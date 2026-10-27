@@ -781,6 +781,82 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_connect_resets_what_the_old_token_wrote_on_every_board_it_rekeys() {
+        let pg = PgStore::test_store().await;
+        let p = workspace(&pg).await;
+        let store = Arc::new(MemoryStore::default());
+        let s = site();
+        let board = FakeBoard::standard().with_assignees([Some("A1"), None, None]);
+        let a = connect(
+            &pg,
+            store.clone(),
+            &JiraAdapter,
+            &board,
+            p,
+            TrackerLevel::Sprint,
+            params(&s, "42"),
+        )
+        .await
+        .unwrap()
+        .tracker_id;
+        crate::tracker::sync::sync_tracker(
+            &pg,
+            &crate::tracker::sync::TrackerLocks::default(),
+            a,
+            &JiraAdapter,
+            &board,
+            crate::tracker::sync::SYNC_DEADLINE,
+        )
+        .await
+        .unwrap();
+        let wrote = |pg: PgStore| async move {
+            for q in [
+                "UPDATE sensei.tracker_tasks SET writeback_comment_ref = '555', writeback_hash = 'h',
+                        writeback_status = 'forbidden', writeback_at = now() WHERE tracker_id = $1",
+                "UPDATE sensei.trackers SET writeback_error = 'db' WHERE id = $1",
+            ] {
+                sqlx_core::query::query(q).bind(a).execute(pg.pool()).await.unwrap();
+            }
+        };
+        let left = |pg: PgStore| async move {
+            sqlx_core::query_as::query_as::<_, (i64, Option<String>)>(
+                "SELECT (SELECT count(*) FROM sensei.tracker_tasks WHERE tracker_id = $1
+                          AND (writeback_comment_ref IS NOT NULL OR writeback_hash IS NOT NULL
+                               OR writeback_status IS NOT NULL)),
+                        (SELECT writeback_error::text FROM sensei.trackers WHERE id = $1)",
+            )
+            .bind(a)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap()
+        };
+        // A new sibling board on the site re-keys `a`.
+        wrote(pg.clone()).await;
+        connect(
+            &pg,
+            store.clone(),
+            &JiraAdapter,
+            &with_board_43(),
+            p,
+            TrackerLevel::Epic,
+            params(&s, "43"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            left(pg.clone()).await,
+            (0, None),
+            "a sibling's old writes are not the new owner's"
+        );
+        // Re-connecting `a` itself.
+        wrote(pg.clone()).await;
+        connect(&pg, store, &JiraAdapter, &board, p, TrackerLevel::Sprint, params(&s, "42"))
+            .await
+            .unwrap();
+        assert_eq!(left(pg.clone()).await, (0, None));
+    }
+
+    #[tokio::test]
     async fn a_drain_racing_the_last_disconnect_still_deletes_the_secret() {
         let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;

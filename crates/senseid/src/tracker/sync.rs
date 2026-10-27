@@ -105,7 +105,8 @@ async fn run(
     let prev = pg.tracker_prev_state(tracker_id).await.map_err(SyncError::Db)?;
     // The whole-sync deadline covers the owner lookup and steps 2-3.
     let until = tokio::time::Instant::now() + deadline;
-    if needs_owner_backfill(row.owner_ref.as_deref(), row.owner_state.as_deref()) {
+    if needs_owner_backfill(row.owner_ref.as_ref().map(|o| o.as_str()), row.owner_state.as_deref())
+    {
         backfill_owner(pg, tracker_id, adapter, transport, &row.secret_service, until).await;
     }
 
@@ -637,6 +638,38 @@ mod tests {
             _t: &dyn GetTransport,
         ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
             Ok(crate::tracker::OwnerLookup::Unknown)
+        }
+        async fn find_comment(
+            &self,
+            _t: &dyn GetTransport,
+            _task: &str,
+            _owner: &crate::tracker::AccountRef,
+        ) -> Result<Option<String>, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn create_comment(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _report: &crate::tracker::writeback::Report,
+        ) -> Result<String, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn update_comment(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _comment: &str,
+            _report: &crate::tracker::writeback::Report,
+        ) -> Result<(), TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn issue_exists(
+            &self,
+            _t: &dyn GetTransport,
+            _task: &str,
+        ) -> Result<bool, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
         }
         async fn validate(
             &self,
@@ -1181,6 +1214,38 @@ mod tests {
             t: &dyn GetTransport,
         ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
             JiraAdapter.owner(t).await
+        }
+        async fn find_comment(
+            &self,
+            t: &dyn GetTransport,
+            task: &str,
+            owner: &crate::tracker::AccountRef,
+        ) -> Result<Option<String>, TrackerError> {
+            JiraAdapter.find_comment(t, task, owner).await
+        }
+        async fn create_comment(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &str,
+            report: &crate::tracker::writeback::Report,
+        ) -> Result<String, TrackerError> {
+            JiraAdapter.create_comment(w, task, report).await
+        }
+        async fn update_comment(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &str,
+            comment: &str,
+            report: &crate::tracker::writeback::Report,
+        ) -> Result<(), TrackerError> {
+            JiraAdapter.update_comment(w, task, comment, report).await
+        }
+        async fn issue_exists(
+            &self,
+            t: &dyn GetTransport,
+            task: &str,
+        ) -> Result<bool, TrackerError> {
+            JiraAdapter.issue_exists(t, task).await
         }
         async fn validate(
             &self,

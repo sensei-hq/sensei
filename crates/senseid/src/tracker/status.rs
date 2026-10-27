@@ -39,6 +39,63 @@ pub fn status(
     }
 }
 
+/// A board's write-back state (spec W8), first match wins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WritebackState {
+    Disabled,
+    PassFailed,
+    OwnerNotAPerson,
+    OwnerLookupFailed,
+    OwnerUnknown,
+    NothingAssigned,
+    Active,
+}
+
+impl WritebackState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WritebackState::Disabled => "disabled",
+            WritebackState::PassFailed => "pass_failed",
+            WritebackState::OwnerNotAPerson => "owner_not_a_person",
+            WritebackState::OwnerLookupFailed => "owner_lookup_failed",
+            WritebackState::OwnerUnknown => "owner_unknown",
+            WritebackState::NothingAssigned => "nothing_assigned",
+            WritebackState::Active => "active",
+        }
+    }
+}
+
+/// What a board's write-back state is made of (W8).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WritebackFacts<'a> {
+    pub enabled: bool,
+    pub writeback_error: Option<&'a str>,
+    pub owner_known: bool,
+    pub owner_state: Option<&'a str>,
+    pub owner_error: Option<&'a str>,
+    pub assigned: i64,
+}
+
+/// The state, and the error code it carries (`pass_failed`, `owner_lookup_failed`).
+pub fn writeback_state<'a>(f: &WritebackFacts<'a>) -> (WritebackState, Option<&'a str>) {
+    use WritebackState as W;
+    if !f.enabled {
+        (W::Disabled, None)
+    } else if let Some(code) = f.writeback_error {
+        (W::PassFailed, Some(code))
+    } else if f.owner_state == Some(crate::tracker::TrackerOwnerState::NotAPerson.as_str()) {
+        (W::OwnerNotAPerson, None)
+    } else if !f.owner_known && f.owner_error.is_some() {
+        (W::OwnerLookupFailed, f.owner_error)
+    } else if !f.owner_known {
+        (W::OwnerUnknown, None)
+    } else if f.assigned == 0 {
+        (W::NothingAssigned, None)
+    } else {
+        (W::Active, None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,6 +107,44 @@ mod tests {
             .with_timezone(&chrono::Utc)
     }
     const INTERVAL: i64 = 1800;
+
+    #[test]
+    fn the_writeback_state_is_the_first_that_applies() {
+        use WritebackState as W;
+        let active =
+            WritebackFacts { enabled: true, owner_known: true, assigned: 2, ..Default::default() };
+        let case = |f: WritebackFacts<'static>| writeback_state(&f);
+        assert_eq!(case(active), (W::Active, None));
+        assert_eq!(case(WritebackFacts { assigned: 0, ..active }), (W::NothingAssigned, None));
+        let unowned = WritebackFacts { owner_known: false, ..active };
+        assert_eq!(case(unowned), (W::OwnerUnknown, None));
+        assert_eq!(
+            case(WritebackFacts { owner_error: Some("forbidden"), ..unowned }),
+            (W::OwnerLookupFailed, Some("forbidden"))
+        );
+        assert_eq!(
+            case(WritebackFacts {
+                owner_state: Some("not_a_person"),
+                owner_error: Some("forbidden"),
+                ..unowned
+            }),
+            (W::OwnerNotAPerson, None),
+            "an app token outranks a lookup error"
+        );
+        assert_eq!(
+            case(WritebackFacts {
+                writeback_error: Some("db"),
+                owner_state: Some("not_a_person"),
+                ..unowned
+            }),
+            (W::PassFailed, Some("db"))
+        );
+        assert_eq!(
+            case(WritebackFacts { enabled: false, writeback_error: Some("db"), ..active }),
+            (W::Disabled, None),
+            "off outranks everything"
+        );
+    }
 
     #[test]
     fn never_synced_is_pending() {

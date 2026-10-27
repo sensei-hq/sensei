@@ -13,7 +13,7 @@ use crate::api::handlers::err;
 use crate::db::pg_store::trackers::TrackerRow;
 use crate::tracker::connect::{ConnectError, connect, disconnect};
 use crate::tracker::runtime::sync_stored;
-use crate::tracker::status::status;
+use crate::tracker::status::{WritebackFacts, status, writeback_state};
 use crate::tracker::sync::SyncError;
 use crate::tracker::usage::{
     sprint_usages, ticket_usage_by_repo, ticket_usages, unlinked_in_sprint,
@@ -51,11 +51,20 @@ async fn known_workspace(state: &AppState, id: &str) -> Result<uuid::Uuid, ApiEr
 
 /// The connection as the API shows it. Never the token, never the keyring name.
 async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, ApiErr> {
-    let (tasks, sprints) = state.pg.tracker_counts(row.id).await.map_err(|_| internal())?;
+    let pg = &state.pg;
+    let (tasks, sprints) = pg.tracker_counts(row.id).await.map_err(|_| internal())?;
+    let (assigned, failing) = pg.writeback_counts(row.id).await.map_err(|_| internal())?;
+    let (wb_state, wb_error) = writeback_state(&WritebackFacts {
+        enabled: row.writeback_enabled,
+        writeback_error: row.writeback_error.as_deref(),
+        owner_known: row.owner_ref.is_some(),
+        owner_state: row.owner_state.as_deref(),
+        owner_error: row.owner_error.as_deref(),
+        assigned,
+    });
     // R9: the stale threshold is the schedule's interval; the row is seeded, so a
     // missing one is a defect, not a reason to guess.
-    let interval = state
-        .pg
+    let interval = pg
         .load_schedule("tracker_sync")
         .await
         .map_err(|_| internal())?
@@ -76,6 +85,16 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         "last_success_at": row.last_success_at,
         "last_error": row.last_error,
         "counts": {"tasks": tasks, "sprints": sprints},
+        // W8. F2 writes comments only; mapped fields arrive with F4.
+        "writeback": {
+            "enabled": row.writeback_enabled,
+            "state": wb_state.as_str(),
+            "surface": "comment",
+            "mapped": 0,
+            "assigned": assigned,
+            "failing": failing,
+            "error": wb_error,
+        },
     }))
 }
 
@@ -335,6 +354,7 @@ pub(crate) async fn get_tracker_task(
         "task": {
             "tracker_id": task.tracker_id, "key": task.key, "summary": task.summary, "issue_type": task.issue_type,
             "status": task.status, "removed": task.removed, "assigned_to_me": task.assigned_to_me,
+            "writeback_status": task.writeback_status, "writeback_at": task.writeback_at,
         },
         "usage": usage,
         "by_repo": by_repo,
@@ -558,6 +578,7 @@ pub(crate) async fn list_tracker_tasks(
             serde_json::json!({
                 "key": t.key, "summary": t.summary, "issue_type": t.issue_type,
                 "status": t.status, "removed": t.removed, "assigned_to_me": t.assigned_to_me,
+                "writeback_status": t.writeback_status, "writeback_at": t.writeback_at,
                 "current_sprint": t.current_sprint.as_ref().map(named),
                 "sprints": t.sprints.iter().map(named).collect::<Vec<_>>(),
                 // No linked sessions is a genuinely empty set: zero sessions, null sums.
@@ -868,7 +889,16 @@ mod tests {
             json(&b)["counts"],
             json!({"sprints": 2, "tasks": 3, "removed": 0, "links": 0, "skipped_members": 0})
         );
-        let _held = h.rt.locks.try_lock(id.parse().unwrap()).unwrap();
+        // The sync's write-back pass holds the guard for a moment after it (W2).
+        let mut held = None;
+        for _ in 0..50 {
+            held = h.rt.locks.try_lock(id.parse().unwrap());
+            if held.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let _held = held.expect("the pass releases the guard");
         let (st, b) = call(&h, "POST", &uri, None, None).await;
         assert_eq!((st, json(&b)["error"].clone()), (StatusCode::CONFLICT, json!("busy")));
     }
@@ -1038,6 +1068,85 @@ mod tests {
             call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/auth-1"), None, None).await;
         assert_eq!(json(&b)["task"]["assigned_to_me"], json!(true), "{b}");
         assert!(!b.contains("B2") && !b.contains("A1"), "no account id in a response: {b}");
+    }
+
+    #[tokio::test]
+    async fn each_board_reports_its_write_back_state_and_each_ticket_its_last_write() {
+        let h = harness().await;
+        let cases = [
+            (
+                json!({"accountId": "A1", "accountType": "atlassian"}),
+                [Some("A1"), None, None],
+                "active",
+                Value::Null,
+            ),
+            (
+                json!({"accountId": "A1", "accountType": "atlassian"}),
+                [None, None, None],
+                "nothing_assigned",
+                Value::Null,
+            ),
+            (json!({"accountType": "app"}), [None, None, None], "owner_not_a_person", Value::Null),
+            (json!({}), [None, None, None], "owner_unknown", Value::Null),
+        ];
+        for (myself, assignees, want, error) in cases {
+            let p = workspace(&h).await;
+            let s = site();
+            h.factory.serve(
+                &format!("https://{s}"),
+                FakeBoard::standard().with_myself(myself.clone()).with_assignees(assignees),
+            );
+            h.factory.serve_writes(
+                &format!("https://{s}"),
+                crate::tracker::test_support::RecordingWrites::default(),
+            );
+            connect(&h, p, &s).await;
+            let card = settled(&h, p).await;
+            let wb = &card[0]["writeback"];
+            assert_eq!(wb["state"], json!(want), "{myself}: {card}");
+            assert_eq!(wb["enabled"], json!(true));
+            assert_eq!(wb["surface"], json!("comment"));
+            assert_eq!(wb["mapped"], json!(0));
+            assert_eq!(wb["assigned"], json!(if want == "active" { 1 } else { 0 }));
+            assert_eq!(wb["failing"], json!(0));
+            assert_eq!(wb["error"], error);
+        }
+        // A lookup that fails is shown with its code.
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        h.factory.serve_writes(
+            &format!("https://{s}"),
+            crate::tracker::test_support::RecordingWrites::default(),
+        );
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET owner_ref = NULL, owner_error = 'forbidden' WHERE id = $1::uuid",
+        )
+        .bind(&t)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (_, b) = call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
+        let wb = &json(&b)[0]["writeback"];
+        assert_eq!(
+            (wb["state"].clone(), wb["error"].clone()),
+            (json!("owner_lookup_failed"), json!("forbidden"))
+        );
+        // Each ticket says what was last written to it, and when.
+        let (_, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers/{t}/tasks"), None, None).await;
+        let row = &json(&b)[0];
+        assert!(row.get("writeback_status").is_some() && row.get("writeback_at").is_some(), "{b}");
+        let (_, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/auth-1"), None, None).await;
+        let task = &json(&b)["task"];
+        assert!(
+            task.get("writeback_status").is_some() && task.get("writeback_at").is_some(),
+            "{b}"
+        );
     }
 
     #[tokio::test]

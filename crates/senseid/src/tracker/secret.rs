@@ -88,6 +88,8 @@ pub mod test_support {
         pub entries: Mutex<HashMap<(String, String), String>>,
         pub fail_set: Mutex<bool>,
         pub fail_delete: Mutex<bool>,
+        /// Fail every `get` with `credential_store` while set (write-back gate 22a).
+        pub fail_get: Mutex<bool>,
         pub deletes: Mutex<Vec<String>>,
         /// Each delete blocks this long first (a slow or prompting keyring).
         pub delete_delay: Mutex<Option<Duration>>,
@@ -103,6 +105,7 @@ pub mod test_support {
                 entries: Mutex::default(),
                 fail_set: Mutex::default(),
                 fail_delete: Mutex::default(),
+                fail_get: Mutex::default(),
                 deletes: Mutex::default(),
                 delete_delay: Mutex::default(),
             }
@@ -122,6 +125,9 @@ pub mod test_support {
             Ok(())
         }
         fn get(&self, service: &str, account: &str) -> Result<ApiToken, TrackerError> {
+            if *self.fail_get.lock().unwrap() {
+                return Err(TrackerError::CredentialStore);
+            }
             self.entries
                 .lock()
                 .unwrap()

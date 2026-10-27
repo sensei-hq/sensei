@@ -17,6 +17,7 @@ pub mod status;
 pub mod sync;
 pub mod transport;
 pub mod usage;
+pub mod writeback;
 
 use std::collections::HashMap;
 
@@ -167,6 +168,25 @@ pub trait GetTransport: Send + Sync {
         &self,
         path: &str,
         query: &[(&str, String)],
+    ) -> Result<serde_json::Value, TrackerError>;
+}
+
+/// The verbs a write may use (spec W10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteMethod {
+    Post,
+    Put,
+}
+
+/// Write access to a tracker's API, held only by the write-back pass (W10).
+#[async_trait::async_trait]
+pub trait WriteTransport: Send + Sync {
+    async fn send_json(
+        &self,
+        method: WriteMethod,
+        path: &str,
+        query: &[(&str, String)],
+        body: &serde_json::Value,
     ) -> Result<serde_json::Value, TrackerError>;
 }
 
@@ -332,6 +352,35 @@ pub trait TrackerAdapter: Send + Sync {
     fn auth(&self, account: &str, token: &ApiToken) -> AuthScheme;
     /// Who the token belongs to (W1).
     async fn owner(&self, t: &dyn GetTransport) -> Result<OwnerLookup, TrackerError>;
+    /// The newest comment `owner` wrote as a write-back report on this ticket, if
+    /// any: adopted instead of posting a second one (W5).
+    async fn find_comment(
+        &self,
+        t: &dyn GetTransport,
+        task_external_id: &str,
+        owner: &AccountRef,
+    ) -> Result<Option<String>, TrackerError>;
+    /// Post the report as a new comment; its id.
+    async fn create_comment(
+        &self,
+        w: &dyn WriteTransport,
+        task_external_id: &str,
+        report: &writeback::Report,
+    ) -> Result<String, TrackerError>;
+    /// Replace the comment's body with the report, without notifying watchers.
+    async fn update_comment(
+        &self,
+        w: &dyn WriteTransport,
+        task_external_id: &str,
+        comment_ref: &str,
+        report: &writeback::Report,
+    ) -> Result<(), TrackerError>;
+    /// Whether the ticket itself still exists (W5: which object a 404 meant).
+    async fn issue_exists(
+        &self,
+        t: &dyn GetTransport,
+        task_external_id: &str,
+    ) -> Result<bool, TrackerError>;
     /// Prove the credential and the board.
     async fn validate(
         &self,
@@ -541,6 +590,8 @@ pub mod test_support {
         /// finds nothing.
         jql: HashMap<String, Result<serde_json::Value, TrackerError>>,
         jql_calls: Mutex<Vec<String>>,
+        /// Every call's path and query, in order.
+        queried: Mutex<Vec<(String, Query)>>,
     }
 
     /// The labels of `database/ddl/enum/sensei/<name>.ddl`, in declared order.
@@ -632,6 +683,7 @@ pub mod test_support {
                 delay: None,
                 jql: HashMap::new(),
                 jql_calls: Mutex::new(vec![]),
+                queried: Mutex::new(vec![]),
             }
         }
         /// Answer a board-scoped search for this exact `jql` with these issues.
@@ -651,6 +703,17 @@ pub mod test_support {
         /// Every path asked, in order.
         pub fn calls(&self) -> Vec<String> {
             self.calls.lock().unwrap().clone()
+        }
+
+        /// The query of the last call to `path`.
+        pub fn query_of(&self, path: &str) -> Option<Vec<(String, String)>> {
+            self.queried
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|(p, _)| p == path)
+                .map(|(_, q)| q.clone())
         }
 
         pub fn jql_calls(&self) -> Vec<String> {
@@ -742,6 +805,10 @@ pub mod test_support {
             query: &[(&str, String)],
         ) -> Result<serde_json::Value, TrackerError> {
             self.calls.lock().unwrap().push(path.to_string());
+            self.queried.lock().unwrap().push((
+                path.to_string(),
+                query.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+            ));
             if let Some(hook) = &self.on_call {
                 hook(path.to_string()).await;
             }
@@ -779,6 +846,112 @@ pub mod test_support {
         }
     }
 
+    /// A request's query, as recorded.
+    pub type Query = Vec<(String, String)>;
+    /// Scripted `(status, Retry-After)` replies, consumed in order.
+    type Replies = std::collections::VecDeque<(u16, Option<String>)>;
+
+    /// One write the recording backend received.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Sent {
+        pub method: WriteMethod,
+        pub path: String,
+        pub query: Vec<(String, String)>,
+        pub body: serde_json::Value,
+    }
+
+    /// A scripted write backend (spec W10): a [`RawWrite`](crate::tracker::transport::RawWrite)
+    /// with a call log, so the real `PolicyTransport` (429 loop, `Retry-After`)
+    /// sits in front of it. Unscripted, a POST answers 201 with a fresh `id` and a
+    /// PUT answers 204.
+    #[derive(Default)]
+    pub struct RecordingWrites {
+        sent: Mutex<Vec<Sent>>,
+        script: Mutex<Vec<(WriteMethod, String, Replies)>>,
+        next_id: std::sync::atomic::AtomicU32,
+        on_send: Option<Hook>,
+        delay: Option<std::time::Duration>,
+    }
+
+    impl RecordingWrites {
+        /// Answer the next `times` sends of `method` to `path` with `status`.
+        pub fn respond(self, method: WriteMethod, path: &str, status: u16, times: usize) -> Self {
+            self.respond_after(method, path, status, None, times)
+        }
+        /// [`respond`](Self::respond) with a `Retry-After` header.
+        pub fn respond_after(
+            self,
+            method: WriteMethod,
+            path: &str,
+            status: u16,
+            retry_after: Option<&str>,
+            times: usize,
+        ) -> Self {
+            let q = (0..times).map(|_| (status, retry_after.map(String::from))).collect();
+            self.script.lock().unwrap().push((method, path.into(), q));
+            self
+        }
+        /// Runs on every send, before the response.
+        pub fn on_send(mut self, hook: Hook) -> Self {
+            self.on_send = Some(hook);
+            self
+        }
+        pub fn delay(mut self, d: std::time::Duration) -> Self {
+            self.delay = Some(d);
+            self
+        }
+        pub fn sent(&self) -> Vec<Sent> {
+            self.sent.lock().unwrap().clone()
+        }
+        pub fn count(&self, method: WriteMethod) -> usize {
+            self.sent.lock().unwrap().iter().filter(|s| s.method == method).count()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::tracker::transport::RawWrite for RecordingWrites {
+        async fn send(
+            &self,
+            method: WriteMethod,
+            path: &str,
+            query: &[(&str, String)],
+            body: &[u8],
+        ) -> Result<crate::tracker::transport::RawResponse, ()> {
+            self.sent.lock().unwrap().push(Sent {
+                method,
+                path: path.into(),
+                query: query.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+                body: serde_json::from_slice(body).unwrap_or(serde_json::Value::Null),
+            });
+            if let Some(hook) = &self.on_send {
+                hook(path.to_string()).await;
+            }
+            if let Some(d) = self.delay {
+                tokio::time::sleep(d).await;
+            }
+            let scripted = self
+                .script
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|(m, p, q)| *m == method && p == path && !q.is_empty())
+                .and_then(|(_, _, q)| q.pop_front());
+            let raw = |status, retry_after, body: String| crate::tracker::transport::RawResponse {
+                status,
+                retry_after,
+                body: body.into_bytes(),
+            };
+            Ok(match (scripted, method) {
+                (Some((status, retry_after)), _) => raw(status, retry_after, String::new()),
+                (None, WriteMethod::Post) => {
+                    let id = 20000 + self.next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    raw(201, None, format!(r#"{{"id":"{id}"}}"#))
+                }
+                (None, WriteMethod::Put) => raw(204, None, String::new()),
+            })
+        }
+    }
+
     /// A board issue as Jira returns it, assigned to `assignee` (`None` = unassigned).
     pub fn assigned_issue(id: &str, key: &str, assignee: Option<&str>) -> serde_json::Value {
         serde_json::json!({"id": id, "key": key, "fields": {
@@ -797,6 +970,18 @@ pub mod test_support {
                 "issues": [assigned_issue("10001", "auth-1", a1), assigned_issue("10002", "AUTH-2", a2)]}))
                 .with("/rest/agile/1.0/board/42/issue", 2, json!({"startAt": 2, "maxResults": 2, "total": 3,
                     "issues": [assigned_issue("10003", "AUTH-3", a3)]}))
+        }
+        /// Write-back reads (W5) for the standard board's three issues: each has no
+        /// comments yet and still exists.
+        pub fn with_comment_reads(self) -> Self {
+            use serde_json::json;
+            ["10001", "10002", "10003"].into_iter().fold(self, |b, id| {
+                b.with(&format!("/rest/api/3/issue/{id}/comment"), 0, json!({"comments": []})).with(
+                    &format!("/rest/api/3/issue/{id}"),
+                    0,
+                    json!({"id": id}),
+                )
+            })
         }
         /// The standard board whose `/myself` answers `body`.
         pub fn with_myself(self, body: serde_json::Value) -> Self {

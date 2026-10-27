@@ -28,11 +28,15 @@ pub struct TrackerRow {
     /// R11: transcript turns ingested up to here have been checked for unknown keys.
     pub discovered_through: chrono::DateTime<chrono::Utc>,
     /// The token owner's provider id (W1); NULL until known.
-    pub owner_ref: Option<String>,
+    pub owner_ref: Option<crate::tracker::AccountRef>,
     /// Why `owner_ref` is NULL (`sensei.tracker_owner_state`).
     pub owner_state: Option<String>,
     /// The last owner lookup's failure code (`sensei.tracker_error`).
     pub owner_error: Option<String>,
+    /// Whether usage is written back (W8).
+    pub writeback_enabled: bool,
+    /// Why the last write-back pass could not run or ended early (W2).
+    pub writeback_error: Option<String>,
 }
 
 impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for TrackerRow {
@@ -53,11 +57,37 @@ impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for TrackerRow {
             last_success_at: r.try_get("last_success_at")?,
             last_error: r.try_get("last_error")?,
             discovered_through: r.try_get("discovered_through")?,
-            owner_ref: r.try_get("owner_ref")?,
+            owner_ref: r
+                .try_get::<Option<String>, _>("owner_ref")?
+                .map(crate::tracker::AccountRef::new),
             owner_state: r.try_get("owner_state")?,
             owner_error: r.try_get("owner_error")?,
+            writeback_enabled: r.try_get("writeback_enabled")?,
+            writeback_error: r.try_get("writeback_error")?,
         })
     }
+}
+
+/// One ticket a write-back pass may write (spec W4), in pass order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WritebackTask {
+    pub id: uuid::Uuid,
+    pub external_id: String,
+    pub comment_ref: Option<String>,
+    pub hash: Option<String>,
+    /// `sensei.tracker_writeback_status`, NULL when never attempted.
+    pub status: Option<String>,
+}
+
+/// What the per-ticket re-check (W2) found just before a write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteTarget {
+    /// Write it.
+    Go,
+    /// No longer the token owner's: skip it, carry on.
+    Reassigned,
+    /// The tracker is gone, write-back is off, or the token changed: end the pass.
+    Stop,
 }
 
 /// The workspace that already owns a board.
@@ -134,6 +164,9 @@ pub struct TaskDetail {
     pub removed: bool,
     /// Whether the token owner is the assignee (W1); NULL while the owner is unknown.
     pub assigned_to_me: Option<bool>,
+    /// The last write-back outcome (W9), and when a write last landed.
+    pub writeback_status: Option<String>,
+    pub writeback_at: Option<chrono::DateTime<chrono::Utc>>,
     pub sessions: Vec<LinkedSession>,
 }
 
@@ -160,7 +193,8 @@ const TRACKER_SELECT: &str =
     "SELECT id, workspace_id, kind::text AS kind, level::text AS level, base_url, account,
         external_scope, board_ref, params, secret_service, last_attempt_at, last_success_at,
         last_error::text AS last_error, discovered_through, owner_ref,
-        owner_state::text AS owner_state, owner_error::text AS owner_error
+        owner_state::text AS owner_state, owner_error::text AS owner_error, writeback_enabled,
+        writeback_error::text AS writeback_error
    FROM sensei.trackers";
 
 /// Last occurrence wins, so overlapping provider pages never make one upsert touch a row twice.
@@ -717,7 +751,18 @@ impl PgStore {
         key: &str,
     ) -> Result<Option<TaskDetail>, String> {
         let err = |e: sqlx_core::Error| e.to_string();
-        let Some((task_id, tracker_id, key, summary, issue_type, status, removed, assigned_to_me)) =
+        let Some((
+            task_id,
+            tracker_id,
+            key,
+            summary,
+            issue_type,
+            status,
+            removed,
+            assigned_to_me,
+            writeback_status,
+            writeback_at,
+        )) =
             sqlx_core::query_as::query_as::<
                 _,
                 (
@@ -729,10 +774,12 @@ impl PgStore {
                     Option<String>,
                     bool,
                     Option<bool>,
+                    Option<String>,
+                    Option<chrono::DateTime<chrono::Utc>>,
                 ),
             >(
                 "SELECT t.id, t.tracker_id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL,
-                        t.assigned_to_me
+                        t.assigned_to_me, t.writeback_status::text, t.writeback_at
                    FROM sensei.tracker_tasks t JOIN sensei.trackers tr ON tr.id = t.tracker_id
                   WHERE tr.workspace_id = $1
                     AND (upper(t.key) = upper($2)
@@ -784,6 +831,8 @@ impl PgStore {
             issue_type,
             status,
             assigned_to_me,
+            writeback_status,
+            writeback_at,
             removed,
             sessions,
         }))
@@ -981,7 +1030,8 @@ impl PgStore {
                         SET level = $2::sensei.tracker_level, account = $3, external_scope = $4,
                             params = params || $5, secret_service = $6,
                             last_success_at = NULL, last_error = NULL,
-                            owner_ref = $7, owner_state = $8::sensei.tracker_owner_state, owner_error = NULL
+                            owner_ref = $7, owner_state = $8::sensei.tracker_owner_state, owner_error = NULL,
+                            writeback_error = NULL
                       WHERE id = $1",
                 )
                 .bind(id)
@@ -1029,7 +1079,7 @@ impl PgStore {
         // old token's failure no longer describes them; the caller re-syncs them.
         let rekeyed: Vec<uuid::Uuid> = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
             "UPDATE sensei.trackers SET account = $4, secret_service = $5, last_error = NULL,
-                    owner_ref = NULL, owner_state = NULL, owner_error = NULL
+                    owner_ref = NULL, owner_state = NULL, owner_error = NULL, writeback_error = NULL
               WHERE workspace_id = $1 AND kind = $2::sensei.tracker_kind AND base_url = $3
                 AND secret_service <> $5
              RETURNING id",
@@ -1049,7 +1099,10 @@ impl PgStore {
         // Whose tickets these are was decided against the old owner (W11).
         let reset: Vec<uuid::Uuid> = rekeyed.iter().copied().chain(Some(outcome.0)).collect();
         sqlx_core::query::query(
-            "UPDATE sensei.tracker_tasks SET assigned_to_me = NULL WHERE tracker_id = ANY($1)",
+            "UPDATE sensei.tracker_tasks
+                SET assigned_to_me = NULL, writeback_comment_ref = NULL, writeback_hash = NULL,
+                    writeback_status = NULL
+              WHERE tracker_id = ANY($1)",
         )
         .bind(&reset)
         .execute(&mut *tx)
@@ -1114,6 +1167,142 @@ impl PgStore {
         .execute(&self.pool)
         .await
         .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
+    /// The tracker's write-back candidates (W4): live tickets assigned to the
+    /// token owner, never-tried first, then by oldest attempt, then by id (W2).
+    pub async fn writeback_candidates(
+        &self,
+        tracker_id: uuid::Uuid,
+    ) -> Result<Vec<WritebackTask>, String> {
+        sqlx_core::query_as::query_as::<
+            _,
+            (uuid::Uuid, String, Option<String>, Option<String>, Option<String>),
+        >(
+            "SELECT id, external_id, writeback_comment_ref, writeback_hash, writeback_status::text
+               FROM sensei.tracker_tasks
+              WHERE tracker_id = $1 AND assigned_to_me AND removed_at IS NULL
+              ORDER BY writeback_tried_at NULLS FIRST, id",
+        )
+        .bind(tracker_id)
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(id, external_id, comment_ref, hash, status)| WritebackTask {
+                    id,
+                    external_id,
+                    comment_ref,
+                    hash,
+                    status,
+                })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    /// The per-ticket re-check before a write (W2), against the pass's token.
+    pub async fn writeback_target(
+        &self,
+        task_id: uuid::Uuid,
+        secret_service: &str,
+    ) -> Result<WriteTarget, String> {
+        let row = sqlx_core::query_as::query_as::<_, (bool, bool, Option<bool>)>(
+            "SELECT tr.writeback_enabled, tr.secret_service = $2, t.assigned_to_me
+               FROM sensei.tracker_tasks t JOIN sensei.trackers tr ON tr.id = t.tracker_id
+              WHERE t.id = $1",
+        )
+        .bind(task_id)
+        .bind(secret_service)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(match row {
+            None | Some((false, _, _)) | Some((_, false, _)) => WriteTarget::Stop,
+            Some((true, true, Some(true))) => WriteTarget::Go,
+            Some((true, true, _)) => WriteTarget::Reassigned,
+        })
+    }
+
+    /// A write landed: its hash, the comment it wrote, `ok` and the time, while the
+    /// token is the pass's. `Ok(false)` when it isn't (superseded).
+    pub async fn record_write_ok(
+        &self,
+        task_id: uuid::Uuid,
+        secret_service: &str,
+        hash: &str,
+        comment_ref: Option<&str>,
+    ) -> Result<bool, String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks t
+                SET writeback_hash = $3, writeback_comment_ref = coalesce($4, t.writeback_comment_ref),
+                    writeback_status = 'ok', writeback_at = now(), writeback_tried_at = now()
+               FROM sensei.trackers tr
+              WHERE t.id = $1 AND tr.id = t.tracker_id AND tr.secret_service = $2",
+        )
+        .bind(task_id)
+        .bind(secret_service)
+        .bind(hash)
+        .bind(comment_ref)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
+    /// A write failed: only its status, under the same condition.
+    pub async fn record_write_status(
+        &self,
+        task_id: uuid::Uuid,
+        secret_service: &str,
+        status: &str,
+    ) -> Result<bool, String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks t
+                SET writeback_status = $3::sensei.tracker_writeback_status, writeback_tried_at = now()
+               FROM sensei.trackers tr
+              WHERE t.id = $1 AND tr.id = t.tracker_id AND tr.secret_service = $2",
+        )
+        .bind(task_id)
+        .bind(secret_service)
+        .bind(status)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
+    /// Set (or, with `None`, clear) the pass-level failure (W2), under the token condition.
+    pub async fn set_writeback_error(
+        &self,
+        tracker_id: uuid::Uuid,
+        secret_service: &str,
+        code: Option<&str>,
+    ) -> Result<bool, String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET writeback_error = $3::sensei.tracker_error
+              WHERE id = $1 AND secret_service = $2",
+        )
+        .bind(tracker_id)
+        .bind(secret_service)
+        .bind(code)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
+    /// `(assigned, failing)` for the board card (W8).
+    pub async fn writeback_counts(&self, tracker_id: uuid::Uuid) -> Result<(i64, i64), String> {
+        sqlx_core::query_as::query_as(
+            "SELECT count(*) FILTER (WHERE assigned_to_me),
+                    count(*) FILTER (WHERE assigned_to_me AND writeback_status <> 'ok')
+               FROM sensei.tracker_tasks WHERE tracker_id = $1 AND removed_at IS NULL",
+        )
+        .bind(tracker_id)
+        .fetch_one(&self.pool)
+        .await
         .map_err(|e| e.to_string())
     }
 

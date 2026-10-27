@@ -9,7 +9,7 @@ use crate::db::pg_store::trackers::TrackerRow;
 use crate::tracker::secret::{KEYRING_TIMEOUT, KeyringSecretStore, SecretStore, bounded};
 use crate::tracker::sync::TrackerLocks;
 use crate::tracker::transport::{PolicyTransport, ReqwestRaw};
-use crate::tracker::{AuthScheme, GetTransport, TrackerAdapter, TrackerError};
+use crate::tracker::{AuthScheme, GetTransport, TrackerAdapter, TrackerError, WriteTransport};
 
 /// 429 retries per request during sync; connect's `validate` uses none.
 pub const SYNC_RETRIES: u8 = 3;
@@ -22,6 +22,13 @@ pub trait TransportFactory: Send + Sync {
         auth: AuthScheme,
         retries: u8,
     ) -> Result<Arc<dyn GetTransport>, TrackerError>;
+    /// Builds the write transport; only the write-back pass calls it (W10).
+    fn write_transport(
+        &self,
+        base_url: &str,
+        auth: AuthScheme,
+        retries: u8,
+    ) -> Result<Arc<dyn WriteTransport>, TrackerError>;
 }
 
 /// The production factory: reqwest, bounded timeouts, redirects off, R4 policy.
@@ -34,6 +41,14 @@ impl TransportFactory for ReqwestTransportFactory {
         auth: AuthScheme,
         retries: u8,
     ) -> Result<Arc<dyn GetTransport>, TrackerError> {
+        Ok(Arc::new(PolicyTransport::new(ReqwestRaw::new(base_url, auth)?, retries)))
+    }
+    fn write_transport(
+        &self,
+        base_url: &str,
+        auth: AuthScheme,
+        retries: u8,
+    ) -> Result<Arc<dyn WriteTransport>, TrackerError> {
         Ok(Arc::new(PolicyTransport::new(ReqwestRaw::new(base_url, auth)?, retries)))
     }
 }
@@ -92,7 +107,7 @@ pub async fn sync_stored(
             return Err(SyncError::Failed(e));
         }
     };
-    sync_with_credential(
+    let counts = sync_with_credential(
         pg,
         &rt.locks,
         row.id,
@@ -101,7 +116,11 @@ pub async fn sync_stored(
         SYNC_DEADLINE,
         &row.secret_service,
     )
-    .await
+    .await?;
+    // Spawned, never awaited: the caller doesn't wait for the pass (W2).
+    let _ =
+        crate::tracker::writeback::spawn_after_sync(pg, rt, row.id, &row.secret_service, adapter);
+    Ok(counts)
 }
 
 /// R11 discovery for one stored tracker, resolving its adapter and transport.
@@ -129,6 +148,26 @@ pub mod test_support {
     #[derive(Default)]
     pub struct FakeFactory {
         pub boards: std::sync::Mutex<HashMap<String, Arc<dyn GetTransport>>>,
+        /// Write backends per base URL; an unserved one is a transport failure.
+        pub writes:
+            std::sync::Mutex<HashMap<String, Arc<crate::tracker::test_support::RecordingWrites>>>,
+        /// The `retries` every write transport was built with.
+        pub write_retries: std::sync::Mutex<Vec<u8>>,
+    }
+
+    /// A shared recording backend, so the test keeps a handle to its call log.
+    struct SharedWrites(Arc<crate::tracker::test_support::RecordingWrites>);
+    #[async_trait::async_trait]
+    impl crate::tracker::transport::RawWrite for SharedWrites {
+        async fn send(
+            &self,
+            method: crate::tracker::WriteMethod,
+            path: &str,
+            query: &[(&str, String)],
+            body: &[u8],
+        ) -> Result<crate::tracker::transport::RawResponse, ()> {
+            self.0.send(method, path, query, body).await
+        }
     }
     impl FakeFactory {
         /// Serve `board` for `base_url`; the handle lets a test read its call log.
@@ -141,6 +180,16 @@ pub mod test_support {
             self.boards.lock().unwrap().insert(base_url.to_string(), board.clone());
             board
         }
+        /// Record `writes` for `base_url`, behind the real 429 policy.
+        pub fn serve_writes(
+            &self,
+            base_url: &str,
+            writes: crate::tracker::test_support::RecordingWrites,
+        ) -> Arc<crate::tracker::test_support::RecordingWrites> {
+            let writes = Arc::new(writes);
+            self.writes.lock().unwrap().insert(base_url.to_string(), writes.clone());
+            writes
+        }
     }
     impl TransportFactory for FakeFactory {
         fn transport(
@@ -150,6 +199,22 @@ pub mod test_support {
             _retries: u8,
         ) -> Result<Arc<dyn GetTransport>, TrackerError> {
             self.boards.lock().unwrap().get(base_url).cloned().ok_or(TrackerError::Transport)
+        }
+        fn write_transport(
+            &self,
+            base_url: &str,
+            _auth: AuthScheme,
+            retries: u8,
+        ) -> Result<Arc<dyn WriteTransport>, TrackerError> {
+            self.write_retries.lock().unwrap().push(retries);
+            let writes = self
+                .writes
+                .lock()
+                .unwrap()
+                .get(base_url)
+                .cloned()
+                .ok_or(TrackerError::Transport)?;
+            Ok(Arc::new(PolicyTransport::new(SharedWrites(writes), retries)))
         }
     }
 

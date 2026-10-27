@@ -21,12 +21,14 @@ create table if not exists trackers (
 , owner_ref        text
 , owner_state      tracker_owner_state
 , owner_error      tracker_error
+, writeback_enabled boolean      not null default true
+, writeback_error  tracker_error
 , created_at       timestamptz   not null default now()
 , unique (kind, base_url, board_ref)
 );
 
 comment on table trackers is
-'An issue-tracker board connected to a sensei workspace at a level (epic, sprint, task): a workspace may hold several, and a board belongs to one workspace. Trackers of one workspace on one site share its credential (D14). Read-only mirror source for sensei.sprints / sensei.tracker_tasks. The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.';
+'An issue-tracker board connected to a sensei workspace at a level (epic, sprint, task): a workspace may hold several, and a board belongs to one workspace. Trackers of one workspace on one site share its credential (D14). Mirror source for sensei.sprints / sensei.tracker_tasks; writes back usage metrics only, to tickets assigned to the token owner (spec tracker-metrics-writeback). The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.';
 
 comment on column trackers.workspace_id
      is 'The sensei workspace this board belongs to. ON DELETE CASCADE, and the delete trigger still tombstones the secret.';
@@ -60,5 +62,9 @@ comment on column trackers.owner_state
      is 'Why owner_ref is NULL: unknown (asked again each sync) or not_a_person (an app token; never asked again until a re-connect). NULL when owner_ref is set, or for a tracker not yet asked.';
 comment on column trackers.owner_error
      is 'Failure code of the last owner lookup (W1 backfill); NULL after a successful one. Kept apart from last_error: the read sync never fails because of the lookup.';
+comment on column trackers.writeback_enabled
+     is 'Whether sensei writes usage metrics back to tickets assigned to the token owner (spec tracker-metrics-writeback W8). On by default, for boards connected before write-back too (user decision 2026-10-26).';
+comment on column trackers.writeback_error
+     is 'Why the last write-back pass could not run or ended early (W2): token_missing / credential_store, db, rate_limited, transport. NULL after a pass that ran. Written only by the pass; never last_error.';
 comment on column trackers.created_at
      is 'When the connection was first made.';

@@ -7,6 +7,7 @@ use crate::tracker::{
     AccountRef, ApiToken, AuthScheme, BoardScope, ConnectParams, Discovered, GetTransport,
     KnownTask, Link, LinkSource, OwnerLookup, ParamError, PrevState, SessionText, Snapshot,
     SprintRow, TaskRow, TrackerAdapter, TrackerError, TrackerKind, ValidateError, Validated,
+    WriteMethod, WriteTransport,
 };
 
 /// Jira Cloud's site domains: `atlassian.net`, and `jira.com` for older sites.
@@ -113,6 +114,73 @@ impl TrackerAdapter for JiraAdapter {
 
     async fn owner(&self, t: &dyn GetTransport) -> Result<OwnerLookup, TrackerError> {
         t.get_json(MYSELF, &[]).await.map(|v| owner_from_myself(&v))
+    }
+
+    async fn find_comment(
+        &self,
+        t: &dyn GetTransport,
+        task_external_id: &str,
+        owner: &AccountRef,
+    ) -> Result<Option<String>, TrackerError> {
+        let path = format!("{}/comment", issue_path(task_external_id)?);
+        let query = [("orderBy", "-created".to_string()), ("maxResults", "50".to_string())];
+        let page = t.get_json(&path, &query).await?;
+        let comments =
+            page.get("comments").and_then(|c| c.as_array()).ok_or(TrackerError::Decode)?;
+        let is_report = |c: &serde_json::Value| {
+            c.pointer("/body/content/0/content/0/text").and_then(|x| x.as_str()).is_some_and(
+                |text| text.starts_with(crate::tracker::writeback::REPORT_TITLE_PREFIX),
+            )
+        };
+        Ok(comments
+            .iter()
+            .find(|c| {
+                c.pointer("/author/accountId").and_then(|a| a.as_str()) == Some(owner.as_str())
+                    && is_report(c)
+            })
+            .and_then(|c| c.get("id").and_then(|id| id.as_str()).map(String::from)))
+    }
+
+    async fn create_comment(
+        &self,
+        w: &dyn WriteTransport,
+        task_external_id: &str,
+        report: &crate::tracker::writeback::Report,
+    ) -> Result<String, TrackerError> {
+        let path = format!("{}/comment", issue_path(task_external_id)?);
+        let created = w
+            .send_json(WriteMethod::Post, &path, &[], &serde_json::json!({"body": adf(report)}))
+            .await?;
+        created.get("id").and_then(|id| id.as_str()).map(String::from).ok_or(TrackerError::Decode)
+    }
+
+    async fn update_comment(
+        &self,
+        w: &dyn WriteTransport,
+        task_external_id: &str,
+        comment_ref: &str,
+        report: &crate::tracker::writeback::Report,
+    ) -> Result<(), TrackerError> {
+        if !is_jira_id(comment_ref) {
+            return Err(TrackerError::BadRequest);
+        }
+        let path = format!("{}/comment/{comment_ref}", issue_path(task_external_id)?);
+        let query = [("notifyUsers", "false".to_string())];
+        w.send_json(WriteMethod::Put, &path, &query, &serde_json::json!({"body": adf(report)}))
+            .await
+            .map(|_| ())
+    }
+
+    async fn issue_exists(
+        &self,
+        t: &dyn GetTransport,
+        task_external_id: &str,
+    ) -> Result<bool, TrackerError> {
+        match t.get_json(&issue_path(task_external_id)?, &[("fields", "none".to_string())]).await {
+            Ok(_) => Ok(true),
+            Err(TrackerError::NotFound) => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 
     async fn validate(
@@ -515,6 +583,37 @@ pub fn owner_from_myself(v: &serde_json::Value) -> OwnerLookup {
     }
 }
 
+/// The report as an Atlassian Document: the title in bold, then one bullet per
+/// line. Every string is a `text` node built by serde, never interpolated (W5).
+pub fn adf(report: &crate::tracker::writeback::Report) -> serde_json::Value {
+    use serde_json::json;
+    let text = |t: &str| json!({"type": "text", "text": t});
+    let mut title = text(&report.title);
+    title["marks"] = json!([{"type": "strong"}]);
+    let items: Vec<_> = report
+        .lines
+        .iter()
+        .map(|l| json!({"type": "listItem", "content": [{"type": "paragraph", "content": [text(l)]}]}))
+        .collect();
+    json!({"type": "doc", "version": 1, "content": [
+        {"type": "paragraph", "content": [title]},
+        {"type": "bulletList", "content": items},
+    ]})
+}
+
+/// Jira's numeric issue and comment ids (W10 path safety): only these reach a path.
+pub fn is_jira_id(id: &str) -> bool {
+    (1..=18).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `/rest/api/3/issue/{id}`, only for an id that passes [`is_jira_id`].
+fn issue_path(task_external_id: &str) -> Result<String, TrackerError> {
+    if !is_jira_id(task_external_id) {
+        return Err(TrackerError::BadRequest);
+    }
+    Ok(format!("/rest/api/3/issue/{task_external_id}"))
+}
+
 fn task_row(v: &serde_json::Value) -> Result<TaskRow, TrackerError> {
     let field = |path: &str| v.pointer(path).and_then(|x| x.as_str()).map(String::from);
     Ok(TaskRow {
@@ -789,6 +888,137 @@ mod adapter_tests {
         let asks = |fields: &str| fields.split(',').any(|f| f == "assignee");
         assert!(asks(ISSUE_FIELDS[0].1), "board issues: {}", ISSUE_FIELDS[0].1);
         assert!(asks(SEARCH_FIELDS), "board search (R11): {SEARCH_FIELDS}");
+    }
+
+    // ── Write-back comments (W5) ───────────────────────────────────────────
+
+    use crate::tracker::test_support::RecordingWrites;
+    use crate::tracker::transport::PolicyTransport;
+    use crate::tracker::writeback::Report;
+
+    fn report() -> Report {
+        Report {
+            title: "Sensei · AI usage from the assignee's sessions (updated x)".into(),
+            lines: vec!["Sessions: 1".into(), "Cost: metered — · API —".into()],
+        }
+    }
+
+    #[test]
+    fn a_report_is_a_document_of_text_nodes() {
+        let r = Report { title: "T \"quoted\" <b>".into(), lines: vec!["a".into(), "b".into()] };
+        let item = |t: &str| {
+            json!({"type": "listItem", "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": t}]}]})
+        };
+        assert_eq!(
+            adf(&r),
+            json!({"type": "doc", "version": 1, "content": [
+                {"type": "paragraph", "content": [
+                    {"type": "text", "text": "T \"quoted\" <b>", "marks": [{"type": "strong"}]}]},
+                {"type": "bulletList", "content": [item("a"), item("b")]}]})
+        );
+    }
+
+    #[test]
+    fn only_numeric_ids_reach_a_path() {
+        for ok in ["1", "10001", "123456789012345678"] {
+            assert!(is_jira_id(ok), "{ok}");
+        }
+        for bad in ["", "1234567890123456789", "10001/../x", "1?x=1", "-1", "1 ", "AUTH-1", "１"] {
+            assert!(!is_jira_id(bad), "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_comment_is_created_then_updated_without_notifying_watchers() {
+        let w = PolicyTransport::new(RecordingWrites::default(), 0);
+        let id = JiraAdapter.create_comment(&w, "10001", &report()).await.unwrap();
+        assert_eq!(id, "20000");
+        JiraAdapter.update_comment(&w, "10001", &id, &report()).await.unwrap();
+        let sent = w.raw().sent();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(
+            (sent[0].method, sent[0].path.as_str()),
+            (WriteMethod::Post, "/rest/api/3/issue/10001/comment")
+        );
+        assert_eq!(sent[0].body, json!({"body": adf(&report())}));
+        assert!(sent[0].query.is_empty());
+        assert_eq!(
+            (sent[1].method, sent[1].path.as_str()),
+            (WriteMethod::Put, "/rest/api/3/issue/10001/comment/20000")
+        );
+        assert_eq!(sent[1].query, [("notifyUsers".to_string(), "false".to_string())]);
+        assert_eq!(sent[1].body, json!({"body": adf(&report())}));
+    }
+
+    #[tokio::test]
+    async fn a_malformed_id_never_reaches_a_request() {
+        let w = PolicyTransport::new(RecordingWrites::default(), 0);
+        let board = FakeBoard::standard();
+        let owner = AccountRef::new("A1");
+        assert_eq!(
+            JiraAdapter.create_comment(&w, "10001/../x", &report()).await,
+            Err(TrackerError::BadRequest)
+        );
+        assert_eq!(
+            JiraAdapter.update_comment(&w, "10001", "1?x=1", &report()).await,
+            Err(TrackerError::BadRequest)
+        );
+        assert_eq!(
+            JiraAdapter.find_comment(&board, "AUTH-1", &owner).await,
+            Err(TrackerError::BadRequest)
+        );
+        assert_eq!(JiraAdapter.issue_exists(&board, "1/x").await, Err(TrackerError::BadRequest));
+        assert!(w.raw().sent().is_empty() && board.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_newest_report_by_the_owner_is_adopted_and_nothing_else() {
+        let c = |id: &str, author: &str, first: &str| {
+            json!({"id": id, "author": {"accountId": author},
+                   "body": {"type": "doc", "version": 1, "content": [
+                       {"type": "paragraph", "content": [{"type": "text", "text": first}]}]}})
+        };
+        let path = "/rest/api/3/issue/10001/comment";
+        let board = FakeBoard::standard().with(
+            path,
+            0,
+            json!({"comments": [
+                c("9", "B2", "Sensei · AI usage from the assignee's sessions (updated y)"),
+                c("8", "A1", "Looks good to me"),
+                c("7", "A1", "Sensei · AI usage from the assignee's sessions (updated x)"),
+                c("6", "A1", "Sensei · AI usage from the assignee's sessions (updated w)"),
+            ]}),
+        );
+        let a1 = AccountRef::new("A1");
+        assert_eq!(JiraAdapter.find_comment(&board, "10001", &a1).await, Ok(Some("7".into())));
+        assert_eq!(
+            board.query_of(path),
+            Some(vec![("orderBy".into(), "-created".into()), ("maxResults".into(), "50".into())])
+        );
+        assert_eq!(
+            JiraAdapter.find_comment(&board, "10001", &AccountRef::new("C3")).await,
+            Ok(None)
+        );
+        let none = FakeBoard::standard().with(path, 0, json!({"comments": []}));
+        assert_eq!(JiraAdapter.find_comment(&none, "10001", &a1).await, Ok(None));
+        let denied = FakeBoard::standard().fail(path, TrackerError::Forbidden);
+        assert_eq!(
+            JiraAdapter.find_comment(&denied, "10001", &a1).await,
+            Err(TrackerError::Forbidden)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_issue_exists_until_jira_says_it_is_gone() {
+        let path = "/rest/api/3/issue/10001";
+        let board = FakeBoard::standard().with(path, 0, json!({"id": "10001"}));
+        assert_eq!(JiraAdapter.issue_exists(&board, "10001").await, Ok(true));
+        assert_eq!(board.query_of(path), Some(vec![("fields".into(), "none".into())]));
+        let gone = FakeBoard::standard().fail(path, TrackerError::NotFound);
+        assert_eq!(JiraAdapter.issue_exists(&gone, "10001").await, Ok(false));
+        let denied = FakeBoard::standard().fail(path, TrackerError::Forbidden);
+        assert_eq!(JiraAdapter.issue_exists(&denied, "10001").await, Err(TrackerError::Forbidden));
     }
 
     #[tokio::test]

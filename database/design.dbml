@@ -733,6 +733,16 @@ Enum "sensei"."tracker_level" {
   "task"
 }
 
+Enum "sensei"."tracker_writeback_status" {
+  "ok"
+  "forbidden"
+  "field_invalid"
+  "comment_removed"
+  "not_found"
+  "rate_limited"
+  "error"
+}
+
 Enum "sensei"."tracker_owner_state" {
   "unknown"
   "not_a_person"
@@ -2780,13 +2790,15 @@ Table "sensei"."trackers" {
   "owner_ref" text [note: 'The token owner\'s id at the provider (Jira: accountId of /myself, a person only). Compared with each ticket\'s assignee to set tracker_tasks.assigned_to_me; never an assignee\'s id. NULL until known (owner_state says why). Spec tracker-metrics-writeback W1.']
   "owner_state" sensei.tracker_owner_state [note: 'Why owner_ref is NULL: unknown (asked again each sync) or not_a_person (an app token; never asked again until a re-connect). NULL when owner_ref is set, or for a tracker not yet asked.']
   "owner_error" sensei.tracker_error [note: 'Failure code of the last owner lookup (W1 backfill); NULL after a successful one. Kept apart from last_error: the read sync never fails because of the lookup.']
+  "writeback_enabled" boolean [not null, default: true, note: 'Whether sensei writes usage metrics back to tickets assigned to the token owner (spec tracker-metrics-writeback W8). On by default, for boards connected before write-back too (user decision 2026-10-26).']
+  "writeback_error" sensei.tracker_error [note: 'Why the last write-back pass could not run or ended early (W2): token_missing / credential_store, db, rate_limited, transport. NULL after a pass that ran. Written only by the pass; never last_error.']
   "created_at" timestamptz [not null, default: `now()`, note: 'When the connection was first made.']
 
   indexes {
     (kind, base_url, board_ref) [unique, note: 'unique constraint']
   }
 
-  Note: 'An issue-tracker board connected to a sensei workspace at a level (epic, sprint, task): a workspace may hold several, and a board belongs to one workspace. Trackers of one workspace on one site share its credential (D14). Read-only mirror source for sensei.sprints / sensei.tracker_tasks. The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.'
+  Note: 'An issue-tracker board connected to a sensei workspace at a level (epic, sprint, task): a workspace may hold several, and a board belongs to one workspace. Trackers of one workspace on one site share its credential (D14). Mirror source for sensei.sprints / sensei.tracker_tasks; writes back usage metrics only, to tickets assigned to the token owner (spec tracker-metrics-writeback). The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.'
 }
 
 Table "activity"."run_events" {
@@ -3613,7 +3625,7 @@ Table "sensei"."sprints" {
     (tracker_id, external_id) [unique, note: 'unique constraint']
   }
 
-  Note: 'Sprints of a tracker board, mirrored read-only from the provider. A sprint missing from a full sync gets removed_at (never deleted), so history and links survive.'
+  Note: 'Sprints of a tracker board, mirrored from the provider and never written back (spec tracker-metrics-writeback writes usage to tickets only). A sprint missing from a full sync gets removed_at (never deleted), so history and links survive.'
 }
 
 Table "sensei"."stances" {
@@ -4135,13 +4147,18 @@ Table "sensei"."tracker_tasks" {
   "removed_at" timestamptz [note: 'When a full sync stopped seeing it. Set once.']
   "last_seen_at" timestamptz [not null, default: `now()`, note: 'When a sync last saw it.']
   "assigned_to_me" boolean [note: 'Whether the ticket\'s assignee is the tracker\'s owner (trackers.owner_ref), set on every upsert; false when unassigned or someone else\'s, NULL while the owner is unknown. The assignee itself is compared, never stored. Spec tracker-metrics-writeback W1.']
+  "writeback_hash" text [note: 'SHA-256 of what write-back last wrote (the comment lines, or the mapped field values), so an unchanged ticket sends nothing (W4). NULL until a write lands.']
+  "writeback_comment_ref" text [note: 'The provider id of the comment sensei writes this ticket\'s usage into (W5). Kept with comment_removed; cleared by a re-connect or by switching write-back back on.']
+  "writeback_status" sensei.tracker_writeback_status [note: 'The last write-back outcome (W9); NULL when never attempted.']
+  "writeback_at" timestamptz [note: 'When a write-back last landed on this ticket.']
+  "writeback_tried_at" timestamptz [note: 'When write-back last tried this ticket, landed or not: the pass order (oldest first, never-tried first), so a ticket that keeps failing never starves the others (W2).']
 
   indexes {
     (tracker_id, external_id) [unique, note: 'unique constraint']
     (tracker_id, key) [name: 'tracker_tasks_tracker_id_key_idx']
   }
 
-  Note: 'Tickets (issues) of a tracker board, mirrored read-only. Keyed on the provider\'s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).'
+  Note: 'Tickets (issues) of a tracker board, mirrored from the tracker; usage is written back to the token owner's (spec tracker-metrics-writeback). Keyed on the provider\'s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).'
 }
 
 Table "inference"."drift_items" {
