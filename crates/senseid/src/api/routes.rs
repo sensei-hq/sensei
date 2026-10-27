@@ -363,13 +363,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/instruments/mcp-servers", get(mcp_servers_handler::list))
         .route("/api/instruments/mcp-servers/{id}/enabled", put(mcp_servers_handler::set_enabled))
         .route("/api/instruments/mcp-servers/{id}/tools", get(mcp_servers_handler::get_tools))
+        .route("/api/instruments/mcp-servers/{id}/call", post(mcp_servers_handler::call))
         .route("/api/instruments/mcp-servers/refresh", post(mcp_servers_handler::refresh))
         .route("/api/instruments/tools-health", get(crate::api::handlers::tools_health::grid))
         .route("/api/instruments/tools/refresh", post(crate::api::handlers::tools_health::refresh))
         // Unified query (desktop/MCP)
         .route("/api/query", post(query::unified_query))
         // MCP tool proxy
-        .route("/api/mcp/tools", get(mcp::mcp_list_tools))
         .route("/api/mcp/call", post(mcp::mcp_call_tool))
         // Marketplace install (legacy — prefer /api/install endpoints)
         .route("/api/marketplace/install", post(config::marketplace_install))
@@ -696,6 +696,81 @@ mod tests {
             .await
             .unwrap();
         assert!(answer.headers().get("access-control-allow-origin").is_none());
+    }
+
+    /// The Playground runs a tool through the server itself (stdio
+    /// `tools/call`), so it shows what an assistant gets: the result, the
+    /// tool's own `isError`, and how long it took. A server that cannot be
+    /// started is an error the caller sees, not an empty result.
+    #[tokio::test]
+    async fn a_tool_runs_through_its_mcp_server() {
+        let (app, state) = test_app().await;
+        let (command, args) = crate::tasks::mcp_probe::fake::server();
+        let key = format!("fake-{}", uuid::Uuid::new_v4().simple());
+        let server = |command: &'static str| crate::db::pg_store::McpServerRow {
+            acp_family: "claude",
+            mcp_key: "",
+            workspace_id: None,
+            config_source: "/tmp/fake-mcp.json",
+            command,
+            args: &serde_json::Value::Null,
+            env: &serde_json::Value::Null,
+        };
+        let args = serde_json::json!(args);
+        let env = serde_json::json!({});
+        let id = state
+            .pg
+            .upsert_mcp_server(&crate::db::pg_store::McpServerRow {
+                mcp_key: &key,
+                command: &command,
+                args: &args,
+                env: &env,
+                ..server("")
+            })
+            .await
+            .unwrap();
+        let uri = format!("/api/instruments/mcp-servers/{id}/call");
+
+        let call = |x: i64| serde_json::json!({"tool": "echo", "arguments": {"x": x}});
+        let (st, body) = req(app.clone(), "POST", &uri, Some(call(1))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["content"][0]["text"], "echoed");
+        assert_eq!(body["isError"], false);
+        assert!(body["duration_ms"].is_u64(), "{body}");
+
+        let (st, body) = req(app.clone(), "POST", &uri, Some(call(2))).await;
+        assert_eq!(st, StatusCode::OK, "a tool error is the tool's answer");
+        assert_eq!(body["isError"], true, "{body}");
+
+        let gone_key = format!("gone-{}", uuid::Uuid::new_v4().simple());
+        let gone = state
+            .pg
+            .upsert_mcp_server(&crate::db::pg_store::McpServerRow {
+                mcp_key: &gone_key,
+                args: &env,
+                env: &env,
+                ..server("definitely_not_a_real_binary_xyz_88")
+            })
+            .await
+            .unwrap();
+        let (st, body) = req(
+            app.clone(),
+            "POST",
+            &format!("/api/instruments/mcp-servers/{gone}/call"),
+            Some(call(1)),
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_GATEWAY, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("spawn failed"), "{body}");
+
+        let (st, _) = req(
+            app,
+            "POST",
+            &format!("/api/instruments/mcp-servers/{}/call", uuid::Uuid::new_v4()),
+            Some(call(1)),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
     }
 
     /// A request as the CLI or the app sends it: addressed to loopback, which

@@ -7,16 +7,6 @@ use axum::{extract::State, http::StatusCode, response::Json};
 
 // ── MCP Tool Proxy ──────────────────────────────────────────────────────────
 
-/// List every MCP tool this daemon dispatches on, with the shape the
-/// Instruments playground consumes: `kind`, `summary`, structured `inputs[]`,
-/// and an `example` response.
-///
-/// Sourced from `mcp_manifests::manifests()` — kept in that module so the
-/// listing stays in lockstep with `mcp_call_tool` (guarded by a unit test).
-pub(crate) async fn mcp_list_tools() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "tools": super::mcp_manifests::manifests() }))
-}
-
 /// Wrap a caller/callee list in an envelope that answers "does this symbol even
 /// exist" and "is this list complete" alongside the list itself.
 ///

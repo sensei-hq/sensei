@@ -16,6 +16,7 @@ use axum::{
     response::Json,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 
 use crate::api::handlers::err;
 use crate::api::state::AppState;
@@ -109,27 +110,7 @@ pub(crate) async fn get_tools(
     }
 
     // Probe path: fetch the server config and spawn the tool manifest probe.
-    let server = state
-        .pg
-        .get_mcp_server_by_id(&uuid)
-        .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "mcp server not found"))?;
-
-    let command = server.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let args: Vec<String> = server
-        .get("args")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    let env: std::collections::HashMap<String, String> = server
-        .get("env")
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
-        })
-        .unwrap_or_default();
-
+    let (command, args, env) = server_launch(&state, &uuid).await?;
     let outcome = crate::tasks::mcp_probe::probe_tools(&command, &args, &env, None).await;
 
     match outcome {
@@ -173,6 +154,70 @@ pub(crate) async fn get_tools(
             err(StatusCode::INTERNAL_SERVER_ERROR, "manifest upserted but not readable")
         })?;
     Ok(Json(refreshed))
+}
+
+/// How to start a discovered server: its `command`, `args` and `env`, from its
+/// config row. 404 when there is no such server.
+async fn server_launch(
+    state: &AppState,
+    id: &uuid::Uuid,
+) -> Result<(String, Vec<String>, HashMap<String, String>), (StatusCode, Json<serde_json::Value>)> {
+    let server = state
+        .pg
+        .get_mcp_server_by_id(id)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "mcp server not found"))?;
+    let command = server.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let args: Vec<String> = server
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let env: HashMap<String, String> = server
+        .get("env")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
+        })
+        .unwrap_or_default();
+    Ok((command, args, env))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CallBody {
+    pub tool: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+}
+
+/// POST /api/instruments/mcp-servers/{id}/call — run one tool through the
+/// server itself, over stdio, as an assistant would. Body:
+/// `{ "tool": name, "arguments": {…} }`. Answers
+/// `{ result, isError, duration_ms }` — a tool's own failure is its answer
+/// (`isError: true`), while a server that cannot be reached is a 502 naming why.
+pub(crate) async fn call(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<CallBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    if body.tool.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "tool is required"));
+    }
+    let (command, args, env) = server_launch(&state, &uuid).await?;
+    let arguments = if body.arguments.is_null() { serde_json::json!({}) } else { body.arguments };
+    let started = std::time::Instant::now();
+    let outcome =
+        crate::tasks::mcp_probe::call_tool(&command, &args, &env, None, &body.tool, &arguments)
+            .await;
+    let duration_ms = started.elapsed().as_millis() as u64;
+    match outcome {
+        crate::tasks::mcp_probe::CallOutcome::Ok { result, is_error } => Ok(Json(
+            serde_json::json!({"result": result, "isError": is_error, "duration_ms": duration_ms}),
+        )),
+        crate::tasks::mcp_probe::CallOutcome::Error(e) => Err(err(StatusCode::BAD_GATEWAY, &e)),
+    }
 }
 
 pub(crate) async fn refresh(

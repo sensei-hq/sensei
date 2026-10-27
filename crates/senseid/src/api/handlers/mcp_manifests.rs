@@ -1,14 +1,12 @@
 //! Curated MCP tool manifests for the sensei server.
 //!
-//! Data source for `GET /api/mcp/tools`. Each entry captures the shape the
-//! Instruments playground consumes (`kind`, `summary`, structured `inputs`,
-//! and an `example` with a sample response). Kept in one const table so the
-//! response stays deterministic and every tool the daemon dispatches on has
-//! matching metadata.
+//! The `kind` and `summary` a workspace's MCP tool stats show for each tool
+//! the daemon dispatches on (`workspace_detail`). Kept in one const table, in
+//! lockstep with `mcp_call_tool` (guarded by a unit test).
 //!
-//! **Slice A' (this module)** — hardcoded const. Slice A of the T2 plan
-//! moves the manifests into a `sensei.mcp_tool_manifests` table once the
-//! `mcp_servers` registry lands (T2 Slice B).
+//! The Instruments Playground does not read this: it lists each server's tools
+//! as the server itself declares them (`mcp_tool_manifests`, probed over stdio)
+//! and runs them through the server.
 
 use serde::{Deserialize, Serialize};
 
