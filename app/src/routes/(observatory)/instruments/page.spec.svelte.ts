@@ -58,6 +58,9 @@ describe('Instruments /+page — the Playground', () => {
       expect(el).not.toBeNull();
       return el!;
     });
+    // What is typed is what is sent: the WebView must not capitalise "sensei"
+    // into "Sensei" (user, 2026-10-27).
+    expect([input.getAttribute('autocapitalize'), input.getAttribute('autocorrect'), input.getAttribute('spellcheck')]).toEqual(['off', 'off', 'false']);
     input.value = 'dbd';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     (m.container.querySelector('[data-testid="tool-execute"]') as HTMLButtonElement).click();

@@ -464,6 +464,8 @@
                                                     placeholder="JSON"
                                                     bind:value={ins.toolParams[field.name]}
                                                     data-testid={`tool-input-${field.name}`}
+                                                    autocapitalize="off"
+                                                    spellcheck="false"
                                                 ></textarea>
                                             {:else}
                                                 <input
@@ -472,6 +474,9 @@
                                                     placeholder={field.description ?? ''}
                                                     bind:value={ins.toolParams[field.name]}
                                                     data-testid={`tool-input-${field.name}`}
+                                                    autocapitalize="off"
+                                                    autocorrect="off"
+                                                    spellcheck="false"
                                                 />
                                             {/if}
                                         </label>
