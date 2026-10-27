@@ -654,12 +654,19 @@ impl PgStore {
                SELECT DISTINCT assistant_family, source_type, source_key,
                       split_part(invoked_name,'__',2) AS prefix
                  FROM sensei.assistant_tools
-                WHERE invoked_name LIKE 'mcp__%' ),
+                WHERE invoked_name LIKE 'mcp__%'
+               UNION
+               -- A server is also called under its own config key (a plugin's
+               -- `plugin_x_x`), whatever older prefix its tools were bridged to.
+               SELECT DISTINCT at.assistant_family, at.source_type, at.source_key, ms.mcp_key
+                 FROM sensei.assistant_tools at
+                 JOIN sensei.mcp_servers ms ON ms.id = at.server_id ),
              retired AS (
                SELECT p.assistant_family, p.source_type, p.source_key,
                       sum(u.calls_14d)::bigint AS calls_14d
                  FROM uncovered u
                  JOIN prefix p ON p.prefix = u.source_key
+                               AND p.assistant_family = u.assistant_family
                 GROUP BY p.assistant_family, p.source_type, p.source_key )
              SELECT r.assistant_family, r.source_type, r.source_key,
                     r.registered, r.server_id,
@@ -676,7 +683,9 @@ impl PgStore {
              SELECT assistant_family, source_type, source_key,
                     NULL::bigint, NULL::uuid, invoked_14d, calls_14d, NULL::text
                FROM uncovered u
-              WHERE NOT EXISTS (SELECT 1 FROM prefix p WHERE p.prefix = u.source_key)
+              WHERE NOT EXISTS (SELECT 1 FROM prefix p
+                                 WHERE p.prefix = u.source_key
+                                   AND p.assistant_family = u.assistant_family)
              ORDER BY 7 DESC"
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
