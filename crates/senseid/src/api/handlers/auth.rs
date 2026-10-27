@@ -1059,18 +1059,27 @@ pub(crate) async fn status(
 pub(crate) async fn personas(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-    use crate::dojo_client::forge_token::persona_action;
+    use crate::dojo_client::forge_token::{PersonaAction, persona_action};
 
     let rows = state.pg.persona_rows().await.map_err(|e| {
         tracing::error!(error = %e, "personas: could not read the registry");
         axum::http::StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let now = chrono::Utc::now().timestamp();
-    // One quiet read per connected persona: a millisecond, and it cannot prompt.
-    // It is what tells "signed in" from "signed in, but the Keychain withholds
-    // the session" — the second needs the user's approval (#283).
-    let slots: Vec<Option<String>> =
-        rows.iter().map(|r| r.session_slot.clone().filter(|_| r.verified)).collect();
+    let actions: Vec<_> = rows
+        .iter()
+        .map(|r| persona_action(r.session_slot.as_deref(), r.verified, &r.state, r.expires_at, now))
+        .collect();
+    // One quiet read per connected persona whose credential is not known dead:
+    // a millisecond, and it cannot prompt. It is what tells "signed in" from
+    // "signed in, but the Keychain withholds the session" — the second needs the
+    // user's approval (#283). A dead one is a sign-in; reading it would only ask
+    // to approve a credential that is no use.
+    let slots: Vec<Option<String>> = rows
+        .iter()
+        .zip(&actions)
+        .map(|(r, a)| r.session_slot.clone().filter(|_| r.verified && *a != PersonaAction::SignIn))
+        .collect();
     let sessions = tokio::task::spawn_blocking(move || {
         slots
             .iter()
@@ -1089,9 +1098,9 @@ pub(crate) async fn personas(
     let list: Vec<serde_json::Value> = rows
         .iter()
         .zip(&sessions)
-        .map(|(r, session)| {
-            let action =
-                persona_action(r.session_slot.as_deref(), r.verified, &r.state, r.expires_at, now);
+        .zip(&actions)
+        .map(|((r, session), action)| {
+            let action = *action;
             serde_json::json!({
                 "label": r.label,
                 // The DISPLAY label is rewritten to the verified login on
@@ -1125,6 +1134,11 @@ fn action_name(
     session: Option<&Result<(), crate::gateway_keys::KeychainError>>,
 ) -> &'static str {
     use crate::dojo_client::forge_token::PersonaAction;
+    // A credential known dead needs a sign-in whatever the Keychain says: the
+    // expiry is on record, and the sign-in's own write may prompt.
+    if action == PersonaAction::SignIn {
+        return "signIn";
+    }
     if let Some(Err(crate::gateway_keys::KeychainError::NeedsApproval)) = session {
         return "approve";
     }
@@ -1781,6 +1795,10 @@ mod tests {
         assert_eq!(action_name(PersonaAction::None, Some(&Ok(()))), "none");
         assert_eq!(action_name(PersonaAction::Renew, Some(&Ok(()))), "renew");
         assert_eq!(action_name(PersonaAction::SignIn, None), "signIn");
+        // A credential known dead (its expiry is on record) is a sign-in,
+        // withheld or not: approving it would only reveal that it is dead, and
+        // the sign-in's own write may prompt (user, 2026-10-27).
+        assert_eq!(action_name(PersonaAction::SignIn, Some(&withheld)), "signIn");
         assert_eq!(action_name(PersonaAction::Connect, None), "connect");
         assert_eq!(
             action_name(PersonaAction::None, Some(&Err(KeychainError::NotFound))),
