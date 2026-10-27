@@ -386,15 +386,20 @@ reason); the ResizeObserver console error on workspace metrics; an ambiguous lib
 (type the error, 409); `dbd reconcile` misses function-body drift (file with dbd); the 19 write tools
 (the user's call: a scratch workspace); the dōjō screens (after a local sign-in); the dōjō sync (Keychain, #282).
 
+## Agenda — 2026-10-28 (user)
+
+1. Apple Developer ID → #282 signing; one signed install of everything built on 10-27; verify live.
+2. Screen-by-screen feedback walk: one screen at a time, the user's feedback, change, verify, next.
+
 ## UI walk — 2026-10-27 (user, in order of report)
 
 1. Settings · Dōjō sync list: group by identity → day → repository; `repo` and `repo@branch` one repository;
-   identity named (not its slot), tagged default, others "Make default". Daemon side done (ebcfe469,
-   f5eaa279); the screen is next.
-2. Settings · General: the switch's off state is near invisible (rokkit zen-sumi: paper thumb on paper-mute
-   track, no edge) — fix in rokkit, release; the three choices (digest, tone, glyphs) as rokkit `Toggle`.
-3. Settings · Roots: an extra `.` before the root path; removing a root shows no progress — stream it over
-   the SSE event stream as indexing does.
+   identity named (not its slot), tagged default, others "Make default". Done (ebcfe469, f5eaa279,
+   02444525); not installed.
+2. Settings · General: the switch's off state is near invisible (rokkit #173) and sm/lg thumbs land wrong
+   (rokkit #174) — fixing in rokkit; the three choices as rokkit `Toggle` done (8b2dc94f).
+3. Settings · Roots: the stray mark before the path — done (be2f37f0); removing a root shows no progress —
+   stream it over the SSE event stream as indexing does (open).
 4. Settings · Libraries: "199 · sensei will wrap" for libraries whose docs and code sensei does not hold
    (serde_json: 0 pages) — say what is held, not what might be.
 5. Settings · Instruments: the switch does not look like rokkit's Switch.

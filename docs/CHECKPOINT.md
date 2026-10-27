@@ -1,22 +1,25 @@
-# Checkpoint — 2026-10-27
+# Checkpoint — 2026-10-27 (end of day)
 
-**Slice:** the baseline (user, 2026-10-27) — every screen, every clickable, the console, and every sensei MCP
-tool run and its answer checked against what is true. Report: `docs/baseline/2026-10-27-app.md`.
+**Agenda — 2026-10-28 (user):**
+1. **Apple Developer ID → #282.** Sign senseid/sensei/sensei-mcp with it, so a reinstall stops revoking Keychain
+   approval. Then ONE signed install of everything waiting (below) and verify live: get_duplicates from qlty,
+   sync rows by identity, Make default, a dead credential → Sign in; rerun `bun run test:inspect -- tool-calls`.
+2. **Screen-by-screen feedback walk.** One screen at a time; the user gives feedback, changes are made, verified,
+   next. Start from the queue in `docs/roadmap/08-issue-burndown.md` (UI walk).
 
-**Done (develop):** 31 of 32 read-only sensei tools right, each held to an oracle worked out without the tool
-(`app/e2e/tests-inspect/tool-oracles.ts`; `bun run test:inspect -- tool-calls`). 12 defects fixed red-first:
-a4f9659e (Playground runs in the workspace — "Runs in" picker, `?workspace=`; file tags on `sensei.files`;
-conventions from files; rank_bm25; pattern reads refuse no/unknown workspace; playbook refusals; nudges;
-communities capped with total; MCP lookup on `?folders=roots`), 14535af6 (library refs by id /
-`ecosystem:name`; `dbd`, `cmake` ecosystems). Live DB converged (dbd reconcile + `apply -n`), release
-daemon installed, sensei rescanned (224 route files tagged).
+**Built, pushed, NOT installed (waiting for the signed install):** ebcfe469 sync rows name their identity;
+f5eaa279 Make default; 02444525 Settings · Dōjō by identity → day → repository; 140e28d7 get_duplicates from
+qlty's scan; 4db76bd8 dead credential → Sign in, no Keychain read; 8b2dc94f General's choices as toggle groups;
+1d084c72 no "sensei speaks" caption; be2f37f0 no stray mark before a root's path. The app must go with the
+daemon (the dōjō screen reads the identity the new daemon writes). Live DB already converged.
 
-**Next:** profile the Layers diagram freeze in the webview (payload is small; jsdom does not freeze).
-Then `get_duplicates` precomputed; a not-watched metric reason; the dōjō crawl once signed in locally.
+**In progress:** rokkit #173 (zen-sumi Switch off state) and #174 (a style's thumb travel overrides every
+size) — an agent is fixing and releasing in ~/Developer/rokkit; then bump @rokkit/* here.
 
-**Open questions (user):** run the 19 write tools against a scratch workspace and clean up? Approve Keychain
-("Always Allow" in Identities) so the dōjō sync resumes; #282 when the Developer ID arrives (2026-10-28).
+**Queued (burndown, UI walk):** Roots removal progress over the SSE stream (removal is one prune call today —
+needs steps that emit events); Libraries "sensei will wrap" claims docs not held; Instruments switch; the
+settings sidebar vs the main sidebar; the settings layout (close button vs child window — ask).
 
-**Known broken:** dōjō sync since 10-22 (Keychain) → production dōjō empty. A long-lived Claude session keeps
-its old sensei-mcp (this one predates the workspace rename): its `update_phase` 404s — `/mcp` reconnect.
-Keychain tests fail on rebuilt test binaries (#282). `dbd reconcile` misses function-body drift.
+**Known:** CI qlty workflows disabled (out of minutes; `gh workflow enable` restores). Long-lived Claude
+sessions keep an old sensei-mcp (404 on update_phase) — `/mcp` reconnect. Keychain tests fail on rebuilt
+test binaries (#282).
