@@ -296,6 +296,10 @@ The settings screen lists them as repositories.
   Live: 56 sensei tools, `list_workspaces` through the server, 6 Health sources, `test:inspect` green. Left:
   the two zed context servers carry no command (extension-provided), and Health reads "not connected"
   for the seconds the inventory capture takes after a restart.
+- **Code map decisions (user, 2026-10-27):** (1) the dōjō's Code health map is computed by the DAEMON
+  and pushed with the graph sync — one implementation of layering/folding/hubs; the dōjō serves L0 as
+  pushed and answers L1/L2 in SQL over the graph it holds. (2) Complexity is computed in the indexer
+  (cyclomatic, per function, every indexed language) and stored on the node — not qlty's findings.
 - ~~#343~~ **closed 2026-10-26** (151cd001, 5770a91b, c680010d): register an MCP server by hand in the
   Playground (family `manual`, kept by the discovery prune, removable here); the client now answers a
   server's own requests mid-call (semgrep asked `roots/list` and every call hung 60s). Live: semgrep
