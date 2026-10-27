@@ -34,7 +34,7 @@ not the call graph.
 > | Dependency matrix | **built** as the Matrix lens over L0's bands, ordered by group so upward sits below the diagonal. |
 > | Cycles | **built** as a lens (only bands inside a cycle; members tinted), and still as `diagrams/cycles`. |
 > | Hidden coupling | **built** — `GET …/diagrams/codemap/cochange` mines `commit_files` (5+ together, sweeps of 20+ modules left out), drops pairs with a static edge either way, ranks by how often the rarer changes with the other; drawn as dashed bands. |
-> | Complexity | **not built**. Per-function complexity is parsed into the indexer IR (`ir.rs`) but no table stores it. |
+> | Complexity | **built** from local qlty (user, 2026-10-27: rely on qlty, not a re-derivation): `measure_complexity` runs `qlty metrics --functions` at HEAD in a temporary worktree with the pinned ruler, only when HEAD moved; `sensei.file_complexity` per file; blocks tinted by share over cyclomatic 10, unmeasured blocks say so. SQL is not measured by qlty. |
 > | File roles | **built at read time** — `analysis::codemap::file_role` (code · test · docs · config · generated, from the path); not stored. |
 
 ## In scope / out of scope
