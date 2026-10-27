@@ -51,7 +51,7 @@ tree moves. Any `FALSE` stops the build.
     `connect_tracker` resets owner state on the connected and sibling rows (W11), and
     `NewTracker` carries the owner
   - touch points:
-    - `TrackerRow` is read through a `#[derive(FromRow)]` struct (C38)
+    - `TrackerRow` is read through a struct with a by-name `FromRow` impl (C38)
     - `owner()` on `FakeAdapter` (sync.rs:587) and `BrokenLinks` (sync.rs:969)
     - the `TaskRow` literals at link.rs:77 and sync.rs:619, and the `Validated` literal
       at jira.rs:700
@@ -59,7 +59,8 @@ tree moves. Any `FALSE` stops the build.
       (gate 4); an owner/assignee fixture builder
   - API: `GET …/tasks` and `…/tracker-tasks/{key}` gain `assigned_to_me`, through
     `TaskListRow`/`tracker_task_rows` (tracker_usage.rs) and
-    `TaskDetail`/`tracker_task_detail` (trackers.rs)
+    `TaskDetail`/`tracker_task_detail` (trackers.rs), documented in the linkage spec's R8 route
+    table and typed in `app/src/lib/types.ts`
 - **Depends on:** —
 - **Acceptance criteria** (spec gates):
   - **2:** the W1 rule table and the stored values (not the `writeback.state` half)
@@ -102,7 +103,9 @@ tree moves. Any `FALSE` stops the build.
   - daemon, `jira.rs`: `find_comment`, `create_comment`, `update_comment`,
     `issue_exists`, ADF builder, id-shape checks
   - API: `GET …/trackers` gains the `writeback` object (`enabled`, `state`, `surface`,
-    `mapped` = 0, `assigned`, `failing`, `error`)
+    `mapped` = 0, `assigned`, `failing`, `error`); the task routes gain `writeback_status` and
+    `writeback_at`. All of these are documented in the linkage spec's R8 route table and
+    typed in `app/src/lib/types.ts`
   - daemon: `connect_tracker` also resets `writeback_error` and the tasks'
     `writeback_comment_ref`, `writeback_hash` and `writeback_status` (W11)
 - **Depends on:** F1

@@ -316,7 +316,7 @@ connect params `{board_url?, base_url?, board_id?, email, api_token, project_key
 | validate credential | `GET /rest/api/3/myself` |
 | validate board | `GET /rest/agile/1.0/board/{boardId}` |
 | sprints | `GET /rest/agile/1.0/board/{boardId}/sprint?startAt&maxResults=50` |
-| board issues | `GET /rest/agile/1.0/board/{boardId}/issue?fields=summary,issuetype,status&startAt&maxResults=100` |
+| board issues | `GET /rest/agile/1.0/board/{boardId}/issue?fields=summary,issuetype,status,assignee&startAt&maxResults=100` (`assignee` since tracker-metrics-writeback W1: compared, never stored) |
 | sprint members | `GET /rest/agile/1.0/board/{boardId}/sprint/{sprintId}/issue?fields=summary&startAt&maxResults=100` |
 
 Pagination: advance `startAt` by the number of items returned; stop when
@@ -511,8 +511,8 @@ sit behind one guard layer built from **existing** code:
 | `POST /api/workspaces/{id}/trackers/{tracker}/sync` | R5 now, for that board. 200 `{counts:{sprints, tasks, removed, links, skipped_members}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 `tracker_not_found` for an id that is not one of the workspace's trackers. |
 | `GET /api/workspaces/{id}/trackers/{tracker}/sprints` | the board's sprints (one Sprints lane, D40), newest first (`start_at` desc, NULL last, then `seq` desc): `[{id, name, state, start_at, end_at, complete_at, tasks, candidates_in_window, linked_sprint, linked_other, unlinked, reason}]` — `tasks` = tickets the sprint lists; each part a usage object; without a window the count and parts are `null` and `reason` says why (`not_started`, `no_dates`). Removed sprints excluded. 404 `tracker_not_found` for an id that is not one of the workspace's trackers. |
 | `GET /api/workspaces/{id}/trackers/{tracker}/backlog` | `{tickets, usage}` — the board's backlog ticket count and its usage (R7 backlog usage). 404 `tracker_not_found` for an id that is not one of the workspace's trackers. |
-| `GET /api/workspaces/{id}/trackers/{tracker}/tasks?sprint={uuid}&backlog=bool&include_removed=bool` | the sprint's tickets, the backlog's (`backlog=true`), or all the board's tickets without either — both given → 422 `sprint_or_backlog`: `[{key, summary, issue_type, status, current_sprint, sprints:[{id, name}], removed, usage}]`. `sprint` filters to its members; unknown sprint → 404 `sprint_not_found`. A ticket with no linked sessions has a zero-session usage object (sums `null`, counts `0`). |
-| `GET /api/workspaces/{id}/tracker-tasks/{key}` | Workspace-wide, across its boards. `{task:{tracker_id, key, …}, usage, by_repo:[{repository_id, name, usage}], sessions:[{id, started_at, links:[{source, matched_key, mentions}]}]}`; `key` matched case-insensitively against current keys **and aliases**; sessions are the ticket's current candidates (R1), as for usage; 404 `task_not_found` if absent or the workspace has no tracker. A miss runs R11 discovery on each board in level order until one has it: 404 `task_not_on_board` (+ `key`, `board_ref` of the first board that answered it does not have it). |
+| `GET /api/workspaces/{id}/trackers/{tracker}/tasks?sprint={uuid}&backlog=bool&include_removed=bool` | the sprint's tickets, the backlog's (`backlog=true`), or all the board's tickets without either — both given → 422 `sprint_or_backlog`: `[{key, summary, issue_type, status, current_sprint, sprints:[{id, name}], removed, assigned_to_me, usage}]` (`assigned_to_me`: tracker-metrics-writeback W1). `sprint` filters to its members; unknown sprint → 404 `sprint_not_found`. A ticket with no linked sessions has a zero-session usage object (sums `null`, counts `0`). |
+| `GET /api/workspaces/{id}/tracker-tasks/{key}` | Workspace-wide, across its boards. `{task:{tracker_id, key, summary, issue_type, status, removed, assigned_to_me}, usage, by_repo:[{repository_id, name, usage}], sessions:[{id, started_at, links:[{source, matched_key, mentions}]}]}`; `key` matched case-insensitively against current keys **and aliases**; sessions are the ticket's current candidates (R1), as for usage; 404 `task_not_found` if absent or the workspace has no tracker. A miss runs R11 discovery on each board in level order until one has it: 404 `task_not_on_board` (+ `key`, `board_ref` of the first board that answered it does not have it). |
 | `GET /api/workspaces/{id}/trackers/{tracker}/sessions/unlinked?sprint={uuid}` | the sprint's `unlinked` sessions `[{id, started_at, task}]`, oldest first; no `sprint` → 422 `sprint_required`; unknown → 404 `sprint_not_found`; a sprint without a window → `[]`. |
 
 Error codes the routes return (body `{error: <code>}`, extra fields where noted):
@@ -593,7 +593,7 @@ R5 shape (no DB transaction or connection across network calls):
    `DISCOVER_MAX_KEYS` (50) keys per run; when more are found the watermark stays,
    so the next run continues.
 4. **Fetch:** `adapter.fetch_tasks(board, keys)` under a 60 s deadline. Jira:
-   `GET /rest/agile/1.0/board/{id}/issue?jql=key in (K1,…)&fields=summary,issuetype,status,sprint,closedSprints`
+   `GET /rest/agile/1.0/board/{id}/issue?jql=key in (K1,…)&fields=summary,issuetype,status,assignee,sprint,closedSprints`
    — board-scoped, so only issues on the board come back. If Jira answers 400 for the
    batch with `bad_request` (claim C33: a key that exists nowhere fails the whole
    `key in` query), ask one key at a time; a key whose own request is `bad_request` is

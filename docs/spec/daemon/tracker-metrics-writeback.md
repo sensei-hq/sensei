@@ -312,6 +312,10 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   it's `owner_lookup_failed`, and otherwise `null`.
 - `GET …/tasks` and `GET …/tracker-tasks/{key}`: each task gains `assigned_to_me`,
   `writeback_status`, `writeback_at`.
+  The linkage spec's route table (R8) and the app's `TrackerTaskRow` / `TrackerTaskDetail`
+  types in `app/src/lib/types.ts` list every field the routes return. Each feature that adds
+  a field updates both (F1 `assigned_to_me`; F2 `writeback_status`, `writeback_at`; F2/F3 the
+  `writeback` object on `GET …/trackers`).
 - Both new routes are added inside `api::routes::tracker_routes()`, before its
   `route_layer(local_caller_guard)`, so they inherit the guard (C12).
 
@@ -398,7 +402,7 @@ pub enum WriteMethod { Post, Put }
 - `trackers` gains `owner_ref text`, `owner_state tracker_owner_state`,
   `owner_error tracker_error` (F1), plus `writeback_enabled boolean not null default true`
   and `writeback_error tracker_error` (F2). `TrackerRow` is read through a
-  `#[derive(FromRow)]` struct, not the positional `TrackerTuple`. With these five columns
+  struct with a by-name `FromRow` impl (no `sqlx` derive crate is a dependency), not the positional `TrackerTuple`. With these five columns
   the tuple would reach 19 fields, past sqlx 0.8's 16-field `FromRow` tuple limit (C38). The comment's "Read-only mirror source
   for …" becomes "Mirror source for …; writes back usage metrics only, to tickets
   assigned to the token owner (spec tracker-metrics-writeback)".

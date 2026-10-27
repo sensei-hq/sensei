@@ -72,6 +72,7 @@ const task = (over: Partial<TrackerTaskRow> = {}): TrackerTaskRow => ({
   current_sprint: { id: 's12', name: 'Sprint 12' },
   sprints: [{ id: 's12', name: 'Sprint 12' }],
   removed: false,
+  assigned_to_me: null,
   usage: usage({ sessions: 3, by_source: { branch: 3, prompt: 1 }, active_secs: 3840, active_n: 2, tokens_fresh: 7700, tokens_fresh_n: 2 }),
   ...over,
 });
@@ -113,7 +114,7 @@ function daemon(over: Partial<SprintsApi> = {}) {
     tryGetTrackerTask: async (_p, key) => {
       calls.push(`task:${key}`);
       return ok<TrackerTaskDetail>({
-        task: { key: 'IAM-5', summary: 'Login', issue_type: 'Story', status: 'Done', removed: false },
+        task: { key: 'IAM-5', summary: 'Login', issue_type: 'Story', status: 'Done', removed: false, assigned_to_me: null },
         usage: usage({ sessions: 2 }),
         by_repo: [{ repository_id: 'r1', name: 'backend', usage: usage({ sessions: 2 }) }],
         sessions: [

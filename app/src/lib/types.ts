@@ -2245,6 +2245,8 @@ export interface TrackerTaskRow {
   current_sprint: NamedRef | null;
   sprints: NamedRef[];
   removed: boolean;
+  /** Whether the token owner is the assignee; `null` while the owner is unknown. */
+  assigned_to_me: boolean | null;
   usage: TrackerUsage;
 }
 
@@ -2256,6 +2258,8 @@ export interface TrackerTaskDetail {
     issue_type: string | null;
     status: string | null;
     removed: boolean;
+    /** Whether the token owner is the assignee; `null` while the owner is unknown. */
+    assigned_to_me: boolean | null;
   };
   usage: TrackerUsage;
   by_repo: Array<{ repository_id: string; name: string; usage: TrackerUsage }>;
