@@ -276,20 +276,49 @@ The settings screen lists them as repositories.
     synced session metrics end 10-18); demo from a fresh Claude session.
   - eb4c16cd: a failed rule-pack or contributions read is an error, not an empty list (the personal
     loader swallowed both). "Tokens" is dominated by cache reads (the user's call whether to change it).
+- **v0.21.0 released 2026-10-26** (user go): carries the demo prep, #123's fixes, #161, #338, #190 (dbd
+  0.27.8: table comments converge, design.yaml read through dbd incl. workspace designs) and Tokens without
+  cache reads (user: cache reads counted apart; 64.3B → 1.44B over 90 days). `deploy-dojo` awaits approval.
+- v0.21.0's `deploy-dojo` and `deploy-worker` approved (user) and green.
+- ~~#341~~ **closed 2026-10-26** (f33ff30e, ad78c727, 9a0d6f1a): the production scan registers a library's
+  `sensei.library.json` (it lived in a test-only stage); a dependency's repository is asked for its manifest
+  at the pinned ref (`discover_library`, daily, never for a watched working copy); `/api/libs` folds packages
+  into their library; the Libraries screen shows packages, skills, agents and docs. Live: rokkit 15/95/5/3,
+  dbd 2/50/1/1, kavach 13/15/4/2 (packages/pages/skills/agents); `test:inspect` shows rokkit 5,3,95. Site
+  discovery (`.well-known`) filed as #342.
+- **Instruments (user, 2026-10-26: list every MCP; the UI sees what an assistant sees).** cb7ca987, ef296c15:
+  the Playground's groups are the discovered servers (sensei's first), tools as each server lists them, the
+  form is the tool's `inputSchema`, and Execute runs `tools/call` through the server
+  (`POST /api/instruments/mcp-servers/{id}/call`); the hand-kept 20-tool catalog (`/api/mcp/tools`) is
+  retired. c28cd21b: the MCP refuses a missing required argument (`[]` before). 88277ea7, the next commit:
+  Health stayed "Loading…": sensei and playwright were drawn twice (calls to retired tools; a plugin key
+  vs a bridged prefix) and the duplicate key stopped the grid. Probe cap 10s → 30s (semgrep 5.6s warm).
+  Live: 56 sensei tools, `list_workspaces` through the server, 6 Health sources, `test:inspect` green. Left:
+  the two zed context servers carry no command (extension-provided), and Health reads "not connected"
+  for the seconds the inventory capture takes after a restart.
+- **Code map decisions (user, 2026-10-27):** (1) the dōjō's Code health map is computed by the DAEMON
+  and pushed with the graph sync — one implementation of layering/folding/hubs; the dōjō serves L0 as
+  pushed and answers L1/L2 in SQL over the graph it holds. (2) Complexity is computed in the indexer
+  (cyclomatic, per function, every indexed language) and stored on the node — not qlty's findings.
+- ~~#343~~ **closed 2026-10-26** (151cd001, 5770a91b, c680010d): register an MCP server by hand in the
+  Playground (family `manual`, kept by the discovery prune, removable here); the client now answers a
+  server's own requests mid-call (semgrep asked `roots/list` and every call hung 60s). Live: semgrep
+  registered by hand, 7 tools listed, removed; `get_supported_languages` answers in 9.5s.
+- **Diagrams — the Code map (M17; user: shared components and state in a new `packages/` package; file,
+  build and release rokkit changes as needed).** Step 1 (daemon) done: cb50502a `/workspaces/{id}/graph`
+  had `repos` 0 (filtered on a field the repo list never returns); ca7953e8 `analysis::codemap` +
+  `/diagrams/codemap` (L0: ≤ 60 blocks, "+N more" per group, hubs need share AND breadth, one band per
+  pair, layering direction), `/codemap/module` (L1: role columns from the path, ≤ 12 each) and
+  `/codemap/file` (L2: symbols, callers/callees ≤ 7); `module_of` splits container folders (lib, routes,
+  src, app, ddl) — sensei went from 145 modules (largest 458 files) to 325 (largest 199). Live: L0 60 of
+  325 modules, 154 bands for 6,186 edges, 1.6s uncached. Next: step 3, `packages/codemap` (state + canvas
+  + lenses + list mode) in the app, then the dōjō embed; rokkit issues as the canvas needs them.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
   signing, notarization, and a first-start Permissions step. Needs the user's Apple Developer account.
   Local builds are fixed already (8d09be73, `make dev-signing-cert`).
-- #190: read `design.yaml` through dbd's `project::survey`, and load a workspace design with
-  `Workspace::load`. Since dbd 0.27, a repository with a `modules:` design cannot be imported.
-  Already on dbd: SQL parsing (`dbd_core::parser`, 87cf190a) and schema import (`Design::from_config`; torii's
-  Schema diagram: 102 tables). Left: `DbdManifestAdapter`'s own serde struct. `project::survey` does not fit (it
-  walks the filesystem, defaults the dialect, has no extensions); `dbd_core::config::DesignConfig` from the text
-  does, once dbd says whether the dialect was stated: **blocked on sensei-hq/dbd#109** (filed 2026-10-26).
-  Accepting it drops the legacy top-level `extensions:` (23 of 77 local designs; `dbd doctor --fix` migrates).
-  `modules:` → `Workspace::load`: 0 of 77 local designs use it, so no live case yet.
-
-**dbd 0.27.3 (2026-10-19).**
+- ~~#190~~ **closed 2026-10-26** (77ab109c, dbd 0.27.8): the manifest is read through `dbd_core::config::parse`
+  (`dialect_stated`, dbd#109) and the schema import through dbd's `Workspace` (modules included).
 - All four pins move from v0.26.0.
 - 0.27.0 adds workspace designs (`modules:`):
   - The hand-rolled reader in `adapters/manifest/dbd.rs` does not know them.
@@ -347,6 +376,43 @@ work (#307 and the gaps #309–#321).
   the release.
 - **How:** build the website from the new mocks. Each feature reads *coming soon* until it ships;
   flip it to *available* in the change that releases it, not afterwards.
+
+## Baseline — 2026-10-27 (user: every screen, every tool, verified)
+
+`docs/baseline/2026-10-27-app.md`. 31 of 32 read-only sensei tools answer right against independent oracles;
+12 defects fixed (a4f9659e, 14535af6). Open, in order: the Layers diagram freezes (profile in the webview);
+`get_duplicates` over 200s (precompute at index time); unwatched repositories read as `behind` (a not-watched
+reason); the ResizeObserver console error on workspace metrics; an ambiguous library name answers a bare 500
+(type the error, 409); `dbd reconcile` misses function-body drift (file with dbd); the 19 write tools
+(the user's call: a scratch workspace); the dōjō screens (after a local sign-in); the dōjō sync (Keychain, #282).
+
+## Agenda — 2026-10-28 (user)
+
+1. Apple Developer ID → #282 signing; one signed install of everything built on 10-27; verify live.
+2. Screen-by-screen feedback walk: one screen at a time, the user's feedback, change, verify, next.
+
+## UI walk — 2026-10-27 (user, in order of report)
+
+1. Settings · Dōjō sync list: group by identity → day → repository; `repo` and `repo@branch` one repository;
+   identity named (not its slot), tagged default, others "Make default". Done (ebcfe469, f5eaa279,
+   02444525); not installed.
+2. Settings · General: the switch's off state is near invisible (rokkit #173) and sm/lg thumbs land wrong
+   (rokkit #174) — fixing in rokkit; the three choices as rokkit `Toggle` done (8b2dc94f).
+3. Settings · Roots: the stray mark before the path — done (be2f37f0); removing a root shows no progress —
+   stream it over the SSE event stream as indexing does (open).
+4. Settings · Libraries: "199 · sensei will wrap" for libraries whose docs and code sensei does not hold
+   (serde_json: 0 pages) — say what is held, not what might be.
+5. Settings · Instruments: the switch does not look like rokkit's Switch.
+6. Settings sidebar: not styled like the main sidebar — is it rokkit List? Make it one component.
+7. Settings layout: its own window, Preferences… (⌘,) — done (2677767a); the settings sidebar is the main
+   sidebar's rokkit List at its density. rokkit 1.9.1 (switch off state, sizes) — done (05cfb84c).
+8. Instruments · Replay: the whole screen scrolls, so the call list carries the call's inputs and response
+   out of view — the list and the detail each scroll on their own; and an easier way to read the history
+   of calls.
+9. Search: a Svelte component is not a symbol — `CodeMap` finds the functions inside CodeMap.svelte, not the
+   component; index each .svelte file as a component under its name. (Case and "Sensei"/"sensei" are fine;
+   rokkit is not under a watched root, so nothing of it is indexed.)
+10. Instruments · "Runs in" offered all 133 workspaces — done: only those under a watched root (3b8017ed).
 
 ## Expected closures
 

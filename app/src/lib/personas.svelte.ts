@@ -55,7 +55,14 @@ export interface PersonaListDeps {
   /** `POST /api/auth/keychain/approve` (#283). Resolves `null` when approved,
    *  otherwise why not. */
   approveKeychain: (persona: string) => Promise<string | null>;
+  /** `POST /api/auth/personas/{label}/default` — Make default. Resolves `null`
+   *  when done, otherwise why not. */
+  makeDefault: (label: string) => Promise<string | null>;
 }
+
+/** How often, and how many times, the list is re-read while a sign-in is open. */
+const FOLLOW_MS = 3_000;
+const FOLLOW_TICKS = 200;
 
 export class PersonaList {
   personas = $state<PersonaWire[]>([]);
@@ -70,7 +77,18 @@ export class PersonaList {
   /** The sign-in in flight, for the UI: which identity, which GitHub account it
    *  expects (`null` for a first connect), and the link to copy into a private
    *  window when the browser is signed in as someone else (#300). */
-  pending = $state<{ label: string; expectedLogin: string | null; url: string } | null>(null);
+  pending = $state<{
+    label: string;
+    expectedLogin: string | null;
+    url: string;
+    /** The Keychain slot it signs into — the label becomes the verified login. */
+    slot: string;
+    /** The credential's expiry when the sign-in began: a new one means it finished. */
+    was: number | null;
+  } | null>(null);
+
+  /** The re-read that follows a sign-in until it finishes. */
+  #follow: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Whether a read has SUCCEEDED at least once.
@@ -125,6 +143,34 @@ export class PersonaList {
     this.defaultError = res.defaultError ?? null;
     this.error = null;
     this.loaded = true;
+    this.#settle();
+  }
+
+  /** A sign-in has finished when its identity holds a NEW live credential; the
+   *  notice then goes, and so does the re-read that waited for it. */
+  #settle(): void {
+    const pending = this.pending;
+    if (!pending) return;
+    const p = this.personas.find((x) => (x.sessionSlot ?? x.label) === pending.slot);
+    if (!p || !p.connected || p.forgeToken.state !== 'active' || p.forgeToken.expiresAt === pending.was) return;
+    this.pending = null;
+    this.#stopFollowing();
+  }
+
+  #stopFollowing(): void {
+    if (this.#follow) clearInterval(this.#follow);
+    this.#follow = null;
+  }
+
+  /** Re-read every few seconds while a sign-in is open in the browser — for
+   *  at most ten minutes, after which a person can re-open the list. */
+  #followSignIn(): void {
+    this.#stopFollowing();
+    let left = FOLLOW_TICKS;
+    this.#follow = setInterval(() => {
+      if (!this.pending || --left < 0) return this.#stopFollowing();
+      void this.load();
+    }, FOLLOW_MS);
   }
 
   /** The verb for this row's button. */
@@ -208,6 +254,23 @@ export class PersonaList {
     }
   }
 
+  /** Make this identity the default (user, 2026-10-27), then re-read the list
+   *  — the daemon decides which identity is the default, and says so. */
+  async makeDefault(p: PersonaWire): Promise<void> {
+    if (this.#busy.has(p.label)) return;
+    this.#busy = new Set(this.#busy).add(p.label);
+    try {
+      this.error = await this.#deps
+        .makeDefault(p.label)
+        .catch((e) => (e instanceof Error ? e.message : `could not make ${p.label} the default`));
+    } finally {
+      const next = new Set(this.#busy);
+      next.delete(p.label);
+      this.#busy = next;
+    }
+    if (!this.error) await this.load();
+  }
+
   /**
    * Start a sign-in for one persona, in the system browser (#300).
    *
@@ -229,7 +292,9 @@ export class PersonaList {
         this.error = `could not start the sign-in for ${p.label}`;
         return;
       }
-      this.pending = { label: p.label, expectedLogin: p.githubLogin, url };
+      const slot = p.sessionSlot ?? p.label;
+      this.pending = { label: p.label, expectedLogin: p.githubLogin, url, slot, was: p.forgeToken.expiresAt };
+      this.#followSignIn();
       await this.#deps.openAuth(url);
     } catch (e) {
       this.error = e instanceof Error ? e.message : `could not open your browser for ${p.label}`;
@@ -269,6 +334,14 @@ export const personaList = new PersonaList({
     const res = await senseiApi(appState.port).tryApproveKeychain(persona);
     if (!res.ok) return res.error.message || 'the daemon did not answer';
     return res.data.ok ? null : (res.data.error ?? 'keychain access was not approved');
+  },
+  makeDefault: async (label) => {
+    const [{ senseiApi }, { appState }] = await Promise.all([
+      import('./api.js'),
+      import('./appstate.svelte.js')
+    ]);
+    const res = await senseiApi(appState.port).tryMakeDefaultPersona(label);
+    return res.ok ? null : res.error.message || 'the daemon did not answer';
   },
   openAuth: async (url) => {
     // The system browser, for every sign-in (#300): it holds the user's GitHub

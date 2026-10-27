@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { KIND_ICONS } from '$lib/glyph-vocabulary';
     import Kanji from '$lib/components/Kanji.svelte';
   import { Button } from '@rokkit/ui';
   import { RECOMMENDED_VERB, type RecCardVm } from './insights-board.svelte.js';
@@ -33,7 +34,7 @@
   <!-- workspace chip + (focal) do-first marker -->
   <div class="flex items-center gap-2 mb-1">
     <span class="inline-flex items-center gap-1 text-xs text-ink-soft" data-rec-workspace>
-      <Kanji char={rec.workspaceKanji} icon={null} size="inherit" tone="inherit" class="text-xs text-accent" />
+      <Kanji char={rec.workspaceKanji} icon={KIND_ICONS.workspace} size="inherit" tone="inherit" class="text-xs text-accent" />
       <span class="truncate max-w-[140px]">{rec.workspaceName}</span>
     </span>
     <span class="flex-1"></span>

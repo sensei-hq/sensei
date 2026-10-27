@@ -291,7 +291,7 @@ export interface WorkspaceListItem {
   /** Small icon union. `kind:"kanji"` → `value` is a single glyph;
    *  `kind:"image"` → `value` is a URL/path from the workspace-icon pipeline.
    *  The wire may send an empty `{}` (nothing inferred yet) or `null`. */
-  icon?: { kind?: string; value?: string } | null;
+  icon?: { kind?: string; value?: string; /** For an image: whether the daemon can serve it. */ available?: boolean } | null;
   preferred_acp?: string;
   /** Workspace "purpose" text — sourced from `sensei.workspaces.goal` and
    *  exposed by the list endpoint as `vision`. Null when absent. */
@@ -327,83 +327,6 @@ export interface WorkspaceSummary {
   solutions: Array<{ solutionId: string; solutionName: string; role: string }>;
 }
 
-export interface GraphNode {
-  id: string;
-  name: string;
-  kind: string;
-  file: string;
-  line: number;
-  complexity?: number;
-  doc_type?: string;
-  level?: string;
-  parent_id?: string;
-  tags?: string;
-  repoId?: string;
-  role?: string;
-}
-
-export interface GraphEdge {
-  source: string;
-  target: string;
-  type: string;
-  repoId?: string;
-}
-
-/**
- * Raw symbol node as returned by `GET /api/graph/nodes?repoId=…`
- * (the daemon's `get_nodes_scoped` shape). Distinct from `GraphNode`,
- * which is the *mapped* solution-graph shape (`file`/`line`). Here the
- * wire carries `file_path`/`line_start` and the owning `folder_id`.
- */
-export interface GraphSymbolNode {
-  id: string;
-  kind: string;
-  name: string;
-  file_path: string;
-  folder_id?: string;
-  parent_id?: string | null;
-  line_start?: number | null;
-  line_end?: number | null;
-  /** True when the node belongs to a test file (daemon `is_test_path`). Lets the
-   *  Atlas filter tests out when focusing on production code. */
-  is_test?: boolean;
-}
-
-/**
- * Raw call edge from `GET /api/graph/nodes` / `GET /api/graph/call-flow`.
- * `target_id` is null for calls that resolve to an out-of-scope / stdlib
- * symbol (only `target_name` is known); those are dropped from the graph.
- */
-export interface GraphCallEdge {
-  id: string;
-  source_id: string;
-  target_id: string | null;
-  target_name?: string | null;
-}
-
-export interface GraphData {
-  summary: { totalSymbols: number; totalEdges: number; communities: number };
-  communities: Array<{
-    id: string; label: string; workspace: string; color: string;
-    symbolCount: number; godNodes: string[];
-  }>;
-  godNodes: Array<{
-    name: string; workspace: string; degree: number; community: string; file: string;
-  }>;
-  rationale: Array<{
-    file: string; tag: string; workspace: string; text: string;
-  }>;
-}
-
-export interface WorkspaceGraphResponse {
-  workspaceId: string;
-  name: string;
-  nodes: number;
-  edges: number;
-  repos: number;
-  graph: { nodes: GraphNode[]; edges: GraphEdge[] };
-}
-
 export interface WorkspaceAnalysis {
   workspace_id: string;
   links: Array<{
@@ -414,8 +337,6 @@ export interface WorkspaceAnalysis {
   shared_libs: Array<{ name: string; repos: string[] }>;
 }
 
-/** @deprecated Use WorkspaceGraphResponse instead */
-export type SolutionGraphResponse = WorkspaceGraphResponse;
 /** @deprecated Use WorkspaceAnalysis instead */
 export type SolutionAnalysis = WorkspaceAnalysis;
 
@@ -495,19 +416,6 @@ export interface TypeDetail {
   kind: string;
 }
 
-/**
- * A detected code community as returned by
- * `GET /api/graph/communities/info?repoId=…`. `label` is a representative
- * `"{kind} ({directory})"` summary; `node_count` is the community size.
- * There is no per-node membership on the wire — communities are graph-
- * clustered, so the atlas uses this only for the collapsed overview.
- */
-export interface CommunityInfo {
-  id: string;
-  label: string;
-  node_count: number;
-}
-
 export interface DocDrift {
   doc_id: string;
   doc_path: string;
@@ -526,6 +434,28 @@ export interface LibEntry {
   pageCount?: number;
   repos: string[];
   repoCount: number;
+  /** The packages the library publishes (from its manifest), folded into it. */
+  packages?: string[];
+  skillCount?: number;
+  agentCount?: number;
+}
+
+/** A skill or agent a library provides (its `sensei.library.json`). */
+export interface LibCapability {
+  name: string;
+  focus: string | null;
+  body: string | null;
+  source?: string | null;
+  version_range?: string | null;
+}
+
+/** One doc page a library's docs hold. */
+export interface LibPage {
+  title: string;
+  component: string | null;
+  description?: string | null;
+  content: string | null;
+  location?: string | null;
 }
 
 export interface LibDoc {
@@ -884,17 +814,6 @@ export interface WorkspaceSession {
   completedAt: string | null;
 }
 
-export interface CallFlowModule {
-  path: string;
-  exports: string[];
-}
-
-export interface CallFlowCall {
-  source: string;
-  target: string;
-  kind: string;
-}
-
 // ── Diagnostic Log Types ──────────────────────────────────────────────────
 
 export interface SystemInfo {
@@ -1021,37 +940,15 @@ export interface DojoBindingSuggestion {
   dojo_url: string;
 }
 
-// ─── MCP tool manifests (playground / instruments) ───────────────────────────
+// ─── A tool run through its MCP server (Instruments Playground) ──────────────
 //
-// Wire shape returned by `GET /api/mcp/tools`. One entry per tool the daemon
-// dispatches on. Fields mirror `crates/senseid/src/api/handlers/mcp_manifests.rs`
-// — the daemon is the source of truth; keep in lockstep.
+// `POST /api/instruments/mcp-servers/{id}/call`: the server's `tools/call`
+// result as it sent it, its own `isError`, and the round trip in ms.
 
-export type McpToolKind = 'query' | 'action';
-export type McpInputKind = 'text' | 'enum' | 'number';
-
-export interface McpToolInput {
-  key: string;
-  kind: McpInputKind;
-  required: boolean;
-  label: string;
-  placeholder?: string;
-  default?: string;
-  options?: string[];
-}
-
-export interface McpToolExample {
-  response: string;
-}
-
-export interface McpToolManifest {
-  mcp: string;
-  id: string;
-  name: string;
-  kind: McpToolKind;
-  summary: string;
-  inputs: McpToolInput[];
-  example: McpToolExample;
+export interface McpToolCallResult {
+  result: unknown;
+  isError: boolean;
+  duration_ms: number;
 }
 
 // ─── Session tool timeline (Instruments Replay tab) ──────────────────────────
@@ -1182,6 +1079,9 @@ export interface ImpactVerdictEntry {
 }
 
 // ─── Workspace-scoped MCP tool stats (T2 Slice F) ──────────────────────────────
+
+/** Whether a sensei tool reads (`query`) or changes something (`action`). */
+export type McpToolKind = 'query' | 'action';
 
 export interface WorkspaceMcpToolStat {
   id: string;
@@ -1746,6 +1646,9 @@ export interface SyncStateRow {
   attempted_at: string | null;
   synced_at: string | null;
   updated_at: string;
+  /** The identity (its Keychain session slot) whose sync last wrote this row;
+   *  null on a row no sync has written since identities were recorded. */
+  persona: string | null;
 }
 
 /** `GET /api/dojo/sync-state`. Rows arrive worst-first (error, pending, partial, skipped,
@@ -1829,67 +1732,6 @@ export interface StructurePayload {
   nodes: StructureNode[];
   edges: StructureEdge[];
   coverage: StructureCoverage;
-}
-
-// ── Diagrams · World (#219) ─────────────────────────────────────────────────
-
-/** Which ring the World diagram leads with.
- *
- *  THREE, NOT FOUR. The mockup's control reads "Code · tests · docs" and only
- *  the first two are facts — `sensei.nodes` holds declarations and no
- *  documentation file ever becomes one (#246). An always-empty docs ring is a
- *  lie the picture would tell confidently, so `kind` is code-vs-tests and
- *  documentation appears as a SHARE instead, where it is real. */
-export type WorldGroupBy = 'workspace' | 'repository' | 'kind';
-
-/** What the shade control can colour a circle by.
- *
- *  `nothing` is a first-class choice and the default: the picture's first job
- *  is size, and colouring by a measure before a reader has asked turns every
- *  glance into an interpretation. */
-export type WorldShadeBy = 'nothing' | 'documentedShare' | 'testShare' | 'unresolvedShare';
-
-export interface WorldMeasures {
-  documentedShare: number;
-  testShare: number;
-  /** NULL below the repository ring, where the question has no answer: edges
-   *  belong to a folder and declarations to a code-or-tests cell, so there is
-   *  no way to say how many of a repository's unresolved edges came from its
-   *  tests. Never 0 as a stand-in — an unshaded circle and a perfectly-resolved
-   *  one must not look alike. */
-  unresolvedShare: number | null;
-}
-
-export interface WorldUnit {
-  id: string;
-  label: string;
-  /** Outermost first, INCLUDING itself — what `@rokkit/graph`'s `world` layout
-   *  reads. A container is an ordinary node whose path other nodes extend. */
-  path: string[];
-  /** Declarations held, directly or through what it contains. */
-  weight: number;
-  measures: WorldMeasures;
-}
-
-export interface WorldTotals {
-  declarations: number;
-  documented: number;
-  tests: number;
-  /** DISTINCT repositories. One repository can belong to two workspaces and is
-   *  drawn in both — that is what the rings mean — but "how many are there" has
-   *  one answer. */
-  repositories: number;
-  workspaces: number;
-}
-
-export interface WorldPayload {
-  groupBy: WorldGroupBy;
-  /** The workspace the reader opened this from. The picture is deliberately
-   *  WIDER than that workspace — it is all indexed code — so the payload names
-   *  which circle they are standing in. */
-  viewing: string;
-  units: WorldUnit[];
-  totals: WorldTotals;
 }
 
 // ── Diagrams · Schema (#221) ────────────────────────────────────────────────

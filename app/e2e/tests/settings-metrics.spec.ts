@@ -61,7 +61,6 @@ async function liveSummary(): Promise<Summary> {
  * assertions then run against the welcome page instead of the screen under test.
  * Several older specs `removeItem` it and still reach their screen; that works
  * only on a database where setup already happened, which a fresh e2e DB is not.
- * Mirrors `atlas.spec.ts`, which survives a fresh DB.
  */
 async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   await fetch(`${DAEMON_URL}/api/config`, {

@@ -890,6 +890,7 @@ async fn the_last_attempt_is_read_back_for_a_mark_and_absent_before_any() {
         entity: "forge_mirror",
         key: &key,
         direction: "pull",
+        persona: "p",
     };
 
     let before = s.sync_attempted_at(&mark).await.unwrap();
@@ -913,8 +914,12 @@ async fn a_sync_error_keeps_when_the_sides_last_agreed() {
     // which is the first thing worth knowing when sync starts failing.
     let s = pg_store().await;
     let key = format!("github.com/test/sync-{}", uuid::Uuid::new_v4());
-    let mark =
-        crate::db::pg_store::sync::SyncMark { entity: "repository", key: &key, direction: "push" };
+    let mark = crate::db::pg_store::sync::SyncMark {
+        entity: "repository",
+        key: &key,
+        direction: "push",
+        persona: "p",
+    };
 
     s.mark_synced(&mark, Some(7)).await.unwrap();
     s.mark_sync_error(&mark, "boom").await.unwrap();
@@ -945,6 +950,7 @@ async fn a_partial_sync_agrees_and_names_what_is_missing() {
         entity: "repository_graph",
         key: &key,
         direction: "push",
+        persona: "p",
     };
 
     s.mark_sync_partial(&mark, "1 file(s) over the cap, not shared: big.rs").await.unwrap();
@@ -990,7 +996,12 @@ async fn sync_state_rows_rank_partial_between_pending_and_skipped() {
         .map(|k| format!("github.com/test/rank-{k}-{tag}"))
         .collect();
     fn mark(k: &str) -> crate::db::pg_store::sync::SyncMark<'_> {
-        crate::db::pg_store::sync::SyncMark { entity: "repository", key: k, direction: "push" }
+        crate::db::pg_store::sync::SyncMark {
+            entity: "repository",
+            key: k,
+            direction: "push",
+            persona: "p",
+        }
     }
     s.mark_sync_skipped(&mark(&keys[0]), "private").await.unwrap();
     s.mark_sync_partial(&mark(&keys[1]), "part missing").await.unwrap();
@@ -1350,4 +1361,30 @@ async fn shared_repositories_returns_only_opted_in_repos_with_a_remote() {
         .execute(s.pool())
         .await
         .ok();
+}
+
+/// Every sync mark records the identity that synced it, so the dōjō screen can
+/// say whose sync a row is (user, 2026-10-27: repositories under identities).
+#[tokio::test]
+async fn a_sync_row_says_which_identity_synced_it() {
+    let s = pg_store().await;
+    let key = format!("_test:who:{}", uuid::Uuid::new_v4().simple());
+    let mark = |persona: &'static str| crate::db::pg_store::sync::SyncMark {
+        entity: "repository_metric",
+        key: &key,
+        direction: "push",
+        persona,
+    };
+    s.mark_synced(&mark("jerrythomas"), None).await.unwrap();
+    let who = |rows: Vec<crate::db::pg_store::sync::SyncStateRow>| {
+        rows.into_iter().find(|r| r.entity_key == key).and_then(|r| r.persona)
+    };
+    assert_eq!(who(s.sync_state_rows().await.unwrap()).as_deref(), Some("jerrythomas"));
+    s.mark_sync_error(&mark("default"), "refused").await.unwrap();
+    assert_eq!(who(s.sync_state_rows().await.unwrap()).as_deref(), Some("default"));
+    sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = $1")
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
 }

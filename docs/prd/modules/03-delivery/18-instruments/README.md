@@ -36,9 +36,10 @@ see exactly what sensei did and whether it worked.*
 
 - **Routes** — `POST /api/instruments/verdicts/classify` · `GET /api/instruments/verdicts`
   · `/verdicts/summary` · `GET /api/instruments/mcp-servers/{id}/tools` ·
+  `POST /api/instruments/mcp-servers/{id}/call` ·
   `GET /api/instruments/tools-health` · `POST /api/instruments/tools/refresh` ·
-  `GET /api/sessions/{id}/replay` · `/tool-timeline` · `GET /api/mcp/tools` ·
-  `POST /api/mcp/call` · `GET /api/observatory/tool-{usage,signals,insights}`.
+  `GET /api/sessions/{id}/replay` · `/tool-timeline` ·
+  `GET /api/observatory/tool-{usage,signals,insights}`.
 - **Daemon** — `api/handlers/{verdicts.rs, tool_signals.rs, tools_health.rs,
   mcp_servers.rs, sessions.rs, mcp.rs, observatory.rs}`;
   `tasks/verdict_classifier.rs`; `db/pg_store/tool_calls_tests.rs` (test helper —

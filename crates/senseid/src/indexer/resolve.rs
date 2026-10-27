@@ -4227,12 +4227,12 @@ mod tests {
         // re-export the walk does not follow (`crate::installer::install` calls
         // a function re-exported from module `installer::install`). They dangle,
         // which is the correct outcome; without a separate `mod` reach they
-        // would resolve onto the MODULE instead — 7 wrong edges rather than 7
+        // would resolve onto the MODULE instead — 8 wrong edges rather than 8
         // missing ones (R4).
         let module_heads: usize = only_a_module_declares_it.values().sum();
         assert_eq!(
             (module_heads, only_a_module_declares_it.len()),
-            (7, 6),
+            (8, 7),
             "the references whose head only a module declares moved: {:?}",
             only_a_module_declares_it
         );

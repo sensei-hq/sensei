@@ -36,12 +36,10 @@ type Page = {
 
 
 async function choose(tauriPage: Page, label: string) {
-  await tauriPage.evaluate(
-    `document.querySelector('[data-testid="pref-glyphs"] [data-select-trigger]').click()`,
-  );
-  await tauriPage.waitForSelector('[data-select-dropdown] [data-select-option]', 5_000);
+  // Glyphs is a toggle group now (user, 2026-10-27): every option in view.
+  await tauriPage.waitForSelector('[data-testid="pref-glyphs"] [role="radio"]', 5_000);
   const picked = await tauriPage.evaluate(`(function () {
-    var opts = document.querySelectorAll('[data-select-dropdown] [data-select-option]');
+    var opts = document.querySelectorAll('[data-testid="pref-glyphs"] [role="radio"]');
     for (var i = 0; i < opts.length; i++) if ((opts[i].textContent || '').trim() === ${JSON.stringify(label)}) { opts[i].click(); return 'clicked'; }
     return JSON.stringify(Array.from(opts).map(function (o) { return o.textContent; }));
   })()`);
@@ -115,7 +113,9 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
     console.log(`[inspect] /sessions: ${sessionMarks.map((m) => m.cls.split(' ')[0]).join(' ')}`);
     expect(sessionMarks.some((m) => m.cls.includes('i-solar-history-bold-duotone') && m.painted)).toBe(true);
 
-    const workspaces: { id: string; icon?: { kind?: string; value?: string } }[] = await (await fetch(`${DAEMON_URL}/api/workspaces`)).json();
+    // A workspace under a watched root: an orphaned one (no repository) has no
+    // overview to speak of.
+    const workspaces: { id: string; icon?: { kind?: string; value?: string } }[] = await (await fetch(`${DAEMON_URL}/api/workspaces?watched=true`)).json();
     const kanjiWorkspace = workspaces.find((p) => p.icon?.kind === 'kanji' && p.icon.value);
     if (kanjiWorkspace) {
       await navigateToScreen(tauriPage, `/workspace/${kanjiWorkspace.id}/overview`, '[data-component="kanji"]', 20_000);

@@ -41,6 +41,7 @@ pub mod pattern_effectiveness;
 pub mod plan_graph;
 pub mod planner;
 pub mod playbook;
+mod qlty;
 pub mod ranking;
 pub mod relay_drivers;
 pub mod resolution;

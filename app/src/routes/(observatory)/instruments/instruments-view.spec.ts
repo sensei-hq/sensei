@@ -1,18 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
-  heroCopy, initialTab, pickToolDefaults, filterGroups, collapsedFor, fmtPayload, fmtDuration,
+  heroCopy, initialTab, filterGroups, collapsedFor, fmtPayload, fmtDuration,
 } from './instruments-view';
-import type { McpToolManifest } from '$lib/types.js';
 import type { PlaygroundGroup } from './playground-groups';
 
-const manifest = (inputs: McpToolManifest['inputs']): McpToolManifest => ({
-  mcp: 'sensei', id: 'sensei.get_callers', name: 'get_callers', kind: 'query', summary: '', inputs,
-  example: {} as McpToolManifest['example'],
-});
-
 const group = (id: string, tools: Array<[string, string]>): PlaygroundGroup => ({
-  id, kanji: '具', name: id, installed: true, source: id === 'sensei' ? 'sensei' : 'discovered',
-  tools: tools.map(([name, summary]) => ({ id: `${id}.${name}`, mcp: id, name, kind: 'query', summary })),
+  id, kanji: '具', name: id, installed: true, primary: id === 'sensei', serverId: id,
+  tools: tools.map(([name, summary]) => ({ id: `${id}.${name}`, serverId: id, name, kind: 'query', summary, schema: undefined })),
 });
 
 describe('instruments view', () => {
@@ -27,18 +21,6 @@ describe('instruments view', () => {
     expect(heroCopy('replay').tagline).toBe('Every instrument call, in order.');
     expect(heroCopy('insights').tagline).toBe('Toolset health.');
     expect(heroCopy('playground').tagline).toBe('Sensei · what your instruments can do.');
-  });
-
-  it('prefills repoId with the active workspace, then defaults, then placeholders', () => {
-    const m = manifest([
-      { key: 'repoId', kind: 'text', required: true, label: 'Repo', placeholder: 'sensei' },
-      { key: 'limit', kind: 'text', required: false, label: 'Limit', default: '10' },
-      { key: 'name', kind: 'text', required: true, label: 'Name', placeholder: 'process_event' },
-      { key: 'free', kind: 'text', required: false, label: 'Free' },
-    ]);
-    expect(pickToolDefaults(m, 'atlas')).toEqual({ repoId: 'atlas', limit: '10', name: 'process_event' });
-    expect(pickToolDefaults(m, null).repoId).toBe('sensei');
-    expect(pickToolDefaults(null, 'atlas')).toEqual({});
   });
 
   it('filters tools by name or summary and drops groups with no hits', () => {

@@ -16,8 +16,8 @@
 //!     resolver is still emitting events to the now-dead listener — the
 //!     "Couldn't find callback id" warning.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use sensei_bootstrap::{self as bootstrap, HealthEvent, HealthPayload};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, State};
 
 use crate::flog;
@@ -31,7 +31,9 @@ static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 /// every subsequent health request would be silently rejected.
 struct InFlightGuard;
 impl Drop for InFlightGuard {
-    fn drop(&mut self) { IN_FLIGHT.store(false, Ordering::Release); }
+    fn drop(&mut self) {
+        IN_FLIGHT.store(false, Ordering::Release);
+    }
 }
 
 /// Attempt to claim the slot. `Some(_)` means we own it and must keep the
@@ -56,10 +58,7 @@ pub fn health_check(app: tauri::AppHandle) -> HealthPayload {
 /// payload itself is returned to the caller so existing UI wiring keeps
 /// working. Non-instrumented sites still run correctly — tracing is additive.
 #[tauri::command]
-pub fn health_check_traced(
-    app: tauri::AppHandle,
-    collector: State<LogCollector>,
-) -> HealthPayload {
+pub fn health_check_traced(app: tauri::AppHandle, collector: State<LogCollector>) -> HealthPayload {
     let version = app.package_info().version.to_string();
     let (payload, traces) = bootstrap::health::check_traced(&version);
 
@@ -69,9 +68,9 @@ pub fn health_check_traced(
     // clean of empty envelopes.
     if !traces.is_empty() {
         let system_info = crate::log_collector::SystemInfo {
-            os:        std::env::consts::OS.to_string(),
-            arch:      std::env::consts::ARCH.to_string(),
-            ram_gb:    0,   // not needed for a diagnostic entry; keeps the payload small
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            ram_gb: 0, // not needed for a diagnostic entry; keeps the payload small
             cpu_cores: 0,
         };
         let session_id = collector.start_session("bootstrap-check", &version, system_info);
@@ -103,7 +102,9 @@ pub fn health_check_and_resolve(app: tauri::AppHandle) -> Result<(), String> {
 
         let emit = {
             let app = app.clone();
-            move |ev: HealthEvent| { let _ = app.emit("health", &ev); }
+            move |ev: HealthEvent| {
+                let _ = app.emit("health", &ev);
+            }
         };
 
         // The whole check+report+resolve pipeline lives in the library.
@@ -126,7 +127,9 @@ mod tests {
     /// `--test-threads=1` constraint on the whole crate.
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    fn reset() { IN_FLIGHT.store(false, Ordering::Release); }
+    fn reset() {
+        IN_FLIGHT.store(false, Ordering::Release);
+    }
 
     #[test]
     fn try_acquire_succeeds_when_idle() {
@@ -156,8 +159,10 @@ mod tests {
             panic!("simulated worker panic");
         });
         assert!(result.is_err());
-        assert!(!IN_FLIGHT.load(Ordering::Acquire),
-            "RAII guard must release slot even when the worker panics");
+        assert!(
+            !IN_FLIGHT.load(Ordering::Acquire),
+            "RAII guard must release slot even when the worker panics"
+        );
         // And the slot is reusable.
         assert!(try_acquire().is_some());
     }

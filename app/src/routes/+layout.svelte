@@ -11,6 +11,7 @@
     import { glyphMode, setGlyphMode } from "$lib/glyphs";
     import { personaList } from "$lib/personas.svelte.js";
     import { DaemonStatusBanner, SignInOverlay } from "$lib/components";
+    import { windowDuties } from "$lib/window-duties.js";
 
     let { children } = $props();
 
@@ -29,7 +30,22 @@
     // The automatic half opens only when a CONNECTED identity has broken. It
     // deliberately ignores never-connected personas (an install has several) and
     // renewal (which is silent), or the overlay would appear on every launch.
-    let overlayOpen = $derived(requested || (!dismissed && personaList.needsAttention));
+    // Which window this is decides what it does beyond its own pages: the
+    // global work is the main window's alone (a second copy in Settings opened
+    // a second browser tab for one renewal). No Tauri (a browser, a test): main.
+    const label = (() => {
+        if (!hasTauri()) return "main";
+        try {
+            return (window as { __TAURI_INTERNALS__?: { metadata?: { currentWebview?: { label?: string } } } })
+                .__TAURI_INTERNALS__?.metadata?.currentWebview?.label ?? "main";
+        } catch {
+            return "main";
+        }
+    })();
+    const duties = windowDuties(label);
+    let overlayOpen = $derived(
+        duties.showsIdentityOverlay && (requested || (!dismissed && personaList.needsAttention)),
+    );
 
     function closeOverlay() {
         requested = false;
@@ -84,31 +100,43 @@
         // Five minutes against an 8h token with a 1h renewal window: ~12 checks
         // inside the window, and the ONE automatic attempt per window is
         // enforced in ForgeAuth, not by the interval.
-        forgeAuth.start();
-        // The identity list backs the overlay. Loaded once here and re-read
-        // after each attempt; the 5-minute forgeAuth poll is what notices a
-        // credential dying while the app sits open.
-        void personaList.load();
+        if (duties.renewsCredentials) {
+            forgeAuth.start();
+            // The identity list backs the overlay. Loaded once here and re-read
+            // after each attempt; the 5-minute forgeAuth poll is what notices a
+            // credential dying while the app sits open.
+            void personaList.load();
+        }
         const unlistens: Array<() => void> = [];
         // eslint-disable-next-line @typescript-eslint/no-floating-promises
-        import("@tauri-apps/api/event").then(({ listen }) => {
-            listen<void>("open-logs", () => {
-                goto("/logs");
-            }).then((fn) => unlistens.push(fn));
-            listen<void>("open-identities", () => {
-                // Re-read on open: the list is polled every five minutes, and a
-                // stale standing is what makes a "ready" row fail on click.
-                void personaList.load();
-                requested = true;
-            }).then((fn) => unlistens.push(fn));
+        import("@tauri-apps/api/event").then(({ listen, emit }) => {
+            if (duties.handlesMenu) {
+                listen<void>("open-logs", () => {
+                    goto("/logs");
+                }).then((fn) => unlistens.push(fn));
+                listen<void>("open-identities", () => {
+                    // Re-read on open: the list is polled every five minutes, and a
+                    // stale standing is what makes a "ready" row fail on click.
+                    void personaList.load();
+                    requested = true;
+                }).then((fn) => unlistens.push(fn));
+            }
+            // A navigation for another window is that window's to take.
             listen<string>("dev-navigate", (e) => {
-                goto(e.payload, { replaceState: true });
+                if (duties.goesTo(e.payload.split("?")[0])) goto(e.payload, { replaceState: true });
+            }).then((fn) => unlistens.push(fn));
+            // Each window holds its own copy of the config: a change saved in
+            // one (Settings, say) is re-read by the others.
+            appState.onConfigSaved = () => void emit("config-saved", { from: label });
+            listen<{ from: string }>("config-saved", (e) => {
+                if (e.payload.from !== label) void appState.load();
             }).then((fn) => unlistens.push(fn));
         });
         return () => {
             for (const fn of unlistens) fn();
             daemonHealth.stop();
-            forgeAuth.stop();
+            if (duties.renewsCredentials) forgeAuth.stop();
+            appState.onConfigSaved = null;
         };
     });
 </script>

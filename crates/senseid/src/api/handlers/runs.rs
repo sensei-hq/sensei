@@ -458,14 +458,17 @@ pub(crate) async fn report_run_outcome(
 pub(crate) async fn get_pending_nudges(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let run_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let refuse =
+        |status: StatusCode, msg: String| (status, Json(serde_json::json!({ "error": msg })));
+    let run_id = uuid::Uuid::parse_str(&id)
+        .map_err(|_| refuse(StatusCode::BAD_REQUEST, format!("'{id}' is not a run id")))?;
     let run = match state.pg.get_run(&run_id).await {
         Ok(Some(run)) => run,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => return Err(refuse(StatusCode::NOT_FOUND, format!("no run {run_id}"))),
         Err(e) => {
             tracing::error!(error = %e, run = %id, "get_pending_nudges: get_run failed");
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(refuse(StatusCode::INTERNAL_SERVER_ERROR, e));
         }
     };
     let empty = || Ok(Json(serde_json::json!({ "nudges": [] })));
@@ -824,12 +827,12 @@ mod tests {
         };
         // Bad uuid → 400.
         let e = get_pending_nudges(State(state.clone()), Path("nope".into())).await.unwrap_err();
-        assert_eq!(e, StatusCode::BAD_REQUEST);
+        assert_eq!(e.0, StatusCode::BAD_REQUEST);
         // Unknown run → 404.
         let e = get_pending_nudges(State(state.clone()), Path(uuid::Uuid::new_v4().to_string()))
             .await
             .unwrap_err();
-        assert_eq!(e, StatusCode::NOT_FOUND);
+        assert_eq!(e.0, StatusCode::NOT_FOUND);
         // A real run with no enrolled dojo → empty nudges (fail-soft), not a 500.
         let id = state.pg.create_run(&NewRun::default()).await.unwrap();
         let Json(body) =

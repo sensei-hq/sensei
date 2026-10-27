@@ -119,13 +119,19 @@ pub(crate) struct DefaultPersona {
     pub slot: String,
 }
 
-/// The default identity: the one that owns the machine's global git email.
-/// No email, no owner, or two owners is an ERROR naming what is missing — never
-/// the `default` slot, which would silently answer for whoever signed in first.
+/// The default identity: the one chosen in sensei (Make default), else the one
+/// that owns the machine's global git email. No choice and no email, no owner,
+/// or two owners is an ERROR naming what is missing — never the `default` slot,
+/// which would silently answer for whoever signed in first.
 pub(crate) fn resolve_default(
+    chosen: Option<(String, Option<String>)>,
     global_email: Option<&str>,
     owners: &[(String, Option<String>)],
 ) -> Result<DefaultPersona, String> {
+    if let Some((label, slot)) = chosen {
+        let slot = slot.unwrap_or_else(|| label.clone());
+        return Ok(DefaultPersona { label, slot });
+    }
     let Some(email) = global_email else {
         return Err("no default identity: git has no global user.email \
                     (set one with `git config --global user.email …`, or name a persona)"
@@ -155,7 +161,23 @@ pub(crate) async fn default_persona(state: &AppState) -> Result<DefaultPersona, 
         Some(e) => state.pg.personas_owning_email(e).await?,
         None => Vec::new(),
     };
-    resolve_default(email.as_deref(), &owners)
+    resolve_default(state.pg.chosen_default_persona().await?, email.as_deref(), &owners)
+}
+
+/// `POST /api/auth/personas/{label}/default` — Make default: this identity is
+/// the default from now on, over the git-email rule. 404 for an identity this
+/// machine does not have.
+pub(crate) async fn make_default(
+    State(state): State<AppState>,
+    axum::extract::Path(label): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let fail =
+        |status, msg: String| (status, Json(serde_json::json!({ "ok": false, "error": msg })));
+    match state.pg.choose_default_persona(&label).await {
+        Ok(true) => Ok(Json(serde_json::json!({ "ok": true, "default": label }))),
+        Ok(false) => Err(fail(axum::http::StatusCode::NOT_FOUND, format!("no identity {label}"))),
+        Err(e) => Err(fail(axum::http::StatusCode::INTERNAL_SERVER_ERROR, e)),
+    }
 }
 
 /// The persona a request addresses: the one it names, or the default (#296).
@@ -1059,18 +1081,27 @@ pub(crate) async fn status(
 pub(crate) async fn personas(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-    use crate::dojo_client::forge_token::persona_action;
+    use crate::dojo_client::forge_token::{PersonaAction, persona_action};
 
     let rows = state.pg.persona_rows().await.map_err(|e| {
         tracing::error!(error = %e, "personas: could not read the registry");
         axum::http::StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let now = chrono::Utc::now().timestamp();
-    // One quiet read per connected persona: a millisecond, and it cannot prompt.
-    // It is what tells "signed in" from "signed in, but the Keychain withholds
-    // the session" — the second needs the user's approval (#283).
-    let slots: Vec<Option<String>> =
-        rows.iter().map(|r| r.session_slot.clone().filter(|_| r.verified)).collect();
+    let actions: Vec<_> = rows
+        .iter()
+        .map(|r| persona_action(r.session_slot.as_deref(), r.verified, &r.state, r.expires_at, now))
+        .collect();
+    // One quiet read per connected persona whose credential is not known dead:
+    // a millisecond, and it cannot prompt. It is what tells "signed in" from
+    // "signed in, but the Keychain withholds the session" — the second needs the
+    // user's approval (#283). A dead one is a sign-in; reading it would only ask
+    // to approve a credential that is no use.
+    let slots: Vec<Option<String>> = rows
+        .iter()
+        .zip(&actions)
+        .map(|(r, a)| r.session_slot.clone().filter(|_| r.verified && *a != PersonaAction::SignIn))
+        .collect();
     let sessions = tokio::task::spawn_blocking(move || {
         slots
             .iter()
@@ -1089,9 +1120,9 @@ pub(crate) async fn personas(
     let list: Vec<serde_json::Value> = rows
         .iter()
         .zip(&sessions)
-        .map(|(r, session)| {
-            let action =
-                persona_action(r.session_slot.as_deref(), r.verified, &r.state, r.expires_at, now);
+        .zip(&actions)
+        .map(|((r, session), action)| {
+            let action = *action;
             serde_json::json!({
                 "label": r.label,
                 // The DISPLAY label is rewritten to the verified login on
@@ -1125,6 +1156,11 @@ fn action_name(
     session: Option<&Result<(), crate::gateway_keys::KeychainError>>,
 ) -> &'static str {
     use crate::dojo_client::forge_token::PersonaAction;
+    // A credential known dead needs a sign-in whatever the Keychain says: the
+    // expiry is on record, and the sign-in's own write may prompt.
+    if action == PersonaAction::SignIn {
+        return "signIn";
+    }
     if let Some(Err(crate::gateway_keys::KeychainError::NeedsApproval)) = session {
         return "approve";
     }
@@ -1433,8 +1469,11 @@ mod default_persona_tests {
 
     #[test]
     fn the_identity_owning_the_global_email_is_the_default() {
-        let got =
-            resolve_default(Some("dev@example.com"), &[owner("jerrythomas", Some("jerrythomas"))]);
+        let got = resolve_default(
+            None,
+            Some("dev@example.com"),
+            &[owner("jerrythomas", Some("jerrythomas"))],
+        );
         assert_eq!(
             got,
             Ok(DefaultPersona { label: "jerrythomas".into(), slot: "jerrythomas".into() })
@@ -1443,27 +1482,47 @@ mod default_persona_tests {
 
     #[test]
     fn a_default_never_signed_in_here_is_addressed_by_its_label() {
-        let got = resolve_default(Some("a@b.c"), &[owner("joel", None)]);
+        let got = resolve_default(None, Some("a@b.c"), &[owner("joel", None)]);
         assert_eq!(got, Ok(DefaultPersona { label: "joel".into(), slot: "joel".into() }));
     }
 
     #[test]
     fn no_global_email_is_an_error_not_the_default_slot() {
-        let err = resolve_default(None, &[owner("x", Some("default"))]).unwrap_err();
+        let err = resolve_default(None, None, &[owner("x", Some("default"))]).unwrap_err();
         assert!(err.contains("user.email"), "{err}");
     }
 
     #[test]
     fn an_email_no_identity_owns_is_an_error_that_names_it() {
-        let err = resolve_default(Some("nobody@x.y"), &[]).unwrap_err();
+        let err = resolve_default(None, Some("nobody@x.y"), &[]).unwrap_err();
         assert!(err.contains("nobody@x.y"), "{err}");
     }
 
     #[test]
     fn an_email_two_identities_own_is_an_error_that_names_both() {
-        let err =
-            resolve_default(Some("a@b.c"), &[owner("one", None), owner("two", None)]).unwrap_err();
+        let err = resolve_default(None, Some("a@b.c"), &[owner("one", None), owner("two", None)])
+            .unwrap_err();
         assert!(err.contains("one") && err.contains("two"), "{err}");
+    }
+
+    /// A default chosen in sensei (Make default) is the default, whatever the
+    /// git email says — and one is reported even with no email at all. With
+    /// none chosen, the git-email rule decides (user, 2026-10-27).
+    #[test]
+    fn a_chosen_default_wins_over_the_git_email_rule() {
+        let chosen = Some(owner("sensei-hq-org", Some("default")));
+        assert_eq!(
+            resolve_default(
+                chosen.clone(),
+                Some("dev@example.com"),
+                &[owner("jerrythomas", Some("jerrythomas"))]
+            ),
+            Ok(DefaultPersona { label: "sensei-hq-org".into(), slot: "default".into() })
+        );
+        assert_eq!(
+            resolve_default(chosen, None, &[]),
+            Ok(DefaultPersona { label: "sensei-hq-org".into(), slot: "default".into() })
+        );
     }
 }
 
@@ -1781,6 +1840,10 @@ mod tests {
         assert_eq!(action_name(PersonaAction::None, Some(&Ok(()))), "none");
         assert_eq!(action_name(PersonaAction::Renew, Some(&Ok(()))), "renew");
         assert_eq!(action_name(PersonaAction::SignIn, None), "signIn");
+        // A credential known dead (its expiry is on record) is a sign-in,
+        // withheld or not: approving it would only reveal that it is dead, and
+        // the sign-in's own write may prompt (user, 2026-10-27).
+        assert_eq!(action_name(PersonaAction::SignIn, Some(&withheld)), "signIn");
         assert_eq!(action_name(PersonaAction::Connect, None), "connect");
         assert_eq!(
             action_name(PersonaAction::None, Some(&Err(KeychainError::NotFound))),

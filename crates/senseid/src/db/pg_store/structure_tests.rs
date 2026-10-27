@@ -53,6 +53,9 @@ async fn a_package_root_symbol_belongs_to_its_package() {
         answer(&pg, Some("senseid"), Some("tasks::handlers")).await,
         Some("senseid/tasks".into())
     );
+    assert_eq!(answer(&pg, Some("app"), Some("store/triage")).await, Some("app/store".into()));
+    // A file directly under a container folder is in the container — see
+    // `a_container_folder_is_not_a_module`.
     assert_eq!(answer(&pg, Some("app"), Some("lib/triage")).await, Some("app/lib".into()));
     // ...and the absence stays an absence.
     assert_eq!(answer(&pg, None, Some("tasks")).await, None, "no package is no module identity");
@@ -61,6 +64,46 @@ async fn a_package_root_symbol_belongs_to_its_package() {
         None,
         "no fqn at all is no module identity"
     );
+}
+
+/// A CONTAINER FOLDER IS NOT A MODULE (M17). SvelteKit puts nearly all of an
+/// app under `lib/` and `routes/`, and a dbd project all of its schema under
+/// `ddl/`; reading the first segment made `sensei-dojo-web/lib` one module of
+/// 405 files and `sensei/ddl` one of 458 (measured 2026-10-26), so the Code
+/// map's drill opened onto columns of "+230 more". The module under a
+/// container is its first two segments; a lone container segment stays itself.
+///
+/// Mutation that must break this test: drop the container arm.
+#[tokio::test]
+async fn a_container_folder_is_not_a_module() {
+    let pg = PgStore::test_store().await;
+    let answer = |pkg: &'static str, module: &'static str| {
+        let pg = &pg;
+        async move {
+            let (m,): (Option<String>,) =
+                sqlx_core::query_as::query_as("SELECT sensei.module_of($1, $2)")
+                    .bind(pkg)
+                    .bind(module)
+                    .fetch_one(pg.pool())
+                    .await
+                    .unwrap();
+            m.unwrap()
+        }
+    };
+    assert_eq!(answer("web", "lib/server/rules-data").await, "web/lib/server");
+    assert_eq!(
+        answer("app", "routes/(observatory)/instruments/+page").await,
+        "app/routes/(observatory)"
+    );
+    assert_eq!(answer("sensei", "ddl/table/sensei/nodes").await, "sensei/ddl/table");
+    assert_eq!(answer("app", "lib").await, "app/lib", "a lone container is itself");
+    // A FILE directly in a container is the container's, not a module of one
+    // file: a TypeScript module path ends in the file's own stem.
+    assert_eq!(answer("web", "lib/personas.svelte").await, "web/lib");
+    assert_eq!(answer("app", "routes/+layout").await, "app/routes");
+    // Not a container: the first segment, as before.
+    assert_eq!(answer("senseid", "tasks::handlers").await, "senseid/tasks");
+    assert_eq!(answer("app", "components/Button").await, "app/components");
 }
 
 /// A WORKSPACE WITH NOTHING INDEXED HAS A VERSION, AND IT IS `None` (#233).

@@ -44,3 +44,18 @@ describe('RootsSection — adding a root', () => {
     expect(m.container.querySelector<HTMLInputElement>('input.folder-input')!.value).toBe('');
   });
 });
+
+// The user (2026-10-27): a root's row showed a stray mark before its path — a
+// decorative ▸ that read as a dot. The path is the row's first text.
+describe('RootsSection — a root row', () => {
+  it('starts with the path, nothing before it', () => {
+    wizardState.roots = {
+      roots: [{ id: 'r1', path: '/code', repos_found: 0, status: 'watching', excluded: [] }] as never,
+      newPath: '',
+    };
+    const m = mountComponent(RootsSection, {});
+    cleanup.push(m.destroy);
+    const row = m.container.querySelector('[data-component="root-item"]') as HTMLElement;
+    expect(row.textContent?.trim().startsWith('/code')).toBe(true);
+  });
+});

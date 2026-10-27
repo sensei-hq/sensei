@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { KIND_ICONS } from '@sensei/glyphs';
 	import { goto } from '$app/navigation';
 	import KanjiToken from './KanjiToken.svelte';
 	import { kindTone } from './vocab';
@@ -56,7 +57,7 @@
 			: 'border-paper-edge'}"
 		style="padding: 4px 12px; min-height: 32px"
 	>
-		<KanjiToken char={isYou ? '携' : (org?.kanji ?? '')} icon={isYou ? undefined : null} size="inherit" toneClass="" class="text-sm {triggerTone}" />
+		<KanjiToken char={isYou ? '携' : (org?.kanji ?? '')} icon={isYou ? undefined : KIND_ICONS.organisation} size="inherit" toneClass="" class="text-sm {triggerTone}" />
 		<span class="text-ink text-sm">{isYou ? 'Your work' : org?.name}</span>
 		{#if !isYou && org}
 			<span class="mono text-ink-faint text-xs uppercase" style="letter-spacing: 0.08em"
@@ -139,7 +140,7 @@
 						style="padding: 8px 12px"
 					>
 						<!-- A dōjō's own mark: an identity, kanji in both modes (#133). -->
-						<KanjiToken char={d.kanji} icon={null} size="sm" toneClass={kindTone(d.kind).text} w={20} />
+						<KanjiToken char={d.kanji} icon={KIND_ICONS.dojo} size="sm" toneClass={kindTone(d.kind).text} w={20} />
 						<div class="flex-1" style="min-width: 0">
 							<div class="text-ink truncate text-sm">{d.name}</div>
 							<div class="mono text-ink-faint text-xs">{K2_ROLE[d.role]?.label} · {d.kind}</div>

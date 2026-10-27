@@ -1,0 +1,12 @@
+{
+  "name": "@sensei/codemap",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Code map (M17): state, layout and components shared by the desktop app and the dōjō.",
+  "type": "module",
+  "svelte": "./index.ts",
+  "main": "index.ts",
+  "exports": {
+    ".": { "svelte": "./index.ts", "default": "./index.js" }
+  }
+}

@@ -100,13 +100,6 @@ async fn cached(
     Ok(Json(payload))
 }
 
-/// `?groupBy=workspace|repository|kind` — which ring the World diagram leads with.
-#[derive(serde::Deserialize)]
-pub(crate) struct WorldQuery {
-    #[serde(rename = "groupBy")]
-    group_by: Option<String>,
-}
-
 /// A DB error is a 500. It is never an empty payload — that would be
 /// indistinguishable from an unindexed workspace, which is the one thing this
 /// screen must not do.
@@ -145,82 +138,6 @@ pub(crate) async fn structure(
             "nodes": nodes,
             "edges": edges,
             "coverage": coverage,
-        }))
-    })
-    .await
-}
-
-/// GET /api/workspaces/{id}/diagrams/world?groupBy=workspace|repository|kind
-///
-/// Containment as area: every indexed declaration, nested by what holds it.
-///
-/// CROSS-WORKSPACE, and the workspace in the path scopes nothing. The picture is
-/// "all indexed code" and WORKSPACE is its outermost ring, so filtering to one
-/// would leave the top level with a single circle. The id is still required and
-/// still resolved, for two reasons that are not decoration: the screen lives in
-/// a workspace window and the payload names which circle the reader is standing
-/// in, and a bad id must 404 here exactly as it does on every sibling endpoint.
-///
-/// A DB error is a 500. It is never an empty picture — on this screen an empty
-/// picture is indistinguishable from a machine that has indexed nothing.
-pub(crate) async fn world(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(q): Query<WorldQuery>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::analysis::world::{Cell, GroupFirst, Placement};
-
-    let label = q.group_by.unwrap_or_else(|| "workspace".to_string());
-    // An unknown grouping is a 400 and never a default. Silently answering a
-    // different question than the one asked is how a control appears to work
-    // while doing nothing.
-    let group = GroupFirst::from_label(&label).ok_or(StatusCode::BAD_REQUEST)?;
-    let workspace_id = resolve_workspace_id(&state, &id).await?;
-    // The workspace's own name, so the payload can say which circle the reader is
-    // standing in. A MISS is a 404 and never an unnamed picture: the id resolved
-    // a moment ago, so a workspace that has vanished between the two reads is an
-    // inconsistency rather than an anonymous view.
-    let viewing = state
-        .pg
-        .get_workspace(&workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .and_then(|p| p.get("name").and_then(|n| n.as_str().map(str::to_string)))
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    cached(&state, "world", &workspace_id, label.clone(), async {
-        // CONCURRENTLY: the two reads share nothing, and the edge pass is the
-        // slow one — waiting for it in series would add the cell read's time
-        // for no ordering anyone needs.
-        let (cells, placements) =
-            tokio::try_join!(state.pg.world_cells(), state.pg.world_placement())
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-        let cells: Vec<Cell> = cells
-            .into_iter()
-            .map(|c| Cell {
-                workspace: c.workspace,
-                repository: c.repository,
-                folder: c.folder_id,
-                is_test: c.is_test,
-                declarations: c.declarations,
-                documented: c.documented,
-            })
-            .collect();
-        let placements: Vec<Placement> = placements
-            .into_iter()
-            .map(|p| Placement { folder: p.folder_id, edges: p.edges, missed: p.missed })
-            .collect();
-
-        let nested = crate::analysis::world::nest(&cells, &placements, group);
-        Ok(serde_json::json!({
-            "groupBy": group.as_label(),
-            // Which circle the reader is standing in, so the screen can say
-            // "you are here" on a picture that is deliberately wider than the
-            // workspace they opened.
-            "viewing": viewing,
-            "units": nested.units,
-            "totals": nested.totals,
         }))
     })
     .await
@@ -593,6 +510,292 @@ pub(crate) async fn layering(
 /// screen MUST omit those points rather than drawing them at an axis origin.
 /// `coverage.unplaceable` counts them, so an omitted point is distinguishable
 /// from one that genuinely sits at zero.
+/// What a Code map band counts: calls and imports (M17).
+const CODEMAP_KINDS: [&str; 2] = ["calls", "imports"];
+
+#[derive(Deserialize)]
+pub(crate) struct CodemapQuery {
+    #[serde(rename = "groupBy")]
+    group_by: Option<String>,
+}
+
+/// GET /api/workspaces/{id}/diagrams/codemap?groupBy=layers|folders
+///
+/// The Code map's L0 (M17): modules as blocks — at most
+/// [`codemap::BLOCK_BUDGET`](crate::analysis::codemap::BLOCK_BUDGET), the
+/// smallest of a group folded into "+N more", hubs in their own lane — grouped
+/// by layer (default) or by package, and one band per module pair weighted by
+/// the calls and imports behind it. Each band between two drawn modules
+/// carries its direction from the layering (`down`, `skip`, `up`, `level`).
+pub(crate) async fn codemap(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<CodemapQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::codemap::{BLOCK_BUDGET, Module, ModuleEdge, level0};
+    let group_by = q.group_by.unwrap_or_else(|| "layers".to_string());
+    if !matches!(group_by.as_str(), "layers" | "folders") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
+
+    cached(&state, "codemap", &workspace_id, group_by.clone(), async {
+        let (nodes, edges, deps, unplaced, complexity) = tokio::try_join!(
+            state.pg.structure_nodes(&workspace_id, "module"),
+            state.pg.structure_edges(&workspace_id, "module", &kinds),
+            state.pg.dependency_graph(&workspace_id, "module", &kinds),
+            state.pg.structure_unplaced(&workspace_id, &kinds),
+            state.pg.codemap_module_complexity(&workspace_id),
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        let units: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+        let ranked = crate::analysis::layering::analyse(&units, &deps);
+        let layer_of: std::collections::HashMap<&str, usize> =
+            ranked.units.iter().map(|p| (p.id.as_str(), p.layer)).collect();
+        let direction: std::collections::HashMap<(&str, &str), _> = ranked
+            .deps
+            .iter()
+            .map(|d| ((d.source.as_str(), d.target.as_str()), d.conformance))
+            .collect();
+
+        let modules: Vec<Module> = nodes
+            .iter()
+            .map(|n| Module {
+                id: n.id.clone(),
+                label: n.label.clone(),
+                group: match group_by.as_str() {
+                    "folders" => n.package.clone(),
+                    // A unit the layering could not place is said so, not
+                    // filed under some layer.
+                    _ => layer_of
+                        .get(n.id.as_str())
+                        .map_or_else(|| "unplaced".to_string(), |l| format!("L{l}")),
+                },
+                files: n.files,
+                symbols: n.symbols,
+                complexity: complexity.get(&n.id).map(|&(functions, complex)| {
+                    crate::analysis::codemap::Complexity { functions, complex }
+                }),
+            })
+            .collect();
+        let module_edges: Vec<ModuleEdge> = edges
+            .iter()
+            .map(|e| ModuleEdge {
+                source: e.source.clone(),
+                target: e.target.clone(),
+                kind: e.kind.clone(),
+                count: e.occurrences,
+            })
+            .collect();
+        let l0 = level0(&modules, &module_edges, BLOCK_BUDGET);
+
+        let bands: Vec<serde_json::Value> = l0
+            .bands
+            .iter()
+            .map(|b| {
+                let mut v = serde_json::to_value(b).unwrap_or_default();
+                v["direction"] = serde_json::json!(
+                    direction.get(&(b.source.as_str(), b.target.as_str())).copied()
+                );
+                v
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "level": "module",
+            "groupBy": group_by,
+            "kinds": kinds,
+            "blocks": l0.blocks,
+            "bands": bands,
+            "budget": l0.budget,
+            "cycles": ranked.cycles,
+            "coverage": { "unplaced": unplaced },
+        }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CodemapModuleQuery {
+    id: String,
+}
+
+/// GET /api/workspaces/{id}/diagrams/codemap/module?id={module}
+///
+/// The Code map's L1 (M17): the module's files in role columns (code, test,
+/// docs, config, generated; at most
+/// [`COLUMN_BUDGET`](crate::analysis::codemap::COLUMN_BUDGET) each, the rest
+/// folded), and the modules it depends on and is used by, each with its weight
+/// and the layering's direction. A module the workspace does not have is 404.
+pub(crate) async fn codemap_module(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<CodemapModuleQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::codemap::{ModuleFile, level1};
+    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
+    let module = q.id;
+
+    cached(&state, "codemap-module", &workspace_id, module.clone(), async {
+        let (files, nodes, deps) = tokio::try_join!(
+            state.pg.codemap_module_files(&workspace_id, &module),
+            state.pg.structure_nodes(&workspace_id, "module"),
+            state.pg.dependency_graph(&workspace_id, "module", &kinds),
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if files.is_empty() {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        let files: Vec<ModuleFile> = files
+            .into_iter()
+            .map(|(fid, path, symbols)| ModuleFile { id: fid.to_string(), path, symbols })
+            .collect();
+
+        let units: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+        let ranked = crate::analysis::layering::analyse(&units, &deps);
+        let side = |outbound: bool| -> Vec<serde_json::Value> {
+            let mut out: Vec<_> = ranked
+                .deps
+                .iter()
+                .filter(|d| if outbound { d.source == module } else { d.target == module })
+                .map(|d| {
+                    serde_json::json!({
+                        "module": if outbound { &d.target } else { &d.source },
+                        "weight": d.occurrences,
+                        "direction": d.conformance,
+                    })
+                })
+                .collect();
+            out.sort_by(|a, b| b["weight"].as_i64().cmp(&a["weight"].as_i64()));
+            out
+        };
+        Ok(serde_json::json!({
+            "level": "file",
+            "module": module,
+            "columns": level1(&files),
+            "dependsOn": side(true),
+            "usedBy": side(false),
+        }))
+    })
+    .await
+}
+
+/// The most callers, and callees, L2 draws beside a file (M17).
+const NEIGHBOUR_BUDGET: i64 = 7;
+
+/// GET /api/workspaces/{id}/diagrams/codemap/file?id={file id}
+///
+/// The Code map's L2 (M17): one file's symbols in source order, and the
+/// symbols that call into it and that it calls — at most
+/// [`NEIGHBOUR_BUDGET`] a side, heaviest first, with how many there are in
+/// all. A file that is not this workspace's is 404.
+pub(crate) async fn codemap_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<CodemapModuleQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
+    let file_id = uuid::Uuid::parse_str(&q.id).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    cached(&state, "codemap-file", &workspace_id, q.id.clone(), async {
+        let path = state
+            .pg
+            .codemap_file_path(&workspace_id, &file_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        let (symbols, callers, callees) = tokio::try_join!(
+            state.pg.codemap_file_symbols(&file_id),
+            state.pg.codemap_file_neighbours(&workspace_id, &file_id, true, NEIGHBOUR_BUDGET),
+            state.pg.codemap_file_neighbours(&workspace_id, &file_id, false, NEIGHBOUR_BUDGET),
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let side = |rows: Vec<(uuid::Uuid, String, Option<String>, i64, i64)>| {
+            let total = rows.first().map_or(0, |r| r.4);
+            let list: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|(id, name, file, calls, _)| {
+                    serde_json::json!({"id": id, "name": name, "file": file, "weight": calls})
+                })
+                .collect();
+            (list, total)
+        };
+        let ((callers, callers_total), (callees, callees_total)) = (side(callers), side(callees));
+        Ok(serde_json::json!({
+            "level": "symbol",
+            "file": file_id,
+            "path": path,
+            "symbols": symbols
+                .into_iter()
+                .map(|(id, name, kind, line)| serde_json::json!({"id": id, "name": name, "kind": kind, "line": line}))
+                .collect::<Vec<_>>(),
+            "callers": callers,
+            "callersTotal": callers_total,
+            "callees": callees,
+            "calleesTotal": callees_total,
+        }))
+    })
+    .await
+}
+
+/// A pair changed together at least this many times to count (M17).
+const COCHANGE_MIN: i64 = 5;
+/// A commit touching more modules than this is a sweep, not a coupling.
+const COCHANGE_MAX_MODULES: i64 = 20;
+/// The most hidden couplings the lens draws.
+const COCHANGE_LIMIT: usize = 40;
+
+/// GET /api/workspaces/{id}/diagrams/codemap/cochange
+///
+/// The Hidden coupling lens (M17): module pairs that change in the same commits
+/// with no static dependency either way, strongest first — `strength` is how
+/// often the rarer of the two changes with the other. Answers how many commits
+/// were read, so an empty list over no history reads as no history.
+pub(crate) async fn codemap_cochange(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::codemap::{CoChange, ModuleEdge, hidden_coupling};
+    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
+
+    cached(&state, "codemap-cochange", &workspace_id, String::new(), async {
+        let ((pairs, commits), edges) = tokio::try_join!(
+            state.pg.codemap_cochange(&workspace_id, COCHANGE_MAX_MODULES, COCHANGE_MIN),
+            state.pg.structure_edges(&workspace_id, "module", &kinds),
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let pairs: Vec<CoChange> = pairs
+            .into_iter()
+            .map(|(a, b, together, a_changes, b_changes)| CoChange {
+                a,
+                b,
+                together,
+                a_changes,
+                b_changes,
+            })
+            .collect();
+        let edges: Vec<ModuleEdge> = edges
+            .into_iter()
+            .map(|e| ModuleEdge {
+                source: e.source,
+                target: e.target,
+                kind: e.kind,
+                count: e.occurrences,
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "hidden": hidden_coupling(&pairs, &edges, COCHANGE_LIMIT),
+            "pairs": pairs.len(),
+            "commits": commits,
+            "minTogether": COCHANGE_MIN,
+        }))
+    })
+    .await
+}
+
 pub(crate) async fn zones(
     State(state): State<AppState>,
     Path(id): Path<String>,

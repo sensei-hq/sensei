@@ -134,9 +134,12 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/workspaces/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
         .route("/api/workspaces/{id}/diagrams/structure", get(diagrams::structure))
+        .route("/api/workspaces/{id}/diagrams/codemap", get(diagrams::codemap))
+        .route("/api/workspaces/{id}/diagrams/codemap/module", get(diagrams::codemap_module))
+        .route("/api/workspaces/{id}/diagrams/codemap/file", get(diagrams::codemap_file))
+        .route("/api/workspaces/{id}/diagrams/codemap/cochange", get(diagrams::codemap_cochange))
         .route("/api/workspaces/{id}/diagrams/layering", get(diagrams::layering))
         .route("/api/workspaces/{id}/diagrams/zones", get(diagrams::zones))
-        .route("/api/workspaces/{id}/diagrams/world", get(diagrams::world))
         .route("/api/workspaces/{id}/diagrams/neighbourhood", get(diagrams::neighbourhood))
         .route("/api/workspaces/{id}/diagrams/schema", get(diagrams::schema))
         .route("/api/workspaces/{id}/tags", post(observatory::add_solution_tag))
@@ -281,6 +284,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/signout", post(crate::api::handlers::auth::signout))
         .route("/api/auth/status", get(crate::api::handlers::auth::status))
         .route("/api/auth/personas", get(crate::api::handlers::auth::personas))
+        .route("/api/auth/personas/{label}/default", post(crate::api::handlers::auth::make_default))
         .route("/api/auth/keychain/approve", post(crate::api::handlers::auth::approve_keychain))
         .route("/api/auth/orgs", get(crate::api::handlers::auth::orgs))
         .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
@@ -330,7 +334,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/transcripts/consent", get(observatory::transcript_consent))
         .route("/api/transcripts/consent/{source}", put(observatory::set_transcript_consent))
         .route("/api/metrics/backfill", post(observatory::backfill_metrics))
-        .route("/api/workspaces/{id}/graph", get(observatory::solution_graph))
         .route("/api/workspaces/{id}/roles", get(observatory::solution_roles))
         // Folder mutations (setup wizard — Workspaces stage)
         .route("/api/folders/{id}", put(workspace::update_folder))
@@ -360,16 +363,20 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/instruments/verdicts", get(verdicts::list))
         .route("/api/instruments/verdicts/summary", get(verdicts::summary))
         // Instruments — discovered MCP servers (#84 T2 Slice A)
-        .route("/api/instruments/mcp-servers", get(mcp_servers_handler::list))
+        .route(
+            "/api/instruments/mcp-servers",
+            get(mcp_servers_handler::list).post(mcp_servers_handler::register),
+        )
+        .route("/api/instruments/mcp-servers/{id}", delete(mcp_servers_handler::remove))
         .route("/api/instruments/mcp-servers/{id}/enabled", put(mcp_servers_handler::set_enabled))
         .route("/api/instruments/mcp-servers/{id}/tools", get(mcp_servers_handler::get_tools))
+        .route("/api/instruments/mcp-servers/{id}/call", post(mcp_servers_handler::call))
         .route("/api/instruments/mcp-servers/refresh", post(mcp_servers_handler::refresh))
         .route("/api/instruments/tools-health", get(crate::api::handlers::tools_health::grid))
         .route("/api/instruments/tools/refresh", post(crate::api::handlers::tools_health::refresh))
         // Unified query (desktop/MCP)
         .route("/api/query", post(query::unified_query))
         // MCP tool proxy
-        .route("/api/mcp/tools", get(mcp::mcp_list_tools))
         .route("/api/mcp/call", post(mcp::mcp_call_tool))
         // Marketplace install (legacy — prefer /api/install endpoints)
         .route("/api/marketplace/install", post(config::marketplace_install))
@@ -696,6 +703,846 @@ mod tests {
             .await
             .unwrap();
         assert!(answer.headers().get("access-control-allow-origin").is_none());
+    }
+
+    /// The Playground runs a tool through the server itself (stdio
+    /// `tools/call`), so it shows what an assistant gets: the result, the
+    /// tool's own `isError`, and how long it took. A server that cannot be
+    /// started is an error the caller sees, not an empty result.
+    #[tokio::test]
+    async fn a_tool_runs_through_its_mcp_server() {
+        let (app, state) = test_app().await;
+        let (command, args) = crate::tasks::mcp_probe::fake::server();
+        let key = format!("fake-{}", uuid::Uuid::new_v4().simple());
+        let server = |command: &'static str| crate::db::pg_store::McpServerRow {
+            acp_family: "claude",
+            mcp_key: "",
+            workspace_id: None,
+            config_source: "/tmp/fake-mcp.json",
+            command,
+            args: &serde_json::Value::Null,
+            env: &serde_json::Value::Null,
+        };
+        let args = serde_json::json!(args);
+        let env = serde_json::json!({});
+        let id = state
+            .pg
+            .upsert_mcp_server(&crate::db::pg_store::McpServerRow {
+                mcp_key: &key,
+                command: &command,
+                args: &args,
+                env: &env,
+                ..server("")
+            })
+            .await
+            .unwrap();
+        let uri = format!("/api/instruments/mcp-servers/{id}/call");
+
+        let call = |x: i64| serde_json::json!({"tool": "echo", "arguments": {"x": x}});
+        let (st, body) = req(app.clone(), "POST", &uri, Some(call(1))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["content"][0]["text"], "echoed");
+        assert_eq!(body["isError"], false);
+        assert!(body["duration_ms"].is_u64(), "{body}");
+
+        let (st, body) = req(app.clone(), "POST", &uri, Some(call(2))).await;
+        assert_eq!(st, StatusCode::OK, "a tool error is the tool's answer");
+        assert_eq!(body["isError"], true, "{body}");
+
+        let gone_key = format!("gone-{}", uuid::Uuid::new_v4().simple());
+        let gone = state
+            .pg
+            .upsert_mcp_server(&crate::db::pg_store::McpServerRow {
+                mcp_key: &gone_key,
+                args: &env,
+                env: &env,
+                ..server("definitely_not_a_real_binary_xyz_88")
+            })
+            .await
+            .unwrap();
+        let (st, body) = req(
+            app.clone(),
+            "POST",
+            &format!("/api/instruments/mcp-servers/{gone}/call"),
+            Some(call(1)),
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_GATEWAY, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("spawn failed"), "{body}");
+
+        let (st, _) = req(
+            app,
+            "POST",
+            &format!("/api/instruments/mcp-servers/{}/call", uuid::Uuid::new_v4()),
+            Some(call(1)),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+
+    /// A large workspace has thousands of communities, most of a node or two;
+    /// all of them was half a megabyte no assistant could read. The largest
+    /// come first, `limit` of them (50 unless asked), with the total beside
+    /// them so the cut is visible.
+    #[tokio::test]
+    async fn communities_come_largest_first_with_the_total() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (ws, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        let name = state.pg.get_workspace(&ws).await.unwrap().unwrap()["name"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        for i in 0..60 {
+            sqlx_core::query::query(
+                "INSERT INTO inference.communities(folder_id, community_id, label, node_count) VALUES($1, $2, $3, $2)",
+            )
+            .bind(fid)
+            .bind(i)
+            .bind(format!("c{i}"))
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        }
+        let call = |limit: Option<&str>| {
+            let mut params = serde_json::json!({"repoId": name});
+            if let Some(l) = limit {
+                params["limit"] = serde_json::json!(l);
+            }
+            serde_json::json!({"tool": "get_communities", "params": params})
+        };
+        let (st, body) = req(app.clone(), "POST", "/api/mcp/call", Some(call(None))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let sizes: Vec<i64> = body["communities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["node_count"].as_i64().unwrap())
+            .collect();
+        assert_eq!(sizes, (10..60).rev().collect::<Vec<_>>());
+        assert_eq!(body["total"], 60);
+
+        let (_, body) = req(app.clone(), "POST", "/api/mcp/call", Some(call(Some("3")))).await;
+        assert_eq!(body["communities"].as_array().map(Vec::len), Some(3), "{body}");
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+    }
+
+    /// Nudges for a run the daemon has no record of: a 404 that names the run,
+    /// so an assistant reads why, not a bare status.
+    #[tokio::test]
+    async fn nudges_for_an_unknown_run_say_so() {
+        let (app, _) = test_app().await;
+        let run = uuid::Uuid::new_v4();
+        let (st, body) = req(app.clone(), "GET", &format!("/api/runs/{run}/nudges"), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+        assert!(body["error"].as_str().unwrap_or_default().contains(&run.to_string()), "{body}");
+        let (st, body) = req(app, "GET", "/api/runs/not-a-uuid/nudges", None).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().is_some(), "{body}");
+    }
+
+    /// The files under a tag are capped (an assistant reads the answer whole),
+    /// and the total rides beside them so the cut is visible, not silent.
+    #[tokio::test]
+    async fn files_by_tag_say_how_many_there_are() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (ws, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        for i in 0..201 {
+            crate::tasks::test_support::seed_file(
+                &state.pg,
+                &fid,
+                &format!("src/routes/r{i:03}/+page.svelte"),
+            )
+            .await
+            .unwrap();
+        }
+        sqlx_core::query::query("UPDATE sensei.files SET tags = '{route}' WHERE folder_id = $1")
+            .bind(fid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        let name = state.pg.get_workspace(&ws).await.unwrap().unwrap()["name"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let call = serde_json::json!({"tool": "get_file_tags", "params": {"repoId": name, "tag": "route"}});
+        let (st, body) = req(app.clone(), "POST", "/api/mcp/call", Some(call)).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["files"].as_array().map(Vec::len), Some(200));
+        assert_eq!(body["total"], 201, "{}", body["total"]);
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+    }
+
+    /// `?watched=true` lists only the workspaces with a folder under a root
+    /// that is being watched — what a tool can run in (user, 2026-10-27: the
+    /// Playground offered 133, of which 4 are watched).
+    #[tokio::test]
+    async fn the_watched_workspaces_are_those_under_a_watched_root() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (watched, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        let orphan =
+            state.pg.create_workspace(&format!("_test:orphan:{uniq}"), None, None).await.unwrap();
+        let (st, body) = req(app.clone(), "GET", "/api/workspaces?watched=true", None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let ids: Vec<&str> =
+            body.as_array().unwrap().iter().filter_map(|w| w["id"].as_str()).collect();
+        assert!(ids.contains(&watched.to_string().as_str()), "the watched workspace is listed");
+        assert!(
+            !ids.contains(&orphan.to_string().as_str()),
+            "a workspace with no watched root is not"
+        );
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &watched, Some(&fid), &[])
+            .await;
+        state.pg.delete_workspace(&orphan).await.unwrap();
+    }
+
+    /// Make default: the identity becomes the default the list reports; an
+    /// identity this machine does not have is a 404 (user, 2026-10-27).
+    #[tokio::test]
+    async fn make_default_makes_the_identity_the_default() {
+        let (app, state) = test_app().await;
+        let label = format!("_test:mkdef-{}", uuid::Uuid::new_v4().simple());
+        state.pg.upsert_persona(&label, true).await.unwrap();
+        let (st, body) =
+            req(app.clone(), "POST", &format!("/api/auth/personas/{label}/default"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let (_, list) = req(app.clone(), "GET", "/api/auth/personas", None).await;
+        assert_eq!(list["default"], label.as_str(), "{list}");
+        let (st, _) =
+            req(app.clone(), "POST", "/api/auth/personas/_test:no-such/default", None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE label = $1")
+            .bind(&label)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// get_duplicates answers what qlty's scan found, stored at HEAD — not a
+    /// similarity search run per question (over 200s on sensei; the MCP gives
+    /// up at 30s). Largest first, with the total and how many repositories
+    /// were measured.
+    #[tokio::test]
+    async fn duplicates_are_the_scans_groups() {
+        use crate::qlty::{DuplicateGroup, FileComplexity, Span};
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (ws, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        let (repo,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+                .bind(fid)
+                .fetch_one(state.pg.pool())
+                .await
+                .unwrap();
+        state
+            .pg
+            .replace_file_complexity(
+                &repo,
+                "s",
+                &[("a.rs".to_string(), FileComplexity::default())].into(),
+            )
+            .await
+            .unwrap();
+        let copies = vec![
+            Span { path: "src/a.rs".into(), start: 1, end: 9 },
+            Span { path: "src/b.rs".into(), start: 3, end: 11 },
+        ];
+        state
+            .pg
+            .replace_duplicates(
+                &repo,
+                "s",
+                &[DuplicateGroup {
+                    hash: "h".into(),
+                    identical: true,
+                    mass: 70.0,
+                    lines: 9,
+                    copies,
+                }],
+            )
+            .await
+            .unwrap();
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/patterns/{ws}/duplicates"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["total"], 1, "{body}");
+        assert_eq!(body["repositories_measured"], 1, "{body}");
+        assert_eq!(body["duplicates"][0]["copies"][1]["path"], "src/b.rs", "{body}");
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+    }
+
+    /// A workspace's conventions count ITS files, by their repo-relative paths.
+    #[tokio::test]
+    async fn conventions_count_the_workspaces_files() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (ws, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        for path in ["src/a.rs", "src/b.rs", "ui/App.svelte"] {
+            crate::tasks::test_support::seed_file(&state.pg, &fid, path).await.unwrap();
+        }
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/patterns/{ws}/conventions"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["structure"]["file_count"], 3, "{body}");
+        assert_eq!(body["structure"]["languages"]["rust"], 2, "{body}");
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+    }
+
+    /// A workspace the daemon does not know is a 404 on every pattern read —
+    /// not an empty answer that reads as "this workspace has none".
+    #[tokio::test]
+    async fn the_pattern_reads_refuse_an_unknown_workspace() {
+        let (app, _) = test_app().await;
+        let ws = format!("no-such-{}", uuid::Uuid::new_v4().simple());
+        for path in ["match?description=x", "for/codemap", "duplicates", "conventions"] {
+            let (st, body) =
+                req(app.clone(), "GET", &format!("/api/patterns/{ws}/{path}"), None).await;
+            assert_eq!(st, StatusCode::NOT_FOUND, "{path}: {body}");
+        }
+    }
+
+    /// A recommendation it cannot make is refused, saying why — never a 200
+    /// whose body is an error a caller reads as a recommendation. An axis value
+    /// the recommender does not know is named, with the values it does.
+    #[tokio::test]
+    async fn a_playbook_recommendation_it_cannot_make_is_refused() {
+        let (app, _) = test_app().await;
+        let ask = |body: serde_json::Value| {
+            req(app.clone(), "POST", "/api/playbook/recommend", Some(body))
+        };
+
+        let (st, body) = ask(serde_json::json!({
+            "lifecycle": "stable", "intent": "fix a bug", "risk": "low", "workspace": "sensei", "preview": true
+        }))
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+        let said = body["error"].as_str().unwrap_or_default();
+        assert!(
+            said.contains("intent") && said.contains("fix a bug") && said.contains("enhancement"),
+            "{body}"
+        );
+
+        let (st, body) = ask(serde_json::json!({"workspace": "sensei", "preview": true})).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+
+        let (st, body) =
+            ask(serde_json::json!({"lifecycle": "stable", "intent": "bug", "risk": "low", "preview": true})).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "no workspace: {body}");
+
+        let (st, body) = ask(serde_json::json!({
+            "lifecycle": "stable", "intent": "bug", "risk": "low", "preview": true,
+            "workspace": format!("no-such-{}", uuid::Uuid::new_v4().simple())
+        }))
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+    }
+
+    /// A tool that takes no workspace answers about the folder its server runs
+    /// in, as it does for an assistant working in a repository. So a Playground
+    /// call made for a workspace runs the server in that workspace's root; a
+    /// workspace with no root on record is refused, not run from somewhere else.
+    #[tokio::test]
+    async fn a_tool_runs_in_the_workspace_it_is_called_for() {
+        let (app, state) = test_app().await;
+        let (command, args) = crate::tasks::mcp_probe::fake::cwd_server();
+        let key = format!("cwd-{}", uuid::Uuid::new_v4().simple());
+        let args = serde_json::json!(args);
+        let env = serde_json::json!({});
+        let id = state
+            .pg
+            .upsert_mcp_server(&crate::db::pg_store::McpServerRow {
+                acp_family: "claude",
+                mcp_key: &key,
+                workspace_id: None,
+                config_source: "/tmp/fake-mcp.json",
+                command: &command,
+                args: &args,
+                env: &env,
+            })
+            .await
+            .unwrap();
+        let uri = format!("/api/instruments/mcp-servers/{id}/call");
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap().to_string_lossy().to_string();
+        let uniq = uuid::Uuid::new_v4();
+        let (ws, fid) =
+            crate::tasks::test_support::seed_workspace_folder_at(&state.pg, &uniq, &root).await;
+
+        let call = |ws: uuid::Uuid| serde_json::json!({"tool": "where", "arguments": {}, "workspace_id": ws});
+        let (st, body) = req(app.clone(), "POST", &uri, Some(call(ws))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["content"][0]["text"], root.as_str());
+
+        let rootless =
+            state.pg.create_workspace(&format!("_test:rootless:{uniq}"), None, None).await.unwrap();
+        let (st, body) = req(app.clone(), "POST", &uri, Some(call(rootless))).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+        state.pg.delete_workspace(&rootless).await.unwrap();
+    }
+
+    /// #343: a server registered by hand is listed, inspected and run like a
+    /// discovered one; the discovery prune never removes it (no config file
+    /// will ever name it); a second registration under its name is refused, not
+    /// an overwrite; and only a hand-registered server can be removed here.
+    #[tokio::test]
+    async fn a_hand_registered_mcp_server_is_listed_run_and_kept() {
+        let (app, state) = test_app().await;
+        let (command, args) = crate::tasks::mcp_probe::fake::server();
+        let name = format!("manual-{}", uuid::Uuid::new_v4().simple());
+        let body = serde_json::json!({"name": name, "command": command, "args": args, "env": {}});
+
+        let (st, made) =
+            req(app.clone(), "POST", "/api/instruments/mcp-servers", Some(body.clone())).await;
+        assert_eq!(st, StatusCode::OK, "{made}");
+        let id = made["id"].as_str().unwrap().to_string();
+        let (st, _) = req(app.clone(), "POST", "/api/instruments/mcp-servers", Some(body)).await;
+        assert_eq!(st, StatusCode::CONFLICT, "a name already registered is not overwritten");
+
+        let (_, list) = req(app.clone(), "GET", "/api/instruments/mcp-servers", None).await;
+        let row =
+            list["servers"].as_array().unwrap().iter().find(|s| s["id"] == id.as_str()).cloned();
+        assert_eq!(
+            row.as_ref().map(|r| r["acp_family"].clone()),
+            Some(serde_json::json!("manual"))
+        );
+
+        let call = serde_json::json!({"tool": "echo", "arguments": {"x": 1}});
+        let (st, ran) = req(
+            app.clone(),
+            "POST",
+            &format!("/api/instruments/mcp-servers/{id}/call"),
+            Some(call),
+        )
+        .await;
+        assert_eq!(
+            (st, ran["result"]["content"][0]["text"].clone()),
+            (StatusCode::OK, serde_json::json!("echoed"))
+        );
+
+        state
+            .pg
+            .prune_stale_mcp_servers(chrono::Utc::now() + chrono::Duration::days(1))
+            .await
+            .unwrap();
+        let (_, list) = req(app.clone(), "GET", "/api/instruments/mcp-servers", None).await;
+        assert!(
+            list["servers"].as_array().unwrap().iter().any(|s| s["id"] == id.as_str()),
+            "the discovery prune keeps a hand-registered server"
+        );
+
+        let found = state
+            .pg
+            .upsert_mcp_server(&crate::db::pg_store::McpServerRow {
+                acp_family: "claude",
+                mcp_key: &format!("found-{}", uuid::Uuid::new_v4().simple()),
+                workspace_id: None,
+                config_source: "/tmp/found.json",
+                command: "npx",
+                args: &serde_json::json!([]),
+                env: &serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        let (st, _) =
+            req(app.clone(), "DELETE", &format!("/api/instruments/mcp-servers/{found}"), None)
+                .await;
+        assert_eq!(st, StatusCode::CONFLICT, "a discovered server is its config file's to remove");
+        let (st, _) =
+            req(app.clone(), "DELETE", &format!("/api/instruments/mcp-servers/{id}"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        let (st, _) = req(app, "DELETE", &format!("/api/instruments/mcp-servers/{id}"), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+
+    /// A workspace with two modules, `{pkg}/alpha` calling `{pkg}/beta`; alpha
+    /// also has a test file.
+    async fn seed_two_modules(state: &AppState) -> (uuid::Uuid, String, uuid::Uuid) {
+        use crate::db::pg_store::graph_seed::SeedGraph;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        let pkg = format!("cm{}", uniq.simple());
+        let def = |file: &'static str| crate::db::pg_store::FqnDef {
+            file_path: file,
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: None,
+        };
+        let node = |fqn: String, name: &'static str, file: &'static str| {
+            let pg = &state.pg;
+            async move {
+                pg.seed_node_by_fqn(&fid, &fqn, "function", name, Some("rust"), Some(def(file)))
+                    .await
+                    .unwrap()
+            }
+        };
+        let a = node(format!("rust·{pkg}·alpha·a"), "a", "alpha/a.rs").await;
+        let b = node(format!("rust·{pkg}·beta·b"), "b", "beta/b.rs").await;
+        node(format!("rust·{pkg}·alpha·t"), "t", "alpha/tests/a_test.rs").await;
+        node(format!("rust·{pkg}·gamma·g"), "g", "gamma/g.rs").await;
+        state
+            .pg
+            .insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls")
+            .await
+            .unwrap();
+        (pid, pkg, fid)
+    }
+
+    /// The Code map's L1 (M17): one module's files in role columns, and the
+    /// modules it depends on and is used by, with weight and direction.
+    #[tokio::test]
+    async fn the_code_map_opens_a_module_into_its_files_by_role() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, _) = seed_two_modules(&state).await;
+        let alpha = format!("{pkg}/alpha");
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap/module?id={alpha}"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let cols: Vec<(String, Vec<String>)> = body["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                let files = c["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|f| f["path"].as_str().unwrap().to_string())
+                    .collect();
+                (c["role"].as_str().unwrap().to_string(), files)
+            })
+            .collect();
+        assert_eq!(
+            cols,
+            vec![
+                ("code".to_string(), vec!["alpha/a.rs".to_string()]),
+                ("test".to_string(), vec!["alpha/tests/a_test.rs".to_string()]),
+            ]
+        );
+        assert_eq!(body["dependsOn"][0]["module"], format!("{pkg}/beta"));
+        assert_eq!(body["dependsOn"][0]["weight"], 1);
+        assert_eq!(body["dependsOn"][0]["direction"], "down");
+        assert_eq!(body["usedBy"].as_array().unwrap().len(), 0);
+
+        let (st, _) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap/module?id={pkg}/nowhere"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "a module this workspace does not have");
+    }
+
+    /// The Code map's L2 (M17): one file's symbols, and the symbols that call
+    /// into it and that it calls, one hop out.
+    #[tokio::test]
+    async fn the_code_map_opens_a_file_into_its_symbols_and_their_neighbours() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, _) = seed_two_modules(&state).await;
+        let file_id = |module: String, path: &'static str| {
+            let app = app.clone();
+            async move {
+                let (_, l1) = req(
+                    app,
+                    "GET",
+                    &format!("/api/workspaces/{pid}/diagrams/codemap/module?id={module}"),
+                    None,
+                )
+                .await;
+                l1["columns"][0]["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|f| f["path"] == path)
+                    .unwrap()["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            }
+        };
+        let a_rs = file_id(format!("{pkg}/alpha"), "alpha/a.rs").await;
+        let b_rs = file_id(format!("{pkg}/beta"), "beta/b.rs").await;
+
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap/file?id={a_rs}"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["path"], "alpha/a.rs");
+        assert_eq!(body["symbols"][0]["name"], "a");
+        assert_eq!(body["callees"][0]["name"], "b");
+        assert_eq!(body["callees"][0]["file"], "beta/b.rs");
+        assert_eq!(body["callees"][0]["weight"], 1);
+        assert_eq!(body["callers"].as_array().unwrap().len(), 0);
+
+        let (_, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap/file?id={b_rs}"),
+            None,
+        )
+        .await;
+        assert_eq!(body["callers"][0]["name"], "a");
+
+        let (st, _) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap/file?id={}", uuid::Uuid::new_v4()),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+
+    /// Hidden coupling (M17): modules that change in the same commits with no
+    /// static dependency either way. alpha calls beta, so their co-change is
+    /// ordinary; beta and gamma change together and share no edge.
+    #[tokio::test]
+    async fn the_code_map_finds_modules_that_change_together_with_no_edge() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, fid) = seed_two_modules(&state).await;
+        let repo = state
+            .pg
+            .repository_id_for_folder(&fid)
+            .await
+            .unwrap()
+            .expect("the fixture's repository");
+        let at = chrono::DateTime::parse_from_rfc3339("2026-10-01T10:00:00+00:00").unwrap();
+        let touch = |path: &str| crate::indexer::git_history::FileTouch {
+            path: crate::indexer::git_history::GitBytes::from(path.as_bytes()),
+            lines_changed: Some(1),
+            renamed_from: None,
+        };
+        let commits: Vec<_> = (0..10)
+            .map(|i| crate::indexer::git_history::Commit {
+                sha: format!("{i:040x}"),
+                authored_at: at,
+                committed_at: at,
+                author_email: None,
+                files: if i < 5 {
+                    vec![touch("beta/b.rs"), touch("gamma/g.rs")]
+                } else {
+                    vec![touch("alpha/a.rs"), touch("beta/b.rs")]
+                },
+            })
+            .collect();
+        state.pg.insert_commits(&repo, &commits).await.unwrap();
+
+        let (st, body) =
+            req(app, "GET", &format!("/api/workspaces/{pid}/diagrams/codemap/cochange"), None)
+                .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let pairs: Vec<(String, String, i64)> = body["hidden"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| {
+                (
+                    h["a"].as_str().unwrap().to_string(),
+                    h["b"].as_str().unwrap().to_string(),
+                    h["together"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(pairs, vec![(format!("{pkg}/beta"), format!("{pkg}/gamma"), 5)], "{body}");
+        assert_eq!(body["commits"], 10, "{body}");
+    }
+
+    /// The Complexity lens (M17): each module block carries its functions and
+    /// how many are over cyclomatic 10, from local qlty's measurement; a module
+    /// never measured carries null — not zero, which would read as simple.
+    #[tokio::test]
+    async fn the_code_map_carries_each_modules_complexity_or_says_it_was_not_measured() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, fid) = seed_two_modules(&state).await;
+        let repo = state
+            .pg
+            .repository_id_for_folder(&fid)
+            .await
+            .unwrap()
+            .expect("the fixture's repository");
+        let measured: std::collections::HashMap<String, crate::qlty::FileComplexity> = [
+            (
+                "alpha/a.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 4, complex: 1, max_cyclo: 14 },
+            ),
+            (
+                "alpha/tests/a_test.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 2, complex: 0, max_cyclo: 3 },
+            ),
+            (
+                "beta/b.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 1, complex: 0, max_cyclo: 2 },
+            ),
+        ]
+        .into_iter()
+        .collect();
+        state.pg.replace_file_complexity(&repo, "abc123", &measured).await.unwrap();
+        assert_eq!(state.pg.complexity_sha(&repo).await.unwrap().as_deref(), Some("abc123"));
+
+        let (st, body) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?groupBy=folders"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let block = |m: &str| {
+            body["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|b| b["id"] == format!("{pkg}/{m}"))
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(block("alpha")["complexity"], serde_json::json!({"functions": 6, "complex": 1}));
+        assert_eq!(block("beta")["complexity"], serde_json::json!({"functions": 1, "complex": 0}));
+        assert!(block("gamma")["complexity"].is_null(), "gamma was never measured");
+    }
+
+    /// The Code map's L0 (M17): modules as blocks grouped by layer or folder,
+    /// one band per module pair, and a budget readout. An unknown grouping is
+    /// refused rather than answered as some other one.
+    #[tokio::test]
+    async fn the_code_map_opens_on_modules_with_one_band_per_pair() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, _) = seed_two_modules(&state).await;
+        for group_by in ["layers", "folders"] {
+            let (st, body) = req(
+                app.clone(),
+                "GET",
+                &format!("/api/workspaces/{pid}/diagrams/codemap?groupBy={group_by}"),
+                None,
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "{body}");
+            let ids: Vec<&str> = body["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|b| b["id"].as_str())
+                .collect();
+            let (alpha, beta) = (format!("{pkg}/alpha"), format!("{pkg}/beta"));
+            assert!(ids.contains(&alpha.as_str()) && ids.contains(&beta.as_str()), "{ids:?}");
+            let bands = body["bands"].as_array().unwrap();
+            assert_eq!(bands.len(), 1, "{body}");
+            assert_eq!(
+                (bands[0]["source"].as_str(), bands[0]["target"].as_str()),
+                (Some(alpha.as_str()), Some(beta.as_str()))
+            );
+            assert_eq!(body["budget"]["drawn"], 3, "alpha, beta, gamma");
+            assert_eq!(body["groupBy"], group_by);
+        }
+        let (_, by_layer) =
+            req(app.clone(), "GET", &format!("/api/workspaces/{pid}/diagrams/codemap"), None).await;
+        let layer_of = |id: String| {
+            by_layer["blocks"].as_array().unwrap().iter().find(|b| b["id"] == id.as_str()).unwrap()
+                ["group"]
+                .clone()
+        };
+        assert_ne!(
+            layer_of(format!("{pkg}/alpha")),
+            layer_of(format!("{pkg}/beta")),
+            "a caller and its callee sit in different layers"
+        );
+        assert_eq!(by_layer["bands"][0]["direction"], "down", "{by_layer}");
+
+        let (st, _) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?groupBy=astrology"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+    }
+
+    /// #133: choosing a glyph mode in Settings stamps when it was chosen, so
+    /// the sync with the dōjō can tell the later choice.
+    #[tokio::test]
+    async fn choosing_a_glyph_mode_records_when() {
+        use crate::dojo_client::glyph_sync::{GLYPHS_KEY, GLYPHS_SET_AT_KEY};
+        let (app, state) = test_app().await;
+        let before = (
+            state.pg.get_config(GLYPHS_KEY).await.unwrap(),
+            state.pg.get_config(GLYPHS_SET_AT_KEY).await.unwrap(),
+        );
+        let start = chrono::Utc::now();
+        let (st, _) =
+            req(app, "PUT", "/api/config", Some(serde_json::json!({ GLYPHS_KEY: "icon" }))).await;
+        assert_eq!(st, StatusCode::OK);
+        let at = state.pg.get_config(GLYPHS_SET_AT_KEY).await.unwrap().expect("stamped");
+        let at = chrono::DateTime::parse_from_rfc3339(&at).expect("RFC 3339");
+        assert!(at >= start - chrono::Duration::seconds(1), "{at} is when it was chosen");
+        for (key, value) in [(GLYPHS_KEY, before.0), (GLYPHS_SET_AT_KEY, before.1)] {
+            match value {
+                Some(v) => state.pg.set_config(key, &v).await.unwrap(),
+                None => state.pg.delete_config(key).await.unwrap(),
+            }
+        }
+    }
+
+    /// A workspace's image icon is offered only when the daemon can serve it:
+    /// the list marks it `available`, so the app asks for no image that answers
+    /// 404 — a repository no longer on disk, or a logo since removed.
+    #[tokio::test]
+    async fn the_workspace_list_says_whether_an_image_icon_can_be_served() {
+        let (app, state) = test_app().await;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("logo.svg"), "<svg/>").unwrap();
+        let uniq = uuid::Uuid::new_v4();
+        let (here, _) = crate::tasks::test_support::seed_workspace_folder_at(
+            &state.pg,
+            &uniq,
+            &dir.path().to_string_lossy(),
+        )
+        .await;
+        let (gone, _) = crate::tasks::test_support::seed_metrics_workspace_folder(
+            &state.pg,
+            &uuid::Uuid::new_v4(),
+        )
+        .await;
+        for (pid, rel) in [(here, "logo.svg"), (gone, "logo.svg")] {
+            state
+                .pg
+                .set_workspace_icon(
+                    &pid,
+                    &serde_json::json!({"kind": "image", "value": rel, "source": "logo_file"}),
+                )
+                .await
+                .unwrap();
+        }
+        let (st, body) = req(app, "GET", "/api/workspaces", None).await;
+        assert_eq!(st, StatusCode::OK);
+        let icon = |pid: uuid::Uuid| {
+            body.as_array().unwrap().iter().find(|w| w["id"] == pid.to_string()).unwrap()["icon"]
+                .clone()
+        };
+        assert_eq!(icon(here)["available"], true);
+        assert_eq!(icon(gone)["available"], false, "its folder is not on disk");
     }
 
     /// A request as the CLI or the app sends it: addressed to loopback, which
@@ -1628,9 +2475,10 @@ mod tests {
         let err_key = format!("test/sync-err-{uniq}");
         let skip_key = format!("test/sync-skip-{uniq}");
 
-        let ok = SyncMark { entity: "repository", key: &ok_key, direction: "push" };
-        let err = SyncMark { entity: "repository", key: &err_key, direction: "push" };
-        let skip = SyncMark { entity: "repository", key: &skip_key, direction: "push" };
+        let ok = SyncMark { entity: "repository", key: &ok_key, direction: "push", persona: "p" };
+        let err = SyncMark { entity: "repository", key: &err_key, direction: "push", persona: "p" };
+        let skip =
+            SyncMark { entity: "repository", key: &skip_key, direction: "push", persona: "p" };
 
         state.pg.mark_synced(&ok, Some(7)).await.unwrap();
         // Synced FIRST, then failed — so this row carries both a `synced_at` and
@@ -3097,93 +3945,6 @@ mod tests {
         pg.delete_workspace(&pid).await.ok();
     }
 
-    /// **THE WORLD ENDPOINT NESTS A SEEDED CORPUS, AND REFUSES A GROUPING IT
-    /// DOES NOT HAVE (#219).**
-    ///
-    /// `analysis::world` owns the nesting invariants and tests them in
-    /// isolation. What only the endpoint can show is the seam: that the two
-    /// reads line up into cells the nester accepts, that the workspace in the path
-    /// NAMES the view without scoping it, and that an unknown grouping is a 400
-    /// rather than a silent fall back to the default — which is how a control
-    /// comes to look like it works while answering a different question.
-    ///
-    /// Mutation that must break this test: make `GroupFirst::from_label`
-    /// return `Some(Workspace)` for an unknown label, or filter `world_cells` by
-    /// workspace.
-    #[tokio::test]
-    async fn the_world_endpoint_nests_every_workspace_and_refuses_an_unknown_grouping() {
-        let (app, state) = test_app().await;
-        let pg = &state.pg;
-        let tag = uuid::Uuid::new_v4();
-        let mine = pg.create_workspace(&format!("_test:world:{tag}"), None, None).await.unwrap();
-        let root = format!("/_test/world/{tag}");
-        let root_id = pg.add_watch_root(&root, "world-wt", &serde_json::json!([])).await.unwrap();
-        let fid = pg.upsert_repo(&root_id, &format!("w-{tag}"), &root).await.unwrap();
-        crate::tasks::test_support::place_folder_in_workspace(pg, &fid, &mine, &format!("w-{tag}"))
-            .await
-            .unwrap();
-        pg.upsert_file_row(
-            &crate::db::pg_store::FileFingerprint {
-                folder_id: &fid,
-                file_path: "a.rs",
-                mtime: 1,
-                content_hash: "seed",
-            },
-            None,
-        )
-        .await
-        .unwrap();
-        let def = crate::db::pg_store::FqnDef {
-            file_path: "a.rs",
-            signature: None,
-            line_start: Some(1),
-            line_end: Some(2),
-            is_exported: true,
-            parent_id: None,
-        };
-        pg.seed_node_by_fqn(&fid, "rust·w·m·one", "function", "one", Some("rust"), Some(def))
-            .await
-            .unwrap();
-
-        let url = format!("/api/workspaces/{mine}/diagrams/world?groupBy=workspace");
-        let (status, body) = req(app.clone(), "GET", &url, None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["groupBy"], "workspace");
-
-        // The path's workspace NAMES the view and does not scope it. The corpus
-        // this runs against holds other workspaces, and the picture is "all
-        // indexed code" — a payload holding only one workspace's circle would mean
-        // the outermost ring had been filtered away.
-        let name = format!("_test:world:{tag}");
-        assert_eq!(body["viewing"], name, "the payload says which circle you are standing in");
-
-        let units = body["units"].as_array().expect("units");
-        assert!(!units.is_empty(), "the fixture declares a symbol, so something is nested");
-        let roots: Vec<&str> = units
-            .iter()
-            .filter(|u| u["path"].as_array().unwrap().len() == 1)
-            .filter_map(|u| u["label"].as_str())
-            .collect();
-        assert!(roots.contains(&name.as_str()), "the seeded workspace is a circle: {roots:?}");
-
-        // Every unit carries the three things the layout and the shade control
-        // read. A missing `path` nests nothing; a missing `measures` leaves the
-        // shade control with nothing to colour by.
-        for u in units {
-            assert!(u["path"].is_array(), "every unit carries its own path: {u}");
-            assert!(u["weight"].is_i64(), "{u}");
-            assert!(u["measures"]["documentedShare"].is_number(), "{u}");
-        }
-
-        // A grouping that does not exist is a refusal, not a default.
-        let (status, _) =
-            req(app, "GET", &format!("/api/workspaces/{mine}/diagrams/world?groupBy=docs"), None)
-                .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "there is no docs grouping");
-
-        pg.delete_workspace(&mine).await.ok();
-    }
-
     /// **THE NEIGHBOURHOOD ENDPOINT WALKS RINGS BY DEPTH, AND REFUSES WHAT IT
     /// CANNOT DRAW (#220).**
     ///
@@ -3561,6 +4322,7 @@ mod tests {
                     source: "manifest",
                     version_range: Some("1"),
                     skills: &[ProvidedSkill {
+                        url: None,
                         name: "semantic-styles-rokkit".into(),
                         focus: "styling".into(),
                         path: Some("p.md".into()),
@@ -4722,15 +5484,13 @@ mod tests {
             .await
             .unwrap();
 
-        // A tagged `file` node so get_patterns (→ get_file_tags) resolves a hit.
+        // A tagged file so get_patterns (→ get_file_tags) resolves a hit — the
+        // tags live on `sensei.files`; the indexer writes no `file` node.
         let file_path = "src/widget.rs".to_string();
-        let file_id = state
-            .pg
-            .seed_node(&folder_id, "file", "widget.rs", &file_path, None, None, None, None)
-            .await
-            .unwrap();
+        let file_id =
+            crate::tasks::test_support::seed_file(&state.pg, &folder_id, &file_path).await.unwrap();
         let tag = "route";
-        sqlx_core::query::query("UPDATE sensei.nodes SET tags = $2 WHERE id = $1")
+        sqlx_core::query::query("UPDATE sensei.files SET tags = $2 WHERE id = $1")
             .bind(file_id)
             .bind(vec![tag.to_string()])
             .execute(state.pg.pool())
@@ -4901,19 +5661,15 @@ mod tests {
                 "get_duplicates",
                 serde_json::json!({}),
                 Box::new(move |b| {
-                    // No code embeddings are seeded in-process, so the cosine
-                    // self-join yields 0 rows — but the seam MUST resolve WORKSPACE
-                    // scope (name → folders), which is what drift would break.
-                    // NOTE (gap): actual duplicate detection needs embeddings and is
-                    // exercised by the daemon's own embedding tests, not here.
-                    if b["scope"].as_str() == Some("workspace")
-                        && b["folder_count"].as_i64().unwrap_or(0) >= 1
-                    {
+                    // The seam must resolve the WORKSPACE (name → its
+                    // repositories), which is what drift would break: the
+                    // seeded workspace has one repository.
+                    if b["repositories"].as_i64() == Some(1) && b["total"].is_i64() {
                         Ok(())
                     } else {
                         Err(format!(
-                            "duplicates scope={:?} folder_count={:?} (want workspace scope over >=1 folder)",
-                            b["scope"], b["folder_count"]
+                            "duplicates repositories={:?} total={:?} (want the workspace's one repository)",
+                            b["repositories"], b["total"]
                         ))
                     }
                 }),
@@ -5256,6 +6012,30 @@ mod tests {
             app_folders.iter().any(|f| f["kind"].as_str() == Some("folder")),
             "app path must still expose the nested `kind:'folder'` descendants",
         );
+
+        // `?folders=roots` — what the MCP resolves a workspace name, and the
+        // current folder, against: every workspace, each with its repo roots
+        // only (the full tree made that lookup outlast the MCP's patience).
+        let resp = app
+            .clone()
+            .oneshot(
+                local_request()
+                    .uri(sensei_mcp::WORKSPACES_FOR_RESOLUTION)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let roots: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mine = roots
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"].as_str() == Some(&pname))
+            .expect("every workspace is listed, not only those under a folder");
+        assert_eq!(mine["folders"].as_array().map(Vec::len), Some(1), "{mine}");
 
         state.pg.delete_workspace(&pid).await.unwrap();
     }

@@ -1,39 +1,33 @@
-# Checkpoint — 2026-10-26
+# Checkpoint — 2026-10-27 (end of day)
 
-**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md), wave 5, plus **demo prep** (user: a demo
-this week, sensei + dōjō, metrics and diagrams).
+**Agenda — 2026-10-28 (user):**
+1. **Apple Developer ID → #282.** Sign senseid/sensei/sensei-mcp with it, so a reinstall stops revoking Keychain
+   approval. Then ONE signed install of everything waiting (below) and verify live: get_duplicates from qlty,
+   sync rows by identity, Make default, a dead credential → Sign in; rerun `bun run test:inspect -- tool-calls`.
+2. **Screen-by-screen feedback walk.** One screen at a time; the user gives feedback, changes are made, verified,
+   next. Start from the queue in `docs/roadmap/08-issue-burndown.md` (UI walk).
 
-**Released:** v0.20.2 and dbd 0.27.7. Closed today: #289, #194, #331, #338. Filed #339.
+**Built, pushed, NOT installed (waiting for the signed install):** ebcfe469 sync rows name their identity;
+f5eaa279 Make default; 02444525 Settings · Dōjō by identity → day → repository; 140e28d7 get_duplicates from
+qlty's scan; 4db76bd8 dead credential → Sign in, no Keychain read; 8b2dc94f General's choices as toggle groups;
+1d084c72 no "sensei speaks" caption; be2f37f0 no stray mark before a root's path; 72052d8a Playground sends
+what is typed; 3b8017ed "Runs in" lists watched workspaces only; 2677767a Settings as its own window (⌘,);
+05cfb84c rokkit 1.9.1. The app must go with the
+daemon (the dōjō screen reads the identity the new daemon writes). Live DB already converged.
 
-**Waiting on the next release:** #336, #125 (5dea36e3), #161, #338's cadence, the VS Code installed scan.
+**Done today, rokkit:** #173 and #174 fixed and released as 1.9.1, bumped here (05cfb84c). glyphs-inspect
+stays red on its overview step until the daemon with `?watched=true` is installed.
 
-**Demo prep, done today (develop, not yet released):**
-- 3f6f4199: sessions "last 7 days" / `sessions7d` / `last_session_at` key on last activity.
-- 00e84641: community labels by where most members live (the largest no longer read "function ()").
-- 87bc0bbc, 7d22700c, eeb834ce: dōjō **My metrics** at `/you/metrics` (`dojo.my_metric_series`,
-  `GET /v1/you/metrics`, four cards with daily lines). Seen in the browser on the local dōjō.
-- Watch roots: dbd, gateway, torii added (user) and indexed.
+**Queued (burndown, UI walk):** Roots removal progress over the SSE stream (removal is one prune call today —
+needs steps that emit events); Libraries "sensei will wrap" claims docs not held; Instruments switch;
+Replay's scrolling and an easier call history; Svelte components as search symbols.
 
-**Before the demo:**
-1. A patch release (`make bump v=patch` → PR → `make release`; deploy-dojo needs the user's approval),
-   or at least `make install` locally. Note that a daemon reinstall revokes its Keychain approval.
-2. Fresh sessions and a dōjō sync: the synced session metrics end 10-18.
-3. Demo from a fresh Claude session; this one runs a pre-rename MCP.
-4. A run-through: Today → Metrics (radar, a trend) → Diagrams (Structure, Cycles, Neighbourhood,
-   Schema with torii) → `get_callers` live in Claude → dōjō My metrics and Teams.
+**Supabase advisor (production dōjō):** fixed in DDL (0bbbc75c) — RLS on all 13 tables, search_path pinned,
+guarded by database/tests/dojo/advisor_guards.sql; reaches production with the next release's dōjō deploy.
+Production's Data API exposed `sensei`, unlike the repo (public, graphql_public, dojo); the user removed it
+(2026-10-27) — no code reads sensei through the API. The 47 SECURITY DEFINER warnings are the dōjō's caller-gated API + RLS
+helpers (by design); a test that calls each as a non-member is the proposed hardening.
 
-**In progress — #123 Track B** (burndown has the detail): B1 swarm 4/6; its live findings fixed. B2/B3:
-`dojo-db.yml` runs the dōjō's 58 access-rule files on a fresh Supabase through `scripts/deploy-dojo-db.sh`
-(release's path too), green; bdd21fdf exit codes. B4 ported. ae3f9514 fixed fmt/clippy slips that failed
-CI lint on 14c098e4: run fmt + workspace clippy before every Rust commit. Left: B2's app e2e (WebKit).
-
-**#190 blocked on sensei-hq/dbd#109.** Filed dbd#110: reconcile/diff ignore a changed TABLE comment (the facet
-tables' new table comments are in the DDL, not live; column comments converge).
-
-**Next:** confirm Rust CI green on develop; then B2's app e2e (WebKit), or wave 5's #281.
-
-**Open (the user's):** release now for the demo?; should "Tokens" exclude cache reads?; dbd#109's shape and
-dbd#110, then a dbd release; delete the local reviewer agents (`/review-slice` names them)?
-
-**Known:** the dōjō Workers build is intermittent on PR/develop commits. qlty is out of minutes. After a DDL
-change, run `make test-template`. The Svelte MCP did not connect this session (svelte-check stood in).
+**Known:** CI qlty workflows disabled (out of minutes; `gh workflow enable` restores). Long-lived Claude
+sessions keep an old sensei-mcp (404 on update_phase) — `/mcp` reconnect. Keychain tests fail on rebuilt
+test binaries (#282).

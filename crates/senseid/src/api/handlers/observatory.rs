@@ -23,6 +23,14 @@ use crate::api::util::resolve_workspace_uuid;
 pub(crate) struct ListSolutionsQuery {
     #[serde(default)]
     under: Option<String>,
+    /// `roots`: each workspace with its repo-root folders only — what a
+    /// name or current-folder lookup needs (the sensei MCP sends it).
+    #[serde(default)]
+    folders: Option<String>,
+    /// `true`: only the workspaces with a folder under a watched root — the
+    /// ones a tool can run in.
+    #[serde(default)]
+    watched: Option<bool>,
 }
 
 pub(crate) async fn list_solutions(
@@ -30,11 +38,24 @@ pub(crate) async fn list_solutions(
     Query(q): Query<ListSolutionsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let under = q.under.as_deref().filter(|s| !s.is_empty());
-    let workspaces = state
+    let mut workspaces = state
         .pg
         .list_workspaces_under(under)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if q.watched == Some(true) {
+        let watched = state
+            .pg
+            .watched_workspace_ids()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        workspaces.retain(|w| {
+            w["id"]
+                .as_str()
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                .is_some_and(|id| watched.contains(&id))
+        });
+    }
 
     // Enrich each workspace with its folder membership so the Workspaces setup
     // page (and any future workspace detail view) can render folder names,
@@ -43,11 +64,11 @@ pub(crate) async fn list_solutions(
     // Folder-scope matters here: the `?under=` call is the MCP `find_workspaces`
     // discovery path, which only needs the repo-root folders — attaching the
     // hundreds of nested `kind:'folder'` descendants blew the response past the
-    // MCP client's token cap (~72K chars for sensei). So when `under` is set we
-    // send only the compact repo roots (still enough for cwd→workspace
-    // resolution). The un-scoped app path (`GET /api/workspaces`, no `under`)
-    // keeps the full folder tree — unchanged.
-    let compact = under.is_some();
+    // MCP client's token cap (~72K chars for sensei). So when `under` is set, or
+    // `folders=roots` asks for the MCP's name/cwd lookup, we send only the
+    // compact repo roots (still enough for cwd→workspace resolution). The app
+    // path (`GET /api/workspaces`, neither) keeps the full folder tree.
+    let compact = under.is_some() || q.folders.as_deref() == Some("roots");
     let mut enriched = Vec::with_capacity(workspaces.len());
     for mut workspace in workspaces {
         // A uuid read back out of a DB row, NOT the `{id}` of a route — this
@@ -78,7 +99,35 @@ pub(crate) async fn list_solutions(
         }
         enriched.push(workspace);
     }
+    // An image icon is offered only when it can be served (the app would
+    // otherwise ask for it and get a 404): its repository root may be gone from
+    // disk, or the logo removed since it was inferred.
+    let enriched = tokio::task::spawn_blocking(move || {
+        enriched.into_iter().map(mark_icon_available).collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!(enriched)))
+}
+
+/// Mark a listed workspace's image icon `available` (or not), from its folders'
+/// paths. Blocking disk I/O.
+fn mark_icon_available(mut workspace: serde_json::Value) -> serde_json::Value {
+    let rel = match workspace["icon"].get("kind").and_then(|k| k.as_str()) {
+        Some("image") => workspace["icon"]["value"].as_str().map(str::to_string),
+        _ => None,
+    };
+    if let Some(rel) = rel {
+        let roots: Vec<String> = workspace["folders"]
+            .as_array()
+            .map(|fs| {
+                fs.iter().filter_map(|f| f["abs_path"].as_str().map(str::to_string)).collect()
+            })
+            .unwrap_or_default();
+        workspace["icon"]["available"] =
+            serde_json::json!(crate::analysis::workspace_icon::icon_available(&roots, &rel));
+    }
+    workspace
 }
 
 #[derive(Deserialize)]
@@ -618,123 +667,6 @@ pub(crate) async fn workspace_summary(
 }
 
 // ── Solution Graph & Roles ──────────────────────────────────────────────────
-
-pub(crate) async fn solution_graph(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    let workspace = state
-        .pg
-        .get_workspace(&workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    let workspace_name = workspace["name"].as_str().unwrap_or("unknown");
-
-    // Get all repos (folders) and filter those belonging to this workspace.
-    // Fail closed on a read error (500) — an empty repo list here would render
-    // as an empty solution graph, indistinguishable from a real single-node one.
-    let all_repos =
-        state.pg.list_repositories().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let workspace_repos: Vec<&serde_json::Value> =
-        all_repos.iter().filter(|r| r["workspace_id"].as_str() == Some(&id)).collect();
-
-    let mut all_nodes = Vec::new();
-    let mut all_edges = Vec::new();
-
-    // Collect folder ids for all member repos, preserving per-repo metadata.
-    let mut folder_ids: Vec<uuid::Uuid> = Vec::new();
-    let mut folder_id_to_repo: std::collections::HashMap<uuid::Uuid, (&serde_json::Value, String)> =
-        std::collections::HashMap::new();
-    let mut seen_repo_ids = std::collections::HashSet::new();
-    for repo in &workspace_repos {
-        let repo_name = repo["name"].as_str().unwrap_or("").to_string();
-        if !seen_repo_ids.insert(repo_name.clone()) {
-            continue;
-        }
-        if let Some(fid) = crate::api::util::json_uuid(&repo["id"]) {
-            folder_ids.push(fid);
-            folder_id_to_repo.insert(fid, (repo, repo_name));
-        }
-    }
-
-    // Fetch nodes and edges in one scoped call each. Fail closed on a read
-    // error (500) — a swallowed error would silently drop nodes/edges and render
-    // a truncated graph as if it were complete.
-    let scoped_nodes = state
-        .pg
-        .get_nodes_scoped(&folder_ids)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let scoped_edges = state
-        .pg
-        .get_edges_scoped(&folder_ids, "calls")
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Re-annotate nodes with repoId/role from folder metadata.
-    // get_nodes_scoped returns folder_id — use it to look up the repo.
-    for node in scoped_nodes {
-        let fid_opt = node
-            .get("folder_id")
-            .and_then(|v| v.as_str())
-            .and_then(|s| uuid::Uuid::parse_str(s).ok());
-        let (repo_name, role) = fid_opt
-            .and_then(|fid| folder_id_to_repo.get(&fid))
-            .map(|(r, rn)| (rn.as_str(), r["role"].as_str().unwrap_or("unknown")))
-            .unwrap_or(("", "unknown"));
-        all_nodes.push(serde_json::json!({
-            "id": node["id"], "name": node["name"], "kind": node["kind"],
-            "file": node["file_path"], "line": node["line_start"],
-            "complexity": node.get("complexity"),
-            "doc_type": node.get("doc_type"), "level": node.get("level"),
-            "parent_id": node["parent_id"],
-            "repoId": repo_name, "role": role,
-        }));
-    }
-    for edge in scoped_edges {
-        // edges don't carry folder_id in the scoped result shape; repoId is best-effort
-        all_edges.push(serde_json::json!({
-            "source": edge["source_id"], "target": edge["target_id"],
-            "type": "calls",
-        }));
-    }
-
-    // Inject workspace-level hierarchy: soln -> repo nodes for each member
-    let soln_node_id = format!("soln:{}", id);
-    all_nodes.push(serde_json::json!({
-        "id": &soln_node_id, "name": workspace_name, "kind": "solution",
-        "file": "", "line": 0, "complexity": null,
-    }));
-    for repo in &workspace_repos {
-        let repo_name = repo["name"].as_str().unwrap_or("");
-        let repo_node_id = format!("repo:{}", repo_name);
-        if !all_nodes.iter().any(|n| n.get("id").and_then(|v| v.as_str()) == Some(&repo_node_id)) {
-            let label = repo["label"].as_str().unwrap_or(repo_name);
-            let abs_path = repo["abs_path"].as_str().unwrap_or("");
-            let role = repo["role"].as_str().unwrap_or("unknown");
-            all_nodes.push(serde_json::json!({
-                "id": &repo_node_id, "name": label, "kind": "repo",
-                "file": abs_path, "line": 0, "complexity": null,
-                "role": role,
-            }));
-        }
-        all_edges.push(serde_json::json!({
-            "source": &soln_node_id, "target": &repo_node_id, "type": "CONTAINS_REPO",
-        }));
-    }
-
-    Ok(Json(serde_json::json!({
-        "solutionId": id,
-        "name": workspace_name,
-        "nodes": all_nodes.len(),
-        "edges": all_edges.len(),
-        "repos": workspace_repos.len(),
-        "graph": {"nodes": all_nodes, "edges": all_edges},
-    })))
-}
 
 pub(crate) async fn solution_roles(
     State(state): State<AppState>,

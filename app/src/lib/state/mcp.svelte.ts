@@ -14,7 +14,7 @@
 import { failureReason, senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
 import type {
-  McpToolManifest, ToolInsight, ToolSignal,
+  ToolInsight, ToolSignal,
   SessionReplayCall, McpServerRow, McpServerToolsManifest,
   ToolHealthSource,
 } from '$lib/types.js';
@@ -57,7 +57,6 @@ let insightsStatus = $state<LoadStatus>('idle');
 let catalogError = $state<string | null>(null);
 let insightsError = $state<string | null>(null);
 
-let tools = $state<McpToolManifest[]>([]);
 let toolStats = $state<ToolStat[]>([]);
 let toolSignals = $state<ToolSignal[]>([]);
 let toolInsights = $state<ToolInsight[]>([]);
@@ -69,18 +68,13 @@ async function loadCatalog(force = false): Promise<void> {
   if (!force && catalogStatus === 'ready') return;
   catalogStatus = 'loading';
   const api = senseiApi(appState.port);
-  const [catalog, stats, signals] = await Promise.all([
-    api.tryMcpListTools(),
-    api.tryGetToolUsage(),
-    api.tryGetToolSignals(),
-  ]);
-  if (!catalog.ok || !stats.ok || !signals.ok) {
-    const failed = [catalog, stats, signals].find((r) => !r.ok);
+  const [stats, signals] = await Promise.all([api.tryGetToolUsage(), api.tryGetToolSignals()]);
+  if (!stats.ok || !signals.ok) {
+    const failed = [stats, signals].find((r) => !r.ok);
     catalogError = failed && !failed.ok ? failureReason(failed.error) : null;
     catalogStatus = 'error';
     return;
   }
-  tools = catalog.data.tools;
   toolStats = stats.data.tools ?? [];
   toolSignals = signals.data.signals ?? [];
   signalSource = signals.data.source ?? null;
@@ -229,6 +223,25 @@ async function toggleMcpServer(serverId: string, enabled: boolean): Promise<stri
   return null;
 }
 
+/** Register a server by hand (#343), then reload the list. Returns `null` on
+ *  success, else the daemon's reason in words. */
+async function registerMcpServer(server: {
+  name: string; command: string; args: string[]; env: Record<string, string>;
+}): Promise<string | null> {
+  const res = await senseiApi(appState.port).tryRegisterMcpServer(server);
+  if (!res.ok) return `The server was not added: ${failureReason(res.error)}`;
+  await loadMcpServers(undefined, true);
+  return null;
+}
+
+/** Remove a hand-registered server; the row goes only once the daemon removed it. */
+async function removeMcpServer(serverId: string): Promise<string | null> {
+  const res = await senseiApi(appState.port).tryRemoveMcpServer(serverId);
+  if (!res.ok) return `The server was not removed (${res.error.status} ${res.error.message})`;
+  mcpServers = mcpServers.filter((s) => s.id !== serverId);
+  return null;
+}
+
 /** Trigger a full discovery pass across $HOME + registered workspaces, then
  *  reload the list. Returns `null` on success, else the failure in words. */
 async function refreshMcpServers(): Promise<string | null> {
@@ -257,7 +270,6 @@ async function refresh(): Promise<void> {
  * consumers get proper $state proxying under Svelte 5 runes.
  */
 export const mcp = {
-  get tools() { return tools; },
   get toolStats() { return toolStats; },
   get toolSignals() { return toolSignals; },
   get toolInsights() { return toolInsights; },
@@ -292,5 +304,7 @@ export const mcp = {
   loadServerTools,
   toggleMcpServer,
   refreshMcpServers,
+  registerMcpServer,
+  removeMcpServer,
   refresh,
 };

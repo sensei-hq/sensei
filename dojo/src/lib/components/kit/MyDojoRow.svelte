@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { KIND_ICONS } from '@sensei/glyphs';
 	import KanjiToken from './KanjiToken.svelte';
 	import Chip from './Chip.svelte';
 	import RoleTag from './RoleTag.svelte';
@@ -20,7 +21,7 @@
 	style="padding: 16px"
 >
 	<!-- A dōjō's own mark: an identity, kanji in both modes (#133). -->
-	<KanjiToken char={dojo.kanji} icon={null} size="2xl" toneClass={kind.text} w={34} />
+	<KanjiToken char={dojo.kanji} icon={KIND_ICONS.dojo} size="2xl" toneClass={kind.text} w={34} />
 	<div class="flex-1" style="min-width: 0">
 		<div class="flex items-center gap-2">
 			<span class="text-ink text-base font-medium">{dojo.name}</span>

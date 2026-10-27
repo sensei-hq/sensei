@@ -20,3 +20,8 @@ create table tenants (
 , dojo_url      text
 , modified_at   timestamptz not null default now()
 );
+
+-- Row level security (the Supabase advisor, 2026-10-27), with no client policy.
+-- An import staging table: written and read by the import alone, as the owner; a client role reads nothing here. Inert on the daemon, which connects
+-- as the owner.
+alter table staging.tenants enable row level security;

@@ -142,6 +142,13 @@ pub enum TaskKind {
     /// Fetch tickets a tracker's board has but sensei hasn't synced yet, named in
     /// newly ingested sessions, and link them (tracker spec R11). `path` = tracker id.
     TrackerDiscover,
+    /// Read a DEPENDENCY's `sensei.library.json` from its repository and register
+    /// the library (#341). `path` = `owner/repo`; `url` = the
+    /// `libraries::dependencies::DependencyRepo` as JSON.
+    DiscoverLibrary,
+    /// Measure a repository's function complexity with local qlty, at HEAD
+    /// (Code map). `folder_path` = the repository root; `path` = its id.
+    MeasureComplexity,
     /// Global: cluster recurring corrective prompts across all workspaces into
     /// inference.corrections (analyzer #65 step 5). Enqueued once per scheduler tick.
     AggregateCorrections,
@@ -332,6 +339,8 @@ impl TaskKind {
         Self::ComputeHealth,
         Self::BackfillCoverage,
         Self::TrackerDiscover,
+        Self::DiscoverLibrary,
+        Self::MeasureComplexity,
         Self::MeasureVerdicts,
         Self::ClassifyPendingVerdicts,
         Self::AggregateCorrections,
@@ -598,6 +607,23 @@ impl TaskKind {
                 pipeline: Pipeline::Activity,
                 stage: Stage::Ingest,
                 budget_secs: 180,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::DiscoverLibrary => KindInfo {
+                name: "discover_library",
+                pipeline: Pipeline::Library,
+                stage: Stage::Ingest,
+                budget_secs: 300,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::MeasureComplexity => KindInfo {
+                name: "measure_complexity",
+                pipeline: Pipeline::Index,
+                stage: Stage::Derive,
+                // 9.4s for sensei's 912 files; a large repository takes longer.
+                budget_secs: 600,
                 high_priority: false,
                 retryable: false,
             },
@@ -1119,7 +1145,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "a kind appears twice in ALL");
-        assert_eq!(total, 41, "ALL is missing a kind — add it beside its info() arm");
+        assert_eq!(total, 43, "ALL is missing a kind — add it beside its info() arm");
     }
 
     #[test]

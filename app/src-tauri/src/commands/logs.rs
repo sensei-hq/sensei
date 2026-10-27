@@ -30,9 +30,6 @@ pub fn log_session_end(state: State<LogCollector>, session_id: String) {
 
 /// Return all log sessions, optionally filtered by module, newest-first.
 #[tauri::command]
-pub fn get_log_sessions(
-    state: State<LogCollector>,
-    module: Option<String>,
-) -> Vec<LogSession> {
+pub fn get_log_sessions(state: State<LogCollector>, module: Option<String>) -> Vec<LogSession> {
     state.read_sessions(module.as_deref())
 }

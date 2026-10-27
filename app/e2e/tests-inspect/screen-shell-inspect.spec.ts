@@ -11,8 +11,8 @@ import { DAEMON_URL } from '../helpers';
 /** Workspace-scoped screens on `Screen`; grows as screens move (#293). */
 const WORKSPACE_SCREENS = [
   'traceability', 'instruments', 'libraries', 'memories',
-  'diagrams/cycles', 'diagrams/layers', 'diagrams/neighbourhood', 'diagrams/schema', 'diagrams/structure', 'diagrams/world',
-  'overview', 'about', 'patterns', 'impact', 'intake', 'metrics', 'sessions', 'atlas',
+  'diagrams/codemap', 'diagrams/cycles', 'diagrams/layers', 'diagrams/neighbourhood', 'diagrams/schema', 'diagrams/structure',
+  'overview', 'about', 'patterns', 'impact', 'intake', 'metrics', 'sessions',
 ];
 
 /** Observatory screens on `Screen`, by path; grows as screens move (#293). */
@@ -54,7 +54,7 @@ async function openScreen(page: Page, route: string) {
     a.remove();
   })()`);
   for (const until = Date.now() + 120_000; Date.now() < until; ) {
-    // A page busy mounting (atlas lays its graph out on the main thread) cannot
+    // A page busy mounting (a diagram lays its graph out on the main thread) cannot
     // answer; that is "not yet", not a failure.
     const mounted = await page.evaluate(`!!document.querySelector('${FRESH_BODY}')`).catch(() => false);
     if (mounted) return;
@@ -116,6 +116,6 @@ test('screens on the shared layout keep the header fixed over one scroll body', 
   for (const screen of [...screens, ...OBSERVATORY_SCREENS]) {
     expect(results[screen], screen).toEqual(expected(results[screen]?.fill ?? false));
   }
-  // The two list-and-detail screens are the fill ones.
-  expect(screens.filter((s) => results[s]?.fill)).toEqual(['atlas', screens.at(-1)]);
+  // The list-and-detail screen is the fill one.
+  expect(screens.filter((s) => results[s]?.fill)).toEqual([screens.at(-1)]);
 });

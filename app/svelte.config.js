@@ -12,6 +12,8 @@ const config = {
       '@sensei/glyphs': '../packages/glyphs/index.js',
       // Svelte components shared with the dōjō (#293).
       '@sensei/ui': '../packages/ui/index.js',
+      // The Code map (M17), shared with the dōjō.
+      '@sensei/codemap': '../packages/codemap/index.ts',
     },
   },
   vitePlugin: {

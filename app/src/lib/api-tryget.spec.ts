@@ -76,7 +76,6 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryListGatewayChains', call: () => api().tryListGatewayChains(), body: { chains: [] } },
   { name: 'tryProvisionStatus', call: () => api().tryProvisionStatus(), body: { models: [] } },
   // #288 — the Instruments store.
-  { name: 'tryMcpListTools', call: () => api().tryMcpListTools(), body: { tools: [] } },
   { name: 'tryGetToolUsage', call: () => api().tryGetToolUsage(), body: { tools: [] } },
   { name: 'tryGetToolSignals', call: () => api().tryGetToolSignals(), body: { signals: [] } },
   { name: 'tryGetToolInsights', call: () => api().tryGetToolInsights(), body: { insights: [] } },
@@ -95,12 +94,6 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryGetIntakeGuide', call: () => api().tryGetIntakeGuide(), body: { frame: '', axes: [], playbooks: [] } },
   { name: 'tryListMemories', call: () => api().tryListMemories({ status: 'active' }), body: { memories: [] } },
   { name: 'tryListKnowledgeSources', call: () => api().tryListKnowledgeSources(), body: { sources: [] } },
-  // #288 — Atlas.
-  { name: 'tryGetGraphNodes', call: () => api().tryGetGraphNodes('r'), body: { nodes: [], edges: [] } },
-  { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
-  { name: 'tryDetectCommunities', call: () => api().tryDetectCommunities('r'), body: { ok: true, communities: 2 } },
-  { name: 'tryGetCallFlow', call: () => api().tryGetCallFlow('r'), body: { moduleCount: 1 } },
-  { name: 'tryGetWorkspaceGraph', call: () => api().tryGetWorkspaceGraph('p1'), body: { repos: 1 } },
 ];
 
 describe('F8 · error-propagating loaders (no fabrication on failure)', () => {

@@ -4,7 +4,8 @@
 	import { getInitials } from './initials';
 	import { createLogout } from './logout.svelte';
 	import { colorMode, setColorMode } from '$lib/theme.svelte';
-	import { GLYPH_OPTIONS, glyphs, setGlyphMode, type GlyphMode } from '$lib/glyphs.svelte';
+	import { onMount } from 'svelte';
+	import { GLYPH_OPTIONS, chooseGlyphMode, glyphs, syncGlyphs, type GlyphMode } from '$lib/glyphs.svelte';
 	import type { ColorMode } from '@rokkit/app';
 	import type { KitMe } from './types';
 
@@ -30,6 +31,12 @@
 		open = false;
 		logout.run();
 	}
+
+	// The glyph choice syncs with the app through the dōjō (#133): the menu is
+	// the signed-in person's, so it brings this browser to the later choice.
+	onMount(() => {
+		void syncGlyphs();
+	});
 </script>
 
 <div class="relative">
@@ -88,7 +95,7 @@
 				<Toggle
 					options={GLYPH_OPTIONS}
 					value={glyphs.mode}
-					onchange={(v) => setGlyphMode(v as GlyphMode)}
+					onchange={(v) => void chooseGlyphMode(v as GlyphMode)}
 					size="sm"
 					label="Glyphs"
 				/>

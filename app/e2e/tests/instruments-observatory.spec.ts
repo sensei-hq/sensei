@@ -2,9 +2,8 @@
  * Observatory Instruments — playground, replay, insights.
  *
  * Verifies the enriched T2 flows against the live daemon:
- *   • Playground renders the enriched mcp_list_tools shape (T2 Slice A'),
- *     each tool row carrying its kind. (The kind-chip filter was retired
- *     with the redesign: each row's glyph shows its kind.)
+ *   • Playground lists sensei's server first with the tools the server
+ *     itself lists, each row carrying its kind.
  *   • Insights tab lights up with derived / cached signal cards (T2 Slice
  *     D-lite + D full) and the row-click disclosure reveals the cached
  *     insight detail from the `tool_insights` cache table.
@@ -21,21 +20,24 @@ import { navigateTo, DAEMON_URL } from '../helpers';
 test.describe('Observatory Instruments', () => {
   test.beforeEach(async ({ tauriPage }) => {
     await navigateTo(tauriPage, '/instruments');
-    // Give the store's loadCatalog() a chance to hydrate.
+    // Give the server list and sensei's tools a chance to load.
     await tauriPage.waitForSelector('[data-testid="playground-body"]', 15_000).catch(() => {});
   });
 
-  test('playground renders sensei manifest tools with kind badges', async ({ tauriPage }) => {
-    const catalog = await fetch(`${DAEMON_URL}/api/mcp/tools`).then(r => r.json()) as {
-      tools: Array<{ name: string; kind: 'query' | 'action'; summary: string }>;
+  test('playground lists the sensei server’s own tools', async ({ tauriPage }) => {
+    const { servers } = await fetch(`${DAEMON_URL}/api/instruments/mcp-servers`).then(r => r.json()) as {
+      servers: Array<{ id: string; mcp_key: string }>;
     };
-    expect(catalog.tools.length).toBeGreaterThan(10);
+    const sensei = servers.find((s) => /(^|_)sensei$/.test(s.mcp_key));
+    expect(sensei, 'the sensei MCP is configured for an assistant').toBeTruthy();
+    const manifest = await fetch(`${DAEMON_URL}/api/instruments/mcp-servers/${sensei!.id}/tools`).then(r => r.json()) as {
+      tools: Array<{ name: string }>;
+    };
+    expect(manifest.tools.length).toBeGreaterThan(10);
 
-    const first = catalog.tools[0];
-    // Row for the first tool should render with the daemon's kind tag.
-    const row = tauriPage.locator(`[data-testid="tool-row-${first.name}"]`);
+    const row = tauriPage.locator(`[data-testid="tool-row-${manifest.tools[0].name}"]`);
     await expect(row).toBeVisible({ timeout: 10_000 });
-    await expect(row).toHaveAttribute('data-tool-kind', first.kind);
+    await expect(row).toHaveAttribute('data-tool-kind', /query|action|other/);
   });
 
   test('Insights tab shows signal cards + expandable per-tool detail', async ({ tauriPage }) => {

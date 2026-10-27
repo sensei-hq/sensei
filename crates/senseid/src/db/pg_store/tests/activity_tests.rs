@@ -1091,3 +1091,133 @@ async fn importing_the_same_staged_event_twice_keeps_one_row() {
     }
     assert_eq!(n, 1, "a re-import must not add a second copy");
 }
+
+/// Instruments · Health: one row per tool source. Calls to a tool its server
+/// no longer lists (a renamed or retired tool) belong to that server's row —
+/// matched by the prefix the harness records — not to a second row with the
+/// same key, which drew sensei twice and broke the whole grid on a duplicate
+/// key. A prefix no server claims is still its own row.
+#[tokio::test]
+async fn a_servers_retired_tools_count_on_its_own_health_row() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().simple().to_string();
+    let key = format!("srv{}", &uniq[..10]);
+    let prefix = format!("plugin_p{0}_p{0}", &uniq[..8]);
+    let orphan = format!("orphan{}", &uniq[..10]);
+    s.upsert_assistant_tool(&AssistantToolRow {
+        assistant_family: "claude",
+        source_type: "mcp",
+        source_key: &key,
+        tool_name: "kept",
+        invoked_name: &format!("mcp__{prefix}__kept"),
+        description: None,
+        server_id: None,
+    })
+    .await
+    .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    let csid = format!("health-{uniq}");
+    for tool in [
+        format!("mcp__{prefix}__kept"),
+        format!("mcp__{prefix}__retired"),
+        format!("mcp__{prefix}__retired"),
+        format!("mcp__{orphan}__x"),
+    ] {
+        s.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some(&tool),
+            cwd: None,
+            ts: now,
+            success: Some(true),
+            payload: &serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    }
+
+    let rows = s.get_tools_health().await.unwrap();
+    let mine: Vec<_> = rows
+        .iter()
+        .filter(|r| {
+            [key.as_str(), prefix.as_str(), orphan.as_str()]
+                .contains(&r["source_key"].as_str().unwrap())
+        })
+        .map(|r| {
+            (
+                r["source_key"].as_str().unwrap().to_string(),
+                r["tools_registered"].as_i64(),
+                r["tools_invoked_14d"].as_i64().unwrap(),
+                r["calls_14d"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        mine,
+        vec![(key.clone(), Some(1), 1, 3), (orphan.clone(), None, 1, 1),],
+        "the retired tool's calls count on its server's row; the share stays registered-only"
+    );
+}
+
+/// A server is also called under its own config key: the inventory bridged
+/// playwright's tools to an older `playwright` prefix, while calls through the
+/// plugin arrive as `plugin_playwright_playwright` — the same server, which
+/// Health drew twice.
+#[tokio::test]
+async fn calls_under_a_servers_own_key_count_on_its_health_row() {
+    use crate::db::pg_store::McpServerRow;
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().simple().to_string();
+    let (key, plugin_key) =
+        (format!("pw{}", &uniq[..10]), format!("plugin_pw{0}_pw{0}", &uniq[..8]));
+    let empty = serde_json::json!({});
+    let server = s
+        .upsert_mcp_server(&McpServerRow {
+            acp_family: "claude",
+            mcp_key: &plugin_key,
+            workspace_id: None,
+            config_source: "/tmp/plugin.json",
+            command: "npx",
+            args: &serde_json::json!([]),
+            env: &empty,
+        })
+        .await
+        .unwrap();
+    s.upsert_assistant_tool(&AssistantToolRow {
+        assistant_family: "claude",
+        source_type: "mcp",
+        source_key: &key,
+        tool_name: "click",
+        invoked_name: &format!("mcp__{key}__click"),
+        description: None,
+        server_id: Some(server),
+    })
+    .await
+    .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    for tool in [format!("mcp__{key}__click"), format!("mcp__{plugin_key}__click")] {
+        s.insert_hook_event(&HookEventRow {
+            session_id: &format!("health-{uniq}"),
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some(&tool),
+            cwd: None,
+            ts: now,
+            success: Some(true),
+            payload: &empty,
+        })
+        .await
+        .unwrap();
+    }
+
+    let rows = s.get_tools_health().await.unwrap();
+    let mine: Vec<(String, i64)> = rows
+        .iter()
+        .filter(|r| {
+            [key.as_str(), plugin_key.as_str()].contains(&r["source_key"].as_str().unwrap())
+        })
+        .map(|r| (r["source_key"].as_str().unwrap().to_string(), r["calls_14d"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(mine, vec![(key.clone(), 2)], "one row for the server, with both calls");
+}

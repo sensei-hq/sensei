@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { KIND_ICONS } from '$lib/glyph-vocabulary';
     import Kanji from '$lib/components/Kanji.svelte';
   import { Toggle } from '@rokkit/ui';
   import type { ProxyItem } from '@rokkit/states';
@@ -84,7 +85,7 @@
           label="filter workspaces by status"
         >
           {#snippet itemContent(proxy: ProxyItem)}
-            <Kanji char={proxy.get('kanji')} icon={null} size="inherit" tone="inherit" class="text-xs" />
+            <Kanji char={proxy.get('kanji')} icon={KIND_ICONS.workspace} size="inherit" tone="inherit" class="text-xs" />
             <span>{proxy.label}</span>
             <!-- Inherit the option's text colour (rokkit sets a contrast-correct colour
                  per selected/unselected state) instead of a hardcoded text-ink-mute,

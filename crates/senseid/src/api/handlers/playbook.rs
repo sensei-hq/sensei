@@ -42,11 +42,15 @@ pub(crate) async fn get_intake_guide(
 pub(crate) async fn recommend_playbook(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let refuse =
+        |status: StatusCode, msg: String| (status, Json(serde_json::json!({ "error": msg })));
+    let bad = |msg: String| refuse(StatusCode::BAD_REQUEST, msg);
     let direct_axes = (
-        body["lifecycle"].as_str().and_then(Lifecycle::parse),
-        body["intent"].as_str().and_then(Intent::parse),
-        body["risk"].as_str().and_then(Risk::parse),
+        axis(&body, "lifecycle", Lifecycle::parse, Lifecycle::ALL.map(Lifecycle::as_str))
+            .map_err(bad)?,
+        axis(&body, "intent", Intent::parse, Intent::ALL.map(Intent::as_str)).map_err(bad)?,
+        axis(&body, "risk", Risk::parse, Risk::ALL.map(Risk::as_str)).map_err(bad)?,
     );
 
     let (axes, classified_by, model_fallback) = match direct_axes {
@@ -55,9 +59,9 @@ pub(crate) async fn recommend_playbook(
         }
         _ => {
             let Some(chunk) = body["chunk"].as_str().filter(|s| !s.is_empty()) else {
-                return Json(serde_json::json!({
-                    "error": "either lifecycle/intent/risk or a non-empty chunk (text) is required"
-                }));
+                return Err(bad(
+                    "either lifecycle/intent/risk or a non-empty chunk (text) is required".into(),
+                ));
             };
             // Bounded inputs to the heuristic fallback — see `heuristic_axes` doc comment
             // for why `has_existing_code`/`blast` stay simple params here rather than a
@@ -73,7 +77,7 @@ pub(crate) async fn recommend_playbook(
         Ok(r) => r,
         Err(e) => {
             tracing::error!("recommend_playbook: list_playbook_rules failed: {e}");
-            return Json(serde_json::json!({ "error": e }));
+            return Err(refuse(StatusCode::INTERNAL_SERVER_ERROR, e));
         }
     };
     let rec = recommend(&axes, &rules);
@@ -88,16 +92,22 @@ pub(crate) async fn recommend_playbook(
         .map(str::trim)
         .filter(|s| !s.is_empty());
     let Some(ident) = workspace_ident else {
-        return Json(serde_json::json!({
-            "error": "workspace (id or name) is required — a playbook run always happens in a workspace"
-        }));
+        return Err(bad(
+            "workspace (id or name) is required — a playbook run always happens in a workspace"
+                .into(),
+        ));
     };
     let workspace_id = match crate::api::util::resolve_workspace_uuid(&state, ident).await {
         Ok(Some(pid)) => pid,
         Ok(None) => {
-            return Json(serde_json::json!({ "error": format!("unknown workspace: {ident}") }));
+            return Err(refuse(StatusCode::NOT_FOUND, format!("unknown workspace: {ident}")));
         }
-        Err(_) => return Json(serde_json::json!({ "error": "failed to resolve workspace" })),
+        Err(_) => {
+            return Err(refuse(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to resolve workspace".into(),
+            ));
+        }
     };
 
     // Persist the run unless this is a preview call. Recommend-and-confirm
@@ -125,6 +135,10 @@ pub(crate) async fn recommend_playbook(
             .await
     {
         tracing::error!("recommend_playbook: insert_playbook_run failed: {e}");
+        return Err(refuse(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("the run was not recorded: {e}"),
+        ));
     }
 
     // Enrich the response with the chosen playbook's tone so the caller (the
@@ -190,7 +204,24 @@ pub(crate) async fn recommend_playbook(
             tracing::warn!(error = %e, "recommend_playbook: library-capability suggestion failed — omitting")
         }
     }
-    Json(resp)
+    Ok(Json(resp))
+}
+
+/// One axis from the request: absent is `None` (the chunk is classified
+/// instead); a value the recommender does not know is refused, naming the ones
+/// it does.
+fn axis<T, const N: usize>(
+    body: &serde_json::Value,
+    name: &str,
+    parse: fn(&str) -> Option<T>,
+    known: [&str; N],
+) -> Result<Option<T>, String> {
+    match body[name].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(v) => parse(v)
+            .map(Some)
+            .ok_or_else(|| format!("{name} '{v}' is not one of {}", known.join(", "))),
+    }
 }
 
 /// Deterministic fallback — also the classifier when the gateway is unavailable.

@@ -23,10 +23,6 @@ type SemanticNodeRow = (uuid::Uuid, String, String, Option<String>, Option<i32>,
 /// `(id, name, file_path, signature, line_start, locality)`.
 type LocatedNodeRow = (uuid::Uuid, String, String, Option<String>, Option<i32>, String);
 
-/// Two sides of a near-duplicate pair — `(name, file_path, line_start)` each —
-/// and the similarity between them.
-type DuplicatePairRow = (String, String, Option<i32>, String, String, Option<i32>, f64);
-
 /// `(id, source_id, target_id, target_name, kind)`.
 type StoredEdge = (uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String);
 
@@ -161,6 +157,9 @@ struct FqnNodeRow<'a> {
     is_exported: bool,
     parent_id: Option<&'a uuid::Uuid>,
 }
+
+/// How many files [`PgStore::get_files_by_tag`] returns; the total rides beside them.
+pub const FILES_BY_TAG_LIMIT: i64 = 200;
 
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
@@ -1272,7 +1271,7 @@ impl PgStore {
 
     /// Semantic nearest-neighbour search over node embeddings, scoped to the
     /// given folders + node kinds. Reuses the same pgvector cosine-distance
-    /// operator (`<=>`) as `find_duplicates`, ordering by ascending distance so
+    /// operator (`<=>`), ordering by ascending distance so
     /// the most semantically similar nodes come first. The query embedding is
     /// rendered with `vector_literal` and cast to `vector`, matching how
     /// `set_node_embedding` stores node vectors. Bounded by `limit` so it never
@@ -1385,119 +1384,6 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())
-    }
-
-    /// Find near-duplicate function/method pairs within a folder by cosine
-    /// similarity on their code embeddings (HNSW `<=>` cosine distance). Each
-    /// pair is returned once (`a.id < b.id`) at or above `min_similarity`,
-    /// strongest first. Trivial functions (< 4 lines) are skipped — they bound
-    /// the O(n²) self-join and avoid false positives from boilerplate. On-demand
-    /// review query, not a hot path.
-    pub async fn find_duplicates(
-        &self,
-        folder_id: &uuid::Uuid,
-        min_similarity: f64,
-        limit: i64,
-    ) -> Result<Vec<serde_json::Value>, String> {
-        let max_distance = 1.0 - min_similarity;
-        let rows: Vec<DuplicatePairRow> = sqlx_core::query_as::query_as(
-            "SELECT a.name, pa.file_path, a.line_start,
-                        b.name, pb.file_path, b.line_start,
-                        1 - (a.embedding <=> b.embedding) AS similarity
-                   FROM sensei.nodes a
-                   JOIN sensei.node_paths pa ON pa.node_id = a.id
-                   JOIN sensei.nodes b
-                     ON b.folder_id = a.folder_id
-                    AND a.id < b.id
-                    AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-                    AND b.embedding IS NOT NULL
-                    AND (b.line_end - b.line_start) >= 3
-                   JOIN sensei.node_paths pb ON pb.node_id = b.id
-                  WHERE a.folder_id = $1
-                    AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-                    AND a.embedding IS NOT NULL
-                    AND (a.line_end - a.line_start) >= 3
-                    AND (a.embedding <=> b.embedding) <= $2
-                  ORDER BY similarity DESC
-                  LIMIT $3",
-        )
-        .bind(folder_id)
-        .bind(max_distance)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(|(na, fa, la, nb, fb, lb, sim)| {
-                serde_json::json!({
-                    "a": { "name": na, "file": fa, "line": la },
-                    "b": { "name": nb, "file": fb, "line": lb },
-                    "similarity": (sim * 10000.0).round() / 10000.0,
-                })
-            })
-            .collect())
-    }
-
-    /// Multi-folder variant of `find_duplicates` (#54). Runs the same
-    /// cosine-similarity self-join but scopes the pair search to every
-    /// folder belonging to a workspace — so a duplicate function defined in
-    /// `crates/foo/src/x.rs` and `crates/bar/src/y.rs` (both inside the
-    /// same workspace) surfaces even though they don't share a folder_id.
-    ///
-    /// Pairs are restricted to `a.id < b.id` so each dyad appears once. It does
-    /// NOT require `a.folder_id != b.folder_id`: in a monorepo the indexer rolls
-    /// every function node up to the single repo-root folder, so a cross-folder-only
-    /// filter made this always return `count:0` (masking every real duplicate).
-    /// The handler uses either this OR `find_duplicates` per call (never both), so
-    /// there is no double-count to guard against.
-    pub async fn find_duplicates_scoped(
-        &self,
-        folder_ids: &[uuid::Uuid],
-        min_similarity: f64,
-        limit: i64,
-    ) -> Result<Vec<serde_json::Value>, String> {
-        if folder_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let max_distance = 1.0 - min_similarity;
-        let rows: Vec<DuplicatePairRow> = sqlx_core::query_as::query_as(
-            "SELECT a.name, pa.file_path, a.line_start,
-                        b.name, pb.file_path, b.line_start,
-                        1 - (a.embedding <=> b.embedding) AS similarity
-                   FROM sensei.nodes a
-                   JOIN sensei.node_paths pa ON pa.node_id = a.id
-                   JOIN sensei.nodes b
-                     ON a.id < b.id
-                    AND b.folder_id = ANY($1::uuid[])
-                    AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-                    AND b.embedding IS NOT NULL
-                    AND (b.line_end - b.line_start) >= 3
-                   JOIN sensei.node_paths pb ON pb.node_id = b.id
-                  WHERE a.folder_id = ANY($1::uuid[])
-                    AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-                    AND a.embedding IS NOT NULL
-                    AND (a.line_end - a.line_start) >= 3
-                    AND (a.embedding <=> b.embedding) <= $2
-                  ORDER BY similarity DESC
-                  LIMIT $3",
-        )
-        .bind(folder_ids)
-        .bind(max_distance)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(|(na, fa, la, nb, fb, lb, sim)| {
-                serde_json::json!({
-                    "a": { "name": na, "file": fa, "line": la },
-                    "b": { "name": nb, "file": fb, "line": lb },
-                    "similarity": (sim * 10000.0).round() / 10000.0,
-                })
-            })
-            .collect())
     }
 
     /// Abs paths of folders that still have embeddable nodes without an
@@ -2742,26 +2628,50 @@ impl PgStore {
             .collect())
     }
 
-    /// Get files matching a tag via the file_tags view.
+    /// Every file in the given folders, by its repo-relative path.
+    pub async fn list_file_paths_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT sensei.repo_relative_path(f.kind, f.path, fi.file_path)
+               FROM sensei.files fi
+               JOIN sensei.folders f ON f.id = fi.folder_id
+              WHERE fi.folder_id = ANY($1)
+              ORDER BY 1",
+        )
+        .bind(folder_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("list_file_paths_scoped: {e}"))?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
+    }
+
+    /// The files a workspace holds under a tag, by repo-relative path — at most
+    /// [`FILES_BY_TAG_LIMIT`], with how many there are in all.
     pub async fn get_files_by_tag(
         &self,
-        folder_name: &str,
+        workspace: &str,
         tag: &str,
-    ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, Vec<String>)> = sqlx_core::query_as::query_as(
-            "SELECT id, file_path, tags FROM sensei.file_tags
-              WHERE folder = $1 AND $2 = ANY(tags)
-              ORDER BY file_path LIMIT 200",
+    ) -> Result<(Vec<serde_json::Value>, i64), String> {
+        let rows: Vec<(uuid::Uuid, String, Vec<String>, i64)> = sqlx_core::query_as::query_as(
+            "SELECT id, file_path, tags, count(*) OVER () FROM sensei.file_tags
+              WHERE $1 = ANY(workspaces) AND $2 = ANY(tags)
+              ORDER BY file_path LIMIT $3",
         )
-        .bind(folder_name)
+        .bind(workspace)
         .bind(tag)
+        .bind(FILES_BY_TAG_LIMIT)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(|(id, fp, tags)| serde_json::json!({ "id": id, "file_path": fp, "tags": tags }))
-            .collect())
+        let total = rows.first().map_or(0, |r| r.3);
+        Ok((
+            rows.into_iter()
+                .map(|(id, fp, tags, _)| serde_json::json!({ "id": id, "file_path": fp, "tags": tags }))
+                .collect(),
+            total,
+        ))
     }
 
     /// Get doc coverage with drift detection via the doc_coverage view.
@@ -3431,21 +3341,19 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
-    /// Populate framework-pattern tags on file nodes so `get_patterns` /
-    /// `get_file_tags` return real files (they read `sensei.file_tags`, a view
-    /// over `nodes.tags` for `kind='file'` — previously always empty).
+    /// Populate framework-pattern tags on files (`sensei.files.tags`) so
+    /// `get_patterns` / `get_file_tags` return real files — they read
+    /// `sensei.file_tags`, the view over them. (They were written to `kind='file'`
+    /// nodes until the indexer stopped writing any, and were empty since.)
     ///
     /// The signal is the classifier's own node kinds: a file is tagged with the
     /// framework kinds of the symbols it contains (`hook`, `component`). This
     /// reuses the existing per-node classification — no separate tagger — and
     /// recomputes the full set per file (so a file that loses its last hook is
     /// cleared), scoped to one watch root. Runs in the scan reconcile. Returns
-    /// file nodes whose tags changed.
-    pub async fn tag_file_nodes_by_framework_kind(
-        &self,
-        root_id: &uuid::Uuid,
-    ) -> Result<u64, String> {
-        // Tag each `file` node with the framework roles it plays, so `get_patterns`
+    /// files whose tags changed.
+    pub async fn tag_files_by_framework_kind(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
+        // Tag each file (`sensei.files`) with the framework roles it plays, so `get_patterns`
         // / `get_file_tags` answer "which files are components / hooks / routes /
         // middleware". Two signals, merged into `tags` and recomputed each scan
         // (self-correcting — adds AND removes):
@@ -3461,41 +3369,38 @@ impl PgStore {
         // actually changes are written (idempotent, accurate `rows_affected`).
         let res = sqlx_core::query::query(
             r"WITH desired AS (
-                SELECT fn.id,
+                SELECT fi.id,
                        COALESCE((
                          SELECT array_agg(DISTINCT tag ORDER BY tag) FROM (
                            SELECT s.kind::text AS tag
                              FROM sensei.nodes s
-                            WHERE s.folder_id = fn.folder_id
-                              AND s.file_id = fn.file_id
+                            WHERE s.file_id = fi.id
                               AND s.kind IN ('hook','component')
                            UNION ALL
                            SELECT 'route'
-                            WHERE fp.file_path ~ '(^|/)\+(page|layout|server|error)\.'
-                               OR fp.file_path ~ '(^|/)(page|route)\.(tsx?|jsx?)$'
+                            WHERE fi.file_path ~ '(^|/)\+(page|layout|server|error)\.'
+                               OR fi.file_path ~ '(^|/)(page|route)\.(tsx?|jsx?)$'
                            UNION ALL
                            SELECT 'middleware'
-                            WHERE fp.file_path ~ '(^|/)hooks\.(server|client)\.(tsx?|jsx?)$'
-                               OR fp.file_path ~ '(^|/)hooks\.(tsx?|jsx?)$'
-                               OR fp.file_path ~ '(^|/)middleware\.(tsx?|jsx?)$'
+                            WHERE fi.file_path ~ '(^|/)hooks\.(server|client)\.(tsx?|jsx?)$'
+                               OR fi.file_path ~ '(^|/)hooks\.(tsx?|jsx?)$'
+                               OR fi.file_path ~ '(^|/)middleware\.(tsx?|jsx?)$'
                          ) src
                        ), '{}') AS tags
-                  FROM sensei.nodes fn
-                  JOIN sensei.node_paths fp ON fp.node_id = fn.id
-                  JOIN sensei.folders f ON f.id = fn.folder_id
+                  FROM sensei.files fi
+                  JOIN sensei.folders f ON f.id = fi.folder_id
                  WHERE f.root_id = $1
-                   AND fn.kind = 'file'
               )
-              UPDATE sensei.nodes n
+              UPDATE sensei.files fi
                  SET tags = d.tags
                 FROM desired d
-               WHERE n.id = d.id
-                 AND n.tags IS DISTINCT FROM d.tags",
+               WHERE fi.id = d.id
+                 AND fi.tags IS DISTINCT FROM d.tags",
         )
         .bind(root_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| format!("tag_file_nodes_by_framework_kind: {e}"))?;
+        .map_err(|e| format!("tag_files_by_framework_kind: {e}"))?;
         Ok(res.rows_affected())
     }
 
@@ -3728,6 +3633,27 @@ pub struct StructureEdge {
 /// so the plan is unchanged; its doc comment carries the measurements behind the
 /// first-segment choice (150 groups over 1,751 files against 1,446 whole-path
 /// ones) and behind taking the package as well as the module.
+/// The CTE `ws_files(m, repository_id, path)`: every file of workspace `$1`
+/// with its module and its REPOSITORY-relative path. A file's own path is
+/// relative to its folder, which for a monorepo member sits below the
+/// repository root, so the folder's offset from the root is put back — the
+/// spelling git and qlty use. Shared by the co-change and complexity reads.
+fn workspace_file_paths_cte() -> String {
+    let module = structure_group_sql("module", "sg.");
+    format!(
+        "ws_files AS (
+           SELECT DISTINCT {module} AS m, f.repository_id,
+                  CASE WHEN f.abs_path = root.abs_path THEN fi.file_path
+                       ELSE substr(f.abs_path, length(root.abs_path) + 2) || '/' || fi.file_path END AS path
+             FROM sensei.structure_graph sg
+             JOIN sensei.files fi ON fi.id = sg.file_id
+             JOIN sensei.folders f ON f.id = fi.folder_id
+             JOIN sensei.folders root ON root.repository_id = f.repository_id AND root.kind = 'git'
+            WHERE sg.workspace_id = $1 AND f.repository_id IS NOT NULL
+         )"
+    )
+}
+
 fn structure_group_sql(level: &str, prefix: &str) -> String {
     match level {
         "package" => format!("{prefix}package"),
@@ -3739,136 +3665,7 @@ fn structure_group_sql(level: &str, prefix: &str) -> String {
     }
 }
 
-/// One (workspace, repository, test-or-not) cell of the World diagram (#219).
-///
-/// THE FINEST GRAIN, and the hierarchy is assembled above it. The screen offers
-/// three groupings — workspace first, repository first, code-vs-tests first — and
-/// they are three readings of ONE set of cells, not three queries. Building the
-/// tree in Rust keeps this a single literal statement that
-/// `check-sql-against-schema.py` can plan, and makes the grouping a pure
-/// function with its own tests.
-/// The `world_cells` select list, in order. A tuple because this crate depends
-/// on `sqlx-core` alone and so has no `FromRow` derive — the same shape
-/// `StructureNodeRow` uses, mapped into the named struct immediately so the
-/// columns are told apart by POSITION exactly once.
-type WorldCellRow = (uuid::Uuid, String, uuid::Uuid, String, bool, i64, i64);
-
-#[derive(Debug, Clone)]
-pub struct WorldCell {
-    pub workspace_id: uuid::Uuid,
-    pub workspace: String,
-    pub folder_id: uuid::Uuid,
-    pub repository: String,
-    /// `true` for the test half of a repository. Tests are a PROPERTY of a
-    /// declaration (`nodes.is_test`), so they are a cell and not a third kind of
-    /// container — which is why the "code · tests" grouping can be offered and a
-    /// "docs" one cannot.
-    pub is_test: bool,
-    pub declarations: i64,
-    pub documented: i64,
-}
-
-/// One repository's edge placement, for the "unresolved share" shade (#219).
-///
-/// SEPARATE FROM [`WorldCell`] because the grains differ and mixing them
-/// double-counts: edges belong to the FOLDER, declarations to the
-/// (folder, is_test) cell. Joined in SQL, a repository's edge total would appear
-/// once per cell and summing the tree would report it twice.
-/// The `world_placement` select list, in order. See [`WorldCellRow`].
-type WorldPlacementRow = (uuid::Uuid, i64, i64);
-
-#[derive(Debug, Clone)]
-pub struct WorldPlacement {
-    pub folder_id: uuid::Uuid,
-    pub edges: i64,
-    pub missed: i64,
-}
-
 impl PgStore {
-    /// Every indexed declaration, as cells to nest (#219).
-    ///
-    /// CROSS-WORKSPACE, deliberately. The screen is "all indexed code, nested by
-    /// what contains it", and WORKSPACE is its outermost ring — so scoping to one
-    /// workspace would leave the top level with a single circle. The workspace a
-    /// reader is viewing from is marked by the caller, not filtered here.
-    ///
-    /// Membership comes through `folder_workspaces`, never a folder column (#211),
-    /// which is why one repository can legitimately appear under two workspaces:
-    /// measured on this corpus, one does.
-    ///
-    /// Library nodes are excluded. A `lib·` node is a name for something whose
-    /// source was never opened, so counting it as indexed code would inflate
-    /// every circle by the size of its dependency surface.
-    ///
-    /// 2.7 s corpus-wide, against the 37 s a structure read costs.
-    pub async fn world_cells(&self) -> Result<Vec<WorldCell>, String> {
-        let rows: Vec<WorldCellRow> = sqlx_core::query_as::query_as(
-            "SELECT fp.workspace_id
-                  , p.name  AS workspace
-                  , f.id    AS folder_id
-                  , f.name  AS repository
-                  , n.is_test
-                  , count(*)::bigint AS declarations
-                  , count(*) FILTER (WHERE n.docstring IS NOT NULL)::bigint AS documented
-               FROM sensei.nodes n
-               JOIN sensei.folders f          ON f.id = n.folder_id
-               JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
-               JOIN sensei.workspaces p         ON p.id = fp.workspace_id
-              WHERE n.fqn IS NOT NULL AND n.fqn NOT LIKE 'lib·%'
-              GROUP BY 1, 2, 3, 4, 5",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| format!("world_cells: {e}"))?;
-        Ok(rows
-            .into_iter()
-            .map(
-                |(
-                    workspace_id,
-                    workspace,
-                    folder_id,
-                    repository,
-                    is_test,
-                    declarations,
-                    documented,
-                )| {
-                    WorldCell {
-                        workspace_id,
-                        workspace,
-                        folder_id,
-                        repository,
-                        is_test,
-                        declarations,
-                        documented,
-                    }
-                },
-            )
-            .collect())
-    }
-
-    /// How each repository's edges turned out, for the unresolved-share shade.
-    ///
-    /// Keyed on the FOLDER and never joined to [`WorldCell`] in SQL — see that
-    /// type for why. 13 s corpus-wide: a full pass of `sensei.edges`, which is
-    /// 3.3M rows, and the reason this payload is cached like every other
-    /// diagram (#233).
-    pub async fn world_placement(&self) -> Result<Vec<WorldPlacement>, String> {
-        let rows: Vec<WorldPlacementRow> = sqlx_core::query_as::query_as(
-            "SELECT e.folder_id
-                  , count(*)::bigint AS edges
-                  , count(*) FILTER (WHERE e.unresolved_reason IS NOT NULL)::bigint AS missed
-               FROM sensei.edges e
-              GROUP BY 1",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| format!("world_placement: {e}"))?;
-        Ok(rows
-            .into_iter()
-            .map(|(folder_id, edges, missed)| WorldPlacement { folder_id, edges, missed })
-            .collect())
-    }
-
     /// Nodes of the Structure diagram for one workspace, rolled up to `level`.
     ///
     /// Reads `sensei.structure_graph`, which is already internal-only and
@@ -3979,6 +3776,300 @@ impl PgStore {
         .await
         .map_err(|e| format!("workspace_graph_version: {e}"))?;
         Ok(row.0)
+    }
+
+    /// One module's files, for the Code map's L1: `(file id, path, symbols)`,
+    /// largest first. The module is matched by the same `module_of` identity
+    /// the module level groups by, so L0's block and L1's files agree.
+    pub async fn codemap_module_files(
+        &self,
+        workspace_id: &uuid::Uuid,
+        module: &str,
+    ) -> Result<Vec<(uuid::Uuid, String, i64)>, String> {
+        let group = structure_group_sql("module", "");
+        let sql = format!(
+            "SELECT file_id, file_path, symbols::bigint
+               FROM sensei.structure_graph
+              WHERE workspace_id = $1 AND {group} = $2
+              ORDER BY symbols DESC, file_path"
+        );
+        sqlx_core::query_as::query_as(&sql)
+            .bind(workspace_id)
+            .bind(module)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_module_files: {e}"))
+    }
+
+    /// Each module's functions and how many exceed cyclomatic 10, from local
+    /// qlty's last measurement (Code map, Complexity). A module none of whose
+    /// files were measured is absent — not zero.
+    pub async fn codemap_module_complexity(
+        &self,
+        workspace_id: &uuid::Uuid,
+    ) -> Result<std::collections::HashMap<String, (i64, i64)>, String> {
+        let ws_files = workspace_file_paths_cte();
+        let sql = format!(
+            "WITH {ws_files}
+             SELECT w.m, sum(c.functions)::bigint, sum(c.complex)::bigint
+               FROM ws_files w
+               JOIN sensei.file_complexity c ON c.repository_id = w.repository_id AND c.path = w.path
+              GROUP BY w.m"
+        );
+        let rows: Vec<(String, i64, i64)> = sqlx_core::query_as::query_as(&sql)
+            .bind(workspace_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_module_complexity: {e}"))?;
+        Ok(rows.into_iter().map(|(m, f, c)| (m, (f, c))).collect())
+    }
+
+    /// Replace a repository's measured complexity with one HEAD's measurement.
+    pub async fn replace_file_complexity(
+        &self,
+        repository_id: &uuid::Uuid,
+        sha: &str,
+        files: &std::collections::HashMap<String, crate::qlty::FileComplexity>,
+    ) -> Result<u64, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("DELETE FROM sensei.file_complexity WHERE repository_id = $1")
+            .bind(repository_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("replace_file_complexity: clear: {e}"))?;
+        let (paths, functions, complex, max): (Vec<&str>, Vec<i32>, Vec<i32>, Vec<i32>) =
+            files.iter().fold((vec![], vec![], vec![], vec![]), |mut acc, (p, f)| {
+                acc.0.push(p.as_str());
+                acc.1.push(f.functions);
+                acc.2.push(f.complex);
+                acc.3.push(f.max_cyclo);
+                acc
+            });
+        let res = sqlx_core::query::query(
+            "INSERT INTO sensei.file_complexity (repository_id, path, functions, complex, max_cyclo, measured_sha)
+             SELECT $1, p, f, c, m, $6
+               FROM unnest($2::text[], $3::int[], $4::int[], $5::int[]) AS t(p, f, c, m)",
+        )
+        .bind(repository_id)
+        .bind(&paths)
+        .bind(&functions)
+        .bind(&complex)
+        .bind(&max)
+        .bind(sha)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("replace_file_complexity: insert: {e}"))?;
+        tx.commit().await.map_err(|e| format!("replace_file_complexity: commit: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
+    /// The HEAD a repository's complexity was last measured at, if ever.
+    pub async fn complexity_sha(
+        &self,
+        repository_id: &uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT measured_sha FROM sensei.file_complexity WHERE repository_id = $1 LIMIT 1",
+        )
+        .bind(repository_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("complexity_sha: {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// Replace a repository's duplicate groups with one measurement's, whole.
+    pub async fn replace_duplicates(
+        &self,
+        repository_id: &uuid::Uuid,
+        sha: &str,
+        groups: &[crate::qlty::DuplicateGroup],
+    ) -> Result<u64, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("DELETE FROM sensei.code_duplicates WHERE repository_id = $1")
+            .bind(repository_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("replace_duplicates: clear: {e}"))?;
+        let rows = serde_json::to_value(groups).map_err(|e| e.to_string())?;
+        let res = sqlx_core::query::query(
+            "INSERT INTO sensei.code_duplicates (repository_id, hash, identical, mass, lines, copies, measured_sha)
+             SELECT $1, g->>'hash', (g->>'identical')::boolean, (g->>'mass')::real,
+                    (g->>'lines')::int, g->'copies', $3
+               FROM jsonb_array_elements($2) AS g",
+        )
+        .bind(repository_id)
+        .bind(&rows)
+        .bind(sha)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("replace_duplicates: insert: {e}"))?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
+    /// A workspace's duplicate groups, largest first — at most `limit`, with
+    /// the total, how many of its repositories have been measured, and how many
+    /// it has. A repository is measured once qlty has run at its HEAD
+    /// (`file_complexity` carries that measurement's commit).
+    pub async fn workspace_duplicates(
+        &self,
+        workspace_id: &uuid::Uuid,
+        limit: i64,
+    ) -> Result<(Vec<serde_json::Value>, i64, i64, i64), String> {
+        let groups: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
+            "SELECT jsonb_build_object('repository', r.name, 'hash', d.hash, 'identical', d.identical,
+                                       'mass', d.mass, 'lines', d.lines, 'copies', d.copies,
+                                       'measured_sha', d.measured_sha)
+               FROM sensei.code_duplicates d
+               JOIN sensei.repositories_in_workspaces rw ON rw.repository_id = d.repository_id
+               JOIN sensei.repositories r ON r.id = d.repository_id
+              WHERE rw.workspace_id = $1
+              ORDER BY d.mass DESC, d.hash
+              LIMIT $2",
+        )
+        .bind(workspace_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("workspace_duplicates: {e}"))?;
+        let (total, measured, repos): (i64, i64, i64) = sqlx_core::query_as::query_as(
+            "SELECT (SELECT count(*) FROM sensei.code_duplicates d
+                       JOIN sensei.repositories_in_workspaces rw ON rw.repository_id = d.repository_id
+                      WHERE rw.workspace_id = $1),
+                    (SELECT count(*) FROM sensei.repositories_in_workspaces rw
+                      WHERE rw.workspace_id = $1
+                        AND EXISTS (SELECT 1 FROM sensei.file_complexity c WHERE c.repository_id = rw.repository_id)),
+                    (SELECT count(*) FROM sensei.repositories_in_workspaces rw WHERE rw.workspace_id = $1)",
+        )
+        .bind(workspace_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("workspace_duplicates: counts: {e}"))?;
+        Ok((groups.into_iter().map(|g| g.0).collect(), total, measured, repos))
+    }
+
+    /// Module pairs that changed in the same commits (Code map, Hidden coupling):
+    /// `(a, b, together, a's changes, b's changes)` for pairs together at least
+    /// `min_together` times, and how many commits touched the workspace's code.
+    ///
+    /// A commit's paths are relative to its REPOSITORY; a file's to its folder,
+    /// which for a monorepo member sits below the repository root — so the
+    /// folder's own offset from the root is put back before matching. A commit
+    /// that touched more than `max_modules` modules (a rename sweep, a format
+    /// pass) says nothing about which modules belong together and is left out.
+    pub async fn codemap_cochange(
+        &self,
+        workspace_id: &uuid::Uuid,
+        max_modules: i64,
+        min_together: i64,
+    ) -> Result<(Vec<(String, String, i64, i64, i64)>, i64), String> {
+        let ws_files = workspace_file_paths_cte();
+        let touched = format!(
+            "WITH {ws_files}, touched AS (
+               SELECT DISTINCT cf.repository_id, cf.sha, w.m
+                 FROM sensei.commit_files cf
+                 JOIN ws_files w ON w.repository_id = cf.repository_id AND w.path = cf.path
+             )"
+        );
+        let pairs_sql = format!(
+            "{touched}, sized AS (
+               SELECT t.*, count(*) OVER (PARTITION BY t.repository_id, t.sha) AS n FROM touched t
+             ), pairs AS (
+               SELECT a.m AS a, b.m AS b, count(*)::bigint AS together
+                 FROM sized a
+                 JOIN sized b ON a.repository_id = b.repository_id AND a.sha = b.sha AND a.m < b.m
+                WHERE a.n <= $2
+                GROUP BY 1, 2
+             ), changes AS (SELECT m, count(*)::bigint AS n FROM touched GROUP BY m)
+             SELECT p.a, p.b, p.together, ca.n, cb.n
+               FROM pairs p JOIN changes ca ON ca.m = p.a JOIN changes cb ON cb.m = p.b
+              WHERE p.together >= $3"
+        );
+        let pairs: Vec<(String, String, i64, i64, i64)> = sqlx_core::query_as::query_as(&pairs_sql)
+            .bind(workspace_id)
+            .bind(max_modules)
+            .bind(min_together)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_cochange: {e}"))?;
+        let count_sql =
+            format!("{touched} SELECT count(DISTINCT (repository_id, sha))::bigint FROM touched");
+        let (commits,): (i64,) = sqlx_core::query_as::query_as(&count_sql)
+            .bind(workspace_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_cochange: {e}"))?;
+        Ok((pairs, commits))
+    }
+
+    /// A file's path, when the file is this workspace's (Code map L2).
+    pub async fn codemap_file_path(
+        &self,
+        workspace_id: &uuid::Uuid,
+        file_id: &uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT fi.file_path FROM sensei.files fi
+               JOIN sensei.folder_workspaces fw ON fw.folder_id = fi.folder_id
+              WHERE fi.id = $2 AND fw.workspace_id = $1
+              LIMIT 1",
+        )
+        .bind(workspace_id)
+        .bind(file_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("codemap_file_path: {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// A file's symbols, in source order: `(id, name, kind, line)`.
+    pub async fn codemap_file_symbols(
+        &self,
+        file_id: &uuid::Uuid,
+    ) -> Result<Vec<(uuid::Uuid, String, String, Option<i32>)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT id, name, kind::text, line_start FROM sensei.nodes
+              WHERE file_id = $1 ORDER BY line_start NULLS LAST, name",
+        )
+        .bind(file_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("codemap_file_symbols: {e}"))
+    }
+
+    /// The symbols one call away from a file, outside it and inside the
+    /// workspace: its callers (`inbound`) or callees, heaviest first, at most
+    /// `limit`. Each row is `(id, name, file, calls, how many there are in all)`.
+    pub async fn codemap_file_neighbours(
+        &self,
+        workspace_id: &uuid::Uuid,
+        file_id: &uuid::Uuid,
+        inbound: bool,
+        limit: i64,
+    ) -> Result<Vec<(uuid::Uuid, String, Option<String>, i64, i64)>, String> {
+        let (inside, outside) =
+            if inbound { ("target_id", "source_id") } else { ("source_id", "target_id") };
+        let sql = format!(
+            "SELECT o.id, o.name, ofi.file_path, count(*)::bigint AS calls,
+                    count(*) OVER ()::bigint AS total
+               FROM sensei.edges e
+               JOIN sensei.nodes i ON i.id = e.{inside}
+               JOIN sensei.nodes o ON o.id = e.{outside}
+               JOIN sensei.folder_workspaces fw ON fw.folder_id = o.folder_id AND fw.workspace_id = $1
+               LEFT JOIN sensei.files ofi ON ofi.id = o.file_id
+              WHERE i.file_id = $2 AND o.file_id IS DISTINCT FROM $2 AND e.kind = 'calls'
+              GROUP BY o.id, o.name, ofi.file_path
+              ORDER BY calls DESC, o.name
+              LIMIT $3"
+        );
+        sqlx_core::query_as::query_as(&sql)
+            .bind(workspace_id)
+            .bind(file_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_file_neighbours: {e}"))
     }
 
     pub async fn structure_edges(

@@ -237,11 +237,11 @@ pub(crate) async fn query_files(
     repo_id: &str,
 ) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let results = state.pg.get_files_by_tag(repo_id, &term).await.map_err(|e| {
+    let (results, total) = state.pg.get_files_by_tag(repo_id, &term).await.map_err(|e| {
         tracing::warn!(error = %e, repo_id = %repo_id, "query_files: get_files_by_tag failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    Ok(serde_json::json!({ "type": "files", "query": q, "results": results }))
+    Ok(serde_json::json!({ "type": "files", "query": q, "results": results, "total": total }))
 }
 
 pub(crate) async fn query_patterns(

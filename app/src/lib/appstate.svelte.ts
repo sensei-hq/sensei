@@ -28,6 +28,10 @@ export class AppState {
    *  render. `null` until loaded → the badge stays hidden. */
   workspaceCount = $state<number | null>(null);
 
+  /** Called with the keys of each config write the daemon stored, so the other
+   *  windows (each holds its own copy) can re-read it. Set by the root layout. */
+  onConfigSaved: ((keys: string[]) => void) | null = null;
+
   get activeWorkspaceId(): string | null {
     return this.config['active_workspace'] || this.config['active_solution'] || null;
   }
@@ -95,6 +99,7 @@ export class AppState {
         `Daemon config write failed (${result.error.status}): ${result.error.message}`,
       );
     }
+    this.onConfigSaved?.(Object.keys(map));
   }
 
   // ── Facade passthroughs ──────────────────────────────────────────────

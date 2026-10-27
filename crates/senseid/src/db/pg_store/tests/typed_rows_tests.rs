@@ -1141,12 +1141,14 @@ async fn library_capabilities_land_with_their_source_and_range() {
         .await
         .unwrap();
     let skills = vec![ProvidedSkill {
+        url: None,
         name: "sk".into(),
         focus: "f".into(),
         path: None,
         body: Some("b".into()),
     }];
     let agents = vec![ProvidedAgent {
+        url: None,
         name: "ag".into(),
         focus: "f".into(),
         path: None,

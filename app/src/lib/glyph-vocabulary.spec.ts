@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { isSolarBoldDuotone } from './glyphs';
-import { IDENTITY_KANJI, KANJI_ICONS, iconForKanji } from './glyph-vocabulary';
+import { KANJI_ICONS, KIND_ICONS, iconForKanji } from './glyph-vocabulary';
 
 // #133: sensei's kanji are a vocabulary — 連 is "connect" wherever it appears —
-// so one table gives each its icon. Every kanji the app renders must be in it,
-// or be declared an identity mark that stays kanji in both modes.
+// so one table gives each its icon. One rule across the app and the dōjō (user,
+// 2026-10-27): kanji mode shows kanji, icon mode shows icons — every mark, no
+// exceptions. A kanji that is data (a workspace's own) takes its kind's icon.
 const solar = new Set(
   Object.keys(JSON.parse(readFileSync('node_modules/@iconify-json/solar/icons.json', 'utf8')).icons),
 );
@@ -31,20 +32,26 @@ describe('KANJI_ICONS', () => {
     }
   });
 
-  it('covers every kanji the app renders, except identity marks', () => {
+  it('covers every kanji the app renders', () => {
     const missing = new Map<string, string>();
     for (const file of sources('src')) {
       for (const m of readFileSync(file, 'utf8').matchAll(KANJI_SITE)) {
-        const k = m[1];
-        if (!KANJI_ICONS[k] && !IDENTITY_KANJI.has(k)) missing.set(k, file.replace('src/', ''));
+        if (!KANJI_ICONS[m[1]]) missing.set(m[1], file.replace('src/', ''));
       }
     }
     expect(Object.fromEntries(missing)).toEqual({});
   });
 
-  it('gives no icon to an identity mark or an unknown kanji', () => {
+  it('lets no mark opt out of icon mode', () => {
+    const opted = sources('src').filter((f) => /icon=\{null\}/.test(readFileSync(f, 'utf8')));
+    expect(opted).toEqual([]);
+  });
+
+  it('gives the assistants their icons, each kind of data kanji its icon, and an unknown kanji none', () => {
     expect(iconForKanji('連')).toBe('i-solar-link-round-bold-duotone');
-    for (const k of IDENTITY_KANJI) expect(iconForKanji(k)).toBeUndefined();
+    expect(iconForKanji('刀')).toBe('i-solar-cursor-bold-duotone');
+    expect(iconForKanji('禅')).toBe('i-solar-code-square-bold-duotone');
     expect(iconForKanji('鬱')).toBeUndefined();
+    for (const icon of Object.values(KIND_ICONS)) expect(isSolarBoldDuotone(icon, solar), icon).toBe(true);
   });
 });

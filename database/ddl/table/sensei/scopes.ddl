@@ -29,3 +29,8 @@ comment on column scopes.description
      is 'What this scope is for.';
 comment on column scopes.modified_at
      is 'Timestamp of the last modification to this row.';
+
+-- Row level security (the Supabase advisor, 2026-10-27), with no client policy.
+-- Read by the server (service_role, which bypasses RLS) and the import; a client role reads nothing here. Inert on the daemon, which connects
+-- as the owner.
+alter table sensei.scopes enable row level security;

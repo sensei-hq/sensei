@@ -68,6 +68,8 @@
 //! duplicates/smells writes a real `0.0` (row written, never suppressed). A ratio
 //! with a 0 denominator (empty touched surface) writes NO row.
 
+pub(super) use crate::qlty::scan_at_commit;
+use crate::qlty::{pin_qlty_config, run_qlty, strip_ansi};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -143,62 +145,7 @@ impl QualityScan {
     }
 }
 
-// ── qlty subprocess + parsers (pure where it counts) ────────────────────────
-
-/// Run `qlty` with `args` in `dir` and return stdout, or `None` when `qlty` is not
-/// on `PATH`, the directory has no `.qlty` config, or the command otherwise fails —
-/// an honest "no qlty data" (the caller writes no row), never a fabricated value.
-/// `qlty` is an OPTIONAL tool (kept SOFT — not a hard bootstrap prereq): absent → the
-/// metric is honest-empty and the daemon runs fine. Mirrors the shell-out-and-
-/// tolerate-absence discipline of [`super::churn::run_git`]. Note `qlty smells`/`qlty
-/// metrics` exit `0` even when they find smells, so a non-success status is a genuine
-/// failure (missing config / missing tool), not "found findings".
-fn run_qlty(dir: &Path, args: &[&str]) -> Option<String> {
-    // Resolve `qlty` through the SHARED bootstrap resolver — NOT a bare
-    // `Command::new("qlty")`. qlty installs at `~/.qlty/bin` (or `$QLTY_INSTALL/bin`),
-    // which the daemon's launchd PATH does not include; a bare spawn misses it and
-    // silently empties the whole quality family. `command_for` scans PATH + those
-    // user-local dirs (its doc: callers MUST use it when the binary may live outside
-    // the process PATH).
-    let mut cmd = match sensei_bootstrap::util::command_for("qlty") {
-        Ok(cmd) => cmd,
-        Err(e) => {
-            // qlty is a SOFT prereq (absent → honest-empty, daemon runs fine), but a
-            // fully-unresolvable CLI would otherwise seal the watermark as if measured.
-            // Surface it (no silent errors) instead of a silent empty.
-            tracing::warn!(
-                error = %e,
-                "quality: qlty CLI not resolved — quality metrics stay honest-empty until it is installed (~/.qlty/bin, $QLTY_INSTALL/bin, or on PATH)",
-            );
-            return None;
-        }
-    };
-    let out = cmd.args(args).current_dir(dir).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
-/// Strip ANSI/SGR escape sequences from `qlty metrics`' colored table so the TOTAL
-/// row is parseable. `qlty` emits `\x1b[…m` resets around every cell regardless of
-/// `NO_COLOR`, so a strip is required; each sequence runs from `ESC` to its final
-/// letter byte. Pure.
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            // Consume the escape sequence up to and including its final letter byte
-            // (e.g. the `m` of an SGR `\x1b[0m`).
-            for d in chars.by_ref() {
-                if d.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
+// ── qlty parsers (pure where it counts); the subprocess is crate::qlty ──────
 
 /// Parse `qlty metrics --all`' table into `(whole-tree TOTAL lines, per-file lines)`.
 /// Locates the `name` + `lines` columns by their header names (robust to column
@@ -252,18 +199,6 @@ struct SmellCounts {
     per_file_maintainability: HashMap<String, i64>,
 }
 
-/// Whether a SARIF result is a duplication finding — by its `duplication` taxon (the
-/// robust signal) with a `ruleId` substring fallback (`identical`/`similar`/`duplicat`).
-fn is_duplication(result: &serde_json::Value) -> bool {
-    let by_taxon = result["taxa"]
-        .as_array()
-        .is_some_and(|taxa| taxa.iter().any(|t| t["id"].as_str() == Some("duplication")));
-    by_taxon
-        || result["ruleId"].as_str().is_some_and(|r| {
-            r.contains("identical") || r.contains("similar") || r.contains("duplicat")
-        })
-}
-
 /// Add every physical line covered by `result`'s primary + related locations to
 /// `per_file` (keyed by artifact uri), so overlapping ranges across findings are
 /// counted once per line.
@@ -315,7 +250,7 @@ fn parse_smells(json: &str) -> Result<SmellCounts, String> {
     let mut dup_per_file: HashMap<String, HashSet<i64>> = HashMap::new();
     let mut maint_per_file: HashMap<String, i64> = HashMap::new();
     for result in results {
-        if is_duplication(result) {
+        if crate::qlty::is_duplication(result) {
             collect_dup_lines(result, &mut dup_per_file);
         } else {
             // A maintainability finding with no locatable file still counts toward the
@@ -327,44 +262,6 @@ fn parse_smells(json: &str) -> Result<SmellCounts, String> {
     let per_file_dup_lines =
         dup_per_file.into_iter().map(|(uri, lines)| (uri, lines.len() as i64)).collect();
     Ok(SmellCounts { per_file_dup_lines, per_file_maintainability: maint_per_file })
-}
-
-/// The FIXED `qlty` ruler pinned into every scanned worktree (P-B, spec §7). Every
-/// sampled commit is measured against THIS config — never its in-tree `.qlty`, which
-/// is absent on pre-config history and can drift between commits — so the trend is
-/// comparable ("the same ruler"). Deliberately plugin-LESS: `qlty metrics`/`smells`
-/// are built-in tree-sitter analyses, while the linter `[[plugin]]`s are for `qlty
-/// check` and would force a per-scan network source fetch. A STABLE snapshot —
-/// changing it re-bases the ruler, so it is versioned here deliberately rather than
-/// tracked to the live repo `.qlty`.
-const PINNED_QLTY_CONFIG: &str = r#"config_version = "0"
-exclude_patterns = [
-  "*.min.*", "*-min.*", "*_min.*",
-  "**/.yarn/**", "**/*.d.ts", "**/assets/**", "**/build/**", "**/cache/**",
-  "**/dist/**", "**/generated/**", "**/node_modules/**", "**/target/**",
-  "**/testdata/**", "**/vendor/**",
-]
-test_patterns = [
-  "**/test/**", "**/spec/**", "**/*.test.*", "**/*.spec.*",
-  "**/*_test.*", "**/*_spec.*", "**/test_*.*",
-]
-[smells]
-mode = "comment"
-[[source]]
-name = "default"
-default = true
-"#;
-
-/// Write [`PINNED_QLTY_CONFIG`] to `wt/.qlty/qlty.toml` (creating `.qlty/`), so the
-/// scan measures against the fixed ruler regardless of what config the checkout
-/// carried (config-pinning, P-B). Propagates the IO error — a scan is never silently
-/// left unpinned. qlty's content cache is global (`~/.qlty/cache`), so scans across
-/// worktrees already share it — no per-scan cache flag is needed.
-fn pin_qlty_config(wt: &Path) -> Result<(), String> {
-    let dir = wt.join(".qlty");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("quality: pin .qlty dir: {e}"))?;
-    std::fs::write(dir.join("qlty.toml"), PINNED_QLTY_CONFIG)
-        .map_err(|e| format!("quality: pin qlty.toml: {e}"))
 }
 
 /// Run the two `qlty` scans in the worktree `wt` and assemble a [`QualityScan`].
@@ -394,54 +291,6 @@ fn run_qlty_scan(wt: &Path) -> Result<Option<QualityScan>, String> {
         per_file_dup_lines: smells.per_file_dup_lines,
         per_file_maintainability: smells.per_file_maintainability,
     }))
-}
-
-// ── git worktree lifecycle ──────────────────────────────────────────────────
-
-/// RAII guard that `git worktree remove --force`s the scanned worktree AND removes
-/// its temp parent dir on Drop — so a worktree is ALWAYS torn down, even if the scan
-/// errors or panics (worktree hygiene, #3). A remove failure is logged + best-effort
-/// `worktree prune`d, never fatal (leaving the daemon otherwise healthy).
-struct WorktreeGuard {
-    root: String,
-    path: String,
-    base: std::path::PathBuf,
-}
-
-impl Drop for WorktreeGuard {
-    fn drop(&mut self) {
-        if super::churn::run_git(&self.root, &["worktree", "remove", "--force", &self.path])
-            .is_none()
-        {
-            tracing::warn!(path = %self.path, "quality: git worktree remove failed — pruning");
-            let _ = super::churn::run_git(&self.root, &["worktree", "prune"]);
-        }
-        let _ = std::fs::remove_dir_all(&self.base); // drop the temp parent dir too
-    }
-}
-
-/// Check out `sha` into a detached temp worktree, run `scan` in it, and ALWAYS remove
-/// the worktree afterwards (via [`WorktreeGuard`]). A failed `worktree add` yields
-/// `Ok(None)` + warn (honest-empty, never fabricated). `scan` is injected so the
-/// DB/as_of path can be tested with a fake and the real path uses [`run_qlty_scan`].
-/// The worktree lives under a unique `sensei-qlty-<uuid>` temp dir (git does not
-/// create missing parents, so the base is created first and torn down by the guard).
-pub(super) fn scan_at_commit<T, F>(root: &str, sha: &str, scan: F) -> Result<Option<T>, String>
-where
-    F: FnOnce(&Path) -> Result<Option<T>, String>,
-{
-    let base = std::env::temp_dir().join(format!("sensei-qlty-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&base).map_err(|e| format!("quality: worktree base dir: {e}"))?;
-    let wt = base.join("wt");
-    let wt_str = wt.to_string_lossy().into_owned();
-    if super::churn::run_git(root, &["worktree", "add", "--detach", "-q", &wt_str, sha]).is_none() {
-        tracing::warn!(root, sha, "quality: git worktree add failed — no quality row");
-        let _ = std::fs::remove_dir_all(&base);
-        return Ok(None);
-    }
-    let _guard = WorktreeGuard { root: root.to_string(), path: wt_str, base };
-    scan(&wt)
-    // `_guard` drops here → `worktree remove --force` + temp parent dir removed.
 }
 
 /// The last commit on or before end-of-`day` on the current branch (`git rev-list -1

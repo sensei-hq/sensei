@@ -3,6 +3,7 @@
 //! from `indexer` (which owns *what* to index) and `tasks` (which owns
 //! *when* to run things) so the heuristics stay unit-testable.
 
+pub mod codemap;
 pub mod doc_drift;
 pub mod layering;
 pub mod metric_day_explainer;
@@ -13,4 +14,3 @@ pub mod rule_consolidation;
 pub mod schema_model;
 pub mod session_metric_note;
 pub mod workspace_icon;
-pub mod world;

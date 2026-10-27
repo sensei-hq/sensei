@@ -646,3 +646,58 @@ async fn repair_prefers_the_renamed_subdir_over_a_live_parent() {
     );
     assert_ne!(session_row_folder(&s, sess).await, Some(parent));
 }
+
+/// A name two ecosystems share (`uuid` is a crate and an npm package) names no
+/// one library: it is refused, saying which ecosystems hold it, rather than
+/// failing the read whole. The library's id, or `ecosystem:name`, names one.
+#[tokio::test]
+async fn a_name_two_ecosystems_share_is_named_by_ecosystem() {
+    let s = pg_store().await;
+    let name = format!("_test:shared-{}", uuid::Uuid::new_v4().simple());
+    let mut ids = Vec::new();
+    for ecosystem in ["cargo", "npm"] {
+        ids.push(
+            s.upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &name,
+                ecosystem,
+                version: Some("1.0"),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
+            .await
+            .unwrap(),
+        );
+    }
+    let said = s.library_id_for(&name).await.unwrap_err();
+    assert!(said.contains("cargo") && said.contains("npm") && said.contains("cargo:"), "{said}");
+    assert_eq!(s.library_id_for(&format!("npm:{name}")).await.unwrap(), Some(ids[1]));
+    assert_eq!(s.library_id_for(&ids[0].to_string()).await.unwrap(), Some(ids[0]));
+    assert_eq!(s.library_id_for("pypi:_test:no-such").await.unwrap(), None);
+    for id in ids {
+        sqlx_core::query::query("DELETE FROM sensei.libraries WHERE id = $1")
+            .bind(id)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+}
+
+/// Every manifest adapter's ecosystem is one the database accepts — the dbd
+/// adapter's `dbd` was not, so every design.yaml's extensions failed to file
+/// (830 failures a day in the log) and the schema's libraries never appeared.
+#[tokio::test]
+async fn every_manifest_ecosystem_is_a_library_ecosystem() {
+    let s = pg_store().await;
+    let (known,): (Vec<String>,) =
+        sqlx_core::query_as::query_as("SELECT enum_range(NULL::sensei.library_ecosystem)::text[]")
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    let missing: Vec<&str> = crate::adapters::manifest::registered_adapters()
+        .iter()
+        .map(|a| a.ecosystem())
+        .filter(|e| !known.iter().any(|k| k == e))
+        .collect();
+    assert!(missing.is_empty(), "not library ecosystems: {missing:?}");
+}

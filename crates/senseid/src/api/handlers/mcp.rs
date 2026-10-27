@@ -1,4 +1,7 @@
 use super::query::{resolve_folder_id, resolve_scope_ids};
+
+/// How many communities `get_communities` returns unless asked for more.
+const COMMUNITIES_LIMIT: usize = 50;
 use crate::api::state::AppState;
 use crate::api::util::json_uuid;
 use crate::db::pg_store::CallDirection;
@@ -6,16 +9,6 @@ use crate::db::pg_store::SessionOutcomeRow;
 use axum::{extract::State, http::StatusCode, response::Json};
 
 // ── MCP Tool Proxy ──────────────────────────────────────────────────────────
-
-/// List every MCP tool this daemon dispatches on, with the shape the
-/// Instruments playground consumes: `kind`, `summary`, structured `inputs[]`,
-/// and an `example` response.
-///
-/// Sourced from `mcp_manifests::manifests()` — kept in that module so the
-/// listing stays in lockstep with `mcp_call_tool` (guarded by a unit test).
-pub(crate) async fn mcp_list_tools() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "tools": super::mcp_manifests::manifests() }))
-}
 
 /// Wrap a caller/callee list in an envelope that answers "does this symbol even
 /// exist" and "is this list complete" alongside the list itself.
@@ -205,15 +198,24 @@ pub(crate) async fn mcp_call_tool(
         }
         "get_file_tags" => {
             let tag = params["tag"].as_str().unwrap_or(query);
-            let files = state.pg.get_files_by_tag(repo_id, tag).await.map_err(|e| { tracing::warn!(error = %e, repo_id, tag, "mcp get_file_tags: get_files_by_tag failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-            serde_json::json!({"files": files})
+            let (files, total) = state.pg.get_files_by_tag(repo_id, tag).await.map_err(|e| { tracing::warn!(error = %e, repo_id, tag, "mcp get_file_tags: get_files_by_tag failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            serde_json::json!({"files": files, "total": total})
         }
         "get_communities" => {
             // Communities are stored per-folder; aggregate across ALL scope folders
             // (#G5a — the single-folder resolve_folder_id missed the repo root's).
             let ids = resolve_scope_ids(&state, repo_id).await?;
-            let communities = state.pg.list_communities_scoped(&ids).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_communities: list_communities_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-            serde_json::json!({"communities": communities})
+            let mut communities = state.pg.list_communities_scoped(&ids).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_communities: list_communities_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            // Largest first (the store's order); `limit` of them, with the total
+            // beside them so the cut is visible.
+            let total = communities.len();
+            let limit = params["limit"]
+                .as_str()
+                .and_then(|l| l.parse::<usize>().ok())
+                .or_else(|| params["limit"].as_u64().map(|l| l as usize))
+                .unwrap_or(COMMUNITIES_LIMIT);
+            communities.truncate(limit);
+            serde_json::json!({"communities": communities, "total": total})
         }
         "get_doc_drift" => {
             let drift = state.pg.get_doc_drift(repo_id).await.map_err(|e| {

@@ -1,7 +1,6 @@
 // Observatory · Instruments — the screen's pure view logic: which tab a deep
-// link opens, each tab's hero copy, tool-input prefill, search over the
+// link opens, each tab's hero copy, search over the
 // playground rail, and payload formatting. No state, no reads.
-import type { McpToolManifest } from '$lib/types.js';
 import type { PlaygroundGroup } from './playground-groups';
 
 export type InstrumentsTab = 'playground' | 'replay' | 'insights';
@@ -27,32 +26,8 @@ export function heroCopy(tab: InstrumentsTab): { tagline: string; sub: string } 
   }
   return {
     tagline: 'Sensei · what your instruments can do.',
-    sub: "Sensei's own MCP + every server discovered from your assistant configs. Try each tool interactively; sensei never wraps third-party MCPs — it just surfaces them.",
+    sub: "Every MCP server your assistants are configured with, sensei's own first. Each tool runs through its server, so what you see is what an assistant gets.",
   };
-}
-
-/**
- * Prefill a sensei tool's inputs so execute works on first click. `repoId`
- * takes the active workspace (a wrong one returns an empty answer), then the
- * manifest's placeholder; other inputs take their default, then their
- * placeholder, which for sensei's own tools is a known-good example. A tool
- * without a manifest (a discovered server's) gets nothing.
- */
-export function pickToolDefaults(
-  manifest: McpToolManifest | null,
-  activeWorkspaceId: string | null,
-): Record<string, string> {
-  const params: Record<string, string> = {};
-  for (const input of manifest?.inputs ?? []) {
-    if (input.key === 'repoId') {
-      params[input.key] = activeWorkspaceId || input.placeholder || input.default || 'sensei';
-    } else if (input.default != null) {
-      params[input.key] = String(input.default);
-    } else if (input.placeholder) {
-      params[input.key] = input.placeholder;
-    }
-  }
-  return params;
 }
 
 /** The rail narrowed to tools whose name or summary matches; empty groups go. */

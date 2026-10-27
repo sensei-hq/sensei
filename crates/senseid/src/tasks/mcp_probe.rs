@@ -21,8 +21,10 @@ use tokio::process::Command;
 
 /// Wall-clock cap for one probe. Covers spawn + initialize round-trip +
 /// tools/list round-trip on a slow MCP; a hung server is killed at the
-/// deadline.
-pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// deadline. Measured 2026-10-26: semgrep's server answers in 5.6s warm and
+/// overran 10s cold, so its tools were never listed. A probe is cached, so a
+/// generous cap costs one slow read, not one per view.
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The MCP protocol version we negotiate with the server. Servers that
 /// implement an older version should still respond with a valid
@@ -66,67 +68,154 @@ pub async fn probe_tools(
     }
 }
 
+/// Result of one tool call through a server.
+pub enum CallOutcome {
+    /// The server answered; `is_error` is the tool's own `isError`.
+    Ok { result: Value, is_error: bool },
+    /// The call never got an answer: spawn, protocol, timeout.
+    Error(String),
+}
+
+/// Wall-clock cap for one tool call — longer than a probe: the tool does work.
+pub const CALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Call one tool on a server over stdio, exactly as an assistant would: the
+/// same handshake, then `tools/call`. What the Playground shows is what the
+/// server returns, not a daemon-side imitation of it.
+pub async fn call_tool(
+    command: &str,
+    args: &[String],
+    env: &HashMap<String, String>,
+    cwd: Option<&std::path::Path>,
+    tool: &str,
+    arguments: &Value,
+) -> CallOutcome {
+    if command.is_empty() {
+        return CallOutcome::Error("no command configured".into());
+    }
+    let run = async {
+        let mut session = Session::start(command, args, env, cwd).await?;
+        let resp =
+            session.request(2, "tools/call", json!({"name": tool, "arguments": arguments})).await;
+        session.close().await;
+        resp
+    };
+    match tokio::time::timeout(CALL_TIMEOUT, run).await {
+        Ok(Ok(result)) => {
+            let is_error = result.get("isError").and_then(Value::as_bool).unwrap_or(false);
+            CallOutcome::Ok { result, is_error }
+        }
+        Ok(Err(e)) => CallOutcome::Error(e),
+        Err(_) => CallOutcome::Error(format!("timed out after {}s", CALL_TIMEOUT.as_secs())),
+    }
+}
+
+/// A server spawned over stdio, past the MCP handshake.
+struct Session {
+    child: tokio::process::Child,
+    stdin: tokio::process::ChildStdin,
+    reader: BufReader<tokio::process::ChildStdout>,
+    protocol_version: Option<String>,
+    server_name: Option<String>,
+    server_version: Option<String>,
+}
+
+impl Session {
+    async fn start(
+        command: &str,
+        args: &[String],
+        env: &HashMap<String, String>,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self, String> {
+        let mut cmd = Command::new(command);
+        cmd.args(args);
+        // Plugin MCP configs sometimes use a command/arg path relative to the
+        // config file's directory (e.g. `node packages/mcp-stdio/dist/index.js`),
+        // so run from the config's dir when the caller provides one.
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
+        // Merge env over process env; the mcp entry usually only wants to set
+        // API keys, so we don't strip the process's PATH etc.
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        cmd.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
+
+        let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+        let mut stdin = child.stdin.take().ok_or("stdin unavailable")?;
+        let stdout = child.stdout.take().ok_or("stdout unavailable")?;
+        let mut reader = BufReader::new(stdout);
+
+        write_frame(&mut stdin, &initialize_request()).await?;
+        let init_resp = read_response_matching(&mut reader, 1).await?;
+        let init_result = init_resp.get("result").cloned().unwrap_or(Value::Null);
+        let server_info = init_result.get("serverInfo").cloned().unwrap_or(Value::Null);
+        // Fire-and-forget: a notification has no id and no response.
+        write_frame(&mut stdin, &initialized_notification()).await?;
+        Ok(Self {
+            child,
+            stdin,
+            reader,
+            protocol_version: init_result
+                .get("protocolVersion")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            server_name: server_info.get("name").and_then(|v| v.as_str()).map(String::from),
+            server_version: server_info.get("version").and_then(|v| v.as_str()).map(String::from),
+        })
+    }
+
+    /// One request; its `result`, or the server's `error` as an `Err`. A
+    /// request the SERVER sends meanwhile is answered, since a server may wait
+    /// on it before it answers ours (semgrep asks for `roots/list`).
+    async fn request(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
+        let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        write_frame(&mut self.stdin, &msg).await?;
+        let resp = loop {
+            let frame = read_frame(&mut self.reader).await?;
+            if let (Some(asked), Some(their_id)) =
+                (frame.get("method").and_then(Value::as_str), frame.get("id"))
+            {
+                write_frame(&mut self.stdin, &answer_server_request(their_id, asked)).await?;
+                continue;
+            }
+            if frame.get("id").and_then(Value::as_u64) == Some(id) {
+                break frame;
+            }
+        };
+        if let Some(err) = resp.get("error") {
+            let text = err.get("message").and_then(|v| v.as_str()).unwrap_or("error");
+            return Err(format!("server error: {text}"));
+        }
+        Ok(resp.get("result").cloned().unwrap_or(Value::Null))
+    }
+
+    /// Best-effort clean shutdown; `kill_on_drop` covers an early return.
+    async fn close(mut self) {
+        let _ = self.stdin.shutdown().await;
+        let _ = self.child.kill().await;
+    }
+}
+
 async fn probe_inner(
     command: &str,
     args: &[String],
     env: &HashMap<String, String>,
     cwd: Option<&std::path::Path>,
 ) -> Result<ProbedManifest, String> {
-    let mut cmd = Command::new(command);
-    cmd.args(args);
-    // Plugin MCP configs sometimes use a command/arg path relative to the
-    // config file's directory (e.g. `node packages/mcp-stdio/dist/index.js`),
-    // so run from the config's dir when the caller provides one.
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
-    }
-    // Merge env over process env; the mcp entry usually only wants to set
-    // API keys, so we don't strip the process's PATH etc.
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    cmd.stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-
-    let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
-    let mut stdin = child.stdin.take().ok_or("stdin unavailable")?;
-    let stdout = child.stdout.take().ok_or("stdout unavailable")?;
-    let mut reader = BufReader::new(stdout);
-
-    // 1. initialize.
-    write_frame(&mut stdin, &initialize_request()).await?;
-    let init_resp = read_response_matching(&mut reader, 1).await?;
-    let init_result = init_resp.get("result").cloned().unwrap_or(Value::Null);
-    let protocol_version =
-        init_result.get("protocolVersion").and_then(|v| v.as_str()).map(String::from);
-    let server_info = init_result.get("serverInfo").cloned().unwrap_or(Value::Null);
-    let server_name = server_info.get("name").and_then(|v| v.as_str()).map(String::from);
-    let server_version = server_info.get("version").and_then(|v| v.as_str()).map(String::from);
-
-    // 2. Send the initialized notification (fire-and-forget — no id/no response).
-    write_frame(&mut stdin, &initialized_notification()).await?;
-
-    // 3. tools/list.
-    write_frame(&mut stdin, &tools_list_request()).await?;
-    let list_resp = read_response_matching(&mut reader, 2).await?;
-    if let Some(err) = list_resp.get("error") {
-        let msg = err.get("message").and_then(|v| v.as_str()).unwrap_or("tools/list error");
-        return Err(format!("server error: {msg}"));
-    }
-    let tools = list_resp
-        .get("result")
-        .and_then(|r| r.get("tools"))
-        .and_then(|t| t.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    // 4. Best-effort clean shutdown. The `kill_on_drop` on the child means
-    // an early return still terminates the process.
-    let _ = stdin.shutdown().await;
-    let _ = child.kill().await;
-
+    let mut session = Session::start(command, args, env, cwd).await?;
+    let listed = session.request(2, "tools/list", json!({})).await;
+    let (protocol_version, server_name, server_version) = (
+        session.protocol_version.take(),
+        session.server_name.take(),
+        session.server_version.take(),
+    );
+    session.close().await;
+    let tools = listed?.get("tools").and_then(|t| t.as_array()).cloned().unwrap_or_default();
     Ok(ProbedManifest { protocol_version, server_name, server_version, tools })
 }
 
@@ -138,13 +227,9 @@ async fn write_frame(stdin: &mut tokio::process::ChildStdin, msg: &Value) -> Res
     Ok(())
 }
 
-/// Read newline-delimited JSON frames from `reader` until one with `id ==
-/// expected_id` arrives. Skips notifications and unrelated messages. Returns
-/// an error if the reader closes before a match is seen.
-async fn read_response_matching(
-    reader: &mut BufReader<tokio::process::ChildStdout>,
-    expected_id: u64,
-) -> Result<Value, String> {
+/// The next newline-delimited JSON frame from the server; an error when it
+/// closes stdout or writes something that is not JSON.
+async fn read_frame(reader: &mut BufReader<tokio::process::ChildStdout>) -> Result<Value, String> {
     let mut line = String::new();
     loop {
         line.clear();
@@ -153,19 +238,35 @@ async fn read_response_matching(
             return Err("server closed stdout before response".into());
         }
         let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
+        if !trimmed.is_empty() {
+            return serde_json::from_str(trimmed).map_err(|e| format!("bad json from server: {e}"));
         }
-        let msg: Value = match serde_json::from_str(trimmed) {
-            Ok(v) => v,
-            Err(e) => return Err(format!("bad json from server: {e}")),
-        };
-        // Match the response id.
+    }
+}
+
+/// Frames until the response with `id == expected_id`. Used for `initialize`,
+/// before which a server has nothing to ask; later requests go through
+/// [`Session::request`], which answers what the server asks.
+async fn read_response_matching(
+    reader: &mut BufReader<tokio::process::ChildStdout>,
+    expected_id: u64,
+) -> Result<Value, String> {
+    loop {
+        let msg = read_frame(reader).await?;
         if msg.get("id").and_then(|v| v.as_u64()) == Some(expected_id) {
             return Ok(msg);
         }
-        // Non-matching id → probably a server-originated notification or
-        // request; ignore and keep reading.
+    }
+}
+
+/// Our answer to a request the server sent: no roots (we expose none), a ping
+/// answered, anything else not supported — always an answer, never silence.
+fn answer_server_request(id: &Value, method: &str) -> Value {
+    match method {
+        "roots/list" => json!({"jsonrpc": "2.0", "id": id, "result": {"roots": []}}),
+        "ping" => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+        _ => json!({"jsonrpc": "2.0", "id": id,
+                    "error": {"code": -32601, "message": format!("method not supported: {method}")}}),
     }
 }
 
@@ -189,13 +290,47 @@ fn initialized_notification() -> Value {
     })
 }
 
-fn tools_list_request() -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id":      2,
-        "method":  "tools/list",
-        "params":  {}
-    })
+/// A stand-in MCP server for tests: answers initialize, then one tools/call —
+/// with a result when asked for `echo` with `{"x":1}`, else a tool error.
+#[cfg(test)]
+pub(crate) mod fake {
+    pub(crate) fn server() -> (String, Vec<String>) {
+        let script = r#"read l
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"fake"}}}'
+read l
+read l
+case "$l" in
+  *'"name":"echo"'*'"x":1'*) echo '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"echoed"}],"isError":false}}' ;;
+  *) echo '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"bad args"}],"isError":true}}' ;;
+esac"#;
+        ("sh".into(), vec!["-c".into(), script.into()])
+    }
+
+    /// A server whose tool answers with the folder it was started in.
+    pub(crate) fn cwd_server() -> (String, Vec<String>) {
+        let script = r#"read l
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"cwd"}}}'
+read l
+read l
+printf '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"%s"}]}}\n' "$(pwd -P)""#;
+        ("sh".into(), vec!["-c".into(), script.into()])
+    }
+
+    /// A server that, like semgrep's, asks the client for its roots and answers
+    /// the tool call only once that request has an answer.
+    pub(crate) fn asking_server() -> (String, Vec<String>) {
+        let script = r#"read l
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"asker"}}}'
+read l
+read l
+echo '{"jsonrpc":"2.0","id":0,"method":"roots/list"}'
+read answer
+case "$answer" in
+  *'"id":0'*'"roots"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"answered"}]}}' ;;
+  *) echo '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"no roots answer"}],"isError":true}}' ;;
+esac"#;
+        ("sh".into(), vec!["-c".into(), script.into()])
+    }
 }
 
 #[cfg(test)]
@@ -214,17 +349,6 @@ mod tests {
             req["params"]["clientInfo"]["version"].is_string(),
             "version populated from CARGO_PKG_VERSION"
         );
-    }
-
-    #[test]
-    fn tools_list_request_matches_mcp_protocol() {
-        let req = tools_list_request();
-        assert_eq!(req["jsonrpc"], "2.0");
-        assert_eq!(
-            req["id"], 2,
-            "response id must be 2 so we can match it in read_response_matching"
-        );
-        assert_eq!(req["method"], "tools/list");
     }
 
     #[test]
@@ -274,6 +398,57 @@ mod tests {
             outcome.contains("timed out") || outcome.contains("read") || outcome.contains("closed"),
             "expected timeout/read/closed error, got: {outcome}"
         );
+    }
+
+    /// A tool runs through the server itself, as an assistant would call it:
+    /// the arguments reach the server and its result comes back whole.
+    #[tokio::test]
+    async fn a_tool_call_reaches_the_server_and_returns_its_result() {
+        let (cmd, args) = fake::server();
+        let got = call_tool(&cmd, &args, &HashMap::new(), None, "echo", &json!({"x": 1})).await;
+        match got {
+            CallOutcome::Ok { result, is_error } => {
+                assert!(!is_error);
+                assert_eq!(result["content"][0]["text"], "echoed");
+            }
+            CallOutcome::Error(e) => panic!("expected a result, got {e}"),
+        }
+    }
+
+    /// A server may ask the client something mid-call (semgrep asks for
+    /// `roots/list`) and wait for the answer: unanswered, the call hung for its
+    /// whole 60s cap.
+    #[tokio::test]
+    async fn a_request_from_the_server_is_answered_mid_call() {
+        let (cmd, args) = fake::asking_server();
+        let got = tokio::time::timeout(
+            Duration::from_secs(5),
+            call_tool(&cmd, &args, &HashMap::new(), None, "anything", &json!({})),
+        )
+        .await
+        .expect("the call must not wait on an unanswered request");
+        match got {
+            CallOutcome::Ok { result, is_error } => {
+                assert!(!is_error, "{result}");
+                assert_eq!(result["content"][0]["text"], "answered");
+            }
+            CallOutcome::Error(e) => panic!("{e}"),
+        }
+    }
+
+    /// A tool that reports failure is a failure the caller sees — `isError`
+    /// is carried, never flattened into a success.
+    #[tokio::test]
+    async fn a_tool_error_is_reported_as_one() {
+        let (cmd, args) = fake::server();
+        let got = call_tool(&cmd, &args, &HashMap::new(), None, "echo", &json!({"x": 2})).await;
+        match got {
+            CallOutcome::Ok { result, is_error } => {
+                assert!(is_error, "the server said isError");
+                assert_eq!(result["content"][0]["text"], "bad args");
+            }
+            CallOutcome::Error(e) => panic!("a tool error is a result, not a transport error: {e}"),
+        }
     }
 
     /// Test-only shim that runs probe_inner with a short timeout so the

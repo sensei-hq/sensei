@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { KIND_ICONS } from '@sensei/glyphs';
 	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { kindToneClass, type DojoOrg } from '$lib/dojo-data';
 	import { Chip } from '$lib/components/kit';
@@ -18,7 +19,7 @@
 	<div
 		class="border-paper-edge bg-paper flex h-[54px] flex-shrink-0 items-center gap-3 border-b px-4 md:px-6"
 	>
-		<KanjiToken char="結" icon={null} size="inherit" toneClass="" class="text-accent text-xl" />
+		<KanjiToken char="結" size="inherit" toneClass="" class="text-accent text-xl" />
 		<span class="display text-lg" style="letter-spacing: -0.01em">Dōjō</span>
 		<span class="mono text-ink-faint hidden text-xs sm:inline">dojo.sensei-hq.com</span>
 		<span class="flex-1"></span>
@@ -67,7 +68,7 @@
 						<div
 							class="bg-paper border-paper-edge flex h-[46px] w-[46px] items-center justify-center rounded-xl border"
 						>
-							<KanjiToken char={o.kanji} icon={null} size="inherit" toneClass="" class="text-accent text-xl" />
+							<KanjiToken char={o.kanji} icon={KIND_ICONS.organisation} size="inherit" toneClass="" class="text-accent text-xl" />
 						</div>
 						<div class="min-w-0">
 							<div class="flex flex-wrap items-center gap-2">

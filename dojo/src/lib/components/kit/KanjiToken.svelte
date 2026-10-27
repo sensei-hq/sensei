@@ -25,9 +25,10 @@
 	//
 	// It follows the dōjō glyph choice (#133): in icon mode it renders the icon
 	// that stands for `char` — its own `icon`, else the shared vocabulary's —
-	// at the same size and tone. `icon={null}` marks an identity (a brand mark,
-	// an organisation's kanji) that stays kanji in both modes. `size="inherit"`
-	// adds no font-size, for a mark whose size its `class` states.
+	// at the same size and tone. Every mark follows the mode — one rule across
+	// the app and the dōjō (2026-10-27); a kanji that is data (an organisation's,
+	// a dōjō's) passes its kind's `icon`. `size="inherit"` adds no font-size, for
+	// a mark whose size its `class` states.
 	let {
 		char,
 		size = 'base',
@@ -40,12 +41,12 @@
 		size?: KanjiSize | 'inherit';
 		toneClass?: string;
 		w?: number;
-		icon?: string | null;
+		icon?: string;
 		class?: string;
 	} = $props();
 
 	const px = $derived(size === 'inherit' ? null : (SIZE_PX[size] ?? SIZE_PX.base));
-	const resolved = $derived(icon === null ? undefined : (icon ?? iconForKanji(char)));
+	const resolved = $derived(icon ?? iconForKanji(char));
 	const style = $derived(
 		[
 			px != null && `font-size: ${px}px`,

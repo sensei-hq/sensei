@@ -117,8 +117,8 @@ This is the daemon's job. The Playground UI reads whatever
 
 - Every tool in `crates/mcp/src/tools/` declares a non-empty
   `defaults` object appropriate to its schema.
-- `GET /api/mcp/tools?mcp=sensei` returns all sensei tools with
-  the categories and defaults matching the declarations.
+- `GET /api/instruments/mcp-servers/{id}/tools` for sensei's server
+  returns every tool with the `inputSchema` it declares.
 - Third-party MCPs configured in Claude Code / Zed appear in
   `sensei.mcp_servers` within 60s of daemon start.
 - Playground can execute any tool round-trip without the user
@@ -131,9 +131,9 @@ This is the daemon's job. The Playground UI reads whatever
 
 Optional check:
 ```
-curl -s 'http://localhost:7744/api/mcp/tools?mcp=sensei' \
-  | jq '[.tools[] | {name, has_defaults: (.defaults | length > 0)}] | group_by(.has_defaults) | map({has_defaults: .[0].has_defaults, n: length})'
-# expected: every tool has_defaults: true
+id=$(curl -s localhost:7744/api/instruments/mcp-servers | jq -r '.servers[] | select(.mcp_key|test("(^|_)sensei$")) | .id')
+curl -s "localhost:7744/api/instruments/mcp-servers/$id/tools" | jq '[.tools[] | select(.inputSchema == null)] | length'
+# expected: 0
 
 psql -A -t -c "select acp_family, count(*) from sensei.mcp_servers
                 where enabled and last_seen_at > now() - interval '1 hour'

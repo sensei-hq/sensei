@@ -674,6 +674,8 @@ Enum "sensei"."task_execution_kind" {
   "advance_run"
   "publish_run"
   "tracker_discover"
+  "discover_library"
+  "measure_complexity"
   "build_connections"
   "resolve_edges"
   "plan_metric_days"
@@ -772,7 +774,7 @@ unchanged transcripts. Shared by the backfill and forward-capture workers.'''
 Table "activity"."session_facet_tags" {
   "session_id" text [pk, not null]
   "kind" sensei.facet_tag_kind [pk, not null]
-  "value" text [pk, not null, note: 'Deliberately text, not an enum: the goal and friction vocabularies grow as more\nACPs are seen, and a new value should not need a migration. The analyzer discards\nvalues outside its current closed list before writing, so a model inventing a\ncategory cannot break a group-by. `kind` IS an enum because it is closed.']
+  "value" text [pk, not null, note: 'Deliberately text, not an enum: the goal and friction vocabularies grow as more\nACPs are seen, and a new value should not need a migration. The analyzer is to\ndiscard values outside its current closed list before writing, so a model\ninventing a category cannot break a group-by. `kind` IS an enum because it is closed.']
   "weight" int [not null, default: 1, note: 'How strongly the tag applies. 1 for a plain occurrence; higher when the analyzer\nsaw a session dominated by one kind of work.']
 
   indexes {
@@ -780,13 +782,14 @@ Table "activity"."session_facet_tags" {
   }
 
   Note: '''Goal categories and friction kinds per session, one row per tag (spec 2026-08-26).
-One table for both multisets, discriminated by `kind`. Rewritten in place when a
-session is re-analyzed.'''
+One table for both multisets, discriminated by `kind`. To be rewritten in place
+when a session is re-analyzed. Not yet written: nothing populates this table
+until the daemon's facet pass is built.'''
 }
 
 Table "activity"."session_facets" {
   "session_id" text [pk, not null, note: 'The assistant\'s own session id (activity.sessions.client_session_id), matching\nsession_process_evidence.session_id — the join key for the cited turns. Not an FK:\na session row can be pruned while its derived record and quotes stay legible.']
-  "underlying_goal" text [note: 'One sentence describing what the person was trying to achieve. NULL until the\nfull facet pass has run — a row may exist carrying only a stage, written by the\nprocess analyzer, before anything else about the session has been derived.']
+  "underlying_goal" text [note: 'One sentence describing what the person was trying to achieve. NULL until the\nfull facet pass has run — a row may exist carrying only a stage, written by the\nprocess analyzer, before anything else about the session has been derived. A\nrecord whose evidence quote is not found verbatim in the transcript is to be\nDROPPED by the analyzer, never stored (spec 2026-08-20 D5).']
   "goal_outcome" sensei.goal_outcome [note: 'Whether the session achieved its goal, read from the transcript. Distinct from\nactivity.sessions.outcome, which is mechanical — a session is routinely both\n`corrected` and `mostly_achieved`. NULL means the analyzer would not commit to a\nreading.']
   "primary_success" text [not null, default: '']
   "friction_detail" text [not null, default: '', note: 'One sentence naming what got in the way. Empty string means the analyzer saw no\nfriction — distinct from a session with no record at all, which is simply absent\nfrom this table.']
@@ -807,7 +810,9 @@ Table "activity"."session_facets" {
 Scalar facets only; the goal/friction multisets live in
 activity.session_facet_tags and the grounding quotes in
 activity.session_process_evidence. brief_summary is NOT here — it is
-activity.sessions.summary.'''
+activity.sessions.summary. Not yet written: nothing populates this table until
+the daemon's facet pass is built, so an empty table means no writer, not no
+findings.'''
 }
 
 Table "activity"."session_process_evidence" {
@@ -2145,6 +2150,8 @@ Table "activity"."assistant_events" {
   "tool_kind" text
   "call_info" text
   "enriched_at" timestamptz
+  "tool_use_id" text [generated always as: 'payload ->> \'tool_use_id\'', note: 'The engine\'s tool-call id, stored from payload->>\'tool_use_id\' at write: the key session_tool_calls pairs a request with its response on, so a read never opens the payload (#298).']
+  "duration_ms" bigint [generated always as: 'CASE WHEN jsonb_typeof(payload -> \'duration_ms\') = \'number\' THEN (payload ->> \'duration_ms\')::numeric::bigint END', note: 'The engine\'s measured duration of a tool call, stored from payload->\'duration_ms\' at write; NULL when absent or not a number (#298).']
 
   indexes {
     (session_id, created_at) [name: 'assistant_events_session_id_idx', note: 'order: asc, desc']
@@ -2153,6 +2160,7 @@ Table "activity"."assistant_events" {
     (family, created_at) [name: 'assistant_events_family_idx', note: 'order: asc, desc']
     id [name: 'assistant_events_unenriched_idx', note: 'where: enriched_at IS NULL']
     (repository_id, created_at) [name: 'assistant_events_repository_id_idx', note: 'where: repository_id IS NOT NULL\norder: asc, desc']
+    (session_id, tool_use_id, id) [name: 'assistant_events_tool_use_idx', note: 'where: tool_use_id IS NOT NULL']
   }
 
   Note: '''Raw assistant event log — one row per hook/event invocation, from any
@@ -2349,6 +2357,23 @@ workspace_id = X  = active only in that workspace.
 extensions.scope column is a seeding hint only; this table is authoritative at runtime.'''
 }
 
+Table "sensei"."file_complexity" {
+  "repository_id" uuid [pk, not null, note: 'The repository measured.']
+  "path" text [pk, not null, note: 'Repository-relative path, as git and qlty name it.']
+  "functions" int [not null, note: 'Functions and methods qlty counted in the file.']
+  "complex" int [not null, note: 'Of those, how many exceed cyclomatic complexity 10.']
+  "max_cyclo" int [not null, note: 'The largest cyclomatic complexity of any function in the file.']
+  "measured_sha" text [not null, note: 'The HEAD commit measured; a scan re-measures only when HEAD moved.']
+  "measured_at" timestamptz [not null, default: `now()`, note: 'When it was measured.']
+
+  Note: '''Per-file function complexity as local `qlty metrics --functions` measures it (user,
+2026-10-27: rely on local qlty rather than re-deriving what it measures), for the Code
+map's Complexity lens (M17). Measured at the repository's HEAD in a temporary worktree
+against the pinned qlty ruler — never in the working copy. Replaced whole per
+repository at each measurement; one HEAD per repository, so every row of a repository
+carries the same `measured_sha`.'''
+}
+
 Table "sensei"."folders" {
   "id" uuid [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "root_id" uuid [not null, note: 'Foreign key to folders_to_watch — which watched root this folder was discovered under.']
@@ -2459,7 +2484,7 @@ Populated by daemon indexer from referenced_libraries; editable by user.'''
 Table "sensei"."library_packages" {
   "package_name" text [pk, not null, note: 'Ecosystem-qualified name as a dependency file spells it (@rokkit/ui) — matches what detection stored, so resolution is an equality join.']
   "library_id" uuid [not null, note: 'FK to libraries — the parent whose skills/agents this package should resolve to.']
-  "source" text [not null, default: 'manifest', note: 'Provenance: manifest (declared) — reserved for a future curated/registry writer.']
+  "source" text [not null, default: 'manifest', note: 'Provenance: manifest (declared by the library), workspace (its repo\'s workspace members), dependency (a dependent used it and its repository\'s manifest named the library).']
   "modified_at" timestamptz [not null, default: `now()`]
 
   indexes {
@@ -4372,6 +4397,7 @@ Ref: "sensei"."dojo_membership_personas"."membership_id" > "sensei"."dojo_member
 Ref: "sensei"."dojo_membership_personas"."persona_id" > "sensei"."personas"."id" [delete: cascade]
 Ref: "sensei"."extension_workspaces"."extension_id" > "sensei"."extensions"."id" [delete: cascade]
 Ref: "sensei"."extension_workspaces"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
+Ref: "sensei"."file_complexity"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
 Ref: "sensei"."folders"."root_id" > "sensei"."folders_to_watch"."id" [delete: cascade]
 Ref: "sensei"."folders"."parent_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."folders"."repository_id" > "sensei"."repositories"."id" [delete: set null]

@@ -21,6 +21,7 @@ create table if not exists files (
 , skip_reason              sensei.scan_skip_reason
 , skip_detail              text
 , parsed_at                timestamptz
+, tags                     text[]      not null default '{}'
 , indexed_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()
 , unique (folder_id, file_path)
@@ -50,6 +51,8 @@ comment on column files.id
      is 'Surrogate primary key. Referenced by nodes.file_id — 16 bytes instead of a repeated path, and unchanged when the file moves.';
 comment on column files.folder_id
      is 'Foreign key to folders — which folder this file belongs to.';
+comment on column files.tags
+     is 'Framework roles, sorted: the kinds of the symbols it holds (hook, component) and its role by path (route, middleware). Written by the scan; read through file_tags.';
 comment on column files.file_path
      is 'Folder-relative path of the source file being tracked. UNIQUE with folder_id: the walk resolves a file by path, having no id in hand.';
 comment on column files.mtime

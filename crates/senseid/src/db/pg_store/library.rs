@@ -63,6 +63,9 @@ impl PgStore {
         name: &str,
         component: Option<&str>,
     ) -> Result<Vec<serde_json::Value>, String> {
+        // By the library a name RESOLVES to — its own or one of its packages'
+        // (#341: `@rokkit/ui` read rokkit's docs as none).
+        let Some(library_id) = self.library_id_for(name).await? else { return Ok(Vec::new()) };
         let rows: Vec<(
             String,
             Option<String>,
@@ -77,13 +80,12 @@ impl PgStore {
                         c.package_name
                    FROM sensei.library_content c
                    JOIN sensei.library_versions lv ON lv.id = c.library_version_id AND lv.is_latest
-                   JOIN sensei.libraries l ON l.id = lv.library_id
-                  WHERE l.name = $1
+                  WHERE lv.library_id = $1
                     AND c.kind = 'page'::sensei.library_content_kind
                     AND ($2::text IS NULL OR c.component = $2)
                   ORDER BY (c.component IS NULL) DESC, c.component, c.name",
         )
-        .bind(name)
+        .bind(library_id)
         .bind(component)
         .fetch_all(&self.pool)
         .await
@@ -570,12 +572,12 @@ impl PgStore {
         // statements could previously drift, and the agent table's own comment
         // said it "mirrors library_skills".
         const UPSERT: &str = "INSERT INTO sensei.library_content(
-                 library_version_id, kind, name, focus, body, source, source_path, version_range)
-             VALUES($1, $2::sensei.library_content_kind, $3, $4, $5, $6, $7, $8)
+                 library_version_id, kind, name, focus, body, source, source_path, version_range, url)
+             VALUES($1, $2::sensei.library_content_kind, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT(library_version_id, kind, package_name, name) DO UPDATE SET
                focus=EXCLUDED.focus, body=EXCLUDED.body, source=EXCLUDED.source,
                source_path=EXCLUDED.source_path, version_range=EXCLUDED.version_range,
-               modified_at=now()";
+               url=EXCLUDED.url, modified_at=now()";
 
         let mut ns = 0u32;
         for s in skills.iter().filter(|s| s.body.is_some()) {
@@ -588,6 +590,7 @@ impl PgStore {
                 .bind(source)
                 .bind(s.path.as_deref())
                 .bind(version_range)
+                .bind(s.url.as_deref())
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -604,6 +607,7 @@ impl PgStore {
                 .bind(source)
                 .bind(a.path.as_deref())
                 .bind(version_range)
+                .bind(a.url.as_deref())
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -611,6 +615,71 @@ impl PgStore {
         }
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok((ns, na))
+    }
+
+    /// The repository a library's source is in.
+    pub async fn library_repository_url(
+        &self,
+        library_id: &uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT repository_url FROM sensei.libraries WHERE id = $1",
+        )
+        .bind(library_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("library_repository_url: {e}"))?;
+        Ok(row.and_then(|r| r.0))
+    }
+
+    /// Record the repository a library's source is in.
+    pub async fn set_library_repository_url(
+        &self,
+        library_id: &uuid::Uuid,
+        url: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.libraries SET repository_url = $2, modified_at = now() WHERE id = $1",
+        )
+        .bind(library_id)
+        .bind(url)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_library_repository_url: {e}"))?;
+        Ok(())
+    }
+
+    /// Of the dependency repositories given as `(url, owner/repo)`, the keys not
+    /// to ask again (#341): a repository whose library is a working copy under a
+    /// watched folder — its own scan registers it — and one a `discover_library`
+    /// ran for within `within_hours`, whatever it found. A failed run counts too:
+    /// a repository that errors is asked again tomorrow, not on every scan.
+    pub async fn dependency_repos_settled(
+        &self,
+        repos: &[(String, String)],
+        within_hours: i32,
+    ) -> Result<std::collections::HashSet<String>, String> {
+        let (urls, keys): (Vec<&str>, Vec<&str>) =
+            repos.iter().map(|(u, k)| (u.as_str(), k.as_str())).unzip();
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT r.key FROM unnest($1::text[], $2::text[]) AS r(url, key)
+              WHERE EXISTS (SELECT 1 FROM sensei.libraries l
+                              JOIN sensei.library_versions lv ON lv.library_id = l.id
+                              JOIN sensei.folders_to_watch w
+                                ON lv.local_path = w.path OR lv.local_path LIKE w.path || '/%'
+                             WHERE l.repository_url = r.url)
+                 OR EXISTS (SELECT 1 FROM activity.task_executions t
+                             WHERE t.task_kind = 'discover_library' AND t.path = r.key
+                               AND t.status IN ('completed', 'failed')
+                               AND t.started_at > now() - make_interval(hours => $3))",
+        )
+        .bind(&urls)
+        .bind(&keys)
+        .bind(within_hours)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("dependency_repos_settled: {e}"))?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
     /// Record where a library's source lives on disk.
@@ -668,28 +737,85 @@ impl PgStore {
     /// [`Self::list_library_agents`]), and three copies of a resolution rule is
     /// how the exclusion resolver came to gate the watcher while pruning nothing.
     ///
-    /// The library's own name WINS over a package link. A library that publishes a
-    /// package under its own name must resolve to itself, and a stale link must
-    /// never shadow a real library.
+    /// In order:
+    /// 1. a row of that name that is a LIBRARY — it owns packages, or no library
+    ///    claims the name as a package. A library that publishes a package under
+    ///    its own name resolves to itself, and a stale link never shadows it;
+    /// 2. the library that CLAIMS the name as one of its packages — over a row
+    ///    detection made for the package itself (#341: `@rokkit/ui`'s own empty
+    ///    row won, so it returned no skills, agents or docs while `rokkit` held
+    ///    5, 3 and 94).
+    ///
+    /// A reference is the library's id, `ecosystem:name` (`cargo:uuid`), or a
+    /// bare name. A bare name two ecosystems share (`uuid` is a crate and an npm
+    /// package) names no one library: it is refused, saying which ecosystems
+    /// hold it — an error, not a pick, and not the whole read failing.
     ///
     /// `None` on a genuine miss; propagates a read failure, because "no such
     /// library" and "the lookup broke" lead a caller to different places.
     pub async fn library_id_for(&self, reference: &str) -> Result<Option<uuid::Uuid>, String> {
-        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "SELECT COALESCE(
-                      (SELECT id FROM sensei.libraries WHERE name = $1),
-                      (SELECT library_id FROM sensei.library_packages WHERE package_name = $1)
-                    ) AS id
-              WHERE COALESCE(
-                      (SELECT id FROM sensei.libraries WHERE name = $1),
-                      (SELECT library_id FROM sensei.library_packages WHERE package_name = $1)
-                    ) IS NOT NULL",
+        let fail = |e: sqlx_core::Error| format!("library_id_for({reference}): {e}");
+        if let Ok(id) = uuid::Uuid::parse_str(reference) {
+            let row: Option<(uuid::Uuid,)> =
+                sqlx_core::query_as::query_as("SELECT id FROM sensei.libraries WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(fail)?;
+            return Ok(row.map(|r| r.0));
+        }
+        // `ecosystem:name` only where the prefix IS an ecosystem — a name may
+        // hold a colon of its own.
+        let (ecosystem, name) = match reference.split_once(':') {
+            Some((eco, name)) => {
+                let (known,): (bool,) = sqlx_core::query_as::query_as(
+                    "SELECT $1 = ANY(enum_range(NULL::sensei.library_ecosystem)::text[])",
+                )
+                .bind(eco)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(fail)?;
+                if known { (Some(eco), name) } else { (None, reference) }
+            }
+            None => (None, reference),
+        };
+        let candidates = |sql: &'static str| {
+            sqlx_core::query_as::query_as::<_, (uuid::Uuid, String)>(sql)
+                .bind(name)
+                .bind(ecosystem)
+                .fetch_all(&self.pool)
+        };
+        let mut found = candidates(
+            "SELECT l.id, l.ecosystem::text FROM sensei.libraries l
+              WHERE l.name = $1
+                AND ($2::text IS NULL OR l.ecosystem::text = $2)
+                AND (EXISTS (SELECT 1 FROM sensei.library_packages o WHERE o.library_id = l.id)
+                     OR NOT EXISTS (SELECT 1 FROM sensei.library_packages c
+                                     WHERE c.package_name = $1 AND c.library_id <> l.id))
+              ORDER BY l.ecosystem::text",
         )
-        .bind(reference)
-        .fetch_optional(&self.pool)
         .await
-        .map_err(|e| format!("library_id_for({reference}): {e}"))?;
-        Ok(row.map(|r| r.0))
+        .map_err(fail)?;
+        if found.is_empty() {
+            found = candidates(
+                "SELECT DISTINCT l.id, l.ecosystem::text FROM sensei.library_packages p
+                   JOIN sensei.libraries l ON l.id = p.library_id
+                  WHERE p.package_name = $1
+                    AND ($2::text IS NULL OR l.ecosystem::text = $2)
+                  ORDER BY 2",
+            )
+            .await
+            .map_err(fail)?;
+        }
+        match found.as_slice() {
+            [] => Ok(None),
+            [(id, _)] => Ok(Some(*id)),
+            many => Err(format!(
+                "'{name}' is a library in {} — name one, as {}:{name}",
+                many.iter().map(|(_, e)| e.as_str()).collect::<Vec<_>>().join(", "),
+                many[0].1
+            )),
+        }
     }
 
     /// Replace the packages a library declares it publishes.
@@ -773,21 +899,27 @@ impl PgStore {
         let Some(version_id) = self.current_library_version(&lib_id).await? else {
             return Ok(Vec::new());
         };
-        let rows: Vec<(String, Option<String>, Option<String>, String, Option<String>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT c.name, c.focus, c.body, c.source, c.version_range
+        let rows: Vec<(
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT c.name, c.focus, c.body, c.source, c.version_range, c.url
                FROM sensei.library_content c
               WHERE c.library_version_id = $1
                 AND c.kind = $2::sensei.library_content_kind
               ORDER BY c.focus, c.name",
-            )
-            .bind(version_id)
-            .bind(kind)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(name, focus, body, source, vr)| {
-            serde_json::json!({ "name": name, "focus": focus, "body": body, "source": source, "version_range": vr })
+        )
+        .bind(version_id)
+        .bind(kind)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(name, focus, body, source, vr, url)| {
+            serde_json::json!({ "name": name, "focus": focus, "body": body, "source": source, "version_range": vr, "url": url })
         }).collect())
     }
 
@@ -805,22 +937,28 @@ impl PgStore {
         let Some(version_id) = self.current_library_version(&lib_id).await? else {
             return Ok(None);
         };
-        let row: Option<(String, Option<String>, Option<String>, String, Option<String>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT c.name, c.focus, c.body, c.source, c.version_range
+        let row: Option<(
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT c.name, c.focus, c.body, c.source, c.version_range, c.url
                FROM sensei.library_content c
               WHERE c.library_version_id = $1
                 AND c.kind = 'skill'::sensei.library_content_kind
                 AND c.focus = $2
               ORDER BY c.modified_at DESC LIMIT 1",
-            )
-            .bind(version_id)
-            .bind(focus)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(row.map(|(name, focus, body, source, vr)| {
-            serde_json::json!({ "name": name, "focus": focus, "body": body, "source": source, "version_range": vr })
+        )
+        .bind(version_id)
+        .bind(focus)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(name, focus, body, source, vr, url)| {
+            serde_json::json!({ "name": name, "focus": focus, "body": body, "source": source, "version_range": vr, "url": url })
         }))
     }
 
@@ -1058,63 +1196,112 @@ impl PgStore {
         }).collect())
     }
 
-    /// List libraries joined with their folder usage. Returns one row per
-    /// library with `repos` (folder names that reference it) and `repoCount`.
-    /// Drives `GET /api/libs` for the setup wizard so the Libraries page can
-    /// render ecosystem + version + usage without a second round-trip.
+    /// The libraries list: ONE ROW PER LIBRARY (#341), with the repos that use it,
+    /// its packages and what it provides. Drives `GET /api/libs`.
+    ///
+    /// - A package a library CLAIMS (`library_packages`) folds into that library:
+    ///   repos referencing `@rokkit/ui` count for rokkit, and `@rokkit/ui` is not a
+    ///   row of its own. Detection makes a row per package; the manifest names the
+    ///   library they belong to.
+    /// - The scopes (`folder_name`, `workspace_id`) and `min_repos` filter the
+    ///   repos counted, and a library appears only if enough in-scope repos use it —
+    ///   EXCEPT that an unscoped list with `min_repos <= 1` also shows a library known
+    ///   from its manifest alone (docs, skills or agents held, no repo using it):
+    ///   dbd and rokkit were absent from all 322 rows, nothing referencing them.
     pub async fn list_libraries_with_usage(
         &self,
         scope_folder_name: Option<&str>,
         scope_workspace_id: Option<&uuid::Uuid>,
         min_repos: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
-        // Aggregate by library, joining via referenced_libraries to count and
-        // list distinct folder names. The optional scopes filter the *folders*
-        // counted (not the library), so a lib appears only if some in-scope
-        // folder references it.
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<String>, i32, i64, Vec<String>)> =
-            sqlx_core::query_as::query_as(
-                // `version` and `page_count` live on the current VERSION now.
-                // LEFT JOIN LATERAL, so a library referenced by folders but
-                // never fetched still appears — it is exactly the row a reader
-                // wants to see ("used in 9 repos, no docs held").
-                "SELECT l.id, l.name, l.ecosystem::text, lv.version, l.description,
-                        COALESCE(lv.page_count, 0) AS page_count,
-                        COUNT(DISTINCT rl.folder_id)::bigint AS repo_count,
-                        COALESCE(array_agg(DISTINCT f.name ORDER BY f.name), ARRAY[]::text[]) AS repos
-                   FROM sensei.libraries l
-                   JOIN sensei.referenced_libraries rl ON rl.library_id = l.id
-                   JOIN sensei.folders f ON f.id = rl.folder_id
-                   LEFT JOIN LATERAL (
-                        SELECT version, page_count
-                          FROM sensei.library_versions v
-                         WHERE v.library_id = l.id
-                         ORDER BY v.is_latest DESC, v.modified_at DESC
-                         LIMIT 1
-                   ) lv ON true
+        type Row = (
+            uuid::Uuid,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            i32,
+            i64,
+            Vec<String>,
+            Vec<String>,
+            i64,
+            i64,
+        );
+        let rows: Vec<Row> = sqlx_core::query_as::query_as(
+            "WITH lib AS (
+                 SELECT l.* FROM sensei.libraries l
                   WHERE l.kind = 'detected'::sensei.library_kind
-                    AND ($1::text     IS NULL OR f.name = $1)
-                    AND ($2::uuid     IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM sensei.library_packages c
+                                     WHERE c.package_name = l.name AND c.library_id <> l.id)
+             ),
+             uses AS (
+                 SELECT lib.id AS library_id, rl.folder_id
+                   FROM lib JOIN sensei.referenced_libraries rl ON rl.library_id = lib.id
+                 UNION
+                 SELECT c.library_id, rl.folder_id
+                   FROM sensei.library_packages c
+                   JOIN sensei.libraries p ON p.name = c.package_name AND p.id <> c.library_id
+                   JOIN sensei.referenced_libraries rl ON rl.library_id = p.id
+             ),
+             scoped AS (
+                 SELECT u.library_id, f.name AS folder_name, u.folder_id
+                   FROM uses u JOIN sensei.folders f ON f.id = u.folder_id
+                  WHERE ($1::text IS NULL OR f.name = $1)
+                    AND ($2::uuid IS NULL
                          OR EXISTS (SELECT 1 FROM sensei.folder_workspaces fp
                                      WHERE fp.folder_id = f.id AND fp.workspace_id = $2))
-                  GROUP BY l.id, l.name, l.ecosystem, lv.version, l.description, lv.page_count
-                 HAVING COUNT(DISTINCT rl.folder_id) >= $3
-                  ORDER BY repo_count DESC, l.name"
-            )
-            .bind(scope_folder_name)
-            .bind(scope_workspace_id)
-            .bind(min_repos)
-            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+             )
+             SELECT lib.id, lib.name, lib.ecosystem::text, lv.version, lib.description,
+                    COALESCE(lv.page_count, 0) AS page_count,
+                    COUNT(DISTINCT sc.folder_id)::bigint AS repo_count,
+                    COALESCE(array_agg(DISTINCT sc.folder_name ORDER BY sc.folder_name)
+                             FILTER (WHERE sc.folder_name IS NOT NULL), ARRAY[]::text[]) AS repos,
+                    COALESCE((SELECT array_agg(c.package_name ORDER BY c.package_name)
+                                FROM sensei.library_packages c
+                               WHERE c.library_id = lib.id AND c.package_name <> lib.name),
+                             ARRAY[]::text[]) AS packages,
+                    (SELECT count(*) FROM sensei.library_content k
+                       JOIN sensei.library_versions v ON v.id = k.library_version_id AND v.is_latest
+                      WHERE v.library_id = lib.id AND k.kind = 'skill'::sensei.library_content_kind)::bigint,
+                    (SELECT count(*) FROM sensei.library_content k
+                       JOIN sensei.library_versions v ON v.id = k.library_version_id AND v.is_latest
+                      WHERE v.library_id = lib.id AND k.kind = 'agent'::sensei.library_content_kind)::bigint
+               FROM lib
+               LEFT JOIN scoped sc ON sc.library_id = lib.id
+               LEFT JOIN LATERAL (
+                    SELECT version, page_count
+                      FROM sensei.library_versions v
+                     WHERE v.library_id = lib.id
+                     ORDER BY v.is_latest DESC, v.modified_at DESC
+                     LIMIT 1
+               ) lv ON true
+              GROUP BY lib.id, lib.name, lib.ecosystem, lv.version, lib.description, lv.page_count
+             HAVING COUNT(DISTINCT sc.folder_id) >= $3
+                 OR ($1::text IS NULL AND $2::uuid IS NULL AND $3 <= 1
+                     AND EXISTS (SELECT 1 FROM sensei.library_content k
+                                   JOIN sensei.library_versions v ON v.id = k.library_version_id
+                                  WHERE v.library_id = lib.id))
+              ORDER BY repo_count DESC, lib.name",
+        )
+        .bind(scope_folder_name)
+        .bind(scope_workspace_id)
+        .bind(min_repos)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
         Ok(rows
             .into_iter()
-            .map(|(id, name, eco, ver, desc, pages, repo_count, repos)| {
-                serde_json::json!({
-                    "id": id, "name": name, "ecosystem": eco, "version": ver,
-                    "description": desc, "pageCount": pages,
-                    "repoCount": repo_count, "repos": repos,
-                })
-            })
+            .map(
+                |(id, name, eco, ver, desc, pages, repo_count, repos, packages, skills, agents)| {
+                    serde_json::json!({
+                        "id": id, "name": name, "ecosystem": eco, "version": ver,
+                        "description": desc, "pageCount": pages,
+                        "repoCount": repo_count, "repos": repos,
+                        "packages": packages, "skillCount": skills, "agentCount": agents,
+                    })
+                },
+            )
             .collect())
     }
 
@@ -1430,8 +1617,16 @@ impl PgStore {
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, String, Option<uuid::Uuid>, Option<String>, i64)> =
             sqlx_core::query_as::query_as(
+                // A library's usage is its own and its PACKAGES' (#341): repos
+                // reference `@rokkit/ui`, never `rokkit`. Each row names the
+                // package the repo uses.
                 "SELECT library_name, folder, workspace_id, version_used, unresolved_import_count
-             FROM sensei.library_usage WHERE library_id = $1 ORDER BY folder",
+             FROM sensei.library_usage
+            WHERE library_id = $1
+               OR library_id IN (SELECT p.id FROM sensei.library_packages c
+                                   JOIN sensei.libraries p ON p.name = c.package_name AND p.id <> $1
+                                  WHERE c.library_id = $1)
+            ORDER BY folder, library_name",
             )
             .bind(library_id)
             .fetch_all(&self.pool)

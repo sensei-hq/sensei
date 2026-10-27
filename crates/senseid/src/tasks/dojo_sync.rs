@@ -125,7 +125,7 @@ fn role_mirror_due(
 /// record the outcome — the dōjō's own reason when it could not. Best-effort: it
 /// never fails the cycle, but it is never silent either.
 async fn refresh_role_mirror(pg: &PgStore, persona: &str, token: &str, plane: &dyn UserPlane) {
-    let mark = SyncMark { entity: MIRROR_ENTITY, key: persona, direction: "pull" };
+    let mark = SyncMark { entity: MIRROR_ENTITY, key: persona, direction: "pull", persona };
     let last = match pg.sync_attempted_at(&mark).await {
         Ok(t) => t,
         Err(e) => {
@@ -187,6 +187,12 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
     for persona in personas {
         let outcome = match persona_token(&persona).await {
             Ok(token) => {
+                // The glyph choice (#133) syncs for every persona with a
+                // session, with repositories or without; a failure is logged,
+                // never a failed persona.
+                if let Err(e) = crate::dojo_client::glyph_sync::sync(&pg, &token, &plane).await {
+                    tracing::warn!(persona, error = %e, "dojo_sync: glyph choice not synced");
+                }
                 plan_persona(&pg, &persona, &token, &plane).await.map(|p| p.map(|p| (token, p)))
             }
             Err(e) => Err(e),
@@ -425,7 +431,7 @@ async fn plan_persona(
     // row from the last good pass reading `synced` while nothing worked. That is
     // the exact failure the plan row exists to prevent, and it was unguarded for
     // the call that fails FIRST when a dōjō is down.
-    let mark = SyncMark { entity: PLAN_ENTITY, key: persona, direction: "pull" };
+    let mark = SyncMark { entity: PLAN_ENTITY, key: persona, direction: "pull", persona };
 
     let registered = match plane.register_repositories(token, &inputs).await {
         Ok(r) => r,
@@ -647,7 +653,7 @@ async fn push_graphs(
         for checkout in pg.graph_checkouts(&repo.repo_key).await? {
             let Some(branch) = checkout.branch.clone() else { continue };
             let key = format!("{}@{}", repo.repo_key, branch);
-            let mark = SyncMark { entity: GRAPH_ENTITY, key: &key, direction: "push" };
+            let mark = SyncMark { entity: GRAPH_ENTITY, key: &key, direction: "push", persona };
             if !tracked.contains(branch.as_str()) {
                 pg.mark_sync_skipped(&mark, "not_a_tracked_branch").await?;
                 continue;
@@ -893,8 +899,8 @@ async fn push_allowed(
     // against, so a failure is durable rather than a log line nobody tailed.
     let repos: std::collections::BTreeSet<&str> =
         pushable.iter().map(|m| m.repo_key.as_str()).collect();
-    fn push_mark<'k>(key: &'k str) -> SyncMark<'k> {
-        SyncMark { entity: "repository_metric", key, direction: "push" }
+    fn push_mark<'k>(key: &'k str, persona: &'k str) -> SyncMark<'k> {
+        SyncMark { entity: "repository_metric", key, direction: "push", persona }
     }
 
     let result = match plane.push_metrics(token, &batch).await {
@@ -911,7 +917,7 @@ async fn push_allowed(
             // while the identical 403 on the plan said "sign in again". One mark
             // per repository in the batch, because that is what the push is
             // scoped to.
-            let marks: Vec<SyncMark<'_>> = repos.iter().map(|k| push_mark(k)).collect();
+            let marks: Vec<SyncMark<'_>> = repos.iter().map(|k| push_mark(k, persona)).collect();
             return Err(record_plane_failure(pg, &marks, persona, "metric push", e).await);
         }
     };
@@ -961,14 +967,14 @@ async fn push_allowed(
         match refusals.get(*key) {
             // Nothing of this repository's was refused, whatever happened to the
             // rest of the batch.
-            None => pg.mark_synced(&push_mark(key), None).await?,
+            None => pg.mark_synced(&push_mark(key, persona), None).await?,
             // `skipped`, not `error`: the dōjō answered, and a refusal is a
             // decision rather than a fault. Both mean "not synced", but only one
             // is a problem, and a dashboard that cannot tell them apart cries
             // wolf or stays silent.
             Some(reasons) => {
                 let why = reasons.iter().take(5).cloned().collect::<Vec<_>>().join("; ");
-                pg.mark_sync_skipped(&push_mark(key), &why).await?
+                pg.mark_sync_skipped(&push_mark(key, persona), &why).await?
             }
         }
     }
@@ -1247,6 +1253,8 @@ mod tests {
         /// What `GET /v1/you/memberships` answers — `None` is an empty list.
         memberships: Option<Result<Vec<MyMembership>, String>>,
         membership_calls: Mutex<usize>,
+        /// What the dōjō holds of the glyph choice; `None`: never chosen.
+        glyphs: Mutex<Option<crate::dojo_client::glyph_sync::GlyphPref>>,
         /// What `GET /v1/you/graph` answers, per (repo_key, branch); absent → {}.
         graph_remote:
             std::collections::HashMap<(String, String), std::collections::HashMap<String, String>>,
@@ -1293,6 +1301,25 @@ mod tests {
         async fn my_memberships(&self, _t: &str) -> Result<Vec<MyMembership>, String> {
             *self.membership_calls.lock().unwrap() += 1;
             self.memberships.clone().unwrap_or(Ok(vec![]))
+        }
+        async fn preferences(
+            &self,
+            _t: &str,
+        ) -> Result<crate::dojo_client::glyph_sync::GlyphPref, String> {
+            Ok(self.glyphs.lock().unwrap().clone().unwrap_or(
+                crate::dojo_client::glyph_sync::GlyphPref {
+                    glyphs: "kanji".into(),
+                    glyphs_set_at: None,
+                },
+            ))
+        }
+        async fn put_glyphs(
+            &self,
+            _t: &str,
+            choice: &crate::dojo_client::glyph_sync::GlyphPref,
+        ) -> Result<crate::dojo_client::glyph_sync::GlyphPref, String> {
+            *self.glyphs.lock().unwrap() = Some(choice.clone());
+            Ok(choice.clone())
         }
         async fn sync_plan(&self, _t: &str) -> Result<SyncPlan, String> {
             *self.plan_calls.lock().unwrap() += 1;
@@ -1395,6 +1422,51 @@ mod tests {
                 // Nothing switched off: the default every dōjō starts in.
                 disabled_metrics: vec![],
                 graph_branches: vec![],
+            }
+        }
+
+        /// #133: the glyph choice syncs both ways through the dōjō, the later
+        /// winning — sent when this machine's is later, taken when the dōjō's is.
+        /// One test, because both halves write the same two config keys.
+        #[tokio::test]
+        async fn the_glyph_choice_syncs_both_ways_the_later_winning() {
+            use crate::dojo_client::glyph_sync::{
+                self, GLYPHS_KEY, GLYPHS_SET_AT_KEY, GlyphPref, Sync,
+            };
+            let pg = PgStore::connect_test().await.unwrap();
+            let before = (
+                pg.get_config(GLYPHS_KEY).await.unwrap(),
+                pg.get_config(GLYPHS_SET_AT_KEY).await.unwrap(),
+            );
+
+            pg.set_config(GLYPHS_KEY, "icon").await.unwrap();
+            pg.set_config(GLYPHS_SET_AT_KEY, "2026-10-27T10:00:00Z").await.unwrap();
+            let plane = StubPlane::default();
+            *plane.glyphs.lock().unwrap() = Some(GlyphPref {
+                glyphs: "kanji".into(),
+                glyphs_set_at: Some("2026-10-27T09:00:00Z".into()),
+            });
+            let pushed = glyph_sync::sync(&pg, "t", &plane).await.unwrap();
+            assert!(matches!(pushed, Sync::Push(_)), "{pushed:?}");
+            assert_eq!(plane.glyphs.lock().unwrap().as_ref().unwrap().glyphs, "icon");
+
+            *plane.glyphs.lock().unwrap() = Some(GlyphPref {
+                glyphs: "kanji".into(),
+                glyphs_set_at: Some("2026-10-27T11:00:00Z".into()),
+            });
+            let pulled = glyph_sync::sync(&pg, "t", &plane).await.unwrap();
+            assert!(matches!(pulled, Sync::Pull(_)), "{pulled:?}");
+            assert_eq!(pg.get_config(GLYPHS_KEY).await.unwrap().as_deref(), Some("kanji"));
+            assert_eq!(
+                pg.get_config(GLYPHS_SET_AT_KEY).await.unwrap().as_deref(),
+                Some("2026-10-27T11:00:00Z")
+            );
+
+            for (key, value) in [(GLYPHS_KEY, before.0), (GLYPHS_SET_AT_KEY, before.1)] {
+                match value {
+                    Some(v) => pg.set_config(key, &v).await.unwrap(),
+                    None => pg.delete_config(key).await.unwrap(),
+                }
             }
         }
 

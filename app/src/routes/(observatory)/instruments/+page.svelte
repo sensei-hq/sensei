@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, untrack } from "svelte";
+    import { untrack } from "svelte";
     import { page } from "$app/state";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
@@ -17,8 +17,9 @@
     import { InstrumentsState } from "./instruments-state.svelte";
     import {
         collapsedFor, filterGroups, fmtDate, fmtDuration, fmtPayload, heroCopy as heroCopyFor,
-        initialTab, pickToolDefaults as defaultsFor,
+        initialTab,
     } from "./instruments-view";
+    import { formFields, initialValues } from "./tool-form";
     import type { ToolHealthSource } from "$lib/types.js";
 
     // Presentation only: the screen's state is InstrumentsState, the tool
@@ -28,24 +29,24 @@
     // A deep link from the Sessions digest — /instruments?tab=replay&session={id} —
     // opens Replay with that session preselected once the list loads.
     const sessionParam = untrack(() => page.url.searchParams.get("session"));
+    // /instruments?workspace={id} opens the Playground running in that workspace.
+    const workspaceParam = untrack(() => page.url.searchParams.get("workspace"));
     const ins = new InstrumentsState(initialTab(untrack(() => page.url.searchParams.get("tab"))));
     let honoredSessionParam = false;
 
-    const tools = $derived(mcp.tools);
     const toolStats = $derived(mcp.toolStats);
     const toolSignals = $derived(mcp.toolSignals);
-    const loading = $derived(mcp.catalogStatus === 'loading' || mcp.catalogStatus === 'idle');
     // The Health KPIs derive from the same rows as the grid, so they never drift.
     const toolsHealth = $derived(mcp.toolsHealth);
     const healthKpis = $derived(mcp.toolsHealthKpis);
     const selectedInsight = $derived(ins.selectedInsightTool ? mcp.insightFor(ins.selectedInsightTool) : undefined);
 
-    // Sensei's own tools and every discovered server are groups in the left rail;
-    // a discovered server's tools load when its group first expands.
+    // Every discovered server is a group in the left rail, sensei's own first;
+    // a server's tools load when its group first expands.
     const discoveredServers = $derived(mcp.mcpServers);
     const discoveredByFamily = $derived(serversByFamily(discoveredServers));
     const playgroundGroups = $derived(
-        buildPlaygroundGroups(tools, discoveredServers, mcp.serverToolManifests, mcp.serverToolErrors),
+        buildPlaygroundGroups(discoveredServers, mcp.serverToolManifests, mcp.serverToolErrors),
     );
     const filteredGroups = $derived(filterGroups(playgroundGroups, ins.toolSearch));
     const effectiveCollapsed = $derived(collapsedFor(filteredGroups, ins.collapsedGroups, ins.toolSearch));
@@ -59,11 +60,8 @@
     });
     const focusedGroup = $derived(focusedGroupAndTool?.group ?? null);
     const focusedTool = $derived(focusedGroupAndTool?.tool ?? null);
-    // A sensei tool has a manifest (structured inputs + example); a discovered
-    // server's tool does not, so its inputs read "No inputs".
-    const selectedTool = $derived(
-        focusedTool?.mcp === 'sensei' ? tools.find((t) => t.name === focusedTool.name) ?? null : null,
-    );
+    // The form is the tool's own input schema, as its server declares it.
+    const fields = $derived(focusedTool ? formFields(focusedTool.schema) : []);
 
     // Tabs and kind marks carry a kanji AND an icon (#133). The third tab reads
     // "Health"; its id stays 'insights' so bookmarks and test ids don't churn.
@@ -75,8 +73,7 @@
     const heroCopy = $derived(heroCopyFor(ins.tab));
 
     function pickToolDefaults(tool: PlaygroundTool): Record<string, string> {
-        const manifest = tool.mcp === 'sensei' ? tools.find((t) => t.name === tool.name) ?? null : null;
-        return defaultsFor(manifest, appState.activeWorkspaceId || null);
+        return initialValues(formFields(tool.schema), ins.runIn);
     }
 
     function openSource(source: ToolHealthSource) {
@@ -87,7 +84,7 @@
         const expanding = ins.collapsedGroups[id];
         ins.collapsedGroups = { ...ins.collapsedGroups, [id]: !ins.collapsedGroups[id] };
         const group = playgroundGroups.find((g) => g.id === id);
-        if (expanding && group?.source === 'discovered' && group.serverId && !mcp.serverToolManifests[group.serverId]) {
+        if (expanding && group && !mcp.serverToolManifests[group.serverId]) {
             void mcp.loadServerTools(group.serverId);
         }
     }
@@ -105,25 +102,28 @@
         ins.serversError = await mcp.toggleMcpServer(serverId, enabled);
     }
 
+    async function removeServer(serverId: string) {
+        ins.serversError = await mcp.removeMcpServer(serverId);
+    }
+
     function executeTool() {
-        if (selectedTool) void ins.execute(api, selectedTool.name);
+        if (focusedTool) void ins.execute(api, focusedTool);
     }
 
     function selectReplaySession(sessionId: string) {
         void ins.selectReplaySession(mcp, sessionId);
     }
 
-    // Default: sensei expanded, every discovered server collapsed.
+    // Default: sensei's server expanded, with its tools read; every other collapsed.
     $effect(() => {
         for (const g of playgroundGroups) {
             if (!(g.id in untrack(() => ins.collapsedGroups))) {
-                ins.collapsedGroups = { ...untrack(() => ins.collapsedGroups), [g.id]: g.source !== 'sensei' };
+                ins.collapsedGroups = { ...untrack(() => ins.collapsedGroups), [g.id]: !g.primary };
+                if (g.primary && !untrack(() => mcp.serverToolManifests[g.serverId])) {
+                    void mcp.loadServerTools(g.serverId);
+                }
             }
         }
-    });
-
-    onMount(() => {
-        void mcp.loadCatalog();
     });
 
     // Each tab's reads, the first time it opens. Depends on the tab ONLY: each
@@ -132,9 +132,13 @@
     $effect(() => {
         const current = ins.tab;
         untrack(() => {
-            if (current === 'playground') void mcp.loadMcpServers();
+            if (current === 'playground') {
+                void mcp.loadMcpServers();
+                void ins.loadWorkspaces(api, workspaceParam || appState.activeWorkspaceId || null);
+            }
             if (current === 'replay') void ins.loadReplaySessions(api);
             if (current === 'insights') {
+                void mcp.loadCatalog();
                 void mcp.loadToolsHealth();
                 void mcp.loadInsights();
                 void ins.loadHolisticFtr(api);
@@ -202,19 +206,12 @@
     <div>
 
         {#if ins.tab === "playground"}
-            {#if mcp.catalogError}
-                <!-- The tool catalog could not be read (#288) — sensei's own tools
-                     would otherwise just be missing from the rail. -->
-                <div class="px-7 pt-4">
-                    <ScreenState status="error" error={`Could not read the tool catalog: ${mcp.catalogError}`} onretry={() => void mcp.loadCatalog(true)} />
-                </div>
-            {/if}
             <!-- #84 T2 Playground — matches docs/mockups/Sensei/lib/instruments-simple.jsx
                  (InstrumentsPlaygroundSimple). Left rail: search + collapsible MCP
                  groups → tools. Right: tool detail with inputs form + response
-                 preview. Sensei's own tools sit as the first (always-installed)
-                 group; every discovered MCP server (Slice A) is its own group
-                 with tools hydrated lazily on expand via Slice B's probe. -->
+                 preview. Every discovered MCP server (Slice A) is a group, sensei's
+                 own first, its tools read from the server itself (Slice B's probe)
+                 and run through it. -->
             {@const running = ins.executing}
             <div class="grid grid-cols-[300px_1fr] min-h-[600px] border-t border-paper-edge" data-testid="playground-body">
                 <!-- ── Left rail — search + MCP tree ────────────────────────────── -->
@@ -236,7 +233,7 @@
 
                     <!-- MCP groups — sensei first, then the discovered servers by assistant -->
                     {#snippet groupBlock(group: (typeof playgroundGroups)[number], server?: (typeof discoveredServers)[number])}
-                        {@const collapsed = effectiveCollapsed[group.id] ?? (group.source !== 'sensei')}
+                        {@const collapsed = effectiveCollapsed[group.id] ?? !group.primary}
                         <div class="mb-1" data-testid={`mcp-group-${group.id}`}>
                             <!-- Expand and enable are siblings: a button inside a button is invalid HTML. -->
                             <div class="flex items-center" data-testid={server ? `server-row-${server.mcp_key}` : undefined}>
@@ -266,6 +263,14 @@
                                         onclick={() => void toggleServer(server.id, !server.enabled)}
                                         data-testid={`server-toggle-${server.mcp_key}`}
                                     >{server.enabled ? 'on' : 'off'}</button>
+                                    {#if server.acp_family === 'manual'}
+                                        <button
+                                            class="mr-3 px-2 py-0.5 text-xs font-mono rounded border border-paper-edge bg-transparent cursor-pointer text-ink-mute"
+                                            aria-label={`Remove ${server.mcp_key}`}
+                                            onclick={() => void removeServer(server.id)}
+                                            data-testid={`server-remove-${server.mcp_key}`}
+                                        >remove</button>
+                                    {/if}
                                 {/if}
                             </div>
 
@@ -306,12 +311,36 @@
                                 no tools match.
                             </div>
                         {/if}
-                        {#each filteredGroups.filter((g) => g.source === 'sensei') as group (group.id)}
+                        {#each filteredGroups.filter((g) => g.primary) as group (group.id)}
                             {@render groupBlock(group)}
                         {/each}
 
                         <section class="mt-3 pt-3 border-t border-paper-edge" data-testid="discovered-servers">
-                            <div class="px-3 pb-1"><Eyebrow>Discovered MCP servers</Eyebrow></div>
+                            <div class="px-3 pb-1 flex items-center justify-between">
+                                <Eyebrow>MCP servers</Eyebrow>
+                                <button
+                                    class="text-xs text-ink-mute bg-transparent border-none cursor-pointer"
+                                    onclick={() => { ins.addingServer = !ins.addingServer; ins.serverFormError = null; }}
+                                    aria-expanded={ins.addingServer}
+                                    data-testid="add-server"
+                                >{ins.addingServer ? 'cancel' : '+ add'}</button>
+                            </div>
+                            {#if ins.addingServer}
+                                <form
+                                    class="px-3 pb-3 flex flex-col gap-2 text-xs"
+                                    data-testid="add-server-form"
+                                    onsubmit={(e) => { e.preventDefault(); void ins.addServer(mcp); }}
+                                >
+                                    <input class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" placeholder="name" bind:value={ins.serverForm.name} data-testid="add-server-name" />
+                                    <input class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" placeholder="command, e.g. npx" bind:value={ins.serverForm.command} data-testid="add-server-command" />
+                                    <textarea class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" rows="2" placeholder="arguments, one per line" bind:value={ins.serverForm.args} data-testid="add-server-args"></textarea>
+                                    <textarea class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" rows="2" placeholder="environment, KEY=VALUE per line" bind:value={ins.serverForm.env}></textarea>
+                                    {#if ins.serverFormError}
+                                        <p class="m-0 text-danger" data-testid="add-server-error">{ins.serverFormError}</p>
+                                    {/if}
+                                    <Button variant="primary" size="sm" type="submit" data-testid="add-server-submit">Add server</Button>
+                                </form>
+                            {/if}
                             {#if ins.serversError}
                                 <p class="px-3 py-1 text-xs text-danger" data-testid="servers-error">{ins.serversError}</p>
                             {/if}
@@ -321,13 +350,13 @@
                                 </p>
                             {:else if discoveredServers.length === 0 && mcp.mcpServersStatus === 'ready'}
                                 <p class="px-3 py-2 text-xs text-ink-soft">
-                                    No MCP servers discovered yet. Configure one in Claude Code, Cursor or Zed, then scan.
+                                    No MCP servers yet. Configure one in Claude Code, Cursor or Zed and scan, or add one here.
                                 </p>
                             {/if}
                             {#each discoveredByFamily as fam (fam.family)}
                                 {@const shown = fam.servers
                                     .map((srv) => ({ server: srv, group: filteredGroups.find((g) => g.id === srv.id) }))
-                                    .filter((x) => x.group)}
+                                    .filter((x) => x.group && !x.group.primary)}
                                 {#if shown.length > 0}
                                     <div class="mb-1" data-testid={`servers-family-${fam.family}`}>
                                         <div class="px-3 pt-2 pb-1 text-xs uppercase tracking-wide text-ink-faint">{fam.label}</div>
@@ -390,32 +419,64 @@
                                 <span class="text-xs uppercase tracking-wide text-ink-mute">Inputs</span>
                                 <span class="text-xs text-ink-faint">{kindHint}</span>
                             </div>
+                            <label class="flex items-center gap-2 text-xs text-ink-soft mb-2" data-testid="run-in">
+                                <span>Runs in</span>
+                                <Select
+                                    items={[
+                                        { label: "the daemon's folder (no workspace)", value: '' },
+                                        ...ins.workspaces.map((w) => ({ label: w.name, value: w.id })),
+                                    ]}
+                                    value={ins.runIn ?? ''}
+                                    onchange={(v) => (ins.runIn = (v as string) || null)}
+                                />
+                            </label>
+                            {#if ins.workspacesError}
+                                <p class="text-xs text-danger m-0 mb-2" data-testid="run-in-error">{ins.workspacesError}</p>
+                            {/if}
 
-                            {#if !selectedTool || (selectedTool.inputs?.length ?? 0) === 0}
-                                <div class="text-sm text-ink-mute mb-2">
-                                    {selectedTool ? 'No inputs — just call it.' : 'Third-party MCP — sensei surfaces the tool but doesn\'t know its input schema yet.'}
-                                </div>
+                            {#if fields.length === 0}
+                                <div class="text-sm text-ink-mute mb-2">No inputs — just call it.</div>
                             {:else}
                                 <div class="grid grid-cols-2 gap-y-2 gap-x-4">
-                                    {#each selectedTool.inputs as input}
-                                        <label class="flex flex-col text-xs text-ink-soft">
+                                    {#each fields as field (field.name)}
+                                        <label class="flex flex-col text-xs text-ink-soft" title={field.description ?? undefined}>
                                             <span class="flex items-baseline gap-1">
-                                                <span>{input.label}</span>
-                                                {#if input.required}<span class="text-accent">*</span>{/if}
-                                                <span class="font-mono text-xs text-ink-faint">{input.kind}</span>
+                                                <span>{field.name}</span>
+                                                {#if field.required}<span class="text-accent">*</span>{/if}
+                                                <span class="font-mono text-xs text-ink-faint">{field.kind}</span>
                                             </span>
-                                            {#if input.kind === 'enum' && input.options}
+                                            {#if field.kind === 'enum' && field.options}
                                                 <Select
-                                                    items={input.options}
-                                                    value={ins.toolParams[input.key]}
-                                                    onchange={(v) => (ins.toolParams[input.key] = v as string)}
+                                                    items={field.options}
+                                                    value={ins.toolParams[field.name]}
+                                                    onchange={(v) => (ins.toolParams[field.name] = v as string)}
                                                 />
+                                            {:else if field.kind === 'boolean'}
+                                                <Select
+                                                    items={['', 'true', 'false']}
+                                                    value={ins.toolParams[field.name]}
+                                                    onchange={(v) => (ins.toolParams[field.name] = v as string)}
+                                                />
+                                            {:else if field.kind === 'json'}
+                                                <textarea
+                                                    class="py-1 px-2 text-sm border border-paper-edge rounded bg-paper text-ink font-mono outline-none"
+                                                    rows="2"
+                                                    placeholder="JSON"
+                                                    bind:value={ins.toolParams[field.name]}
+                                                    data-testid={`tool-input-${field.name}`}
+                                                    autocapitalize="off"
+                                                    spellcheck="false"
+                                                ></textarea>
                                             {:else}
                                                 <input
-                                                    type={input.kind === 'number' ? 'number' : 'text'}
+                                                    type={field.kind === 'number' ? 'number' : 'text'}
                                                     class="py-1 px-2 text-sm border border-paper-edge rounded bg-paper text-ink font-mono outline-none"
-                                                    placeholder={input.placeholder ?? input.default ?? ''}
-                                                    bind:value={ins.toolParams[input.key]}
+                                                    placeholder={field.description ?? ''}
+                                                    bind:value={ins.toolParams[field.name]}
+                                                    data-testid={`tool-input-${field.name}`}
+                                                    autocapitalize="off"
+                                                    autocorrect="off"
+                                                    spellcheck="false"
                                                 />
                                             {/if}
                                         </label>
@@ -428,7 +489,7 @@
                                     variant="primary"
                                     size="sm"
                                     onclick={executeTool}
-                                    disabled={running || !selectedTool}
+                                    disabled={running || !focusedTool}
                                     data-testid="tool-execute"
                                 >
                                     {isAction ? 'Run →' : 'Query →'}
@@ -439,7 +500,7 @@
                                 {:else if ins.toolError}
                                     <span class="font-mono text-xs text-danger" data-testid="tool-error">{ins.toolError}</span>
                                 {:else if ins.toolResult}
-                                    <span class="font-mono text-xs text-success">200 ok</span>
+                                    <span class="font-mono text-xs text-success" data-testid="tool-ok">ok · {fmtDuration(ins.durationMs)}</span>
                                 {/if}
                             </div>
                         </div>
@@ -742,7 +803,7 @@
             style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));"
             data-testid="tool-health-grid"
         >
-            {#each toolsHealth as source (source.source_type + ':' + source.source_key)}
+            {#each toolsHealth as source (`${source.assistant_family}:${source.source_type}:${source.source_key}`)}
                 <ToolHealthCard
                     {source}
                     active={ins.activeSource?.source_type === source.source_type

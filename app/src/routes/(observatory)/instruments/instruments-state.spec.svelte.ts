@@ -6,9 +6,12 @@ const fail = (status: number, message: string) => ({ ok: false as const, error: 
 
 function api(over: Partial<InstrumentsApi> = {}): InstrumentsApi {
   return {
-    tryMcpCallTool: vi.fn().mockResolvedValue(ok({ callers: ['a'] })),
+    tryCallServerTool: vi.fn().mockResolvedValue(
+      ok({ result: { content: [{ type: 'text', text: '{"callers":["a"]}' }] }, isError: false, duration_ms: 42 }),
+    ),
     tryGetSessions: vi.fn().mockResolvedValue(ok({ sessions: [{ id: 's1', task: 't', startedAt: '2026-10-20T00:00:00Z', ftr: 1 }] })),
     tryGetObservatoryFtr: vi.fn().mockResolvedValue(ok({ rate: 0.5 })),
+    tryListWatchedWorkspaces: vi.fn().mockResolvedValue(ok([{ id: 'ws-2', name: 'zeta' }, { id: 'ws-1', name: 'alpha' }])),
     ...over,
   } as InstrumentsApi;
 }
@@ -21,36 +24,114 @@ function store(over: Partial<InstrumentsStore> = {}): InstrumentsStore {
   } as InstrumentsStore;
 }
 
+const tool = {
+  serverId: 'srv',
+  name: 'get_callers',
+  schema: { type: 'object', properties: { name: { type: 'string' }, depth: { type: 'integer' } }, required: ['name'] },
+};
+
 describe('InstrumentsState — the playground', () => {
-  it('shows a tool’s answer', async () => {
+  it('runs in the active workspace by default, and lists the workspaces to pick from', async () => {
     const s = new InstrumentsState('playground');
-    s.toolParams = { repoId: 'sensei' };
+    await s.loadWorkspaces(api(), 'ws-1');
+    expect(s.workspaces.map((w) => w.name)).toEqual(['alpha', 'zeta']);
+    expect(s.runIn).toBe('ws-1');
+  });
+
+  it('runs in no workspace when none is active, or the active one is not listed', async () => {
+    const s = new InstrumentsState('playground');
+    await s.loadWorkspaces(api(), null);
+    expect(s.runIn).toBeNull();
+    await s.loadWorkspaces(api(), 'ws-gone');
+    expect(s.runIn).toBeNull();
+  });
+
+  it('says why the workspaces could not be listed', async () => {
+    const s = new InstrumentsState('playground');
+    await s.loadWorkspaces(api({ tryListWatchedWorkspaces: vi.fn().mockResolvedValue(fail(500, 'boom')) }), 'ws-1');
+    expect(s.workspaces).toEqual([]);
+    expect(s.workspacesError).toMatch(/boom/);
+  });
+
+  it('runs a tool through its server with typed arguments, and shows its answer', async () => {
+    const s = new InstrumentsState('playground');
+    s.toolParams = { name: 'scan_root', depth: '2' };
     const a = api();
-    await s.execute(a, 'get_callers');
-    expect(a.tryMcpCallTool).toHaveBeenCalledWith('get_callers', { repoId: 'sensei' });
+    s.runIn = 'ws-1';
+    await s.execute(a, tool);
+    // In the workspace the person is in: a tool that takes no workspace answers
+    // about the folder its server runs in.
+    expect(a.tryCallServerTool).toHaveBeenCalledWith('srv', 'get_callers', { name: 'scan_root', depth: 2 }, 'ws-1');
     expect(JSON.parse(s.toolResult)).toEqual({ callers: ['a'] });
+    expect(s.durationMs).toBe(42);
     expect(s.toolError).toBeNull();
     expect(s.executing).toBe(false);
   });
 
+  it('shows a tool’s own failure as a failure, with what it said', async () => {
+    const s = new InstrumentsState('playground');
+    s.toolParams = { name: 'x' };
+    const said = ok({ result: { content: [{ type: 'text', text: 'no such symbol' }] }, isError: true, duration_ms: 3 });
+    await s.execute(api({ tryCallServerTool: vi.fn().mockResolvedValue(said) }), tool);
+    expect(s.toolError).toBe('The tool reported an error');
+    expect(s.toolResult).toBe('no such symbol');
+  });
+
   it('says why a call failed instead of showing an empty answer (#288)', async () => {
     const s = new InstrumentsState('playground');
-    await s.execute(api({ tryMcpCallTool: vi.fn().mockResolvedValue(fail(503, 'Service Unavailable')) }), 'get_callers');
+    s.toolParams = { name: 'x' };
+    await s.execute(api({ tryCallServerTool: vi.fn().mockResolvedValue(fail(502, 'spawn failed')) }), tool);
     expect(s.toolResult).toBe('');
-    expect(s.toolError).toContain('Service Unavailable');
+    expect(s.toolError).toContain('spawn failed');
     expect(s.executing).toBe(false);
+  });
+
+  it('refuses arguments the schema does not allow, without calling', async () => {
+    const s = new InstrumentsState('playground');
+    s.toolParams = { name: '' };
+    const a = api();
+    await s.execute(a, tool);
+    expect(a.tryCallServerTool).not.toHaveBeenCalled();
+    expect(s.toolError).toBe('name is required');
   });
 });
 
 describe('InstrumentsState — picking a tool', () => {
   it('starts the new tool clean: its own inputs, no earlier answer or failure', async () => {
     const s = new InstrumentsState('playground');
-    await s.execute(api({ tryMcpCallTool: vi.fn().mockResolvedValue(fail(500, 'boom')) }), 'a');
-    s.pickTool('sensei.search', { query: 'x' });
-    expect(s.selectedToolId).toBe('sensei.search');
+    s.toolParams = { name: 'x' };
+    await s.execute(api({ tryCallServerTool: vi.fn().mockResolvedValue(fail(500, 'boom')) }), tool);
+    s.pickTool('srv:search', { query: 'x' });
+    expect(s.selectedToolId).toBe('srv:search');
     expect(s.toolParams).toEqual({ query: 'x' });
     expect(s.toolResult).toBe('');
     expect(s.toolError).toBeNull();
+    expect(s.durationMs).toBeNull();
+  });
+});
+
+describe('InstrumentsState — adding a server (#343)', () => {
+  it('registers the form, then closes and clears it', async () => {
+    const s = new InstrumentsState('playground');
+    s.addingServer = true;
+    s.serverForm = { name: 'gh', command: 'npx', args: '-y\npkg', env: 'T=1' };
+    const registerMcpServer = vi.fn().mockResolvedValue(null);
+    await s.addServer(store({ registerMcpServer }));
+    expect(registerMcpServer).toHaveBeenCalledWith({ name: 'gh', command: 'npx', args: ['-y', 'pkg'], env: { T: '1' } });
+    expect([s.addingServer, s.serverForm.name, s.serverFormError]).toEqual([false, '', null]);
+  });
+
+  it('keeps the form open with the reason when the form or the daemon refuses', async () => {
+    const s = new InstrumentsState('playground');
+    s.addingServer = true;
+    s.serverForm = { name: '', command: 'npx', args: '', env: '' };
+    const registerMcpServer = vi.fn().mockResolvedValue('The server was not added: taken');
+    await s.addServer(store({ registerMcpServer }));
+    expect(registerMcpServer).not.toHaveBeenCalled();
+    expect(s.serverFormError).toBe('A name is required');
+    s.serverForm = { name: 'gh', command: 'npx', args: '', env: '' };
+    await s.addServer(store({ registerMcpServer }));
+    expect([s.addingServer, s.serverFormError]).toEqual([true, 'The server was not added: taken']);
   });
 });
 
