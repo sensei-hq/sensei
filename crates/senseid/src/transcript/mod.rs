@@ -78,10 +78,31 @@ pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
         _ => return None,
     };
     let trimmed = text.trim();
+    if let Some(command) = slash_command(trimmed) {
+        return Some(command);
+    }
     if trimmed.is_empty() || is_injected_noise(trimmed) {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+/// A slash command the person typed, as `/name args`: Claude Code records it as
+/// `<command-name>` and `<command-args>` tags, in either order alongside
+/// `<command-message>`. `None` when the text names no command.
+fn slash_command(text: &str) -> Option<String> {
+    let tag = |name: &str| {
+        let (open, close) = (format!("<{name}>"), format!("</{name}>"));
+        let start = text.find(&open)? + open.len();
+        let len = text[start..].find(&close)?;
+        Some(text[start..start + len].trim())
+    };
+    let name = tag("command-name").filter(|n| !n.is_empty())?;
+    let slash = if name.starts_with('/') { "" } else { "/" };
+    Some(match tag("command-args").filter(|a| !a.is_empty()) {
+        Some(args) => format!("{slash}{name} {args}"),
+        None => format!("{slash}{name}"),
+    })
 }
 
 /// Check whether a prompt string is injected noise (not a genuine human turn).
@@ -850,14 +871,18 @@ pub async fn backfill(
         tracing::error!(error = %e, "transcript backfill: consent unreadable; reading no transcripts");
         std::collections::HashSet::new()
     });
-    // Once: re-read Claude transcripts ingested before each response was counted
-    // once (session-api-cost C6). A failure retries on the next backfill.
-    match pg.reset_claude_watermarks_once().await {
-        Ok(true) => {
-            tracing::info!("transcript backfill: re-reading Claude transcripts once (messages_v1)")
+    // Once per rule change: re-read the transcripts ingested under the old rule.
+    // A failure retries on the next backfill.
+    for &(done, sources, why) in WATERMARK_RESETS {
+        match pg.reset_watermarks_once(done, sources).await {
+            Ok(true) => {
+                tracing::info!(done, why, "transcript backfill: re-reading transcripts once")
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, done, "transcript backfill: watermark reset failed")
+            }
         }
-        Ok(false) => {}
-        Err(e) => tracing::warn!(error = %e, "transcript backfill: messages_v1 reset failed"),
     }
     let (files_seen, enqueued) = dispatch(queue, parent, since, &consented).await;
     let sessions_repaired = repair_sessions(pg).await;
@@ -923,6 +948,21 @@ pub async fn repair_sessions(pg: &crate::db::pg_store::PgStore) -> u32 {
     }
     repaired
 }
+
+/// The rule changes that re-read transcripts once: (config key set when done,
+/// sources re-read, why).
+const WATERMARK_RESETS: &[(&str, &[&str], &str)] = &[
+    (
+        "transcripts.messages_v1",
+        &["claude_code"],
+        "each response counted once (session-api-cost C6)",
+    ),
+    (
+        "transcripts.slash_prompts_v1",
+        &["claude_code", "cursor"],
+        "a slash command is a prompt (decisions 2026-10-28)",
+    ),
+];
 
 /// Scan all adapters and enqueue one `IngestCapture` task per
 /// transcript. Returns `(files_seen, enqueued)`. Each per-file task does the

@@ -253,6 +253,49 @@ async fn a_session_reports_its_priced_part_and_what_it_could_not_price() {
 
 /// C6: the one-time re-read clears the Claude watermarks once, so every Claude
 /// transcript is parsed again under C1; a second call is a no-op.
+/// A reset clears only the sources it names, once per key; another key resets again.
+#[tokio::test]
+async fn a_watermark_reset_clears_the_named_sources_once_per_key() {
+    let s = pg_store().await;
+    let key = format!("_test.reset_{}", uuid::Uuid::new_v4().simple());
+    let file = format!("/_test/{}.jsonl", uuid::Uuid::new_v4());
+    let mark = |source: &'static str, mtime_ns: i64| {
+        let (s, file) = (&s, file.clone());
+        async move {
+            s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+                source,
+                file_path: &file,
+                session_id: None,
+                mtime_ns,
+                turns: 0,
+            })
+            .await
+            .unwrap()
+        }
+    };
+    let mtime = |source: &'static str| {
+        let (s, file) = (&s, file.clone());
+        async move { s.get_capture_watermark(source, &file).await.unwrap().map(|w| w.mtime_ns) }
+    };
+    for source in ["claude_code", "cursor", "copilot_cli"] {
+        mark(source, 1).await;
+    }
+    assert!(s.reset_watermarks_once(&key, &["claude_code", "cursor"]).await.unwrap());
+    assert_eq!((mtime("claude_code").await, mtime("cursor").await), (None, None));
+    assert_eq!(mtime("copilot_cli").await, Some(1), "a source not named keeps its mark");
+    mark("cursor", 2).await;
+    assert!(
+        !s.reset_watermarks_once(&key, &["claude_code", "cursor"]).await.unwrap(),
+        "once per key"
+    );
+    assert_eq!(mtime("cursor").await, Some(2));
+    sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE file_path = $1")
+        .bind(&file)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn the_message_rewrite_resets_claude_watermarks_once() {
     let s = pg_store().await;
@@ -270,7 +313,10 @@ async fn the_message_rewrite_resets_claude_watermarks_once() {
     })
     .await
     .unwrap();
-    assert!(s.reset_claude_watermarks_once().await.unwrap(), "first call resets");
+    assert!(
+        s.reset_watermarks_once("transcripts.messages_v1", &["claude_code"]).await.unwrap(),
+        "first call resets"
+    );
     assert_eq!(s.get_capture_watermark("claude_code", &file).await.unwrap(), None);
     s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
         source: "claude_code",
@@ -281,7 +327,10 @@ async fn the_message_rewrite_resets_claude_watermarks_once() {
     })
     .await
     .unwrap();
-    assert!(!s.reset_claude_watermarks_once().await.unwrap(), "second call is a no-op");
+    assert!(
+        !s.reset_watermarks_once("transcripts.messages_v1", &["claude_code"]).await.unwrap(),
+        "second call is a no-op"
+    );
     assert_eq!(
         s.get_capture_watermark("claude_code", &file).await.unwrap().map(|w| w.mtime_ns),
         Some(2)

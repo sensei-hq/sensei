@@ -115,22 +115,23 @@ impl PgStore {
         tx.commit().await.map_err(|e| e.to_string())
     }
 
-    /// Spec session-api-cost C6: the first time it runs, clear the Claude
-    /// transcripts' ingest watermarks so each is read again — its turns' tokens
-    /// counted once per message and its message rows written. `true` when it
-    /// cleared them; `false` once done (`transcripts.messages_v1` is set).
-    pub async fn reset_claude_watermarks_once(&self) -> Result<bool, String> {
-        const DONE: &str = "transcripts.messages_v1";
-        if self.get_config(DONE).await?.is_some() {
+    /// Clear the ingest watermarks of `sources` the first time `done` is seen, so
+    /// each of their transcripts is read again under a changed rule. `true` when it
+    /// cleared them; `false` once `done` is set.
+    pub async fn reset_watermarks_once(
+        &self,
+        done: &str,
+        sources: &[&str],
+    ) -> Result<bool, String> {
+        if self.get_config(done).await?.is_some() {
             return Ok(false);
         }
-        sqlx_core::query::query(
-            "DELETE FROM activity.capture_watermarks WHERE source = 'claude_code'",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        self.set_config(DONE, &chrono::Utc::now().to_rfc3339()).await?;
+        sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE source = ANY($1)")
+            .bind(sources)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.set_config(done, &chrono::Utc::now().to_rfc3339()).await?;
         Ok(true)
     }
 

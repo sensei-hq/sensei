@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-10-25
+updated: 2026-10-28
 ---
 
 # Decisions
@@ -9,6 +9,23 @@ updated: 2026-10-25
 > The anti-rework memory — never re-derive a settled choice.
 > The **design journey** (approaches tried, what worked, what didn't) lives in
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
+
+---
+
+## 2026-10-28 — A slash command is a prompt
+
+The transcript parser listed `<command-name` and `<command-message` among the injected
+markers (#73 v1, 2026-06-22, no recorded reason), so a session begun with
+`/opsx:explore P057542601-784` kept no prompt: it parsed as 0 turns, and ticket linkage,
+which reads prompts, never saw the key.
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **A slash command is a prompt** | A `user` record naming a command is the prompt `/name args` (`human_prompt_text`), and a turn boundary. What a command prints (`<local-command-stdout>` etc.) stays injected. | The person typed it, and its arguments are where a ticket key or a task goes. |
+| **Re-read once** | Claude and Cursor transcripts are read again once (`transcripts.slash_prompts_v1`, through `reset_watermarks_once`). | Their watermarks say "read" for files parsed under the old rule. |
+
+Effect: more transcript turns per session where commands were used. Rejected: keeping only
+commands with arguments (a bare `/compact` is still the person's turn).
 
 ---
 
