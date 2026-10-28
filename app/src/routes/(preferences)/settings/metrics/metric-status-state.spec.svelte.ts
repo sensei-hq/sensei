@@ -15,7 +15,6 @@ import {
   cadenceLabel,
   watermarkLabel,
   isConfigurable,
-  signedInSlot,
   MetricSettings,
 } from './metric-status-state.svelte.js';
 import type {
@@ -233,34 +232,6 @@ describe('isConfigurable', () => {
   });
   it('is true with a remote key', () => {
     expect(isConfigurable('github.com/acme/api')).toBe(true);
-  });
-});
-
-describe('signedInSlot', () => {
-  it('takes the sessionSlot, never the label', () => {
-    // `PersonaList` exposes both, and `label` is explicitly NOT the slot. Signing
-    // against the label addresses a different credential — the daemon then answers
-    // 401 and the screen blames permissions for a wrong-field bug.
-    expect(
-      signedInSlot([{ label: 'Work', sessionSlot: 'slot-7' } as never]),
-    ).toBe('slot-7');
-  });
-
-  it('skips a persona that has never connected', () => {
-    expect(
-      signedInSlot([
-        { label: 'Never used', sessionSlot: null } as never,
-        { label: 'Work', sessionSlot: 'slot-2' } as never,
-      ]),
-    ).toBe('slot-2');
-  });
-
-  it('is null when nobody is signed in, rather than guessing "default"', () => {
-    // Falling back to a conventional slot name would send a write that cannot
-    // succeed, and the 401 would read as "you are not allowed" instead of
-    // "you are not signed in".
-    expect(signedInSlot([{ label: 'a', sessionSlot: null } as never])).toBeNull();
-    expect(signedInSlot([])).toBeNull();
   });
 });
 

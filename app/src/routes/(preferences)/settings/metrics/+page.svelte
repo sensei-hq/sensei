@@ -6,7 +6,7 @@
   import { senseiApi } from '$lib/api.js';
   import { PageHeader, Screen, ScreenState, Switch } from '$lib/components';
   import { personaList } from '$lib/personas.svelte.js';
-  import { MetricSettings, signedInSlot } from './metric-status-state.svelte.js';
+  import { MetricSettings } from './metric-status-state.svelte.js';
 
   let { data } = $props();
 
@@ -24,12 +24,14 @@
     ? new MetricSettings(summary, senseiApi(appState.port), null)
     : null;
 
-  // The write credential is the KEYCHAIN SESSION SLOT, and `signedInSlot` takes
-  // it from `sessionSlot` — never from `label`, which is a display string.
+  // The write credential is the identity state's decision (`writeSlot`): the
+  // default identity while it is usable, never a dead or substituted one. It
+  // follows the state, so an expiry seen in the overlay reaches this screen too.
   $effect(() => {
-    void personaList.load().then(() => {
-      state?.setPersona(signedInSlot(personaList.identities));
-    });
+    void personaList.load();
+  });
+  $effect(() => {
+    state?.setPersona(personaList.writeSlot);
   });
 
   // The reason kinds map to three treatments, and the mapping is the registry's,

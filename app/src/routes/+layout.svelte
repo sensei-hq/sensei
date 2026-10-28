@@ -149,8 +149,8 @@
 <SignInOverlay
     open={overlayOpen}
     identities={personaList.identities}
+    phase={personaList.phase}
     error={personaList.error ?? forgeAuth.lastError}
-    loaded={personaList.loaded}
     onAct={(i) => personaList.act(i)}
     onClose={closeOverlay}
     pending={personaList.pending}

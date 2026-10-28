@@ -16,25 +16,23 @@
   // PRESENTATIONAL. Every identity's sentence, tone, button and busy state is
   // decided by PersonaList (personas.svelte.ts) — the same state Settings · Dōjō
   // renders — so the two cannot disagree. This renders it and reports clicks.
-  import { IDENTITY_TONE_CLASS, type Identity } from '$lib/personas.svelte.js';
+  import { IDENTITY_TONE_CLASS, type IdentitiesPhase, type Identity } from '$lib/personas.svelte.js';
   import ModalShell from './ModalShell.svelte';
   import SignInPending from './SignInPending.svelte';
 
   interface Props {
     open: boolean;
     identities: Identity[];
-    /** Non-null when the read or an attempt FAILED. Rendered instead of a
-     *  list — "no identities" and "we could not ask" are different answers. */
+    /** The state's phase: loading, error, empty or list. */
+    phase: IdentitiesPhase;
+    /** Why a read or an attempt failed, when one did. */
     error?: string | null;
-    /** False until a read has succeeded. Distinguishes "none" from "not yet
-     *  asked" — without it the overlay claims emptiness on open. */
-    loaded?: boolean;
     onAct?: (identity: Identity) => void;
     onClose?: () => void;
     /** The sign-in in flight (#300): which account to use, and its link. */
     pending?: { label: string; expectedLogin: string | null; url: string } | null;
   }
-  let { open, identities, error = null, loaded = true, onAct, onClose, pending = null }: Props = $props();
+  let { open, identities, phase, error = null, onAct, onClose, pending = null }: Props = $props();
 
 </script>
 
@@ -47,13 +45,13 @@
         </p>
       </header>
 
-      {#if error}
+      {#if phase === 'error'}
         <p role="alert" class="text-xs text-danger">{error}</p>
-      {:else if !loaded}
+      {:else if phase === 'loading'}
         <p data-component="sign-in-loading" class="text-xs text-ink-mute">
           Reading identities…
         </p>
-      {:else if identities.length === 0}
+      {:else if phase === 'empty'}
         <p class="text-xs text-ink-mute">
           No identities yet. They appear once sensei has scanned a repository and
           seen who authored the commits.
@@ -67,15 +65,15 @@
               class="flex items-center justify-between gap-3 rounded-md border border-paper-edge px-3 py-2"
             >
               <div class="flex min-w-0 flex-col">
-                <span class="truncate text-sm text-ink">{p.githubLogin ?? p.label}</span>
+                <span class="truncate text-sm text-ink">{p.name}</span>
                 <span class="text-xs {IDENTITY_TONE_CLASS[p.tone]}">{p.standing}</span>
               </div>
 
-              {#if p.action === null}
+              {#if p.badge}
                 <!-- Nothing to do. A button here would invite a needless
                      sign-in, which rotates a working credential for no reason. -->
-                <span class="whitespace-nowrap text-xs text-success">ready</span>
-              {:else}
+                <span class="whitespace-nowrap text-xs text-success">{p.badge}</span>
+              {:else if p.action}
                 <button
                   type="button"
                   class="whitespace-nowrap rounded-md border border-paper-edge px-2 py-1 text-xs text-ink hover:bg-paper-mute disabled:opacity-50"
@@ -92,10 +90,9 @@
       <SignInPending {pending} />
 
       <footer class="flex items-center justify-between gap-3">
-        <!-- Stated because a fresh window is a deliberate, visible choice: the
-             shared browser session would answer as whoever is already signed in
-             to GitHub, silently connecting the wrong account. -->
-        <span class="text-xs text-ink-faint">Opens a separate window per identity.</span>
+        <!-- Sign-in happens in the system browser (#300); a browser signed in as
+             another GitHub account is caught by the daemon's account guard. -->
+        <span class="text-xs text-ink-faint">Sign-in opens your browser.</span>
         <button
           type="button"
           class="rounded-md border border-paper-edge px-2 py-1 text-xs text-ink hover:bg-paper-mute"

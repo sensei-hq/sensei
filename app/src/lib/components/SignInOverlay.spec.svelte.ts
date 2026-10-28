@@ -17,6 +17,7 @@ afterEach(() => {
 // What PersonaList decides; the overlay renders it and nothing else.
 const persona = (over: Partial<Identity> = {}): Identity => ({
   label: 'sensei-hq-org',
+  name: 'sensei-hq-org',
   githubLogin: 'sensei-hq-org',
   sessionSlot: 'default',
   isDefault: false,
@@ -27,13 +28,15 @@ const persona = (over: Partial<Identity> = {}): Identity => ({
   action: null,
   busy: false,
   buttonLabel: null,
+  badge: 'ready',
   ...over
 });
 const connect = (over: Partial<Identity> = {}) =>
-  persona({ status: 'neverConnected', standing: 'never signed in on this machine', tone: 'idle', action: { kind: 'connect', label: 'Connect' }, buttonLabel: 'Connect', ...over });
+  persona({ status: 'neverConnected', standing: 'never signed in on this machine', tone: 'idle', action: { kind: 'connect', label: 'Connect' }, buttonLabel: 'Connect', badge: null, ...over });
 
 const BASE = {
   open: true,
+  phase: 'list' as const,
   identities: [persona()]
 };
 
@@ -52,7 +55,7 @@ describe('SignInOverlay', () => {
   it('lists one row per identity', () => {
     const m = mountComponent(SignInOverlay, {
       ...BASE,
-      identities: [persona(), connect({ label: 'devuser', githubLogin: null })]
+      identities: [persona(), connect({ label: 'devuser', name: 'devuser', githubLogin: null })]
     });
     cleanup.push(m.destroy);
     expect(rows(m)).toHaveLength(2);
@@ -77,7 +80,8 @@ describe('SignInOverlay', () => {
       standing: 'credential expired',
       tone: 'dead',
       action: { kind: 'signIn', label: 'Sign in again' },
-      buttonLabel: 'Sign in again'
+      buttonLabel: 'Sign in again',
+      badge: null
     });
     const m = mountComponent(SignInOverlay, { ...BASE, identities: [expired] });
     cleanup.push(m.destroy);
@@ -122,6 +126,7 @@ describe('SignInOverlay', () => {
     const m = mountComponent(SignInOverlay, {
       ...BASE,
       identities: [],
+      phase: 'error' as const,
       error: 'could not read the identity list'
     });
     cleanup.push(m.destroy);
@@ -132,14 +137,14 @@ describe('SignInOverlay', () => {
   it('says it is reading rather than claiming emptiness before the first read', () => {
     // Opening from the menu starts the read and shows the overlay in the same
     // tick, so "No identities yet" would be visible over data not yet fetched.
-    const m = mountComponent(SignInOverlay, { ...BASE, identities: [], loaded: false });
+    const m = mountComponent(SignInOverlay, { ...BASE, identities: [], phase: 'loading' as const });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[data-component="sign-in-loading"]')).not.toBeNull();
     expect(root(m)!.textContent).not.toMatch(/no identities yet/i);
   });
 
   it('distinguishes a genuinely empty registry from a failure', () => {
-    const m = mountComponent(SignInOverlay, { ...BASE, identities: [], error: null, loaded: true });
+    const m = mountComponent(SignInOverlay, { ...BASE, identities: [], phase: 'empty' as const });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[role="alert"]')).toBeNull();
     expect(root(m)!.textContent).toMatch(/no identities yet/i);
@@ -197,12 +202,13 @@ describe('SignInOverlay', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('says that each identity opens its own window', () => {
-    // A separate window is a deliberate, visible choice: a shared browser
-    // session answers as whoever is already signed in to GitHub.
+  it('says a sign-in opens the browser — not a separate window (#300)', () => {
+    // Sign-in moved to the system browser (#300); the footer still promised a
+    // separate window per identity (audit 2026-10-28, item 4).
     const m = mountComponent(SignInOverlay, BASE);
     cleanup.push(m.destroy);
-    expect(root(m)!.textContent).toMatch(/separate window/i);
+    expect(root(m)!.textContent).toMatch(/opens your browser/i);
+    expect(root(m)!.textContent).not.toMatch(/separate window/i);
   });
 
   it('is announced as a modal dialog with a name', () => {

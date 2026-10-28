@@ -79,12 +79,14 @@
           />
         {/if}
 
-        {#if personaList.error}
+        {#if personaList.phase === 'error'}
           <!-- A failed registry read is NOT "no identities": that phrasing invites
                connecting one, which is the wrong action against a registry that is
                merely unreachable. -->
           <p class="text-xs text-danger m-0" data-persona-error>{personaList.error}</p>
-        {:else if personaList.identities.length === 0}
+        {:else if personaList.phase === 'loading'}
+          <p class="text-sm text-ink-soft m-0" data-personas-loading>Reading identities…</p>
+        {:else if personaList.phase === 'empty'}
           <p class="text-sm text-ink-soft m-0" data-personas-empty>
             No identities yet. sensei infers them from commit authorship as you work.
           </p>
@@ -104,7 +106,7 @@
                 <div class="grid grid-cols-[1fr_auto] gap-6 items-center px-4 py-3 bg-paper-soft">
                   <div>
                     <div class="text-sm text-ink">
-                      <span data-identity-name>{p.label}</span>
+                      <span data-identity-name>{p.name}</span>
                       {#if p.isDefault}
                         <span class="ml-1 text-xs text-ink-soft" data-default-persona>default</span>
                       {:else}
@@ -122,7 +124,9 @@
                     </div>
                     <div class="text-xs mt-0.5 {IDENTITY_TONE_CLASS[p.tone]}" data-standing>{p.standing}</div>
                   </div>
-                  {#if p.action}
+                  {#if p.badge}
+                    <span class="text-xs text-success whitespace-nowrap" data-badge>{p.badge}</span>
+                  {:else if p.action}
                     <button
                       type="button"
                       class="text-xs px-3 py-1.5 rounded-md border border-paper-edge text-ink

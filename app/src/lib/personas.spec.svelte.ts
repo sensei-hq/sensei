@@ -376,3 +376,95 @@ describe('PersonaList.makeDefault', () => {
     expect(list.error).toBe('no identity x');
   });
 });
+
+// The audit (2026-10-28, docs/review/2026-10-28-state-view-audit.md items 2, 4):
+// what the views still decided for themselves.
+describe('what every identity view renders, decided here', () => {
+  it('names an identity by its GitHub login, the label until one is known', async () => {
+    const h = harness(LIST);
+    await h.list.load();
+    expect(h.list.identities.map((i) => i.name)).toEqual(['sensei-hq-org', 'devuser']);
+  });
+
+  it('labels a ready identity, and only a ready one', async () => {
+    expect((await one({})).badge).toBe('ready');
+    expect((await one({ keychain: 'needsApproval' })).badge).toBeNull();
+  });
+
+  it('says which phase the list is in, so no view claims emptiness early', async () => {
+    const loading = harness(LIST);
+    expect(loading.list.phase).toBe('loading');
+    await loading.list.load();
+    expect(loading.list.phase).toBe('list');
+    const failed = harness(null);
+    await failed.list.load();
+    expect(failed.list.phase).toBe('error');
+    const empty = harness({ personas: [] });
+    await empty.list.load();
+    expect(empty.list.phase).toBe('empty');
+  });
+});
+
+describe('PersonaList.writeSlot — the credential a write signs with', () => {
+  // Settings · Metrics took the first slot it found, ignoring status and the
+  // default: a write as a dead or the wrong identity while the overlay said
+  // "credential expired".
+  const def = (p: Partial<PersonaWire> = {}) => ({ ...live, isDefault: true, ...p });
+  const other = { ...live, label: 'other', sessionSlot: 'other', isDefault: false };
+
+  it('is the default identity while it is usable', async () => {
+    const h = harness({ personas: [other, def()] });
+    await h.list.load();
+    expect(h.list.writeSlot).toBe('default');
+  });
+
+  it('is none when the default cannot be used — never another identity in its place', async () => {
+    for (const broken of [{ forgeToken: { state: 'dead', expiresAt: null } }, { keychain: 'needsApproval' as const }]) {
+      const h = harness({ personas: [other, def(broken)] });
+      await h.list.load();
+      expect(h.list.writeSlot, JSON.stringify(broken)).toBeNull();
+    }
+  });
+
+  it('with no default, is the one usable identity', async () => {
+    const h = harness({ personas: [{ ...live, forgeToken: { state: 'dead', expiresAt: null } }, other] });
+    await h.list.load();
+    expect(h.list.writeSlot).toBe('other');
+  });
+
+  it('follows the clock: a default that expires stops being the write credential', async () => {
+    const h = harness({ personas: [def({ forgeToken: { state: 'active', expiresAt: NOW + 60 } })] });
+    await h.list.load();
+    expect(h.list.writeSlot).toBe('default');
+    h.clock.now = NOW + 61;
+    await h.list.tick();
+    expect(h.list.writeSlot).toBeNull();
+  });
+});
+
+describe('PersonaList.start / stop', () => {
+  it('keeps ticking while any view still needs it', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchPersonas = vi.fn(async () => LIST as never);
+      const list = new PersonaList({
+        fetchPersonas,
+        startSignIn: vi.fn(async () => null),
+        approveKeychain: vi.fn(async () => null),
+        openAuth: vi.fn(async () => {}),
+        makeDefault: vi.fn(async () => null),
+        now: () => NOW
+      });
+      list.start(); // the overlay
+      list.start(); // the settings screen
+      list.stop(); // the settings screen goes
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchPersonas).toHaveBeenCalledTimes(1);
+      list.stop();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fetchPersonas).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

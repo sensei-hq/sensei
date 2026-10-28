@@ -59,6 +59,8 @@ export interface IdentityAction {
 /** One identity as every view renders it — decided here, once. */
 export interface Identity {
   label: string;
+  /** What to call it: the GitHub login, the label until one is known. */
+  name: string;
   githubLogin: string | null;
   sessionSlot: string | null;
   isDefault: boolean;
@@ -72,7 +74,12 @@ export interface Identity {
   busy: boolean;
   /** The button's text, `opening…` while its sign-in starts; `null` with no button. */
   buttonLabel: string | null;
+  /** `ready` beside a usable identity with nothing to do; `null` otherwise. */
+  badge: 'ready' | null;
 }
+
+/** Where the list stands, so no view claims emptiness before the answer. */
+export type IdentitiesPhase = 'loading' | 'error' | 'empty' | 'list';
 
 export interface PersonaListDeps {
   /** Resolves `null` when the registry could not be read — never `[]`. */
@@ -141,6 +148,9 @@ export class PersonaList {
   #busy = $state<Set<string>>(new Set());
   #follow: ReturnType<typeof setInterval> | null = null;
   #ticker: ReturnType<typeof setInterval> | null = null;
+  /** How many views need the clock moving: the overlay and the settings screen
+   *  each start it, and one going away must not stop it for the other. */
+  #viewers = 0;
   #deps: PersonaListDeps;
 
   /** Called when an identity changed here — a sign-in finished, an approval,
@@ -159,6 +169,25 @@ export class PersonaList {
 
   /** Every identity, decided. The only thing views render. */
   identities = $derived(this.#wire.map((w) => this.#identity(w)));
+
+  get phase(): IdentitiesPhase {
+    if (this.error) return 'error';
+    if (!this.loaded) return 'loading';
+    return this.#wire.length === 0 ? 'empty' : 'list';
+  }
+
+  /**
+   * The Keychain slot a write signs with (Settings · Metrics' activation): the
+   * default identity while it is usable, else — with no default — the first
+   * usable one. Never another identity standing in for a broken default: that
+   * would write as someone the user did not choose.
+   */
+  get writeSlot(): string | null {
+    const usable = (i: Identity) => i.status === 'ready' || i.status === 'expiring';
+    const def = this.identities.find((i) => i.isDefault);
+    if (def) return usable(def) ? def.sessionSlot : null;
+    return this.identities.find(usable)?.sessionSlot ?? null;
+  }
 
   /** Whether something is BROKEN enough to open the overlay unasked: an
    *  expired credential, or a live one the Keychain withholds. Never-connected
@@ -204,6 +233,7 @@ export class PersonaList {
     const busy = this.#busy.has(w.label);
     return {
       label: w.label,
+      name: w.githubLogin ?? w.label,
       githubLogin: w.githubLogin,
       sessionSlot: w.sessionSlot,
       isDefault: w.isDefault ?? false,
@@ -213,7 +243,8 @@ export class PersonaList {
       tone,
       action,
       busy,
-      buttonLabel: action === null ? null : busy ? 'opening…' : action.label
+      buttonLabel: action === null ? null : busy ? 'opening…' : action.label,
+      badge: status === 'ready' ? 'ready' : null
     };
   }
 
@@ -242,11 +273,15 @@ export class PersonaList {
   /** Keep the state current while the app is open: the clock moves, so a
    *  credential that expires on screen says so without anyone reloading. */
   start(): void {
+    this.#viewers += 1;
     if (this.#ticker) return;
     this.#ticker = setInterval(() => void this.tick(), TICK_MS);
   }
 
+  /** One view is done; the clock stops when none needs it. */
   stop(): void {
+    this.#viewers = Math.max(0, this.#viewers - 1);
+    if (this.#viewers > 0) return;
     if (this.#ticker) clearInterval(this.#ticker);
     this.#ticker = null;
     this.#stopFollowing();
