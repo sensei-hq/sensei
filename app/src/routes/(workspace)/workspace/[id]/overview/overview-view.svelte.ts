@@ -7,7 +7,6 @@
 // the three stat blocks, the multi-repo chips, and the recent-session rows.
 // No component carries logic — it all lives here so it can be unit-tested in
 // isolation.
-import { correctionsView } from '$lib/ftr';
 import type {
   WorkspaceOverviewHeader,
   WorkspaceOverviewTopRec,
@@ -16,8 +15,15 @@ import type {
   WorkspaceOverview,
   PatternEntry,
 } from '$lib/types.js';
-import { ftrPct } from '$lib/ftr.js';
+import { correctionsView, ftrPct } from '$lib/ftr.js';
+import { compactDuration, durationMinutes } from '$lib/sessions-digest';
 import { failureReason, readOutcome, type ApiResult, type RecommendationPreview } from '$lib/api.js';
+
+/** A session's duration (the shared format), or null so the row drops the part. */
+function sessionDurationLabel(startedAt: string, completedAt: string | null): string | null {
+  const mins = durationMinutes(startedAt, completedAt);
+  return mins == null ? null : compactDuration(mins);
+}
 
 // ── Header FTR chip ─────────────────────────────────────────────────────────
 
@@ -168,25 +174,6 @@ function sessionTitle(title: string): string {
   return title.trim() || 'session';
 }
 
-/** Elapsed wall-clock between start and completion, formatted m / h m / d h.
- *  Null when the session has no completion or the timestamps don't parse. */
-export function sessionDuration(startedAt: string, completedAt: string | null): string | null {
-  if (!completedAt) return null;
-  const start = Date.parse(startedAt);
-  const end = Date.parse(completedAt);
-  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return null;
-  const mins = Math.round((end - start) / 60_000);
-  if (mins < 60) return `${mins}m`;
-  const hoursTotal = Math.floor(mins / 60);
-  if (hoursTotal < 24) {
-    const m = mins % 60;
-    return m === 0 ? `${hoursTotal}h` : `${hoursTotal}h ${m}m`;
-  }
-  const d = Math.floor(hoursTotal / 24);
-  const h = hoursTotal % 24;
-  return h === 0 ? `${d}d` : `${d}d ${h}h`;
-}
-
 /** Terse relative-time label from an ISO timestamp — m / h / d / w / mo / y.
  *  `now` is injectable so the label is deterministic under test. Empty string
  *  for a missing/unparseable timestamp so the row's time column collapses. */
@@ -210,7 +197,7 @@ export function relativeTime(iso: string | null, now: number = Date.now()): stri
  *  chip (null passes straight through so the row renders no chip). */
 export function sessionRows(sessions: WorkspaceOverviewSession[], now: number = Date.now()): SessionRow[] {
   return sessions.map((s) => {
-    const parts = [shortId(s.id), sessionDuration(s.startedAt, s.completedAt), correctionsView(s.corrections).label]
+    const parts = [shortId(s.id), sessionDurationLabel(s.startedAt, s.completedAt), correctionsView(s.corrections).label]
       .filter((p): p is string => Boolean(p));
     return {
       id: s.id,

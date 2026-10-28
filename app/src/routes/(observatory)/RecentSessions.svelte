@@ -1,5 +1,6 @@
 <script lang="ts">
   import { correctionsView, sessionFtrView } from '$lib/ftr';
+  import { compactDuration, durationMinutes, timeOfDay } from '$lib/sessions-digest';
   interface Session {
     id: string;
     task: string;
@@ -16,26 +17,6 @@
   }
   let { sessions }: Props = $props();
 
-  function durationMinutes(s: Session): number | null {
-    if (!s.completedAt) return null;
-    const start = Date.parse(s.startedAt);
-    const end   = Date.parse(s.completedAt);
-    if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return null;
-    return Math.round((end - start) / 60_000);
-  }
-
-  function formatDuration(mins: number): string {
-    if (mins < 60) return `${mins}m`;
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    return m === 0 ? `${h}h` : `${h}h ${m}m`;
-  }
-
-  function timeOfDay(iso: string): string {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
-  }
 </script>
 
 {#if sessions.length > 0}
@@ -46,7 +27,7 @@
     </div>
     <div class="flex flex-col">
       {#each sessions as s (s.id)}
-        {@const mins = durationMinutes(s)}
+        {@const mins = durationMinutes(s.startedAt, s.completedAt ?? null)}
         {@const ftr = sessionFtrView(s.ftr)}
         <a
           data-session-row={s.id}
@@ -68,7 +49,7 @@
           </span>
           {#if mins !== null}
             <span data-duration class="font-mono text-xs text-ink-mute min-w-[3rem] text-right">
-              {formatDuration(mins)}
+              {compactDuration(mins)}
             </span>
           {:else}
             <span></span>

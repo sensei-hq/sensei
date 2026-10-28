@@ -355,7 +355,7 @@ describe('ticket rows', () => {
         last_at: '2026-10-07T17:20:00Z',
       }),
     );
-    expect([c.active, c.claude, c.you, c.wall, c.cycle]).toEqual(['40m', '30m', '10m', '50m', '55h 20m']);
+    expect([c.active, c.claude, c.you, c.wall, c.cycle]).toEqual(['40m', '30m', '10m', '50m', '2d 7h']); // the shared duration format past a day (lib/sessions-digest)
   });
 
   it('has no cycle time while no session has ended', () => {

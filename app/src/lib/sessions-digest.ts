@@ -71,7 +71,6 @@ export function durationMinutes(startedAt: string, completedAt: string | null): 
   return Math.round((end - start) / 60_000);
 }
 
-/** Compact duration label: "12m" / "1h 04m" / "2h" / "—". */
 /** The median duration as the totals show it: "—" only when no session has a
  *  duration, "<1m" for short ones (which round to 0). */
 export function medianLabel(mins: number | null): string {
@@ -79,10 +78,17 @@ export function medianLabel(mins: number | null): string {
   return mins < 1 ? '<1m' : compactDuration(mins);
 }
 
+/** A session's duration as every screen shows it: "12m", "1h 04m", "2h",
+ *  "2d 3h"; "—" when it has none. */
 export function compactDuration(mins: number | null): string {
   if (mins == null) return '—';
   if (mins < 60) return `${mins}m`;
   const h = Math.floor(mins / 60);
+  if (h >= 24) {
+    const d = Math.floor(h / 24);
+    const rest = h % 24;
+    return rest === 0 ? `${d}d` : `${d}d ${rest}h`;
+  }
   const m = mins % 60;
   return m === 0 ? `${h}h` : `${h}h ${String(m).padStart(2, '0')}m`;
 }

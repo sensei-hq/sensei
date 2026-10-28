@@ -156,6 +156,10 @@ describe('duration', () => {
     expect(compactDuration(12)).toBe('12m');
     expect(compactDuration(64)).toBe('1h 04m');
     expect(compactDuration(120)).toBe('2h');
+    // Days, as Overview showed them (audit 2026-10-28, item 15: three copies of
+    // this rule — Sessions, Overview, Today — now one).
+    expect(compactDuration(2 * 1440 + 180)).toBe('2d 3h');
+    expect(compactDuration(1440)).toBe('1d');
     expect(compactDuration(null)).toBe('—');
   });
 });

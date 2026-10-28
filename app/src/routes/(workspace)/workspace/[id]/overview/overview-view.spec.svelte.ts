@@ -5,7 +5,6 @@ import {
   repoChipLabel,
   heroContent,
   statBlocks,
-  sessionDuration,
   relativeTime,
   sessionRows,
   workspaceVisibilityLabel,
@@ -159,21 +158,6 @@ describe('statBlocks', () => {
   it('warns on doc drift only when the open count is above zero', () => {
     expect(statBlocks(stats({ docDrift: { open: 3, referencedDocs: 18 } }))[2].toneClass).toBe('text-warning');
     expect(statBlocks(stats({ docDrift: { open: 0, referencedDocs: 18 } }))[2].toneClass).toBe('text-ink');
-  });
-});
-
-describe('sessionDuration', () => {
-  it('formats sub-hour, hour, and multi-day spans', () => {
-    expect(sessionDuration('2026-07-08T01:00:00Z', '2026-07-08T01:42:00Z')).toBe('42m');
-    expect(sessionDuration('2026-07-08T01:00:00Z', '2026-07-08T02:30:00Z')).toBe('1h 30m');
-    expect(sessionDuration('2026-07-08T01:00:00Z', '2026-07-08T03:00:00Z')).toBe('2h');
-    // 2 days + 3 hours
-    expect(sessionDuration('2026-07-01T00:00:00Z', '2026-07-03T03:00:00Z')).toBe('2d 3h');
-  });
-
-  it('returns null when incomplete or the timestamps do not advance', () => {
-    expect(sessionDuration('2026-07-08T01:00:00Z', null)).toBeNull();
-    expect(sessionDuration('2026-07-08T02:00:00Z', '2026-07-08T01:00:00Z')).toBeNull();
   });
 });
 

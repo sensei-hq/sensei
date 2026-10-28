@@ -265,7 +265,7 @@ describe('ready', () => {
     q<HTMLButtonElement>('[data-ticket="AUTH-2"]')!.click();
     await settle();
     const time = (k: string) => q(`[data-view="ticket"] [data-time="${k}"]`)!.textContent!.trim();
-    expect([time('claude'), time('you'), time('wall'), time('cycle')]).toEqual(['30m', '10m', '50m', '55h 20m']);
+    expect([time('claude'), time('you'), time('wall'), time('cycle')]).toEqual(['30m', '10m', '50m', '2d 7h']); // the shared duration format past a day (lib/sessions-digest)
   });
 
   it('a ticket with no measured time shows — for each, never 0m', async () => {
