@@ -165,6 +165,45 @@ describe('WizardState', () => {
     });
   });
 
+  // Audit item 12 (2026-10-28): the card decided its state twice with different
+  // precedence (its header said "off" while a removal was configuring) and the
+  // done page counted "configured" by a third rule (the daemon's variant flags).
+  describe('assistantView — one view of a family, for the card and the summary', () => {
+    it('in-flight work wins: a removal that cleared the switch still reads configuring', () => {
+      ws.hydrate(mockWizardLoadData());
+      ws.applyAssistantEvent({ family: 'claude', part: 'plugins', status: 'configuring' });
+      ws.assistants.assistants[0]!.selected = false;
+      const v = ws.assistantView(ws.assistants.assistants[0]!);
+      expect(v).toMatchObject({ state: 'configuring', busy: true, header: { text: 'configuring…', tone: 'accent', icon: 'spinner' } });
+    });
+
+    it('is configured once every part is done, and the summary counts the same', () => {
+      ws.hydrate(mockWizardLoadData());
+      const claude = ws.assistants.assistants[0]!;
+      expect(ws.assistantView(claude).configured).toBe(false);
+      for (const p of claude.parts) ws.applyAssistantEvent({ family: 'claude', part: p.id, status: 'done' });
+      expect(ws.assistantView(claude)).toMatchObject({ state: 'done', configured: true, header: { text: 'configured', tone: 'success' } });
+      expect(ws.configuredAssistants).toBe(1);
+    });
+
+    it('before any live event, configured is the daemon\'s word', () => {
+      const data = mockWizardLoadData();
+      data.assistantFamilies[0]!.variants = data.assistantFamilies[0]!.variants.map((v) => ({ ...v, configured: true }));
+      ws.hydrate(data);
+      expect(ws.assistantView(ws.assistants.assistants[0]!).configured).toBe(true);
+      expect(ws.configuredAssistants).toBe(1);
+    });
+
+    it('a family with nothing installed is not found, and an error is said once', () => {
+      ws.hydrate(mockWizardLoadData());
+      const cursor = ws.assistants.assistants[1]!;
+      expect(ws.assistantView(cursor)).toMatchObject({ found: false, header: { text: 'not found' } });
+      ws.applyAssistantEvent({ family: 'claude', part: 'plugins', status: 'error', error: 'denied' });
+      ws.applyAssistantEvent({ family: 'claude', part: 'skills', status: 'error', error: 'denied' });
+      expect(ws.assistantView(ws.assistants.assistants[0]!)).toMatchObject({ state: 'failed', error: 'denied', showError: true });
+    });
+  });
+
   describe('markFamily helpers', () => {
     it('markFamilyConfiguring sets every part to configuring', () => {
       ws.hydrate(mockWizardLoadData());

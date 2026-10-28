@@ -1,10 +1,9 @@
 <script lang="ts">
     import Kanji from '$lib/components/Kanji.svelte';
-  import { wizardState, familyIsConfigured } from '$lib/wizard-state.svelte.js';
+  import { wizardState } from '$lib/wizard-state.svelte.js';
 
-  const assistantsConfigured = $derived(
-    wizardState.assistants.assistants.filter(familyIsConfigured).length,
-  );
+  // The same "configured" the cards show (audit 2026-10-28, item 12).
+  const assistantsConfigured = $derived(wizardState.configuredAssistants);
   const rootsCount = $derived(wizardState.roots.roots.length);
   const workspacesCount = $derived(wizardState.workspaces.workspaces.length);
   const foldersCount = $derived(

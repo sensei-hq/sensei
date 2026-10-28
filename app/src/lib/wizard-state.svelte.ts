@@ -10,6 +10,7 @@
  */
 
 import { senseiApi, failureReason, daemonFailure, type ApiResult } from './api.js';
+import { EventManager } from './events.js';
 import { roleAssignments } from './setup/role-meta.js';
 import { DEFAULT_PREFERENCES } from './setup/preferences.js';
 import { appState } from './appstate.svelte.js';
@@ -319,6 +320,80 @@ function initialSetupComplete(): boolean {
   }
 }
 
+/** A family as the card and the setup summary render it — see `assistantView`. */
+export interface AssistantView {
+  id: string;
+  name: string;
+  /** Some variant is installed. */
+  found: boolean;
+  /** The switch. */
+  enabled: boolean;
+  parts: { id: string; label: string; status: AssistantPartStatus }[];
+  error: string | null;
+  busy: boolean;
+  showError: boolean;
+  state: 'idle' | 'configuring' | 'failed' | 'done';
+  configured: boolean;
+  header: { text: string; tone: string; icon: 'spinner' | 'check' | 'cross' | null };
+}
+
+/** Pure: one family's view from its live part statuses and errors — what
+ *  `WizardState.assistantView` returns, testable without the store. */
+export function assistantViewOf(
+  family: DaemonAssistantFamily,
+  partStatus: Record<string, AssistantPartStatus> = {},
+  partErrors: Record<string, string | undefined> = {},
+): AssistantView {
+  const parts = family.parts.map((p) => ({
+    id: p.id,
+    label: p.label,
+    status: (partStatus[p.id] ?? 'idle') as AssistantPartStatus
+  }));
+  const found = family.variants.some((v) => v.installed);
+  const enabled = family.selected;
+  const statuses = parts.map((p) => p.status);
+  const configuring = statuses.includes('configuring');
+  const failed = statuses.includes('error');
+  const allDone = parts.length > 0 && statuses.every((st) => st === 'done');
+  const live = statuses.some((st) => st !== 'idle');
+  const configured = enabled && (live ? allDone : familyIsConfigured(family));
+  const errs = Object.values(partErrors).filter(Boolean) as string[];
+  const error = errs.length ? Array.from(new Set(errs)).join('; ') : null;
+  const state: AssistantView['state'] = configuring
+    ? 'configuring'
+    : !enabled
+      ? 'idle'
+      : failed
+        ? 'failed'
+        : configured
+          ? 'done'
+          : 'idle';
+  const header: AssistantView['header'] = !found
+    ? { text: 'not found', tone: 'muted-italic', icon: null }
+    : state === 'configuring'
+      ? { text: 'configuring…', tone: 'accent', icon: 'spinner' }
+      : !enabled
+        ? { text: 'off', tone: 'muted', icon: null }
+        : state === 'failed'
+          ? { text: 'failed', tone: 'danger', icon: 'cross' }
+          : state === 'done'
+            ? { text: 'configured', tone: 'success', icon: 'check' }
+            : { text: '', tone: 'muted', icon: null };
+  return {
+    id: family.id,
+    name: family.name,
+    found,
+    enabled,
+    parts,
+    error,
+    busy: configuring,
+    showError: enabled && !!error && !configuring,
+    state,
+    configured,
+    header
+  };
+}
+
 export class WizardState {
   /**
    * Canonical "is the wizard finished?" flag. Owned here (rather than on
@@ -435,6 +510,38 @@ export class WizardState {
   }
 
   // ── Assistant per-part state ────────────────────────────────────
+
+  /**
+   * One family as the card and the setup summary show it (audit 2026-10-28,
+   * item 12: the card decided its state twice with different precedence, and
+   * the summary counted "configured" by a third rule). In-flight work wins —
+   * a removal clears the switch first, and still reads configuring. Configured
+   * is the live parts once any has moved, else the daemon's word.
+   */
+  assistantView(family: DaemonAssistantFamily): AssistantView {
+    return assistantViewOf(family, this.assistants.partStatus[family.id], this.assistants.partErrors[family.id]);
+  }
+
+  /** How many families are configured — the same rule the cards show. */
+  get configuredAssistants(): number {
+    return this.assistants.assistants.filter((f) => this.assistantView(f).configured).length;
+  }
+
+  /** Follow the daemon's per-part events (entity "assistant" on the scan
+   *  stream) so the cards' chips settle live. Returns the unsubscribe. */
+  watchAssistantEvents(port: number): () => void {
+    const events = new EventManager<{ action: string; entity: string; data: AssistantPartEvent }>(
+      `http://127.0.0.1:${port}/api/scan/events`,
+      (data) => JSON.parse(data)
+    );
+    const unsubscribe = events.subscribe((evt) => {
+      if (evt.entity === 'assistant') this.applyAssistantEvent(evt.data);
+    });
+    return () => {
+      unsubscribe();
+      events.destroy();
+    };
+  }
 
   /**
    * Apply one assistant-part SSE event from the daemon. Single entry point
