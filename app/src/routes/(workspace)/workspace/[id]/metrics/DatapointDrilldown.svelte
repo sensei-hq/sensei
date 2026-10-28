@@ -76,7 +76,7 @@
                     data-active={active}
                     onclick={() => controller.select(day)}
                     class="px-3 py-1 rounded-md text-xs transition-colors duration-fast {active
-                        ? 'bg-accent-soft text-accent font-medium'
+                        ? 'bg-accent-soft text-on-accent-soft font-medium'
                         : 'text-ink-soft hover:text-ink'}"
                 >{formatDayLabel(day)}</button>
             {/each}

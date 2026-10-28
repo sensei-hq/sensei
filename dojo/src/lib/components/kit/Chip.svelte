@@ -4,7 +4,7 @@
 	import Icon from './Icon.svelte';
 
 	// Generic pill (kit K2Chip). Kanji and icon optional. Tones default to a neutral
-	// chip; callers pass token classes (`text-accent`, `bg-accent-soft`,
+	// chip; callers pass token classes (`text-on-accent-soft`, `bg-accent-soft`,
 	// `border-accent-soft`) — never a raw color. `mono` switches the label to the
 	// tabular mono face. Content is a snippet so callers compose freely.
 	let {

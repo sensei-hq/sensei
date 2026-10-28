@@ -43,9 +43,9 @@ export function stateTone(state: string): StateTone {
  *  raw wire state (honest -- a chip never claims a state the daemon didn't). */
 export function stateChip(state: string): ChipClasses {
   switch (stateTone(state)) {
-    case 'info':    return { bg: 'bg-info-soft',    text: 'text-info',     label: state };
-    case 'success': return { bg: 'bg-success-soft', text: 'text-success',  label: state };
-    case 'accent':  return { bg: 'bg-accent-soft',  text: 'text-accent',   label: state };
+    case 'info':    return { bg: 'bg-info-soft',    text: 'text-on-info-soft',     label: state };
+    case 'success': return { bg: 'bg-success-soft', text: 'text-on-success-soft',  label: state };
+    case 'accent':  return { bg: 'bg-accent-soft',  text: 'text-on-accent-soft',   label: state };
     default:        return { bg: 'bg-paper-mute',   text: 'text-ink-soft', label: state };
   }
 }

@@ -35,7 +35,7 @@
 			>
 				{#snippet right()}
 					{#if billing.plan}
-						<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+						<Chip toneClass="text-on-accent-soft" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 							>{billing.plan}</Chip
 						>
 					{/if}
@@ -111,7 +111,7 @@
 							<span class="text-sm font-semibold {t.dark ? 'text-on-primary' : 'text-ink'}">{t.name}</span>
 							{#if t.current}
 								<span class="ml-auto">
-									<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+									<Chip toneClass="text-on-accent-soft" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 										>current</Chip
 									>
 								</span>

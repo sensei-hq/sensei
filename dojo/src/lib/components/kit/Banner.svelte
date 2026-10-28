@@ -4,9 +4,9 @@
 	// so the banner stays theme-free.
 	const TONES = {
 		neutral: { bg: 'bg-paper-soft', edge: 'border-paper-edge', k: 'text-ink-soft' },
-		accent: { bg: 'bg-accent-soft', edge: 'border-accent-soft', k: 'text-accent' },
-		success: { bg: 'bg-success-soft', edge: 'border-success-soft', k: 'text-success' },
-		warning: { bg: 'bg-warning-soft', edge: 'border-warning-soft', k: 'text-warning' }
+		accent: { bg: 'bg-accent-soft', edge: 'border-accent-soft', k: 'text-on-accent-soft' },
+		success: { bg: 'bg-success-soft', edge: 'border-success-soft', k: 'text-on-success-soft' },
+		warning: { bg: 'bg-warning-soft', edge: 'border-warning-soft', k: 'text-on-warning-soft' }
 	} as const;
 
 	export type BannerTone = keyof typeof TONES;

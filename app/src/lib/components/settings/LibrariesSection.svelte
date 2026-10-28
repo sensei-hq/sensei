@@ -49,7 +49,7 @@
       <span class="font-mono py-1 px-2 text-xs text-ink-soft bg-paper-mute border border-paper-edge rounded-sm">
         {detectedCount} detected
       </span>
-      <span class="font-mono py-1 px-2 text-xs text-success bg-success-soft border border-success rounded-sm">
+      <span class="font-mono py-1 px-2 text-xs text-on-success-soft bg-success-soft border border-success rounded-sm">
         {wrappedCount} will be wrapped
       </span>
     </div>

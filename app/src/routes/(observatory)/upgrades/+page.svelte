@@ -141,7 +141,7 @@
       <span
         class="font-mono px-2 py-0.5 rounded"
         class:bg-warning-soft={up.urgency === 'high'}
-        class:text-warning={up.urgency === 'high'}
+        class:text-on-warning-soft={up.urgency === 'high'}
         class:bg-paper-mute={up.urgency === 'medium'}
         class:text-ink-mute={up.urgency === 'medium'}
         class:bg-paper-mute-alt={up.urgency === 'low'}

@@ -19,7 +19,7 @@
 		<div class="flex gap-3 {mine ? 'flex-row-reverse' : 'flex-row'}">
 			{#if mine}
 				<span
-					class="bg-accent-soft text-accent flex flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+					class="bg-accent-soft text-on-accent-soft flex flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold"
 					style="width: 28px; height: 28px"
 					aria-hidden="true">{initials}</span
 				>

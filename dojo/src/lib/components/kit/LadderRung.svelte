@@ -65,7 +65,7 @@
 		<div class="border-paper-edge flex flex-wrap items-center gap-2 border-t" style="padding: 8px 16px">
 			<span class="mono text-ink-soft text-xs">packs applied here</span>
 			{#each packs as pack (pack)}
-				<Chip icon="box" toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+				<Chip icon="box" toneClass="text-on-accent-soft" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 					>{pack}</Chip
 				>
 			{/each}

@@ -78,13 +78,13 @@ describe('shareStateChip', () => {
   it('queued reads info', () =>
     expect(shareStateChip('queued')).toEqual({
       bg: 'bg-info-soft',
-      text: 'text-info',
+      text: 'text-on-info-soft',
       label: 'queued',
     }));
   it('held reads warning', () =>
     expect(shareStateChip('held')).toEqual({
       bg: 'bg-warning-soft',
-      text: 'text-warning',
+      text: 'text-on-warning-soft',
       label: 'held',
     }));
   it('degrades an unexpected state to muted ink, still labelled with the raw value', () =>
@@ -139,21 +139,21 @@ describe('requiresConfirm', () => {
 
 describe('publishResultChip', () => {
   it('published reads success', () =>
-    expect(publishResultChip('published')).toMatchObject({ text: 'text-success', label: 'published' }));
+    expect(publishResultChip('published')).toMatchObject({ text: 'text-on-success-soft', label: 'published' }));
   it('held_residual_risk reads warning and labels held', () =>
     expect(publishResultChip('held_residual_risk')).toMatchObject({
-      text: 'text-warning',
+      text: 'text-on-warning-soft',
       label: 'held',
     }));
   it('error reads danger', () =>
-    expect(publishResultChip('error')).toMatchObject({ text: 'text-danger', label: 'error' }));
+    expect(publishResultChip('error')).toMatchObject({ text: 'text-on-danger-soft', label: 'error' }));
   it('queued_retry reads info with a human label', () =>
     expect(publishResultChip('queued_retry')).toMatchObject({
-      text: 'text-info',
+      text: 'text-on-info-soft',
       label: 'queued for retry',
     }));
   it('no_destination reads warning', () =>
-    expect(publishResultChip('no_destination')).toMatchObject({ text: 'text-warning' }));
+    expect(publishResultChip('no_destination')).toMatchObject({ text: 'text-on-warning-soft' }));
   it('degrades an unknown result to muted ink echoing the raw tag', () =>
     expect(publishResultChip('teleported')).toEqual({
       bg: 'bg-paper-mute',

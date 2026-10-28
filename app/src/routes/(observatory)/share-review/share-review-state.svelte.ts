@@ -55,8 +55,8 @@ export function heldCount(items: ShareReviewItem[]): number {
  *  state degrades to muted ink, still labelled with the raw wire value. */
 export function shareStateChip(state: string): ChipClasses {
   switch (state) {
-    case 'queued': return { bg: 'bg-info-soft',    text: 'text-info',     label: 'queued' };
-    case 'held':   return { bg: 'bg-warning-soft', text: 'text-warning',  label: 'held' };
+    case 'queued': return { bg: 'bg-info-soft',    text: 'text-on-info-soft',     label: 'queued' };
+    case 'held':   return { bg: 'bg-warning-soft', text: 'text-on-warning-soft',  label: 'held' };
     default:       return { bg: 'bg-paper-mute',   text: 'text-ink-soft', label: state || 'unknown' };
   }
 }
@@ -119,12 +119,12 @@ const RESULT_LABELS: Record<string, string> = {
 export function publishResultChip(result: string): ChipClasses {
   const label = RESULT_LABELS[result] ?? result ?? 'unknown';
   switch (result) {
-    case 'published':          return { bg: 'bg-success-soft', text: 'text-success', label };
+    case 'published':          return { bg: 'bg-success-soft', text: 'text-on-success-soft', label };
     case 'held_residual_risk':
-    case 'no_destination':     return { bg: 'bg-warning-soft', text: 'text-warning', label };
-    case 'error':              return { bg: 'bg-danger-soft',  text: 'text-danger',  label };
+    case 'no_destination':     return { bg: 'bg-warning-soft', text: 'text-on-warning-soft', label };
+    case 'error':              return { bg: 'bg-danger-soft',  text: 'text-on-danger-soft',  label };
     case 'queued_retry':
-    case 'staged':             return { bg: 'bg-info-soft',    text: 'text-info',    label };
+    case 'staged':             return { bg: 'bg-info-soft',    text: 'text-on-info-soft',    label };
     default:                   return { bg: 'bg-paper-mute',   text: 'text-ink-soft', label };
   }
 }

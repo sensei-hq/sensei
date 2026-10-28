@@ -186,13 +186,13 @@
           <Kanji char="規" size="inherit" tone="inherit" class="text-sm text-ink-soft" />
           <span class="text-xs text-ink-mute">Destination</span>
           {#if unbound}
-            <span class="font-mono text-xs px-2 py-0.5 rounded-full bg-warning-soft text-warning" data-unbound
+            <span class="font-mono text-xs px-2 py-0.5 rounded-full bg-warning-soft text-on-warning-soft" data-unbound
               >unbound — nothing can leave</span
             >
           {:else}
             {#each dests as d, i (i)}
               <span
-                class="inline-flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded-full bg-accent-soft text-accent"
+                class="inline-flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded-full bg-accent-soft text-on-accent-soft"
                 data-destination
               >
                 <Kanji char="結" size="inherit" tone="inherit" class="" />{d}

@@ -144,7 +144,7 @@
           <div class="ts-client-body p-10 {flip ? 'lg:order-2' : ''}">
             <div class="mb-6 flex items-center justify-between">
               <span class="mono text-ink-faint text-sm">{String(i + 1).padStart(2, '0')}</span>
-              <span class="mono rounded-sm px-2 py-0.5 text-warning bg-warning-soft text-xs" style="white-space:nowrap">{c.status}</span>
+              <span class="mono rounded-sm px-2 py-0.5 text-on-warning-soft bg-warning-soft text-xs" style="white-space:nowrap">{c.status}</span>
             </div>
             <div class="flex items-baseline flex-wrap gap-3 mb-2">
               <span class="display text-ink text-2xl" style="font-weight:400;letter-spacing:-0.02em">{c.name}</span>

@@ -75,12 +75,12 @@ export function bindingKanji(kind: string): string {
 
 /** Pure: the confirmed-state chip — success tone, sentence-case label. */
 export function confirmedChip(): BindingChip {
-  return { bg: 'bg-success-soft', text: 'text-success', label: 'confirmed' };
+  return { bg: 'bg-success-soft', text: 'text-on-success-soft', label: 'confirmed' };
 }
 
 /** Pure: the inferred-state chip — warning tone, sentence-case label. */
 export function inferredChip(): BindingChip {
-  return { bg: 'bg-warning-soft', text: 'text-warning', label: 'inferred' };
+  return { bg: 'bg-warning-soft', text: 'text-on-warning-soft', label: 'inferred' };
 }
 
 /** Pure: find the membership this workspace is bound to, or null. Confirmed when

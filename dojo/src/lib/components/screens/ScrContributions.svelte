@@ -150,7 +150,7 @@
 							edgeClass="border-success-soft">adopted</Chip
 						>
 					{:else}
-						<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+						<Chip toneClass="text-on-accent-soft" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 							>new</Chip
 						>
 						<Btn size="sm" variant="ghost" icon="pin" onclick={() => onPin?.(it)}>Pin</Btn>

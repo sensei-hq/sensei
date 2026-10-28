@@ -24,7 +24,7 @@
 		<span class="mono text-ink-faint hidden text-xs sm:inline">dojo.sensei-hq.com</span>
 		<span class="flex-1"></span>
 		<span
-			class="bg-accent-soft text-accent flex h-[28px] w-[28px] items-center justify-center rounded-full text-xs font-semibold"
+			class="bg-accent-soft text-on-accent-soft flex h-[28px] w-[28px] items-center justify-center rounded-full text-xs font-semibold"
 			aria-hidden="true">{user.initials}</span
 		>
 		<span class="text-ink-mute hidden text-sm sm:inline">{user.name}</span>

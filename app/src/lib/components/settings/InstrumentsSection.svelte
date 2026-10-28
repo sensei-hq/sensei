@@ -73,7 +73,7 @@
     </div>
   {:else}
     <div class="flex items-center gap-2 mb-6">
-      <span class="font-mono py-1 px-2 text-xs text-success bg-success-soft border border-success rounded-sm">
+      <span class="font-mono py-1 px-2 text-xs text-on-success-soft bg-success-soft border border-success rounded-sm">
         {installCount} MCPs to install
       </span>
     </div>

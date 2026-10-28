@@ -35,12 +35,12 @@ describe('flattenCandidates — every candidate across the scope groups, in orde
 
 describe('impactTone — token classes for the impact chip', () => {
 	it('tints high impact accent', () => {
-		expect(impactTone('high').text).toBe('text-accent');
+		expect(impactTone('high').text).toBe('text-on-accent-soft');
 		expect(impactTone('high').soft).toBe('bg-accent-soft');
 	});
 
 	it('tints safety impact danger', () => {
-		expect(impactTone('safety').text).toBe('text-danger');
+		expect(impactTone('safety').text).toBe('text-on-danger-soft');
 		expect(impactTone('safety').soft).toBe('bg-danger-soft');
 	});
 

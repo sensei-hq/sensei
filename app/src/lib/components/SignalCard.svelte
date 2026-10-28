@@ -15,10 +15,10 @@
   // Each variant maps to a status colour family. Kept in one place so the
   // Health / Insights tabs render consistent cards regardless of caller.
   const VARIANT_STYLE: Record<SignalVariant, { bg: string; edge: string; ink: string; kanji: string }> = {
-    warn:        { bg: 'bg-danger-soft',  edge: 'border-danger-edge',  ink: 'text-danger',  kanji: '警' },
-    opportunity: { bg: 'bg-warning-soft', edge: 'border-warning-edge', ink: 'text-warning', kanji: '芽' },
+    warn:        { bg: 'bg-danger-soft',  edge: 'border-danger-edge',  ink: 'text-on-danger-soft',  kanji: '警' },
+    opportunity: { bg: 'bg-warning-soft', edge: 'border-warning-edge', ink: 'text-on-warning-soft', kanji: '芽' },
     unused:      { bg: 'bg-paper-mute',   edge: 'border-paper-edge',   ink: 'text-ink-soft', kanji: '眠' },
-    win:         { bg: 'bg-success-soft', edge: 'border-success-edge', ink: 'text-success', kanji: '勝' },
+    win:         { bg: 'bg-success-soft', edge: 'border-success-edge', ink: 'text-on-success-soft', kanji: '勝' },
   };
   const style = $derived(VARIANT_STYLE[variant]);
 </script>

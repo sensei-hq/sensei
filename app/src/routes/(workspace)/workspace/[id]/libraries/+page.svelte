@@ -123,7 +123,7 @@
                         <span class="text-ink-soft text-xs">{lib.ecosystem}</span>
                         <div class="flex gap-1 flex-1">
                             {#if lib.hasDocs}
-                                <span class="badge bg-success-soft text-success border border-success-edge"
+                                <span class="badge bg-success-soft text-on-success-soft border border-success-edge"
                                       title="{lib.pageCount ?? 0} indexed doc page{lib.pageCount === 1 ? '' : 's'}"
                                       data-testid={`library-badge-wrapped-${lib.name}`}>Wrapped</span>
                             {/if}
@@ -133,7 +133,7 @@
                                       data-testid={`library-badge-local-${lib.name}`}>Local</span>
                             {/if}
                             {#if inConflict}
-                                <span class="badge bg-warning-soft text-warning border border-warning-edge"
+                                <span class="badge bg-warning-soft text-on-warning-soft border border-warning-edge"
                                       data-testid={`library-badge-conflict-${lib.name}`}>Version conflict</span>
                             {/if}
                         </div>

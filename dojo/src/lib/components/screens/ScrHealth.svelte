@@ -59,10 +59,10 @@
 							>Contributions vs approvals</span
 						>
 						<span class="flex-1"></span>
-						<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+						<Chip toneClass="text-on-accent-soft" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 							>contrib</Chip
 						>
-						<Chip toneClass="text-success" softClass="bg-success-soft" edgeClass="border-success-soft"
+						<Chip toneClass="text-on-success-soft" softClass="bg-success-soft" edgeClass="border-success-soft"
 							>approved</Chip
 						>
 					</div>

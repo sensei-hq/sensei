@@ -67,8 +67,8 @@
                     <li class="my-1">
                         <span
                             class="inline-block px-2 py-0.5 rounded-full text-xs {ex.is_good
-                                ? 'bg-success-soft text-success'
-                                : 'bg-danger-soft text-danger'}"
+                                ? 'bg-success-soft text-on-success-soft'
+                                : 'bg-danger-soft text-on-danger-soft'}"
                         >{ex.is_good ? 'good' : 'bad'}</span>
                         {#if ex.node_id}<code class="font-mono text-xs bg-paper-mute px-1 rounded">{ex.node_id}</code>{/if}
                         {ex.note ?? ''}
@@ -86,9 +86,9 @@
                     <li class="my-1">
                         <span
                             class="inline-block px-2 py-0.5 rounded-full text-xs {o.outcome === 'applied'
-                                ? 'bg-success-soft text-success'
+                                ? 'bg-success-soft text-on-success-soft'
                                 : o.outcome === 'violated'
-                                    ? 'bg-danger-soft text-danger'
+                                    ? 'bg-danger-soft text-on-danger-soft'
                                     : 'bg-paper-mute text-ink'}"
                         >{o.outcome}</span>
                         <time class="text-xs text-ink-soft">{new Date(o.recorded_at).toLocaleString()}</time>

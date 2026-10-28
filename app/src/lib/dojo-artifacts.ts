@@ -39,12 +39,12 @@ export interface TypePill {
  *  domain rather than in the component. */
 export function typePill(type: string): TypePill {
   switch (type) {
-    case 'skill':     return { kanji: '技', label: 'skill',     bg: 'bg-accent-soft',  text: 'text-accent'  };
-    case 'agent':     return { kanji: '作', label: 'agent',     bg: 'bg-accent-soft',  text: 'text-accent'  };
-    case 'principle': return { kanji: '理', label: 'principle', bg: 'bg-success-soft', text: 'text-success' };
-    case 'pattern':   return { kanji: '紋', label: 'pattern',   bg: 'bg-info-soft',    text: 'text-info'    };
-    case 'prompt':    return { kanji: '問', label: 'prompt',    bg: 'bg-info-soft',    text: 'text-info'    };
-    case 'guard':     return { kanji: '守', label: 'guard',     bg: 'bg-warning-soft', text: 'text-warning' };
+    case 'skill':     return { kanji: '技', label: 'skill',     bg: 'bg-accent-soft',  text: 'text-on-accent-soft'  };
+    case 'agent':     return { kanji: '作', label: 'agent',     bg: 'bg-accent-soft',  text: 'text-on-accent-soft'  };
+    case 'principle': return { kanji: '理', label: 'principle', bg: 'bg-success-soft', text: 'text-on-success-soft' };
+    case 'pattern':   return { kanji: '紋', label: 'pattern',   bg: 'bg-info-soft',    text: 'text-on-info-soft'    };
+    case 'prompt':    return { kanji: '問', label: 'prompt',    bg: 'bg-info-soft',    text: 'text-on-info-soft'    };
+    case 'guard':     return { kanji: '守', label: 'guard',     bg: 'bg-warning-soft', text: 'text-on-warning-soft' };
     default:          return { kanji: '贈', label: type || 'artifact', bg: 'bg-paper-mute', text: 'text-ink-soft' };
   }
 }

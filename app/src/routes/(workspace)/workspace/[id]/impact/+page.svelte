@@ -227,13 +227,13 @@
               </div>
               <button type="button" disabled={st.isDeciding(entry.id)} onclick={() => decide(entry.id, 'success')}
                       data-testid={`impact-success-${entry.id}`}
-                      class="px-2 py-1 text-xs rounded-md bg-success-soft text-success border-none cursor-pointer">Success</button>
+                      class="px-2 py-1 text-xs rounded-md bg-success-soft text-on-success-soft border-none cursor-pointer">Success</button>
               <button type="button" disabled={st.isDeciding(entry.id)} onclick={() => decide(entry.id, 'mixed')}
                       data-testid={`impact-mixed-${entry.id}`}
-                      class="px-2 py-1 text-xs rounded-md bg-warning-soft text-warning border-none cursor-pointer">Mixed</button>
+                      class="px-2 py-1 text-xs rounded-md bg-warning-soft text-on-warning-soft border-none cursor-pointer">Mixed</button>
               <button type="button" disabled={st.isDeciding(entry.id)} onclick={() => decide(entry.id, 'failure')}
                       data-testid={`impact-failure-${entry.id}`}
-                      class="px-2 py-1 text-xs rounded-md bg-danger-soft text-danger border-none cursor-pointer">Failure</button>
+                      class="px-2 py-1 text-xs rounded-md bg-danger-soft text-on-danger-soft border-none cursor-pointer">Failure</button>
               {#if st.decideError(entry.id)}
                 <span class="text-xs text-danger" data-testid={`impact-decide-error-${entry.id}`}>{st.decideError(entry.id)}</span>
               {/if}
@@ -248,8 +248,8 @@
           {#each impactDecided as entry (entry.id)}
             <li class="flex items-center gap-2 py-1.5 border-b border-paper-edge text-sm">
               <span class="text-xs uppercase tracking-wide font-mono w-16"
-                    class:text-success={entry.verdict === 'success'}
-                    class:text-warning={entry.verdict === 'mixed'}
+                    class:text-on-success-soft={entry.verdict === 'success'}
+                    class:text-on-warning-soft={entry.verdict === 'mixed'}
                     class:text-danger={entry.verdict === 'failure'}
               >{entry.verdict}</span>
               <span class="flex-1 truncate">{entry.title}</span>

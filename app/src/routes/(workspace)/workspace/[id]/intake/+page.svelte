@@ -66,7 +66,7 @@
     {/if}
 
     {#if intake.phase === 'error'}
-      <p class="text-sm bg-danger-soft text-danger border border-danger rounded py-2 px-3 m-0" data-testid="intake-error">{intake.error}</p>
+      <p class="text-sm bg-danger-soft text-on-danger-soft border border-danger rounded py-2 px-3 m-0" data-testid="intake-error">{intake.error}</p>
     {/if}
 
     {#if intake.rec && (intake.phase === 'recommended' || intake.phase === 'recorded')}
@@ -75,7 +75,7 @@
         <div class="flex items-center justify-between gap-2">
           <h2 class="text-sm font-medium text-ink m-0" data-testid="intake-playbook-title">{intake.playbookTitle}</h2>
           {#if r.auto_select}
-            <span class="text-xs bg-success-soft text-success rounded-sm py-1 px-2" data-testid="intake-trust-badge">
+            <span class="text-xs bg-success-soft text-on-success-soft rounded-sm py-1 px-2" data-testid="intake-trust-badge">
               trusted · FTR {r.trust.ftr.toFixed(2)} over {r.trust.n}
             </span>
           {/if}

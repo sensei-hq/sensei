@@ -53,7 +53,7 @@
 		}}
 		title={me?.name ?? 'Account'}
 		aria-label="Account menu"
-		class="bg-accent-soft text-accent flex flex-shrink-0 cursor-pointer items-center justify-center rounded-full border-none text-xs font-semibold"
+		class="bg-accent-soft text-on-accent-soft flex flex-shrink-0 cursor-pointer items-center justify-center rounded-full border-none text-xs font-semibold"
 		style="width: 30px; height: 30px"
 	>
 		{initials}

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import config from "../../rokkit.config.js";
 import dojoConfig from "../../../dojo/rokkit.config.js";
 import websiteConfig from "../../../website/rokkit.config.js";
@@ -54,3 +54,51 @@ describe.each([
   });
 });
 
+
+// A role's -soft tint stays light in both modes, so its bright text reads 2.9:1 on it by day and
+// worse by night (axe, 2026-10-28). Text on a tint is `text-on-{role}-soft` (rokkit ≥ 1.12): the
+// role darkened toward black, AA on every tint in both modes.
+const ROLES = ["accent", "success", "warning", "danger", "error", "info"];
+const FRONTENDS = ["app/src", "dojo/src", "website/src"];
+
+function sources(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const path = join(dir, e.name);
+    if (e.isDirectory()) return e.name === "__snapshots__" ? [] : sources(path);
+    return /\.(svelte|ts)$/.test(e.name) && !/\.spec\./.test(e.name) ? [path] : [];
+  });
+}
+
+describe("text on a soft tint", () => {
+  const root = resolve(__dirname, "../../..");
+  const files = FRONTENDS.flatMap((d) => sources(join(root, d)));
+
+  it("finds the frontends' sources", () => {
+    expect(files.length).toBeGreaterThan(300);
+  });
+
+  it("never draws a role's bright text on its own tint", () => {
+    const found = files.flatMap((f) => {
+      // Comments describe classes; only code draws them.
+      const text = readFileSync(f, "utf8")
+        .replace(/\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->/g, (c) => c.replace(/[^\n]/g, " "))
+        .replace(/(^|\s)\/\/.*$/gm, "$1");
+      const lines = text.split("\n").flatMap((line, i) =>
+        // A tone table may list a role's paper text beside its tint — when it also gives the tint's own.
+        ROLES.filter(
+          (r) =>
+            line.includes(`bg-${r}-soft`) &&
+            new RegExp(`(?<![\\w-])text-${r}(?![\\w-])`).test(line) &&
+            !line.includes(`text-on-${r}-soft`),
+        ).map(
+          (r) => `${relative(root, f)}:${i + 1} text-${r} on bg-${r}-soft`,
+        ),
+      );
+      const directives = ROLES.filter(
+        (r) => text.includes(`class:bg-${r}-soft=`) && text.includes(`class:text-${r}=`),
+      ).map((r) => `${relative(root, f)} class:text-${r} beside class:bg-${r}-soft`);
+      return [...lines, ...directives];
+    });
+    expect(found).toEqual([]);
+  });
+});

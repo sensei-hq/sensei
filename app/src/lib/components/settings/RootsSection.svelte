@@ -130,7 +130,7 @@
                     >
                 {:else if r.status === "watching"}
                     <span
-                        class="chip-watching text-xs text-success border border-success bg-success-soft rounded-md px-2 py-0.5 whitespace-nowrap"
+                        class="chip-watching text-xs text-on-success-soft border border-success bg-success-soft rounded-md px-2 py-0.5 whitespace-nowrap"
                         >watching</span
                     >
                 {:else}

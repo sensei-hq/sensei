@@ -866,11 +866,11 @@ export const TREND_RULE: Record<TrendColor, string> = {
 /** Grade badge tone (a per-KLOC quality grade; healthier grade = calmer token).
  *  Full class strings so UnoCSS extracts them statically. */
 export const GRADE_CLASS: Record<MetricGrade, string> = {
-    A: 'text-success bg-success-soft',
-    B: 'text-success bg-success-soft',
-    C: 'text-warning bg-warning-soft',
-    D: 'text-error bg-error-soft',
-    F: 'text-error bg-error-soft',
+    A: 'text-on-success-soft bg-success-soft',
+    B: 'text-on-success-soft bg-success-soft',
+    C: 'text-on-warning-soft bg-warning-soft',
+    D: 'text-on-error-soft bg-error-soft',
+    F: 'text-on-error-soft bg-error-soft',
 };
 
 /** Unit-free magnitude for ranking movers: relative change vs the prior, so

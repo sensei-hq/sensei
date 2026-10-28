@@ -22,9 +22,9 @@ export function driftTone(status: string): DriftTone {
 export function driftChipClasses(status: string): Pick<ChipClasses, 'bg' | 'text'> {
   switch (driftTone(status)) {
     case 'danger':
-      return { bg: 'bg-danger-soft', text: 'text-danger' };
+      return { bg: 'bg-danger-soft', text: 'text-on-danger-soft' };
     case 'warning':
-      return { bg: 'bg-warning-soft', text: 'text-warning' };
+      return { bg: 'bg-warning-soft', text: 'text-on-warning-soft' };
     default:
       return { bg: 'bg-paper-mute', text: 'text-ink-soft' };
   }

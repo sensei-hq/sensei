@@ -26,8 +26,8 @@ export interface ImpactTone {
 }
 
 const IMPACT_TONES: Record<string, ImpactTone> = {
-	high: { text: 'text-accent', soft: 'bg-accent-soft', edge: 'border-accent-soft' },
-	safety: { text: 'text-danger', soft: 'bg-danger-soft', edge: 'border-danger-soft' }
+	high: { text: 'text-on-accent-soft', soft: 'bg-accent-soft', edge: 'border-accent-soft' },
+	safety: { text: 'text-on-danger-soft', soft: 'bg-danger-soft', edge: 'border-danger-soft' }
 };
 
 const NEUTRAL_IMPACT: ImpactTone = {

@@ -12,9 +12,9 @@
     // Semantic tone → utility classes. Ink tokens have no `-soft`, so the
     // neutral pill sits on paper-mute; the status tones use their soft fill.
     const TONES: Record<ChipTone, string> = {
-        success: 'bg-success-soft text-success',
+        success: 'bg-success-soft text-on-success-soft',
         neutral: 'bg-paper-mute text-ink-soft',
-        accent: 'bg-accent-soft text-accent',
+        accent: 'bg-accent-soft text-on-accent-soft',
     };
 </script>
 

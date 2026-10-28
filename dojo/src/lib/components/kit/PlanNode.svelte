@@ -23,7 +23,7 @@
 		: ''} {tone.edge} {selected ? 'bg-paper-mute' : tone.soft}"
 	style="padding: var(--space-2) var(--space-3)"
 >
-	<Icon name={tone.icon} size={16} toneClass={tone.text} />
+	<Icon name={tone.icon} size={16} toneClass={selected ? tone.text : tone.onSoft} />
 	<span class="min-w-0 flex-1">
 		<span
 			class="block text-sm {task.state === 'pending' || task.state === 'skipped'

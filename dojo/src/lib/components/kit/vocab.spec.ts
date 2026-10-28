@@ -42,6 +42,18 @@ describe('kit vocab lookups', () => {
 		expect(K2_NODE.pending.dashed).toBe(true);
 	});
 
+	// A state's text is read on paper (labels, list icons) and on its own soft tint (the plan
+	// node). The tint stays light in both modes, so the bright role is unreadable on it; the
+	// node uses `onSoft`, the role darkened (rokkit text-on-{role}-soft).
+	it('K2_NODE gives each state a paper tone and a tone for its own tint', () => {
+		expect(K2_NODE.active).toMatchObject({ text: 'text-success', onSoft: 'text-on-success-soft' });
+		expect(K2_NODE.needs_review).toMatchObject({ text: 'text-accent', onSoft: 'text-on-accent-soft' });
+		expect(K2_NODE.blocked).toMatchObject({ text: 'text-warning', onSoft: 'text-on-warning-soft' });
+		expect(K2_NODE.failed).toMatchObject({ text: 'text-danger', onSoft: 'text-on-danger-soft' });
+		for (const state of ['done', 'skipped', 'pending'] as const)
+			expect(K2_NODE[state].onSoft, state).toBe(K2_NODE[state].text);
+	});
+
 	it('taskState aliases legacy states and defaults unknowns to pending', () => {
 		expect(taskState('running')).toBe('active'); // legacy alias
 		expect(taskState('queued')).toBe('pending');

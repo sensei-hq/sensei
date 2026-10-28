@@ -97,7 +97,7 @@
 							onclick={() => (fam = f.kanji)}
 							aria-pressed={on}
 							class="inline-flex cursor-pointer items-center gap-2 rounded-full border text-sm {on
-								? 'bg-accent-soft border-accent text-accent'
+								? 'bg-accent-soft border-accent text-on-accent-soft'
 								: 'bg-paper-mute border-paper-edge text-ink-mute'}"
 							style="padding: 8px 12px"
 						>

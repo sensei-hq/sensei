@@ -128,7 +128,7 @@
               disabled={state.saving}
               onclick={() => state.setCadence(c.value)}
               class="px-3 py-1.5 rounded-full text-xs cursor-pointer border transition-colors disabled:opacity-50 disabled:cursor-not-allowed {active
-                ? 'bg-accent-soft text-accent border-accent-soft'
+                ? 'bg-accent-soft text-on-accent-soft border-accent-soft'
                 : 'bg-paper-mute text-ink-mute border-paper-edge'}"
             >{c.label}</button>
           {/each}

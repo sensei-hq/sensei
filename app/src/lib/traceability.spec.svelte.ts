@@ -9,9 +9,9 @@ describe('driftTone', () => {
 
 describe('driftChipClasses', () => {
   it('broken → danger tokens', () =>
-    expect(driftChipClasses('broken')).toEqual({ bg: 'bg-danger-soft', text: 'text-danger' }));
+    expect(driftChipClasses('broken')).toEqual({ bg: 'bg-danger-soft', text: 'text-on-danger-soft' }));
   it('drifted → warning tokens', () =>
-    expect(driftChipClasses('drifted')).toEqual({ bg: 'bg-warning-soft', text: 'text-warning' }));
+    expect(driftChipClasses('drifted')).toEqual({ bg: 'bg-warning-soft', text: 'text-on-warning-soft' }));
 });
 
 // Audit item 10 (2026-10-28): the workspace screen drew an unknown drift status

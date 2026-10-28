@@ -10,9 +10,9 @@
   const href = $derived(isExternal ? p.href : `${base}${p.href}`);
 
   function statusClass(status: string): string {
-    if (status === 'Available') return 'text-accent bg-accent-soft';
-    if (status === 'Beta') return 'text-warning bg-warning-soft';
-    return 'text-success bg-success-soft';
+    if (status === 'Available') return 'text-on-accent-soft bg-accent-soft';
+    if (status === 'Beta') return 'text-on-warning-soft bg-warning-soft';
+    return 'text-on-success-soft bg-success-soft';
   }
 </script>
 

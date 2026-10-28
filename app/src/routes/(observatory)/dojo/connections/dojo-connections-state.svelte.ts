@@ -58,13 +58,13 @@ export function syncTone(status: string): SyncTone {
 export function syncChip(status: string): ChipClasses {
   switch (syncTone(status)) {
     case 'success':
-      return { bg: 'bg-success-soft', text: 'text-success', label: status };
+      return { bg: 'bg-success-soft', text: 'text-on-success-soft', label: status };
     case 'warning':
-      return { bg: 'bg-warning-soft', text: 'text-warning', label: status };
+      return { bg: 'bg-warning-soft', text: 'text-on-warning-soft', label: status };
     case 'danger':
-      return { bg: 'bg-danger-soft', text: 'text-danger', label: status };
+      return { bg: 'bg-danger-soft', text: 'text-on-danger-soft', label: status };
     case 'info':
-      return { bg: 'bg-info-soft', text: 'text-info', label: status };
+      return { bg: 'bg-info-soft', text: 'text-on-info-soft', label: status };
     default:
       return { bg: 'bg-paper-mute', text: 'text-ink-soft', label: status };
   }
@@ -78,7 +78,7 @@ export function kindPill(kind: string): KindPill {
     case 'employer':
       return { kanji: '社', label: 'employer', bg: 'bg-paper-mute', text: 'text-ink-soft' };
     case 'client':
-      return { kanji: '客', label: 'client', bg: 'bg-accent-soft', text: 'text-accent' };
+      return { kanji: '客', label: 'client', bg: 'bg-accent-soft', text: 'text-on-accent-soft' };
     case 'community':
       return { kanji: '群', label: 'community', bg: 'bg-paper-mute', text: 'text-ink-soft' };
     case 'personal':

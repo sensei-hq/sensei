@@ -28,13 +28,13 @@ const upgrade = (over: Partial<DojoUpgrade> = {}): DojoUpgrade => ({
 
 describe('typePill', () => {
   it('skill -> 技, accent', () =>
-    expect(typePill('skill')).toEqual({ kanji: '技', label: 'skill', bg: 'bg-accent-soft', text: 'text-accent' }));
+    expect(typePill('skill')).toEqual({ kanji: '技', label: 'skill', bg: 'bg-accent-soft', text: 'text-on-accent-soft' }));
   it('agent -> 作, accent', () => expect(typePill('agent').kanji).toBe('作'));
   it('principle -> 理, success', () =>
-    expect(typePill('principle')).toMatchObject({ kanji: '理', text: 'text-success' }));
-  it('pattern -> 紋, info', () => expect(typePill('pattern')).toMatchObject({ kanji: '紋', text: 'text-info' }));
+    expect(typePill('principle')).toMatchObject({ kanji: '理', text: 'text-on-success-soft' }));
+  it('pattern -> 紋, info', () => expect(typePill('pattern')).toMatchObject({ kanji: '紋', text: 'text-on-info-soft' }));
   it('prompt -> 問, info', () => expect(typePill('prompt').kanji).toBe('問'));
-  it('guard -> 守, warning', () => expect(typePill('guard')).toMatchObject({ kanji: '守', text: 'text-warning' }));
+  it('guard -> 守, warning', () => expect(typePill('guard')).toMatchObject({ kanji: '守', text: 'text-on-warning-soft' }));
   it('unknown type degrades to muted ink but keeps the raw label', () => {
     const p = typePill('freshly_invented');
     expect(p.bg).toBe('bg-paper-mute');
@@ -53,11 +53,11 @@ describe('stateTone', () => {
 
 describe('stateChip', () => {
   it('applied -> success tokens, labelled with the raw state', () =>
-    expect(stateChip('applied')).toEqual({ bg: 'bg-success-soft', text: 'text-success', label: 'applied' }));
+    expect(stateChip('applied')).toEqual({ bg: 'bg-success-soft', text: 'text-on-success-soft', label: 'applied' }));
   it('pending -> info tokens', () =>
-    expect(stateChip('pending')).toEqual({ bg: 'bg-info-soft', text: 'text-info', label: 'pending' }));
+    expect(stateChip('pending')).toEqual({ bg: 'bg-info-soft', text: 'text-on-info-soft', label: 'pending' }));
   it('pinned -> accent tokens', () =>
-    expect(stateChip('pinned')).toEqual({ bg: 'bg-accent-soft', text: 'text-accent', label: 'pinned' }));
+    expect(stateChip('pinned')).toEqual({ bg: 'bg-accent-soft', text: 'text-on-accent-soft', label: 'pinned' }));
   it('muted -> muted ink tokens, still labelled', () =>
     expect(stateChip('muted')).toEqual({ bg: 'bg-paper-mute', text: 'text-ink-soft', label: 'muted' }));
 });
