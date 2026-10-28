@@ -16,6 +16,7 @@ import {
   watermarkLabel,
   isConfigurable,
   MetricSettings,
+  reasonKindClass,
 } from './metric-status-state.svelte.js';
 import type {
   MetricReason,
@@ -439,3 +440,11 @@ describe('MetricSettings', () => {
     await first;
   });
 });
+
+// Audit item 15 (2026-10-28): the screen mapped a reason kind to a colour itself.
+describe('reasonKindClass', () => {
+  it('a fault needs attention, a refusal is someone\'s decision, normal is plain', () => {
+    expect(['fault', 'refusal', 'normal', 'other'].map(reasonKindClass)).toEqual(['text-danger', 'text-warning', 'text-ink-soft', 'text-ink-soft']);
+  });
+});
+

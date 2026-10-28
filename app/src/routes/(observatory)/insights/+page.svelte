@@ -7,7 +7,7 @@
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
-  import { InsightsBoardState, type RecCardVm } from './insights-board.svelte.js';
+  import { InsightsBoardState, columnToneClass, type RecCardVm } from './insights-board.svelte.js';
   import WorkspaceFilterStrip from './WorkspaceFilterStrip.svelte';
   import RecCard from './RecCard.svelte';
   import ViolationCard from './ViolationCard.svelte';
@@ -41,10 +41,7 @@
 {#snippet stat(n: number, label: string, tone: 'now' | 'soon' | 'settled')}
   <div class="text-center">
     <div
-      class="font-mono text-lg font-light leading-none"
-      class:text-accent={tone === 'now'}
-      class:text-warning={tone === 'soon'}
-      class:text-success={tone === 'settled'}
+      class="font-mono text-lg font-light leading-none {columnToneClass(tone)}"
     >{n}</div>
     <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">{label}</div>
   </div>
@@ -72,17 +69,14 @@
         char={kanji}
         size="xl"
         tone="inherit"
-        class={tone === 'now' ? 'text-accent' : tone === 'soon' ? 'text-warning' : tone === 'settled' ? 'text-success' : ''}
+        class={columnToneClass(tone)}
       />
       <div class="flex-1 min-w-0">
         <div class="text-sm text-ink font-medium">{title}</div>
         <div class="text-xs text-ink-mute mt-0.5">{sub}</div>
       </div>
       <span
-        class="font-mono text-xs"
-        class:text-accent={tone === 'now'}
-        class:text-warning={tone === 'soon'}
-        class:text-success={tone === 'settled'}
+        class="font-mono text-xs {columnToneClass(tone)}"
       >{count}</span>
     </div>
     <!-- Keyboard-focusable so a keyboard user can scroll the column (a11y:

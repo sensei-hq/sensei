@@ -6,7 +6,7 @@
   import { senseiApi } from '$lib/api.js';
   import { PageHeader, Screen, ScreenState, Switch } from '$lib/components';
   import { personaList } from '$lib/personas.svelte.js';
-  import { MetricSettings } from './metric-status-state.svelte.js';
+  import { MetricSettings, reasonKindClass } from './metric-status-state.svelte.js';
 
   let { data } = $props();
 
@@ -34,11 +34,6 @@
     state?.setPersona(personaList.writeSlot);
   });
 
-  // The reason kinds map to three treatments, and the mapping is the registry's,
-  // not this screen's: `normal` clears itself so it reads as plain text; a
-  // `refusal` is somebody's decision; a `fault` needs attention.
-  const kindClass = (kind: string) =>
-    kind === 'fault' ? 'text-danger' : kind === 'refusal' ? 'text-warning' : 'text-ink-soft';
 </script>
 
 <Screen>
@@ -90,7 +85,7 @@
               >
                 <span class="block text-sm text-ink truncate">{entry.name}</span>
                 {#if entry.worst}
-                  <span class="block text-xs mt-0.5 {kindClass(entry.worst.kind)}">
+                  <span class="block text-xs mt-0.5 {reasonKindClass(entry.worst.kind)}">
                     {entry.worst.summary}
                   </span>
                 {/if}
@@ -139,7 +134,7 @@
                   >
                     <div>
                       <div class="text-sm text-ink">{row.metric}</div>
-                      <div class="text-xs mt-0.5 {kindClass(row.reason.kind)}" data-reason-summary>
+                      <div class="text-xs mt-0.5 {reasonKindClass(row.reason.kind)}" data-reason-summary>
                         {row.reason.summary}
                       </div>
                       <div class="text-xs text-ink-faint mt-0.5">

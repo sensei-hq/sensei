@@ -519,6 +519,43 @@ export class WizardState {
     return assistantViewOf(family, this.assistants.partStatus[family.id], this.assistants.partErrors[family.id]);
   }
 
+  /** What setup configured, as the Done page says it (audit 2026-10-28, item 15:
+   *  the page assembled these in its template). */
+  get doneSummary(): { kanji: string; label: string; sub: string }[] {
+    const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+    const assistants = this.configuredAssistants;
+    const roots = this.roots.roots.length;
+    const workspaces = this.workspaces.workspaces.length;
+    const folders = this.workspaces.workspaces.reduce((t, p) => t + p.folders.length, 0);
+    const libs = this.libraries.libs.filter((l) => l.enabled).length;
+    const selected = this.instruments.mcps.filter((m) => m.selected).length;
+    const installed = this.instruments.mcps.filter((m) => m.installed).length;
+    return [
+      {
+        kanji: '連',
+        label: assistants === 0 ? 'No assistants' : n(assistants, 'assistant', 'assistants'),
+        sub: assistants === 0 ? 'install Claude/Cursor/etc. to enable sessions' : 'configured with sensei',
+      },
+      {
+        kanji: '庵',
+        label: roots === 0 ? 'No roots' : n(roots, 'root', 'roots'),
+        sub: folders > 0
+          ? `${n(folders, 'folder', 'folders')} across ${n(workspaces, 'workspace', 'workspaces')}`
+          : 'no folders scanned yet',
+      },
+      {
+        kanji: '書',
+        label: libs === 0 ? 'No libraries' : n(libs, 'library', 'libraries'),
+        sub: libs === 0 ? 'nothing to wrap yet' : 'docs & code indexed by sensei',
+      },
+      {
+        kanji: '器',
+        label: selected === 0 ? 'No instruments' : n(selected, 'instrument', 'instruments'),
+        sub: installed > 0 ? `${installed} already installed in your assistants` : 'recommended for your stack',
+      },
+    ];
+  }
+
   /** How many families are configured — the same rule the cards show. */
   get configuredAssistants(): number {
     return this.assistants.assistants.filter((f) => this.assistantView(f).configured).length;

@@ -3,6 +3,7 @@ import {
   InsightsBoardState,
   RECOMMENDED_VERB,
   EMPTY_INSIGHTS_BOARD,
+  columnToneClass,
 } from './insights-board.svelte.js';
 import type { InsightsBoard } from '$lib/types.js';
 import type { SenseiApi } from '$lib/api.js';
@@ -232,3 +233,11 @@ describe('InsightsBoardState — a failed read', () => {
     expect(s.loadError).toBeNull();
   });
 });
+
+// Audit item 15 (2026-10-28): the page coloured each triage column inline.
+describe('columnToneClass', () => {
+  it('now is accent, soon warning, settled success', () => {
+    expect(['now', 'soon', 'settled'].map((t) => columnToneClass(t as never))).toEqual(['text-accent', 'text-warning', 'text-success']);
+  });
+});
+

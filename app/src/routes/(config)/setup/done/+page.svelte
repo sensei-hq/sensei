@@ -2,45 +2,8 @@
     import Kanji from '$lib/components/Kanji.svelte';
   import { wizardState } from '$lib/wizard-state.svelte.js';
 
-  // The same "configured" the cards show (audit 2026-10-28, item 12).
-  const assistantsConfigured = $derived(wizardState.configuredAssistants);
-  const rootsCount = $derived(wizardState.roots.roots.length);
-  const workspacesCount = $derived(wizardState.workspaces.workspaces.length);
-  const foldersCount = $derived(
-    wizardState.workspaces.workspaces.reduce((n, p) => n + p.folders.length, 0),
-  );
-  const libsWrapped = $derived(wizardState.libraries.libs.filter(l => l.enabled).length);
-  const mcpsSelected = $derived(wizardState.instruments.mcps.filter(m => m.selected).length);
-  const mcpsInstalled = $derived(wizardState.instruments.mcps.filter(m => m.installed).length);
-
-  const summary = $derived([
-    {
-      kanji: '連',
-      label: assistantsConfigured === 0 ? 'No assistants' : `${assistantsConfigured} assistant${assistantsConfigured === 1 ? '' : 's'}`,
-      sub: assistantsConfigured === 0
-        ? 'install Claude/Cursor/etc. to enable sessions'
-        : 'configured with sensei',
-    },
-    {
-      kanji: '庵',
-      label: rootsCount === 0 ? 'No roots' : `${rootsCount} root${rootsCount === 1 ? '' : 's'}`,
-      sub: foldersCount > 0
-        ? `${foldersCount} folder${foldersCount === 1 ? '' : 's'} across ${workspacesCount} workspace${workspacesCount === 1 ? '' : 's'}`
-        : 'no folders scanned yet',
-    },
-    {
-      kanji: '書',
-      label: libsWrapped === 0 ? 'No libraries' : `${libsWrapped} librar${libsWrapped === 1 ? 'y' : 'ies'}`,
-      sub: libsWrapped === 0 ? 'nothing to wrap yet' : 'docs & code indexed by sensei',
-    },
-    {
-      kanji: '器',
-      label: mcpsSelected === 0 ? 'No instruments' : `${mcpsSelected} instrument${mcpsSelected === 1 ? '' : 's'}`,
-      sub: mcpsInstalled > 0
-        ? `${mcpsInstalled} already installed in your assistants`
-        : 'recommended for your stack',
-    },
-  ]);
+  // Every line of the summary is the wizard state's (audit 2026-10-28, item 15).
+  const summary = $derived(wizardState.doneSummary);
 </script>
 
 <div class="max-w-[720px]">

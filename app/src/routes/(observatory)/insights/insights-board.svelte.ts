@@ -308,3 +308,10 @@ export class InsightsBoardState {
     }
   }
 }
+
+/** A triage column's colour: now is accent (it needs you), soon warning,
+ *  settled success. */
+export function columnToneClass(tone: 'now' | 'soon' | 'settled'): string {
+  return tone === 'now' ? 'text-accent' : tone === 'soon' ? 'text-warning' : 'text-success';
+}
+

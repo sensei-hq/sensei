@@ -31,15 +31,6 @@
   // Pinned-first ordering mirrors the daemon; derived so it re-sorts on reload.
   const orderedUpgrades = $derived(orderUpgrades(data.dojoUpgrades));
 
-  // Tone per LOCAL upgrade kind — mirrors the mockup's KIND_META coloring so
-  // rule/lint (opinion-shape) reads warning-ish, skill/agent (concrete)
-  // reads accent.
-  function toneClass(kind: UpgradeKind): string {
-    if (kind === 'skill' || kind === 'agent') return 'text-accent';
-    if (kind === 'rule')  return 'text-success';
-    if (kind === 'lint')  return 'text-warning';
-    return 'text-ink-mute';
-  }
 </script>
 
 {#snippet chip(cls: ChipClasses)}
@@ -129,7 +120,7 @@
   >
     <!-- typed descriptor + workspace mono -->
     <div class="flex items-center gap-2 mb-1">
-      <span class="inline-flex items-center gap-1 text-xs {toneClass(kind)}">
+      <span class="inline-flex items-center gap-1 text-xs {KIND_META[kind].tone}">
         <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xs" />
         <span class="uppercase tracking-wide">{meta.title}</span>
       </span>
@@ -169,9 +160,9 @@
     <section class="mb-8" data-upgrade-bucket={kind}>
       <!-- bucket header mirrors the mockup: big kanji + title + count + sub -->
       <div class="flex items-baseline gap-3 mb-1">
-        <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xl {toneClass(kind)}" />
+        <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xl {KIND_META[kind].tone}" />
         <h2 class="display text-lg font-normal m-0">{meta.title}</h2>
-        <span class="font-mono text-xs {toneClass(kind)}">{items.length}</span>
+        <span class="font-mono text-xs {KIND_META[kind].tone}">{items.length}</span>
       </div>
       <p class="text-xs text-ink-mute mb-4">{meta.sub}</p>
       <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">

@@ -422,3 +422,10 @@ export class MetricSettings {
     };
   }
 }
+
+/** A reason's colour: a fault needs attention, a refusal is somebody's
+ *  decision, a normal reason reads as plain text. */
+export function reasonKindClass(kind: string): string {
+  return kind === 'fault' ? 'text-danger' : kind === 'refusal' ? 'text-warning' : 'text-ink-soft';
+}
+

@@ -778,3 +778,17 @@ describe('saveRouterKey', () => {
   });
 });
 
+// Audit item 15 (2026-10-28): the Done page assembled its summary sentences in
+// the component. The state says them.
+describe('doneSummary', () => {
+  it('says what setup configured, in the singular and plural', () => {
+    const ws = new WizardState();
+    ws.hydrate(mockWizardLoadData());
+    const [assistants, roots, libs, instruments] = ws.doneSummary;
+    expect(assistants).toEqual({ kanji: '連', label: 'No assistants', sub: 'install Claude/Cursor/etc. to enable sessions' });
+    expect(roots).toMatchObject({ kanji: '庵', label: '1 root', sub: '1 folder across 1 workspace' });
+    expect(libs.kanji).toBe('書');
+    expect(instruments.kanji).toBe('器');
+  });
+});
+
