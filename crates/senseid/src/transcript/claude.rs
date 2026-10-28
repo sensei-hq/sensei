@@ -780,6 +780,42 @@ mod tests {
     }
 
     #[test]
+    fn a_slash_command_is_the_prompt_its_name_and_arguments() {
+        let prompt = |content: &str| {
+            super::super::human_prompt_text(&serde_json::json!({"message": {"content": content}}))
+        };
+        // Claude Code's current order, then the older one; the arguments carry the key.
+        let now = "<command-message>opsx:explore</command-message>\n<command-name>/opsx:explore</command-name>\n<command-args>P057542601-784 the login flow</command-args>";
+        assert_eq!(prompt(now).as_deref(), Some("/opsx:explore P057542601-784 the login flow"));
+        let before = "<command-name>/review</command-name>\n            <command-message>review</command-message>\n            <command-args>AUTH-12</command-args>";
+        assert_eq!(prompt(before).as_deref(), Some("/review AUTH-12"));
+        let bare = "<command-message>compact</command-message>\n<command-name>/compact</command-name>\n<command-args></command-args>";
+        assert_eq!(prompt(bare).as_deref(), Some("/compact"), "typed by the person, so a prompt");
+        let unslashed = "<command-name>deploy</command-name><command-args>v2</command-args>";
+        assert_eq!(prompt(unslashed).as_deref(), Some("/deploy v2"));
+        // What a command prints is injected, never a prompt.
+        assert_eq!(prompt("<local-command-stdout>Compacted.</local-command-stdout>"), None);
+        assert_eq!(prompt("<command-message>x</command-message>"), None, "no name: not a command");
+    }
+
+    #[test]
+    fn a_session_started_with_a_slash_command_splits_into_turns_there() {
+        let turns = parse_claude_transcript(
+            r#"
+{"type":"user","timestamp":"2026-10-28T04:27:00.000Z","message":{"role":"user","content":"<command-message>opsx:explore</command-message>\n<command-name>/opsx:explore</command-name>\n<command-args>P057542601-784</command-args>"}}
+{"type":"user","timestamp":"2026-10-28T04:27:00.100Z","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: ..."}]}}
+{"type":"assistant","timestamp":"2026-10-28T04:27:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Exploring."}]}}
+{"type":"user","timestamp":"2026-10-28T04:28:00.000Z","message":{"role":"user","content":"<local-command-stdout>ok</local-command-stdout>"}}
+{"type":"user","timestamp":"2026-10-28T04:29:00.000Z","message":{"role":"user","content":"go on"}}
+{"type":"assistant","timestamp":"2026-10-28T04:29:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Going."}]}}
+"#,
+        );
+        let prompts: Vec<_> = turns.iter().map(|t| t.user_text.as_deref()).collect();
+        assert_eq!(prompts, [Some("/opsx:explore P057542601-784"), Some("go on")]);
+        assert_eq!(turns[0].assistant_text, "Exploring.");
+    }
+
+    #[test]
     fn ignores_malformed_lines_and_empty() {
         let turns = parse_claude_transcript(
             "not json\n\n{\"type\":\"user\",\"message\":{\"content\":\"hello\"}}\n",
