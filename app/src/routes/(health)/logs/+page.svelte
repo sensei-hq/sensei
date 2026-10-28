@@ -1,8 +1,8 @@
 <script lang="ts">
+    import { fmtMs } from '$lib/format';
     import type { PageData } from "./$types";
     import { openUrl } from "@tauri-apps/plugin-opener";
     import {
-        fmtMs,
         outcomeColor,
         outcomeStatus,
         anonymize,

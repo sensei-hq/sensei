@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-    fmtMs, outcomeColor, anonymize, formatTime, dateKey, timeOfDay,
+    outcomeColor, anonymize, formatTime, dateKey, timeOfDay,
     sessionSummary, groupByDate,
     moduleLabel, moduleKanji,
     isBootstrapTrace, actionMeta,
@@ -53,22 +53,6 @@ function makeSession(overrides: Partial<LogSession> = {}): LogSession {
         ...overrides,
     };
 }
-
-// ── fmtMs ─────────────────────────────────────────────────────────────────
-
-describe('fmtMs', () => {
-    it('shows ms for values under 1000', () => {
-        expect(fmtMs(0)).toBe('0ms');
-        expect(fmtMs(45)).toBe('45ms');
-        expect(fmtMs(999)).toBe('999ms');
-    });
-
-    it('shows seconds with one decimal for 1000ms+', () => {
-        expect(fmtMs(1000)).toBe('1.0s');
-        expect(fmtMs(1500)).toBe('1.5s');
-        expect(fmtMs(3200)).toBe('3.2s');
-    });
-});
 
 // ── outcomeColor ──────────────────────────────────────────────────────────
 
@@ -148,7 +132,8 @@ describe('moduleKanji', () => {
 describe('sessionSummary', () => {
     it('shows duration and step count', () => {
         const s = makeSession({ duration_ms: 3200, traces: [makeTrace()] });
-        expect(sessionSummary(s)).toBe('3.2s · 1 steps');
+        // The shared duration format (lib/format), and "1 step" in the singular.
+        expect(sessionSummary(s)).toBe('3.2 s · 1 step');
     });
 
     it('appends fix count when > 0', () => {
@@ -178,7 +163,7 @@ describe('sessionSummary', () => {
         // action_type) must NOT claim "N steps" while the detail pane is empty.
         const gateRecords = [{ id: 'g1' }, { id: 'g2' }] as unknown as LogSession['traces'];
         const s = makeSession({ duration_ms: 0, outcome: 'blocked', traces: gateRecords });
-        expect(sessionSummary(s)).toBe('0ms · 0 steps');
+        expect(sessionSummary(s)).toBe('0 ms · 0 steps');
     });
 });
 

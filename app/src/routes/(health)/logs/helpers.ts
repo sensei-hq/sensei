@@ -2,6 +2,7 @@
  * Pure helper functions for the Diagnostic Logs page.
  * Extracted so they can be unit-tested independently of the Svelte component.
  */
+import { fmtMs } from '$lib/format';
 import type { LogSession, BootstrapTrace } from '$lib/types.js';
 
 // ── Action badge ──────────────────────────────────────────────────────────
@@ -33,10 +34,6 @@ export function moduleKanji(mod: string): string {
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────
-
-export function fmtMs(ms: number): string {
-    return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
-}
 
 export function outcomeColor(o: string): string {
     if (o === 'success') return 'var(--success)';
@@ -84,7 +81,7 @@ export function timeOfDay(ts: string): string {
 export function sessionSummary(s: LogSession): string {
     const bt = s.traces.filter(isBootstrapTrace);
     const fixes = bt.filter(t => (t as BootstrapTrace).fix_attempted).length;
-    const parts = [fmtMs(s.duration_ms), `${bt.length} steps`];
+    const parts = [fmtMs(s.duration_ms), `${bt.length} step${bt.length === 1 ? '' : 's'}`];
     if (fixes > 0) parts.push(`${fixes} fix${fixes > 1 ? 'es' : ''}`);
     return parts.join(' · ');
 }

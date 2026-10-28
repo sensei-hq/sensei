@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  heroCopy, initialTab, filterGroups, collapsedFor, fmtPayload, fmtDuration, toolKindView, callVerdictView
+  heroCopy, initialTab, filterGroups, collapsedFor, fmtPayload, toolKindView, callVerdictView
 } from './instruments-view';
 import type { PlaygroundGroup } from './playground-groups';
 
@@ -38,13 +38,10 @@ describe('instruments view', () => {
     expect(collapsedFor(groups, chosen, 'b')).toEqual({ sensei: false, gh: false });
   });
 
-  it('formats payloads and durations', () => {
+  it('formats payloads (durations are lib/format fmtMs)', () => {
     expect(fmtPayload(null)).toBe('—');
     expect(fmtPayload('raw')).toBe('raw');
     expect(fmtPayload({ a: 1 })).toBe('{\n  "a": 1\n}');
-    expect(fmtDuration(null)).toBe('—');
-    expect(fmtDuration(250)).toBe('250 ms');
-    expect(fmtDuration(1500)).toBe('1.50 s');
   });
 });
 

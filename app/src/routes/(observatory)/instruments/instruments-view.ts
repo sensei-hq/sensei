@@ -63,12 +63,6 @@ export function fmtPayload(value: unknown): string {
   }
 }
 
-export function fmtDuration(ms: number | null): string {
-  if (ms == null) return '—';
-  if (ms < 1000) return `${ms} ms`;
-  return `${(ms / 1000).toFixed(2)} s`;
-}
-
 export function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString();
 }

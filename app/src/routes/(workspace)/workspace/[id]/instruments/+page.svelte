@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { ftrBandView } from '$lib/ftr';
+    import { ftrBandView, ftrPctLabel } from '$lib/ftr';
+    import { fmtCount, fmtMs } from '$lib/format';
     import { toolHealthView } from '$lib/state/mcp.svelte.js';
     import { PageHeader, Screen, ScreenState } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
@@ -37,17 +38,6 @@
     const toggleService = (service: WorkspaceService) =>
         servicesState.toggle(senseiApi(appState.port), workspaceId, service, invalidateAll);
 
-    function fmtInt(n: number | null | undefined): string {
-        return n == null ? '—' : n.toLocaleString();
-    }
-    function fmtPct(n: number | null | undefined): string {
-        return n == null ? '—' : `${Math.round(n * 100)}%`;
-    }
-    function fmtMs(n: number | null | undefined): string {
-        if (n == null) return '—';
-        if (n < 1000) return `${Math.round(n)} ms`;
-        return `${(n / 1000).toFixed(2)} s`;
-    }
 </script>
 
 <Screen>
@@ -56,7 +46,7 @@
         {#snippet right()}
             {#if !data.error}
                 <span class="text-sm text-ink-soft">
-                    {stats.length} tools · {fmtInt(totalCalls)} calls · {fmtInt(totalErrors)} errors
+                    {stats.length} tools · {fmtCount(totalCalls)} calls · {fmtCount(totalErrors)} errors
                 </span>
             {/if}
         {/snippet}
@@ -160,14 +150,14 @@
                             <div class="font-mono text-xs truncate">{t.name}</div>
                             <div class="text-xs text-ink-mute truncate">{t.summary}</div>
                         </div>
-                        <span class="text-right font-mono text-xs">{fmtInt(t.calls)}</span>
+                        <span class="text-right font-mono text-xs">{fmtCount(t.calls)}</span>
                         <span class="text-right font-mono text-xs {toolHealthView(t.calls, t.errors).errorClass}">
-                            {fmtInt(t.errors)}
+                            {fmtCount(t.errors)}
                         </span>
                         <span class="text-right font-mono text-xs opacity-70">{fmtMs(t.avgDurationMs)}</span>
                         <!-- The shared FTR band (lib/ftr): 0.8 / 0.6, as every screen. -->
                         <span class="text-right font-mono text-xs {ftrBandView(t.ftr).text}">
-                            {fmtPct(t.ftr)}
+                            {ftrPctLabel(t.ftr)}
                         </span>
                         <span class="text-right text-xs text-ink-mute">
                             {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleDateString() : '—'}

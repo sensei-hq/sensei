@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { fmtMs } from '$lib/format';
     import { sessionFtrView } from '$lib/ftr';
     import { untrack } from "svelte";
     import { page } from "$app/state";
@@ -17,7 +18,7 @@
     import ToolHealthCard from "./ToolHealthCard.svelte";
     import { InstrumentsState } from "./instruments-state.svelte";
     import {
-        collapsedFor, filterGroups, fmtDate, fmtDuration, fmtPayload, heroCopy as heroCopyFor,
+        collapsedFor, filterGroups, fmtDate, fmtPayload, heroCopy as heroCopyFor,
         initialTab,
         toolKindView,
         callVerdictView,
@@ -494,7 +495,7 @@
                                 {:else if ins.toolError}
                                     <span class="font-mono text-xs text-danger" data-testid="tool-error">{ins.toolError}</span>
                                 {:else if ins.toolResult}
-                                    <span class="font-mono text-xs text-success" data-testid="tool-ok">ok · {fmtDuration(ins.durationMs)}</span>
+                                    <span class="font-mono text-xs text-success" data-testid="tool-ok">ok · {fmtMs(ins.durationMs)}</span>
                                 {/if}
                             </div>
                         </div>
@@ -656,7 +657,7 @@
                                         <div class="flex items-baseline justify-between pb-3 border-b border-paper-edge">
                                             <div>
                                                 <div class="text-xs uppercase tracking-wide text-ink-soft mb-1">
-                                                    call #{call.callId} · {fmtDuration(call.durationMs)}
+                                                    call #{call.callId} · {fmtMs(call.durationMs)}
                                                 </div>
                                                 <div class="font-mono text-sm text-ink">{call.toolName}</div>
                                             </div>
@@ -970,7 +971,7 @@
                                 </span>
                                 <span class="text-ink-soft">Avg duration</span>
                                 <span class="font-mono">
-                                    {insight.metrics.avgDurationMs != null ? fmtDuration(insight.metrics.avgDurationMs) : '—'}
+                                    {insight.metrics.avgDurationMs != null ? fmtMs(insight.metrics.avgDurationMs) : '—'}
                                 </span>
                                 <span class="text-ink-soft">Calls</span>
                                 <span class="font-mono">{insight.metrics.callCount ?? 0}</span>
