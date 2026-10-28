@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
 import MemoryRowHarness from './MemoryRow.harness.svelte';
 import type { MemoryRowVm } from './insights-board.svelte.js';
+import { strengthView } from '$lib/memoryState.svelte.js';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
@@ -11,7 +12,7 @@ const memory = (over: Partial<MemoryRowVm> = {}): MemoryRowVm => ({
   id: 'm1',
   title: 'Use dbd deploy, not combine',
   content: 'combine mangles long comments',
-  strength: 1,
+  strength: strengthView(1),
   scope: 'workspace',
   violatedCount: 0,
   ...over,
@@ -19,13 +20,15 @@ const memory = (over: Partial<MemoryRowVm> = {}): MemoryRowVm => ({
 
 describe('MemoryRow', () => {
   it('settled variant shows the strength bar and scope', () => {
-    const m = mountComponent(MemoryRowHarness, { memory: memory({ strength: 0.6 }), variant: 'settled' });
+    const m = mountComponent(MemoryRowHarness, { memory: memory({ strength: strengthView(3) }), variant: 'settled' });
     cleanup.push(m.destroy);
     const el = m.container.querySelector('[data-component="memory-row"]');
     expect(el?.getAttribute('data-variant')).toBe('settled');
     const fill = m.container.querySelector('[data-strength-fill]') as HTMLElement;
     expect(fill).not.toBeNull();
     expect(fill.getAttribute('style')).toContain('60%');
+    // The state's label, on the 5-point scale (audit 2026-10-28, item 1).
+    expect(m.container.querySelector('[title="strength 3.0 / 5"]')).not.toBeNull();
     expect(m.container.textContent).toContain('workspace');
     expect(m.container.textContent).toContain('Use dbd deploy, not combine');
   });

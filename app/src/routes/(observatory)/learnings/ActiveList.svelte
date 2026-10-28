@@ -22,7 +22,7 @@
             </div>
             <button type="button" class="title-btn" onclick={() => memoryState.select(m.id)}>{m.title}</button>
             <div class="metrics">
-                <span title="strength">★ {m.strength.toFixed(1)} / 5</span>
+                <span title="strength">★ {memoryState.strengthOf(m).label}</span>
                 <span title="applied">✓ {m.applied_count}</span>
                 <span title="violated">✗ {m.violated_count}</span>
             </div>

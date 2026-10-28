@@ -33,6 +33,39 @@ export interface MemoryUsageStrip {
     window:   string;
 }
 
+/** The strength scale the daemon keeps: memories start at 1 and an outcome
+ *  adds 0.5, capped at 5 (`memory_outcome_apply`). */
+export const STRENGTH_MAX = 5;
+
+/** A memory's strength as every screen shows it (audit 2026-10-28, item 1:
+ *  it read "300%", a full bar and "3.0 / 5" on three screens). */
+export interface StrengthView {
+  label: string;
+  /** 0–1, for a bar. */
+  fraction: number;
+  /** The bar's CSS width. */
+  width: string;
+  full: boolean;
+  /** Five dots, filled to the rounded strength. */
+  dots: string;
+}
+
+export function strengthView(strength: number | null | undefined): StrengthView {
+  // Not reported is not zero: a made-up "0.0 / 5" would read as a weak memory.
+  if (strength === null || strength === undefined) {
+    return { label: '—', fraction: 0, width: '0%', full: false, dots: '' };
+  }
+  const s = Math.max(0, Math.min(STRENGTH_MAX, strength));
+  const filled = Math.round(s);
+  return {
+    label: `${s.toFixed(1)} / ${STRENGTH_MAX}`,
+    fraction: s / STRENGTH_MAX,
+    width: `${Math.round((s / STRENGTH_MAX) * 100)}%`,
+    full: s >= STRENGTH_MAX,
+    dots: '\u25CF'.repeat(filled) + '\u25CB'.repeat(STRENGTH_MAX - filled)
+  };
+}
+
 /**
  * Format the 7-day memory-usage telemetry into the detail "usage" strip.
  * The numbers are deterministic; only the pluralization/labels live here so
@@ -60,6 +93,11 @@ const STATUSES_BY_TAB: Record<Tab, MemoryStatus[]> = {
 };
 
 class MemoryState {
+    /** A memory's strength as Learnings shows it — the one shared view. */
+    strengthOf(m: { strength: number | null | undefined }): StrengthView {
+        return strengthView(m.strength);
+    }
+
     triage   = $state<Memory[]>([]);
     active   = $state<Memory[]>([]);
     archive  = $state<Memory[]>([]);

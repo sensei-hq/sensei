@@ -3,6 +3,7 @@ import {
     memoryState,
     memoryUsageStrip,
     actionErrorMessage,
+    strengthView,
     isTerminalStatus,
 } from './memoryState.svelte.js';
 import { mockMemory, mockMemoryDetail } from './setup/mock-contracts.js';
@@ -291,3 +292,34 @@ describe('memoryUsageStrip', () => {
         expect([memoryState.active.map((m) => m.id), memoryState.listError]).toEqual([['m-k'], 'Service Unavailable']);
     });
 });
+
+// Audit item 1 (2026-10-28): a memory's strength (1–5 in the DB, capped by
+// memory_outcome_apply) read "300%" on workspace Memories, a full bar on
+// Insights and "3.0 / 5" on Learnings. One view of it, for every screen.
+describe('strengthView', () => {
+  it('reads on the 5-point scale the daemon keeps', () => {
+    expect(strengthView(3)).toEqual({ label: '3.0 / 5', fraction: 0.6, width: '60%', full: false, dots: '●●●○○' });
+    expect(strengthView(1.5).label).toBe('1.5 / 5');
+  });
+
+  it('is full only at the cap', () => {
+    expect(strengthView(5)).toMatchObject({ fraction: 1, full: true, dots: '●●●●●' });
+    expect(strengthView(4.9).full).toBe(false);
+  });
+
+  it('a strength not reported reads as unknown, not zero', () => {
+    expect(strengthView(null)).toEqual({ label: '—', fraction: 0, width: '0%', full: false, dots: '' });
+  });
+
+  it('never draws past the scale', () => {
+    expect(strengthView(7).fraction).toBe(1);
+    expect(strengthView(-1).fraction).toBe(0);
+  });
+});
+
+describe('MemoryState.strengthOf', () => {
+  it('gives Learnings the shared strength view', () => {
+    expect(memoryState.strengthOf({ strength: 3 } as never).label).toBe('3.0 / 5');
+  });
+});
+

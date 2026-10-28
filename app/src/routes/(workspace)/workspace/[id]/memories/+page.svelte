@@ -165,7 +165,7 @@
                             >{m.title || m.name}</button>
                             <MemoryChip tone={chip.tone} label={chip.label} />
                             <span class="opacity-50 text-xs">{m.type}</span>
-                            <span class="text-xs font-mono">{Math.round((m.strength ?? 0) * 100)}%</span>
+                            <span class="text-xs font-mono">{memState.strengthOf(m).label}</span>
                         </li>
                     {/each}
                 </ul>
@@ -180,7 +180,7 @@
                         <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-mute mb-3">
                             <span>{openedMemory.type}</span>
                             <span class="w-[3px] h-[3px] rounded-full bg-ink-faint"></span>
-                            <span>strength {Math.round((openedMemory.strength ?? 0) * 100)}%</span>
+                            <span>strength {memState.strengthOf(openedMemory).label}</span>
                             {#if openedMemory.scope}
                                 <span class="w-[3px] h-[3px] rounded-full bg-ink-faint"></span>
                                 <span class="font-mono normal-case tracking-normal text-ink-soft">{openedMemory.scope}{openedMemory.scopeFilter ? ` · ${openedMemory.scopeFilter}` : ''}</span>

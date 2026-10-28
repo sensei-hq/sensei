@@ -33,7 +33,7 @@ const fixture = (over: Partial<InsightsBoard> = {}): InsightsBoard => ({
     { id: 'r2', urgency: 'medium', title: 'Soon rec', why: '', impact: '', evidence: [], workspace_id: 'p1', name: 'sensei', column: 'soon' },
   ],
   memories: [
-    { id: 'm1', status: 'active', title: 'Violated', content: 'c', violated_count: 3, strength: 0.4, scope: 'workspace', workspace_id: 'p1', column: 'now' },
+    { id: 'm1', status: 'active', title: 'Violated', content: 'c', violated_count: 3, strength: 2, scope: 'workspace', workspace_id: 'p1', column: 'now' },
     { id: 'm2', status: 'active', title: 'Settled', content: 'c', violated_count: 0, strength: 1, scope: 'workspace', workspace_id: 'p1', column: 'settled' },
   ],
   patterns: [
@@ -71,11 +71,17 @@ describe('InsightsBoardState — column bucketing', () => {
   it('sorts Settled memories by strength descending', () => {
     const s = new InsightsBoardState(fixture({
       memories: [
-        { id: 'weak', status: 'active', title: 'weak', content: '', violated_count: 0, strength: 0.2, scope: 'workspace', workspace_id: 'p1', column: 'settled' },
-        { id: 'strong', status: 'active', title: 'strong', content: '', violated_count: 0, strength: 0.9, scope: 'workspace', workspace_id: 'p1', column: 'settled' },
+        { id: 'weak', status: 'active', title: 'weak', content: '', violated_count: 0, strength: 1.5, scope: 'workspace', workspace_id: 'p1', column: 'settled' },
+        { id: 'strong', status: 'active', title: 'strong', content: '', violated_count: 0, strength: 4.5, scope: 'workspace', workspace_id: 'p1', column: 'settled' },
       ],
     }));
     expect(s.settled.memories.map((m) => m.id)).toEqual(['strong', 'weak']);
+  });
+
+  it('shows a memory\'s strength on the daemon\'s 1–5 scale, not clamped to a full bar', () => {
+    // Audit 2026-10-28, item 1: clamping 1–5 to 0–1 drew every memory full.
+    const s = new InsightsBoardState(fixture());
+    expect(s.settled.memories[0].strength).toMatchObject({ label: '1.0 / 5', width: '20%', full: false });
   });
 
   it('joins the workspace kanji onto rec view-models', () => {

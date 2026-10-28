@@ -40,7 +40,7 @@
             <span class="text-ink-soft"> {usage.window}</span>
         </p>
         <p data-testid="usage-lifetime" class="text-xs text-ink-soft m-0 mt-1">
-            strength {d.memory.strength.toFixed(1)} / 5
+            strength {memoryState.strengthOf(d.memory).label}
             · applied {d.memory.applied_count}× · violated {d.memory.violated_count}× all-time
         </p>
     </section>

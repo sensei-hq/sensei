@@ -355,3 +355,12 @@ describe('WorkspaceMemoriesState — generalise and widen', () => {
         expect(s.promoteError('m1')).toContain("isn't promotable yet");
     });
 });
+
+describe('WorkspaceMemoriesState.strengthOf', () => {
+    // Audit 2026-10-28, item 1: this screen read "300%" for a strength of 3.
+    it('reads on the 1–5 scale the daemon keeps', () => {
+        const state = new WorkspaceMemoriesState([mem('a', { strength: 3 })]);
+        expect(state.strengthOf(state.memories[0]).label).toBe('3.0 / 5');
+    });
+});
+
