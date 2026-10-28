@@ -1,120 +1,36 @@
 <script lang="ts">
     /**
-     * Upgrade page — runs post-restart upgrade steps (health resolvers + db deploy).
-     *
-     * Reached when `localStorage["sensei:app-version"]` is set, which means the
-     * app was just updated by tauri-plugin-updater and restarted. This page:
-     *   1. Calls run_upgrade_steps (health resolvers + db deploy)
-     *   2. Streams progress via the "upgrade" Tauri event channel
-     *   3. On completion, clears the flag and redirects to /health
+     * Upgrade page — runs the post-restart upgrade steps (health resolvers + db
+     * deploy). Reached when `localStorage["sensei:app-version"]` is set, i.e.
+     * the app was just updated and restarted. The run — each step, what failed,
+     * every line this page shows — is UpgradeRun's (audit 2026-10-28, item 13).
      */
     import { goto } from "$app/navigation";
     import { onMount } from "svelte";
     import { hasTauri } from "$lib/bootstrap.js";
     import { Eyebrow, Kanji, StatusDot } from "$lib/components";
     import { STORAGE_KEYS } from "$lib/storage-keys.js";
+    import { UpgradeRun } from "./upgrade-state.svelte.js";
 
-    type StepStatus = "pending" | "running" | "done" | "failed";
-
-    interface UpgradeStep {
-        id: "prereqs" | "db_deploy";
-        label: string;
-        note: string;
-    }
-
-    const STEPS: UpgradeStep[] = [
-        { id: "prereqs",   label: "Prerequisite upgrades",     note: "health resolvers" },
-        { id: "db_deploy", label: "Database schema deploy",    note: "dbd deploy" },
-    ];
-
-    let stepStatuses = $state<Record<string, StepStatus>>({
-        prereqs:   "pending",
-        db_deploy: "pending",
-    });
-    let stepErrors = $state<Record<string, string>>({});
-    let done = $state(false);
-    let anyFailed = $state(false);
-
-    $effect(() => {
-        if (done) {
-            // Give the user a moment to see the result, then continue
-            setTimeout(() => {
-                // Clear the upgrade-pending flag
-                if (typeof localStorage !== "undefined") {
-                    localStorage.removeItem(STORAGE_KEYS.appVersion);
-                }
-                goto("/health", { replaceState: true });
-            }, 1200);
-        }
-    });
-
-    // Derived state for the hero card
-    const isRunning = $derived(Object.values(stepStatuses).some(s => s === "running"));
-    const isComplete = $derived(done);
-    const activeStepLabel = $derived(
-        STEPS.find(s => stepStatuses[s.id] === "running")?.label ?? "Preparing…"
-    );
-    const doneCount = $derived(
-        STEPS.filter(s => stepStatuses[s.id] === "done" || stepStatuses[s.id] === "failed").length
-    );
-    const progress = $derived((doneCount / STEPS.length) * 100);
+    const upgrade = new UpgradeRun();
 
     onMount(() => {
-        if (!hasTauri()) {
-            // Browser simulation: walk steps with delays
-            simulateBrowserUpgrade();
-            return;
-        }
-
-        runUpgradeSteps();
-    });
-
-    async function runUpgradeSteps() {
-        const { listen } = await import("@tauri-apps/api/event");
-        const { invoke } = await import("@tauri-apps/api/core");
-
-        const unlisten = await listen<{
-            step: string;
-            status: string;
-            error?: string;
-        }>("upgrade", (event) => {
-            const { step, status, error } = event.payload;
-            if (step === "complete") {
-                done = true;
-                return;
-            }
-            stepStatuses = { ...stepStatuses, [step]: status as StepStatus };
-            if (status === "failed" && error) {
-                stepErrors = { ...stepErrors, [step]: error };
-                anyFailed = true;
-            }
+        if (!hasTauri()) return void upgrade.start(null);
+        void upgrade.start({
+            listen: async (handler) => {
+                const { listen } = await import("@tauri-apps/api/event");
+                return listen<{ step: string; status: string; error?: string }>("upgrade", (e) => handler(e.payload));
+            },
+            invoke: async () => {
+                const { invoke } = await import("@tauri-apps/api/core");
+                return invoke("run_upgrade_steps");
+            },
+            finish: () => {
+                localStorage.removeItem(STORAGE_KEYS.appVersion);
+                void goto("/health", { replaceState: true });
+            },
         });
-
-        try {
-            await invoke("run_upgrade_steps");
-        } catch (e) {
-            done = true;
-        }
-
-        return unlisten;
-    }
-
-    function simulateBrowserUpgrade() {
-        setTimeout(() => {
-            stepStatuses = { ...stepStatuses, prereqs: "running" };
-            setTimeout(() => {
-                stepStatuses = { ...stepStatuses, prereqs: "done", db_deploy: "running" };
-                setTimeout(() => {
-                    stepStatuses = { ...stepStatuses, db_deploy: "done" };
-                    done = true;
-                }, 1400);
-            }, 1600);
-        }, 400);
-    }
-
-    function stepState(id: string): StepStatus {
-        return stepStatuses[id] as StepStatus;
-    }
+    });
 </script>
 
 <div class="flex-1 min-h-0 overflow-hidden bg-paper-soft text-ink flex flex-col">
@@ -129,24 +45,11 @@
             </div>
 
             <h1 class="display text-4xl font-light leading-tight mb-3.5 tracking-tight">
-                {#if isComplete && !anyFailed}
-                    Up to date. <span class="text-success">Resuming.</span>
-                {:else if isComplete && anyFailed}
-                    Partial upgrade. <span class="text-accent">Continuing.</span>
-                {:else}
-                    Upgrading <span class="text-accent">sensei.</span>
-                {/if}
+                {upgrade.title.lead} <span class={upgrade.title.tailClass}>{upgrade.title.tail}</span>
             </h1>
 
             <p class="text-sm text-ink-mute leading-loose max-w-[540px]">
-                {#if isComplete && !anyFailed}
-                    Homebrew and the database schema are up to date. Running health checks now.
-                {:else if isComplete && anyFailed}
-                    Some steps had issues. Health checks will run — if anything is missing you can fix it there.
-                {:else}
-                    Applying the update: upgrading packages via Homebrew and deploying the latest schema.
-                    No input needed.
-                {/if}
+                {upgrade.blurb}
             </p>
         </div>
     </div>
@@ -158,11 +61,11 @@
             <!-- ── Hero card ─────────────────────────────────────────────── -->
             <div class="hero-card relative overflow-hidden border border-paper-edge rounded-xl bg-paper-mute p-6">
                 <!-- Progress bar -->
-                {#if !isComplete}
+                {#if upgrade.phase === "running"}
                     <div class="absolute top-0 left-0 right-0 h-0.5 bg-paper-mute">
                         <div
                             class="h-full bg-accent transition-all duration-700 ease-out"
-                            style="width: {progress}%"
+                            style="width: {upgrade.progress}"
                         ></div>
                     </div>
                 {/if}
@@ -171,15 +74,15 @@
                     <!-- Status indicator -->
                     <div
                         class="indicator w-14 h-14 rounded-full border-[1.5px] flex items-center justify-center shrink-0"
-                        class:border-success={isComplete && !anyFailed}
-                        class:border-accent={isComplete && anyFailed}
-                        class:border-ink-mute={!isComplete}
+                        class:border-success={upgrade.indicator === "check"}
+                        class:border-accent={upgrade.indicator === "warn"}
+                        class:border-ink-mute={upgrade.indicator === "spinner" || upgrade.indicator === "none"}
                     >
-                        {#if isComplete && !anyFailed}
+                        {#if upgrade.indicator === "check"}
                             <span class="text-2xl text-success leading-none">✓</span>
-                        {:else if isComplete && anyFailed}
+                        {:else if upgrade.indicator === "warn"}
                             <Kanji char="△" size="xl" />
-                        {:else}
+                        {:else if upgrade.indicator === "spinner"}
                             <span class="spinner-ring"></span>
                         {/if}
                     </div>
@@ -191,16 +94,7 @@
                             <span class="font-mono text-xs text-ink-mute">health resolvers · dbd</span>
                         </div>
                         <div class="text-sm text-ink-soft leading-snug">
-                            {#if isComplete && !anyFailed}
-                                All upgrade steps completed.
-                            {:else if isComplete && anyFailed}
-                                Completed with warnings. Continuing to health check.
-                            {:else}
-                                {activeStepLabel}…
-                                <span class="font-mono text-xs text-ink-mute ml-2">
-                                    ({doneCount + 1}/{STEPS.length})
-                                </span>
-                            {/if}
+                            {upgrade.cardText}
                         </div>
                     </div>
                 </div>
@@ -210,32 +104,22 @@
             <div class="mt-6">
                 <div class="mb-2.5"><Eyebrow>upgrade steps</Eyebrow></div>
                 <div class="flex flex-col">
-                    {#each STEPS as step}
-                        {@const s = stepState(step.id)}
+                    {#each upgrade.rows as step (step.id)}
                         <div
                             class="grid grid-cols-[10px_1fr_auto] gap-3 items-center py-2 border-b border-paper-edge transition-opacity duration"
-                            class:opacity-50={s === "pending"}
+                            class:opacity-50={step.dim}
                         >
-                            <StatusDot status={s === "done" ? "ok" : s === "running" ? "busy" : s === "failed" ? "fail" : "idle"} />
+                            <StatusDot status={step.dot} />
 
                             <div>
                                 <span class="text-sm text-ink">{step.label}</span>
                                 <span class="font-mono text-xs text-ink-mute ml-2">· {step.note}</span>
-                                {#if s === "failed" && stepErrors[step.id]}
-                                    <div class="font-mono text-xs text-accent mt-0.5">
-                                        {stepErrors[step.id]}
-                                    </div>
+                                {#if step.error}
+                                    <div class="font-mono text-xs text-accent mt-0.5">{step.error}</div>
                                 {/if}
                             </div>
 
-                            <span
-                                class="font-mono text-xs tracking-wide uppercase"
-                                class:text-success={s === "done"}
-                                class:text-accent={s === "running" || s === "failed"}
-                                class:text-ink-mute={s === "pending"}
-                            >
-                                {s}
-                            </span>
+                            <span class="font-mono text-xs tracking-wide uppercase {step.statusClass}">{step.status}</span>
                         </div>
                     {/each}
                 </div>
