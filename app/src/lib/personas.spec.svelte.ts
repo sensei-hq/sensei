@@ -468,3 +468,81 @@ describe('PersonaList.start / stop', () => {
     }
   });
 });
+
+// Audit item 3 (2026-10-28): renewal was a second store (forge-auth) with its
+// own endpoint, its own 5-minute clock and its own error, and the layout picked
+// whose error to show. The identity state now owns it: ONE automatic attempt per
+// identity per renewal window — renewal opens a browser, so a naive "renew while
+// due" would open a tab every minute at someone whose GitHub session lapsed.
+describe('automatic renewal', () => {
+  const due = { ...live, renewalDue: true, forgeToken: { state: 'active', expiresAt: NOW + 1800 } };
+
+  function renewing(first: unknown) {
+    let payload = first;
+    const opened: string[] = [];
+    const startSignIn = vi.fn(async () => 'https://github.test/renew');
+    const list = new PersonaList({
+      fetchPersonas: vi.fn(async () => payload as never),
+      startSignIn,
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async (u: string) => {
+        opened.push(u);
+      }),
+      makeDefault: vi.fn(async () => null),
+      now: () => NOW
+    });
+    list.renews = true;
+    return { list, opened, startSignIn, set: (p: unknown) => (payload = p) };
+  }
+
+  it('re-authorizes an identity once when its renewal falls due', async () => {
+    const r = renewing({ personas: [due] });
+    await r.list.load();
+    expect(r.startSignIn).toHaveBeenCalledWith('default', 'sensei-hq-org');
+    expect(r.opened).toEqual(['https://github.test/renew']);
+  });
+
+  it('does not try again while the same window is still due', async () => {
+    const r = renewing({ personas: [due] });
+    await r.list.load();
+    await r.list.load();
+    await r.list.load();
+    expect(r.opened).toHaveLength(1);
+  });
+
+  it('tries again in the next renewal window', async () => {
+    const r = renewing({ personas: [due] });
+    await r.list.load();
+    r.set({ personas: [live] }); // renewed: ready again
+    await r.list.load();
+    r.set({ personas: [due] }); // the next window
+    await r.list.load();
+    expect(r.opened).toHaveLength(2);
+  });
+
+  it('never opens a browser unasked for an expired, withheld or never-connected identity', async () => {
+    const r = renewing({
+      personas: [
+        { ...due, forgeToken: { state: 'dead', expiresAt: null } },
+        { ...due, label: 'w', sessionSlot: 'w', keychain: 'needsApproval' },
+        fresh
+      ]
+    });
+    await r.list.load();
+    expect(r.opened).toEqual([]);
+  });
+
+  it('only where renewal is owned — the settings window does not open a second tab', async () => {
+    const r = renewing({ personas: [due] });
+    r.list.renews = false;
+    await r.list.load();
+    expect(r.opened).toEqual([]);
+  });
+
+  it('a failed attempt is the list\'s one error', async () => {
+    const r = renewing({ personas: [due] });
+    r.startSignIn.mockResolvedValueOnce(null as never);
+    await r.list.load();
+    expect(r.list.error).toMatch(/could not start/i);
+  });
+});

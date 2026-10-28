@@ -153,6 +153,14 @@ export class PersonaList {
   #viewers = 0;
   #deps: PersonaListDeps;
 
+  /** Whether THIS window re-authorizes on its own (the main window; the layout
+   *  sets it). One window, or a renewal would open two browser tabs. */
+  renews = false;
+  /** The identities whose current renewal window has had its one automatic
+   *  attempt. An identity leaves the set when it stops being due — re-armed for
+   *  the next window. */
+  #attempted = new Set<string>();
+
   /** Called when an identity changed here — a sign-in finished, an approval,
    *  a new default — so the layout can tell the other windows, each of which
    *  holds its own copy of this state (as `appState.onConfigSaved`). */
@@ -263,6 +271,28 @@ export class PersonaList {
     this.error = null;
     this.loaded = true;
     this.#settle();
+    await this.#renewDue();
+  }
+
+  /**
+   * Renewal re-runs the authorize flow in the browser (the client secret stays
+   * in Supabase, so the daemon cannot redeem a refresh token itself). For a
+   * user with a live GitHub session that is a ~6 s redirect chain with no
+   * prompt. It opens a browser, so ONE attempt per identity per renewal window:
+   * if it does not complete, the identity becomes expired and its button is the
+   * user's choice.
+   */
+  async #renewDue(): Promise<void> {
+    if (!this.renews) return;
+    for (const id of this.identities) {
+      if (id.status !== 'expiring') {
+        this.#attempted.delete(id.label);
+        continue;
+      }
+      if (this.#attempted.has(id.label)) continue;
+      this.#attempted.add(id.label);
+      await this.signIn(id);
+    }
   }
 
   /** Move the clock and re-read the facts. Runs every minute once started. */

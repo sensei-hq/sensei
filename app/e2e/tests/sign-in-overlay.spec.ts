@@ -2,7 +2,7 @@
  * Sign-in overlay — functional e2e.
  *
  * Unit tests cover the standing reduction, the per-row action, the one-attempt
- * guard and the rendering (personas.spec, SignInOverlay.spec, forge-auth.spec).
+ * guard and the rendering (personas.spec, SignInOverlay.spec).
  * What they cannot cover is the thing that actually went wrong in use: "I don't
  * see it in the launched app." That is a WIRING question — the menu event, the
  * layout's listener, the real endpoint — and only a real app can answer it.

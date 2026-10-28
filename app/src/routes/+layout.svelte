@@ -7,7 +7,6 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { healthState } from "$lib/health-state.svelte.js";
     import { daemonHealth } from "$lib/daemon-health.svelte.js";
-    import { forgeAuth } from "$lib/forge-auth.svelte.js";
     import { glyphMode, setGlyphMode } from "$lib/glyphs";
     import { personaList } from "$lib/personas.svelte.js";
     import { DaemonStatusBanner, SignInOverlay } from "$lib/components";
@@ -80,23 +79,15 @@
         // daemon is healthy: it stops after the first `full` reading.
         daemonHealth.start();
 
-        // Watch the forge credential and re-authorize before it expires. The
-        // daemon cannot do this: renewal re-runs the authorize flow Supabase
-        // performs (that is where the App's client secret lives, in one place),
-        // and that needs a browser. For an already-authorized App it is a
-        // redirect with no prompt — measured at ~6s, no clicks.
+        // The identity state: every identity's standing, and — in the main window
+        // only — the one automatic re-authorization per renewal window (renewal
+        // runs the authorize flow in a browser; see PersonaList).
         //
         // Tauri-only. A browser dev session has no opener plugin, and polling
         // there would report a standing nobody can act on.
         if (!hasTauri()) return () => daemonHealth.stop();
-        // Five minutes against an 8h token with a 1h renewal window: ~12 checks
-        // inside the window, and the ONE automatic attempt per window is
-        // enforced in ForgeAuth, not by the interval.
         if (duties.renewsCredentials) {
-            forgeAuth.start();
-            // The identity state backs the overlay. It re-reads every minute and
-            // moves its clock, so a credential that dies while the app sits open
-            // says so without a click.
+            personaList.renews = true;
             void personaList.load();
             personaList.start();
         }
@@ -136,7 +127,7 @@
             for (const fn of unlistens) fn();
             daemonHealth.stop();
             if (duties.renewsCredentials) {
-                forgeAuth.stop();
+                personaList.renews = false;
                 personaList.stop();
             }
             appState.onConfigSaved = null;
@@ -150,7 +141,7 @@
     open={overlayOpen}
     identities={personaList.identities}
     phase={personaList.phase}
-    error={personaList.error ?? forgeAuth.lastError}
+    error={personaList.error}
     onAct={(i) => personaList.act(i)}
     onClose={closeOverlay}
     pending={personaList.pending}

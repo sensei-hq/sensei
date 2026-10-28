@@ -168,10 +168,6 @@ describe('auth requests leave the default to the daemon (#296)', () => {
     await call();
     return seen;
   };
-  it('a status with no persona names none', async () => {
-    const [u] = await urls(() => api().tryGetAuthStatus());
-    expect(u).toMatch(/\/api\/auth\/status$/);
-  });
   it('a sign-in with no persona names none', async () => {
     const [u] = await urls(() => api().tryStartSignIn());
     expect(u).toMatch(/\/api\/auth\/signin$/);

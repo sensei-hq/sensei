@@ -198,15 +198,6 @@ export function senseiApi(port: number) {
 
   return {
     // ── Auth ──────────────────────────────────────────────────────────────
-    // Result-based on purpose. A failed read of the credential's standing must
-    // NOT collapse into a fallback body: `{}` is indistinguishable from a
-    // daemon reporting a shape we do not understand, and either way the caller
-    // would be told something about a credential we never asked about.
-    // No persona named → the daemon resolves the DEFAULT identity (#296), the
-    // one owning the global git email; never the literal `default` slot.
-    tryGetAuthStatus: (persona?: string) =>
-      tryGet<Record<string, unknown>>(`/api/auth/status${personaQuery(persona)}`),
-
     /** Every identity and what each one needs. Result-based: a failed read must
      *  not become `[]`, which reads as "you have no identities". */
     tryGetPersonas: () =>
