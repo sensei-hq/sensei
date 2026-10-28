@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { deltaView } from '$lib/impact';
     import Kanji from '$lib/components/Kanji.svelte';
     import { PageHeader, Screen, ScreenState } from '$lib/components';
     import { invalidateAll } from '$app/navigation';
@@ -15,24 +16,6 @@
         expanded = { ...expanded, [id]: !expanded[id] };
     }
 
-    // "+12%" / "-4%" / "±0%" / "—" — same vocabulary as the observatory
-    // Impact page so both surfaces read the same. Null means no baseline
-    // could be computed (fewer than the analyzer's minimum session count).
-    function fmtFtrDelta(v: number | null | undefined): string {
-        if (v == null) return '—';
-        const pct = Math.round(v * 100);
-        if (pct === 0) return '±0%';
-        return pct > 0 ? `+${pct}%` : `${pct}%`;
-    }
-    function deltaTone(v: number | null | undefined, anti: boolean): string {
-        // On an anti-pattern the meaning of the sign flips — a NEGATIVE FTR
-        // delta on an anti-pattern is EXPECTED and reads healthy (the locus
-        // performs worse, which is why we're flagging it). So invert the
-        // tone rule on anti-pattern rows.
-        if (v == null || v === 0) return 'text-ink-soft';
-        const good = anti ? v < 0 : v > 0;
-        return good ? 'text-success' : 'text-warning';
-    }
 </script>
 
 {#snippet PatternRow(p: PatternEntry, anti: boolean)}
@@ -69,10 +52,10 @@
                 </p>
             </div>
             <span
-                class="text-xs font-mono min-w-[3.5rem] text-right {deltaTone(p.ftrDelta, anti)}"
+                class="text-xs font-mono min-w-[3.5rem] text-right {deltaView(p.ftrDelta, { anti }).text}"
                 data-testid={`pattern-ftr-delta-${p.id}`}
                 title="FTR delta vs workspace baseline"
-            >{fmtFtrDelta(p.ftrDelta)}</span>
+            >{deltaView(p.ftrDelta, { anti }).label}</span>
             <span class="text-xs text-ink-faint w-3">{open ? '▾' : '▸'}</span>
         </button>
 

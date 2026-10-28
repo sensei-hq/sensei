@@ -6,8 +6,7 @@ import {
   verdictMeta,
   verdictToneClass,
   VERDICT_META,
-  type ImpactRow,
-} from './impact.js';
+  type ImpactRow, deltaView, verdictToneVar } from './impact.js';
 
 const row = (over: Partial<ImpactRow> = {}): ImpactRow => ({
   id: 'r',
@@ -120,5 +119,29 @@ describe('verdictToneClass', () => {
   });
   it('defaults kind to text', () => {
     expect(verdictToneClass('warning')).toBe('text-warning');
+  });
+});
+
+// Audit item 9 (2026-10-28): the delta's tone came from the raw sign while its
+// label was rounded, so a +0.3pp change read "±0%" in green; the patterns
+// screen had its own copy of both.
+describe('deltaView', () => {
+  it('labels and tones the rounded change, so ±0% is never coloured', () => {
+    expect(deltaView(0.14)).toEqual({ label: '+14%', tone: 'success', text: 'text-success' });
+    expect(deltaView(-0.03)).toEqual({ label: '-3%', tone: 'warning', text: 'text-warning' });
+    expect(deltaView(0.003)).toEqual({ label: '±0%', tone: 'ink', text: 'text-ink-soft' });
+    expect(deltaView(-0.004)).toEqual({ label: '±0%', tone: 'ink', text: 'text-ink-soft' });
+    expect(deltaView(null)).toEqual({ label: '—', tone: 'ink', text: 'text-ink-soft' });
+  });
+
+  it('reads an anti-pattern the other way: a fall is the expected, healthy reading', () => {
+    expect(deltaView(-0.1, { anti: true }).tone).toBe('success');
+    expect(deltaView(0.1, { anti: true }).tone).toBe('warning');
+  });
+});
+
+describe('verdictToneVar', () => {
+  it('is the verdict tone as a CSS colour, for an edge', () => {
+    expect(['success', 'warning', 'ink'].map((t) => verdictToneVar(t as never))).toEqual(['var(--success)', 'var(--warning)', 'var(--ink-soft)']);
   });
 });

@@ -4,7 +4,8 @@
   import { EmptyState, MoeReasoningPanel, PageHeader, Screen, ScreenState, UnreadWorkspacesNotice } from '$lib/components';
   import { railIcon } from '../observatory-nav';
   import {
-    formatDeltaPct,
+    deltaView,
+    verdictToneVar,
     pct,
     verdictMeta as meta,
     verdictToneClass as toneClass,
@@ -100,7 +101,7 @@
             class:bg-paper-mute={isOpen}
             data-impact-row={r.id}
             data-impact-bucket={r.verdict}
-            style={isOpen ? `border-left: 2px solid var(${vm.tone === 'success' ? '--success' : vm.tone === 'warning' ? '--warning' : '--ink-soft'});` : 'border-left: 2px solid transparent;'}
+            style={isOpen ? `border-left: 2px solid ${verdictToneVar(vm.tone)};` : 'border-left: 2px solid transparent;'}
             onclick={() => (openId = r.id)}
           >
             <div class="flex items-center gap-2">
@@ -108,12 +109,9 @@
               <span class="text-xs uppercase tracking-wider {toneClass(vm.tone)}">{r.verdict}</span>
               <span class="flex-1"></span>
               <span
-                class="font-mono text-xs"
-                class:text-success={r.ftrDelta != null && r.ftrDelta > 0}
-                class:text-warning={r.ftrDelta != null && r.ftrDelta < 0}
-                class:text-ink-soft={r.ftrDelta == null || r.ftrDelta === 0}
+                class="font-mono text-xs {deltaView(r.ftrDelta).text}"
                 data-ftr-delta
-              >{formatDeltaPct(r.ftrDelta)}</span>
+              >{deltaView(r.ftrDelta).label}</span>
             </div>
             <div class="text-sm mt-1 leading-snug font-medium truncate"
                  class:text-ink={isOpen}
@@ -168,12 +166,9 @@
             <div class="font-mono text-sm text-ink-soft">{pct(open.baselineFtr)}</div>
             <div class="font-mono text-lg text-ink">{pct(open.currentFtr)}</div>
             <div
-              class="font-mono text-xs mt-1"
-              class:text-success={open.ftrDelta != null && open.ftrDelta > 0}
-              class:text-warning={open.ftrDelta != null && open.ftrDelta < 0}
-              class:text-ink-soft={open.ftrDelta == null || open.ftrDelta === 0}
+              class="font-mono text-xs mt-1 {deltaView(open.ftrDelta).text}"
             >
-              {formatDeltaPct(open.ftrDelta)}
+              {deltaView(open.ftrDelta).label}
             </div>
           </div>
           <div class="bg-paper-mute py-3 px-4">

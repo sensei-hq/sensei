@@ -7,7 +7,7 @@
   import { EmptyState, MoeReasoningPanel, PageHeader, Screen, ScreenState } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import {
-    formatDeltaPct,
+    deltaView,
     pct,
     verdictMeta,
     verdictToneClass as toneClass,
@@ -98,11 +98,8 @@
                 <span class="text-xs uppercase tracking-wider {toneClass(vm.tone)}">{v.verdict}</span>
                 <span class="flex-1"></span>
                 <span
-                  class="font-mono text-xs"
-                  class:text-success={v.ftrDelta != null && v.ftrDelta > 0}
-                  class:text-warning={v.ftrDelta != null && v.ftrDelta < 0}
-                  class:text-ink-soft={v.ftrDelta == null || v.ftrDelta === 0}
-                >{formatDeltaPct(v.ftrDelta)}</span>
+                  class="font-mono text-xs {deltaView(v.ftrDelta).text}"
+                >{deltaView(v.ftrDelta).label}</span>
               </div>
               <p class="text-sm m-0 leading-snug font-medium truncate"
                  class:text-ink={isOpen}
@@ -151,11 +148,8 @@
               <div class="font-mono text-sm text-ink-soft">{pct(selected.baselineFtr)}</div>
               <div class="font-mono text-lg text-ink">{pct(selected.currentFtr)}</div>
               <div
-                class="font-mono text-xs mt-1"
-                class:text-success={selected.ftrDelta != null && selected.ftrDelta > 0}
-                class:text-warning={selected.ftrDelta != null && selected.ftrDelta < 0}
-                class:text-ink-soft={selected.ftrDelta == null || selected.ftrDelta === 0}
-              >{formatDeltaPct(selected.ftrDelta)}</div>
+                class="font-mono text-xs mt-1 {deltaView(selected.ftrDelta).text}"
+              >{deltaView(selected.ftrDelta).label}</div>
             </div>
             <div class="bg-paper-mute py-3 px-4">
               <div class="text-xs uppercase tracking-wider text-ink-faint mb-1">Status</div>
