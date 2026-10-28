@@ -99,7 +99,6 @@ const OBSERVATORY: Array<{ route: string; sel: string }> = [
   { route: '/libraries',     sel: 'main' },
   { route: '/instruments',   sel: 'main' },
   { route: '/sessions',      sel: 'main' },
-  { route: '/memories',      sel: 'main' },
   { route: '/learnings',     sel: 'main' },
   { route: '/upgrades',      sel: 'main' },
   { route: '/settings',      sel: 'main' },

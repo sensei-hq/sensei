@@ -67,7 +67,7 @@ test.describe('Observatory — Workspaces list', () => {
       test.skip(true, 'no workspaces registered on this daemon');
       return;
     }
-    await navigateToScreen(tauriPage, '/workspaces', '[data-component="workspaces-page"]');
+    await navigateToScreen(tauriPage, '/workspaces', '[data-screen="workspaces"]');
     // Segmentation is now a status FILTER (All/Active/Dormant/Archived); the
     // list renders workspace cards/rows. With ≥1 workspace registered, at least one
     // card is visible (default filter is All).

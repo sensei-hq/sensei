@@ -45,7 +45,7 @@ test.describe('Observatory Instruments — T2 Slices', () => {
     if (list.servers.length === 0) {
       // Empty e2e install — panel must show the friendly empty state,
       // and the refresh button is still clickable.
-      await expect(section).toContainText(/No MCP servers discovered/i);
+      await expect(section).toContainText(/No MCP servers yet/i);
       const refreshBtn = tauriPage.locator('[data-testid="refresh-servers"]');
       await expect(refreshBtn).toBeEnabled();
     } else {

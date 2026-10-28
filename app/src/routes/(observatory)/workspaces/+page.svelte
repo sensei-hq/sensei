@@ -65,7 +65,7 @@
   ];
 </script>
 
-<Screen data-component="workspaces-page">
+<Screen data-screen="workspaces">
   {#snippet header()}
     <div class="bg-paper">
       <PageHeader kanji="場" icon={railIcon('/workspaces')} eyebrow="Workspaces" title="All the places you work.">
