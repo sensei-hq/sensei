@@ -16,8 +16,13 @@ dojo.sensei-hq.com/version reports v0.21.1. Live verify of the list above happen
 The review index (docs/review/README.md) and the signing steps (docs/ops/apple-signing.md) are committed.
 Cloudflare's git integration for the dojo Worker: recommended disconnect (release.yml deploys it).
 
-**Done today, rokkit:** #173 and #174 fixed and released as 1.9.1, bumped here (05cfb84c). glyphs-inspect
-stays red on its overview step until the daemon with `?watched=true` is installed.
+**rokkit-first styling (2026-10-28, user):** no app overrides of rokkit (b7ab476b, guarded by
+app/src/lib/rokkit-defaults.spec.ts). rokkit 1.10.0 (guides rail is a List; zen-sumi List takes its look; every
+ink tone AA) + 1.10.1 (link Button has no target) shipped; app/dōjō/website on 1.10.1 (d2f9a483). IN FLIGHT: rokkit
+exports named palette families (zen-sumi + beni/ai/murasaki for danger/info, plus sea/orange-pink/violet/green
+families), agent stops before release. NEXT: review names → rokkit 1.11.0 → app/dōjō/website import zen-sumi, delete
+packages/sumi-palette + the remaining token overrides, swap the app's text-ink-soft ↔ text-ink-mute (rokkit's order),
+measure against rokkit.sensei-hq.com.
 
 **Queued (burndown, UI walk):** Roots removal progress over the SSE stream (removal is one prune call today —
 needs steps that emit events); Libraries "sensei will wrap" claims docs not held; Instruments switch;
