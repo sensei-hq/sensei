@@ -37,11 +37,89 @@ type ToolStat = {
  */
 export type ToolVerdict = 'healthy' | 'ok' | 'warn' | 'unused';
 
+/** Above this error rate a tool warns — the one threshold (audit 2026-10-28, item 8). */
+export const TOOL_ERROR_RATE_WARN = 0.1;
+
 export function toolVerdict(callCount: number, errorCount: number): ToolVerdict {
   if (callCount <= 0) return 'unused';
-  if (errorCount / callCount > 0.1) return 'warn';
+  if (errorCount / callCount > TOOL_ERROR_RATE_WARN) return 'warn';
   if (errorCount === 0) return 'healthy';
   return 'ok';
+}
+
+const VERDICT_CLASS: Record<ToolVerdict, string> = {
+  healthy: 'text-success',
+  ok: 'text-ink-mute',
+  warn: 'text-warning',
+  unused: 'text-ink-soft'
+};
+
+/** One tool's health as every Instruments screen shows it: the verdict and its
+ *  colour, and the error rate — red exactly when the verdict warns. */
+export function toolHealthView(callCount: number, errorCount: number): {
+  verdict: ToolVerdict;
+  verdictClass: string;
+  errorRate: string;
+  errorClass: string;
+} {
+  const verdict = toolVerdict(callCount, errorCount);
+  const rate = callCount > 0 ? errorCount / callCount : 0;
+  return {
+    verdict,
+    verdictClass: VERDICT_CLASS[verdict],
+    errorRate: rate > 0 ? `(${Math.round(rate * 100)}%)` : '',
+    errorClass: verdict === 'warn' ? 'text-danger' : ''
+  };
+}
+
+/** Below this share of a source's tools invoked, its coverage warns. */
+export const TOOL_COVERAGE_WARN = 0.7;
+
+/** One tool source's card: whether its registry was enumerated, the invoked
+ *  share (null when it could not be — never a made-up 0%), and its glyph. */
+export function toolSourceView(source: ToolHealthSource): {
+  probed: boolean;
+  registered: number | null;
+  pct: number | null;
+  /** The share as text: "60%", or "—" when it was not reported. */
+  pctLabel: string;
+  pctClass: string;
+  kanji: string;
+} {
+  const probed = source.tools_registered != null;
+  const share = probed ? source.share_invoked : null;
+  return {
+    probed,
+    registered: source.tools_registered ?? null,
+    pct: share == null ? null : Math.round(share * 100),
+    pctLabel: share == null ? '—' : `${Math.round(share * 100)}%`,
+    pctClass: share == null ? '' : share < TOOL_COVERAGE_WARN ? 'text-warning' : 'text-ink',
+    // 器 (vessel) for a built-in tool set, 接 (connect) for a probed MCP server.
+    kanji: source.source_type === 'builtin' ? '器' : '接'
+  };
+}
+
+/** Totals over sensei's own tools (`/api/observatory/tool-usage`: every session,
+ *  all time) — a different population from the grid's 14-day count across every
+ *  source, and labelled so. */
+export function toolUsageTotals(stats: Pick<ToolStat, 'call_count' | 'error_count'>[]): {
+  calls: number;
+  errors: number;
+  errorRate: string;
+  errorClass: string;
+  tools: number;
+  scope: string;
+} {
+  const calls = stats.reduce((n, t) => n + t.call_count, 0);
+  const errors = stats.reduce((n, t) => n + t.error_count, 0);
+  return {
+    calls,
+    errors,
+    errorRate: calls > 0 ? `${((errors / calls) * 100).toFixed(1)}% rate` : '—',
+    errorClass: errors > 0 ? 'text-warning' : '',
+    tools: stats.length,
+    scope: 'sensei tools · all time'
+  };
 }
 
 // Loading lifecycle — 'idle' before first load, 'loading' during the

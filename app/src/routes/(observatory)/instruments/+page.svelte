@@ -10,7 +10,7 @@
     import SignalCard from "$lib/components/SignalCard.svelte";
     import { Eyebrow, Kanji, Screen } from "$lib/components";
     import { Button, Select } from "@rokkit/ui";
-    import { mcp, toolVerdict } from "$lib/state/mcp.svelte.js";
+    import { mcp, toolHealthView, toolUsageTotals } from "$lib/state/mcp.svelte.js";
     import { buildPlaygroundGroups, serversByFamily, type PlaygroundTool } from "./playground-groups.js";
     import { INSTRUMENT_TABS, kindMark } from "./instrument-marks";
     import { glyphMode } from "$lib/glyphs";
@@ -19,6 +19,8 @@
     import {
         collapsedFor, filterGroups, fmtDate, fmtDuration, fmtPayload, heroCopy as heroCopyFor,
         initialTab,
+        toolKindView,
+        callVerdictView,
     } from "./instruments-view";
     import { formFields, initialValues } from "./tool-form";
     import type { ToolHealthSource } from "$lib/types.js";
@@ -68,8 +70,6 @@
     // "Health"; its id stays 'insights' so bookmarks and test ids don't churn.
     const instrumentTabs = INSTRUMENT_TABS;
     const glyphs = $derived(glyphMode(appState.config));
-    const kindTone = (kind: PlaygroundTool['kind']) =>
-        kind === 'action' ? 'accent' : kind === 'query' ? 'success' : 'muted';
     const currentTab = $derived(instrumentTabs.find((t) => t.id === ins.tab) ?? instrumentTabs[0]);
     const heroCopy = $derived(heroCopyFor(ins.tab));
 
@@ -283,7 +283,6 @@
                                 <div>
                                     {#each group.tools as tool (tool.id)}
                                         {@const active = focusedTool?.id === tool.id}
-                                        {@const isAction = tool.kind === 'action'}
                                         {@const mark = kindMark(tool.kind)}
                                         <button
                                             class="w-full grid grid-cols-[32px_14px_1fr] gap-1 py-1 pl-1 pr-3 text-left bg-transparent border-none cursor-pointer"
@@ -293,7 +292,7 @@
                                             data-tool-kind={tool.kind}
                                         >
                                             <span></span>
-                                            <Kanji char={mark.kanji} icon={mark.icon} mode={glyphs} size="xs" tone={kindTone(tool.kind)} />
+                                            <Kanji char={mark.kanji} icon={mark.icon} mode={glyphs} size="xs" tone={toolKindView(tool.kind).tone} />
                                             <span
                                                 class="font-mono text-xs truncate"
                                                 class:text-ink={active}
@@ -387,11 +386,8 @@
                     {#if focusedTool && focusedGroup}
                         {@const tool = focusedTool}
                         {@const group = focusedGroup}
-                        {@const isAction = tool.kind === 'action'}
-                        {@const kindColor = isAction ? 'accent' : tool.kind === 'query' ? 'success' : 'ink-soft'}
-                        {@const kindLabel = isAction ? 'action' : tool.kind === 'query' ? 'query' : 'call'}
+                        {@const kind = toolKindView(tool.kind)}
                         {@const mark = kindMark(tool.kind)}
-                        {@const kindHint = isAction ? 'performs an operation' : 'returns information'}
 
                         <!-- Heading -->
                         <div class="mb-4">
@@ -399,13 +395,10 @@
                                 <span class="inline-flex items-center gap-1 font-mono text-xs text-ink-soft"><Kanji char={group.kanji} icon={group.icon} mode={glyphs} size="xs" tone="muted" /> {group.name.toLowerCase()}</span>
                                 <span class="text-xs text-ink-faint">·</span>
                                 <span
-                                    class="inline-flex items-center gap-1 py-1 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide"
-                                    class:text-accent={isAction}
-                                    class:text-success={tool.kind === 'query'}
-                                    class:text-ink-soft={tool.kind === 'other'}
+                                    class="inline-flex items-center gap-1 py-1 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide {kind.text}"
                                 >
-                                    <Kanji char={mark.kanji} icon={mark.icon} mode={glyphs} size="xs" tone={kindTone(tool.kind)} />
-                                    {kindLabel}
+                                    <Kanji char={mark.kanji} icon={mark.icon} mode={glyphs} size="xs" tone={toolKindView(tool.kind).tone} />
+                                    {kind.label}
                                 </span>
                             </div>
                             <h2 class="font-mono text-lg font-normal m-0 text-ink">{tool.name}</h2>
@@ -418,7 +411,7 @@
                         <div class="bg-paper-soft border border-paper-edge rounded-lg py-3 px-4 mb-3">
                             <div class="flex items-baseline justify-between mb-2">
                                 <span class="text-xs uppercase tracking-wide text-ink-soft">Inputs</span>
-                                <span class="text-xs text-ink-faint">{kindHint}</span>
+                                <span class="text-xs text-ink-faint">{kind.hint}</span>
                             </div>
                             <label class="flex items-center gap-2 text-xs text-ink-mute mb-2" data-testid="run-in">
                                 <span>Runs in</span>
@@ -493,7 +486,7 @@
                                     disabled={running || !focusedTool}
                                     data-testid="tool-execute"
                                 >
-                                    {isAction ? 'Run →' : 'Query →'}
+                                    {kind.runLabel}
                                 </Button>
                                 <div class="flex-1"></div>
                                 {#if running}
@@ -516,9 +509,7 @@
                                 class:text-ink={ins.toolResult}
                                 class:text-ink-mute={!ins.toolResult}
                                 class:opacity-70={!ins.toolResult}
-                                class:border-l-accent={isAction}
-                                class:border-l-success={tool.kind === 'query'}
-                                style="border-left-width: 2px; border-left-color: {isAction ? 'var(--accent)' : tool.kind === 'query' ? 'var(--success)' : 'var(--ink-soft)'};"
+                                style="border-left-width: 2px; border-left-color: {kind.edge};"
                             >{ins.toolResult || '—'}</pre>
                         </div>
                     {:else}
@@ -630,7 +621,7 @@
                                     {:else}
                                         {#each ins.sessionCalls as call, i (call.callId)}
                                             {@const on = ins.selectedCall?.callId === call.callId}
-                                            {@const kindColor = call.verdict === 'used' ? 'var(--success)' : call.verdict === 'partial' ? 'var(--warning)' : call.verdict === 'ignored' ? 'var(--ink-soft)' : 'var(--accent)'}
+                                            {@const verdictView = callVerdictView(call)}
                                             <button
                                                 class="w-full grid grid-cols-[22px_38px_1fr_auto] gap-2 items-center py-2 pl-3 pr-2 text-left border rounded-sm cursor-pointer"
                                                 class:bg-paper-soft={on}
@@ -645,7 +636,7 @@
                                                 </span>
                                                 <span class="font-mono text-xs text-ink truncate">{call.toolName}</span>
                                                 <span class="flex items-center gap-1">
-                                                    <span class="rounded-full inline-block" style="width: 7px; height: 7px; background: {kindColor};" title={call.verdict ?? 'unclassified'}></span>
+                                                    <span class="rounded-full inline-block" style="width: 7px; height: 7px; background: {verdictView.edge};" title={call.verdict ?? 'unclassified'}></span>
                                                     <span class="font-mono text-xs text-ink-faint" style='font-feature-settings: "tnum";'>
                                                         {call.durationMs != null ? `${call.durationMs}ms` : '—'}
                                                     </span>
@@ -661,8 +652,7 @@
                                         <p class="text-sm text-ink-mute">Select a call to see request + response.</p>
                                     {:else}
                                         {@const call = ins.selectedCall}
-                                        {@const kindGlyph = call.verdict === 'used' ? '用' : call.verdict === 'partial' ? '部' : call.verdict === 'ignored' ? '無' : call.success === false ? '✗' : '問'}
-                                        {@const kindColor = call.verdict === 'used' ? 'text-success' : call.verdict === 'partial' ? 'text-warning' : call.verdict === 'ignored' ? 'text-ink-soft' : 'text-accent'}
+                                        {@const verdictView = callVerdictView(call)}
                                         <div class="flex items-baseline justify-between pb-3 border-b border-paper-edge">
                                             <div>
                                                 <div class="text-xs uppercase tracking-wide text-ink-soft mb-1">
@@ -670,8 +660,8 @@
                                                 </div>
                                                 <div class="font-mono text-sm text-ink">{call.toolName}</div>
                                             </div>
-                                            <span class="inline-flex items-center gap-1 py-1 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide {kindColor}">
-                                                <Kanji char={kindGlyph} size="inherit" tone="inherit" class="text-xs" />
+                                            <span class="inline-flex items-center gap-1 py-1 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide {verdictView.text}">
+                                                <Kanji char={verdictView.glyph} size="inherit" tone="inherit" class="text-xs" />
                                                 {call.verdict ?? (call.success === false ? 'error' : 'query')}
                                             </span>
                                         </div>
@@ -690,7 +680,7 @@
                                             {:else}
                                                 <pre
                                                     class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-edge rounded whitespace-pre-wrap overflow-auto max-h-[220px] text-ink"
-                                                    style="border-left-width: 2px; border-left-color: {call.verdict === 'used' ? 'var(--success)' : call.verdict === 'partial' ? 'var(--warning)' : call.verdict === 'ignored' ? 'var(--ink-soft)' : 'var(--accent)'};"
+                                                    style="border-left-width: 2px; border-left-color: {callVerdictView(call).edge};"
                                                 >{fmtPayload(call.response)}</pre>
                                             {/if}
                                             {#if call.verdictReason}
@@ -828,8 +818,7 @@
             description="Tool usage statistics appear after your assistant sessions call sensei tools. Start a session to begin tracking."
         />
     {:else}
-        {@const totalCalls = toolStats.reduce((n, t) => n + t.call_count, 0)}
-        {@const totalErrors = toolStats.reduce((n, t) => n + t.error_count, 0)}
+        {@const totals = toolUsageTotals(toolStats)}
         {@const warnTools = toolSignals.filter((sig) => sig.variant === 'warn').length}
         <!-- Dormant = signals-side "unused" (no calls in window), not just
              zero call_count on the aggregate row. The aggregate keeps
@@ -841,21 +830,21 @@
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <Kanji char="計" size="inherit" tone="inherit" class="text-sm text-accent" />
-                    <span class="text-xs uppercase tracking-wide text-ink-soft">total calls</span>
+                    <span class="text-xs uppercase tracking-wide text-ink-soft">sensei tool calls</span>
                 </div>
-                <div class="display text-xl" style='font-feature-settings: "tnum";'>{totalCalls.toLocaleString()}</div>
-                <div class="text-xs text-ink-soft mt-1">{toolStats.length} tools</div>
+                <div class="display text-xl" style='font-feature-settings: "tnum";'>{totals.calls.toLocaleString()}</div>
+                <div class="text-xs text-ink-soft mt-1">{totals.tools} tools · {totals.scope}</div>
             </div>
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <Kanji char="誤" size="inherit" tone="inherit" class="text-sm text-accent" />
                     <span class="text-xs uppercase tracking-wide text-ink-soft">errors</span>
                 </div>
-                <div class="display text-xl" style='font-feature-settings: "tnum";' class:text-warning={totalErrors > 0}>
-                    {totalErrors.toLocaleString()}
+                <div class="display text-xl {totals.errorClass}" style='font-feature-settings: "tnum";'>
+                    {totals.errors.toLocaleString()}
                 </div>
                 <div class="text-xs text-ink-soft mt-1">
-                    {totalCalls > 0 ? `${((totalErrors / totalCalls) * 100).toFixed(1)}% rate` : '—'}
+                    {totals.errorRate}
                 </div>
             </div>
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
@@ -922,9 +911,9 @@
                 <span class="text-right">Verdict</span>
             </div>
             {#each toolStats as stat (stat.tool_name)}
-                {@const errorRate = stat.call_count > 0 ? stat.error_count / stat.call_count : 0}
                 {@const expanded = ins.selectedInsightTool === stat.tool_name}
-                {@const verdict = toolVerdict(stat.call_count, stat.error_count)}
+                {@const health = toolHealthView(stat.call_count, stat.error_count)}
+                {@const verdict = health.verdict}
                 <button
                     type="button"
                     class="w-full text-left grid grid-cols-[1fr_80px_80px_100px_120px_90px] gap-3 px-3 py-2.5 border-b border-paper-edge text-sm items-center bg-transparent border-l-0 border-r-0 border-t-0 cursor-pointer"
@@ -935,10 +924,10 @@
                 >
                     <span class="font-mono text-xs">{stat.tool_name}</span>
                     <span class="text-right font-mono text-xs">{stat.call_count}</span>
-                    <span class="text-right font-mono text-xs" class:text-danger={errorRate > 0.1}>
+                    <span class="text-right font-mono text-xs {health.errorClass}">
                         {stat.error_count}
-                        {#if errorRate > 0}
-                            <span class="text-xs opacity-50">({Math.round(errorRate * 100)}%)</span>
+                        {#if health.errorRate}
+                            <span class="text-xs opacity-50">{health.errorRate}</span>
                         {/if}
                     </span>
                     <span class="text-right font-mono text-xs opacity-70">
@@ -949,11 +938,7 @@
                     </span>
                     <span class="flex justify-end">
                         <span
-                            class="inline-flex items-center py-0.5 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide"
-                            class:text-success={verdict === 'healthy'}
-                            class:text-ink-mute={verdict === 'ok'}
-                            class:text-warning={verdict === 'warn'}
-                            class:text-ink-soft={verdict === 'unused'}
+                            class="inline-flex items-center py-0.5 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide {health.verdictClass}"
                             data-testid={`verdict-chip-${stat.tool_name}`}
                             data-verdict={verdict}
                         >{verdict}</span>

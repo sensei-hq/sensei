@@ -72,3 +72,37 @@ export function fmtDuration(ms: number | null): string {
 export function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString();
 }
+
+/** A tool's kind, as every part of the Instruments screen shows it (audit
+ *  2026-10-28, item 8: coloured three times in the markup). */
+export interface ToolKindView {
+  label: string;
+  /** The Kanji `tone` prop. */
+  tone: 'accent' | 'success' | 'muted';
+  text: string;
+  /** The left-edge colour. */
+  edge: string;
+  hint: string;
+  /** The execute button's label. */
+  runLabel: string;
+}
+
+export function toolKindView(kind: 'action' | 'query' | 'other' | string): ToolKindView {
+  if (kind === 'action') return { label: 'action', tone: 'accent', text: 'text-accent', edge: 'var(--accent)', hint: 'performs an operation', runLabel: 'Run →' };
+  if (kind === 'query') return { label: 'query', tone: 'success', text: 'text-success', edge: 'var(--success)', hint: 'returns information', runLabel: 'Query →' };
+  return { label: 'call', tone: 'muted', text: 'text-ink-soft', edge: 'var(--ink-soft)', hint: 'returns information', runLabel: 'Query →' };
+}
+
+/** A recorded call's verdict (#90): used, partial, ignored, else failed or
+ *  unclassified — one glyph and colour (it was decided three times). */
+export function callVerdictView(call: { verdict: 'used' | 'partial' | 'ignored' | null; success?: boolean | null }): {
+  glyph: string;
+  text: string;
+  edge: string;
+} {
+  if (call.verdict === 'used') return { glyph: '用', text: 'text-success', edge: 'var(--success)' };
+  if (call.verdict === 'partial') return { glyph: '部', text: 'text-warning', edge: 'var(--warning)' };
+  if (call.verdict === 'ignored') return { glyph: '無', text: 'text-ink-soft', edge: 'var(--ink-soft)' };
+  return { glyph: call.success === false ? '✗' : '問', text: 'text-accent', edge: 'var(--accent)' };
+}
+

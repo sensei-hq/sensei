@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  heroCopy, initialTab, filterGroups, collapsedFor, fmtPayload, fmtDuration,
+  heroCopy, initialTab, filterGroups, collapsedFor, fmtPayload, fmtDuration, toolKindView, callVerdictView
 } from './instruments-view';
 import type { PlaygroundGroup } from './playground-groups';
 
@@ -45,5 +45,25 @@ describe('instruments view', () => {
     expect(fmtDuration(null)).toBe('—');
     expect(fmtDuration(250)).toBe('250 ms');
     expect(fmtDuration(1500)).toBe('1.50 s');
+  });
+});
+
+// Audit item 8 (2026-10-28): a tool's kind was coloured three times and a
+// call's verdict three times, in the page's markup.
+describe('toolKindView', () => {
+  it('gives each kind one label, colour and hint', () => {
+    expect(toolKindView('action')).toEqual({ label: 'action', tone: 'accent', text: 'text-accent', edge: 'var(--accent)', hint: 'performs an operation', runLabel: 'Run →' });
+    expect(toolKindView('query')).toEqual({ label: 'query', tone: 'success', text: 'text-success', edge: 'var(--success)', hint: 'returns information', runLabel: 'Query →' });
+    expect(toolKindView('other')).toEqual({ label: 'call', tone: 'muted', text: 'text-ink-soft', edge: 'var(--ink-soft)', hint: 'returns information', runLabel: 'Query →' });
+  });
+});
+
+describe('callVerdictView', () => {
+  it('gives each call verdict one glyph and colour', () => {
+    expect(callVerdictView({ verdict: 'used', success: true })).toEqual({ glyph: '用', text: 'text-success', edge: 'var(--success)' });
+    expect(callVerdictView({ verdict: 'partial', success: true })).toEqual({ glyph: '部', text: 'text-warning', edge: 'var(--warning)' });
+    expect(callVerdictView({ verdict: 'ignored', success: true })).toEqual({ glyph: '無', text: 'text-ink-soft', edge: 'var(--ink-soft)' });
+    expect(callVerdictView({ verdict: null, success: false })).toEqual({ glyph: '✗', text: 'text-accent', edge: 'var(--accent)' });
+    expect(callVerdictView({ verdict: null, success: true })).toEqual({ glyph: '問', text: 'text-accent', edge: 'var(--accent)' });
   });
 });

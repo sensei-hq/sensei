@@ -1,5 +1,6 @@
 <script lang="ts">
     import { ftrBandView } from '$lib/ftr';
+    import { toolHealthView } from '$lib/state/mcp.svelte.js';
     import { PageHeader, Screen, ScreenState } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
@@ -160,7 +161,7 @@
                             <div class="text-xs text-ink-mute truncate">{t.summary}</div>
                         </div>
                         <span class="text-right font-mono text-xs">{fmtInt(t.calls)}</span>
-                        <span class="text-right font-mono text-xs" class:text-danger={t.errors > 0}>
+                        <span class="text-right font-mono text-xs {toolHealthView(t.calls, t.errors).errorClass}">
                             {fmtInt(t.errors)}
                         </span>
                         <span class="text-right font-mono text-xs opacity-70">{fmtMs(t.avgDurationMs)}</span>
