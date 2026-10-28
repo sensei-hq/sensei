@@ -379,7 +379,7 @@ website-build:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard check-tracker-docs test-crates-fast test-app-unit test-plugin
+test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -428,6 +428,14 @@ check-tracker-docs:
 	@bash scripts/check-tracker-readonly-docs.sh --test >/dev/null || bash scripts/check-tracker-readonly-docs.sh --test
 	@bash scripts/check-tracker-readonly-docs.sh
 
+# The Jira admin script that creates and maps sensei's write-back fields
+# (spec/daemon/tracker-metrics-writeback.md W7): its self-test runs against an
+# in-memory Jira, and reads the metrics from the enum and the app, so a metric
+# added to one and not the other fails here. Instant and needs no network.
+.PHONY: check-jira-fields-script
+check-jira-fields-script:
+	@python3 -I scripts/jira-create-sensei-fields.py --self-test >/dev/null || python3 -I scripts/jira-create-sensei-fields.py --self-test
+
 # The leak guard's own self-test (#213): every rule catches its case and passes
 # the legitimate one, a hit is reported on its own line, and a message or stdin
 # hit exits non-zero. It ran only when someone remembered `--test`.
@@ -435,7 +443,7 @@ check-tracker-docs:
 check-leak-guard:
 	@bash .githooks/check-no-leaks.sh --test >/dev/null || bash .githooks/check-no-leaks.sh --test
 
-test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard check-tracker-docs test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
+test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard check-tracker-docs check-jira-fields-script test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
 
 test-crates:
 	cargo test --workspace

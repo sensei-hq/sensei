@@ -359,6 +359,13 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
 
 ### W7 · Field mapping
 
+sensei never creates a Jira field: that, and putting it on the board's screens, needs Jira
+admin rights. A Jira admin can run `scripts/jira-create-sensei-fields.py` once per board.
+It finds or creates one Number field per metric ("sensei <label>", with a global
+context), adds the fields to the edit and view screens of the board's company-managed
+projects, and with `--sensei` saves the mapping through the PUT below. A field missing
+from the edit screen is refused with a 400, which is `field_invalid` (W4).
+
 - `PUT /api/workspaces/{id}/trackers/{tracker}/fields` with body
   `{"fields": [{"metric": "...", "field_ref": "..."}…]}` **replaces** the mapped set, and
   `[]` clears it. The body must be JSON; a non-JSON body gets axum's own 400/415. It's
