@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import RelayList from './RelayList.svelte';
 import { relayInboxState } from './relay-inbox-state.svelte';
 import { relayInboxMock } from './relay-inbox.mock';
+import { RelayNotify } from './relay-notify.svelte';
 
 // #104: the rail rendered a relay outage as "Nothing in flight." and showed nothing
 // while it loaded. Each load outcome now has its own state on screen.
@@ -53,5 +54,17 @@ describe('RelayList', () => {
 		const { container, getByText } = render(RelayList);
 		expect(getByText('Nothing in flight.')).toBeTruthy();
 		expect(container.querySelector('[data-inbox-partial]')).toBeNull();
+	});
+
+	// The user (2026-10-28): "Notify me" goes into the relay inbox header.
+	it('shows "Notify me" in the header, for the dōjōs the inbox spans', async () => {
+		const subscribe = async () => ({ ok: true as const, id: 's' });
+		const notify = new RelayNotify({ supported: () => true, permission: () => 'default', subscribe, postPrefs: async () => {} });
+		relayInboxState.loaded(outcome({}));
+		const { container, getByRole } = render(RelayList, { notify, tenantKeys: ['github.com/acme'] });
+		expect(container.querySelector('[data-relay-notify="button"]')).toBeTruthy();
+		getByRole('button', { name: /Notify me/ }).click();
+		await new Promise((r) => setTimeout(r, 0));
+		expect(container.querySelector('[data-relay-notify="on"]')?.textContent).toContain('Notifications on');
 	});
 });
