@@ -31,3 +31,61 @@ export function ftrReadLabel(
 ): string {
   return read?.error ? FTR_UNAVAILABLE : ftrPctLabel(read?.data?.ftr14d);
 }
+
+// ── Bands (audit 2026-10-28, item 6) ─────────────────────────────────────────
+// One banding for every screen. The middle band is neutral: accent is the
+// "needs you" colour, and an ok rate does not need you. No data is faint —
+// absence is not a red signal, and not the same grey as "ok".
+
+/** At or above: good. */
+export const FTR_GOOD = 0.8;
+/** At or above (below good): ok. Below: low. */
+export const FTR_OK = 0.6;
+
+export type FtrBand = 'good' | 'ok' | 'low' | 'none';
+
+export function ftrBand(rate: number | null | undefined): FtrBand {
+  if (rate == null) return 'none';
+  if (rate >= FTR_GOOD) return 'good';
+  if (rate >= FTR_OK) return 'ok';
+  return 'low';
+}
+
+export interface FtrBandView {
+  band: FtrBand;
+  /** Fill for a status dot. */
+  dot: string;
+  /** Text colour for the rate. */
+  text: string;
+  label: string;
+}
+
+const BAND_VIEWS: Record<FtrBand, Omit<FtrBandView, 'band'>> = {
+  good: { dot: 'bg-success', text: 'text-success', label: 'healthy' },
+  ok: { dot: 'bg-ink-soft', text: 'text-ink-soft', label: 'ok' },
+  low: { dot: 'bg-warning', text: 'text-warning', label: 'needs attention' },
+  none: { dot: 'bg-ink-faint', text: 'text-ink-faint', label: 'no ftr data' }
+};
+
+export function ftrBandView(rate: number | null | undefined): FtrBandView {
+  const band = ftrBand(rate);
+  return { band, ...BAND_VIEWS[band] };
+}
+
+/** One session's first-try standing, whether its FTR is a boolean or a rate
+ *  (1 = first try). Unscored is faint, never a warning. */
+export interface SessionFtrView {
+  firstTry: boolean | null;
+  tone: 'success' | 'warn' | 'none';
+  dot: string;
+  text: string;
+  label: string;
+}
+
+export function sessionFtrView(ftr: boolean | number | null | undefined): SessionFtrView {
+  if (ftr == null) return { firstTry: null, tone: 'none', dot: 'bg-ink-faint', text: 'text-ink-faint', label: FTR_NONE };
+  const firstTry = typeof ftr === 'boolean' ? ftr : ftr >= 1;
+  return firstTry
+    ? { firstTry, tone: 'success', dot: 'bg-success', text: 'text-success', label: 'first try' }
+    : { firstTry, tone: 'warn', dot: 'bg-warning', text: 'text-warning', label: 'rework' };
+}

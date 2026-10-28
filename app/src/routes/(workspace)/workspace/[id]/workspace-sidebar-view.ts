@@ -2,7 +2,7 @@
 // the section model, the active-route test, and the health readout formatting
 // are unit-testable without mounting (the component itself only reads `page`
 // and renders these).
-import { ftrPctLabel } from '$lib/ftr.js';
+import { ftrPctLabel, ftrBandView, type FtrBandView } from '$lib/ftr.js';
 import { KANJI_ICONS } from '$lib/glyph-vocabulary';
 import { resolveActiveHref } from '$lib/rail';
 
@@ -60,15 +60,11 @@ export function isSectionActive(pathname: string, workspaceId: string, sectionId
  *  whether it matches the daemon after a deploy. */
 export const APP_VERSION: string = __SENSEI_APP_VERSION__;
 
-export type FtrBand = 'success' | 'accent' | 'warning' | 'ink-faint';
-
-/** FTR-band token for the identity status dot + health tint. ≥0.8 success,
- *  ≥0.6 accent, <0.6 warning, null (no data) ink-faint — never a fabricated band. */
-export function ftrBand(ftr14d: number | null): FtrBand {
-    if (ftr14d == null) return 'ink-faint';
-    if (ftr14d >= 0.8) return 'success';
-    if (ftr14d >= 0.6) return 'accent';
-    return 'warning';
+/** The sidebar's FTR headline: the shared band (lib/ftr) for the dot, and the
+ *  value in ink — warning only when the rate is low. */
+export function ftrHeadline(ftr14d: number | null): FtrBandView & { valueClass: string } {
+    const v = ftrBandView(ftr14d);
+    return { ...v, valueClass: v.band === 'low' ? v.text : 'text-ink' };
 }
 
 /** FTR delta chip vs the prior 14d window: "+N pt" / "−N pt" / "steady", or "—"

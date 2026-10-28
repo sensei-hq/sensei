@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { sessionFtrView } from '$lib/ftr';
     import { untrack } from "svelte";
     import { page } from "$app/state";
     import { appState } from "$lib/appstate.svelte.js";
@@ -570,14 +571,9 @@
                                         {session.id.substring(0, 8)}
                                     </span>
                                     {#if session.ftr != null}
-                                        {@const isFtr = session.ftr >= 1}
-                                        <span
-                                            class="text-xs uppercase tracking-wide"
-                                            class:text-success={isFtr}
-                                            class:text-warning={!isFtr}
-                                        >
-                                            {isFtr ? 'ftr' : `${((1 - (session.ftr ?? 0)) * 100).toFixed(0)}%c`}
-                                        </span>
+                                        <!-- The shared session view (lib/ftr), as Today and Sessions. -->
+                                        {@const ftr = sessionFtrView(session.ftr)}
+                                        <span class="text-xs uppercase tracking-wide {ftr.text}">{ftr.label}</span>
                                     {/if}
                                 </div>
                                 <div class="text-xs text-ink-mute leading-normal mt-1 line-clamp-2">

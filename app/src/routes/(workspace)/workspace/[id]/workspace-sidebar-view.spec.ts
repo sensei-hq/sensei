@@ -3,9 +3,9 @@ import {
     SECTIONS,
     isSectionActive,
     healthRows,
-    ftrBand,
     ftrDelta,
     ftrSparkTone,
+    ftrHeadline,
 } from './workspace-sidebar-view.js';
 
 describe('workspace-sidebar-view', () => {
@@ -74,15 +74,6 @@ describe('workspace-sidebar-view', () => {
         });
     });
 
-    describe('ftrBand', () => {
-        it('bands FTR by threshold, and null → ink-faint (no fabricated band)', () => {
-            expect(ftrBand(null)).toBe('ink-faint');
-            expect(ftrBand(0.85)).toBe('success');
-            expect(ftrBand(0.7)).toBe('accent');
-            expect(ftrBand(0.4)).toBe('warning');
-        });
-    });
-
     describe('ftrDelta', () => {
         it('renders the point delta, steady, or an em dash when a window is absent', () => {
             expect(ftrDelta(0.72, 0.6)).toBe('+12 pt');
@@ -100,5 +91,16 @@ describe('workspace-sidebar-view', () => {
             expect(ftrSparkTone(0.6, 0.6)).toBe('neutral');
             expect(ftrSparkTone(0.6, null)).toBe('neutral');
         });
+    });
+});
+
+// Audit item 6 (2026-10-28): the sidebar bands FTR as every screen does (lib/ftr);
+// its headline is ink, warning only when low — no accent middle band.
+describe('ftrHeadline', () => {
+    it('is the shared band; the value is ink unless the rate is low', () => {
+        expect(ftrHeadline(0.85)).toMatchObject({ dot: 'bg-success', valueClass: 'text-ink' });
+        expect(ftrHeadline(0.7)).toMatchObject({ dot: 'bg-ink-soft', valueClass: 'text-ink' });
+        expect(ftrHeadline(0.4)).toMatchObject({ dot: 'bg-warning', valueClass: 'text-warning' });
+        expect(ftrHeadline(null)).toMatchObject({ dot: 'bg-ink-faint', band: 'none' });
     });
 });

@@ -8,6 +8,7 @@
   // (multi-repo workspaces); it stays dormant on the multi-workspace observatory
   // view and on single-folder workspaces.
   import type { EnrichedSession, QualityTone } from '$lib/sessions-digest.js';
+  import { sessionFtrView } from '$lib/ftr';
 
   interface Props {
     session: EnrichedSession;
@@ -23,13 +24,9 @@
     neutral: 'bg-ink-soft',
   };
 
-  // FTR badge agrees with the underlying `ftr` column (spec done-gate): a
-  // green ✓ only when ftr is truthy, an amber marker when explicitly false,
-  // a faint dash when the session isn't scored yet.
-  const ftrClass = $derived(
-    session.ftr === true ? 'text-success' : session.ftr === false ? 'text-warning' : 'text-ink-faint',
-  );
-  const ftrLabel = $derived(session.ftr === true ? '✓ FTR' : session.ftr === false ? 'no FTR' : '—');
+  // The shared session view (lib/ftr): the same words and colours as Today and
+  // Instruments; an unscored session is a faint dash.
+  const ftr = $derived(sessionFtrView(session.ftr));
 
   const correctionsLabel = $derived(
     session.corrections === 0 ? 'first-try' : `${session.corrections}× rework`,
@@ -76,7 +73,7 @@
       title={tokensTitle}
     >{session.tokensLabel}</span>
     <span class="text-ink-mute w-20 text-right">{correctionsLabel}</span>
-    <span class="{ftrClass} w-16 text-right uppercase tracking-wide">{ftrLabel}</span>
+    <span class="{ftr.text} w-16 text-right uppercase tracking-wide">{ftr.label}</span>
     <span class="text-ink-mute w-20 text-right capitalize">{session.outcome}</span>
   </span>
 </button>

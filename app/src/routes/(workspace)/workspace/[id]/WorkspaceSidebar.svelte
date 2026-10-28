@@ -9,11 +9,10 @@
     import {
         buildWorkspaceNav,
         workspaceActiveHref,
-        ftrBand,
         ftrDelta,
         ftrSparkTone,
+        ftrHeadline,
         APP_VERSION,
-        type FtrBand,
     } from './workspace-sidebar-view.js';
     import { workspaceVisibilityLabel } from './overview/overview-view.svelte.js';
 
@@ -49,16 +48,10 @@
 
     // FTR leads the Health readout below (a spark + delta), matching the mock; the
     // identity slot carries a small band-coloured status dot.
-    const band = $derived(ftrBand(ftr14d));
+    // The FTR band is the shared one (lib/ftr) — the same on every screen.
+    const band = $derived(ftrHeadline(ftr14d));
     const delta = $derived(ftrDelta(ftr14d, ftr14dPrev));
     const sparkTone = $derived(ftrSparkTone(ftr14d, ftr14dPrev));
-    // Static class maps so UnoCSS extracts the tokens (never a dynamic `bg-{band}`).
-    const DOT: Record<FtrBand, string> = {
-        success: 'bg-success',
-        accent: 'bg-accent',
-        warning: 'bg-warning',
-        'ink-faint': 'bg-ink-faint',
-    };
 </script>
 
 <Rail component="workspace-sidebar" label="Workspace sections" {items} value={activeHref} {glyphs}>
@@ -75,8 +68,8 @@
                 <WorkspaceGlyph {icon} />
                 <span
                     data-workspace-status
-                    data-band={band}
-                    class="w-2 h-2 shrink-0 rounded-full {DOT[band]}"
+                    data-band={band.band}
+                    class="w-2 h-2 shrink-0 rounded-full {band.dot}"
                     title="FTR band"
                 ></span>
                 <span
@@ -102,7 +95,7 @@
             <div class="flex items-end justify-between gap-2">
                 <span
                     data-ftr-value
-                    class="display text-2xl font-light leading-none tabular-nums {band === 'warning' ? 'text-warning' : 'text-ink'}"
+                    class="display text-2xl font-light leading-none tabular-nums {band.valueClass}"
                     title={ftrError}
                     >{ftrReadLabel({ data: { ftr14d }, error: ftrError })}</span
                 >

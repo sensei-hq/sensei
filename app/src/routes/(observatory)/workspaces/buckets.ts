@@ -1,3 +1,4 @@
+import { ftrBand, ftrBandView } from '$lib/ftr';
 import { KIND_ICONS } from '$lib/glyph-vocabulary';
 import type { GlyphMode } from '$lib/glyphs';
 import type { WorkspaceListItem } from '$lib/types.js';
@@ -115,7 +116,15 @@ export function isWarning(
   sessions7d: number,
 ): boolean {
   if (sessions7d <= 0) return false;
-  return signals.open_drift_count > 0 || signals.ftr_7d < 0.6;
+  return signals.open_drift_count > 0 || ftrBand(signals.ftr_7d) === 'low';
+}
+
+/** The dot beside a workspace: the shared FTR band (lib/ftr), unless a live
+ *  warning wins. */
+export function workspaceDotView(ftr: number | null, warn: boolean): { dot: string; label: string } {
+  if (warn) return { dot: 'bg-warning', label: 'needs attention' };
+  const v = ftrBandView(ftr);
+  return { dot: v.dot, label: v.label };
 }
 
 /** The default hero/list glyph — 場 (place) — when nothing else is known.

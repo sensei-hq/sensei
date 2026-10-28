@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { ftrBandView } from '$lib/ftr';
     import { PageHeader, Screen, ScreenState } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
@@ -163,9 +164,8 @@
                             {fmtInt(t.errors)}
                         </span>
                         <span class="text-right font-mono text-xs opacity-70">{fmtMs(t.avgDurationMs)}</span>
-                        <span class="text-right font-mono text-xs"
-                            class:text-success={t.ftr != null && t.ftr >= 0.8}
-                            class:text-warning={t.ftr != null && t.ftr < 0.5}>
+                        <!-- The shared FTR band (lib/ftr): 0.8 / 0.6, as every screen. -->
+                        <span class="text-right font-mono text-xs {ftrBandView(t.ftr).text}">
                             {fmtPct(t.ftr)}
                         </span>
                         <span class="text-right text-xs text-ink-mute">

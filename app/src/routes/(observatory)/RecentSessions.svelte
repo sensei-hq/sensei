@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { sessionFtrView } from '$lib/ftr';
   interface Session {
     id: string;
     task: string;
@@ -54,7 +55,7 @@
     <div class="flex flex-col">
       {#each sessions as s (s.id)}
         {@const mins = durationMinutes(s)}
-        {@const isSuccess = (s.ftr ?? 0) >= 1}
+        {@const ftr = sessionFtrView(s.ftr)}
         <a
           data-session-row={s.id}
           href={`/sessions#${s.id}`}
@@ -62,10 +63,8 @@
         >
           <span
             data-ftr-dot
-            data-tone={isSuccess ? 'success' : 'warn'}
-            class="w-2 h-2 rounded-full"
-            class:bg-success={isSuccess}
-            class:bg-warning={!isSuccess}
+            data-tone={ftr.tone}
+            class="w-2 h-2 rounded-full {ftr.dot}"
           ></span>
           <span class="font-mono text-xs text-ink-mute truncate">{s.workspace}</span>
           <span class="text-sm text-ink-soft truncate">{s.task}</span>

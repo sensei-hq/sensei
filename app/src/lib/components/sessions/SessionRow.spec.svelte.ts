@@ -50,17 +50,19 @@ describe('SessionRow — quality dot', () => {
 });
 
 describe('SessionRow — FTR badge agrees with the ftr column', () => {
-  it('shows a green ✓ FTR only when ftr is true', () => {
+  // The shared session view (lib/ftr sessionFtrView) — the same words and colours
+  // as Today and Instruments (audit 2026-10-28, item 6).
+  it('shows a green "first try" only when ftr is true', () => {
     const m = mount({ ftr: true });
     const badge = row(m).querySelector('.text-success');
-    expect(badge?.textContent).toContain('✓ FTR');
+    expect(badge?.textContent).toContain('first try');
   });
 
-  it('shows an amber "no FTR" when ftr is explicitly false', () => {
+  it('shows an amber "rework" when ftr is explicitly false', () => {
     const m = mount({ ftr: false, quality: 'bad' });
     const text = row(m).textContent ?? '';
-    expect(text).toContain('no FTR');
-    expect(text).not.toContain('✓ FTR');
+    expect(text).toContain('rework');
+    expect(text).not.toContain('first try');
   });
 
   it('shows a faint dash when the session is not scored yet', () => {
