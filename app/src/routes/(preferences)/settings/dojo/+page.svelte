@@ -159,7 +159,7 @@
     <div class="px-4 pt-3 pb-1 text-xs uppercase tracking-wide text-ink-soft" data-day={d.day ?? ''}>
       {d.day ?? 'never'}
     </div>
-    {#each d.own as item (item.row.entity + item.row.direction)}
+    {#each d.own as item (item.row.entity_key + item.row.entity + item.row.direction)}
       <div class="px-4 py-2">{@render syncLine(item)}</div>
     {/each}
     {#each d.repositories as r (r.name)}

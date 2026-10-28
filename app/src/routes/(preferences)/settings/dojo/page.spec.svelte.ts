@@ -52,4 +52,19 @@ describe('Settings · Dōjō', () => {
     // One sign-in notice for the screen, not one per identity.
     expect(m.container.querySelectorAll('[data-sign-in-pending]').length).toBeLessThanOrEqual(1);
   });
+
+  // An identity paired with two dōjōs has two sync plans: the same entity and direction,
+  // a different entity_key. Keyed by entity + direction alone, Svelte threw on the
+  // duplicate key and the window froze on the page it came from (live data, 2026-10-28).
+  it('shows each of an identity’s own entities once per key, two dōjōs’ sync plans included', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => json(url.includes('/api/auth/personas') ? personas : {})));
+    await personaList.load();
+    const plans = [
+      row({ entity: 'dojo_sync_plan', entity_key: 'dojo-a', direction: 'pull', persona: 'jerrythomas' }),
+      row({ entity: 'dojo_sync_plan', entity_key: 'dojo-b', direction: 'pull', persona: 'jerrythomas' }),
+    ];
+    const m = mountComponent(Page, { data: { sync: { count: 2, counts: { synced: 2 }, entities: plans }, error: null } });
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.querySelectorAll('[data-identity="jerrythomas"] [data-entity="dojo_sync_plan"]').length).toBe(2));
+  });
 });
