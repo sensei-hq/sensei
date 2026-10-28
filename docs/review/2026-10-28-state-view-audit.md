@@ -42,7 +42,7 @@ libraries, dōjō connections and sharing, share review, every `+page.ts` loader
 | 10 | 0b883bf2 | lib/traceability: driftDotStatus, DriftScan |
 | 11 | c3be0afd | componentStatusView |
 | 12 | 731a2821 | assistantViewOf / assistantView, configuredAssistants, watchAssistantEvents |
-| 13 | 7f885dde, 1b5255c6, cbf6dfde | saveRouterKey; ChainRoles + assignChainRoles; UpgradeRun (a run that cannot start is a failure; no simulated progress). RelayNotifyToggle is rendered nowhere — wire it into the relay inbox or remove it (user's call) |
+| 13 | 7f885dde, 1b5255c6, cbf6dfde, 5206abfb | saveRouterKey; ChainRoles + assignChainRoles; UpgradeRun (a run that cannot start is a failure; no simulated progress); RelayNotify — "Notify me" in the relay inbox header, for every dōjō the inbox spans |
 | 14 | 7b7fe532 | lib/clock — a ticking, ref-counted clock |
-| 15 | 241a1c2f, 4a7db153 | lib/format (fmtMs, fmtCount; "1 step"); scan progressOf. Open (single-site, low): setup Done summary sentences, RecentSessions time formats, local tone ternaries (upgrades, settings metrics, insights), the metric grain label, TrendChart, dōjō ScrSharing labels |
+| 15 | 241a1c2f, 4a7db153, fcda410f, 1df91a79, cd7a7daa4 | lib/format; scan progressOf; one session-duration format (compactDuration, days); doneSummary; KIND_META tone, reasonKindClass, columnToneClass; grainUnit, dayTone, rollingFtr; dōjō sharing labels. All 15 done. |
 
