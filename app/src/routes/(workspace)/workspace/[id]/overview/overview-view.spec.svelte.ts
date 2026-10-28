@@ -210,7 +210,7 @@ describe('sessionRows', () => {
 
   it('tones the time column by FTR', () => {
     expect(sessionRows([session({ ftr: true })], now)[0].timeToneClass).toBe('text-success');
-    expect(sessionRows([session({ ftr: false })], now)[0].timeToneClass).toBe('text-ink-mute');
+    expect(sessionRows([session({ ftr: false })], now)[0].timeToneClass).toBe('text-ink-soft');
   });
 
   it('passes the folder role through, including null (no chip)', () => {

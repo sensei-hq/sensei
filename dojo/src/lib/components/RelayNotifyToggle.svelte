@@ -82,7 +82,7 @@
 </script>
 
 {#if toggleState === 'enabled'}
-	<span class="text-ink-mute text-xs" style="white-space: nowrap">
+	<span class="text-ink-soft text-xs" style="white-space: nowrap">
 		<KanjiToken char="鈴" size="inherit" toneClass="" class="text-accent text-xs" />
 		{status || 'Notifications on'}
 	</span>

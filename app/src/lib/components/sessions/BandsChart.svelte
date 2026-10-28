@@ -43,14 +43,14 @@
 <svg viewBox={`0 0 ${width} ${height}`} width="100%" class="block" data-component="bands-chart">
   {#each rows as r, i (r.day)}
     {@const cy = padT + i * rowH + rowH / 2}
-    <text x={padL - 10} y={cy + 3} font-size="10.5" fill="var(--ink-soft)" text-anchor="end">
+    <text x={padL - 10} y={cy + 3} font-size="10.5" fill="var(--ink-mute)" text-anchor="end">
       {r.label}
     </text>
     <rect x={padL} y={cy - 9} width={innerW} height="18" rx="3" fill="var(--paper-mute)" opacity="0.5" />
     {#each offsets(r) as seg, s (s)}
       <rect x={seg.x} y={cy - 9} width={seg.w} height="18" rx="2" fill={seg.color} opacity="0.85" />
     {/each}
-    <text x={padL + innerW + 10} y={cy + 3} font-size="10" fill="var(--ink-soft)" class="font-mono">
+    <text x={padL + innerW + 10} y={cy + 3} font-size="10" fill="var(--ink-mute)" class="font-mono">
       {r.total}× · {r.chartedMins}m
     </text>
   {/each}

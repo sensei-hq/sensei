@@ -56,7 +56,7 @@
       oninput={(e) => set((e.currentTarget as HTMLInputElement).value)}
     />
     {#if help}
-      <p id="{id}-help" class="m-0 text-xs text-ink-soft">{help}</p>
+      <p id="{id}-help" class="m-0 text-xs text-ink-mute">{help}</p>
     {/if}
   </div>
 {/snippet}
@@ -74,7 +74,7 @@
 <section data-screen="integrations" class="flex flex-col">
 
   <div class="flex max-w-[640px] flex-col gap-5 px-6 py-6">
-    <p role="status" aria-live="polite" class="m-0 min-h-[1lh] text-sm text-ink-soft">{screen.statusText}</p>
+    <p role="status" aria-live="polite" class="m-0 min-h-[1lh] text-sm text-ink-mute">{screen.statusText}</p>
 
     {#if screen.alert}
       <div
@@ -100,7 +100,7 @@
     {/if}
 
     {#if screen.view === 'loading'}
-      <p class="m-0 text-sm text-ink-soft">Reading the connection…</p>
+      <p class="m-0 text-sm text-ink-mute">Reading the connection…</p>
     {:else if screen.view === 'daemon_error'}
       <div data-view="daemon_error" class="flex flex-col gap-3 rounded-md border border-paper-edge bg-paper-soft p-4">
         <p class="m-0 text-sm text-danger">{screen.loadError}</p>
@@ -115,7 +115,7 @@
           {#each group.trackers as tracker (tracker.id)}
             <div data-tracker={tracker.id} class="flex flex-col gap-3 rounded-lg border border-paper-edge bg-paper-soft p-4">
               <p class="m-0 text-sm text-ink">{screen.cardTitle(tracker)}</p>
-              <p class="m-0 flex items-center gap-2 text-xs text-ink-mute" data-status={tracker.status}>
+              <p class="m-0 flex items-center gap-2 text-xs text-ink-soft" data-status={tracker.status}>
                 <span
                   aria-hidden="true"
                   class="inline-block size-2 rounded-full"
@@ -188,7 +188,7 @@
                   checked={screen.level === l.level}
                   onchange={() => (screen.level = l.level)}
                 />
-                <span>{l.label} <span class="text-xs text-ink-soft">· {l.help}</span></span>
+                <span>{l.label} <span class="text-xs text-ink-mute">· {l.help}</span></span>
               </label>
             {/each}
           </fieldset>
@@ -218,7 +218,7 @@
           <div class="flex flex-col gap-3">
             <button
               type="button"
-              class="self-start bg-transparent p-0 text-xs text-ink-soft underline"
+              class="self-start bg-transparent p-0 text-xs text-ink-mute underline"
               aria-expanded={screen.advanced}
               aria-controls="tracker-advanced"
               onclick={() => (screen.advanced = !screen.advanced)}
@@ -265,7 +265,7 @@
             onclick={(e) => external(e, CREATE_TOKEN_URL)}>Create an API token</a
           >
 
-          <p class="m-0 text-xs text-ink-soft">
+          <p class="m-0 text-xs text-ink-mute">
             Your token is stored in your system keychain, not in sensei’s database.
           </p>
 
@@ -308,7 +308,7 @@
   <h2 id="disconnect-title" class="m-0 font-heading text-base text-ink">
     Disconnect board #{screen.confirmingDisconnect?.board_ref}?
   </h2>
-  <p class="m-0 text-sm text-ink-soft">
+  <p class="m-0 text-sm text-ink-mute">
     This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and Jira itself is not changed.
   </p>
   <div class="flex justify-end gap-2">

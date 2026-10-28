@@ -4,7 +4,7 @@
 </script>
 
 {#if !d}
-    <p class="text-sm text-ink-mute">Select a memory to view details.</p>
+    <p class="text-sm text-ink-soft">Select a memory to view details.</p>
 {:else}
     {@const usage = memoryUsageStrip(d)}
     <header class="flex flex-wrap gap-1 mb-2">
@@ -24,22 +24,22 @@
 
     {#if d.memory.impact}
         <section class="mt-4">
-            <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-1">Impact</h4>
+            <h4 class="text-xs uppercase tracking-wide text-ink-soft m-0 mb-1">Impact</h4>
             <p class="text-sm text-ink m-0">{d.memory.impact}</p>
         </section>
     {/if}
 
     <section class="mt-4">
-        <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-1">Usage</h4>
+        <h4 class="text-xs uppercase tracking-wide text-ink-soft m-0 mb-1">Usage</h4>
         <p data-testid="usage-strip" class="text-sm text-ink m-0">
             <span data-testid="usage-loaded">{usage.loaded}</span>
             <span class="text-ink-faint"> · </span>
             <span data-testid="usage-followed">{usage.followed}</span>
             <span class="text-ink-faint"> · </span>
             <span data-testid="usage-skipped">{usage.skipped}</span>
-            <span class="text-ink-mute"> {usage.window}</span>
+            <span class="text-ink-soft"> {usage.window}</span>
         </p>
-        <p data-testid="usage-lifetime" class="text-xs text-ink-mute m-0 mt-1">
+        <p data-testid="usage-lifetime" class="text-xs text-ink-soft m-0 mt-1">
             strength {d.memory.strength.toFixed(1)} / 5
             · applied {d.memory.applied_count}× · violated {d.memory.violated_count}× all-time
         </p>
@@ -47,7 +47,7 @@
 
     {#if d.evidence.length}
         <section class="mt-4">
-            <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-1">Evidence</h4>
+            <h4 class="text-xs uppercase tracking-wide text-ink-soft m-0 mb-1">Evidence</h4>
             <ul class="pl-5 m-0 text-sm text-ink">
                 {#each d.evidence as e, i (i)}
                     <li class="my-1">
@@ -61,7 +61,7 @@
 
     {#if d.examples.length}
         <section class="mt-4">
-            <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-1">Examples</h4>
+            <h4 class="text-xs uppercase tracking-wide text-ink-soft m-0 mb-1">Examples</h4>
             <ul class="pl-5 m-0 text-sm text-ink">
                 {#each d.examples as ex, i (i)}
                     <li class="my-1">
@@ -80,7 +80,7 @@
 
     {#if d.outcomes.length}
         <section class="mt-4" data-testid="detail-outcomes">
-            <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-1">Recent outcomes</h4>
+            <h4 class="text-xs uppercase tracking-wide text-ink-soft m-0 mb-1">Recent outcomes</h4>
             <ul class="pl-5 m-0 text-sm text-ink">
                 {#each d.outcomes as o, i (i)}
                     <li class="my-1">
@@ -91,7 +91,7 @@
                                     ? 'bg-danger-soft text-danger'
                                     : 'bg-paper-mute text-ink'}"
                         >{o.outcome}</span>
-                        <time class="text-xs text-ink-mute">{new Date(o.recorded_at).toLocaleString()}</time>
+                        <time class="text-xs text-ink-soft">{new Date(o.recorded_at).toLocaleString()}</time>
                         {#if o.context}— {o.context}{/if}
                     </li>
                 {/each}

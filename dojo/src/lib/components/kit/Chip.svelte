@@ -10,7 +10,7 @@
 	let {
 		kanji,
 		icon,
-		toneClass = 'text-ink-mute',
+		toneClass = 'text-ink-soft',
 		softClass = 'bg-paper-mute',
 		edgeClass = 'border-transparent',
 		mono = false,

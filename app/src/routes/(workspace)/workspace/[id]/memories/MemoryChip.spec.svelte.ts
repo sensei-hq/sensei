@@ -34,7 +34,7 @@ describe('MemoryChip', () => {
     it('uses a muted paper/ink pair for the neutral tone', () => {
         const el = mount('neutral', 'generalised: no');
         expect(el.className).toContain('bg-paper-mute');
-        expect(el.className).toContain('text-ink-mute');
+        expect(el.className).toContain('text-ink-soft');
     });
 
     it('uses the accent token pair for the accent tone', () => {

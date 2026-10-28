@@ -32,7 +32,7 @@
 	{#if !online}
 		<!-- Offline — a soft warning; guidance is held locally until reconnect. -->
 		<div
-			class="bg-warning-soft border-warning-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"
+			class="bg-warning-soft border-warning-edge text-ink-mute flex items-center gap-2 rounded-xl border text-sm"
 			style="padding: 12px 16px; margin-top: 16px"
 		>
 			<KanjiToken char="検" size="inherit" toneClass="" class="text-warning" />
@@ -43,13 +43,13 @@
 				{/if}
 			</span>
 			{#if note}
-				<span class="mono text-ink-mute text-xs">{note}</span>
+				<span class="mono text-ink-soft text-xs">{note}</span>
 			{/if}
 		</div>
 	{:else}
 		<!-- Online with work waiting — offer to send it. -->
 		<div
-			class="bg-warning-soft border-warning-edge text-ink-soft flex flex-wrap items-center gap-2 rounded-xl border text-sm"
+			class="bg-warning-soft border-warning-edge text-ink-mute flex flex-wrap items-center gap-2 rounded-xl border text-sm"
 			style="padding: 12px 16px; margin-top: 16px"
 		>
 			<KanjiToken char="検" size="inherit" toneClass="" class="text-warning" />
@@ -59,7 +59,7 @@
 					{queued} change{queued === 1 ? '' : 's'} still queued.
 				{/if}
 				{#if note}
-					<span class="mono text-ink-mute text-xs">{note}</span>
+					<span class="mono text-ink-soft text-xs">{note}</span>
 				{/if}
 			</span>
 			{#if queued > 0}

@@ -23,7 +23,7 @@
   <Kanji char={insight.kanji} size="inherit" tone="inherit" class="text-xl w-6 leading-none {tone.glyph}" />
   <div>
     <p class="m-0 mb-1"><Eyebrow>{insight.label}</Eyebrow></p>
-    <p class="text-sm text-ink-mute leading-snug m-0">{insight.text}</p>
+    <p class="text-sm text-ink-soft leading-snug m-0">{insight.text}</p>
   </div>
   <span data-insight-tag class="font-mono text-xs px-2 py-1 rounded-sm whitespace-nowrap {tone.tag}">
     {insight.tag}

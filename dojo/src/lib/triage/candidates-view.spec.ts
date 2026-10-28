@@ -45,9 +45,9 @@ describe('impactTone — token classes for the impact chip', () => {
 	});
 
 	it('falls back to a neutral tone for normal/low/unknown', () => {
-		expect(impactTone('normal').text).toBe('text-ink-mute');
-		expect(impactTone('low').text).toBe('text-ink-mute');
-		expect(impactTone('whatever').text).toBe('text-ink-mute');
+		expect(impactTone('normal').text).toBe('text-ink-soft');
+		expect(impactTone('low').text).toBe('text-ink-soft');
+		expect(impactTone('whatever').text).toBe('text-ink-soft');
 	});
 });
 

@@ -67,20 +67,20 @@
     accent: 'text-accent',
     success: 'text-success',
     warning: 'text-warning',
-    'ink-soft': 'text-ink-soft',
     'ink-mute': 'text-ink-mute',
+    'ink-soft': 'text-ink-soft',
   };
   const toneVar: Record<Tone, string> = {
     accent: 'var(--accent)',
     success: 'var(--success)',
     warning: 'var(--warning)',
-    'ink-soft': 'var(--ink-soft)',
     'ink-mute': 'var(--ink-mute)',
+    'ink-soft': 'var(--ink-soft)',
   };
   const priorityTone: Record<'P0' | 'P1' | 'P2', Tone> = {
     P0: 'accent',
     P1: 'warning',
-    P2: 'ink-mute',
+    P2: 'ink-soft',
   };
 
   const privacyItems = [
@@ -415,16 +415,16 @@
 {#snippet heroBriefCard(h: HeroBrief)}
   <div class="hero-card w-full py-12 px-16 bg-paper-soft border border-paper-edge rounded-lg shadow-lg">
     <div class="mb-6 flex items-center justify-between">
-      <span class="mono text-xs text-ink-mute">{h.meta}</span>
+      <span class="mono text-xs text-ink-soft">{h.meta}</span>
       <span class="surf-eyebrow text-xs text-ink-faint font-semibold">{h.metaRight}</span>
     </div>
 
     <div class="hero-focal gap-8 items-start">
       <div class="kanji text-accent hero-focal-kanji">{h.focalKanji}</div>
       <div>
-        <div class="surf-eyebrow text-xs text-ink-mute mb-2">{h.eyebrow}</div>
+        <div class="surf-eyebrow text-xs text-ink-soft mb-2">{h.eyebrow}</div>
         <div class="display text-2xl font-light text-ink hero-headline">{h.headline}</div>
-        <p class="mt-3 mb-4 text-base text-ink-soft hero-lead">
+        <p class="mt-3 mb-4 text-base text-ink-mute hero-lead">
           {h.leadBefore}<span class="mono text-sm">{h.leadCode}</span>{h.leadAfter}
         </p>
         <div class="gap-4 flex items-center flex-wrap">
@@ -445,8 +445,8 @@
           <div class="flex items-start gap-2">
             <span class="kanji text-base hero-sec-kanji {toneText[s.tone]}">{s.kanji}</span>
             <div class="min-w-0">
-              <div class="surf-eyebrow text-xs text-ink-mute">{s.label}</div>
-              <div class="mt-1 text-sm text-ink-soft">{s.text}</div>
+              <div class="surf-eyebrow text-xs text-ink-soft">{s.label}</div>
+              <div class="mt-1 text-sm text-ink-mute">{s.text}</div>
               <span class="mono text-xs {toneText[s.tone]}">{s.tag}</span>
             </div>
           </div>
@@ -466,18 +466,18 @@
           <span class="kanji text-accent text-2xl surf-id-kanji">{s.kanji}</span>
           <div class="gap-1 flex flex-col">
             <span class="display font-normal text-2xl surf-name">{s.name}</span>
-            <span class="surf-eyebrow text-xs text-ink-mute font-semibold">{s.role}</span>
+            <span class="surf-eyebrow text-xs text-ink-soft font-semibold">{s.role}</span>
           </div>
         </div>
         <h3 class="display m-0 font-light text-ink text-xl surf-headline">{s.headline}</h3>
       </div>
       <div>
-        <p class="display mt-0 mb-4 text-base text-ink-soft font-light surf-lead">
+        <p class="display mt-0 mb-4 text-base text-ink-mute font-light surf-lead">
           {#each s.lead as seg (seg.t)}{#if seg.em}<span class="text-ink">{seg.t}</span>{:else}{seg.t}{/if}{/each}
         </p>
         <div class="surf-why pl-3 flex items-start gap-2.5">
-          <span class="surf-eyebrow text-xs text-ink-mute font-semibold">Why</span>
-          <span class="text-sm text-ink-soft italic surf-why-note">{s.why}</span>
+          <span class="surf-eyebrow text-xs text-ink-soft font-semibold">Why</span>
+          <span class="text-sm text-ink-mute italic surf-why-note">{s.why}</span>
         </div>
       </div>
     </div>
@@ -490,7 +490,7 @@
 {/snippet}
 
 {#snippet mechLabel(text: string)}
-  <div class="surf-eyebrow text-xs text-ink-mute font-semibold mb-3">{text}</div>
+  <div class="surf-eyebrow text-xs text-ink-soft font-semibold mb-3">{text}</div>
 {/snippet}
 
 {#snippet mechanic(m: Mechanic)}
@@ -522,7 +522,7 @@
             <span class="mono font-semibold text-xs {toneText[priorityTone[r.priority]]}">{r.priority}</span>
             <span class="display font-medium text-ink text-base">{r.label}</span>
           </div>
-          <span class="text-sm text-ink-soft today-row-desc">{r.desc}</span>
+          <span class="text-sm text-ink-mute today-row-desc">{r.desc}</span>
         </div>
       {/each}
     </div>
@@ -537,9 +537,9 @@
         <div class="lane py-4 px-4 bg-paper rounded-lg" style="border-top-color: {toneVar[l.tone]}">
           <div class="gap-2 mb-2 flex items-baseline">
             <span class="kanji text-lg {toneText[l.tone]}">{l.kanji}</span>
-            <span class="surf-eyebrow text-xs text-ink-mute font-semibold">{l.title}</span>
+            <span class="surf-eyebrow text-xs text-ink-soft font-semibold">{l.title}</span>
           </div>
-          <div class="text-sm text-ink-soft lane-desc">{l.desc}</div>
+          <div class="text-sm text-ink-mute lane-desc">{l.desc}</div>
         </div>
       {/each}
     </div>
@@ -555,7 +555,7 @@
           <span class="kanji text-accent text-base chip-kanji">{c.kanji}</span>
           <div>
             <div class="display font-medium text-ink text-base">{c.title}</div>
-            <div class="mt-1 text-xs text-ink-mute chip-desc">{c.desc}</div>
+            <div class="mt-1 text-xs text-ink-soft chip-desc">{c.desc}</div>
           </div>
         </div>
       {/each}
@@ -574,8 +574,8 @@
         <div class="flow-step py-4 px-4 flex-1 bg-paper border border-paper-edge rounded-lg flex flex-col gap-1.5">
           <span class="mono text-accent text-xs">{(i + 1).toString().padStart(2, '0')}</span>
           <span class="display font-medium text-ink text-lg flow-step-title">{st.title}</span>
-          <span class="surf-eyebrow text-xs text-ink-mute font-semibold">{st.who}</span>
-          <span class="text-xs text-ink-soft flow-step-desc">{st.desc}</span>
+          <span class="surf-eyebrow text-xs text-ink-soft font-semibold">{st.who}</span>
+          <span class="text-xs text-ink-mute flow-step-desc">{st.desc}</span>
         </div>
       {/each}
     </div>
@@ -589,7 +589,7 @@
       {#each m.cards as c (c.title)}
         <div class="py-4 px-4 bg-paper border border-paper-edge rounded-lg">
           <div class="display font-medium text-ink text-base card-title">{c.title}</div>
-          <div class="mt-2 text-xs text-ink-mute card-desc">{c.desc}</div>
+          <div class="mt-2 text-xs text-ink-soft card-desc">{c.desc}</div>
         </div>
       {/each}
     </div>
@@ -601,11 +601,11 @@
     {@render mechLabel(m.label)}
     <div class="flex flex-wrap gap-2 items-center">
       {#each m.pills as p (p.label)}
-        <span class="py-2 px-4 inline-flex items-center gap-1.5 text-sm text-ink-soft bg-paper border border-paper-edge rounded-full">
+        <span class="py-2 px-4 inline-flex items-center gap-1.5 text-sm text-ink-mute bg-paper border border-paper-edge rounded-full">
           <span class="kanji text-accent text-base">{p.kanji}</span>{p.label}
         </span>
       {/each}
-      <span class="pl-2 inline-flex items-center text-xs text-ink-mute italic">{m.note}</span>
+      <span class="pl-2 inline-flex items-center text-xs text-ink-soft italic">{m.note}</span>
     </div>
   </div>
 {/snippet}
@@ -618,7 +618,7 @@
         <div class="py-6 px-4 bg-paper border border-paper-edge rounded-lg">
           <div class="kanji text-accent text-2xl mode-kanji">{md.kanji}</div>
           <div class="display mt-3 font-medium text-ink text-lg mode-title">{md.title}</div>
-          <div class="mt-2 text-sm text-ink-soft mode-desc">{md.desc}</div>
+          <div class="mt-2 text-sm text-ink-mute mode-desc">{md.desc}</div>
         </div>
       {/each}
     </div>

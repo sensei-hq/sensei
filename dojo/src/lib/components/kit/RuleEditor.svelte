@@ -62,13 +62,13 @@
 				>{rule ? 'Edit rule' : 'New rule'}</span
 			>
 			<span class="flex-1"></span>
-			<span class="mono text-ink-mute text-xs">{scope} · {scopeName}</span>
+			<span class="mono text-ink-soft text-xs">{scope} · {scopeName}</span>
 		</div>
 
 		<div class="flex flex-col gap-4" style="padding: 24px">
 			<div>
 				<div
-					class="text-ink-mute text-xs font-semibold uppercase"
+					class="text-ink-soft text-xs font-semibold uppercase"
 					style="letter-spacing: 0.18em; margin-bottom: 8px"
 				>
 					Rule
@@ -84,7 +84,7 @@
 
 			<div>
 				<div
-					class="text-ink-mute text-xs font-semibold uppercase"
+					class="text-ink-soft text-xs font-semibold uppercase"
 					style="letter-spacing: 0.18em; margin-bottom: 8px"
 				>
 					Family
@@ -98,7 +98,7 @@
 							aria-pressed={on}
 							class="inline-flex cursor-pointer items-center gap-2 rounded-full border text-sm {on
 								? 'bg-accent-soft border-accent text-accent'
-								: 'bg-paper-mute border-paper-edge text-ink-soft'}"
+								: 'bg-paper-mute border-paper-edge text-ink-mute'}"
 							style="padding: 8px 12px"
 						>
 							<KanjiToken char={f.kanji} size="sm" toneClass="" />{f.label}
@@ -119,7 +119,7 @@
 				<span class="text-base {hard ? 'text-accent' : 'text-ink-faint'}">★</span>
 				<div class="flex-1">
 					<div class="text-ink text-sm font-medium">Non-negotiable</div>
-					<div class="mono text-ink-mute text-xs">
+					<div class="mono text-ink-soft text-xs">
 						Locks the rule — no narrower scope can relax it.
 					</div>
 				</div>

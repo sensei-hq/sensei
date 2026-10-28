@@ -27,7 +27,7 @@
 	<span class="min-w-0 flex-1">
 		<span
 			class="block text-sm {task.state === 'pending' || task.state === 'skipped'
-				? 'text-ink-mute'
+				? 'text-ink-soft'
 				: 'text-ink'}"
 			style="line-height: 1.35">{task.title}</span
 		>

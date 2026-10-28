@@ -26,7 +26,7 @@
     good: 'var(--success)',
     bad: 'var(--warning)',
     ugly: 'var(--accent)',
-    neutral: 'var(--ink-mute)',
+    neutral: 'var(--ink-soft)',
   };
   function dominant(b: DayBucket): QualityTone {
     if (b.ugly > 0) return 'ugly';
@@ -85,14 +85,14 @@
       stroke="var(--paper-edge)"
       stroke-dasharray="2 4"
     />
-    <text x={padL - 8} y={yFtr(t) + 3} font-size="10" fill="var(--ink-mute)" text-anchor="end">
+    <text x={padL - 8} y={yFtr(t) + 3} font-size="10" fill="var(--ink-soft)" text-anchor="end">
       {Math.round(t * 100)}%
     </text>
   {/each}
 
   {#if hasData}
     <!-- Daily FTR — faint line + colored dots -->
-    <path d={linePath(dailyPts)} fill="none" stroke="var(--ink-mute)" stroke-width="1" opacity="0.4" />
+    <path d={linePath(dailyPts)} fill="none" stroke="var(--ink-soft)" stroke-width="1" opacity="0.4" />
     <!-- 7-day rolling mean — the quiet narrative line -->
     <path d={linePath(rollingPts)} fill="none" stroke="var(--success)" stroke-width="2.2" />
     {#each buckets as b, i (b.day)}
@@ -108,7 +108,7 @@
       {/if}
     {/each}
   {:else}
-    <text x={width / 2} y={height / 2} font-size="12" fill="var(--ink-mute)" text-anchor="middle">
+    <text x={width / 2} y={height / 2} font-size="12" fill="var(--ink-soft)" text-anchor="middle">
       no scored sessions in this range yet
     </text>
   {/if}
@@ -116,7 +116,7 @@
   <!-- X labels -->
   {#each buckets as b, i (b.day)}
     {#if i % labelStride === 0 || i === n - 1}
-      <text x={x(i)} y={height - 10} font-size="10" fill="var(--ink-soft)" text-anchor="middle">
+      <text x={x(i)} y={height - 10} font-size="10" fill="var(--ink-mute)" text-anchor="middle">
         {b.label}
       </text>
     {/if}

@@ -26,7 +26,7 @@
 						? 'a task failed'
 						: null
 	);
-	const whyClass = $derived(needsYou ? 'text-accent' : row.attention ? tone.text : 'text-ink-mute');
+	const whyClass = $derived(needsYou ? 'text-accent' : row.attention ? tone.text : 'text-ink-soft');
 	// The status dot: accent when it needs you, the status fill for an attention
 	// state or a running run, else a hollow hairline dot.
 	const dotFill = $derived(
@@ -48,14 +48,14 @@
 		<span class="flex min-w-0 flex-col" style="gap: 3px">
 			<span class="flex items-baseline gap-2">
 				<span
-					class="mono text-ink-mute min-w-0 text-xs"
+					class="mono text-ink-soft min-w-0 text-xs"
 					style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{row.run.project}</span
 				>
 				<span class="flex-1"></span>
 				<span class="mono text-ink-faint shrink-0 text-xs">{row.run.last ?? ''}</span>
 			</span>
 			<span
-				class="text-sm {row.status === 'done' ? 'text-ink-mute' : 'text-ink font-medium'}"
+				class="text-sm {row.status === 'done' ? 'text-ink-soft' : 'text-ink font-medium'}"
 				style="line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden"
 				>{row.run.task}</span
 			>

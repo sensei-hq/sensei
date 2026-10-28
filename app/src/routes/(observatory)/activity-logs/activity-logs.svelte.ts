@@ -88,11 +88,11 @@ export function levelTone(level: string): { text: string; bg: string } {
     case 'info':
       return { text: 'text-info', bg: 'bg-info-soft' };
     case 'debug':
-      return { text: 'text-ink-soft', bg: 'bg-paper-mute' };
+      return { text: 'text-ink-mute', bg: 'bg-paper-mute' };
     case 'trace':
       return { text: 'text-ink-faint', bg: 'bg-paper-mute' };
     default:
-      return { text: 'text-ink-mute', bg: 'bg-paper-mute' };
+      return { text: 'text-ink-soft', bg: 'bg-paper-mute' };
   }
 }
 

@@ -52,7 +52,7 @@
 <svg viewBox={`0 0 ${width} ${height}`} width="100%" class="block" data-component="stream-chart">
   {#each yTicks as t (t)}
     <line x1={padL} x2={width - padR} y1={y(t)} y2={y(t)} stroke="var(--paper-edge)" stroke-dasharray="2 4" />
-    <text x={padL - 8} y={y(t) + 3} font-size="10" fill="var(--ink-mute)" text-anchor="end">
+    <text x={padL - 8} y={y(t) + 3} font-size="10" fill="var(--ink-soft)" text-anchor="end">
       {fmtMins(t)}
     </text>
   {/each}
@@ -63,7 +63,7 @@
 
   {#each buckets as b, i (b.day)}
     {#if i % labelStride === 0 || i === n - 1}
-      <text x={x(i)} y={height - 8} font-size="10" fill="var(--ink-soft)" text-anchor="middle">
+      <text x={x(i)} y={height - 8} font-size="10" fill="var(--ink-mute)" text-anchor="middle">
         {b.label}
       </text>
     {/if}

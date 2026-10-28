@@ -38,7 +38,7 @@
 
 	// Open (unanswered) asks drive the badge + the header/bar accent tone.
 	const openCount = $derived(run ? run.asks.filter((a) => !st.answered[a.id]).length : 0);
-	const tone = $derived(openCount ? 'text-accent' : 'text-ink-mute');
+	const tone = $derived(openCount ? 'text-accent' : 'text-ink-soft');
 
 	// Progress: current phase = first not-done; the done/total numbers are the run's
 	// own authoritative counts (its plan graph is summarized to one pip per phase).
@@ -91,23 +91,23 @@
 					<button
 						type="button"
 						onclick={onBack}
-						class="text-ink-mute inline-flex cursor-pointer items-center gap-1 self-start bg-transparent text-sm md:hidden"
+						class="text-ink-soft inline-flex cursor-pointer items-center gap-1 self-start bg-transparent text-sm md:hidden"
 					>
-						<Icon name="alt-arrow-left" size={15} toneClass="text-ink-mute" /> Back to inbox
+						<Icon name="alt-arrow-left" size={15} toneClass="text-ink-soft" /> Back to inbox
 					</button>
 				{/if}
 				<!-- Header: session identity + meta + live status. -->
 			<div class="flex items-baseline gap-3">
 				<KanjiToken char="観" size="lg" toneClass={tone} />
 				<div style="min-width: 0; flex: 1">
-					<div class="text-ink-mute text-xs font-medium uppercase" style="letter-spacing: 0.18em">
+					<div class="text-ink-soft text-xs font-medium uppercase" style="letter-spacing: 0.18em">
 						{m.detail_session()} · {sessionId}
 					</div>
 					<h2 class="display text-ink text-lg font-normal" style="margin: 2px 0 0; line-height: 1.4">
 						{run.title}
 					</h2>
 					{#if meta}
-						<div class="mono text-ink-mute text-xs" style="margin-top: 3px">{meta}</div>
+						<div class="mono text-ink-soft text-xs" style="margin-top: 3px">{meta}</div>
 					{/if}
 				</div>
 				<RelayStatusBadge status={run.status} />
@@ -117,18 +117,18 @@
 			{#if stages}
 				<div style="max-width: 560px">
 					<div class="mb-2 flex items-center justify-between">
-						<span class="mono text-ink-soft text-xs">
+						<span class="mono text-ink-mute text-xs">
 							{m.detail_phase({ stage, stages })}{run.phase ? ` · ${run.phase}` : ''}
 						</span>
-						<span class="mono text-ink-soft text-xs">{m.detail_tasks_pct({ done: run.done, total: run.total, pct })}</span>
+						<span class="mono text-ink-mute text-xs">{m.detail_tasks_pct({ done: run.done, total: run.total, pct })}</span>
 					</div>
 					<PlanBar {pct} tone={openCount ? 'bg-accent' : 'bg-ink'} />
 				</div>
 			{/if}
 
 				{#if notice}
-					<div role="status" class="bg-warning-soft border-warning-edge text-ink-soft rounded-xl border text-sm" style="padding: 12px 16px">
-						Live relay is unavailable. <span class="mono text-ink-mute text-xs">{notice}</span>
+					<div role="status" class="bg-warning-soft border-warning-edge text-ink-mute rounded-xl border text-sm" style="padding: 12px 16px">
+						Live relay is unavailable. <span class="mono text-ink-soft text-xs">{notice}</span>
 					</div>
 				{/if}
 
@@ -160,12 +160,12 @@
 		{:else if stages}
 			<ListSection
 				icon="layers-minimalistic"
-				iconToneClass="text-ink-mute"
+				iconToneClass="text-ink-soft"
 				title={m.detail_tab_plan()}
 				count={m.detail_plan_count({ stages, total: run.total })}
 			>
 				{#if run.goal}
-					<div class="border-paper-edge mono text-ink-mute border-b px-4 py-3 text-xs">
+					<div class="border-paper-edge mono text-ink-soft border-b px-4 py-3 text-xs">
 						{m.detail_goal({ goal: run.goal })}
 					</div>
 				{/if}
@@ -177,15 +177,15 @@
 
 		<!-- Activity (what the run submitted) + Conversation (none carried yet). -->
 		<div class="grid grid-cols-1 items-start gap-4 md:grid-cols-2">
-			<ListSection icon="pulse" iconToneClass="text-ink-mute" title={m.detail_activity()}>
+			<ListSection icon="pulse" iconToneClass="text-ink-soft" title={m.detail_activity()}>
 				{#if run.activity.length}
 					<RunActivity feed={run.activity} />
 				{:else}
-					<div class="text-ink-mute px-4 py-3 text-sm">{m.detail_activity_empty()}</div>
+					<div class="text-ink-soft px-4 py-3 text-sm">{m.detail_activity_empty()}</div>
 				{/if}
 			</ListSection>
-			<ListSection icon="chat-round-line" iconToneClass="text-ink-mute" title={m.detail_conversation()}>
-				<div class="text-ink-mute px-4 py-3 text-sm">{m.detail_conversation_empty()}</div>
+			<ListSection icon="chat-round-line" iconToneClass="text-ink-soft" title={m.detail_conversation()}>
+				<div class="text-ink-soft px-4 py-3 text-sm">{m.detail_conversation_empty()}</div>
 			</ListSection>
 			</div>
 		</div>

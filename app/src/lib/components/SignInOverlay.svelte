@@ -58,7 +58,7 @@
 <ModalShell {open} component="sign-in-overlay" labelledBy="sign-in-overlay-title" {onClose}>
       <header class="flex flex-col gap-1">
         <h2 id="sign-in-overlay-title" class="font-heading text-base text-ink">Identities</h2>
-        <p class="text-xs text-ink-soft">
+        <p class="text-xs text-ink-mute">
           Each identity holds its own GitHub credential, valid for about eight hours.
           sensei renews them on its own; sign in when it cannot.
         </p>
@@ -67,11 +67,11 @@
       {#if error}
         <p role="alert" class="text-xs text-danger">{error}</p>
       {:else if !loaded}
-        <p data-component="sign-in-loading" class="text-xs text-ink-soft">
+        <p data-component="sign-in-loading" class="text-xs text-ink-mute">
           Reading identities…
         </p>
       {:else if personas.length === 0}
-        <p class="text-xs text-ink-soft">
+        <p class="text-xs text-ink-mute">
           No identities yet. They appear once sensei has scanned a repository and
           seen who authored the commits.
         </p>
@@ -87,7 +87,7 @@
                 <span
                   class="text-xs"
                   class:text-warning={needsUser(p)}
-                  class:text-ink-soft={!needsUser(p)}
+                  class:text-ink-mute={!needsUser(p)}
                 >
                   {describe(p)}
                 </span>

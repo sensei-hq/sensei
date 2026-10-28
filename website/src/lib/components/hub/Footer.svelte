@@ -48,10 +48,10 @@
           <span class="i-brand:sensei-hq text-accent block flex-shrink-0" style="width:26px;height:26px" aria-hidden="true"></span>
           <span class="flex items-baseline gap-2">
             <span class="display text-ink text-base">Sensei</span>
-            <span class="mono text-ink-mute text-xs" style="letter-spacing:0.08em">HQ</span>
+            <span class="mono text-ink-soft text-xs" style="letter-spacing:0.08em">HQ</span>
           </span>
         </div>
-        <p class="text-ink-mute m-0 text-sm" style="line-height:1.6;max-width:280px">
+        <p class="text-ink-soft m-0 text-sm" style="line-height:1.6;max-width:280px">
           A small workshop of developer tools. Built quietly, in Tennessee.
         </p>
       </div>
@@ -59,13 +59,13 @@
       <!-- Link columns -->
       {#each cols as col (col.title)}
         <div>
-          <span class="mono text-ink-mute block mb-4 text-xs" style="letter-spacing:0.12em;text-transform:uppercase">{col.title}</span>
+          <span class="mono text-ink-soft block mb-4 text-xs" style="letter-spacing:0.12em;text-transform:uppercase">{col.title}</span>
           <div class="flex flex-col gap-2">
             {#each col.items as item (item.label)}
               <a href={item.href}
                  target={item.external ? '_blank' : undefined}
                  rel={item.external ? 'noopener' : undefined}
-                 class="text-ink-soft text-sm footer-link no-underline">{item.label}</a>
+                 class="text-ink-mute text-sm footer-link no-underline">{item.label}</a>
             {/each}
           </div>
         </div>

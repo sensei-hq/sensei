@@ -39,11 +39,11 @@
                 class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"
             >
                 <h3 class="text-base m-0 mb-1">Extensions</h3>
-                <p class="text-sm text-ink-soft m-0 mb-6">
+                <p class="text-sm text-ink-mute m-0 mb-6">
                     Skills, commands, agents, and hooks installed in sensei.
                 </p>
                 {#if ex.extensions.length === 0}
-                    <p class="text-sm text-ink-soft leading-normal">
+                    <p class="text-sm text-ink-mute leading-normal">
                         No extensions installed yet.
                     </p>
                 {:else}
@@ -56,12 +56,12 @@
                                 data-testid={`ext-row-${ext.kind}-${ext.name}`}
                             >
                                 <span
-                                    class="text-xs uppercase tracking-wide text-ink-soft w-[70px]"
+                                    class="text-xs uppercase tracking-wide text-ink-mute w-[70px]"
                                     >{ext.kind}</span
                                 >
                                 <span class="text-sm text-ink flex-1">{ext.name}</span>
                                 {#if busy}
-                                    <span class="text-xs text-ink-soft w-14 text-right"
+                                    <span class="text-xs text-ink-mute w-14 text-right"
                                         >saving…</span
                                     >
                                 {:else if toggleError}
@@ -79,7 +79,7 @@
                                         onchange={(e) => toggleExtension(ext, e.currentTarget)}
                                     />
                                     <span
-                                        class="extension-enabled text-xs text-ink-soft w-8"
+                                        class="extension-enabled text-xs text-ink-mute w-8"
                                         class:on={ext.enabled}
                                         >{ext.enabled ? "on" : "off"}</span
                                     >

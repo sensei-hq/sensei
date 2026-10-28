@@ -54,9 +54,9 @@
 				<button
 					type="button"
 					onclick={onBack}
-					class="text-ink-mute inline-flex cursor-pointer items-center gap-1 self-start bg-transparent text-sm"
+					class="text-ink-soft inline-flex cursor-pointer items-center gap-1 self-start bg-transparent text-sm"
 				>
-					<Icon name="alt-arrow-left" size={15} toneClass="text-ink-mute" /> Back to workspaces
+					<Icon name="alt-arrow-left" size={15} toneClass="text-ink-soft" /> Back to workspaces
 				</button>
 			{/if}
 
@@ -102,7 +102,7 @@
 					<span class="text-ink text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
 						{preview.view === 'layer' ? 'The ladder — broad → specific' : 'Consolidated constitution'}
 					</span>
-					<span class="mono text-ink-mute text-xs">
+					<span class="mono text-ink-soft text-xs">
 						{preview.view === 'layer'
 							? 'tap a rung to focus'
 							: preview.effective.length + ' effective rules'}
@@ -115,7 +115,7 @@
 								onclick={() => preview.setView(id)}
 								class="rounded text-xs {preview.view === id
 									? 'bg-paper text-ink border-paper-edge border'
-									: 'text-ink-mute border border-transparent bg-transparent'}"
+									: 'text-ink-soft border border-transparent bg-transparent'}"
 								style="padding: 4px 10px"
 							>
 								{label}
@@ -146,7 +146,7 @@
 						<span class="text-ink text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
 							Discarded by the ladder
 						</span>
-						<span class="mono text-ink-mute text-xs">what the resolution eliminated, and why</span>
+						<span class="mono text-ink-soft text-xs">what the resolution eliminated, and why</span>
 					</div>
 					<div class="flex flex-col gap-3">
 						{#each conflicts as conflict (conflict.id)}

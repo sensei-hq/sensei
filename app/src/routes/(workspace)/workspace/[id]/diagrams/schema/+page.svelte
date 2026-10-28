@@ -44,7 +44,7 @@
 
     <div class="flex flex-col gap-4 p-4" data-testid="schema-screen">
         {#if view.view === 'loading'}
-            <p class="text-sm text-ink-mute" data-testid="schema-loading">Reading the schema store.</p>
+            <p class="text-sm text-ink-soft" data-testid="schema-loading">Reading the schema store.</p>
         {:else if view.view === 'error'}
             <div class="p-4 border border-warning rounded" data-testid="schema-error">
                 <p class="text-sm text-warning">{view.failure}</p>
@@ -58,7 +58,7 @@
                 </button>
             </div>
         {:else if view.view === 'none'}
-            <p class="text-sm text-ink-mute" data-testid="schema-none">
+            <p class="text-sm text-ink-soft" data-testid="schema-none">
                 No database structure is described in this workspace — no dbd design.yaml was found
                 under its folders.
             </p>
@@ -80,7 +80,7 @@
                 />
             </div>
 
-            <ul class="flex flex-col list-none p-0 m-0 text-sm text-ink-mute" data-testid="schema-coverage">
+            <ul class="flex flex-col list-none p-0 m-0 text-sm text-ink-soft" data-testid="schema-coverage">
                 {#each view.coverage as line (line)}
                     <li>{line}</li>
                 {/each}
@@ -125,7 +125,7 @@
                             value={view.selected}
                         />
                     {:else}
-                        <p class="text-sm text-ink-mute m-0">
+                        <p class="text-sm text-ink-soft m-0">
                             Select a table to see its columns, keys and notes.
                         </p>
                     {/if}

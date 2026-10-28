@@ -57,7 +57,7 @@ export function shareStateChip(state: string): ChipClasses {
   switch (state) {
     case 'queued': return { bg: 'bg-info-soft',    text: 'text-info',     label: 'queued' };
     case 'held':   return { bg: 'bg-warning-soft', text: 'text-warning',  label: 'held' };
-    default:       return { bg: 'bg-paper-mute',   text: 'text-ink-mute', label: state || 'unknown' };
+    default:       return { bg: 'bg-paper-mute',   text: 'text-ink-soft', label: state || 'unknown' };
   }
 }
 
@@ -125,7 +125,7 @@ export function publishResultChip(result: string): ChipClasses {
     case 'error':              return { bg: 'bg-danger-soft',  text: 'text-danger',  label };
     case 'queued_retry':
     case 'staged':             return { bg: 'bg-info-soft',    text: 'text-info',    label };
-    default:                   return { bg: 'bg-paper-mute',   text: 'text-ink-mute', label };
+    default:                   return { bg: 'bg-paper-mute',   text: 'text-ink-soft', label };
   }
 }
 

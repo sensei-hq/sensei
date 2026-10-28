@@ -422,7 +422,7 @@ utility, or — when the alpha matters — into a small utility class:
 
 | Question                                         | Source                                                       |
 | ------------------------------------------------ | ------------------------------------------------------------ |
-| What color does `text-ink-soft` resolve to?      | `rokkit.config.js` overrides → `sumi-palette.js` shade       |
+| What color does `text-ink-soft` resolve to?      | rokkit's zen-sumi skin (`@rokkit/unocss/palettes`) → its shade |
 | What does my screen need to look like?           | `docs/mockups/Sensei/lib/<feature>.jsx`                      |
 | What enum values does the wire use?              | `src/lib/<feature>-types.ts`                                 |
 | Which voice rule applies to this copy?           | `docs/mockups/Zen-Sumi Design System/SKILL.md` §Voice        |

@@ -49,7 +49,7 @@
   <section class="mt-6">
     <div class="flex items-baseline justify-between mb-3">
       <h2 class="display text-base font-normal m-0">Recent sessions</h2>
-      <a href="/sessions" class="text-xs text-ink-soft hover:text-ink">all sessions →</a>
+      <a href="/sessions" class="text-xs text-ink-mute hover:text-ink">all sessions →</a>
     </div>
     <div class="flex flex-col">
       {#each sessions as s (s.id)}
@@ -67,25 +67,25 @@
             class:bg-success={isSuccess}
             class:bg-warning={!isSuccess}
           ></span>
-          <span class="font-mono text-xs text-ink-soft truncate">{s.workspace}</span>
-          <span class="text-sm text-ink-mute truncate">{s.task}</span>
+          <span class="font-mono text-xs text-ink-mute truncate">{s.workspace}</span>
+          <span class="text-sm text-ink-soft truncate">{s.task}</span>
           <span
             data-corrections={s.corrections ?? ''}
             class="font-mono text-xs min-w-[5rem] text-right"
             class:text-success={s.corrections === 0}
             class:text-warning={typeof s.corrections === 'number' && s.corrections > 0}
-            class:text-ink-soft={s.corrections == null}
+            class:text-ink-mute={s.corrections == null}
           >
             {correctionsLabel(s.corrections)}
           </span>
           {#if mins !== null}
-            <span data-duration class="font-mono text-xs text-ink-soft min-w-[3rem] text-right">
+            <span data-duration class="font-mono text-xs text-ink-mute min-w-[3rem] text-right">
               {formatDuration(mins)}
             </span>
           {:else}
             <span></span>
           {/if}
-          <span class="font-mono text-xs text-ink-soft">{timeOfDay(s.startedAt)}</span>
+          <span class="font-mono text-xs text-ink-mute">{timeOfDay(s.startedAt)}</span>
         </a>
       {/each}
     </div>

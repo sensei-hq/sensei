@@ -35,7 +35,7 @@
         />
 
         {#if view.view === 'loading'}
-            <p class="text-sm text-ink-mute" data-testid="cycles-loading">
+            <p class="text-sm text-ink-soft" data-testid="cycles-loading">
                 Finding the strongly-connected components — this reads every dependency in the workspace.
             </p>
         {:else if view.view === 'error'}
@@ -51,11 +51,11 @@
                 </button>
             </div>
         {:else if view.view === 'empty'}
-            <p class="text-sm text-ink-mute" data-testid="cycles-empty">
+            <p class="text-sm text-ink-soft" data-testid="cycles-empty">
                 Nothing indexed for this workspace yet — no dependency carries two placed ends.
             </p>
         {:else}
-            <p class="text-sm text-ink-mute" data-testid="cycles-coverage">{view.coverageLine}</p>
+            <p class="text-sm text-ink-soft" data-testid="cycles-coverage">{view.coverageLine}</p>
 
             <!-- NO CYCLES IS A FINDING. An empty canvas under no caption reads as a
                  screen that failed to load, which is the one misreading that
@@ -99,7 +99,7 @@
                                     <li
                                         class="text-sm"
                                         class:text-accent={isCut}
-                                        class:text-ink-mute={!isCut}
+                                        class:text-ink-soft={!isCut}
                                     >
                                         {isCut ? 'cut · ' : ''}{dep.source} → {dep.target} (×{dep.occurrences})
                                     </li>
@@ -120,13 +120,13 @@
             {#if view.selfDependencies.length > 0}
                 <section data-testid="cycles-self">
                     <h2 class="text-sm font-semibold text-ink m-0">Depends on itself</h2>
-                    <p class="text-sm text-ink-mute mt-1 mb-2">
+                    <p class="text-sm text-ink-soft mt-1 mb-2">
                         At module grain this is two of a module's own files referring to each other —
                         a fact about the module, not a loop between units.
                     </p>
                     <ul class="flex flex-col list-none p-0 m-0">
                         {#each view.selfDependencies as dep (dep.source)}
-                            <li class="text-sm text-ink-mute">{dep.source} (×{dep.occurrences})</li>
+                            <li class="text-sm text-ink-soft">{dep.source} (×{dep.occurrences})</li>
                         {/each}
                     </ul>
                 </section>

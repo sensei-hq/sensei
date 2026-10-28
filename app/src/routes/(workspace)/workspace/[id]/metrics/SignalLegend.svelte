@@ -8,7 +8,7 @@
     ];
 </script>
 
-<div data-component="signal-legend" class="flex items-center gap-4 text-xs text-ink-mute">
+<div data-component="signal-legend" class="flex items-center gap-4 text-xs text-ink-soft">
     {#each ITEMS as item (item.label)}
         <span class="flex items-center gap-1">
             <span class="inline-block w-3 h-0.5 {item.cls}"></span>{item.label}

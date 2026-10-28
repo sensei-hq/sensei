@@ -46,7 +46,7 @@ export function stateChip(state: string): ChipClasses {
     case 'info':    return { bg: 'bg-info-soft',    text: 'text-info',     label: state };
     case 'success': return { bg: 'bg-success-soft', text: 'text-success',  label: state };
     case 'accent':  return { bg: 'bg-accent-soft',  text: 'text-accent',   label: state };
-    default:        return { bg: 'bg-paper-mute',   text: 'text-ink-mute', label: state };
+    default:        return { bg: 'bg-paper-mute',   text: 'text-ink-soft', label: state };
   }
 }
 

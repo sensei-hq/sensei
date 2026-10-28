@@ -45,7 +45,7 @@
 <!-- The tracked-uppercase micro-label the detail pane reuses for each field. -->
 {#snippet eyebrow(label: string)}
 	<div
-		class="text-ink-mute text-xs font-semibold uppercase"
+		class="text-ink-soft text-xs font-semibold uppercase"
 		style="letter-spacing: 0.18em; margin-bottom: 4px"
 	>
 		{label}
@@ -104,7 +104,7 @@
 													>
 												{/if}
 												{#if c.dups > 0}
-													<Chip toneClass="text-ink-mute">{c.dups} dup</Chip>
+													<Chip toneClass="text-ink-soft">{c.dups} dup</Chip>
 												{/if}
 												{#if c.impact === 'high' || c.impact === 'safety'}
 													<Chip toneClass={im.text} softClass={im.soft} edgeClass={im.edge}
@@ -131,7 +131,7 @@
 								<KanjiToken char={cur.kanji} size="xl" toneClass="text-accent" />
 								<div class="flex-1" style="min-width: 0">
 									<div
-										class="text-ink-mute text-xs font-semibold uppercase"
+										class="text-ink-soft text-xs font-semibold uppercase"
 										style="letter-spacing: 0.18em"
 									>
 										candidate
@@ -147,13 +147,13 @@
 								</div>
 								<div>
 									{@render eyebrow('Cause')}
-									<div class="text-ink-soft text-sm">{detail.cause}</div>
+									<div class="text-ink-mute text-sm">{detail.cause}</div>
 								</div>
 								<div>
 									{@render eyebrow('Evidence')}
 									<div class="flex flex-col gap-1">
 										{#each detail.evidence as e (e)}
-											<div class="mono text-ink-soft text-xs">· {e}</div>
+											<div class="mono text-ink-mute text-xs">· {e}</div>
 										{/each}
 									</div>
 								</div>
@@ -165,7 +165,7 @@
 										<div class="text-warning text-xs font-semibold uppercase" style="letter-spacing: 0.18em; margin-bottom: 4px">
 											Conflict — the ladder settles it
 										</div>
-										<div class="text-ink-soft text-xs" style="text-decoration: line-through">
+										<div class="text-ink-mute text-xs" style="text-decoration: line-through">
 											{detail.conflict.loser}
 										</div>
 										<div class="text-ink text-sm font-medium" style="margin-top: 2px">
@@ -178,7 +178,7 @@
 									<div class="flex flex-wrap gap-2">
 										{#each detail.scopes as s, i (s)}
 											<Chip
-												toneClass={i === 1 ? 'text-accent' : 'text-ink-mute'}
+												toneClass={i === 1 ? 'text-accent' : 'text-ink-soft'}
 												softClass={i === 1 ? 'bg-accent-soft' : 'bg-paper-mute'}
 												edgeClass={i === 1 ? 'border-accent-soft' : 'border-paper-edge'}>{s}</Chip
 											>
@@ -197,7 +197,7 @@
 							</div>
 							{#if needsSecondApproval(cur.impact)}
 								<div
-									class="bg-paper border-paper-edge text-ink-mute border-t text-xs"
+									class="bg-paper border-paper-edge text-ink-soft border-t text-xs"
 									style="padding: 8px 16px"
 								>
 									Approving sends this to a second maintainer before it publishes.

@@ -6,11 +6,11 @@
   <div class="approach-inner mx-auto px-7 py-24">
     <div class="grid grid-cols-1 md:grid-cols-[1fr_1.5fr] items-start gap-8">
       <div>
-        <span class="mono text-ink-mute mb-3 block text-xs" style="letter-spacing:0.12em;text-transform:uppercase">The approach</span>
+        <span class="mono text-ink-soft mb-3 block text-xs" style="letter-spacing:0.12em;text-transform:uppercase">The approach</span>
         <h2 class="display text-ink m-0 text-2xl" style="font-weight:400;letter-spacing:-0.015em;line-height:1.25">
           The master observes for a long time before teaching.
         </h2>
-        <p class="text-ink-soft mt-4 text-sm" style="line-height:1.7;max-width:360px">
+        <p class="text-ink-mute mt-4 text-sm" style="line-height:1.7;max-width:360px">
           The kanji on each tool name a phase of practice — observe, build,
           hasten, guard. They are what we ask of the people who use our
           tools, and what we ask of ourselves while making them.
@@ -28,7 +28,7 @@
                 <span class="display text-ink text-lg">{pr.title}</span>
                 <span class="mono text-ink-faint text-xs">{pr.label}</span>
               </div>
-              <p class="text-ink-soft m-0 text-sm" style="line-height:1.65">{pr.text}</p>
+              <p class="text-ink-mute m-0 text-sm" style="line-height:1.65">{pr.text}</p>
             </div>
           </div>
         {/each}

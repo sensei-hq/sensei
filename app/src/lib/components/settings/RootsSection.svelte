@@ -78,7 +78,7 @@
 </script>
 
 <div class="max-w-[780px]">
-    <p class="text-sm text-ink-soft leading-normal m-0 mb-6">
+    <p class="text-sm text-ink-mute leading-normal m-0 mb-6">
         Where your work lives. Sensei recurses each root and finds repositories.
     </p>
 
@@ -117,7 +117,7 @@
                         {r.path}
                     </div>
                     {#if r.repos_found > 0}
-                        <div class="text-xs text-ink-soft mt-0.5">
+                        <div class="text-xs text-ink-mute mt-0.5">
                             {r.repos_found} repositories found
                         </div>
                     {/if}
@@ -125,7 +125,7 @@
                 {#if r.status === "paused"}
                     <span
                         data-testid="root-paused"
-                        class="text-xs text-ink-soft border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap"
+                        class="text-xs text-ink-mute border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap"
                         >paused · not syncing</span
                     >
                 {:else if r.status === "watching"}
@@ -135,13 +135,13 @@
                     >
                 {:else}
                     <span
-                        class="text-xs text-ink-soft border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap"
+                        class="text-xs text-ink-mute border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap"
                         >recursive</span
                     >
                 {/if}
                 <button
                     data-testid="root-skips"
-                    class="text-xs text-ink-soft border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap cursor-pointer hover:text-ink"
+                    class="text-xs text-ink-mute border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap cursor-pointer hover:text-ink"
                     onclick={() => {
                         openFor = openFor === r.id ? null : r.id;
                         draft = "";
@@ -154,7 +154,7 @@
                 </button>
                 <button
                     data-testid="root-remove"
-                    class="text-base text-ink-soft bg-none border-none cursor-pointer px-1 leading-none hover:text-accent"
+                    class="text-base text-ink-mute bg-none border-none cursor-pointer px-1 leading-none hover:text-accent"
                     aria-label="Remove {r.path}"
                     onclick={() => startRemoval(r.id)}>×</button
                 >
@@ -178,7 +178,7 @@
                     {/if}
 
                     {#if removal.loaded && removal.outcome === null}
-                        <p class="text-xs text-ink-soft m-0" data-testid="root-removal-question">
+                        <p class="text-xs text-ink-mute m-0" data-testid="root-removal-question">
                             {removal.question}
                         </p>
                         {#if removal.repositories.length > 0}
@@ -187,7 +187,7 @@
                                     <li class="flex items-baseline gap-3">
                                         <span class="text-xs font-mono text-ink truncate flex-1 min-w-0">{repo.path}</span>
                                         <button
-                                            class="text-xs text-ink-soft bg-none border-none cursor-pointer hover:text-accent"
+                                            class="text-xs text-ink-mute bg-none border-none cursor-pointer hover:text-accent"
                                             disabled={removal.busy}
                                             onclick={() => removal?.pruneRepository(repo.path)}
                                             >remove this one</button
@@ -230,13 +230,13 @@
                     data-root={r.id}
                     class="ml-8 -mt-1 px-5 py-4 bg-paper-soft rounded-lg"
                 >
-                    <p class="text-xs text-ink-soft m-0 mb-3 max-w-[560px] leading-normal">
+                    <p class="text-xs text-ink-mute m-0 mb-3 max-w-[560px] leading-normal">
                         Folders sensei will not walk under this root. A plain name skips
                         every folder with that name; a full path skips one subtree.
                     </p>
 
                     {#if ex.excluded.length === 0}
-                        <p class="text-xs text-ink-mute m-0 mb-3" data-empty>
+                        <p class="text-xs text-ink-soft m-0 mb-3" data-empty>
                             Nothing skipped. Only .gitignore and the built-in list
                             (node_modules, target, dist…) bound this root — a folder that
                             is not a git repository has neither.
@@ -253,7 +253,7 @@
                                         {ex.describe(value)}
                                     </span>
                                     <button
-                                        class="text-xs text-ink-soft bg-none border-none cursor-pointer hover:text-accent"
+                                        class="text-xs text-ink-mute bg-none border-none cursor-pointer hover:text-accent"
                                         disabled={ex.saving}
                                         onclick={() => ex.remove(value)}>remove</button
                                     >
@@ -300,9 +300,9 @@
 <style>
     /* Folder input pseudo-classes */
     .folder-input::placeholder {
-        color: var(--ink-soft);
+        color: var(--ink-mute);
     }
     .folder-input:focus {
-        border-color: var(--ink-soft);
+        border-color: var(--ink-mute);
     }
 </style>

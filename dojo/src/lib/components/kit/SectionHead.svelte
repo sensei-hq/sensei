@@ -34,7 +34,7 @@
 	<div style="min-width: 0">
 		{#if eyebrow}
 			<div
-				class="text-ink-mute text-xs font-semibold uppercase"
+				class="text-ink-soft text-xs font-semibold uppercase"
 				style="letter-spacing: 0.18em; margin-bottom: 4px"
 			>
 				{eyebrow}
@@ -47,7 +47,7 @@
 			{title}
 		</h2>
 		{#if description}
-			<p class="text-ink-soft mt-2 mb-0 max-w-[76ch] text-sm" style="line-height: 1.55">
+			<p class="text-ink-mute mt-2 mb-0 max-w-[76ch] text-sm" style="line-height: 1.55">
 				{description}
 			</p>
 		{/if}

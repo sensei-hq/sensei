@@ -37,7 +37,7 @@
       <!-- Inline links (desktop / wide) -->
       <div class="hidden md:flex items-center gap-6">
         {#each links as [href, label] (href)}
-          <a {href} class="text-ink-soft text-sm nav-link no-underline">{label}</a>
+          <a {href} class="text-ink-mute text-sm nav-link no-underline">{label}</a>
         {/each}
         <Button
           href={cta.href}
@@ -75,7 +75,7 @@
   {#if open}
     <div id="site-nav-menu" class="site-nav-menu md:hidden border-t border-paper-edge px-7 py-5 flex flex-col gap-5">
       {#each links as [href, label] (href)}
-        <a {href} class="text-ink-soft text-base nav-link no-underline" onclick={close}>{label}</a>
+        <a {href} class="text-ink-mute text-base nav-link no-underline" onclick={close}>{label}</a>
       {/each}
       <Button
         href={cta.href}

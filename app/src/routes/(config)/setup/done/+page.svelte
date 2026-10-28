@@ -52,13 +52,13 @@
     <span class="text-accent">is ready.</span>
   </h1>
 
-  <p class="text-base text-ink-mute leading-loose max-w-[560px] m-0 mb-10">
+  <p class="text-base text-ink-soft leading-loose max-w-[560px] m-0 mb-10">
     Sensei is watching. Work normally with your AI assistants — sensei
     learns from every session and begins teaching after it has enough data.
   </p>
 
   <!-- What was configured -->
-  <div class="text-xs uppercase tracking-wider text-ink-soft mb-3">
+  <div class="text-xs uppercase tracking-wider text-ink-mute mb-3">
     What you set up
   </div>
   <div
@@ -70,14 +70,14 @@
         <Kanji char={s.kanji} size="inherit" tone="inherit" class="text-2xl text-accent leading-none mt-1" />
         <div class="min-w-0">
           <div class="text-sm text-ink font-medium">{s.label}</div>
-          <div class="text-xs text-ink-soft mt-0.5">{s.sub}</div>
+          <div class="text-xs text-ink-mute mt-0.5">{s.sub}</div>
         </div>
       </div>
     {/each}
   </div>
 
   <!-- What happens next -->
-  <div class="text-xs uppercase tracking-wider text-ink-soft mb-3">
+  <div class="text-xs uppercase tracking-wider text-ink-mute mb-3">
     What happens next
   </div>
   <div class="grid grid-cols-3 gap-4 py-5 border-t border-b border-paper-edge">
@@ -89,7 +89,7 @@
       <div>
         <Kanji char={s.kanji} size="inherit" tone="inherit" class="block text-2xl text-accent mb-2" />
         <div class="display text-base">{s.label}</div>
-        <div class="text-xs text-ink-soft mt-1">{s.sub}</div>
+        <div class="text-xs text-ink-mute mt-1">{s.sub}</div>
       </div>
     {/each}
   </div>

@@ -3,7 +3,7 @@
  *
  * Rokkit (rokkit.config.js + @rokkit/themes, imported before this file in
  * app.css) now owns the color system: --paper / --paper-soft / --paper-mute /
- * --paper-edge / --ink / --ink-soft / --ink-mute / --ink-faint / --primary /
+ * --paper-edge / --ink / --ink-mute / --ink-soft / --ink-faint / --primary /
  * --accent / status tokens, with dual-palette (sumi/sumiDark) dark-mode flip.
  * Per-product accents (--sensei / --dbd / --rokkit / --kavach / ...) come from
  * rokkit.config.js `overrides:` and also flip per mode.
@@ -41,8 +41,8 @@
   --paper-2: var(--paper-soft);
   --paper-3: var(--paper-mute);
   --sumi:    var(--ink);
-  --sumi-2:  var(--ink-soft);
-  --sumi-3:  var(--ink-mute);
+  --sumi-2:  var(--ink-mute);
+  --sumi-3:  var(--ink-soft);
   --sumi-4:  var(--ink-faint);
   /* --shu is the vermillion used for TEXT/highlights on the sensei page, so it
      aliases the WCAG-AA-tuned --accent (not the vibrant --primary button fill). */

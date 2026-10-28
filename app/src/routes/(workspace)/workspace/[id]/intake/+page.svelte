@@ -42,7 +42,7 @@
     {#if intake.phase !== 'recorded'}
       <section class="flex flex-col gap-2">
         {#if intake.guide.frame}
-          <p class="text-sm text-ink-soft m-0">{intake.guide.frame}</p>
+          <p class="text-sm text-ink-mute m-0">{intake.guide.frame}</p>
         {/if}
         <textarea
           class="w-full min-h-32 rounded bg-paper-soft border border-paper-edge py-2 px-3 text-sm text-ink"
@@ -80,11 +80,11 @@
             </span>
           {/if}
         </div>
-        <p class="text-sm text-ink-soft m-0 leading-snug">{r.rationale}</p>
+        <p class="text-sm text-ink-mute m-0 leading-snug">{r.rationale}</p>
         {#if r.opening_tone}
           <p class="text-xs italic text-ink-faint m-0">{r.opening_tone}</p>
         {/if}
-        <div class="flex flex-wrap gap-2 text-xs text-ink-soft" data-testid="intake-axes">
+        <div class="flex flex-wrap gap-2 text-xs text-ink-mute" data-testid="intake-axes">
           <span class="border border-paper-edge rounded-sm py-1 px-2">{r.lifecycle}</span>
           <span class="border border-paper-edge rounded-sm py-1 px-2">{r.intent}</span>
           <span class="border border-paper-edge rounded-sm py-1 px-2">{r.risk}</span>

@@ -141,10 +141,10 @@
 						onclick={() => select(t.id)}
 						class="inline-flex cursor-pointer items-center gap-2 rounded border text-sm {on
 							? 'bg-paper-soft border-paper-edge text-ink'
-							: 'text-ink-mute border-transparent bg-transparent'}"
+							: 'text-ink-soft border-transparent bg-transparent'}"
 						style="padding: 8px 12px"
 					>
-						<Icon name={t.icon} size={15} toneClass={on ? 'text-accent' : 'text-ink-mute'} />{t.label}
+						<Icon name={t.icon} size={15} toneClass={on ? 'text-accent' : 'text-ink-soft'} />{t.label}
 					</button>
 				{/each}
 			</div>
@@ -161,13 +161,13 @@
 							<div class="flex-1" style="min-width: 0">
 								<div class="flex items-center gap-2">
 									<span class="text-ink text-sm font-medium">{m.name}</span>
-									{#if m.you}<Chip toneClass="text-ink-mute">you</Chip>{/if}
+									{#if m.you}<Chip toneClass="text-ink-soft">you</Chip>{/if}
 								</div>
 								<div class="mono text-ink-faint text-xs" style="margin-top: 1px">
 									git: {m.git} · {m.scopes}
 								</div>
 							</div>
-							<span class="text-ink-mute text-xs">{m.active}</span>
+							<span class="text-ink-soft text-xs">{m.active}</span>
 							{#if onSetRole && m.userId && !m.you}
 								<!-- Change-role picker (admin): a native select keeps the kit lean
 								     and stays keyboard/a11y-correct. The viewer's own row stays a
@@ -228,7 +228,7 @@
 							<KanjiToken char={r.kanji} size="xl" toneClass="text-accent" w={30} />
 							<div class="flex-1" style="min-width: 0">
 								<div class="text-ink text-sm font-medium">{r.label}</div>
-								<div class="text-ink-mute text-xs">{r.note}</div>
+								<div class="text-ink-soft text-xs">{r.note}</div>
 							</div>
 							<Btn size="sm" variant="ghost" icon="tuning-2">Edit policy</Btn>
 						</div>
@@ -239,7 +239,7 @@
 				<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 					{#each audit as x, i (i)}
 						<div class="border-paper-edge flex items-center gap-3 border-b" style="padding: 12px 16px">
-							<Icon name="clipboard-list" size={17} toneClass="text-ink-mute" />
+							<Icon name="clipboard-list" size={17} toneClass="text-ink-soft" />
 							<span class="text-ink flex-1 text-sm">
 								{x.who === 'sensei' ? 'sensei' : me} · {x.text.slice(0, 60)}…
 							</span>

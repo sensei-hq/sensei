@@ -30,7 +30,7 @@
     <p class="display text-2xl font-normal m-0 mb-3 tracking-tight leading-tight text-ink">
       {hero.koan}
     </p>
-    <p class="text-base text-ink-mute leading-relaxed m-0 mb-4 max-w-[620px]">{hero.body}</p>
+    <p class="text-base text-ink-soft leading-relaxed m-0 mb-4 max-w-[620px]">{hero.body}</p>
 
     <div class="flex items-center gap-4 flex-wrap mt-auto">
       {#if hero.action}
@@ -44,7 +44,7 @@
       {/if}
       <span class="flex-1"></span>
       {#if provenance}
-        <span data-hero-source class="font-mono text-xs text-ink-soft">{provenance}</span>
+        <span data-hero-source class="font-mono text-xs text-ink-mute">{provenance}</span>
       {/if}
     </div>
   </div>

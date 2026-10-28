@@ -70,7 +70,7 @@ export function syncChip(status: string): ChipClasses {
     case 'info':
       return { bg: 'bg-info-soft', text: 'text-info', label: status };
     default:
-      return { bg: 'bg-paper-mute', text: 'text-ink-mute', label: status };
+      return { bg: 'bg-paper-mute', text: 'text-ink-soft', label: status };
   }
 }
 
@@ -80,15 +80,15 @@ export function syncChip(status: string): ChipClasses {
 export function kindPill(kind: string): KindPill {
   switch (kind) {
     case 'employer':
-      return { kanji: '社', label: 'employer', bg: 'bg-paper-mute', text: 'text-ink-mute' };
+      return { kanji: '社', label: 'employer', bg: 'bg-paper-mute', text: 'text-ink-soft' };
     case 'client':
       return { kanji: '客', label: 'client', bg: 'bg-accent-soft', text: 'text-accent' };
     case 'community':
-      return { kanji: '群', label: 'community', bg: 'bg-paper-mute', text: 'text-ink-mute' };
+      return { kanji: '群', label: 'community', bg: 'bg-paper-mute', text: 'text-ink-soft' };
     case 'personal':
-      return { kanji: '己', label: 'personal', bg: 'bg-paper-mute', text: 'text-ink-mute' };
+      return { kanji: '己', label: 'personal', bg: 'bg-paper-mute', text: 'text-ink-soft' };
     default:
-      return { kanji: '結', label: kind || 'unknown', bg: 'bg-paper-mute', text: 'text-ink-mute' };
+      return { kanji: '結', label: kind || 'unknown', bg: 'bg-paper-mute', text: 'text-ink-soft' };
   }
 }
 

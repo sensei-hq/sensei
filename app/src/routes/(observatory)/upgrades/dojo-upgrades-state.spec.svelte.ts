@@ -38,7 +38,7 @@ describe('typePill', () => {
   it('unknown type degrades to muted ink but keeps the raw label', () => {
     const p = typePill('freshly_invented');
     expect(p.bg).toBe('bg-paper-mute');
-    expect(p.text).toBe('text-ink-mute');
+    expect(p.text).toBe('text-ink-soft');
     expect(p.label).toBe('freshly_invented');
   });
 });
@@ -59,7 +59,7 @@ describe('stateChip', () => {
   it('pinned -> accent tokens', () =>
     expect(stateChip('pinned')).toEqual({ bg: 'bg-accent-soft', text: 'text-accent', label: 'pinned' }));
   it('muted -> muted ink tokens, still labelled', () =>
-    expect(stateChip('muted')).toEqual({ bg: 'bg-paper-mute', text: 'text-ink-mute', label: 'muted' }));
+    expect(stateChip('muted')).toEqual({ bg: 'bg-paper-mute', text: 'text-ink-soft', label: 'muted' }));
 });
 
 describe('scopeSummary', () => {

@@ -3,7 +3,7 @@
  *
  * Rokkit (rokkit.config.js + @rokkit/themes, imported before this file in
  * app.css) owns the color system: --paper / --paper-soft / --paper-mute /
- * --paper-edge / --ink / --ink-soft / --ink-mute / --ink-faint / --primary /
+ * --paper-edge / --ink / --ink-mute / --ink-soft / --ink-faint / --primary /
  * --on-primary / --accent / --accent-soft / status tokens, with dual-palette
  * (kami/sumi) dark-mode flip.
  *

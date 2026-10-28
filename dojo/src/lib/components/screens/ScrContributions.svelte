@@ -131,7 +131,7 @@
 			count={downstream.length}
 		>
 			{#snippet right()}
-				<span class="mono text-ink-mute text-xs">from your dōjōs · never silently merged</span>
+				<span class="mono text-ink-soft text-xs">from your dōjōs · never silently merged</span>
 			{/snippet}
 			{#each downstream as it, i (i)}
 				<div class="border-paper-edge flex items-center gap-4 border-b px-4 py-3">

@@ -36,7 +36,7 @@
 >
   <div class="min-w-0">
     <div class="font-mono text-xs text-ink truncate">{task.name}</div>
-    <div class="text-xs text-ink-mute truncate mt-[2px]" title={task.description}>
+    <div class="text-xs text-ink-soft truncate mt-[2px]" title={task.description}>
       {task.description}
     </div>
     {#if log}
@@ -50,7 +50,7 @@
     {/if}
     {#if running}
       <!-- A pass in progress, so a stall is not read as an old result (#283). -->
-      <div class="text-xs text-ink-mute mt-[2px]" data-task-running>{running}</div>
+      <div class="text-xs text-ink-soft mt-[2px]" data-task-running>{running}</div>
     {/if}
     {#if task.last_ok === false && task.last_error}
       <!-- Why it is failing, where it is listed (#96). -->
@@ -60,27 +60,27 @@
     {/if}
   </div>
 
-  <span class="font-mono text-xs text-ink-mute truncate" data-task-last-run>
+  <span class="font-mono text-xs text-ink-soft truncate" data-task-last-run>
     {lastRun}
   </span>
 
-  <span class="font-mono text-xs text-ink-mute truncate" data-task-interval>
+  <span class="font-mono text-xs text-ink-soft truncate" data-task-interval>
     {interval}
   </span>
 
-  <span class="font-mono text-xs text-ink-mute truncate" data-task-next-run>
+  <span class="font-mono text-xs text-ink-soft truncate" data-task-next-run>
     {nextRun}
   </span>
 
-  <span class="font-mono text-xs text-ink-mute truncate" data-task-schedule title={schedule}>
+  <span class="font-mono text-xs text-ink-soft truncate" data-task-schedule title={schedule}>
     {schedule}
   </span>
 
-  <span class="font-mono text-xs text-ink-mute truncate" data-task-avg>
+  <span class="font-mono text-xs text-ink-soft truncate" data-task-avg>
     {avg}
   </span>
 
-  <span class="font-mono text-xs text-ink-mute truncate" data-task-health>
+  <span class="font-mono text-xs text-ink-soft truncate" data-task-health>
     {health}
   </span>
 </div>
@@ -94,7 +94,7 @@
     {:else if log.lines.length === 0}
       <p class="text-xs text-ink-faint m-0">Nothing logged by {task.name} today.</p>
     {:else}
-      <pre class="font-mono text-xs text-ink-mute m-0 overflow-x-auto whitespace-pre max-h-64 overflow-y-auto">{log.lines.join('\n')}</pre>
+      <pre class="font-mono text-xs text-ink-soft m-0 overflow-x-auto whitespace-pre max-h-64 overflow-y-auto">{log.lines.join('\n')}</pre>
     {/if}
   </div>
 {/if}

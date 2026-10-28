@@ -69,11 +69,11 @@
                     onclick={() => state.toggleDate(dg.date)}
                 >
                     <span
-                        class="text-xs text-ink-soft leading-none inline-block transition-transform duration"
+                        class="text-xs text-ink-mute leading-none inline-block transition-transform duration"
                         class:collapsed={!open}>▾</span
                     >
                     <span
-                        class="text-xs font-semibold tracking-wide uppercase text-ink-mute"
+                        class="text-xs font-semibold tracking-wide uppercase text-ink-soft"
                         >{dg.date}</span
                     >
                 </button>
@@ -96,11 +96,11 @@
                             <div class="flex items-center gap-1.5 mb-0.5">
                                 <StatusDot status={outcomeStatus(s.outcome)} size="sm" />
                                 <span
-                                    class="session-time text-sm font-medium text-ink-mute"
+                                    class="session-time text-sm font-medium text-ink-soft"
                                     >{timeOfDay(s.started_at)}</span
                                 >
                             </div>
-                            <div class="ml-3 text-xs text-ink-soft">
+                            <div class="ml-3 text-xs text-ink-mute">
                                 {moduleLabel(s.module)} · {sessionSummary(s)}
                             </div>
                         </button>
@@ -109,7 +109,7 @@
             {/each}
 
             {#if state.sessions.length === 0}
-                <div class="px-5 py-4 text-xs text-ink-soft">
+                <div class="px-5 py-4 text-xs text-ink-mute">
                     No sessions yet
                 </div>
             {/if}
@@ -135,7 +135,7 @@
                             {formatTime(s.started_at)}
                         </h2>
                         <div
-                            class="flex items-center flex-wrap text-xs text-ink-soft"
+                            class="flex items-center flex-wrap text-xs text-ink-mute"
                         >
                             {#each [anonymize(si.os), si.arch, `${si.ram_gb} GB`, `${si.cpu_cores} cores`, `v${s.app_version}`] as v, i}
                                 {#if i > 0}<span class="mx-2 opacity-40">·</span
@@ -174,7 +174,7 @@
 
             <!-- Column headers -->
             <div
-                class="grid grid-cols-[68px_148px_1fr_52px_40px] gap-3 px-9 py-2 border-b border-paper-edge bg-paper-mute shrink-0 text-xs tracking-wide uppercase text-ink-soft"
+                class="grid grid-cols-[68px_148px_1fr_52px_40px] gap-3 px-9 py-2 border-b border-paper-edge bg-paper-mute shrink-0 text-xs tracking-wide uppercase text-ink-mute"
             >
                 <span>action</span>
                 <span>step</span>
@@ -218,15 +218,15 @@
                                 {am.label}
                             </span>
                             <span
-                                class="text-xs font-mono text-ink-mute overflow-hidden whitespace-nowrap text-ellipsis"
+                                class="text-xs font-mono text-ink-soft overflow-hidden whitespace-nowrap text-ellipsis"
                                 >{t.step ?? ""}</span
                             >
                             <span
-                                class="text-xs font-mono text-ink-soft overflow-hidden whitespace-nowrap text-ellipsis"
+                                class="text-xs font-mono text-ink-mute overflow-hidden whitespace-nowrap text-ellipsis"
                                 >{anonymize(t.cmd ?? "")}</span
                             >
                             <span
-                                class="text-xs text-ink-soft tabular-nums text-right"
+                                class="text-xs text-ink-mute tabular-nums text-right"
                                 >{fmtMs(t.ms ?? 0)}</span
                             >
                             <div class="text-center">
@@ -258,7 +258,7 @@
                                     <div class="flex flex-col gap-1">
                                         <Eyebrow>stdout</Eyebrow>
                                         <pre
-                                            class="m-0 text-xs font-mono text-ink-mute leading-normal whitespace-pre-wrap break-all">{anonymize(
+                                            class="m-0 text-xs font-mono text-ink-soft leading-normal whitespace-pre-wrap break-all">{anonymize(
                                                 t.out,
                                             )}</pre>
                                     </div>
@@ -289,7 +289,7 @@
                                                 ? "var(--success)"
                                                 : "var(--accent)"}>$ {t.fix_approach ??
                                                 ""}  <span
-                                                class="text-ink-soft text-xs"
+                                                class="text-ink-mute text-xs"
                                                 >→ {t.fix_ok
                                                     ? "succeeded"
                                                     : "failed"}</span
@@ -301,7 +301,7 @@
                     </div>
                 {/each}
                 {#if bt.length === 0}
-                    <div class="py-10 text-center text-sm text-ink-soft">
+                    <div class="py-10 text-center text-sm text-ink-mute">
                         {#if s.traces.length > 0}
                             Legacy bootstrap session — {s.traces.length} record{s.traces.length === 1 ? "" : "s"} with no detailed step traces.
                         {:else}
@@ -313,7 +313,7 @@
             </div>
         {:else}
             <div
-                class="flex-1 flex items-center justify-center text-sm text-ink-soft"
+                class="flex-1 flex items-center justify-center text-sm text-ink-mute"
             >
                 No sessions recorded yet. Run the app to generate logs.
             </div>
@@ -340,13 +340,13 @@
                     <div id="report-modal-title" class="display text-lg font-normal mb-1">
                         Report session
                     </div>
-                    <div class="text-xs text-ink-soft">
+                    <div class="text-xs text-ink-mute">
                         {formatTime(s.started_at)} · {bt.length} traces ·
                         {bt.filter((t) => t.fix_attempted).length} auto-fixes
                     </div>
                 </div>
                 <button
-                    class="bg-transparent border-none cursor-pointer text-ink-soft text-xl px-2 py-1 leading-none ml-4 shrink-0"
+                    class="bg-transparent border-none cursor-pointer text-ink-mute text-xl px-2 py-1 leading-none ml-4 shrink-0"
                     onclick={() => state.closeModal()}>×</button
                 >
             </div>
@@ -361,7 +361,7 @@
                         {buildTitle(s)}
                     </div>
                     <pre
-                        class="flex-1 bg-paper-mute border border-paper-edge rounded-md px-3.5 py-3 font-mono text-xs text-ink-mute leading-loose overflow-auto whitespace-pre-wrap break-words min-h-0 m-0">{buildBody(
+                        class="flex-1 bg-paper-mute border border-paper-edge rounded-md px-3.5 py-3 font-mono text-xs text-ink-soft leading-loose overflow-auto whitespace-pre-wrap break-words min-h-0 m-0">{buildBody(
                             s,
                             state.addCtx,
                         )}</pre>
@@ -375,8 +375,8 @@
                         <div class="mb-2"><Eyebrow>Included in report</Eyebrow></div>
                         {#each [["Session", formatTime(s.started_at)], ["OS", anonymize(si.os)], ["Arch", si.arch], ["RAM", `${si.ram_gb} GB`], ["Traces", String(bt.length)], ["Fixes", String(bt.filter((t) => t.fix_attempted).length)], ["App", `v${s.app_version}`]] as [k, v]}
                             <div class="flex justify-between text-xs mb-1">
-                                <span class="text-ink-soft">{k}</span>
-                                <span class="text-ink-mute font-mono text-xs"
+                                <span class="text-ink-mute">{k}</span>
+                                <span class="text-ink-soft font-mono text-xs"
                                     >{v}</span
                                 >
                             </div>
@@ -394,7 +394,7 @@
                     </div>
 
                     <p
-                        class="privacy-note text-xs text-ink-soft leading-loose m-0"
+                        class="privacy-note text-xs text-ink-mute leading-loose m-0"
                     >
                         Paths like <code>/Users/</code> are replaced with
                         <code>~/</code>. No personal data included.
@@ -453,7 +453,7 @@
     /* Input focus ring */
     .ctx-input:focus {
         outline: none;
-        border-color: var(--ink-soft);
+        border-color: var(--ink-mute);
     }
 
     /* Code snippets in privacy note */

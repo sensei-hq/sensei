@@ -44,7 +44,7 @@
     {#snippet header()}
     <PageHeader title="Traceability">
         {#snippet right()}
-            <div class="text-sm text-ink-mute flex items-center gap-3">
+            <div class="text-sm text-ink-soft flex items-center gap-3">
                 {#if !data.error}
                     <span>{data.total} tracked</span>
                     <span> · </span>
@@ -71,19 +71,19 @@
             <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
         {:else}
         {#if lastSummary}
-            <div class="mb-4 text-xs text-ink-soft" data-testid="drift-scan-summary">
+            <div class="mb-4 text-xs text-ink-mute" data-testid="drift-scan-summary">
                 Scanned {lastSummary.scannedDocs} docs · added {lastSummary.newBroken} broken · resolved {lastSummary.resolved}.
             </div>
         {/if}
         {#if data.driftItems.length === 0 && data.indexedDocs === 0}
             <!-- Nothing to check (#290): no document is indexed, so an empty list is
                  not "no drift". Markdown has no indexer adapter yet. -->
-            <p class="text-sm text-ink-soft" data-testid="drift-no-docs">
+            <p class="text-sm text-ink-mute" data-testid="drift-no-docs">
                 No documents are indexed for this workspace, so nothing has been checked for drift — sensei does not
                 index markdown yet.
             </p>
         {:else if data.driftItems.length === 0}
-            <p class="text-sm text-ink-soft">No drift signals yet. Run a scan to check for stale doc references.</p>
+            <p class="text-sm text-ink-mute">No drift signals yet. Run a scan to check for stale doc references.</p>
         {:else}
             <ul class="list-none m-0 p-0" data-testid="drift-list">
                 {#each data.driftItems as item (item.id)}
@@ -100,25 +100,25 @@
                             <span class="mt-1"><StatusDot status={dotStatus(item.status)} /></span>
                             <span class="flex-1">{item.detail ?? item.status}</span>
                             {#if hasDiff}
-                                <span class="text-xs text-ink-mute">{opened ? '−' : '+'}</span>
+                                <span class="text-xs text-ink-soft">{opened ? '−' : '+'}</span>
                             {/if}
                         </button>
                         {#if opened && hasDiff}
                             <div class="pl-6 pb-3 flex flex-col gap-2" data-testid={`drift-diff-${item.id}`}>
                                 {#if item.expectedSignature}
                                     <div>
-                                        <p class="text-xs text-ink-mute uppercase tracking-wide m-0 mb-1">Expected</p>
+                                        <p class="text-xs text-ink-soft uppercase tracking-wide m-0 mb-1">Expected</p>
                                         <pre class="text-xs font-mono bg-paper-soft border border-paper-edge rounded-md p-2 m-0 whitespace-pre-wrap break-all">{item.expectedSignature}</pre>
                                     </div>
                                 {/if}
                                 {#if item.actualSignature}
                                     <div>
-                                        <p class="text-xs text-ink-mute uppercase tracking-wide m-0 mb-1">Actual</p>
+                                        <p class="text-xs text-ink-soft uppercase tracking-wide m-0 mb-1">Actual</p>
                                         <pre class="text-xs font-mono bg-paper-soft border border-paper-edge rounded-md p-2 m-0 whitespace-pre-wrap break-all">{item.actualSignature}</pre>
                                     </div>
                                 {:else if item.status === 'broken'}
                                     <div>
-                                        <p class="text-xs text-ink-mute uppercase tracking-wide m-0 mb-1">Actual</p>
+                                        <p class="text-xs text-ink-soft uppercase tracking-wide m-0 mb-1">Actual</p>
                                         <p class="text-xs text-warning italic m-0">Symbol no longer exists.</p>
                                     </div>
                                 {/if}

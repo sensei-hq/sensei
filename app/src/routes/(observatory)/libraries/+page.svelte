@@ -35,7 +35,7 @@
         </div>
 
         {#if lib.loading}
-            <p class="text-sm text-ink-soft">Loading libraries...</p>
+            <p class="text-sm text-ink-mute">Loading libraries...</p>
         {:else if lib.error}
             <ScreenState status="error" error={lib.error} onretry={() => void lib.load(api)} />
         {:else if filtered.length === 0}
@@ -62,13 +62,13 @@
                                 {#if l.ecosystem}
                                     <span class="text-xs text-ink-faint">{l.ecosystem}</span>
                                 {/if}
-                                <span class="text-xs text-ink-soft"
+                                <span class="text-xs text-ink-mute"
                                     >{l.repoCount} repo{l.repoCount !== 1
                                         ? "s"
                                         : ""}</span
                                 >
                                 {#if l.skillCount || l.agentCount}
-                                    <span class="text-xs text-ink-soft"
+                                    <span class="text-xs text-ink-mute"
                                         >· {l.skillCount ?? 0} skills · {l.agentCount ?? 0} agents</span
                                     >
                                 {/if}
@@ -84,7 +84,7 @@
                         <h3 class="text-base font-medium m-0 mb-1">
                             {lib.selected.name}
                         </h3>
-                        <p class="text-xs text-ink-soft m-0 mb-4">
+                        <p class="text-xs text-ink-mute m-0 mb-4">
                             {#if lib.selected.ecosystem}{lib.selected.ecosystem} · {/if}
                             {lib.selected.repoCount} repo{lib.selected.repoCount !== 1 ? 's' : ''}
                             {#if lib.selected.pageCount}· {lib.selected.pageCount} doc pages{/if}
@@ -95,7 +95,7 @@
                                 <p class="m-0 mb-2"><Eyebrow>Packages</Eyebrow></p>
                                 <div class="flex flex-wrap gap-1.5">
                                     {#each lib.selected.packages as pkg (pkg)}
-                                        <span class="inline-block px-2 py-0.5 rounded-full text-xs bg-paper-soft text-ink-soft font-mono">{pkg}</span>
+                                        <span class="inline-block px-2 py-0.5 rounded-full text-xs bg-paper-soft text-ink-mute font-mono">{pkg}</span>
                                     {/each}
                                 </div>
                             </div>
@@ -105,11 +105,11 @@
                             <p class="m-0 mb-1"><Eyebrow>Provided by the library</Eyebrow></p>
                             <p class="text-xs text-ink-faint m-0 mb-2">From its sensei.library.json — what assistants are given.</p>
                             {#if lib.provided.loading}
-                                <p class="text-xs text-ink-soft">Loading...</p>
+                                <p class="text-xs text-ink-mute">Loading...</p>
                             {:else if lib.provided.error}
                                 <p class="text-xs text-error">Couldn't load what it provides: {lib.provided.error}</p>
                             {:else if !lib.provided.docs.length && !lib.provided.skills.length && !lib.provided.agents.length}
-                                <p class="text-xs text-ink-soft">No docs, skills or agents held for this library.</p>
+                                <p class="text-xs text-ink-mute">No docs, skills or agents held for this library.</p>
                             {:else}
                                 {@render provides("Skills", lib.provided.skills.map((c) => ({ key: c.name, label: c.name, note: c.focus, body: c.body })))}
                                 {@render provides("Agents", lib.provided.agents.map((c) => ({ key: c.name, label: c.name, note: c.focus, body: c.body })))}
@@ -121,13 +121,13 @@
                             <p class="m-0 mb-2"><Eyebrow>Used in</Eyebrow></p>
                             <div class="flex flex-wrap gap-1.5">
                                 {#each lib.selected.repos as repo}
-                                    <span class="inline-block px-2 py-0.5 rounded-full text-xs bg-paper-mute text-ink-soft lowercase">{repo}</span>
+                                    <span class="inline-block px-2 py-0.5 rounded-full text-xs bg-paper-mute text-ink-mute lowercase">{repo}</span>
                                 {/each}
                             </div>
                         </div>
 
                         {#if lib.usageLoading}
-                            <p class="text-xs text-ink-soft">Loading usage...</p>
+                            <p class="text-xs text-ink-mute">Loading usage...</p>
                         {:else if lib.usageError}
                             <p class="text-xs text-error">Couldn't load usage: {lib.usageError}</p>
                         {:else if lib.usage.length > 0}
@@ -138,10 +138,10 @@
                                         <div>
                                             <span class="font-mono text-xs">{u.folder}</span>
                                             {#if u.version_used}
-                                                <span class="text-xs text-ink-soft ml-1.5">v{u.version_used}</span>
+                                                <span class="text-xs text-ink-mute ml-1.5">v{u.version_used}</span>
                                             {/if}
                                         </div>
-                                        <span class="font-mono text-xs text-ink-soft">{u.import_count} imports</span>
+                                        <span class="font-mono text-xs text-ink-mute">{u.import_count} imports</span>
                                     </div>
                                 {/each}
                             </div>
@@ -156,7 +156,7 @@
 {#snippet provides(title: string, items: { key: string; label: string; note: string | null; body: string | null }[])}
     {#if items.length}
         <div class="mb-3">
-            <p class="text-xs text-ink-soft m-0 mb-1">{title} · {items.length}</p>
+            <p class="text-xs text-ink-mute m-0 mb-1">{title} · {items.length}</p>
             <ul class="m-0 p-0 list-none max-h-48 overflow-y-auto">
                 {#each items as item (item.key)}
                     <li class="border-b border-paper-edge">
@@ -165,7 +165,7 @@
                                 <span class="font-mono text-xs">{item.label}</span>
                                 {#if item.note}<span class="text-xs text-ink-faint ml-1.5">{item.note}</span>{/if}
                             </summary>
-                            <pre class="text-xs text-ink-soft whitespace-pre-wrap m-0 mb-2 max-h-64 overflow-y-auto">{item.body ?? "No body held."}</pre>
+                            <pre class="text-xs text-ink-mute whitespace-pre-wrap m-0 mb-2 max-h-64 overflow-y-auto">{item.body ?? "No body held."}</pre>
                         </details>
                     </li>
                 {/each}
@@ -176,14 +176,14 @@
 
 <style>
     .lib-search:focus {
-        border-color: var(--ink-soft);
+        border-color: var(--ink-mute);
     }
 
     .lib-card:hover {
         background: var(--paper-mute);
     }
     .lib-card.selected {
-        border-color: var(--ink-soft);
+        border-color: var(--ink-mute);
         background: var(--paper-mute);
     }
 </style>

@@ -46,7 +46,7 @@
 {#if draft.open}
 	<div class="bg-paper-soft border-paper-edge flex flex-wrap items-end gap-3 rounded-lg border p-4">
 		<label class="flex min-w-0 flex-1 flex-col gap-1">
-			<span class="text-ink-mute text-xs">Team name</span>
+			<span class="text-ink-soft text-xs">Team name</span>
 			<input
 				type="text"
 				class="bg-paper border-paper-edge text-ink rounded border px-3 py-2 text-sm"
@@ -63,7 +63,7 @@
 {/if}
 
 {#if teams.length === 0}
-	<div class="bg-paper-soft border-paper-edge text-ink-mute rounded-lg border p-4 text-sm">
+	<div class="bg-paper-soft border-paper-edge text-ink-soft rounded-lg border p-4 text-sm">
 		No teams yet. A team groups members for reports and for granting a workspace to all of them at once.
 	</div>
 {:else}
@@ -72,13 +72,13 @@
 			{@const addable = addableMembers(t, members)}
 			<div class="border-paper-edge flex flex-col gap-2 border-b px-4 py-3">
 				<div class="flex items-center gap-3">
-					<Icon name="users-group-two-rounded" size={18} toneClass="text-ink-mute" />
+					<Icon name="users-group-two-rounded" size={18} toneClass="text-ink-soft" />
 					<span class="text-ink flex-1 text-sm font-medium">{t.name}</span>
 					<span class="text-ink-faint text-xs">{t.members.length} on it</span>
 					{#if onSave}
 						<button
 							type="button"
-							class="text-ink-mute cursor-pointer text-xs"
+							class="text-ink-soft cursor-pointer text-xs"
 							aria-label={'Rename ' + t.name}
 							onclick={() => draft.start(t)}>Rename</button
 						>
@@ -86,7 +86,7 @@
 					{#if onDelete}
 						<button
 							type="button"
-							class="text-ink-mute hover:text-danger cursor-pointer text-xs"
+							class="text-ink-soft hover:text-danger cursor-pointer text-xs"
 							aria-label={'Delete ' + t.name}
 							onclick={() => onDelete?.(t)}>Delete</button
 						>

@@ -46,7 +46,7 @@
 			{#each Object.values(K2_NODE) as n (n.label)}
 				<span class="flex items-center gap-1">
 					<Icon name={n.icon} size={13} toneClass={n.text} />
-					<span class="mono text-ink-mute text-xs">{n.label}</span>
+					<span class="mono text-ink-soft text-xs">{n.label}</span>
 				</span>
 			{/each}
 		</div>

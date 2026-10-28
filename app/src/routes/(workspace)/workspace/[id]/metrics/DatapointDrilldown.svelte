@@ -77,7 +77,7 @@
                     onclick={() => controller.select(day)}
                     class="px-3 py-1 rounded-md text-xs transition-colors duration-fast {active
                         ? 'bg-accent-soft text-accent font-medium'
-                        : 'text-ink-mute hover:text-ink'}"
+                        : 'text-ink-soft hover:text-ink'}"
                 >{formatDayLabel(day)}</button>
             {/each}
         </div>
@@ -86,7 +86,7 @@
     {#if controller.explainer}
         <p
             data-drilldown-explainer
-            class="text-sm text-ink-soft leading-relaxed text-pretty"
+            class="text-sm text-ink-mute leading-relaxed text-pretty"
         >{controller.explainer}</p>
     {/if}
 
@@ -97,7 +97,7 @@
             This drill-down isn’t available on the connected daemon yet.
         </p>
     {:else if controller.status === 'error'}
-        <p data-drilldown-error class="text-sm text-ink-mute">
+        <p data-drilldown-error class="text-sm text-ink-soft">
             Couldn’t load the drill-down — {controller.errorMessage}
         </p>
     {:else if controller.status === 'empty'}
@@ -110,7 +110,7 @@
                     class="flex flex-col gap-1 py-3 border-t border-paper-edge"
                 >
                     <div class="flex items-baseline justify-between gap-3">
-                        <span class="font-mono text-xs text-ink-mute truncate"
+                        <span class="font-mono text-xs text-ink-soft truncate"
                             >{shortSessionId(s.client_session_id)}</span
                         >
                         <span class="flex items-center gap-2 shrink-0">
@@ -125,14 +125,14 @@
                     </div>
                     <div class="text-sm text-ink text-pretty">{s.task}</div>
                     {#if s.summary && s.summary.trim()}
-                        <div class="text-sm text-ink-soft text-pretty">{s.summary}</div>
+                        <div class="text-sm text-ink-mute text-pretty">{s.summary}</div>
                     {/if}
                     <div
                         data-session-observation
                         class="flex flex-col gap-1 border-l border-accent-soft pl-3 mt-1"
                     >
                         <span class="text-xs text-ink-faint">{s.observation.title}</span>
-                        <span class="text-sm text-ink-soft text-pretty">{s.observation.detail}</span>
+                        <span class="text-sm text-ink-mute text-pretty">{s.observation.detail}</span>
                     </div>
                     {#if s.evidence && s.evidence.moments.length}
                         <div data-session-evidence class="flex flex-col gap-1 mt-1">
@@ -140,10 +140,10 @@
                             {#each s.evidence.moments as m (m.turn)}
                                 <div data-evidence-moment class="flex gap-2 text-xs text-pretty">
                                     <span
-                                        class="shrink-0 {m.who === 'you' ? 'text-accent' : 'text-ink-mute'}"
+                                        class="shrink-0 {m.who === 'you' ? 'text-accent' : 'text-ink-soft'}"
                                         >{m.who}{#if m.kind === 'correction'} · correction{/if}</span
                                     >
-                                    <span class="text-ink-soft italic">“{m.text}”</span>
+                                    <span class="text-ink-mute italic">“{m.text}”</span>
                                 </div>
                             {/each}
                         </div>

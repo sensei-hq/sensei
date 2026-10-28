@@ -55,7 +55,7 @@
 		<!-- An error state, never an empty list. -->
 		<p role="alert" class="text-sm text-danger">Could not load your repositories — {error}</p>
 	{:else if repos.length === 0}
-		<p class="text-sm text-ink-soft">
+		<p class="text-sm text-ink-mute">
 			No repositories yet. They appear once sensei has scanned a clone and the daemon
 			has registered it.
 		</p>
@@ -65,13 +65,13 @@
 				<li class="flex flex-col gap-2 rounded border border-line p-3 md:flex-row md:items-center md:justify-between">
 					<div class="flex flex-col gap-1">
 						<span class="text-sm text-ink">{r.name ?? r.repo_key}</span>
-						<span class="text-xs text-ink-soft">
+						<span class="text-xs text-ink-mute">
 							{r.tenant} · {visibilityLabel(r.forge_visibility)} · {authorityLabel(r)}
 						</span>
 						{#if !r.sync_enabled && r.reason}
 							<!-- The refusal names itself AND what to do. A bare "off" here is
 							     the exact ambiguity the reason registry exists to remove. -->
-							<span class="text-xs text-ink-soft">
+							<span class="text-xs text-ink-mute">
 								{r.reason}{#if r.remedy} — {r.remedy}{/if}{#if r.reason_actor && !r.configurable_by_me}
 									<span class="text-ink-faint"> ({r.reason_actor} can change it)</span>
 								{/if}
@@ -80,10 +80,10 @@
 					</div>
 
 					<div class="flex items-center gap-3">
-						<span class="text-xs" class:text-success={r.sync_enabled} class:text-ink-soft={!r.sync_enabled}>
+						<span class="text-xs" class:text-success={r.sync_enabled} class:text-ink-mute={!r.sync_enabled}>
 							{r.sync_enabled ? 'sharing' : 'not sharing'}
 						</span>
-						<label class="flex items-center gap-2 text-xs text-ink-soft">
+						<label class="flex items-center gap-2 text-xs text-ink-mute">
 							<input
 								type="checkbox"
 								checked={r.elected}

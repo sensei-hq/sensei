@@ -28,10 +28,10 @@
 	</div>
 	<div class="flex flex-col items-stretch gap-3 md:flex-row md:items-center" style="padding: 16px">
 		<div class="bg-paper-mute flex-1 rounded" style="padding: 12px; opacity: 0.7">
-			<div class="text-ink-mute text-xs font-semibold uppercase" style="letter-spacing: 0.18em; margin-bottom: 4px">
+			<div class="text-ink-soft text-xs font-semibold uppercase" style="letter-spacing: 0.18em; margin-bottom: 4px">
 				{conflict.loser.level} · yields
 			</div>
-			<div class="text-ink-soft text-sm" style="text-decoration: line-through">
+			<div class="text-ink-mute text-sm" style="text-decoration: line-through">
 				{conflict.loser.text}
 			</div>
 		</div>
@@ -43,7 +43,7 @@
 			<div class="text-ink text-sm font-medium">{conflict.winner.text}</div>
 		</div>
 	</div>
-	<div class="border-paper-edge bg-paper text-ink-soft border-t text-sm" style="padding: 12px 16px; line-height: 1.55">
+	<div class="border-paper-edge bg-paper text-ink-mute border-t text-sm" style="padding: 12px 16px; line-height: 1.55">
 		{conflict.why}
 	</div>
 </div>

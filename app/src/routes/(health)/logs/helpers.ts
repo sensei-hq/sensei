@@ -7,7 +7,7 @@ import type { LogSession, BootstrapTrace } from '$lib/types.js';
 // ── Action badge ──────────────────────────────────────────────────────────
 
 export const ACTION_META: Record<string, { label: string; color: string; bg: string }> = {
-    check:    { label: 'CHECK',    color: 'var(--ink-soft)',   bg: 'var(--paper-mute)' },
+    check:    { label: 'CHECK',    color: 'var(--ink-mute)',   bg: 'var(--paper-mute)' },
     resolve:  { label: 'RESOLVE',  color: 'var(--warning)',   bg: 'color-mix(in oklch, var(--warning) 10%, transparent)' },
     instruct: { label: 'INSTRUCT', color: 'var(--accent)',   bg: 'color-mix(in oklch, var(--accent) 8%, transparent)' },
 };

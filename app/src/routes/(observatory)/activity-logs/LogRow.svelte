@@ -34,7 +34,7 @@
     onclick={onToggle}
     data-log-row-header
   >
-    <span class="font-mono text-xs text-ink-mute truncate" title={absoluteTime(row.logged_at)}>
+    <span class="font-mono text-xs text-ink-soft truncate" title={absoluteTime(row.logged_at)}>
       {relativeTime(now, row.logged_at)}
     </span>
 
@@ -45,11 +45,11 @@
       {row.level}
     </span>
 
-    <span class="font-mono text-xs text-ink-mute truncate">
+    <span class="font-mono text-xs text-ink-soft truncate">
       {row.source ?? '—'}
     </span>
 
-    <span class="font-mono text-xs text-ink-soft truncate">
+    <span class="font-mono text-xs text-ink-mute truncate">
       {mod ?? '—'}
     </span>
 
@@ -76,7 +76,7 @@
           <pre
             class="font-mono text-xs leading-relaxed whitespace-pre-wrap break-words m-0"
             class:text-error={section.label === 'error'}
-            class:text-ink-soft={section.label !== 'error'}>{section.json}</pre>
+            class:text-ink-mute={section.label !== 'error'}>{section.json}</pre>
         </div>
       {/each}
     </div>

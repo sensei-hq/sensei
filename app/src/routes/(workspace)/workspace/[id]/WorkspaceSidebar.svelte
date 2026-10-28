@@ -84,7 +84,7 @@
                  which read as missing data rather than "no client". -->
             <span
                 data-component="sidebar-workspace-visibility"
-                class="self-start mono text-xs uppercase text-ink-mute bg-paper border border-paper-edge rounded px-1.5 py-0.5"
+                class="self-start mono text-xs uppercase text-ink-soft bg-paper border border-paper-edge rounded px-1.5 py-0.5"
                 >{workspaceVisibilityLabel(client)}</span
             >
         </div>
@@ -110,7 +110,7 @@
     <div data-component="workspace-health" class="mt-auto px-4 pt-3 flex flex-col gap-2 border-t border-paper-edge">
         <div class="flex items-baseline justify-between">
             <Eyebrow>FTR · 14d</Eyebrow>
-            <span data-ftr-delta class="mono text-xs text-ink-mute">{delta}</span>
+            <span data-ftr-delta class="mono text-xs text-ink-soft">{delta}</span>
         </div>
         <div class="flex items-end justify-between gap-2">
             <span
@@ -124,7 +124,7 @@
             {/if}
         </div>
         <div class="flex items-center justify-between text-xs">
-            <span class="text-ink-soft">Sessions · 7d</span>
+            <span class="text-ink-mute">Sessions · 7d</span>
             <span class="mono text-ink">{sessions7d == null ? '—' : sessions7d}</span>
         </div>
     </div>

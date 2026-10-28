@@ -222,7 +222,7 @@ export function sessionRows(sessions: WorkspaceOverviewSession[], now: number = 
       meta: parts.join(' · '),
       time: relativeTime(s.completedAt ?? s.startedAt, now),
       ftr: s.ftr,
-      timeToneClass: s.ftr ? 'text-success' : 'text-ink-mute',
+      timeToneClass: s.ftr ? 'text-success' : 'text-ink-soft',
       role: s.role,
     };
   });

@@ -19,8 +19,8 @@
   // Named-token text class per tone — kept here so the template stays literal
   // and UnoCSS statically sees the classes.
   const toneClass: Record<PhaseTone, string> = {
-    'ink-mute': 'text-ink-mute',
     'ink-soft': 'text-ink-soft',
+    'ink-mute': 'text-ink-mute',
     success: 'text-success',
     warning: 'text-warning',
     accent: 'text-accent',
@@ -29,18 +29,18 @@
 
 <div class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg" data-testid="settings-local-models">
   <h3 class="text-base m-0 mb-1">Local models</h3>
-  <p class="text-sm text-ink-soft m-0 mb-5">
+  <p class="text-sm text-ink-mute m-0 mb-5">
     Pulled to disk, served in-process by the embedded runtime — runs offline.
   </p>
 
   {#if controller.notice}
-    <p class="text-sm text-ink-soft" data-testid="local-models-notice">{controller.notice}</p>
+    <p class="text-sm text-ink-mute" data-testid="local-models-notice">{controller.notice}</p>
   {:else if controller.loading}
-    <p class="text-sm text-ink-soft">Loading models…</p>
+    <p class="text-sm text-ink-mute">Loading models…</p>
   {:else if controller.models.length === 0 && controller.error}
     <ScreenState status="error" error={controller.error} onretry={() => void controller.load()} />
   {:else if controller.models.length === 0}
-    <p class="text-sm text-ink-soft" data-testid="local-models-empty">No local models configured.</p>
+    <p class="text-sm text-ink-mute" data-testid="local-models-empty">No local models configured.</p>
   {:else}
     {#if controller.error}
       <p class="text-xs text-danger mb-3" data-testid="local-models-error">{controller.error}</p>
@@ -52,7 +52,7 @@
         <div class="grid grid-cols-[1fr_auto] gap-3 py-3 items-center" data-testid={`local-model-${m.id}`}>
           <div class="min-w-0">
             <div class="font-mono text-sm text-ink truncate">{m.id}</div>
-            <div class="text-xs text-ink-soft mt-0.5">{m.name}</div>
+            <div class="text-xs text-ink-mute mt-0.5">{m.name}</div>
             {#if d.percent !== null}
               <div class="h-1 mt-2 rounded-full bg-paper-edge overflow-hidden" data-testid={`local-model-progress-${m.id}`}>
                 <div class="h-full bg-accent" style="width: {d.percent}%"></div>

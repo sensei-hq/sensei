@@ -42,7 +42,7 @@ describe('toneClass', () => {
   it('maps tone + kind to a named-token class', () => {
     expect(toneClass('success')).toBe('text-success');
     expect(toneClass('accent', 'bg')).toBe('bg-accent');
-    expect(toneClass('ink', 'border')).toBe('border-ink-mute');
+    expect(toneClass('ink', 'border')).toBe('border-ink-soft');
   });
 });
 

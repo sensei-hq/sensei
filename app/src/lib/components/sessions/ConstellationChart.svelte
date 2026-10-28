@@ -26,7 +26,7 @@
     good: 'var(--success)',
     bad: 'var(--warning)',
     ugly: 'var(--accent)',
-    neutral: 'var(--ink-mute)',
+    neutral: 'var(--ink-soft)',
   };
 
   // Only sessions that fall on a visible day and have a measured duration.
@@ -42,13 +42,13 @@
   {#each dayRows as day, i (day)}
     {#if i % labelStride === 0 || i === dayRows.length - 1}
       <line x1={padL} x2={width - padR} y1={y(i)} y2={y(i)} stroke="var(--paper-edge)" stroke-dasharray="1 3" />
-      <text x={padL - 10} y={y(i) + 3} font-size="10.5" fill="var(--ink-soft)" text-anchor="end">
+      <text x={padL - 10} y={y(i) + 3} font-size="10.5" fill="var(--ink-mute)" text-anchor="end">
         {shortDayLabel(day)}
       </text>
     {/if}
   {/each}
 
-  <text x={(padL + width - padR) / 2} y={height - 8} font-size="10" fill="var(--ink-mute)" text-anchor="middle">
+  <text x={(padL + width - padR) / 2} y={height - 8} font-size="10" fill="var(--ink-soft)" text-anchor="middle">
     ← shorter session · longer session →
   </text>
 

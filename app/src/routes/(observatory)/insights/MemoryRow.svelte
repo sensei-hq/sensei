@@ -42,14 +42,14 @@
       <div
         class="h-full rounded-full"
         class:bg-success={full}
-        class:bg-ink-soft={!full}
+        class:bg-ink-mute={!full}
         style={`width: ${fillWidth}`}
         data-strength-fill
       ></div>
     </div>
     <div class="flex-1 min-w-0">
       <p class="text-sm text-ink m-0 leading-snug truncate">{memory.title}</p>
-      <span class="font-mono text-xs text-ink-mute">{memory.scope}</span>
+      <span class="font-mono text-xs text-ink-soft">{memory.scope}</span>
     </div>
   </article>
 {/if}

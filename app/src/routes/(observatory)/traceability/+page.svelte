@@ -79,7 +79,7 @@
           description="Doc-to-code references are all resolving. Broken or drifted mentions will surface here once a workspace's next scan finds one."
         />
       {:else}
-        <p class="text-sm text-ink-soft mb-6" data-traceability-rollup>{rollupHeadline(data.rollup)}</p>
+        <p class="text-sm text-ink-mute mb-6" data-traceability-rollup>{rollupHeadline(data.rollup)}</p>
         {#each data.groups as g (g.workspaceId)}
           {@render group(g)}
         {/each}

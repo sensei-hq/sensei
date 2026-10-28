@@ -42,7 +42,7 @@
 		</span>
 		<div class="min-w-0 flex-1">
 			<div class="text-ink text-sm font-medium" style="line-height: 1.25">{item.title}</div>
-			<div class="mono text-ink-mute text-xs" style="margin-top: 1px">
+			<div class="mono text-ink-soft text-xs" style="margin-top: 1px">
 				{item.project} · {item.dojo} · {item.why}
 			</div>
 		</div>

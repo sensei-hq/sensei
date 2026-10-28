@@ -42,8 +42,8 @@
 						class="bg-paper border-paper-edge inline-flex items-center gap-1 rounded-lg border"
 						style="padding: 6px 10px"
 					>
-						<Icon name="alt-arrow-down" size={14} toneClass="text-ink-mute" />
-						<span class="text-ink-soft text-sm whitespace-nowrap">{knowledge.prunePolicy}</span>
+						<Icon name="alt-arrow-down" size={14} toneClass="text-ink-soft" />
+						<span class="text-ink-mute text-sm whitespace-nowrap">{knowledge.prunePolicy}</span>
 					</div>
 				{/snippet}
 			</SectionHead>
@@ -80,9 +80,9 @@
 			>
 				{#each knowledge.pending as r (r.title)}
 					<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-						<KanjiToken char={r.kanji} size="lg" toneClass="text-ink-mute" w={22} />
+						<KanjiToken char={r.kanji} size="lg" toneClass="text-ink-soft" w={22} />
 						<div class="flex-1" style="min-width: 0">
-							<div class="text-ink-soft text-sm">{r.title}</div>
+							<div class="text-ink-mute text-sm">{r.title}</div>
 							<div class="mono text-ink-faint text-xs" style="margin-top: 1px">{r.scope} · {r.age}</div>
 						</div>
 						<Btn size="sm" variant="ghost" icon="restart">Keep</Btn>
@@ -98,7 +98,7 @@
 							<div class="text-ink text-sm">{c.title}</div>
 							<div class="mono text-ink-faint text-xs" style="margin-top: 1px">{c.scope}</div>
 						</div>
-						<Chip mono toneClass="text-ink-mute">{c.kind}</Chip>
+						<Chip mono toneClass="text-ink-soft">{c.kind}</Chip>
 					</div>
 				{/each}
 			</ListSection>

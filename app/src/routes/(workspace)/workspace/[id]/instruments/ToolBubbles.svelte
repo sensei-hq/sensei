@@ -39,10 +39,10 @@
                         >{t.calls}</span
                     >
                 </div>
-                <span class="text-xs text-ink-mute truncate w-full text-center">{short(t.tool)}</span>
+                <span class="text-xs text-ink-soft truncate w-full text-center">{short(t.tool)}</span>
             </div>
         {/each}
     {:else}
-        <div class="text-sm text-ink-mute py-6">No tool usage captured for this workspace yet.</div>
+        <div class="text-sm text-ink-soft py-6">No tool usage captured for this workspace yet.</div>
     {/if}
 </div>

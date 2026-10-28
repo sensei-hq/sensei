@@ -7,7 +7,7 @@ describe('kit vocab lookups', () => {
 		expect(classTone('client').label).toBe('client');
 		expect(classTone('client').text).toBe('text-accent');
 		expect(classTone(undefined).label).toBe('company');
-		expect(classTone('nope').text).toBe('text-ink-soft');
+		expect(classTone('nope').text).toBe('text-ink-mute');
 	});
 
 	it('phaseTone lights the right number of steps and defaults to watch', () => {

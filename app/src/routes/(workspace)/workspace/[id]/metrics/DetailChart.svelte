@@ -156,7 +156,7 @@
          `onselect`, so without this the interaction is invisible. -->
     {#if caption || onselect}
         <div class="flex items-baseline justify-between gap-4">
-            <div class="text-xs text-ink-mute">{caption}</div>
+            <div class="text-xs text-ink-soft">{caption}</div>
             {#if onselect}
                 <div data-component="chart-hint" class="mono text-xs text-ink-faint shrink-0">
                     click a point to open it
@@ -259,6 +259,6 @@
             {/each}
         </ChartCanvas>
     {:else}
-        <div class="text-sm text-ink-mute py-8 text-center">Not enough history to chart yet.</div>
+        <div class="text-sm text-ink-soft py-8 text-center">Not enough history to chart yet.</div>
     {/if}
 </div>

@@ -114,12 +114,12 @@
 							<Icon
 								name="alt-arrow-down"
 								size={12}
-								toneClass="text-ink-mute {open ? 'rotate-180' : ''}"
+								toneClass="text-ink-soft {open ? 'rotate-180' : ''}"
 							/>
 						</Chip>
 					</button>
 				</div>
-				<div class="mono text-ink-mute text-xs" style="margin-top: 2px">
+				<div class="mono text-ink-soft text-xs" style="margin-top: 2px">
 					by {pack.by} · {pack.note}
 				</div>
 			</div>

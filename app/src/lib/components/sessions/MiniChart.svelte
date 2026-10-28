@@ -21,7 +21,7 @@
     good: 'var(--success)',
     bad: 'var(--warning)',
     ugly: 'var(--accent)',
-    neutral: 'var(--ink-mute)',
+    neutral: 'var(--ink-soft)',
   };
   const n = $derived(buckets.length);
   const xStep = $derived(n > 1 ? width / (n - 1) : 0);

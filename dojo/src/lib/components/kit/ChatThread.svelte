@@ -33,7 +33,7 @@
 				>
 					<div class="text-ink text-sm" style="line-height: 1.5">{turn.text}</div>
 				</div>
-				<div class="mono text-ink-mute text-xs {mine ? 'text-right' : ''}" style="margin-top: 3px">
+				<div class="mono text-ink-soft text-xs {mine ? 'text-right' : ''}" style="margin-top: 3px">
 					{mine ? (me?.name ?? 'you') : 'sensei'} · {turn.when}
 				</div>
 			</div>

@@ -42,7 +42,7 @@
     <div class="flex-1"></div>
 
     <div class="border-t border-paper-edge pt-2 text-xs leading-relaxed">
-        <span class="font-mono text-ink-mute">daemon · running</span><br />
+        <span class="font-mono text-ink-soft">daemon · running</span><br />
         <span class="font-mono text-ink-faint">port {port}</span>
     </div>
 </aside>

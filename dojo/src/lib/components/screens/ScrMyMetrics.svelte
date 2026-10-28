@@ -32,11 +32,11 @@
 		{#if error || !view}
 			<p role="alert" class="text-sm text-danger">Could not load your metrics — {error ?? 'no answer'}</p>
 		{:else}
-			<p class="text-xs text-ink-soft">The last {view.days} days, across the repositories you share.</p>
+			<p class="text-xs text-ink-mute">The last {view.days} days, across the repositories you share.</p>
 			<ul class="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
 				{#each view.cards as c (c.key)}
 					<li class="flex flex-col gap-2 rounded border border-paper-edge p-4">
-						<span class="text-xs text-ink-soft">{c.label}</span>
+						<span class="text-xs text-ink-mute">{c.label}</span>
 						{#if c.empty}
 							<span class="text-sm text-ink-faint">Nothing sent in this window</span>
 						{:else}

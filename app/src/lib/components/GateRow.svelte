@@ -11,7 +11,7 @@
   const numeralTone = $derived(
     gate.status === 'ready'                                ? 'text-success'
     : gate.status === 'failed'                              ? 'text-accent'
-    : gate.status === 'checking' || gate.status === 'installing' ? 'text-ink-mute'
+    : gate.status === 'checking' || gate.status === 'installing' ? 'text-ink-soft'
     :                                                          'text-ink-faint',
   );
 
@@ -40,12 +40,12 @@
           <span class="text-xs text-ink-faint">· {gate.detail}</span>
         {/if}
         {#if gate.version}
-          <span class="font-mono text-xs text-ink-mute">{gate.version}</span>
+          <span class="font-mono text-xs text-ink-soft">{gate.version}</span>
         {/if}
       </div>
       <div
         data-component="gate-row-description"
-        class="italic text-xs text-ink-soft leading-snug"
+        class="italic text-xs text-ink-mute leading-snug"
       >{gate.description}</div>
     </div>
 

@@ -13,9 +13,9 @@ import { failureReason, type SenseiApi } from '$lib/api.js';
 import type { ProvisionModel, ProvisionPhase } from '$lib/types.js';
 
 /** Semantic tone a phase label renders in. Mirrors the named-token vocabulary
- *  (`text-ink-mute` / `text-ink-soft` / `text-success` / `text-warning` /
+ *  (`text-ink-soft` / `text-ink-mute` / `text-success` / `text-warning` /
  *  `text-accent`). */
-export type PhaseTone = 'ink-mute' | 'ink-soft' | 'success' | 'warning' | 'accent';
+export type PhaseTone = 'ink-soft' | 'ink-mute' | 'success' | 'warning' | 'accent';
 
 /** The presentation of one phase: the label to show, its tone, an optional
  *  download percentage (0–100, only mid-download with a known total), whether
@@ -38,25 +38,25 @@ export interface PhaseDisplay {
 export function phaseDisplay(phase: ProvisionPhase): PhaseDisplay {
   switch (phase.phase) {
     case 'absent':
-      return { label: 'not pulled', tone: 'ink-mute', percent: null, actionable: true, inFlight: false };
+      return { label: 'not pulled', tone: 'ink-soft', percent: null, actionable: true, inFlight: false };
     case 'queued':
-      return { label: 'queued…', tone: 'ink-soft', percent: null, actionable: false, inFlight: true };
+      return { label: 'queued…', tone: 'ink-mute', percent: null, actionable: false, inFlight: true };
     case 'downloading': {
       const percent = phase.total ? Math.round((phase.done / phase.total) * 100) : null;
       const label = percent !== null ? `downloading ${percent}%` : 'downloading…';
       return { label, tone: 'accent', percent, actionable: false, inFlight: true };
     }
     case 'verifying':
-      return { label: 'verifying…', tone: 'ink-soft', percent: null, actionable: false, inFlight: true };
+      return { label: 'verifying…', tone: 'ink-mute', percent: null, actionable: false, inFlight: true };
     case 'loading':
-      return { label: 'loading…', tone: 'ink-soft', percent: null, actionable: false, inFlight: true };
+      return { label: 'loading…', tone: 'ink-mute', percent: null, actionable: false, inFlight: true };
     case 'ready':
       return { label: 'ready', tone: 'success', percent: 100, actionable: false, inFlight: false };
     case 'failed':
       return { label: 'failed', tone: 'warning', percent: null, actionable: true, inFlight: false };
     default:
       // Wire-API-wins: an unknown phase is surfaced neutrally, never dropped.
-      return { label: 'unknown', tone: 'ink-mute', percent: null, actionable: false, inFlight: false };
+      return { label: 'unknown', tone: 'ink-soft', percent: null, actionable: false, inFlight: false };
   }
 }
 

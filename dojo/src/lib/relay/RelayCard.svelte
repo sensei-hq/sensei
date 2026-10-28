@@ -57,7 +57,7 @@
 				? 'text-warning font-semibold'
 				: session.attention
 					? 'text-danger font-semibold'
-					: 'text-ink-mute'
+					: 'text-ink-soft'
 	);
 
 	const age = $derived(session.lastEventAt ? relativeAge(session.lastEventAt) : '');
@@ -94,7 +94,7 @@
 		<span class="flex min-w-0 flex-col" style="gap: 3px">
 			<span class="flex items-baseline gap-2">
 				<span
-					class="mono text-ink-mute min-w-0 text-xs"
+					class="mono text-ink-soft min-w-0 text-xs"
 					style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap"
 					>{session.project ?? ''}</span
 				>
@@ -102,7 +102,7 @@
 				<span class="mono text-ink-faint shrink-0 text-xs">{age}</span>
 			</span>
 			<span
-				class="text-sm {session.status === 'done' ? 'text-ink-mute' : 'text-ink font-medium'}"
+				class="text-sm {session.status === 'done' ? 'text-ink-soft' : 'text-ink font-medium'}"
 				style="line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden"
 				>{session.title}</span
 			>

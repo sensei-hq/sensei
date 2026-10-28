@@ -27,7 +27,7 @@
     </div>
 
     {#if error}
-        <p data-action-items-error class="text-sm text-ink-mute">
+        <p data-action-items-error class="text-sm text-ink-soft">
             Couldn’t load action items — {error}
         </p>
     {:else if items.length}
@@ -47,7 +47,7 @@
                         {/if}
                     </div>
                     {#if item.why}
-                        <p data-action-why class="text-sm text-ink-soft leading-relaxed text-pretty">
+                        <p data-action-why class="text-sm text-ink-mute leading-relaxed text-pretty">
                             {item.why}
                         </p>
                     {/if}

@@ -118,7 +118,7 @@ export function verdictToneClass(
   const prefix = kind === 'bg' ? 'bg' : kind === 'border' ? 'border' : 'text';
   if (tone === 'success') return `${prefix}-success`;
   if (tone === 'warning') return `${prefix}-warning`;
-  return `${prefix}-ink-mute`;
+  return `${prefix}-ink-soft`;
 }
 
 /** Pure: FTR value → percent string, or an em dash when unknown. */

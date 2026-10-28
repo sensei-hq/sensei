@@ -29,7 +29,7 @@
                 <Eyebrow>What it measures</Eyebrow>
                 <p
                     data-row="purpose"
-                    class="m-0 text-sm leading-relaxed text-ink-soft text-pretty"
+                    class="m-0 text-sm leading-relaxed text-ink-mute text-pretty"
                 >{purpose}</p>
             </div>
         {/if}
@@ -39,7 +39,7 @@
                 <Eyebrow>How to read it</Eyebrow>
                 <p
                     data-row="how"
-                    class="m-0 text-sm leading-relaxed text-ink-soft text-pretty"
+                    class="m-0 text-sm leading-relaxed text-ink-mute text-pretty"
                 >{#if howToReadSegments.length}{#each howToReadSegments as seg, si (si)}{#if seg.key && workspaceId}<a
                                 data-companion={seg.key}
                                 href={`/workspace/${workspaceId}/metrics/${seg.key}`}
@@ -56,7 +56,7 @@
             </div>
             <code
                 data-row="formula"
-                class="mono block m-0 rounded border border-paper-edge bg-paper-soft px-3 py-2 text-xs leading-relaxed text-ink-mute"
+                class="mono block m-0 rounded border border-paper-edge bg-paper-soft px-3 py-2 text-xs leading-relaxed text-ink-soft"
             >{formula}</code>
         </div>
     {/if}

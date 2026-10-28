@@ -63,7 +63,7 @@
               <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">negative</div>
             </div>
             <div class="text-center">
-              <div class="font-mono text-lg font-light text-ink-soft">{buckets.pending.length}</div>
+              <div class="font-mono text-lg font-light text-ink-mute">{buckets.pending.length}</div>
               <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">pending</div>
             </div>
           </div>
@@ -100,7 +100,7 @@
             class:bg-paper-mute={isOpen}
             data-impact-row={r.id}
             data-impact-bucket={r.verdict}
-            style={isOpen ? `border-left: 2px solid var(${vm.tone === 'success' ? '--success' : vm.tone === 'warning' ? '--warning' : '--ink-mute'});` : 'border-left: 2px solid transparent;'}
+            style={isOpen ? `border-left: 2px solid var(${vm.tone === 'success' ? '--success' : vm.tone === 'warning' ? '--warning' : '--ink-soft'});` : 'border-left: 2px solid transparent;'}
             onclick={() => (openId = r.id)}
           >
             <div class="flex items-center gap-2">
@@ -111,13 +111,13 @@
                 class="font-mono text-xs"
                 class:text-success={r.ftrDelta != null && r.ftrDelta > 0}
                 class:text-warning={r.ftrDelta != null && r.ftrDelta < 0}
-                class:text-ink-mute={r.ftrDelta == null || r.ftrDelta === 0}
+                class:text-ink-soft={r.ftrDelta == null || r.ftrDelta === 0}
                 data-ftr-delta
               >{formatDeltaPct(r.ftrDelta)}</span>
             </div>
             <div class="text-sm mt-1 leading-snug font-medium truncate"
                  class:text-ink={isOpen}
-                 class:text-ink-mute={!isOpen}>{r.title}</div>
+                 class:text-ink-soft={!isOpen}>{r.title}</div>
             <div class="font-mono text-xs text-ink-faint mt-1 truncate">{r.workspaceName}</div>
           </button>
         {/each}
@@ -129,7 +129,7 @@
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <main class="overflow-auto pt-5 pb-6 px-7" tabindex="0">
         <!-- Eyebrow line — workspace · verdict metadata -->
-        <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-soft mb-3">
+        <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-mute mb-3">
           <span class="font-mono normal-case tracking-normal">{open.workspaceName}</span>
           <span class="text-ink-faint">·</span>
           <span>{open.status}</span>
@@ -165,13 +165,13 @@
         <div class="grid grid-cols-4 gap-[1px] bg-paper-edge rounded overflow-hidden mb-5">
           <div class="bg-paper-mute py-3 px-4">
             <div class="text-xs uppercase tracking-wider text-ink-faint mb-1">First-Try-Right</div>
-            <div class="font-mono text-sm text-ink-mute">{pct(open.baselineFtr)}</div>
+            <div class="font-mono text-sm text-ink-soft">{pct(open.baselineFtr)}</div>
             <div class="font-mono text-lg text-ink">{pct(open.currentFtr)}</div>
             <div
               class="font-mono text-xs mt-1"
               class:text-success={open.ftrDelta != null && open.ftrDelta > 0}
               class:text-warning={open.ftrDelta != null && open.ftrDelta < 0}
-              class:text-ink-mute={open.ftrDelta == null || open.ftrDelta === 0}
+              class:text-ink-soft={open.ftrDelta == null || open.ftrDelta === 0}
             >
               {formatDeltaPct(open.ftrDelta)}
             </div>
@@ -196,7 +196,7 @@
             <MoeReasoningPanel reasoning={open.reasoning} tone={openVm?.tone ?? 'ink'} />
           </div>
         {:else}
-          <p class="text-sm text-ink-soft italic">
+          <p class="text-sm text-ink-mute italic">
             No MOE reasoning trace captured for this verdict yet.
           </p>
         {/if}

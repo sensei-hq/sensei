@@ -65,7 +65,7 @@ describe('syncChip', () => {
   it('unknown → muted ink tokens, still labelled', () =>
     expect(syncChip('weird')).toEqual({
       bg: 'bg-paper-mute',
-      text: 'text-ink-mute',
+      text: 'text-ink-soft',
       label: 'weird',
     }));
 });
@@ -76,7 +76,7 @@ describe('kindPill', () => {
       kanji: '社',
       label: 'employer',
       bg: 'bg-paper-mute',
-      text: 'text-ink-mute',
+      text: 'text-ink-soft',
     }));
   it('distinguishes client visually with the accent treatment', () => {
     const pill = kindPill('client');

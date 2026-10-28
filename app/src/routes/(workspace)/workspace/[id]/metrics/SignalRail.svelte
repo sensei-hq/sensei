@@ -40,7 +40,7 @@
                 class="flex items-center justify-between gap-3 border-l-2 p-3 pl-2.5 rounded-md no-underline text-sm transition-colors duration-fast {s.key ===
                 selectedKey
                     ? 'border-accent bg-accent-soft text-ink'
-                    : 'border-transparent text-ink-soft hover:bg-paper-mute'}"
+                    : 'border-transparent text-ink-mute hover:bg-paper-mute'}"
             >
                 <!-- Glyph column is reserved whether or not this metric has one,
                      so an unassigned signal doesn't shunt its name out of line. -->
@@ -65,7 +65,7 @@
         <div class="flex flex-col gap-2 border-t border-paper-edge pt-4">
             <Eyebrow>In this period</Eyebrow>
             {#each [{ label: 'High', v: distribution.high }, { label: 'Mean', v: distribution.mean }, { label: 'Low', v: distribution.low }] as r (r.label)}
-                <div class="flex justify-between text-sm text-ink-soft">
+                <div class="flex justify-between text-sm text-ink-mute">
                     <span>{r.label}</span>
                     <span class="mono text-ink">{format(r.v)}</span>
                 </div>

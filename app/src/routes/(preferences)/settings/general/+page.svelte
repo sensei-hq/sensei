@@ -61,8 +61,8 @@
                     <h3 class="text-base m-0">Preferences</h3>
                     <span
                         class="text-xs"
-                        class:text-ink-mute={st.saveStatus === "idle"}
-                        class:text-ink-soft={st.saveStatus === "saving"}
+                        class:text-ink-soft={st.saveStatus === "idle"}
+                        class:text-ink-mute={st.saveStatus === "saving"}
                         class:text-success={st.saveStatus === "saved"}
                         class:text-warning={st.saveStatus === "error"}
                         data-testid="settings-save-status"
@@ -79,7 +79,7 @@
                     <div class="row grid grid-cols-[1fr_auto] gap-6 items-center py-3">
                         <div>
                             <div class="text-sm text-ink">Display name</div>
-                            <div class="text-xs text-ink-mute mt-0.5">
+                            <div class="text-xs text-ink-soft mt-0.5">
                                 Used in the morning digest and when raising a teaching.
                             </div>
                         </div>
@@ -99,7 +99,7 @@
                     <div class="row grid grid-cols-[1fr_auto] gap-6 items-center py-3">
                         <div>
                             <div class="text-sm text-ink">Morning digest</div>
-                            <div class="text-xs text-ink-mute mt-0.5">
+                            <div class="text-xs text-ink-soft mt-0.5">
                                 The Today view cadence. Off keeps the dashboard quiet.
                             </div>
                         </div>
@@ -121,7 +121,7 @@
                     <div class="row grid grid-cols-[1fr_auto] gap-6 items-center py-3">
                         <div>
                             <div class="text-sm text-ink">Correction tone</div>
-                            <div class="text-xs text-ink-mute mt-0.5">
+                            <div class="text-xs text-ink-soft mt-0.5">
                                 How direct sensei is when something repeats.
                             </div>
                         </div>
@@ -142,7 +142,7 @@
                     <div class="row grid grid-cols-[1fr_auto] gap-6 items-center py-3">
                         <div>
                             <div class="text-sm text-ink">Glyphs</div>
-                            <div class="text-xs text-ink-mute mt-0.5">
+                            <div class="text-xs text-ink-soft mt-0.5">
                                 Kanji or icons beside each section, across the app.
                             </div>
                         </div>
@@ -163,7 +163,7 @@
                     <div class="row grid grid-cols-[1fr_auto] gap-6 items-center py-3">
                         <div>
                             <div class="text-sm text-ink">Nudge on regression</div>
-                            <div class="text-xs text-ink-mute mt-0.5">
+                            <div class="text-xs text-ink-soft mt-0.5">
                                 If FTR drops sharply on a workspace, sensei surfaces it on Today.
                             </div>
                         </div>
@@ -176,7 +176,7 @@
                     <div class="row grid grid-cols-[1fr_auto] gap-6 items-center py-3">
                         <div>
                             <div class="text-sm text-ink">Anonymized telemetry</div>
-                            <div class="text-xs text-ink-mute mt-0.5">
+                            <div class="text-xs text-ink-soft mt-0.5">
                                 Crashes, performance, which views you visit. Never code or session content.
                             </div>
                         </div>
@@ -189,7 +189,7 @@
                     <div class="row grid grid-cols-[1fr_auto] gap-6 items-center py-3">
                         <div>
                             <div class="text-sm text-ink">Show welcome greeting</div>
-                            <div class="text-xs text-ink-mute mt-0.5">
+                            <div class="text-xs text-ink-soft mt-0.5">
                                 The daily greeting toast on the observatory.
                             </div>
                         </div>

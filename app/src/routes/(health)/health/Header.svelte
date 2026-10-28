@@ -8,7 +8,7 @@
   const headlineKeyTone = $derived(
     state.display.headlineTone === 'success' ? 'text-success'
     : state.display.headlineTone === 'accent' ? 'text-accent'
-    :                                            'text-ink-mute',
+    :                                            'text-ink-soft',
   );
 </script>
 
@@ -23,7 +23,7 @@
       <span class={headlineKeyTone}>{state.display.headlineKey}</span>
     </h1>
 
-    <p data-sub class="text-sm text-ink-soft leading-relaxed max-w-prose">
+    <p data-sub class="text-sm text-ink-mute leading-relaxed max-w-prose">
       {state.display.subCopy}
     </p>
   </div>

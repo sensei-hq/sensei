@@ -19,12 +19,12 @@
     <div>
       <div class="flex items-baseline gap-3 mb-5">
         <span class="kanji text-accent text-3xl" style="line-height:1">道</span>
-        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Dō · the way — an independent studio</span>
+        <span class="mono text-ink-soft text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Dō · the way — an independent studio</span>
       </div>
       <h1 class="display text-ink m-0 text-3xl md:text-4xl hero-h1">
         We build quiet, sharp tools for the people who build software.
       </h1>
-      <p class="text-ink-soft mt-5 text-lg" style="line-height:1.6;max-width:540px">
+      <p class="text-ink-mute mt-5 text-lg" style="line-height:1.6;max-width:540px">
         Sensei HQ is a small workshop of developer tools — three products you
         open, four libraries you build on. Restraint over noise, craft over
         scale, and a deep respect for the person on the other side of the screen.
@@ -34,11 +34,11 @@
           <span class="kanji text-base" style="line-height:1">見</span>
           See the tools
         </Button>
-        <a href="#approach" class="text-ink-soft text-sm no-underline">How we work ↓</a>
+        <a href="#approach" class="text-ink-mute text-sm no-underline">How we work ↓</a>
       </div>
       <div class="flex flex-wrap gap-4 mt-7">
         {#each meta as m (m)}
-          <span class="mono text-ink-mute text-xs">{m}</span>
+          <span class="mono text-ink-soft text-xs">{m}</span>
         {/each}
       </div>
     </div>
@@ -46,7 +46,7 @@
     <!-- In the workshop -->
     <aside class="border border-paper-edge rounded-lg bg-paper-soft" style="overflow:hidden">
       <div class="px-5 py-4 border-b border-paper-edge flex items-center justify-between">
-        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">In the workshop</span>
+        <span class="mono text-ink-soft text-xs" style="letter-spacing:0.12em;text-transform:uppercase">In the workshop</span>
         <span class="mono text-ink-faint text-xs">{workshopCount}</span>
       </div>
       <div class="divide-y divide-paper-edge">
@@ -58,7 +58,7 @@
             <span class="kanji text-2xl" style="line-height:1;width:30px;text-align:center">{p.kanji}</span>
             <span>
               <span class="display text-ink block text-base">{p.name}</span>
-              <span class="text-ink-mute text-xs">{p.category}</span>
+              <span class="text-ink-soft text-xs">{p.category}</span>
             </span>
             <span class="product-dot" style="background:var(--{p.id})"></span>
           </a>

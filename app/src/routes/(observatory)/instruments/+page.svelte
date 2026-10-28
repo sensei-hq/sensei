@@ -171,11 +171,11 @@
         <div class="flex items-end gap-4 pt-5 pb-4 px-7 border-b border-paper-edge" data-testid="instruments-hero">
             <Kanji char={currentTab.kanji} icon={currentTab.icon} mode={glyphs} size="4xl" />
             <div class="flex-1 min-w-0">
-                <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">
+                <div class="text-xs uppercase tracking-[0.18em] text-ink-soft mb-1">
                     Instruments · {currentTab.label}
                 </div>
                 <h1 class="display text-xl font-normal m-0 text-ink">{heroCopy.tagline}</h1>
-                <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[680px]">
+                <p class="text-sm text-ink-mute leading-normal mt-1 mb-0 max-w-[680px]">
                     {heroCopy.sub}
                 </p>
             </div>
@@ -186,7 +186,7 @@
                 <button
                     class="flex items-center gap-2 py-3 px-4 bg-transparent border-none cursor-pointer"
                     class:text-ink={on}
-                    class:text-ink-soft={!on}
+                    class:text-ink-mute={!on}
                     style="border-bottom: {on ? '2px solid var(--ink)' : '2px solid transparent'}; margin-bottom: -1px;"
                     role="tab"
                     aria-selected={on}
@@ -218,7 +218,7 @@
                 <aside class="bg-paper-soft border-r border-paper-edge flex flex-col overflow-hidden">
                     <!-- Search box -->
                     <div class="flex items-center gap-2 py-3 px-3 border-b border-paper-edge">
-                        <Kanji char="探" size="inherit" tone="inherit" class="text-xs text-ink-mute" />
+                        <Kanji char="探" size="inherit" tone="inherit" class="text-xs text-ink-soft" />
                         <input
                             type="text"
                             class="border-none outline-none bg-transparent text-sm text-ink flex-1"
@@ -238,13 +238,13 @@
                             <!-- Expand and enable are siblings: a button inside a button is invalid HTML. -->
                             <div class="flex items-center" data-testid={server ? `server-row-${server.mcp_key}` : undefined}>
                                 <button
-                                    class="flex-1 min-w-0 grid grid-cols-[14px_18px_1fr_auto_auto] items-center gap-2 py-2 px-3 text-left bg-transparent border-none cursor-pointer text-ink-soft"
+                                    class="flex-1 min-w-0 grid grid-cols-[14px_18px_1fr_auto_auto] items-center gap-2 py-2 px-3 text-left bg-transparent border-none cursor-pointer text-ink-mute"
                                     onclick={() => toggleGroup(group.id)}
                                     aria-expanded={!collapsed}
                                     data-testid={`mcp-group-toggle-${group.id}`}
                                 >
                                     <span
-                                        class="font-mono text-xs text-ink-mute transition-transform duration-fast"
+                                        class="font-mono text-xs text-ink-soft transition-transform duration-fast"
                                         style="transform: {collapsed ? 'none' : 'rotate(90deg)'};"
                                     >▶</span>
                                     <Kanji char={group.kanji} icon={group.icon} mode={glyphs} size="sm" />
@@ -256,7 +256,7 @@
                                     <button
                                         class="mr-3 px-2 py-0.5 text-xs font-mono uppercase tracking-wide rounded border border-paper-edge bg-transparent cursor-pointer"
                                         class:text-success={server.enabled}
-                                        class:text-ink-mute={!server.enabled}
+                                        class:text-ink-soft={!server.enabled}
                                         role="switch"
                                         aria-checked={server.enabled}
                                         aria-label={`${server.enabled ? 'Disable' : 'Enable'} ${server.mcp_key}`}
@@ -265,7 +265,7 @@
                                     >{server.enabled ? 'on' : 'off'}</button>
                                     {#if server.acp_family === 'manual'}
                                         <button
-                                            class="mr-3 px-2 py-0.5 text-xs font-mono rounded border border-paper-edge bg-transparent cursor-pointer text-ink-mute"
+                                            class="mr-3 px-2 py-0.5 text-xs font-mono rounded border border-paper-edge bg-transparent cursor-pointer text-ink-soft"
                                             aria-label={`Remove ${server.mcp_key}`}
                                             onclick={() => void removeServer(server.id)}
                                             data-testid={`server-remove-${server.mcp_key}`}
@@ -296,7 +296,7 @@
                                             <span
                                                 class="font-mono text-xs truncate"
                                                 class:text-ink={active}
-                                                class:text-ink-soft={!active}
+                                                class:text-ink-mute={!active}
                                             >{tool.name}</span>
                                         </button>
                                     {/each}
@@ -319,7 +319,7 @@
                             <div class="px-3 pb-1 flex items-center justify-between">
                                 <Eyebrow>MCP servers</Eyebrow>
                                 <button
-                                    class="text-xs text-ink-mute bg-transparent border-none cursor-pointer"
+                                    class="text-xs text-ink-soft bg-transparent border-none cursor-pointer"
                                     onclick={() => { ins.addingServer = !ins.addingServer; ins.serverFormError = null; }}
                                     aria-expanded={ins.addingServer}
                                     data-testid="add-server"
@@ -349,7 +349,7 @@
                                     Could not read the discovered servers from the daemon.
                                 </p>
                             {:else if discoveredServers.length === 0 && mcp.mcpServersStatus === 'ready'}
-                                <p class="px-3 py-2 text-xs text-ink-soft">
+                                <p class="px-3 py-2 text-xs text-ink-mute">
                                     No MCP servers yet. Configure one in Claude Code, Cursor or Zed and scan, or add one here.
                                 </p>
                             {/if}
@@ -373,7 +373,7 @@
                     <div class="border-t border-paper-edge flex justify-between items-center gap-2 py-2 px-3 text-xs text-ink-faint">
                         <span>{playgroundGroups.length} MCPs · {playgroundGroups.reduce((n, g) => n + g.tools.length, 0)} tools</span>
                         <button
-                            class="text-xs text-ink-mute bg-transparent border-none cursor-pointer"
+                            class="text-xs text-ink-soft bg-transparent border-none cursor-pointer"
                             onclick={refreshDiscoveredServers}
                             disabled={ins.refreshingServers}
                             data-testid="refresh-servers"
@@ -387,7 +387,7 @@
                         {@const tool = focusedTool}
                         {@const group = focusedGroup}
                         {@const isAction = tool.kind === 'action'}
-                        {@const kindColor = isAction ? 'accent' : tool.kind === 'query' ? 'success' : 'ink-mute'}
+                        {@const kindColor = isAction ? 'accent' : tool.kind === 'query' ? 'success' : 'ink-soft'}
                         {@const kindLabel = isAction ? 'action' : tool.kind === 'query' ? 'query' : 'call'}
                         {@const mark = kindMark(tool.kind)}
                         {@const kindHint = isAction ? 'performs an operation' : 'returns information'}
@@ -395,20 +395,20 @@
                         <!-- Heading -->
                         <div class="mb-4">
                             <div class="flex items-center flex-wrap gap-2 mb-2">
-                                <span class="inline-flex items-center gap-1 font-mono text-xs text-ink-mute"><Kanji char={group.kanji} icon={group.icon} mode={glyphs} size="xs" tone="muted" /> {group.name.toLowerCase()}</span>
+                                <span class="inline-flex items-center gap-1 font-mono text-xs text-ink-soft"><Kanji char={group.kanji} icon={group.icon} mode={glyphs} size="xs" tone="muted" /> {group.name.toLowerCase()}</span>
                                 <span class="text-xs text-ink-faint">·</span>
                                 <span
                                     class="inline-flex items-center gap-1 py-1 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide"
                                     class:text-accent={isAction}
                                     class:text-success={tool.kind === 'query'}
-                                    class:text-ink-mute={tool.kind === 'other'}
+                                    class:text-ink-soft={tool.kind === 'other'}
                                 >
                                     <Kanji char={mark.kanji} icon={mark.icon} mode={glyphs} size="xs" tone={kindTone(tool.kind)} />
                                     {kindLabel}
                                 </span>
                             </div>
                             <h2 class="font-mono text-lg font-normal m-0 text-ink">{tool.name}</h2>
-                            <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[700px]">
+                            <p class="text-sm text-ink-mute leading-normal mt-1 mb-0 max-w-[700px]">
                                 {tool.summary || 'No description.'}
                             </p>
                         </div>
@@ -416,10 +416,10 @@
                         <!-- Inputs panel -->
                         <div class="bg-paper-soft border border-paper-edge rounded-lg py-3 px-4 mb-3">
                             <div class="flex items-baseline justify-between mb-2">
-                                <span class="text-xs uppercase tracking-wide text-ink-mute">Inputs</span>
+                                <span class="text-xs uppercase tracking-wide text-ink-soft">Inputs</span>
                                 <span class="text-xs text-ink-faint">{kindHint}</span>
                             </div>
-                            <label class="flex items-center gap-2 text-xs text-ink-soft mb-2" data-testid="run-in">
+                            <label class="flex items-center gap-2 text-xs text-ink-mute mb-2" data-testid="run-in">
                                 <span>Runs in</span>
                                 <Select
                                     items={[
@@ -435,11 +435,11 @@
                             {/if}
 
                             {#if fields.length === 0}
-                                <div class="text-sm text-ink-mute mb-2">No inputs — just call it.</div>
+                                <div class="text-sm text-ink-soft mb-2">No inputs — just call it.</div>
                             {:else}
                                 <div class="grid grid-cols-2 gap-y-2 gap-x-4">
                                     {#each fields as field (field.name)}
-                                        <label class="flex flex-col text-xs text-ink-soft" title={field.description ?? undefined}>
+                                        <label class="flex flex-col text-xs text-ink-mute" title={field.description ?? undefined}>
                                             <span class="flex items-baseline gap-1">
                                                 <span>{field.name}</span>
                                                 {#if field.required}<span class="text-accent">*</span>{/if}
@@ -496,7 +496,7 @@
                                 </Button>
                                 <div class="flex-1"></div>
                                 {#if running}
-                                    <span class="font-mono text-xs text-ink-mute">calling …</span>
+                                    <span class="font-mono text-xs text-ink-soft">calling …</span>
                                 {:else if ins.toolError}
                                     <span class="font-mono text-xs text-danger" data-testid="tool-error">{ins.toolError}</span>
                                 {:else if ins.toolResult}
@@ -507,17 +507,17 @@
 
                         <!-- Response panel -->
                         <div>
-                            <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">
+                            <div class="text-xs uppercase tracking-wide text-ink-soft mb-1">
                                 Response{!ins.toolResult ? ' · preview' : ''}
                             </div>
                             <pre
                                 class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-edge rounded whitespace-pre-wrap overflow-auto max-h-[360px]"
                                 class:text-ink={ins.toolResult}
-                                class:text-ink-soft={!ins.toolResult}
+                                class:text-ink-mute={!ins.toolResult}
                                 class:opacity-70={!ins.toolResult}
                                 class:border-l-accent={isAction}
                                 class:border-l-success={tool.kind === 'query'}
-                                style="border-left-width: 2px; border-left-color: {isAction ? 'var(--accent)' : tool.kind === 'query' ? 'var(--success)' : 'var(--ink-mute)'};"
+                                style="border-left-width: 2px; border-left-color: {isAction ? 'var(--accent)' : tool.kind === 'query' ? 'var(--success)' : 'var(--ink-soft)'};"
                             >{ins.toolResult || '—'}</pre>
                         </div>
                     {:else}
@@ -534,7 +534,7 @@
                  detail grid. Timeline entries use the mockup's [22px | 38px |
                  1fr | auto] grid (index / offset / tool name / dot+ms). -->
             {#if ins.replayLoading && ins.replaySessions.length === 0}
-                <p class="text-sm text-ink-soft px-7 py-5">Loading sessions…</p>
+                <p class="text-sm text-ink-mute px-7 py-5">Loading sessions…</p>
             {:else if ins.replayError}
                 <div class="px-7 py-5">
                     <ScreenState
@@ -553,7 +553,7 @@
                 <div class="grid grid-cols-[300px_1fr] min-h-[600px] border-t border-paper-edge">
                     <!-- ── Left rail — session picker ─────────────────── -->
                     <aside class="bg-paper-soft border-r border-paper-edge overflow-auto">
-                        <div class="text-xs uppercase tracking-wide text-ink-mute pt-3 pb-2 px-3">
+                        <div class="text-xs uppercase tracking-wide text-ink-soft pt-3 pb-2 px-3">
                             sessions
                         </div>
                         {#each ins.replaySessions as session (session.id)}
@@ -566,7 +566,7 @@
                                 data-testid={`replay-session-${session.id}`}
                             >
                                 <div class="flex items-baseline gap-1">
-                                    <span class="font-mono text-xs" class:text-ink={on} class:text-ink-soft={!on}>
+                                    <span class="font-mono text-xs" class:text-ink={on} class:text-ink-mute={!on}>
                                         {session.id.substring(0, 8)}
                                     </span>
                                     {#if session.ftr != null}
@@ -580,7 +580,7 @@
                                         </span>
                                     {/if}
                                 </div>
-                                <div class="text-xs text-ink-soft leading-normal mt-1 line-clamp-2">
+                                <div class="text-xs text-ink-mute leading-normal mt-1 line-clamp-2">
                                     {session.task}
                                 </div>
                                 <div class="text-xs text-ink-faint mt-1">
@@ -593,9 +593,9 @@
                     <!-- ── Detail ─────────────────────────────────────── -->
                     <main class="overflow-auto pt-5 pb-6 px-6">
                         {#if ins.selectedSessionId == null}
-                            <p class="text-sm text-ink-soft">Pick a session on the left.</p>
+                            <p class="text-sm text-ink-mute">Pick a session on the left.</p>
                         {:else if ins.replayLoading}
-                            <p class="text-sm text-ink-soft">Loading timeline…</p>
+                            <p class="text-sm text-ink-mute">Loading timeline…</p>
                         {:else}
                             <!-- Session summary strip -->
                             <div class="grid grid-cols-[auto_auto_auto_auto_1fr] items-baseline gap-5 mb-4 pb-3 border-b border-paper-edge">
@@ -603,7 +603,7 @@
                                     <div class="display text-base mb-1">
                                         {ins.replaySessions.find((r) => r.id === ins.selectedSessionId)?.task ?? ins.selectedSessionId}
                                     </div>
-                                    <div class="font-mono text-xs text-ink-mute">{ins.selectedSessionId}</div>
+                                    <div class="font-mono text-xs text-ink-soft">{ins.selectedSessionId}</div>
                                 </div>
                                 <div>
                                     <div class="text-xs uppercase tracking-wide text-ink-faint">calls</div>
@@ -615,7 +615,7 @@
                                 </div>
                                 <div>
                                     <div class="text-xs uppercase tracking-wide text-ink-faint">ignored</div>
-                                    <div class="display text-base text-ink-mute mt-1">{ins.sessionSummary.ignored}</div>
+                                    <div class="display text-base text-ink-soft mt-1">{ins.sessionSummary.ignored}</div>
                                 </div>
                                 <span></span>
                             </div>
@@ -624,17 +624,17 @@
                             <div class="grid grid-cols-[0.95fr_1.4fr] gap-5" style="min-height: 400px;">
                                 <!-- Timeline -->
                                 <div>
-                                    <div class="text-xs uppercase tracking-wide text-ink-mute mb-2">
+                                    <div class="text-xs uppercase tracking-wide text-ink-soft mb-2">
                                         timeline ({ins.sessionCalls.length})
                                     </div>
                                     {#if ins.replayDetailError}
                                         <p class="text-xs text-danger" data-testid="replay-detail-error">Could not read this session's tool calls: {ins.replayDetailError}</p>
                                     {:else if ins.sessionCalls.length === 0}
-                                        <p class="text-xs text-ink-soft">No tool calls in this session.</p>
+                                        <p class="text-xs text-ink-mute">No tool calls in this session.</p>
                                     {:else}
                                         {#each ins.sessionCalls as call, i (call.callId)}
                                             {@const on = ins.selectedCall?.callId === call.callId}
-                                            {@const kindColor = call.verdict === 'used' ? 'var(--success)' : call.verdict === 'partial' ? 'var(--warning)' : call.verdict === 'ignored' ? 'var(--ink-mute)' : 'var(--accent)'}
+                                            {@const kindColor = call.verdict === 'used' ? 'var(--success)' : call.verdict === 'partial' ? 'var(--warning)' : call.verdict === 'ignored' ? 'var(--ink-soft)' : 'var(--accent)'}
                                             <button
                                                 class="w-full grid grid-cols-[22px_38px_1fr_auto] gap-2 items-center py-2 pl-3 pr-2 text-left border rounded-sm cursor-pointer"
                                                 class:bg-paper-soft={on}
@@ -643,8 +643,8 @@
                                                 style="background: {on ? 'var(--paper-soft)' : 'transparent'};"
                                                 onclick={() => (ins.selectedCall = call)}
                                             >
-                                                <span class="font-mono text-xs text-ink-mute" style='font-feature-settings: "tnum";'>{i + 1}</span>
-                                                <span class="font-mono text-xs text-ink-mute truncate" style='font-feature-settings: "tnum";'>
+                                                <span class="font-mono text-xs text-ink-soft" style='font-feature-settings: "tnum";'>{i + 1}</span>
+                                                <span class="font-mono text-xs text-ink-soft truncate" style='font-feature-settings: "tnum";'>
                                                     {call.startedAtMs ? new Date(call.startedAtMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
                                                 </span>
                                                 <span class="font-mono text-xs text-ink truncate">{call.toolName}</span>
@@ -662,14 +662,14 @@
                                 <!-- Detail: request + response panels matching CallDetailSimple -->
                                 <div class="flex flex-col gap-3">
                                     {#if !ins.selectedCall}
-                                        <p class="text-sm text-ink-soft">Select a call to see request + response.</p>
+                                        <p class="text-sm text-ink-mute">Select a call to see request + response.</p>
                                     {:else}
                                         {@const call = ins.selectedCall}
                                         {@const kindGlyph = call.verdict === 'used' ? '用' : call.verdict === 'partial' ? '部' : call.verdict === 'ignored' ? '無' : call.success === false ? '✗' : '問'}
-                                        {@const kindColor = call.verdict === 'used' ? 'text-success' : call.verdict === 'partial' ? 'text-warning' : call.verdict === 'ignored' ? 'text-ink-mute' : 'text-accent'}
+                                        {@const kindColor = call.verdict === 'used' ? 'text-success' : call.verdict === 'partial' ? 'text-warning' : call.verdict === 'ignored' ? 'text-ink-soft' : 'text-accent'}
                                         <div class="flex items-baseline justify-between pb-3 border-b border-paper-edge">
                                             <div>
-                                                <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">
+                                                <div class="text-xs uppercase tracking-wide text-ink-soft mb-1">
                                                     call #{call.callId} · {fmtDuration(call.durationMs)}
                                                 </div>
                                                 <div class="font-mono text-sm text-ink">{call.toolName}</div>
@@ -681,20 +681,20 @@
                                         </div>
 
                                         <div>
-                                            <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">request</div>
-                                            <pre class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-edge rounded whitespace-pre-wrap overflow-auto max-h-[220px] text-ink-soft">{fmtPayload(call.request)}</pre>
+                                            <div class="text-xs uppercase tracking-wide text-ink-soft mb-1">request</div>
+                                            <pre class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-edge rounded whitespace-pre-wrap overflow-auto max-h-[220px] text-ink-mute">{fmtPayload(call.request)}</pre>
                                         </div>
 
                                         <div>
-                                            <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">
+                                            <div class="text-xs uppercase tracking-wide text-ink-soft mb-1">
                                                 response · {call.durationMs != null ? `${call.durationMs}ms` : '—'}
                                             </div>
                                             {#if call.response == null}
-                                                <p class="text-xs text-ink-soft m-0 italic">No response captured yet.</p>
+                                                <p class="text-xs text-ink-mute m-0 italic">No response captured yet.</p>
                                             {:else}
                                                 <pre
                                                     class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-edge rounded whitespace-pre-wrap overflow-auto max-h-[220px] text-ink"
-                                                    style="border-left-width: 2px; border-left-color: {call.verdict === 'used' ? 'var(--success)' : call.verdict === 'partial' ? 'var(--warning)' : call.verdict === 'ignored' ? 'var(--ink-mute)' : 'var(--accent)'};"
+                                                    style="border-left-width: 2px; border-left-color: {call.verdict === 'used' ? 'var(--success)' : call.verdict === 'partial' ? 'var(--warning)' : call.verdict === 'ignored' ? 'var(--ink-soft)' : 'var(--accent)'};"
                                                 >{fmtPayload(call.response)}</pre>
                                             {/if}
                                             {#if call.verdictReason}
@@ -719,13 +719,13 @@
                 {#if ins.activeSource}
                     <button
                         type="button"
-                        class="bg-transparent border-none cursor-pointer p-0 mb-4 text-sm text-ink-mute"
+                        class="bg-transparent border-none cursor-pointer p-0 mb-4 text-sm text-ink-soft"
                         onclick={() => (ins.activeSource = null)}
                         data-testid="tool-health-back"
                     >← all sources</button>
                     <div class="flex items-baseline gap-2 mb-4">
                         <h3 class="display text-base font-normal m-0">{ins.activeSource.name}</h3>
-                        <span class="font-mono text-xs text-ink-mute">
+                        <span class="font-mono text-xs text-ink-soft">
                             · all sources · scoping per source coming
                         </span>
                     </div>
@@ -742,10 +742,10 @@
     <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
         <div class="flex items-center gap-1 mb-1">
             <Kanji char={kanji} size="inherit" tone="inherit" class="text-sm text-accent" />
-            <span class="text-xs uppercase tracking-wide text-ink-mute">{label}</span>
+            <span class="text-xs uppercase tracking-wide text-ink-soft">{label}</span>
         </div>
         <div class="display text-xl" style='font-feature-settings: "tnum";'>{value}</div>
-        <div class="text-xs text-ink-mute mt-1">{hint}</div>
+        <div class="text-xs text-ink-soft mt-1">{hint}</div>
     </div>
 {/snippet}
 
@@ -755,7 +755,7 @@
          KPI header derived from the same rows. The loading branch leads so
          the empty state can't flash during the first fetch. -->
     {#if mcp.toolsHealthStatus === 'loading' || mcp.toolsHealthStatus === 'idle'}
-        <p class="text-sm text-ink-soft" data-testid="tool-health-loading">Loading tool sources…</p>
+        <p class="text-sm text-ink-mute" data-testid="tool-health-loading">Loading tool sources…</p>
     {:else if mcp.toolsHealthError}
         <ScreenState status="error" error={mcp.toolsHealthError} onretry={() => void mcp.loadToolsHealth(true)} />
     {:else if toolsHealth.length === 0}
@@ -794,9 +794,9 @@
         <div class="flex items-baseline justify-between mb-3">
             <h3 class="display text-base font-normal m-0">
                 Sources
-                <span class="text-sm text-ink-mute ml-2">· what share of each source's tools is in use</span>
+                <span class="text-sm text-ink-soft ml-2">· what share of each source's tools is in use</span>
             </h3>
-            <span class="font-mono text-xs text-ink-mute">open a source to drill in →</span>
+            <span class="font-mono text-xs text-ink-soft">open a source to drill in →</span>
         </div>
         <div
             class="grid gap-3"
@@ -845,44 +845,44 @@
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <Kanji char="計" size="inherit" tone="inherit" class="text-sm text-accent" />
-                    <span class="text-xs uppercase tracking-wide text-ink-mute">total calls</span>
+                    <span class="text-xs uppercase tracking-wide text-ink-soft">total calls</span>
                 </div>
                 <div class="display text-xl" style='font-feature-settings: "tnum";'>{totalCalls.toLocaleString()}</div>
-                <div class="text-xs text-ink-mute mt-1">{toolStats.length} tools</div>
+                <div class="text-xs text-ink-soft mt-1">{toolStats.length} tools</div>
             </div>
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <Kanji char="誤" size="inherit" tone="inherit" class="text-sm text-accent" />
-                    <span class="text-xs uppercase tracking-wide text-ink-mute">errors</span>
+                    <span class="text-xs uppercase tracking-wide text-ink-soft">errors</span>
                 </div>
                 <div class="display text-xl" style='font-feature-settings: "tnum";' class:text-warning={totalErrors > 0}>
                     {totalErrors.toLocaleString()}
                 </div>
-                <div class="text-xs text-ink-mute mt-1">
+                <div class="text-xs text-ink-soft mt-1">
                     {totalCalls > 0 ? `${((totalErrors / totalCalls) * 100).toFixed(1)}% rate` : '—'}
                 </div>
             </div>
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <Kanji char="警" size="inherit" tone="inherit" class="text-sm text-accent" />
-                    <span class="text-xs uppercase tracking-wide text-ink-mute">signals</span>
+                    <span class="text-xs uppercase tracking-wide text-ink-soft">signals</span>
                 </div>
                 <div class="display text-xl" style='font-feature-settings: "tnum";' class:text-warning={warnTools > 0}>
                     {toolSignals.length}
                 </div>
-                <div class="text-xs text-ink-mute mt-1">
+                <div class="text-xs text-ink-soft mt-1">
                     {warnTools} need attention
                 </div>
             </div>
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <Kanji char="眠" size="inherit" tone="inherit" class="text-sm text-accent" />
-                    <span class="text-xs uppercase tracking-wide text-ink-mute">dormant</span>
+                    <span class="text-xs uppercase tracking-wide text-ink-soft">dormant</span>
                 </div>
                 <div class="display text-xl" style='font-feature-settings: "tnum";' class:text-warning={dormantTools > 0}>
                     {dormantTools}
                 </div>
-                <div class="text-xs text-ink-mute mt-1">0 calls</div>
+                <div class="text-xs text-ink-soft mt-1">0 calls</div>
             </div>
         </div>
 
@@ -892,9 +892,9 @@
                 <div class="flex items-baseline justify-between mb-3">
                     <h3 class="display text-base font-normal m-0">
                         Signals
-                        <span class="text-sm text-ink-mute ml-2">· what the data suggests you change</span>
+                        <span class="text-sm text-ink-soft ml-2">· what the data suggests you change</span>
                     </h3>
-                    <span class="font-mono text-xs text-ink-mute">{toolSignals.length} signals</span>
+                    <span class="font-mono text-xs text-ink-soft">{toolSignals.length} signals</span>
                 </div>
                 <div class="grid gap-3" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));">
                     {#each toolSignals as sig (sig.tool_name + sig.variant)}
@@ -914,10 +914,10 @@
         <!-- ── Per-tool usage table ─────────────────────────────────── -->
         <div class="flex items-baseline justify-between mb-3">
             <h3 class="display text-base font-normal m-0">Per-tool usage</h3>
-            <span class="font-mono text-xs text-ink-mute">{toolStats.length} tools · sorted by calls</span>
+            <span class="font-mono text-xs text-ink-soft">{toolStats.length} tools · sorted by calls</span>
         </div>
         <div class="flex flex-col gap-1 border border-paper-edge rounded-md overflow-hidden bg-paper" data-testid="insights-table">
-            <div class="grid grid-cols-[1fr_80px_80px_100px_120px_90px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
+            <div class="grid grid-cols-[1fr_80px_80px_100px_120px_90px] gap-3 px-3 py-2 text-xs text-ink-mute tracking-wide uppercase">
                 <span>Tool</span>
                 <span class="text-right">Calls</span>
                 <span class="text-right">Errors</span>
@@ -948,16 +948,16 @@
                     <span class="text-right font-mono text-xs opacity-70">
                         {stat.avg_duration_ms != null ? Math.round(stat.avg_duration_ms) : '—'}
                     </span>
-                    <span class="text-right text-xs text-ink-soft">
+                    <span class="text-right text-xs text-ink-mute">
                         {new Date(stat.last_used_at).toLocaleDateString()}
                     </span>
                     <span class="flex justify-end">
                         <span
                             class="inline-flex items-center py-0.5 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide"
                             class:text-success={verdict === 'healthy'}
-                            class:text-ink-soft={verdict === 'ok'}
+                            class:text-ink-mute={verdict === 'ok'}
                             class:text-warning={verdict === 'warn'}
-                            class:text-ink-mute={verdict === 'unused'}
+                            class:text-ink-soft={verdict === 'unused'}
                             data-testid={`verdict-chip-${stat.tool_name}`}
                             data-verdict={verdict}
                         >{verdict}</span>
@@ -968,32 +968,32 @@
                     <div class="px-3 pb-3 pt-1 border-b border-paper-edge bg-paper-soft" data-testid={`insights-detail-${stat.tool_name}`}>
                         {#if insight}
                             <div class="flex items-center gap-3 mb-2">
-                                <span class="text-xs uppercase tracking-wide text-ink-mute">Snapshot</span>
-                                <span class="text-xs text-ink-soft font-mono">
+                                <span class="text-xs uppercase tracking-wide text-ink-soft">Snapshot</span>
+                                <span class="text-xs text-ink-mute font-mono">
                                     computed {new Date(insight.computedAt).toLocaleString()}
                                 </span>
                                 {#if insight.variant}
                                     <span class="text-xs uppercase tracking-wide"
                                         class:text-danger={insight.variant === 'warn'}
                                         class:text-warning={insight.variant === 'opportunity'}
-                                        class:text-ink-mute={insight.variant === 'unused'}
+                                        class:text-ink-soft={insight.variant === 'unused'}
                                         class:text-success={insight.variant === 'win'}>
                                         {insight.variant}
                                     </span>
                                 {/if}
                             </div>
                             <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-                                <span class="text-ink-mute">Error rate</span>
+                                <span class="text-ink-soft">Error rate</span>
                                 <span class="font-mono">
                                     {insight.metrics.errorRate != null ? `${(insight.metrics.errorRate * 100).toFixed(1)}%` : '—'}
                                 </span>
-                                <span class="text-ink-mute">Avg duration</span>
+                                <span class="text-ink-soft">Avg duration</span>
                                 <span class="font-mono">
                                     {insight.metrics.avgDurationMs != null ? fmtDuration(insight.metrics.avgDurationMs) : '—'}
                                 </span>
-                                <span class="text-ink-mute">Calls</span>
+                                <span class="text-ink-soft">Calls</span>
                                 <span class="font-mono">{insight.metrics.callCount ?? 0}</span>
-                                <span class="text-ink-mute">Errors</span>
+                                <span class="text-ink-soft">Errors</span>
                                 <span class="font-mono">{insight.metrics.errorCount ?? 0}</span>
                             </div>
 
@@ -1005,10 +1005,10 @@
                                      show a zero-bar. -->
                                 <div class="mt-3 pt-3 border-t border-paper-edge">
                                     <div class="flex items-baseline justify-between mb-1.5">
-                                        <span class="text-xs uppercase tracking-wide text-ink-mute">
+                                        <span class="text-xs uppercase tracking-wide text-ink-soft">
                                             Usage split · {insight.metrics.verdictWindowDays ?? 14}d
                                         </span>
-                                        <span class="text-xs text-ink-soft font-mono">
+                                        <span class="text-xs text-ink-mute font-mono">
                                             {insight.metrics.verdictTotal} classified
                                         </span>
                                     </div>
@@ -1024,23 +1024,23 @@
                                             <div class="bg-warning" style="width: {((insight.metrics.partialPct ?? 0) * 100).toFixed(1)}%"></div>
                                         {/if}
                                         {#if (insight.metrics.ignoredPct ?? 0) > 0}
-                                            <div class="bg-ink-mute" style="width: {((insight.metrics.ignoredPct ?? 0) * 100).toFixed(1)}%"></div>
+                                            <div class="bg-ink-soft" style="width: {((insight.metrics.ignoredPct ?? 0) * 100).toFixed(1)}%"></div>
                                         {/if}
                                     </div>
                                     <div class="flex gap-3 mt-1.5 text-xs">
                                         <span><span class="inline-block w-2 h-2 rounded-sm bg-success align-middle mr-1"></span>used {insight.metrics.usedCount ?? 0}</span>
                                         <span><span class="inline-block w-2 h-2 rounded-sm bg-warning align-middle mr-1"></span>partial {insight.metrics.partialCount ?? 0}</span>
-                                        <span><span class="inline-block w-2 h-2 rounded-sm bg-ink-mute align-middle mr-1"></span>ignored {insight.metrics.ignoredCount ?? 0}</span>
+                                        <span><span class="inline-block w-2 h-2 rounded-sm bg-ink-soft align-middle mr-1"></span>ignored {insight.metrics.ignoredCount ?? 0}</span>
                                     </div>
                                 </div>
                             {/if}
                             {#if insight.title && insight.detail}
-                                <div class="mt-2 text-xs text-ink-soft leading-normal">
+                                <div class="mt-2 text-xs text-ink-mute leading-normal">
                                     <span class="font-medium">{insight.title}.</span> {insight.detail}
                                 </div>
                             {/if}
                         {:else}
-                            <p class="text-xs text-ink-soft m-0">
+                            <p class="text-xs text-ink-mute m-0">
                                 No cached snapshot yet — the AggregateToolInsights task
                                 writes one per scheduler tick.
                             </p>

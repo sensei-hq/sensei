@@ -12,12 +12,12 @@
   <div class="portfolio-inner mx-auto px-7 py-24">
     <div class="flex items-end justify-between flex-wrap gap-4 mb-12">
       <div>
-        <span class="mono text-ink-mute mb-3 block text-xs" style="letter-spacing:0.12em;text-transform:uppercase">The portfolio</span>
+        <span class="mono text-ink-soft mb-3 block text-xs" style="letter-spacing:0.12em;text-transform:uppercase">The portfolio</span>
         <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;letter-spacing:-0.02em">
           Three products. Four libraries.
         </h2>
       </div>
-      <p class="text-ink-soft text-sm" style="line-height:1.6;max-width:360px">
+      <p class="text-ink-mute text-sm" style="line-height:1.6;max-width:360px">
         The products are things you open. The libraries are things you build on.
         Both carry the same temperament and the same refusal to get in your way.
       </p>
@@ -39,13 +39,13 @@
         <div>
           <div class="flex items-baseline gap-3 mb-3">
             <span class="kanji text-accent text-2xl" style="line-height:1">礎</span>
-            <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Soseki · the foundation stones</span>
+            <span class="mono text-ink-soft text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Soseki · the foundation stones</span>
           </div>
           <h2 class="display text-ink m-0 text-2xl" style="font-weight:300;letter-spacing:-0.02em">
             What our products stand on.
           </h2>
         </div>
-        <p class="text-ink-soft text-sm" style="line-height:1.6;max-width:340px">
+        <p class="text-ink-mute text-sm" style="line-height:1.6;max-width:340px">
           Written for our own tools first, then published — so the thing you
           install is the thing we depend on.
         </p>

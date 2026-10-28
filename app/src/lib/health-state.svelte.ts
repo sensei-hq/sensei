@@ -101,7 +101,7 @@ export class HealthState {
     eyebrow:      string;
     headlinePre:  string;
     headlineKey:  string;
-    headlineTone: 'success' | 'accent' | 'ink-mute';
+    headlineTone: 'success' | 'accent' | 'ink-soft';
     subCopy:      string;
     heroTitle:    string;
   } {

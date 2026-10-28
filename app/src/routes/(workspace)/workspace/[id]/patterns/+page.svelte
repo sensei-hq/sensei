@@ -29,7 +29,7 @@
         // delta on an anti-pattern is EXPECTED and reads healthy (the locus
         // performs worse, which is why we're flagging it). So invert the
         // tone rule on anti-pattern rows.
-        if (v == null || v === 0) return 'text-ink-mute';
+        if (v == null || v === 0) return 'text-ink-soft';
         const good = anti ? v < 0 : v > 0;
         return good ? 'text-success' : 'text-warning';
     }
@@ -54,7 +54,7 @@
             />
             <div class="flex-1 min-w-0">
                 <p class="m-0 text-sm text-ink truncate">{p.name}</p>
-                <p class="m-0 mt-0.5 text-xs text-ink-soft flex items-center gap-2">
+                <p class="m-0 mt-0.5 text-xs text-ink-mute flex items-center gap-2">
                     {#if p.instanceCount != null && p.instanceCount > 0}
                         <span class="font-mono">{p.instanceCount}×</span>
                         <span class="text-ink-faint">·</span>
@@ -79,9 +79,9 @@
         {#if open}
             <div class="mt-2 flex flex-col gap-2 pl-1" data-testid={`pattern-detail-${p.id}`}>
                 {#if p.description}
-                    <p class="text-sm text-ink-soft m-0 leading-normal">{p.description}</p>
+                    <p class="text-sm text-ink-mute m-0 leading-normal">{p.description}</p>
                 {:else}
-                    <p class="text-xs text-ink-soft opacity-60 m-0 italic">
+                    <p class="text-xs text-ink-mute opacity-60 m-0 italic">
                         No description captured for this pattern yet.
                     </p>
                 {/if}
@@ -89,7 +89,7 @@
                 {#if p.enforcement}
                     <div>
                         <span class="text-xs uppercase tracking-wide opacity-60">Enforcement</span>
-                        <p class="text-sm text-ink-soft m-0 mt-1">{p.enforcement}</p>
+                        <p class="text-sm text-ink-mute m-0 mt-1">{p.enforcement}</p>
                     </div>
                 {/if}
 
@@ -103,7 +103,7 @@
                                     <span class="text-xs font-mono text-ink-faint ml-1">{g.files.length}</span>
                                     <ul class="list-none m-0 mt-0.5 p-0 pl-3">
                                         {#each g.files as file (file)}
-                                            <li class="text-xs font-mono text-ink-soft break-all">{file}</li>
+                                            <li class="text-xs font-mono text-ink-mute break-all">{file}</li>
                                         {/each}
                                     </ul>
                                 </li>
@@ -157,7 +157,7 @@
             </section>
         {/if}
         {#if data.followed.length === 0 && data.antiPatterns.length === 0}
-            <p class="text-sm text-ink-soft">No patterns detected yet.</p>
+            <p class="text-sm text-ink-mute">No patterns detected yet.</p>
         {/if}
         {/if}
     </div>

@@ -53,7 +53,7 @@
         </div>
 
         {#if view.view === 'loading'}
-            <p class="text-sm text-ink-mute" data-testid="layers-loading">
+            <p class="text-sm text-ink-soft" data-testid="layers-loading">
                 Ranking the call graph — this reads every dependency in the workspace.
             </p>
         {:else if view.view === 'error'}
@@ -69,15 +69,15 @@
                 </button>
             </div>
         {:else if view.view === 'empty'}
-            <p class="text-sm text-ink-mute" data-testid="layers-empty">
+            <p class="text-sm text-ink-soft" data-testid="layers-empty">
                 Nothing indexed for this workspace yet — no dependency carries two placed ends.
             </p>
         {:else}
             <!-- Three lines, and none of them is decoration. What the layering IS,
                  what it found, and what the picture leaves out. -->
-            <p class="text-sm text-ink-mute" data-testid="layers-source">{view.sourceNote}</p>
+            <p class="text-sm text-ink-soft" data-testid="layers-source">{view.sourceNote}</p>
             <p class="text-sm text-ink" data-testid="layers-breaks">{view.breaksNote}</p>
-            <p class="text-sm text-ink-mute" data-testid="layers-coverage">{view.coverageLine}</p>
+            <p class="text-sm text-ink-soft" data-testid="layers-coverage">{view.coverageLine}</p>
 
             <div class="h-[70vh]" data-testid="layers-diagram">
                 <LayersDiagram
@@ -95,17 +95,17 @@
                     class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm p-3 border border-paper-edge rounded"
                     data-testid="layers-selection"
                 >
-                    <dt class="text-ink-mute">Unit</dt>
+                    <dt class="text-ink-soft">Unit</dt>
                     <dd data-testid="layers-selection-label">{view.selectedNode.label}</dd>
-                    <dt class="text-ink-mute">Layer</dt>
+                    <dt class="text-ink-soft">Layer</dt>
                     <dd>{view.selectedNode.layer ?? 'unplaced'}</dd>
-                    <dt class="text-ink-mute">Package</dt>
+                    <dt class="text-ink-soft">Package</dt>
                     <dd>{view.selectedNode.group || '—'}</dd>
-                    <dt class="text-ink-mute">Files</dt>
+                    <dt class="text-ink-soft">Files</dt>
                     <dd>{view.selectedNode.files}</dd>
                     <!-- A component of one is not a cycle, and saying "component 4"
                          with no size beside it invites reading every unit as one. -->
-                    <dt class="text-ink-mute">Cycle</dt>
+                    <dt class="text-ink-soft">Cycle</dt>
                     <dd data-testid="layers-selection-cycle">
                         {(view.selectedNode.componentSize ?? 1) > 1
                             ? `in a cycle of ${view.selectedNode.componentSize}`

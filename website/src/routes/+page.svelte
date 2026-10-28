@@ -32,7 +32,7 @@
       <h2 class="display text-ink m-0 text-2xl" style="font-weight:300;letter-spacing:-0.02em;line-height:1.2">
         Building something quiet and sharp?
       </h2>
-      <p class="text-ink-soft mt-4 text-base" style="line-height:1.7">
+      <p class="text-ink-mute mt-4 text-base" style="line-height:1.7">
         We like talking to people who care about the craft. Tell us what you
         are working on, or follow along as the workshop grows.
       </p>
@@ -44,7 +44,7 @@
         <Button href="mailto:hi@sensei-hq.com" style="outline" size="lg" label="Join the newsletter" />
       </div>
       <a href="mailto:hi@sensei-hq.com"
-         class="mono text-ink-mute mt-4 no-underline text-xs" style="display:inline-block;letter-spacing:0.02em;white-space:nowrap">
+         class="mono text-ink-soft mt-4 no-underline text-xs" style="display:inline-block;letter-spacing:0.02em;white-space:nowrap">
         hi@sensei-hq.com
       </a>
     </div>

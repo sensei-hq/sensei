@@ -13,7 +13,7 @@
     // neutral pill sits on paper-mute; the status tones use their soft fill.
     const TONES: Record<ChipTone, string> = {
         success: 'bg-success-soft text-success',
-        neutral: 'bg-paper-mute text-ink-mute',
+        neutral: 'bg-paper-mute text-ink-soft',
         accent: 'bg-accent-soft text-accent',
     };
 </script>

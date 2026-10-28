@@ -86,7 +86,7 @@
       </span>
       {@render chip(shareStateChip(item.state))}
       {#if deref}
-        {@render chip({ bg: 'bg-paper-mute', text: 'text-ink-mute', label: deref })}
+        {@render chip({ bg: 'bg-paper-mute', text: 'text-ink-soft', label: deref })}
       {/if}
     </div>
 
@@ -94,14 +94,14 @@
       <p class="text-sm text-ink m-0 leading-snug font-medium">{item.title}</p>
     {/if}
     {#if item.body}
-      <p class="text-xs text-ink-soft mt-1 m-0 leading-snug line-clamp-3">{item.body}</p>
+      <p class="text-xs text-ink-mute mt-1 m-0 leading-snug line-clamp-3">{item.body}</p>
     {:else if held}
-      <p class="text-xs text-ink-soft m-0 leading-snug">
+      <p class="text-xs text-ink-mute m-0 leading-snug">
         Content withheld — flagged for residual identifier risk.
       </p>
     {/if}
 
-    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-ink-mute">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-ink-soft">
       <span data-attribution>{attributionSummary(item.attribution)}</span>
       {#if held}
         <span class="text-warning">won't ship this batch</span>
@@ -120,7 +120,7 @@
     <div class="flex items-baseline gap-3 mb-2">
       <Kanji char="旅" size="inherit" tone="inherit" class="text-lg text-accent" />
       <h2 class="display text-lg font-normal m-0">Where your batch went</h2>
-      <span class="font-mono text-xs text-ink-soft" data-outcome-summary>{outcomeSummary(outcome)}</span>
+      <span class="font-mono text-xs text-ink-mute" data-outcome-summary>{outcomeSummary(outcome)}</span>
     </div>
     <div class="flex flex-col gap-2">
       {#each outcome.items as it, i (i)}
@@ -130,7 +130,7 @@
           data-result={it.result}
         >
           {@render chip(publishResultChip(it.result))}
-          <span class="font-mono text-ink-mute">{it.remote_id ?? it.memory_id}</span>
+          <span class="font-mono text-ink-soft">{it.remote_id ?? it.memory_id}</span>
           {#if it.message}
             <span class="text-danger">{it.message}</span>
           {/if}
@@ -183,8 +183,8 @@
           data-policy-bar
           data-batch={batch.batch_id}
         >
-          <Kanji char="規" size="inherit" tone="inherit" class="text-sm text-ink-mute" />
-          <span class="text-xs text-ink-soft">Destination</span>
+          <Kanji char="規" size="inherit" tone="inherit" class="text-sm text-ink-soft" />
+          <span class="text-xs text-ink-mute">Destination</span>
           {#if unbound}
             <span class="font-mono text-xs px-2 py-0.5 rounded-full bg-warning-soft text-warning" data-unbound
               >unbound — nothing can leave</span
@@ -199,19 +199,19 @@
               </span>
             {/each}
           {/if}
-          <span class="font-mono text-xs px-2 py-0.5 rounded-full bg-paper-mute text-ink-mute" data-cadence
+          <span class="font-mono text-xs px-2 py-0.5 rounded-full bg-paper-mute text-ink-soft" data-cadence
             >{batch.cadence}</span
           >
           {#if when}
             <span class="font-mono text-xs text-ink-faint" data-next-batch>next batch {when}</span>
           {/if}
           <span class="flex-1"></span>
-          <span class="font-mono text-xs text-ink-soft" data-shippable-count>{nShip} to ship</span>
+          <span class="font-mono text-xs text-ink-mute" data-shippable-count>{nShip} to ship</span>
           {#if nHeld > 0}
             <span class="font-mono text-xs text-warning" data-held-count>{nHeld} held</span>
           {/if}
         </div>
-        <p class="text-xs text-ink-soft mb-4 leading-normal">
+        <p class="text-xs text-ink-mute mb-4 leading-normal">
           Your org's policy is the floor — an item can be stricter, never looser. Nothing leaves without
           passing through here.
         </p>
@@ -219,7 +219,7 @@
         <!-- Publish action — a large batch asks for confirmation first. -->
         <div class="flex flex-wrap items-center gap-2 mb-6">
           {#if confirming}
-            <span class="text-xs text-ink-soft" data-confirm-prompt>
+            <span class="text-xs text-ink-mute" data-confirm-prompt>
               Publish {nShip} items to your Dōjō? A maintainer approves before distribution.
             </span>
             <Button

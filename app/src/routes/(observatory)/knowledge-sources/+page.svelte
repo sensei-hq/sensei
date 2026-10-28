@@ -53,7 +53,7 @@
         </div>
 
         {#if state.loading}
-            <p class="text-sm text-ink-soft">Loading sources...</p>
+            <p class="text-sm text-ink-mute">Loading sources...</p>
         {:else if state.sources.length === 0}
             <EmptyState
                 kanji="連"
@@ -72,12 +72,12 @@
                                 <p class="text-sm font-medium text-ink m-0">
                                     {source.name || source.url}
                                 </p>
-                                <p class="font-mono text-xs text-ink-soft m-0 mt-0.5 truncate">
+                                <p class="font-mono text-xs text-ink-mute m-0 mt-0.5 truncate">
                                     {source.url}
                                 </p>
                             </div>
                             <button
-                                class="ks-btn px-3 py-1 rounded-md border border-paper-edge bg-transparent text-xs text-ink-mute cursor-pointer"
+                                class="ks-btn px-3 py-1 rounded-md border border-paper-edge bg-transparent text-xs text-ink-soft cursor-pointer"
                                 data-testid="sync-{source.id}"
                                 onclick={() => state.sync(api(), source.id)}
                             >Sync</button>
@@ -87,7 +87,7 @@
                                 onclick={() => state.remove(api(), source.id)}
                             >Remove</button>
                         </div>
-                        <div class="flex items-center gap-3 mt-2 text-xs text-ink-soft">
+                        <div class="flex items-center gap-3 mt-2 text-xs text-ink-mute">
                             <span>{source.direction}</span>
                             <span class="font-mono">seq {source.last_seq ?? "—"}</span>
                             <span>{source.enabled ? "enabled" : "disabled"}</span>
@@ -105,7 +105,7 @@
 
 <style>
     .ks-input:focus {
-        border-color: var(--ink-soft);
+        border-color: var(--ink-mute);
     }
     .ks-btn:hover {
         background: var(--paper-mute);

@@ -22,7 +22,7 @@ interface StatusBadge {
 // both read danger but stay distinct labels.
 const STATUS_BADGES: Record<RelayRunStatus, StatusBadge> = {
 	running: { label: 'Running', toneClass: 'text-accent' },
-	paused: { label: 'Paused', toneClass: 'text-ink-mute' },
+	paused: { label: 'Paused', toneClass: 'text-ink-soft' },
 	stalled: { label: 'Stuck', toneClass: 'text-warning' },
 	crashed: { label: 'Crashed', toneClass: 'text-danger' },
 	blocked: { label: 'Needs you', toneClass: 'text-accent' },
@@ -30,7 +30,7 @@ const STATUS_BADGES: Record<RelayRunStatus, StatusBadge> = {
 	failed: { label: 'Failed', toneClass: 'text-danger' }
 };
 
-const FALLBACK_BADGE: StatusBadge = { label: 'Unknown', toneClass: 'text-ink-mute' };
+const FALLBACK_BADGE: StatusBadge = { label: 'Unknown', toneClass: 'text-ink-soft' };
 
 /** Friendly label + tone class for a run status (defaults to a muted "Unknown"). */
 export function statusBadge(status: RelayRunStatus): StatusBadge {
@@ -46,9 +46,9 @@ export function statusBadge(status: RelayRunStatus): StatusBadge {
 // stays muted (deliberately passed over). Same shape as statusBadge so the markup
 // stays declarative and the mapping is unit-tested in one place.
 const SEGMENT_STATE_BADGES: Record<SegmentState, StatusBadge> = {
-	pending: { label: 'Queued', toneClass: 'text-ink-mute' },
+	pending: { label: 'Queued', toneClass: 'text-ink-soft' },
 	active: { label: 'In progress', toneClass: 'text-success' },
-	done: { label: 'Done', toneClass: 'text-ink-mute' },
+	done: { label: 'Done', toneClass: 'text-ink-soft' },
 	skipped: { label: 'Skipped', toneClass: 'text-ink-faint' },
 	failed: { label: 'Failed', toneClass: 'text-danger' },
 	blocked: { label: 'Needs you', toneClass: 'text-accent' },

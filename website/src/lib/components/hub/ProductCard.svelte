@@ -30,24 +30,24 @@
       </div>
       <div class="flex items-baseline gap-3 mb-2">
         <span class="display text-ink text-2xl" style="font-weight:400;letter-spacing:-0.02em">{p.name}</span>
-        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.1em;text-transform:uppercase">{p.category}</span>
+        <span class="mono text-ink-soft text-xs" style="letter-spacing:0.1em;text-transform:uppercase">{p.category}</span>
       </div>
       <p class="display text-ink m-0 text-xl" style="font-weight:300;letter-spacing:-0.015em;line-height:1.3">
         {p.tagline}
       </p>
-      <p class="text-ink-soft mt-3 text-sm" style="line-height:1.65;max-width:460px">{p.blurb}</p>
+      <p class="text-ink-mute mt-3 text-sm" style="line-height:1.65;max-width:460px">{p.blurb}</p>
       <div class="flex flex-col gap-2 mt-5 mb-6">
         {#each (p.highlights ?? []) as h (h)}
           <div class="flex items-center gap-3">
             <span class="product-dot" style="background:var(--{p.id})"></span>
-            <span class="text-ink-soft text-sm">{h}</span>
+            <span class="text-ink-mute text-sm">{h}</span>
           </div>
         {/each}
       </div>
       <div class="flex items-center justify-between flex-wrap gap-4">
         <div class="flex flex-wrap gap-2">
           {#each p.meta as m (m)}
-            <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs px-2 py-1" style="white-space:nowrap">{m}</span>
+            <span class="mono text-ink-soft border border-paper-edge rounded-sm text-xs px-2 py-1" style="white-space:nowrap">{m}</span>
           {/each}
         </div>
         <span class="text-{p.id} text-sm font-medium">Explore {p.name} →</span>
@@ -74,13 +74,13 @@
       <div class="flex items-baseline gap-2 mb-1">
         <span class="display text-ink text-xl" style="font-weight:400;letter-spacing:-0.02em">{p.name}</span>
       </div>
-      <span class="mono text-ink-mute mb-3 text-xs" style="letter-spacing:0.1em;text-transform:uppercase">{p.category}</span>
+      <span class="mono text-ink-soft mb-3 text-xs" style="letter-spacing:0.1em;text-transform:uppercase">{p.category}</span>
       <p class="display text-ink m-0 text-lg" style="font-weight:400;line-height:1.3">{p.tagline}</p>
-      <p class="text-ink-soft mt-2 text-sm" style="line-height:1.6">{p.blurb}</p>
+      <p class="text-ink-mute mt-2 text-sm" style="line-height:1.6">{p.blurb}</p>
       <div style="flex:1"></div>
       <div class="mt-5 mb-4 flex flex-wrap gap-2">
         {#each p.meta as m (m)}
-          <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs px-2 py-1" style="white-space:nowrap">{m}</span>
+          <span class="mono text-ink-soft border border-paper-edge rounded-sm text-xs px-2 py-1" style="white-space:nowrap">{m}</span>
         {/each}
       </div>
       <div class="border-t border-paper-edge pt-4 flex items-center justify-between">

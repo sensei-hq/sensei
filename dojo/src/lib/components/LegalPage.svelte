@@ -14,15 +14,15 @@
 
 <main class="bg-paper text-ink min-h-screen px-6 py-12">
 	<article class="mx-auto max-w-[680px]">
-		<p class="text-ink-mute m-0 text-xs font-semibold uppercase" style="letter-spacing: 0.2em">Dōjō</p>
+		<p class="text-ink-soft m-0 text-xs font-semibold uppercase" style="letter-spacing: 0.2em">Dōjō</p>
 		<h1 class="display m-0 mt-2 font-light text-3xl">{page.title}</h1>
-		<p class="text-ink-mute mt-2 text-sm">Last updated {page.updated}</p>
+		<p class="text-ink-soft mt-2 text-sm">Last updated {page.updated}</p>
 
 		{#each page.sections as section (section.heading)}
 			<section class="mt-8">
 				<h2 class="m-0 font-heading text-lg">{section.heading}</h2>
 				{#each section.body as para, i (i)}
-					<p class="text-ink-soft mt-3 text-sm" style="line-height: 1.6">{para}</p>
+					<p class="text-ink-mute mt-3 text-sm" style="line-height: 1.6">{para}</p>
 				{/each}
 			</section>
 		{/each}

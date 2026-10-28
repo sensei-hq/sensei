@@ -17,7 +17,7 @@
   const VARIANT_STYLE: Record<SignalVariant, { bg: string; edge: string; ink: string; kanji: string }> = {
     warn:        { bg: 'bg-danger-soft',  edge: 'border-danger-edge',  ink: 'text-danger',  kanji: '警' },
     opportunity: { bg: 'bg-warning-soft', edge: 'border-warning-edge', ink: 'text-warning', kanji: '芽' },
-    unused:      { bg: 'bg-paper-mute',   edge: 'border-paper-edge',   ink: 'text-ink-mute', kanji: '眠' },
+    unused:      { bg: 'bg-paper-mute',   edge: 'border-paper-edge',   ink: 'text-ink-soft', kanji: '眠' },
     win:         { bg: 'bg-success-soft', edge: 'border-success-edge', ink: 'text-success', kanji: '勝' },
   };
   const style = $derived(VARIANT_STYLE[variant]);
@@ -31,9 +31,9 @@
   <Kanji char={style.kanji} size="inherit" tone="inherit" class="text-xl {style.ink} w-6 text-center shrink-0" />
   <div class="flex-1 min-w-0">
     {#if toolName}
-      <div class="text-xs uppercase tracking-wide text-ink-mute font-mono">{toolName}</div>
+      <div class="text-xs uppercase tracking-wide text-ink-soft font-mono">{toolName}</div>
     {/if}
     <div class="text-sm font-medium text-ink m-0">{title}</div>
-    <p class="text-sm text-ink-soft m-0 mt-1 leading-normal">{detail}</p>
+    <p class="text-sm text-ink-mute m-0 mt-1 leading-normal">{detail}</p>
   </div>
 </article>

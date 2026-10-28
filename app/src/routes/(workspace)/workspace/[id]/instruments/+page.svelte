@@ -53,7 +53,7 @@
     <PageHeader title="Instruments">
         {#snippet right()}
             {#if !data.error}
-                <span class="text-sm text-ink-mute">
+                <span class="text-sm text-ink-soft">
                     {stats.length} tools · {fmtInt(totalCalls)} calls · {fmtInt(totalErrors)} errors
                 </span>
             {/if}
@@ -74,14 +74,14 @@
                         <li class="flex items-center gap-3 py-2 px-2 rounded-md border border-paper-edge">
                             <div class="flex-1 min-w-0">
                                 <div class="text-sm font-medium text-ink truncate">{service.displayName}</div>
-                                <div class="text-xs text-ink-soft truncate">
+                                <div class="text-xs text-ink-mute truncate">
                                     <span class="font-mono">{service.name}</span>
                                     <span class="opacity-60"> · {service.protocol} · {service.kind}</span>
                                     {#if service.publisher} · {service.publisher}{/if}
                                 </div>
                             </div>
                             {#if service.toolsCount > 0}
-                                <span class="text-xs text-ink-soft">{service.toolsCount} tool{service.toolsCount === 1 ? '' : 's'}</span>
+                                <span class="text-xs text-ink-mute">{service.toolsCount} tool{service.toolsCount === 1 ? '' : 's'}</span>
                             {/if}
                             <button
                                 type="button"
@@ -115,7 +115,7 @@
             {:else if data.toolUsage.length > 0}
                 <div data-testid="tools-used"><ToolBubbles tools={data.toolUsage} /></div>
             {:else}
-                <p class="text-xs text-ink-soft m-0">No tool calls captured for this workspace yet.</p>
+                <p class="text-xs text-ink-mute m-0">No tool calls captured for this workspace yet.</p>
             {/if}
         </section>
 
@@ -132,7 +132,7 @@
                         class:text-on-primary={active}
                         class:border-primary={active}
                         class:bg-transparent={!active}
-                        class:text-ink-soft={!active}
+                        class:text-ink-mute={!active}
                         class:border-paper-edge={!active}
                         role="tab"
                         aria-selected={active}
@@ -142,9 +142,9 @@
             </div>
 
             {#if visibleStats.length === 0}
-                <p class="text-sm text-ink-soft">No tools match this filter.</p>
+                <p class="text-sm text-ink-mute">No tools match this filter.</p>
             {:else}
-                <div class="grid grid-cols-[1fr_60px_60px_80px_80px_100px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
+                <div class="grid grid-cols-[1fr_60px_60px_80px_80px_100px] gap-3 px-3 py-2 text-xs text-ink-mute tracking-wide uppercase">
                     <span>Tool</span>
                     <span class="text-right">Calls</span>
                     <span class="text-right">Errors</span>
@@ -156,7 +156,7 @@
                     <div class="grid grid-cols-[1fr_60px_60px_80px_80px_100px] gap-3 px-3 py-2 border-b border-paper-edge text-sm items-center">
                         <div class="min-w-0">
                             <div class="font-mono text-xs truncate">{t.name}</div>
-                            <div class="text-xs text-ink-soft truncate">{t.summary}</div>
+                            <div class="text-xs text-ink-mute truncate">{t.summary}</div>
                         </div>
                         <span class="text-right font-mono text-xs">{fmtInt(t.calls)}</span>
                         <span class="text-right font-mono text-xs" class:text-danger={t.errors > 0}>
@@ -168,7 +168,7 @@
                             class:text-warning={t.ftr != null && t.ftr < 0.5}>
                             {fmtPct(t.ftr)}
                         </span>
-                        <span class="text-right text-xs text-ink-soft">
+                        <span class="text-right text-xs text-ink-mute">
                             {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleDateString() : '—'}
                         </span>
                     </div>
@@ -214,7 +214,7 @@
     /* Enable-toggle pill — On is bright, Off is muted. Token-only. */
     .toggle {
         background: transparent;
-        color: var(--ink-mute);
+        color: var(--ink-soft);
         border-color: var(--paper-edge);
     }
     .toggle.enabled {

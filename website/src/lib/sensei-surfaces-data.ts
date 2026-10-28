@@ -13,7 +13,7 @@
  */
 
 /** Semantic colour keys → text-<token> / var(--<token>) in the page. */
-export type Tone = 'accent' | 'success' | 'warning' | 'ink-soft' | 'ink-mute';
+export type Tone = 'accent' | 'success' | 'warning' | 'ink-mute' | 'ink-soft';
 
 /** A lead paragraph, split into segments so a phrase can be emphasised (ink). */
 export interface LeadSegment {
@@ -173,7 +173,7 @@ export const heroBrief: HeroBrief = {
 			label: 'Drift detected',
 			text: 'brand-tokens README is 47 days old',
 			tag: 'low',
-			tone: 'ink-mute'
+			tone: 'ink-soft'
 		}
 	]
 };
@@ -258,7 +258,7 @@ export const surfaces: Surface[] = [
 					{
 						kanji: '観',
 						title: 'Insights',
-						tone: 'ink-soft',
+						tone: 'ink-mute',
 						desc: "New idioms forming, recurring shapes in error handling — things sensei noticed but won't judge yet."
 					}
 				]

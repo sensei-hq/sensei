@@ -62,7 +62,7 @@
         {#if data.error}
             <div
                 data-component="metrics-error"
-                class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-mute"
+                class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-soft"
             >
                 Couldn’t load metrics — {data.error}
             </div>
@@ -72,7 +72,7 @@
             <div
                 data-component="metrics-empty"
                 data-empty-kind={empty.kind}
-                class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-mute"
+                class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-soft"
             >
                 {empty.text}
             </div>
@@ -90,7 +90,7 @@
                         {headline}
                     </p>
                     {#if data.narrative?.subhead}
-                        <p class="text-sm text-ink-soft leading-relaxed text-pretty m-0">
+                        <p class="text-sm text-ink-mute leading-relaxed text-pretty m-0">
                             {data.narrative.subhead}
                         </p>
                     {/if}

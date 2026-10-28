@@ -38,7 +38,7 @@
     if (kind === 'skill' || kind === 'agent') return 'text-accent';
     if (kind === 'rule')  return 'text-success';
     if (kind === 'lint')  return 'text-warning';
-    return 'text-ink-soft';
+    return 'text-ink-mute';
   }
 </script>
 
@@ -65,7 +65,7 @@
       </span>
       {@render chip(stateChip(up.state))}
       {#if up.attribution?.dereferenced}
-        {@render chip({ bg: 'bg-paper-mute', text: 'text-ink-mute', label: 'dereferenced' })}
+        {@render chip({ bg: 'bg-paper-mute', text: 'text-ink-soft', label: 'dereferenced' })}
       {/if}
       <span class="flex-1"></span>
       {#if received}
@@ -76,11 +76,11 @@
     <!-- title + body (narration-cache) -->
     <p class="text-sm text-ink m-0 leading-snug font-medium">{up.title}</p>
     {#if up.body}
-      <p class="text-xs text-ink-soft mt-1 m-0 leading-snug line-clamp-3">{up.body}</p>
+      <p class="text-xs text-ink-mute mt-1 m-0 leading-snug line-clamp-3">{up.body}</p>
     {/if}
 
     <!-- provenance: scope + attribution -->
-    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-ink-mute">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-ink-soft">
       <span data-scope>{scopeSummary(up.scope)}</span>
       <span data-attribution>{attributionSummary(up.attribution)}</span>
     </div>
@@ -134,7 +134,7 @@
         <span class="uppercase tracking-wide">{meta.title}</span>
       </span>
       <span class="flex-1"></span>
-      <span class="font-mono text-xs text-ink-mute">{up.workspaceName}</span>
+      <span class="font-mono text-xs text-ink-soft">{up.workspaceName}</span>
     </div>
 
     <!-- title -->
@@ -142,7 +142,7 @@
 
     <!-- why with 2-line clamp so the card stays a consistent height -->
     {#if up.why}
-      <p class="text-xs text-ink-soft mt-1 m-0 leading-snug line-clamp-2">{up.why}</p>
+      <p class="text-xs text-ink-mute mt-1 m-0 leading-snug line-clamp-2">{up.why}</p>
     {/if}
 
     <!-- footer: urgency chip + effect caption -->
@@ -152,12 +152,12 @@
         class:bg-warning-soft={up.urgency === 'high'}
         class:text-warning={up.urgency === 'high'}
         class:bg-paper-mute={up.urgency === 'medium'}
-        class:text-ink-soft={up.urgency === 'medium'}
+        class:text-ink-mute={up.urgency === 'medium'}
         class:bg-paper-mute-alt={up.urgency === 'low'}
         class:text-ink-faint={up.urgency === 'low'}
       >{up.urgency}</span>
       <span class="text-ink-faint">Opens in</span>
-      <span class="font-mono text-ink-soft">{up.workspaceName}</span>
+      <span class="font-mono text-ink-mute">{up.workspaceName}</span>
     </div>
   </a>
 {/snippet}
@@ -173,7 +173,7 @@
         <h2 class="display text-lg font-normal m-0">{meta.title}</h2>
         <span class="font-mono text-xs {toneClass(kind)}">{items.length}</span>
       </div>
-      <p class="text-xs text-ink-soft mb-4">{meta.sub}</p>
+      <p class="text-xs text-ink-mute mb-4">{meta.sub}</p>
       <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">
         {#each items as up (up.id)}
           {@render card(up, kind)}
@@ -206,7 +206,7 @@
             <span class="font-mono text-xs text-accent" data-dojo-unread>{data.dojoUnread} new</span>
           {/if}
         </div>
-        <p class="text-xs text-ink-soft mb-4">
+        <p class="text-xs text-ink-mute mb-4">
           Approved practice pulled back from the teams you've paired with. Applying lands it into your
           local rules and memory.
         </p>
@@ -235,10 +235,10 @@
         <div class="flex items-baseline gap-3 mb-1">
           <h2 class="display text-lg font-normal m-0">From your analyzer</h2>
           {#if data.total > 0}
-            <span class="font-mono text-xs text-ink-soft">{data.total}</span>
+            <span class="font-mono text-xs text-ink-mute">{data.total}</span>
           {/if}
         </div>
-        <p class="text-xs text-ink-soft mb-4">
+        <p class="text-xs text-ink-mute mb-4">
           Candidate skills, agents, rules and lints your workspace's own patterns are asking for. Each
           links back to the recommendation that produced it.
         </p>

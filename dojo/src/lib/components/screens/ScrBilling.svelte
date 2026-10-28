@@ -50,14 +50,14 @@
 			<!-- Plan summary — current plan · billable seats · live monthly total. -->
 			<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
 				<div class="bg-paper-soft border-accent rounded-lg border" style="padding: 16px">
-					<div class="text-ink-mute mb-1 text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
+					<div class="text-ink-soft mb-1 text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
 						Current plan
 					</div>
 					<div class="display text-2xl font-light" style="letter-spacing: -0.01em">
 						{billing.plan ?? 'No billing account yet'}
 					</div>
 					{#if billing.renews || billing.perSeat !== null}
-						<div class="text-ink-mute text-sm" style="margin-top: 2px">
+						<div class="text-ink-soft text-sm" style="margin-top: 2px">
 							{#if billing.renews}Renews {billing.renews}{/if}
 							{#if billing.renews && billing.perSeat !== null}·{/if}
 							{#if billing.perSeat !== null}<span class="mono">${billing.perSeat}</span>/contributor/mo{/if}
@@ -65,7 +65,7 @@
 					{/if}
 				</div>
 				<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 16px">
-					<div class="text-ink-mute mb-1 text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
+					<div class="text-ink-soft mb-1 text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
 						Billable seats
 					</div>
 					<StatBadge
@@ -75,7 +75,7 @@
 					/>
 				</div>
 				<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 16px">
-					<div class="text-ink-mute mb-1 text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
+					<div class="text-ink-soft mb-1 text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
 						This month
 					</div>
 					{#if monthly === null}
@@ -106,7 +106,7 @@
 							<KanjiToken
 								char={t.kanji}
 								size="lg"
-								toneClass={t.dark || t.current ? 'text-accent' : 'text-ink-mute'}
+								toneClass={t.dark || t.current ? 'text-accent' : 'text-ink-soft'}
 							/>
 							<span class="text-sm font-semibold {t.dark ? 'text-on-primary' : 'text-ink'}">{t.name}</span>
 							{#if t.current}
@@ -129,7 +129,7 @@
 						<div class="flex flex-col gap-1">
 							{#each t.lines as l (l)}
 								<div
-									class="flex gap-2 text-xs {t.dark ? 'text-on-primary opacity-80' : 'text-ink-soft'}"
+									class="flex gap-2 text-xs {t.dark ? 'text-on-primary opacity-80' : 'text-ink-mute'}"
 									style="line-height: 1.45"
 								>
 									<span class="text-accent flex-shrink-0">·</span>{l}
@@ -152,7 +152,7 @@
 				{#each billing.relayRows as r (r.label)}
 					{@const tone = relayTone(r.free)}
 					<div class="border-paper-edge flex items-center gap-3 border-b" style="padding: 12px 16px">
-						<span class="text-ink-soft flex-1 text-sm">{r.label}</span>
+						<span class="text-ink-mute flex-1 text-sm">{r.label}</span>
 						<Chip toneClass={tone.text} softClass={tone.soft} edgeClass={tone.edge}>{tone.label}</Chip>
 					</div>
 				{/each}
@@ -161,13 +161,13 @@
 			<!-- Invoice history. -->
 			<ListSection icon="bill-list" title="Invoices" count={billing.invoices.length}>
 				{#if billing.invoices.length === 0}
-					<div class="text-ink-mute text-sm" style="padding: 12px 16px">
+					<div class="text-ink-soft text-sm" style="padding: 12px 16px">
 						No invoices — no payment provider is connected.
 					</div>
 				{/if}
 				{#each billing.invoices as iv (iv.d)}
 					<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-						<span class="mono text-ink-soft flex-1 text-xs">{iv.d}</span>
+						<span class="mono text-ink-mute flex-1 text-xs">{iv.d}</span>
 						<span class="mono text-ink text-sm">{iv.amt}</span>
 						<Chip
 							icon="check-circle"

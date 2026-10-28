@@ -45,7 +45,7 @@ export function typePill(type: string): TypePill {
     case 'pattern':   return { kanji: '紋', label: 'pattern',   bg: 'bg-info-soft',    text: 'text-info'    };
     case 'prompt':    return { kanji: '問', label: 'prompt',    bg: 'bg-info-soft',    text: 'text-info'    };
     case 'guard':     return { kanji: '守', label: 'guard',     bg: 'bg-warning-soft', text: 'text-warning' };
-    default:          return { kanji: '贈', label: type || 'artifact', bg: 'bg-paper-mute', text: 'text-ink-mute' };
+    default:          return { kanji: '贈', label: type || 'artifact', bg: 'bg-paper-mute', text: 'text-ink-soft' };
   }
 }
 

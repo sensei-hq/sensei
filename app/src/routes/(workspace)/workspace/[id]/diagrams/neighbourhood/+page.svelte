@@ -74,7 +74,7 @@
                                     onclick={() => view.setFocus(m.id)}
                                 >
                                     <span class="text-ink">{m.name}</span>
-                                    <span class="text-ink-mute">
+                                    <span class="text-ink-soft">
                                         · {m.file_path}{m.line_start ? `:${m.line_start}` : ''}
                                     </span>
                                 </button>
@@ -82,7 +82,7 @@
                         {/each}
                     </ul>
                 {:else if view.query.trim().length >= 2}
-                    <p class="text-sm text-ink-mute m-0" data-testid="neighbourhood-no-matches">
+                    <p class="text-sm text-ink-soft m-0" data-testid="neighbourhood-no-matches">
                         No function or method in this workspace matches “{view.query.trim()}”.
                     </p>
                 {/if}
@@ -100,12 +100,12 @@
         </div>
 
         {#if view.view === 'pick'}
-            <p class="text-sm text-ink-mute" data-testid="neighbourhood-pick">
+            <p class="text-sm text-ink-soft" data-testid="neighbourhood-pick">
                 Pick a function to see what calls it and what it calls. There is no default — a picture
                 of a symbol you did not choose answers a question nobody asked.
             </p>
         {:else if view.view === 'loading'}
-            <p class="text-sm text-ink-mute" data-testid="neighbourhood-loading">
+            <p class="text-sm text-ink-soft" data-testid="neighbourhood-loading">
                 Walking {view.depth === 1 ? 'one ring' : `${view.depth} rings`} out…
             </p>
         {:else if view.view === 'error'}
@@ -124,7 +124,7 @@
             {#if view.focusCard}
                 <p class="text-sm text-ink m-0" data-testid="neighbourhood-focus">
                     <span class="font-mono">{view.focusCard.label}</span>
-                    <span class="text-ink-mute">
+                    <span class="text-ink-soft">
                         · {view.focusCard.group ?? 'no package'}{view.focusCard.module
                             ? ` / ${view.focusCard.module}`
                             : ''} · {view.focusCard.file ?? 'no file'}{view.focusCard.line
@@ -136,7 +136,7 @@
 
             <ul class="flex flex-col gap-1 list-none p-0 m-0" data-testid="neighbourhood-coverage">
                 {#each view.coverageNotes as note (note)}
-                    <li class="text-sm text-ink-mute">{note}</li>
+                    <li class="text-sm text-ink-soft">{note}</li>
                 {/each}
             </ul>
 
@@ -145,7 +145,7 @@
             {/if}
 
             {#if view.view === 'alone'}
-                <p class="text-sm text-ink-mute" data-testid="neighbourhood-alone">
+                <p class="text-sm text-ink-soft" data-testid="neighbourhood-alone">
                     Nothing in this workspace calls it, and it calls nothing the graph could place.
                 </p>
             {:else}

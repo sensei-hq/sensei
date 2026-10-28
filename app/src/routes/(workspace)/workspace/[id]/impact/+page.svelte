@@ -63,7 +63,7 @@
         <span class="text-xs uppercase tracking-wider text-ink-faint ml-2">negative</span>
       </div>
       <div>
-        <span class="font-mono text-lg font-light text-ink-soft">{data.buckets.pending.length}</span>
+        <span class="font-mono text-lg font-light text-ink-mute">{data.buckets.pending.length}</span>
         <span class="text-xs uppercase tracking-wider text-ink-faint ml-2">pending</span>
       </div>
     </div>
@@ -88,7 +88,7 @@
               class:border-l-transparent={!isOpen}
               class:border-l-success={isOpen && vm.tone === 'success'}
               class:border-l-warning={isOpen && vm.tone === 'warning'}
-              class:border-l-ink-mute={isOpen && vm.tone === 'ink'}
+              class:border-l-ink-soft={isOpen && vm.tone === 'ink'}
               data-verdict-row={v.id}
               data-verdict-bucket={v.verdict}
               onclick={() => (st.selectedId = v.id)}
@@ -101,12 +101,12 @@
                   class="font-mono text-xs"
                   class:text-success={v.ftrDelta != null && v.ftrDelta > 0}
                   class:text-warning={v.ftrDelta != null && v.ftrDelta < 0}
-                  class:text-ink-mute={v.ftrDelta == null || v.ftrDelta === 0}
+                  class:text-ink-soft={v.ftrDelta == null || v.ftrDelta === 0}
                 >{formatDeltaPct(v.ftrDelta)}</span>
               </div>
               <p class="text-sm m-0 leading-snug font-medium truncate"
                  class:text-ink={isOpen}
-                 class:text-ink-mute={!isOpen}>{v.title}</p>
+                 class:text-ink-soft={!isOpen}>{v.title}</p>
             </button>
           {/each}
         </div>
@@ -114,7 +114,7 @@
         <!-- Detail panel -->
         <div class="min-w-0">
           <!-- Eyebrow — action verb · status -->
-          <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-soft mb-3">
+          <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-mute mb-3">
             {#if selected.actionType}
               <span class="font-mono normal-case tracking-normal">{selected.actionType}</span>
               <span class="text-ink-faint">·</span>
@@ -148,13 +148,13 @@
           <div class="grid grid-cols-3 gap-[1px] bg-paper-edge rounded overflow-hidden mb-5">
             <div class="bg-paper-mute py-3 px-4">
               <div class="text-xs uppercase tracking-wider text-ink-faint mb-1">First-Try-Right</div>
-              <div class="font-mono text-sm text-ink-mute">{pct(selected.baselineFtr)}</div>
+              <div class="font-mono text-sm text-ink-soft">{pct(selected.baselineFtr)}</div>
               <div class="font-mono text-lg text-ink">{pct(selected.currentFtr)}</div>
               <div
                 class="font-mono text-xs mt-1"
                 class:text-success={selected.ftrDelta != null && selected.ftrDelta > 0}
                 class:text-warning={selected.ftrDelta != null && selected.ftrDelta < 0}
-                class:text-ink-mute={selected.ftrDelta == null || selected.ftrDelta === 0}
+                class:text-ink-soft={selected.ftrDelta == null || selected.ftrDelta === 0}
               >{formatDeltaPct(selected.ftrDelta)}</div>
             </div>
             <div class="bg-paper-mute py-3 px-4">
@@ -171,7 +171,7 @@
           {#if selected.reasoning}
             <MoeReasoningPanel reasoning={selected.reasoning} tone={selectedVm?.tone ?? 'ink'} />
           {:else}
-            <p class="text-sm text-ink-soft italic m-0">
+            <p class="text-sm text-ink-mute italic m-0">
               No MOE reasoning trace captured for this verdict yet.
             </p>
           {/if}
@@ -182,7 +182,7 @@
     <!-- ── Manual impact log (T3 Slice 3) ─────────────────────────────── -->
     <section class="mt-10 pt-6 border-t border-paper-edge">
       <h3 class="text-sm font-medium m-0 mb-1">Impact log</h3>
-      <p class="text-xs text-ink-soft m-0 mb-4">
+      <p class="text-xs text-ink-mute m-0 mb-4">
         Log a shipped change, then verdict it later once the outcome has had
         time to settle. Independent of the automatic recommendation
         measurement above.
@@ -220,16 +220,16 @@
       </form>
 
       {#if impactPending.length > 0}
-        <h4 class="text-xs uppercase tracking-wide text-ink-soft m-0 mb-2">Pending verdict</h4>
+        <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-2">Pending verdict</h4>
         <ul class="list-none m-0 p-0 flex flex-col gap-2 mb-6" data-testid="impact-pending-list">
           {#each impactPending as entry (entry.id)}
             <li class="border border-paper-edge rounded-md px-3 py-2 flex items-center gap-2" data-testid={`impact-pending-${entry.id}`}>
               <div class="flex-1 min-w-0">
                 <div class="text-sm text-ink truncate">{entry.title}</div>
                 {#if entry.note}
-                  <div class="text-xs text-ink-soft mt-0.5">{entry.note}</div>
+                  <div class="text-xs text-ink-mute mt-0.5">{entry.note}</div>
                 {/if}
-                <div class="text-xs text-ink-soft mt-0.5">{new Date(entry.createdAt).toLocaleDateString()}</div>
+                <div class="text-xs text-ink-mute mt-0.5">{new Date(entry.createdAt).toLocaleDateString()}</div>
               </div>
               <button type="button" disabled={st.isDeciding(entry.id)} onclick={() => decide(entry.id, 'success')}
                       data-testid={`impact-success-${entry.id}`}
@@ -249,7 +249,7 @@
       {/if}
 
       {#if impactDecided.length > 0}
-        <h4 class="text-xs uppercase tracking-wide text-ink-soft m-0 mb-2">Decided</h4>
+        <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-2">Decided</h4>
         <ul class="list-none m-0 p-0 flex flex-col gap-1">
           {#each impactDecided as entry (entry.id)}
             <li class="flex items-center gap-2 py-1.5 border-b border-paper-edge text-sm">
@@ -259,7 +259,7 @@
                     class:text-danger={entry.verdict === 'failure'}
               >{entry.verdict}</span>
               <span class="flex-1 truncate">{entry.title}</span>
-              <span class="text-xs text-ink-soft">
+              <span class="text-xs text-ink-mute">
                 {entry.decidedAt ? new Date(entry.decidedAt).toLocaleDateString() : ''}
               </span>
             </li>
@@ -268,7 +268,7 @@
       {/if}
 
       {#if impactLog.length === 0}
-        <p class="text-sm text-ink-soft">No impact entries yet.</p>
+        <p class="text-sm text-ink-mute">No impact entries yet.</p>
       {/if}
     </section>
     {/if}

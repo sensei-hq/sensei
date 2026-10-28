@@ -90,7 +90,7 @@ describe('shareStateChip', () => {
   it('degrades an unexpected state to muted ink, still labelled with the raw value', () =>
     expect(shareStateChip('weird')).toEqual({
       bg: 'bg-paper-mute',
-      text: 'text-ink-mute',
+      text: 'text-ink-soft',
       label: 'weird',
     }));
 });
@@ -157,7 +157,7 @@ describe('publishResultChip', () => {
   it('degrades an unknown result to muted ink echoing the raw tag', () =>
     expect(publishResultChip('teleported')).toEqual({
       bg: 'bg-paper-mute',
-      text: 'text-ink-mute',
+      text: 'text-ink-soft',
       label: 'teleported',
     }));
 });

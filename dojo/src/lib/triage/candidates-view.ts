@@ -31,7 +31,7 @@ const IMPACT_TONES: Record<string, ImpactTone> = {
 };
 
 const NEUTRAL_IMPACT: ImpactTone = {
-	text: 'text-ink-mute',
+	text: 'text-ink-soft',
 	soft: 'bg-paper-mute',
 	edge: 'border-paper-edge'
 };

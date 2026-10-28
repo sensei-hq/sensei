@@ -11,13 +11,13 @@
   class="mt-4 max-w-[300px] rounded-lg border border-paper-edge bg-paper-soft p-4"
 >
   <div class="mb-1.5"><Eyebrow>What this is</Eyebrow></div>
-  <p class="text-xs text-ink-soft leading-relaxed">
+  <p class="text-xs text-ink-mute leading-relaxed">
     sensei runs on a small local foundation — a database, a model runtime, and a
     background watcher. This check confirms each piece is present before opening.
   </p>
   <div class="mt-3 pt-3 border-t border-paper-edge flex gap-2 items-start">
     <Kanji char="修" size="base" tone="accent" />
-    <p class="text-xs text-ink-mute leading-relaxed">
+    <p class="text-xs text-ink-soft leading-relaxed">
       Anything missing is installed for you — usually automatically, occasionally
       with one script to paste. Nothing leaves your machine.
     </p>

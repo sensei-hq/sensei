@@ -70,7 +70,7 @@
     <div class="bg-paper">
       <PageHeader kanji="場" icon={railIcon('/workspaces')} eyebrow="Workspaces" title="All the places you work.">
         {#snippet right()}
-          <span class="font-mono text-xs text-ink-soft py-1 px-2 border border-paper-edge rounded">
+          <span class="font-mono text-xs text-ink-mute py-1 px-2 border border-paper-edge rounded">
             ⌘K to jump
           </span>
         {/snippet}
@@ -88,7 +88,7 @@
             <Kanji char={proxy.get('kanji')} icon={KIND_ICONS.workspace} size="inherit" tone="inherit" class="text-xs" />
             <span>{proxy.label}</span>
             <!-- Inherit the option's text colour (rokkit sets a contrast-correct colour
-                 per selected/unselected state) instead of a hardcoded text-ink-mute,
+                 per selected/unselected state) instead of a hardcoded text-ink-soft,
                  which failed contrast on the SELECTED pill's background (a11y). -->
             <span class="font-mono text-xs">{proxy.get('count')}</span>
           {/snippet}
@@ -108,7 +108,7 @@
         </Toggle>
 
         <div class="flex items-center bg-paper-soft border border-paper-edge rounded gap-2 py-1 px-2 min-w-[260px]">
-          <Kanji char="探" size="inherit" tone="inherit" class="text-xs text-ink-soft" />
+          <Kanji char="探" size="inherit" tone="inherit" class="text-xs text-ink-mute" />
           <input
             type="text"
             bind:value={workspacesView.query}
@@ -125,7 +125,7 @@
             >×</button>
           {/if}
         </div>
-        <span class="font-mono text-xs text-ink-soft whitespace-nowrap">
+        <span class="font-mono text-xs text-ink-mute whitespace-nowrap">
           {filtered.length} of {counts.all}
         </span>
       </div>
@@ -137,11 +137,11 @@
     {#if data.error}
       <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
     {:else if counts.all === 0}
-      <p class="text-sm text-ink-soft opacity-70 py-6 text-center">
+      <p class="text-sm text-ink-mute opacity-70 py-6 text-center">
         No workspaces yet. Set up a workspace to get started.
       </p>
     {:else if filtered.length === 0}
-      <p class="text-sm text-ink-soft py-6 text-center">
+      <p class="text-sm text-ink-mute py-6 text-center">
         {workspacesView.query ? `No workspaces match “${workspacesView.query}”.` : 'No workspaces in this bucket.'}
       </p>
     {:else if workspacesView.view === 'grid'}

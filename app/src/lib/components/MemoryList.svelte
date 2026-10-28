@@ -41,7 +41,7 @@
 
 <div class="max-w-[960px] mx-auto px-12 py-12 pb-16">
     <div class="mb-6">
-        <p class="text-xs tracking-wide uppercase text-ink-soft m-0 mb-2">
+        <p class="text-xs tracking-wide uppercase text-ink-mute m-0 mb-2">
             {pageLabel}
         </p>
         <h1 class="display text-2xl font-normal m-0">{pageTitle}</h1>
@@ -50,7 +50,7 @@
     <TabBar {tabs} bind:active={tab} class="mb-7" />
 
     {#if loading}
-        <p class="text-sm text-ink-soft">Loading...</p>
+        <p class="text-sm text-ink-mute">Loading...</p>
     {:else if memories.length === 0}
         <EmptyState
             kanji="學"
@@ -74,7 +74,7 @@
                                 >{strengthDots(mem.strength)}</span
                             >
                             <span
-                                class="text-xs text-ink-soft uppercase tracking-wide"
+                                class="text-xs text-ink-mute uppercase tracking-wide"
                                 >{mem.scope}</span
                             >
                         </div>
@@ -83,7 +83,7 @@
                         </p>
                         {#if mem.workspace_name}
                             <span
-                                class="text-xs text-ink-soft mt-1 inline-block"
+                                class="text-xs text-ink-mute mt-1 inline-block"
                                 >{mem.workspace_name}</span
                             >
                         {/if}
@@ -99,7 +99,7 @@
                     {#each [{ label: "What", text: selectedMemory.title }, { label: "Why", text: selectedMemory.content }] as section}
                         <div>
                             <p
-                                class="text-xs tracking-wide uppercase text-ink-soft m-0 mb-1.5"
+                                class="text-xs tracking-wide uppercase text-ink-mute m-0 mb-1.5"
                             >
                                 {section.label}
                             </p>
@@ -112,18 +112,18 @@
                     {/each}
                     <div>
                         <p
-                            class="text-xs tracking-wide uppercase text-ink-soft m-0 mb-1.5"
+                            class="text-xs tracking-wide uppercase text-ink-mute m-0 mb-1.5"
                         >
                             Scope
                         </p>
                         <span
-                            class="inline-block px-2.5 py-1 rounded-full text-xs bg-paper-mute text-ink-mute"
+                            class="inline-block px-2.5 py-1 rounded-full text-xs bg-paper-mute text-ink-soft"
                             >{selectedMemory.scope}</span
                         >
                     </div>
                     <div>
                         <p
-                            class="text-xs tracking-wide uppercase text-ink-soft m-0 mb-1.5"
+                            class="text-xs tracking-wide uppercase text-ink-mute m-0 mb-1.5"
                         >
                             Strength
                         </p>
@@ -134,12 +134,12 @@
                     </div>
                     <div>
                         <p
-                            class="text-xs tracking-wide uppercase text-ink-soft m-0 mb-1.5"
+                            class="text-xs tracking-wide uppercase text-ink-mute m-0 mb-1.5"
                         >
                             Status
                         </p>
                         <span
-                            class="inline-block px-2.5 py-1 rounded-full text-xs bg-paper-mute text-ink-mute"
+                            class="inline-block px-2.5 py-1 rounded-full text-xs bg-paper-mute text-ink-soft"
                             >{selectedMemory.status}</span
                         >
                     </div>
@@ -154,7 +154,7 @@
         background: var(--paper-mute);
     }
     .memory-card.selected {
-        border-color: var(--ink-soft);
+        border-color: var(--ink-mute);
         background: var(--paper-mute);
     }
 </style>

@@ -41,13 +41,13 @@
 				<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 16px">
 					<div class="mb-2 flex items-center gap-2">
 						<Icon name="key" size={17} toneClass="text-accent" />
-						<span class="text-ink-mute text-xs font-semibold uppercase" style="letter-spacing: 0.18em"
+						<span class="text-ink-soft text-xs font-semibold uppercase" style="letter-spacing: 0.18em"
 							>Identity provider</span
 						>
 					</div>
 					<div class="flex flex-wrap items-center gap-2">
 						<span class="text-ink text-lg font-medium">{identity.idp.name}</span>
-						<Chip mono toneClass="text-ink-mute">{identity.idp.protocol}</Chip>
+						<Chip mono toneClass="text-ink-soft">{identity.idp.protocol}</Chip>
 						<Chip
 							icon="check-circle"
 							toneClass="text-success"
@@ -65,7 +65,7 @@
 				<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 16px">
 					<div class="mb-2 flex items-center gap-2">
 						<Icon name="refresh-circle" size={17} toneClass="text-accent" />
-						<span class="text-ink-mute text-xs font-semibold uppercase" style="letter-spacing: 0.18em"
+						<span class="text-ink-soft text-xs font-semibold uppercase" style="letter-spacing: 0.18em"
 							>SCIM provisioning</span
 						>
 					</div>
@@ -88,7 +88,7 @@
 							<div class="text-ink text-sm">{m.source}</div>
 							<div class="mono text-ink-faint text-xs" style="margin-top: 1px">→ {m.to}</div>
 						</div>
-						<span class="mono text-ink-mute text-xs">{m.count} members</span>
+						<span class="mono text-ink-soft text-xs">{m.count} members</span>
 						<Btn size="sm" variant="ghost" icon="pen-2">Edit</Btn>
 					</div>
 				{/each}

@@ -24,7 +24,7 @@
 	} = $props();
 
 	const on = $derived(active === rung.id);
-	const toneClass = $derived(rung.tone === 'accent' ? 'text-accent' : 'text-ink-soft');
+	const toneClass = $derived(rung.tone === 'accent' ? 'text-accent' : 'text-ink-mute');
 	const rules = $derived(rung.rules ?? []);
 	const locks = $derived(rules.filter((r) => r.hard).length);
 	const packs = $derived(rung.packs ?? []);
@@ -49,7 +49,7 @@
 				>
 				<span class="text-ink text-sm font-medium">{rung.name}</span>
 			</div>
-			<div class="mono text-ink-mute text-xs" style="margin-top: 1px">{rung.caption}</div>
+			<div class="mono text-ink-soft text-xs" style="margin-top: 1px">{rung.caption}</div>
 		</div>
 		<span class="mono text-ink-faint text-xs">{rules.length} rules</span>
 		{#if locks > 0}
@@ -63,7 +63,7 @@
 	</button>
 	{#if packs.length}
 		<div class="border-paper-edge flex flex-wrap items-center gap-2 border-t" style="padding: 8px 16px">
-			<span class="mono text-ink-mute text-xs">packs applied here</span>
+			<span class="mono text-ink-soft text-xs">packs applied here</span>
 			{#each packs as pack (pack)}
 				<Chip icon="box" toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 					>{pack}</Chip

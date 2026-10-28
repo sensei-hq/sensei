@@ -48,7 +48,7 @@
 		aria-label="Open navigation"
 		aria-controls="kit-nav"
 		aria-expanded={navExpanded}
-		class="text-ink-soft hover:text-ink -ml-1 flex h-[34px] w-[34px] flex-shrink-0 cursor-pointer items-center justify-center rounded-lg bg-transparent md:hidden"
+		class="text-ink-mute hover:text-ink -ml-1 flex h-[34px] w-[34px] flex-shrink-0 cursor-pointer items-center justify-center rounded-lg bg-transparent md:hidden"
 	>
 		<span aria-hidden="true" class="text-lg leading-none">☰</span>
 	</button>
@@ -62,7 +62,7 @@
 
 	{#if isOrg && org}
 		<span
-			class="mono text-ink-mute bg-paper-soft border-paper-edge hidden whitespace-nowrap rounded-full border text-xs md:inline"
+			class="mono text-ink-soft bg-paper-soft border-paper-edge hidden whitespace-nowrap rounded-full border text-xs md:inline"
 			style="padding: 3px 10px">{org.route}</span
 		>
 		<span class="hidden md:inline"><RoleTag role={org.role} /></span>
@@ -74,7 +74,7 @@
 		class="bg-paper-soft border-paper-edge hidden items-center gap-2 rounded border md:flex"
 		style="padding: 0 12px; width: 240px; height: 34px"
 	>
-		<KanjiToken char="探" size="sm" toneClass="text-ink-mute" />
+		<KanjiToken char="探" size="sm" toneClass="text-ink-soft" />
 		<span class="text-ink-faint truncate text-sm">search…</span>
 	</div>
 
@@ -86,7 +86,7 @@
 			? 'bg-accent-soft border-accent-soft'
 			: 'border-paper-edge bg-transparent'}"
 	>
-		<Icon name="bell" size={17} toneClass={needsCount ? 'text-accent' : 'text-ink-mute'} />
+		<Icon name="bell" size={17} toneClass={needsCount ? 'text-accent' : 'text-ink-soft'} />
 		{#if needsCount > 0}
 			<span
 				class="mono bg-accent text-on-primary absolute text-xs font-semibold"

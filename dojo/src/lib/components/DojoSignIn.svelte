@@ -59,7 +59,7 @@
 			<KanjiToken char="結" size="inherit" toneClass="" class="text-accent text-2xl" />
 			<span class="display text-xl" style="letter-spacing: -0.01em">Dōjō</span>
 			<span
-				class="mono bg-paper border-paper-edge text-ink-mute rounded-full border px-2 py-1 text-xs"
+				class="mono bg-paper border-paper-edge text-ink-soft rounded-full border px-2 py-1 text-xs"
 				>dojo.sensei-hq.com</span
 			>
 		</div>
@@ -68,13 +68,13 @@
 		     lesson counts and a "+11pp" lift from a fixture — invented numbers in
 		     front of every visitor, before sign-in (#241). -->
 		<div class="mt-12">
-			<div class="text-ink-mute mb-2 text-xs font-semibold uppercase" style="letter-spacing: 0.2em">
+			<div class="text-ink-soft mb-2 text-xs font-semibold uppercase" style="letter-spacing: 0.2em">
 				先生 Sensei
 			</div>
 			<h1 class="display m-0 font-light text-3xl" style="letter-spacing: -0.02em; line-height: 1.08">
 				A quiet companion<br />for your<br />AI-assisted work.
 			</h1>
-			<p class="text-ink-soft mt-4 max-w-[440px] text-sm" style="line-height: 1.6">
+			<p class="text-ink-mute mt-4 max-w-[440px] text-sm" style="line-height: 1.6">
 				Sensei watches your coding sessions on this machine and surfaces the patterns you're too close to
 				see. Yours alone by default — a dōjō is optional, for when you want to share what you learn with a
 				team.
@@ -86,16 +86,16 @@
 				<div class="bg-paper border-paper-edge rounded-lg border p-4">
 					<KanjiToken char={kanji} size="inherit" toneClass="" class="text-accent text-xl" />
 					<div class="text-ink mt-2 text-sm font-semibold" style="line-height: 1.3">{title}</div>
-					<div class="text-ink-mute mt-1 text-xs">{sub}</div>
+					<div class="text-ink-soft mt-1 text-xs">{sub}</div>
 				</div>
 			{/each}
 		</div>
 
 		<div class="bg-paper border-paper-edge mt-3 flex items-center gap-3 rounded-lg border p-4">
-			<KanjiToken char="空" size="inherit" toneClass="" class="text-ink-mute text-xl" />
+			<KanjiToken char="空" size="inherit" toneClass="" class="text-ink-soft text-xl" />
 			<div class="min-w-0 flex-1">
 				<div class="text-ink text-sm">Sign in and sensei picks up where you left off.</div>
-				<div class="text-ink-mute mt-1 text-xs">
+				<div class="text-ink-soft mt-1 text-xs">
 					No team, no setup required. <span class="italic">Still listening.</span>
 				</div>
 			</div>
@@ -113,7 +113,7 @@
 			<h2 class="display m-0 font-normal text-2xl" style="letter-spacing: -0.015em; line-height: 1.1">
 				Sign in to continue
 			</h2>
-			<p class="text-ink-mute mb-6 mt-2 text-sm" style="line-height: 1.55">
+			<p class="text-ink-soft mb-6 mt-2 text-sm" style="line-height: 1.55">
 				GitHub or Microsoft brings your organizations automatically. Neither? Use a magic link.
 			</p>
 
@@ -148,9 +148,9 @@
 					<button
 						type="button"
 						onclick={() => (selfHost = true)}
-						class="text-ink-soft flex w-full cursor-pointer items-center justify-center gap-2 border-none bg-transparent text-sm"
+						class="text-ink-mute flex w-full cursor-pointer items-center justify-center gap-2 border-none bg-transparent text-sm"
 					>
-						<KanjiToken char="基" size="inherit" toneClass="" class="text-ink-mute text-sm" />
+						<KanjiToken char="基" size="inherit" toneClass="" class="text-ink-soft text-sm" />
 						Connecting to a self-hosted Dōjō?
 						<span class="text-accent">Enter its URL →</span>
 					</button>
@@ -158,7 +158,7 @@
 					<div>
 						<label
 							for="dojo-selfhost"
-							class="text-ink-mute mb-2 block font-semibold uppercase text-xs" style="letter-spacing: 0.1em">Self-hosted Dōjō URL</label
+							class="text-ink-soft mb-2 block font-semibold uppercase text-xs" style="letter-spacing: 0.1em">Self-hosted Dōjō URL</label
 						>
 						<div class="flex gap-2">
 							<input
@@ -187,9 +187,9 @@
 			</div>
 			<div class="text-ink-faint mt-3 text-center text-xs" style="line-height: 1.5">
 				By signing in you agree to the
-				<a href="/terms-of-service" class="text-ink-soft underline">Terms of Service</a>
+				<a href="/terms-of-service" class="text-ink-mute underline">Terms of Service</a>
 				and the
-				<a href="/privacy-policy" class="text-ink-soft underline">Privacy Policy</a>.
+				<a href="/privacy-policy" class="text-ink-mute underline">Privacy Policy</a>.
 			</div>
 		</div>
 	</div>
@@ -238,7 +238,7 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.1em;
-		color: var(--ink-mute);
+		color: var(--ink-soft);
 		margin-bottom: 0.375rem;
 	}
 	.signin-auth :global([data-field] input) {

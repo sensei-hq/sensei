@@ -133,13 +133,13 @@
 
 <div class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg" data-testid="settings-inference">
   <h3 class="text-base m-0 mb-1">Inference</h3>
-  <p class="text-sm text-ink-soft m-0 mb-5">
+  <p class="text-sm text-ink-mute m-0 mb-5">
     Which model chain handles each reasoning role. Chains carry an ordered
     fallback list; change them here to try a different mix.
   </p>
 
   {#if loading}
-    <p class="text-sm text-ink-soft">Loading chains…</p>
+    <p class="text-sm text-ink-mute">Loading chains…</p>
   {:else if loadError}
     <p class="text-sm text-danger" data-testid="settings-inference-error">Could not load chains: {loadError}</p>
   {:else}
@@ -154,7 +154,7 @@
           <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xl text-accent leading-none mt-1" />
           <div class="min-w-0">
             <div class="text-sm text-ink font-medium">{meta.label}</div>
-            <div class="text-xs text-ink-soft mt-0.5">{meta.hint}</div>
+            <div class="text-xs text-ink-mute mt-0.5">{meta.hint}</div>
             {#if current && current.models.length > 0}
               <!-- Chain editor: model chips + ▲/▼/× per member. Adding a
                    new model happens in the wizard's fuller "Available
@@ -213,8 +213,8 @@
           <div class="flex items-center gap-2">
             <span
               class="text-xs w-14 text-right"
-              class:text-ink-mute={status === 'idle'}
-              class:text-ink-soft={status === 'saving'}
+              class:text-ink-soft={status === 'idle'}
+              class:text-ink-mute={status === 'saving'}
               class:text-success={status === 'saved'}
               class:text-warning={status === 'error'}
               data-testid={`inference-role-status-${role}`}

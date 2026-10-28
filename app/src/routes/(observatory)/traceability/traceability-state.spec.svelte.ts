@@ -59,7 +59,7 @@ describe('driftChipClasses', () => {
   it('drifted → warning tokens', () =>
     expect(driftChipClasses('drifted')).toEqual({ bg: 'bg-warning-soft', text: 'text-warning' }));
   it('unknown → muted ink tokens', () =>
-    expect(driftChipClasses('whatever')).toEqual({ bg: 'bg-paper-mute', text: 'text-ink-mute' }));
+    expect(driftChipClasses('whatever')).toEqual({ bg: 'bg-paper-mute', text: 'text-ink-soft' }));
 });
 
 describe('rollupDrift', () => {

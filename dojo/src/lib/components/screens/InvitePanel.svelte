@@ -35,7 +35,7 @@
 		</div>
 	{:else}
 		<label class="flex flex-col gap-1">
-			<span class="text-ink-mute text-xs">Email</span>
+			<span class="text-ink-soft text-xs">Email</span>
 			<input
 				type="email"
 				autocomplete="off"
@@ -45,7 +45,7 @@
 			/>
 		</label>
 		<div class="flex flex-col gap-1">
-			<span class="text-ink-mute text-xs">Access</span>
+			<span class="text-ink-soft text-xs">Access</span>
 			<Toggle
 				options={ACCESS_OPTS}
 				value={invite.draft.access}
@@ -56,12 +56,12 @@
 		</div>
 		{#if invite.draft.access === 'member'}
 			<div class="flex flex-col gap-1">
-				<span class="text-ink-mute text-xs">Role</span>
+				<span class="text-ink-soft text-xs">Role</span>
 				<Toggle options={ROLE_OPTS} value={invite.draft.role} onchange={(v) => set({ role: v as string })} size="sm" label="Role" />
 			</div>
 		{/if}
 		<div class="flex flex-col gap-1">
-			<span class="text-ink-mute text-xs">Relationship</span>
+			<span class="text-ink-soft text-xs">Relationship</span>
 			<Toggle
 				options={KIND_OPTS}
 				value={invite.draft.kind}

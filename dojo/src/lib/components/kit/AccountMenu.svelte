@@ -80,7 +80,7 @@
 			{/if}
 
 			<div class="flex flex-col gap-2 px-4 py-3">
-				<span class="text-ink-mute text-xs font-semibold uppercase" style="letter-spacing: 0.18em">Theme</span>
+				<span class="text-ink-soft text-xs font-semibold uppercase" style="letter-spacing: 0.18em">Theme</span>
 				<Toggle
 					options={MODES}
 					value={colorMode.mode}
@@ -91,7 +91,7 @@
 			</div>
 
 			<div class="flex flex-col gap-2 px-4 pb-3">
-				<span class="text-ink-mute text-xs font-semibold uppercase" style="letter-spacing: 0.18em">Glyphs</span>
+				<span class="text-ink-soft text-xs font-semibold uppercase" style="letter-spacing: 0.18em">Glyphs</span>
 				<Toggle
 					options={GLYPH_OPTIONS}
 					value={glyphs.mode}
@@ -106,9 +106,9 @@
 				role="menuitem"
 				onclick={doLogout}
 				disabled={logout.busy}
-				class="border-paper-edge text-ink-soft hover:text-ink flex w-full cursor-pointer items-center gap-2 border-t bg-transparent px-4 py-3 text-left text-sm"
+				class="border-paper-edge text-ink-mute hover:text-ink flex w-full cursor-pointer items-center gap-2 border-t bg-transparent px-4 py-3 text-left text-sm"
 			>
-				<KanjiToken char="出" size="inherit" toneClass="" class="text-ink-mute text-xs" /> Log out
+				<KanjiToken char="出" size="inherit" toneClass="" class="text-ink-soft text-xs" /> Log out
 			</button>
 		</div>
 	{/if}

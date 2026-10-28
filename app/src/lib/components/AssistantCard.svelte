@@ -194,7 +194,7 @@
        --paper-2  ↔ Rokkit --paper-soft   (card surface)
        --paper-3  ↔ Rokkit --paper-mute   (chip-configuring bg)
        --edge     ↔ Rokkit --paper-edge   (hairlines)
-       --ink-2/3/4 ↔ --ink-mute / --ink-soft / --ink-faint
+       --ink-2/3/4 ↔ --ink-soft / --ink-mute / --ink-faint
   */
   .card {
     display: flex;
@@ -233,7 +233,7 @@
     justify-content: center;
     color: var(--ink);
   }
-  .logo-tile.dim { color: var(--ink-mute); }
+  .logo-tile.dim { color: var(--ink-soft); }
 
   .title {
     font-size: 15px;
@@ -256,8 +256,8 @@
     flex-shrink: 0;
     font-family: var(--font-mono);
   }
-  .status-muted        { color: var(--ink-soft); }
-  .status-muted-italic { color: var(--ink-soft); font-style: italic; font-family: var(--font-sans); }
+  .status-muted        { color: var(--ink-mute); }
+  .status-muted-italic { color: var(--ink-mute); font-style: italic; font-family: var(--font-sans); }
   .status-accent       { color: var(--primary); }
   .status-success      { color: var(--success); }
   .status-danger       { color: var(--danger); }
@@ -269,7 +269,7 @@
   }
   /* All chips share a solid 1px edge; only colour and bg differ between
      states (mirrors docs/mockups/lib/assistant-card.jsx CapChip skin).
-     Disabled (base) chip uses ink-mute text instead of ink-faint so the
+     Disabled (base) chip uses ink-soft text instead of ink-faint so the
      unchecked capabilities are still legible — ink-faint was too close
      to paper-edge and disappeared. */
   .chip {
@@ -282,7 +282,7 @@
     border-radius: 999px;
     border: 1px solid var(--paper-edge);
     background: transparent;
-    color: var(--ink-mute);
+    color: var(--ink-soft);
     white-space: nowrap;
     transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
   }
@@ -329,7 +329,7 @@
     min-width: 0;
     flex: 1;
     font-size: 12.5px;
-    color: var(--ink-mute);
+    color: var(--ink-soft);
     line-height: 1.45;
   }
   .error-message {

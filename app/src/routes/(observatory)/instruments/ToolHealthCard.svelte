@@ -42,7 +42,7 @@
         <Kanji char={kanji} size="inherit" tone="inherit" class="text-xl text-accent leading-none w-6 text-center shrink-0" />
         <div class="flex-1 min-w-0">
             <div class="text-base text-ink truncate">{source.name}</div>
-            <div class="flex items-center gap-2 font-mono text-xs text-ink-mute mt-1">
+            <div class="flex items-center gap-2 font-mono text-xs text-ink-soft mt-1">
                 <span class="uppercase tracking-wide">{source.source_type}</span>
                 <span>·</span>
                 <span class="truncate">{source.source_key}</span>
@@ -58,7 +58,7 @@
             <span
                 class="text-xs uppercase tracking-wide"
                 class:text-success={source.connected}
-                class:text-ink-mute={!source.connected}
+                class:text-ink-soft={!source.connected}
             >{source.connected ? "on" : "off"}</span>
         </span>
     </div>
@@ -72,7 +72,7 @@
                 class:text-warning={pct < 70}
                 style='font-feature-settings: "tnum";'
             >{pct}%</span>
-            <span class="text-xs text-ink-mute">
+            <span class="text-xs text-ink-soft">
                 invoked {source.tools_invoked_14d} of {registered} tools
             </span>
         </div>
@@ -81,14 +81,14 @@
         </div>
     {:else}
         <!-- Un-probed server — honest usage-only line, no bar. -->
-        <div class="text-sm text-ink-soft" data-testid="registered-none">
+        <div class="text-sm text-ink-mute" data-testid="registered-none">
             invoked {source.tools_invoked_14d} · registered —
         </div>
     {/if}
 
     <!-- Calls chip -->
     <div
-        class="flex gap-3 pt-2 border-t border-paper-edge font-mono text-xs text-ink-mute"
+        class="flex gap-3 pt-2 border-t border-paper-edge font-mono text-xs text-ink-soft"
         style='font-feature-settings: "tnum";'
     >
         <span>{source.calls_14d.toLocaleString()} calls · 14d</span>

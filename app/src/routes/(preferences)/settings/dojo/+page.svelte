@@ -53,7 +53,7 @@
           ? 'text-success'
           : tone === 'info'
             ? 'text-info'
-            : 'text-ink-mute';
+            : 'text-ink-soft';
 </script>
 
 <Screen>
@@ -69,14 +69,14 @@
     <div class="max-w-[820px] mx-auto px-12 pt-8 pb-16" data-screen="settings-dojo">
       <section>
         <h2 class="display text-base font-medium m-0 mb-1 text-ink">Identities</h2>
-        <p class="text-xs text-ink-soft mt-0 mb-3 max-w-[620px] leading-normal">
+        <p class="text-xs text-ink-mute mt-0 mb-3 max-w-[620px] leading-normal">
           Each identity's credential, and what it has agreed with its dōjō — by day, by repository.
           Renewal is automatic; it only needs you when the session behind it has gone. A skipped
           item is a decision, not a fault.
         </p>
 
         {#if data.sync && data.sync.count > 0}
-          <p class="text-xs text-ink-mute mt-0 mb-3" data-summary>{summarise(data.sync.counts)}</p>
+          <p class="text-xs text-ink-soft mt-0 mb-3" data-summary>{summarise(data.sync.counts)}</p>
         {/if}
         {#if data.error || !data.sync}
           <ScreenState
@@ -92,12 +92,12 @@
                merely unreachable. -->
           <p class="text-xs text-danger m-0" data-persona-error>{personaList.error}</p>
         {:else if personaList.personas.length === 0}
-          <p class="text-sm text-ink-mute m-0" data-personas-empty>
+          <p class="text-sm text-ink-soft m-0" data-personas-empty>
             No identities yet. sensei infers them from commit authorship as you work.
           </p>
         {:else}
           {#if personaList.defaultError}
-            <p class="text-xs text-ink-mute mt-0 mb-3" data-default-error>{personaList.defaultError}</p>
+            <p class="text-xs text-ink-soft mt-0 mb-3" data-default-error>{personaList.defaultError}</p>
           {/if}
           <div class="mb-3" data-sign-in-pending><SignInPending pending={personaList.pending} /></div>
           <div class="flex flex-col gap-4" data-personas>
@@ -113,11 +113,11 @@
                     <div class="text-sm text-ink">
                       <span data-identity-name>{p.label}</span>
                       {#if p.isDefault}
-                        <span class="ml-1 text-xs text-ink-mute" data-default-persona>default</span>
+                        <span class="ml-1 text-xs text-ink-soft" data-default-persona>default</span>
                       {:else}
                         <button
                           type="button"
-                          class="ml-2 text-xs text-ink-soft underline cursor-pointer bg-transparent border-0 p-0
+                          class="ml-2 text-xs text-ink-mute underline cursor-pointer bg-transparent border-0 p-0
                                  disabled:opacity-50"
                           disabled={personaList.isBusy(p)}
                           onclick={() => personaList.makeDefault(p)}
@@ -152,7 +152,7 @@
             {#if unattributed}
               <!-- Written before each record named its identity; the next pass fills it in. -->
               <div class="border border-paper-edge rounded-lg overflow-hidden" data-identity="">
-                <div class="px-4 py-3 bg-paper-soft text-sm text-ink-mute">Not yet attributed to an identity</div>
+                <div class="px-4 py-3 bg-paper-soft text-sm text-ink-soft">Not yet attributed to an identity</div>
                 {@render syncDays(unattributed.days)}
               </div>
             {/if}
@@ -170,7 +170,7 @@
 
 {#snippet syncDays(days: import('./dojo-status-state.svelte.js').SyncDay[])}
   {#each days as d (d.day)}
-    <div class="px-4 pt-3 pb-1 text-xs uppercase tracking-wide text-ink-mute" data-day={d.day ?? ''}>
+    <div class="px-4 pt-3 pb-1 text-xs uppercase tracking-wide text-ink-soft" data-day={d.day ?? ''}>
       {d.day ?? 'never'}
     </div>
     {#each d.own as item (item.row.entity + item.row.direction)}
@@ -191,8 +191,8 @@
   {@const detail = detailLine(item.row)}
   <div data-entity={item.row.entity} data-state={item.row.state} data-branch={item.branch ?? undefined}>
     <div class="flex flex-wrap items-baseline gap-x-3 text-xs">
-      <span class="text-ink-soft">
-        {entityLabel(item.row.entity)} · {item.row.direction}{#if item.branch}<span class="text-ink-mute"> · {item.branch}</span>{/if}
+      <span class="text-ink-mute">
+        {entityLabel(item.row.entity)} · {item.row.direction}{#if item.branch}<span class="text-ink-soft"> · {item.branch}</span>{/if}
       </span>
       <span class={toneClass(syncTone(item.row.state))} data-agreement>{agreementLine(item.row)}</span>
     </div>

@@ -20,7 +20,7 @@
     good: 'bg-success',
     bad: 'bg-warning',
     ugly: 'bg-accent',
-    neutral: 'bg-ink-mute',
+    neutral: 'bg-ink-soft',
   };
 
   // FTR badge agrees with the underlying `ftr` column (spec done-gate): a
@@ -53,15 +53,15 @@
 >
   <span class="w-2.5 h-2.5 rounded-full {DOT[session.quality]}"></span>
 
-  <span class="font-mono text-xs text-ink-mute" style='font-feature-settings: "tnum";'>{session.time}</span>
+  <span class="font-mono text-xs text-ink-soft" style='font-feature-settings: "tnum";'>{session.time}</span>
 
   <span class="flex flex-col gap-0.5 min-w-0">
     <span class="text-sm text-ink truncate">{session.title}</span>
-    <span class="text-xs text-ink-soft truncate flex items-center gap-1.5">
+    <span class="text-xs text-ink-mute truncate flex items-center gap-1.5">
       <span class="truncate">{session.workspace || 'unlinked'}{#if session.agent} · {session.agent}{/if}</span>
       {#if session.folderRole}
         <span
-          class="shrink-0 py-px px-1.5 rounded-full bg-paper-mute text-ink-mute uppercase tracking-wide text-xs"
+          class="shrink-0 py-px px-1.5 rounded-full bg-paper-mute text-ink-soft uppercase tracking-wide text-xs"
           data-folder-role={session.folderRole}
         >{session.folderRole}</span>
       {/if}
@@ -69,15 +69,15 @@
   </span>
 
   <span class="flex items-center gap-4 text-xs">
-    <span class="font-mono text-ink-mute w-14 text-right" style='font-feature-settings: "tnum";'>{session.duration}</span>
+    <span class="font-mono text-ink-soft w-14 text-right" style='font-feature-settings: "tnum";'>{session.duration}</span>
     <span
       class="font-mono text-ink-faint w-14 text-right"
       style='font-feature-settings: "tnum";'
       title={tokensTitle}
     >{session.tokensLabel}</span>
-    <span class="text-ink-soft w-20 text-right">{correctionsLabel}</span>
+    <span class="text-ink-mute w-20 text-right">{correctionsLabel}</span>
     <span class="{ftrClass} w-16 text-right uppercase tracking-wide">{ftrLabel}</span>
-    <span class="text-ink-soft w-20 text-right capitalize">{session.outcome}</span>
+    <span class="text-ink-mute w-20 text-right capitalize">{session.outcome}</span>
   </span>
 </button>
 

@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
-  /** Color utility class (e.g. `text-ink-mute`, `text-ink`, `text-accent`).
-   *  Defaults to ink-mute — eyebrows are secondary labels above a headline. */
+  /** Color utility class (e.g. `text-ink-soft`, `text-ink`, `text-accent`).
+   *  Defaults to ink-soft — eyebrows are secondary labels above a headline. */
   let {
-    tone = 'text-ink-mute',
+    tone = 'text-ink-soft',
     children,
   }: { tone?: string; children: Snippet } = $props();
 </script>

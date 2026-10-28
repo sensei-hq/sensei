@@ -40,7 +40,7 @@
         <div class="flex items-baseline gap-4 pt-8 pb-4 px-6 md:px-10 max-w-[1040px]">
             <a
                 href={`/workspace/${workspaceId}/metrics`}
-                class="inline-flex items-center gap-1 text-xs text-ink-mute hover:text-accent no-underline"
+                class="inline-flex items-center gap-1 text-xs text-ink-soft hover:text-accent no-underline"
             >← All signals</a>
             {#if selected}
                 <div data-component="signal-breadcrumb" class="mono text-xs text-ink-faint lowercase truncate">
@@ -51,7 +51,7 @@
     {/snippet}
     <div class="flex-1 min-h-0 flex flex-col px-6 md:px-10 pb-6 max-w-[1040px]">
         {#if data.error}
-            <div data-component="metrics-error" class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-mute">
+            <div data-component="metrics-error" class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-soft">
                 Couldn’t load metrics — {data.error}
             </div>
         {:else}
@@ -96,7 +96,7 @@
                                         href={`/workspace/${workspaceId}/metrics/${data.selectedKey}?grain=${g.id}`}
                                         data-grain={g.id}
                                         data-active={active}
-                                        class="px-4 py-2 rounded-md text-sm no-underline transition-colors duration-fast {active ? 'bg-ink text-paper' : 'text-ink-mute hover:text-ink'}"
+                                        class="px-4 py-2 rounded-md text-sm no-underline transition-colors duration-fast {active ? 'bg-ink text-paper' : 'text-ink-soft hover:text-ink'}"
                                     >{g.label}</a>
                                 {/each}
                             </div>
@@ -107,7 +107,7 @@
                         {/if}
 
                         {#if data.seriesError}
-                            <p data-component="chart-error" class="bg-paper border border-paper-edge rounded-md px-4 py-6 text-sm text-ink-mute">
+                            <p data-component="chart-error" class="bg-paper border border-paper-edge rounded-md px-4 py-6 text-sm text-ink-soft">
                                 Couldn’t load this signal’s history — {data.seriesError}
                             </p>
                         {:else}
@@ -123,7 +123,7 @@
                             />
 
                             {#if md.fullChartSeries.length > 2}
-                                <div class="flex items-center gap-3 text-xs text-ink-mute px-1">
+                                <div class="flex items-center gap-3 text-xs text-ink-soft px-1">
                                     <span class="shrink-0">Start</span>
                                     <input
                                         type="range"
@@ -168,14 +168,14 @@
                                 <Kanji char="察" size="sm" tone="accent" />
                                 <Eyebrow>What sensei noticed</Eyebrow>
                             </div>
-                            <p data-component="signal-insight" class="text-sm text-ink-soft leading-relaxed text-pretty">
+                            <p data-component="signal-insight" class="text-sm text-ink-mute leading-relaxed text-pretty">
                                 {selected.insight}
                             </p>
                         </div>
 
                         <ActionItems items={md.actionItems} error={data.recommendationsError} />
                     {:else}
-                        <div class="text-sm text-ink-mute py-8">
+                        <div class="text-sm text-ink-soft py-8">
                             That signal isn’t computed for this workspace — pick one from the list.
                         </div>
                     {/if}

@@ -116,7 +116,7 @@ describe('verdictToneClass', () => {
   it('maps tone + kind to a named-token utility', () => {
     expect(verdictToneClass('success')).toBe('text-success');
     expect(verdictToneClass('warning', 'bg')).toBe('bg-warning');
-    expect(verdictToneClass('ink', 'border')).toBe('border-ink-mute');
+    expect(verdictToneClass('ink', 'border')).toBe('border-ink-soft');
   });
   it('defaults kind to text', () => {
     expect(verdictToneClass('warning')).toBe('text-warning');

@@ -33,7 +33,7 @@ describe('relay-view', () => {
 		it('maps every run status to a plain-language label + tone class', () => {
 			const cases: Record<RelayRunStatus, { label: string; toneClass: string }> = {
 				running: { label: 'Running', toneClass: 'text-accent' },
-				paused: { label: 'Paused', toneClass: 'text-ink-mute' },
+				paused: { label: 'Paused', toneClass: 'text-ink-soft' },
 				stalled: { label: 'Stuck', toneClass: 'text-warning' },
 				crashed: { label: 'Crashed', toneClass: 'text-danger' },
 				blocked: { label: 'Needs you', toneClass: 'text-accent' },
@@ -60,7 +60,7 @@ describe('relay-view', () => {
 		it('falls back to a muted "Unknown" for an unrecognized status', () => {
 			expect(statusBadge('bogus' as RelayRunStatus)).toEqual({
 				label: 'Unknown',
-				toneClass: 'text-ink-mute'
+				toneClass: 'text-ink-soft'
 			});
 		});
 	});
@@ -68,9 +68,9 @@ describe('relay-view', () => {
 	describe('segmentStateBadge', () => {
 		it('maps every segment state to a plain-language label + tone class', () => {
 			const cases: Record<SegmentState, { label: string; toneClass: string }> = {
-				pending: { label: 'Queued', toneClass: 'text-ink-mute' },
+				pending: { label: 'Queued', toneClass: 'text-ink-soft' },
 				active: { label: 'In progress', toneClass: 'text-success' },
-				done: { label: 'Done', toneClass: 'text-ink-mute' },
+				done: { label: 'Done', toneClass: 'text-ink-soft' },
 				skipped: { label: 'Skipped', toneClass: 'text-ink-faint' },
 				failed: { label: 'Failed', toneClass: 'text-danger' },
 				blocked: { label: 'Needs you', toneClass: 'text-accent' },
@@ -99,7 +99,7 @@ describe('relay-view', () => {
 		it('falls back to a muted "Unknown" for an unrecognized state', () => {
 			expect(segmentStateBadge('bogus' as SegmentState)).toEqual({
 				label: 'Unknown',
-				toneClass: 'text-ink-mute'
+				toneClass: 'text-ink-soft'
 			});
 		});
 	});

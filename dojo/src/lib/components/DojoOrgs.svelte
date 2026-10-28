@@ -27,21 +27,21 @@
 			class="bg-accent-soft text-accent flex h-[28px] w-[28px] items-center justify-center rounded-full text-xs font-semibold"
 			aria-hidden="true">{user.initials}</span
 		>
-		<span class="text-ink-soft hidden text-sm sm:inline">{user.name}</span>
-		<button type="button" class="mono text-ink-mute cursor-pointer border-none bg-transparent text-xs"
+		<span class="text-ink-mute hidden text-sm sm:inline">{user.name}</span>
+		<button type="button" class="mono text-ink-soft cursor-pointer border-none bg-transparent text-xs"
 			>sign out</button
 		>
 	</div>
 
 	<div class="flex-1 overflow-auto py-8">
 		<div class="mx-auto max-w-[820px] px-4 md:px-8">
-			<div class="text-ink-mute mb-2 text-xs uppercase" style="letter-spacing: 0.2em">
+			<div class="text-ink-soft mb-2 text-xs uppercase" style="letter-spacing: 0.2em">
 				Signed in as {user.handle}
 			</div>
 			<h1 class="display m-0 font-light text-2xl" style="letter-spacing: -0.02em; line-height: 1.1">
 				Your organizations
 			</h1>
-			<p class="text-ink-soft mb-6 mt-2 max-w-[560px] text-sm" style="line-height: 1.55">
+			<p class="text-ink-mute mb-6 mt-2 max-w-[560px] text-sm" style="line-height: 1.55">
 				{#if orgs.length === 0}
 					You don't belong to any Dōjōs yet. Join one with an invite code below, or ask an
 					administrator to add you.
@@ -79,7 +79,7 @@
 								{/if}
 							</div>
 							<div class="mt-2 flex flex-wrap items-center gap-3">
-								<span class="mono text-ink-soft text-xs">
+								<span class="mono text-ink-mute text-xs">
 									<span class="text-ink-faint">sensei-hq.com/</span>{o.url}
 								</span>
 							</div>
@@ -93,7 +93,7 @@
 							</div>
 							<div class="min-w-[64px] text-right">
 								{#if o.members != null}
-									<div class="mono text-ink-soft text-xs">
+									<div class="mono text-ink-mute text-xs">
 										{o.members}
 										{o.members === 1 ? 'member' : 'members'}
 									</div>
@@ -126,10 +126,10 @@
 			<div
 				class="bg-paper border-ink-faint mt-5 flex flex-col gap-4 rounded-2xl border border-dashed p-4 md:flex-row md:items-center"
 			>
-				<KanjiToken char="迎" size="inherit" toneClass="" class="text-ink-mute text-xl" />
+				<KanjiToken char="迎" size="inherit" toneClass="" class="text-ink-soft text-xl" />
 				<div class="min-w-0 flex-1">
 					<div class="text-ink text-sm">Join another organization</div>
-					<div class="text-ink-mute mt-1 text-xs">
+					<div class="text-ink-soft mt-1 text-xs">
 						New GitHub orgs you join appear here automatically. Have an invite code for a client or
 						non-GitHub org?
 					</div>
@@ -148,7 +148,7 @@
 				</div>
 			</div>
 
-			<div class="text-ink-mute mt-6 flex max-w-[640px] items-start gap-2 text-xs" style="line-height: 1.5">
+			<div class="text-ink-soft mt-6 flex max-w-[640px] items-start gap-2 text-xs" style="line-height: 1.5">
 				<KanjiToken char="鍵" size="inherit" toneClass="" class="text-accent text-sm" />
 				<span
 					>Roles are derived from your GitHub org &amp; repo access, then refined inside each Dōjō.

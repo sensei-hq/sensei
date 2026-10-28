@@ -76,7 +76,7 @@
       />
       <div class="flex-1 min-w-0">
         <div class="text-sm text-ink font-medium">{title}</div>
-        <div class="text-xs text-ink-soft mt-0.5">{sub}</div>
+        <div class="text-xs text-ink-mute mt-0.5">{sub}</div>
       </div>
       <span
         class="font-mono text-xs"

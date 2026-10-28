@@ -69,7 +69,7 @@
 	<div class="bg-paper-soft border-paper-edge flex items-start gap-3 rounded-lg border p-4">
 		<Icon name="check-circle" size={20} toneClass="text-success" />
 		<div class="min-w-0 flex-1">
-			<div class="text-ink-mute text-sm">{ask.prompt}</div>
+			<div class="text-ink-soft text-sm">{ask.prompt}</div>
 			<div class="text-ink text-sm" style="margin-top: 2px">{m.ask_answered()} · {verdict}</div>
 		</div>
 	</div>
@@ -89,10 +89,10 @@
 				</div>
 				<div class="text-ink text-sm font-medium" style="margin-top: 3px; line-height: 1.4">{ask.prompt}</div>
 				{#if ask.context}
-					<div class="text-ink-soft text-sm" style="margin-top: 2px; line-height: 1.5">{ask.context}</div>
+					<div class="text-ink-mute text-sm" style="margin-top: 2px; line-height: 1.5">{ask.context}</div>
 				{/if}
 				{#if holds}
-					<div class="mono text-ink-mute text-xs" style="margin-top: 4px">{m.ask_holds({ task: holds })}</div>
+					<div class="mono text-ink-soft text-xs" style="margin-top: 4px">{m.ask_holds({ task: holds })}</div>
 				{/if}
 			</div>
 		</div>
@@ -111,7 +111,7 @@
 								: 'border-transparent'} border"
 						>
 							<span class="mono shrink-0 text-xs {on ? 'text-accent' : 'text-ink-faint'}">{i + 1}</span>
-							<span class="text-sm {on ? 'text-ink' : 'text-ink-soft'}">{opt}</span>
+							<span class="text-sm {on ? 'text-ink' : 'text-ink-mute'}">{opt}</span>
 						</button>
 					{/each}
 				</div>

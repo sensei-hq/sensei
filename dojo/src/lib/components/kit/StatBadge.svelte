@@ -13,5 +13,5 @@
 <div class="flex flex-col" style="gap: 2px">
 	<div class="display text-2xl font-light {toneClass}" style="line-height: 1">{n}</div>
 	<div class="text-ink text-xs font-medium">{label}</div>
-	{#if sub}<div class="mono text-ink-mute text-xs">{sub}</div>{/if}
+	{#if sub}<div class="mono text-ink-soft text-xs">{sub}</div>{/if}
 </div>

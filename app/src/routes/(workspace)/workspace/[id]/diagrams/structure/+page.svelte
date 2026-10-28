@@ -52,7 +52,7 @@
         </div>
 
         {#if view.view === 'loading'}
-            <p class="text-sm text-ink-mute" data-testid="structure-loading">Loading structure…</p>
+            <p class="text-sm text-ink-soft" data-testid="structure-loading">Loading structure…</p>
         {:else if view.view === 'error'}
             <div class="p-4 border border-warning rounded" data-testid="structure-error">
                 <p class="text-sm text-warning">{view.failure}</p>
@@ -66,11 +66,11 @@
                 </button>
             </div>
         {:else if view.view === 'empty'}
-            <p class="text-sm text-ink-mute" data-testid="structure-empty">
+            <p class="text-sm text-ink-soft" data-testid="structure-empty">
                 Nothing indexed for this workspace yet — no files carry a resolvable structure.
             </p>
         {:else}
-            <p class="text-sm text-ink-mute" data-testid="structure-coverage">{view.coverageLine}</p>
+            <p class="text-sm text-ink-soft" data-testid="structure-coverage">{view.coverageLine}</p>
 
             <div class="h-[70vh]" data-testid="structure-diagram">
                 <StructureDiagram
@@ -90,15 +90,15 @@
                     class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm p-3 border border-paper-edge rounded"
                     data-testid="structure-selection"
                 >
-                    <dt class="text-ink-mute">Node</dt>
+                    <dt class="text-ink-soft">Node</dt>
                     <dd data-testid="structure-selection-label">{view.selectedNode.label}</dd>
-                    <dt class="text-ink-mute">Module</dt>
+                    <dt class="text-ink-soft">Module</dt>
                     <dd>{view.selectedNode.module || '—'}</dd>
-                    <dt class="text-ink-mute">Package</dt>
+                    <dt class="text-ink-soft">Package</dt>
                     <dd>{view.selectedNode.package || '—'}</dd>
-                    <dt class="text-ink-mute">Symbols</dt>
+                    <dt class="text-ink-soft">Symbols</dt>
                     <dd>{view.selectedNode.symbols}</dd>
-                    <dt class="text-ink-mute">Degree</dt>
+                    <dt class="text-ink-soft">Degree</dt>
                     <dd data-testid="structure-selection-degree">
                         {view.degree.inbound} in · {view.degree.outbound} out ·
                         {view.degree.crossing} crossing

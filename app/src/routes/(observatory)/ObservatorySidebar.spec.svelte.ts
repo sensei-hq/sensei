@@ -62,7 +62,7 @@ describe("ObservatorySidebar", () => {
     // bug in the `zen-sumi` style: the hover/focus rule is not guarded against
     // `[data-selected]` and is MORE specific than the selected rule, so
     // focusing the chosen segment replaced its `primary`/`on-primary` pair with
-    // `paper-mute`/`ink-mute` — muted on muted, invisible in dark mode.
+    // `paper-mute`/`ink-soft` — muted on muted, invisible in dark mode.
     //
     // Asserted rather than merely deleted, so the control cannot creep back
     // without this failing.

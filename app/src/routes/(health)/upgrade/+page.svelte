@@ -138,7 +138,7 @@
                 {/if}
             </h1>
 
-            <p class="text-sm text-ink-soft leading-loose max-w-[540px]">
+            <p class="text-sm text-ink-mute leading-loose max-w-[540px]">
                 {#if isComplete && !anyFailed}
                     Homebrew and the database schema are up to date. Running health checks now.
                 {:else if isComplete && anyFailed}
@@ -173,7 +173,7 @@
                         class="indicator w-14 h-14 rounded-full border-[1.5px] flex items-center justify-center shrink-0"
                         class:border-success={isComplete && !anyFailed}
                         class:border-accent={isComplete && anyFailed}
-                        class:border-ink-soft={!isComplete}
+                        class:border-ink-mute={!isComplete}
                     >
                         {#if isComplete && !anyFailed}
                             <span class="text-2xl text-success leading-none">✓</span>
@@ -188,16 +188,16 @@
                     <div class="flex-1 min-w-0">
                         <div class="flex items-baseline gap-2.5 mb-1">
                             <span class="display text-lg font-medium">Sensei update</span>
-                            <span class="font-mono text-xs text-ink-soft">health resolvers · dbd</span>
+                            <span class="font-mono text-xs text-ink-mute">health resolvers · dbd</span>
                         </div>
-                        <div class="text-sm text-ink-mute leading-snug">
+                        <div class="text-sm text-ink-soft leading-snug">
                             {#if isComplete && !anyFailed}
                                 All upgrade steps completed.
                             {:else if isComplete && anyFailed}
                                 Completed with warnings. Continuing to health check.
                             {:else}
                                 {activeStepLabel}…
-                                <span class="font-mono text-xs text-ink-soft ml-2">
+                                <span class="font-mono text-xs text-ink-mute ml-2">
                                     ({doneCount + 1}/{STEPS.length})
                                 </span>
                             {/if}
@@ -220,7 +220,7 @@
 
                             <div>
                                 <span class="text-sm text-ink">{step.label}</span>
-                                <span class="font-mono text-xs text-ink-soft ml-2">· {step.note}</span>
+                                <span class="font-mono text-xs text-ink-mute ml-2">· {step.note}</span>
                                 {#if s === "failed" && stepErrors[step.id]}
                                     <div class="font-mono text-xs text-accent mt-0.5">
                                         {stepErrors[step.id]}
@@ -232,7 +232,7 @@
                                 class="font-mono text-xs tracking-wide uppercase"
                                 class:text-success={s === "done"}
                                 class:text-accent={s === "running" || s === "failed"}
-                                class:text-ink-soft={s === "pending"}
+                                class:text-ink-mute={s === "pending"}
                             >
                                 {s}
                             </span>
@@ -243,7 +243,7 @@
 
             <!-- ── Footer ─────────────────────────────────────────────────── -->
             <div class="flex justify-between items-center gap-4 mt-8 pt-6 border-t border-paper-edge">
-                <div class="text-xs text-ink-soft leading-normal">
+                <div class="text-xs text-ink-mute leading-normal">
                     Upgrade steps run once after each update. The next launch will be quick.
                 </div>
             </div>
@@ -258,7 +258,7 @@
         width: 20px;
         height: 20px;
         border-radius: 50%;
-        border: 2px solid var(--ink-soft);
+        border: 2px solid var(--ink-mute);
         border-top-color: transparent;
         animation: spin 0.9s linear infinite;
     }

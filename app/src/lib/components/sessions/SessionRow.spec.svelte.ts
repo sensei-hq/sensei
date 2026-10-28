@@ -39,7 +39,7 @@ describe('SessionRow — quality dot', () => {
     ['good', 'bg-success'],
     ['bad', 'bg-warning'],
     ['ugly', 'bg-accent'],
-    ['neutral', 'bg-ink-mute'],
+    ['neutral', 'bg-ink-soft'],
   ] as const) {
     it(`colours the dot ${cls} for a ${quality} session`, () => {
       const m = mount({ quality });

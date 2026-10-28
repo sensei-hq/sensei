@@ -27,10 +27,10 @@ export const K2_CLASS: Record<string, ClassTone> = {
 	company: {
 		kanji: '社',
 		label: 'company',
-		text: 'text-ink-soft',
+		text: 'text-ink-mute',
 		soft: 'bg-paper-mute',
 		edge: 'border-paper-edge',
-		fill: 'bg-ink-soft'
+		fill: 'bg-ink-mute'
 	},
 	client: {
 		kanji: '客',
@@ -43,10 +43,10 @@ export const K2_CLASS: Record<string, ClassTone> = {
 	personal: {
 		kanji: '己',
 		label: 'personal',
-		text: 'text-ink-mute',
+		text: 'text-ink-soft',
 		soft: 'bg-paper-mute',
 		edge: 'border-paper-edge',
-		fill: 'bg-ink-mute'
+		fill: 'bg-ink-soft'
 	},
 	community: {
 		kanji: '群',
@@ -71,7 +71,7 @@ export interface PhaseTone {
 
 /** Adoption phase — watch → notice → adopt (a 3-step track). */
 export const K2_PHASE: Record<string, PhaseTone> = {
-	watch: { kanji: '観', label: 'watch', text: 'text-ink-mute', dot: 'bg-ink-mute', step: 1 },
+	watch: { kanji: '観', label: 'watch', text: 'text-ink-soft', dot: 'bg-ink-soft', step: 1 },
 	notice: { kanji: '察', label: 'notice', text: 'text-warning', dot: 'bg-warning', step: 2 },
 	adopt: { kanji: '覚', label: 'adopt', text: 'text-success', dot: 'bg-success', step: 3 }
 };
@@ -99,11 +99,11 @@ export interface KindTone {
 
 /** Dōjō kind — employer · client · community · personal. */
 export const K2_KIND: Record<string, KindTone> = {
-	employer: { kanji: '社', text: 'text-ink-soft' },
-	team: { kanji: '組', text: 'text-ink-soft' },
+	employer: { kanji: '社', text: 'text-ink-mute' },
+	team: { kanji: '組', text: 'text-ink-mute' },
 	client: { kanji: '客', text: 'text-accent' },
 	community: { kanji: '群', text: 'text-success' },
-	personal: { kanji: '己', text: 'text-ink-mute' }
+	personal: { kanji: '己', text: 'text-ink-soft' }
 };
 
 /** Look up a classification tone, defaulting to `company`. */
@@ -149,7 +149,7 @@ export interface NodeTone {
 
 /** The seven task-node tones — one place decides every plan-state color. */
 export const K2_NODE: Record<KitTaskState, NodeTone> = {
-	done: { icon: 'check-circle', label: 'done', text: 'text-ink-mute', fill: 'bg-ink-mute', soft: 'bg-paper-mute', edge: 'border-paper-edge' },
+	done: { icon: 'check-circle', label: 'done', text: 'text-ink-soft', fill: 'bg-ink-soft', soft: 'bg-paper-mute', edge: 'border-paper-edge' },
 	active: { icon: 'play-circle', label: 'active', text: 'text-success', fill: 'bg-success', soft: 'bg-success-soft', edge: 'border-success-soft' },
 	needs_review: { icon: 'shield-warning', label: 'needs review', text: 'text-accent', fill: 'bg-accent', soft: 'bg-accent-soft', edge: 'border-accent-soft' },
 	blocked: { icon: 'lock-keyhole-minimalistic', label: 'blocked', text: 'text-warning', fill: 'bg-warning', soft: 'bg-warning-soft', edge: 'border-warning-soft' },
@@ -190,14 +190,14 @@ export interface StatusTone {
 /** Run status → badge tone for the inbox row (see relay-map `inboxStatus`). */
 export const K2_STATUS: Record<string, StatusTone> = {
 	running: { label: 'running', text: 'text-success', fill: 'bg-success' },
-	waiting: { label: 'waiting', text: 'text-ink-soft', fill: 'bg-ink-soft' },
+	waiting: { label: 'waiting', text: 'text-ink-mute', fill: 'bg-ink-mute' },
 	stalled: { label: 'stalled', text: 'text-warning', fill: 'bg-warning' },
 	blocked: { label: 'blocked', text: 'text-warning', fill: 'bg-warning' },
 	failed: { label: 'failed', text: 'text-danger', fill: 'bg-danger' },
-	done: { label: 'done', text: 'text-ink-mute', fill: 'bg-ink-mute' }
+	done: { label: 'done', text: 'text-ink-soft', fill: 'bg-ink-soft' }
 };
 
 /** Look up a run-status tone, defaulting to a neutral waiting-like tone. */
 export function statusTone(status: string | null | undefined): StatusTone {
-	return (status && K2_STATUS[status]) || { label: status ?? '', text: 'text-ink-mute', fill: 'bg-ink-mute' };
+	return (status && K2_STATUS[status]) || { label: status ?? '', text: 'text-ink-soft', fill: 'bg-ink-soft' };
 }

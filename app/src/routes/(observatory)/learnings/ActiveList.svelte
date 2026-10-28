@@ -36,7 +36,7 @@
                 >Reinforce</button>
                 <button
                     type="button"
-                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-mute border border-paper-edge cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="challenge-btn"
                     disabled={acting || terminal}
                     onclick={() => memoryState.challenge(m.id)}
@@ -44,7 +44,7 @@
                 <span class="flex-1"></span>
                 <button
                     type="button"
-                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-mute border border-paper-edge cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="archive-btn"
                     disabled={acting}
                     onclick={() => memoryState.archiveMemory(m.id)}

@@ -41,7 +41,7 @@
     {#snippet header()}
     <PageHeader title="Libraries">
         {#snippet right()}
-            <div class="text-sm text-ink-mute flex gap-3 items-center">
+            <div class="text-sm text-ink-soft flex gap-3 items-center">
                 <span>{data.libraries.length} total</span>
                 <span class="text-success">{data.wrappedCount} wrapped</span>
                 {#if data.localCount > 0}<span class="text-primary">{data.localCount} local</span>{/if}
@@ -69,7 +69,7 @@
                 <h3 class="text-sm font-medium m-0 mb-2 text-warning flex items-center gap-1.5">
                     <span aria-hidden="true">⚠</span> Version conflicts
                 </h3>
-                <p class="text-xs text-ink-soft m-0 mb-3">
+                <p class="text-xs text-ink-mute m-0 mb-3">
                     These libraries are pinned to different versions across folders in this workspace.
                 </p>
                 <ul class="flex flex-col gap-2">
@@ -80,7 +80,7 @@
                             <span class="opacity-60"> · </span>
                             <span class="font-mono text-ink">{c.versions.join(', ')}</span>
                             <span class="opacity-60"> across </span>
-                            <span class="font-mono text-ink-soft">{c.folders.join(', ')}</span>
+                            <span class="font-mono text-ink-mute">{c.folders.join(', ')}</span>
                         </li>
                     {/each}
                 </ul>
@@ -108,7 +108,7 @@
         </div>
 
         {#if filtered.length === 0}
-            <p class="text-sm text-ink-mute">
+            <p class="text-sm text-ink-soft">
                 {data.libraries.length === 0
                     ? 'No libraries associated with this workspace yet.'
                     : 'No libraries match this filter.'}
@@ -120,7 +120,7 @@
                     <li class="lib-row flex items-center gap-2.5 py-2 border-b border-paper-edge text-sm"
                         data-testid={`library-row-${lib.name}`}>
                         <span class="font-semibold text-ink truncate max-w-[280px]">{lib.name}</span>
-                        <span class="text-ink-mute text-xs">{lib.ecosystem}</span>
+                        <span class="text-ink-soft text-xs">{lib.ecosystem}</span>
                         <div class="flex gap-1 flex-1">
                             {#if lib.hasDocs}
                                 <span class="badge bg-success-soft text-success border border-success-edge"

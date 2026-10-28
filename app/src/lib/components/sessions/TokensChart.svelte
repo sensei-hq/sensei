@@ -35,7 +35,7 @@
 <svg viewBox={`0 0 ${width} ${height}`} width="100%" class="block" data-component="tokens-chart">
   {#each yTicks as t (t)}
     <line x1={padL} x2={width - padR} y1={baseY - h(t)} y2={baseY - h(t)} stroke="var(--paper-edge)" stroke-dasharray="2 4" />
-    <text x={padL - 8} y={baseY - h(t) + 3} font-size="10" fill="var(--ink-mute)" text-anchor="end">
+    <text x={padL - 8} y={baseY - h(t) + 3} font-size="10" fill="var(--ink-soft)" text-anchor="end">
       {compactTokens(t)}
     </text>
   {/each}
@@ -59,7 +59,7 @@
 
   {#each buckets as b, i (b.day)}
     {#if i % labelStride === 0 || i === n - 1}
-      <text x={cx(i)} y={height - 8} font-size="10" fill="var(--ink-soft)" text-anchor="middle">
+      <text x={cx(i)} y={height - 8} font-size="10" fill="var(--ink-mute)" text-anchor="middle">
         {b.label}
       </text>
     {/if}

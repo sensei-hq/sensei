@@ -83,7 +83,7 @@ export function driftChipClasses(status: string): ChipClasses {
     case 'warning':
       return { bg: 'bg-warning-soft', text: 'text-warning' };
     default:
-      return { bg: 'bg-paper-mute', text: 'text-ink-mute' };
+      return { bg: 'bg-paper-mute', text: 'text-ink-soft' };
   }
 }
 

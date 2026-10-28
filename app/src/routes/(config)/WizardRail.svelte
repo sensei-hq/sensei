@@ -18,7 +18,7 @@
         <Wordmark size="md" />
     </div>
 
-    <div class="text-xs tracking-wide text-ink-soft uppercase mb-3.5">
+    <div class="text-xs tracking-wide text-ink-mute uppercase mb-3.5">
         Setup
     </div>
 
@@ -29,13 +29,13 @@
                 data-rail-item
                 data-stage-id={s.id}
                 data-active={s.active}
-                class="grid grid-cols-[24px_1fr_14px] px-2 py-1 gap-2.5 items-center rounded-md text-left border border-transparent text-ink-soft cursor-pointer transition-all duration-fast text-sm"
+                class="grid grid-cols-[24px_1fr_14px] px-2 py-1 gap-2.5 items-center rounded-md text-left border border-transparent text-ink-mute cursor-pointer transition-all duration-fast text-sm"
                 class:active={s.active}
                 class:done={isDone}
                 onclick={() => goto(s.path)}
             >
                 <span
-                    class="rail-kanji kanji text-sm text-center text-ink-soft"
+                    class="rail-kanji kanji text-sm text-center text-ink-mute"
                     class:active={s.active}
                     class:done={isDone}
                     class:text-accent={s.active}
@@ -45,7 +45,7 @@
                         {s.title}
                     </div>
                     {#if s.active}
-                        <div class="font-mono text-xs text-ink-soft mt-0.5">
+                        <div class="font-mono text-xs text-ink-mute mt-0.5">
                             {s.brief}
                         </div>
                     {/if}
@@ -61,8 +61,8 @@
     <div class="mt-auto border-t border-paper-edge pt-3">
         <div class="flex items-center gap-2.5">
             <StatusDot status="ok" />
-            <div class="text-xs text-ink-mute leading-snug">
-                <div class="tracking-wide uppercase text-xs text-ink-soft">
+            <div class="text-xs text-ink-soft leading-snug">
+                <div class="tracking-wide uppercase text-xs text-ink-mute">
                     Services
                 </div>
                 <div class="mt-0.5">all green</div>
@@ -81,9 +81,9 @@
         color: var(--ink);
     }
     [data-rail-item].done {
-        color: var(--ink-mute);
+        color: var(--ink-soft);
     }
     .rail-kanji.done {
-        color: var(--ink-mute);
+        color: var(--ink-soft);
     }
 </style>

@@ -29,7 +29,7 @@
 </script>
 
 {#snippet summary(cells: TeamMetricCell[])}
-	<span class="mono text-ink-mute text-xs md:hidden">
+	<span class="mono text-ink-soft text-xs md:hidden">
 		{cells.map((c, j) => view!.columns[j].label + ' ' + c.text).join(' · ')}
 	</span>
 	{#each cells as cell (cell.key)}
@@ -58,11 +58,11 @@
 			{#each view.teams as team (team.id)}
 				<ListSection icon="users-group-rounded" title={team.name} count={team.memberCount}>
 					<div class="border-paper-edge bg-paper-mute hidden gap-3 border-b px-4 py-2 md:grid {COLS}">
-						<span class="text-ink-mute text-xs font-semibold uppercase">{view.perPerson ? 'Member' : 'Team'}</span>
+						<span class="text-ink-soft text-xs font-semibold uppercase">{view.perPerson ? 'Member' : 'Team'}</span>
 						{#each view.columns as c (c.key)}
-							<span class="text-ink-mute text-xs font-semibold uppercase">{c.label}</span>
+							<span class="text-ink-soft text-xs font-semibold uppercase">{c.label}</span>
 						{/each}
-						<span class="text-ink-mute text-right text-xs font-semibold uppercase">{view.perPerson ? 'Last' : ''}</span>
+						<span class="text-ink-soft text-right text-xs font-semibold uppercase">{view.perPerson ? 'Last' : ''}</span>
 					</div>
 					<div class="border-paper-edge bg-paper grid items-center gap-3 border-b px-4 py-3 {COLS}" data-team-total>
 						<span class="text-ink text-sm font-medium">Team total</span>

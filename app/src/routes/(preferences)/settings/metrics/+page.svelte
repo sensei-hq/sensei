@@ -36,7 +36,7 @@
   // not this screen's: `normal` clears itself so it reads as plain text; a
   // `refusal` is somebody's decision; a `fault` needs attention.
   const kindClass = (kind: string) =>
-    kind === 'fault' ? 'text-danger' : kind === 'refusal' ? 'text-warning' : 'text-ink-mute';
+    kind === 'fault' ? 'text-danger' : kind === 'refusal' ? 'text-warning' : 'text-ink-soft';
 </script>
 
 <Screen>
@@ -68,7 +68,7 @@
              intrinsic height, so rendering it empty beside "choose a repository"
              shows an invisible list and an instruction that cannot be followed. The
              load succeeded — there is genuinely nothing yet. -->
-        <p class="text-sm text-ink-mute m-0" data-empty>
+        <p class="text-sm text-ink-soft m-0" data-empty>
           No repositories are registered yet, so there is nothing to compute metrics
           for. Add a root under Settings · Roots and let a scan finish.
         </p>
@@ -111,7 +111,7 @@
                 onretry={() => state.selected && state.select(state.selected)}
               />
             {:else if !state.selected}
-              <p class="text-sm text-ink-mute m-0">Choose a repository to see its metrics.</p>
+              <p class="text-sm text-ink-soft m-0">Choose a repository to see its metrics.</p>
             {:else}
               {#if state.error}
                 <!-- A write error, with the rows still shown: the reason the switch
@@ -122,7 +122,7 @@
                 <!-- The controller distinguishes the two causes — no remote vs nobody
                      signed in — because one is a fact about the repository and the
                      other is actionable by the reader. -->
-                <p class="text-xs text-ink-mute mb-3 mt-0" data-not-configurable>
+                <p class="text-xs text-ink-soft mb-3 mt-0" data-not-configurable>
                   {state.blockedReason}
                 </p>
               {/if}
@@ -146,7 +146,7 @@
                       {#if row.reason.remedy}
                         <!-- Only a refusal or a fault carries one — a `normal` code has
                              no remedy by DDL invariant, so nothing is invented here. -->
-                        <div class="text-xs text-ink-soft mt-1" data-remedy>{row.reason.remedy}</div>
+                        <div class="text-xs text-ink-mute mt-1" data-remedy>{row.reason.remedy}</div>
                       {/if}
                     </div>
                     <!-- Keyed on the controller's revision so a REFUSED write remounts

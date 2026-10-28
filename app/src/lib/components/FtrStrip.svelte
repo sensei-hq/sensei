@@ -59,7 +59,7 @@
       y={height + 11}
       font-size="9"
       fill="currentColor"
-      class="text-ink-mute"
+      class="text-ink-soft"
       style="letter-spacing: 0.08em"
     >14d ago</text>
     <text
@@ -67,7 +67,7 @@
       y={height + 11}
       font-size="9"
       fill="currentColor"
-      class="text-ink-mute"
+      class="text-ink-soft"
       style="letter-spacing: 0.08em"
       text-anchor="end"
     >today</text>

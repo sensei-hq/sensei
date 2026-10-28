@@ -90,7 +90,7 @@
 </script>
 
 <div>
-  <p class="text-sm text-ink-soft leading-normal m-0 mb-6">
+  <p class="text-sm text-ink-mute leading-normal m-0 mb-6">
     One switch per assistant — sensei registers every capability it can,
     or none. Flip a switch and watch the chips settle.
   </p>
@@ -111,7 +111,7 @@
   </div>
 
   {#if families.length === 0}
-    <p class="text-sm text-ink-soft italic">
+    <p class="text-sm text-ink-mute italic">
       No AI coding assistants detected. Make sure the daemon is running.
     </p>
   {/if}

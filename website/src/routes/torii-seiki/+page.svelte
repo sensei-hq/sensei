@@ -29,7 +29,7 @@
       <span class="i-brand:sensei-hq text-accent block flex-shrink-0" style="width:26px;height:26px" aria-hidden="true"></span>
       <span class="flex items-baseline gap-2">
         <span class="display text-ink text-lg" style="letter-spacing:-0.01em">Torii · Seiki</span>
-        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.08em">SENSEI HQ</span>
+        <span class="mono text-ink-soft text-xs" style="letter-spacing:0.08em">SENSEI HQ</span>
       </span>
     </a>
   {/snippet}
@@ -41,12 +41,12 @@
     <div>
       <div class="flex items-baseline gap-3 mb-6">
         <span class="kanji text-accent" style="font-size:44px;line-height:1">門</span>
-        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Torii · Seiki — the gate and what stands behind it</span>
+        <span class="mono text-ink-soft text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Torii · Seiki — the gate and what stands behind it</span>
       </div>
       <h1 class="display text-ink m-0" style="font-size:56px;font-weight:300;line-height:1.08;letter-spacing:-0.025em;max-width:640px">
         The gate, and the sanctuary behind it.
       </h1>
-      <p class="text-ink-soft mt-6 m-0" style="font-size:17px;line-height:1.6;max-width:540px">
+      <p class="text-ink-mute mt-6 m-0" style="font-size:17px;line-height:1.6;max-width:540px">
         Torii is the gate your team walks through to reach your models. Seiki is the
         governance plane behind it — routing, budgets, audit. Both stand on Gateway,
         our Rust library for fallback chains and budget control.
@@ -56,18 +56,18 @@
           <span class="kanji text-on-primary text-base" style="line-height:1">入</span>
           Request access
         </Button>
-        <a href="#clients" class="text-ink-soft text-sm no-underline">Meet Torii and Seiki ↓</a>
+        <a href="#clients" class="text-ink-mute text-sm no-underline">Meet Torii and Seiki ↓</a>
       </div>
       <div class="flex flex-wrap gap-4 mt-12">
         {#each ['Self-hosted', 'Bring your own keys', 'Built on Gateway'] as m (m)}
-          <span class="mono text-ink-mute text-xs">{m}</span>
+          <span class="mono text-ink-soft text-xs">{m}</span>
         {/each}
       </div>
     </div>
 
     <aside class="border border-paper-edge rounded-lg bg-paper-soft" style="overflow:hidden">
       <div class="px-6 py-4 border-b border-paper-edge flex items-center justify-between">
-        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">The pair</span>
+        <span class="mono text-ink-soft text-xs" style="letter-spacing:0.12em;text-transform:uppercase">The pair</span>
         <span class="mono text-ink-faint text-xs">02</span>
       </div>
       <div>
@@ -76,14 +76,14 @@
             <span class="kanji text-{c.id} text-center" style="font-size:26px;line-height:1;width:30px">{c.kanji}</span>
             <span>
               <span class="display text-ink block text-base">{c.name}</span>
-              <span class="text-ink-mute text-xs">{c.category}</span>
+              <span class="text-ink-soft text-xs">{c.category}</span>
             </span>
             <span class="ts-dot bg-{c.id}"></span>
           </a>
         {/each}
       </div>
       <div class="px-6 py-4 border-t border-paper-edge">
-        <p class="text-ink-mute m-0 text-sm" style="line-height:1.6">
+        <p class="text-ink-soft m-0 text-sm" style="line-height:1.6">
           Pass through the gate and the rules are already in force. That is the point of the pair.
         </p>
       </div>
@@ -97,12 +97,12 @@
     <div class="mb-12">
       <div class="flex items-baseline gap-3 mb-4">
         <span class="kanji text-accent text-2xl" style="line-height:1">分</span>
-        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Bun · to divide</span>
+        <span class="mono text-ink-soft text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Bun · to divide</span>
       </div>
       <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em;max-width:720px">
         Every answer knows where it ran.
       </h2>
-      <p class="text-ink-soft mt-4 m-0 text-lg" style="line-height:1.6;max-width:560px">
+      <p class="text-ink-mute mt-4 m-0 text-lg" style="line-height:1.6;max-width:560px">
         The split execution plane is not a setting buried in preferences — it is written on the response, every time.
       </p>
     </div>
@@ -113,7 +113,7 @@
             <span class="kanji text-accent text-xl" style="line-height:1">{p.kanji}</span>
             <span class="mono text-ink border border-paper-edge rounded-full text-xs px-2.5 py-1">{p.label}</span>
           </div>
-          <p class="text-ink-soft m-0 text-base" style="line-height:1.65">{p.text}</p>
+          <p class="text-ink-mute m-0 text-base" style="line-height:1.65">{p.text}</p>
         </div>
       {/each}
     </div>
@@ -126,12 +126,12 @@
     <div class="mb-12">
       <div class="flex items-baseline gap-3 mb-4">
         <span class="kanji text-accent text-2xl" style="line-height:1">二</span>
-        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Ni · two</span>
+        <span class="mono text-ink-soft text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Ni · two</span>
       </div>
       <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em;max-width:720px">
         Two tools, one temperament.
       </h2>
-      <p class="text-ink-soft mt-4 m-0 text-lg" style="line-height:1.6;max-width:560px">
+      <p class="text-ink-mute mt-4 m-0 text-lg" style="line-height:1.6;max-width:560px">
         Torii is what your team opens in the morning. Seiki is where you go when you need to know why — and to change it.
       </p>
     </div>
@@ -148,18 +148,18 @@
             </div>
             <div class="flex items-baseline flex-wrap gap-3 mb-2">
               <span class="display text-ink text-2xl" style="font-weight:400;letter-spacing:-0.02em">{c.name}</span>
-              <span class="mono text-ink-mute text-xs" style="letter-spacing:0.1em;text-transform:uppercase">{c.category}</span>
+              <span class="mono text-ink-soft text-xs" style="letter-spacing:0.1em;text-transform:uppercase">{c.category}</span>
             </div>
             <p class="display text-ink m-0 text-xl" style="font-weight:300;letter-spacing:-0.015em;line-height:1.3">{c.tagline}</p>
-            <p class="text-ink-soft mt-3 text-base" style="line-height:1.65;max-width:460px">{c.blurb}</p>
+            <p class="text-ink-mute mt-3 text-base" style="line-height:1.65;max-width:460px">{c.blurb}</p>
             <div class="flex flex-wrap gap-2 mt-6 mb-8">
               {#each c.surfaces as s (s)}
-                <span class="text-ink-soft text-sm border border-paper-edge rounded-full px-3 py-1" style="white-space:nowrap">{s}</span>
+                <span class="text-ink-mute text-sm border border-paper-edge rounded-full px-3 py-1" style="white-space:nowrap">{s}</span>
               {/each}
             </div>
             <div class="flex flex-wrap gap-2">
               {#each c.meta as m (m)}
-                <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs px-2 py-0.5" style="white-space:nowrap">{m}</span>
+                <span class="mono text-ink-soft border border-paper-edge rounded-sm text-xs px-2 py-0.5" style="white-space:nowrap">{m}</span>
               {/each}
             </div>
           </div>
@@ -180,7 +180,7 @@
     <div class="mb-12">
       <div class="flex items-baseline gap-3 mb-4">
         <span class="kanji text-accent text-2xl" style="line-height:1">具</span>
-        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Gu · the instruments</span>
+        <span class="mono text-ink-soft text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Gu · the instruments</span>
       </div>
       <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em;max-width:720px">
         What the pair is made of.
@@ -191,7 +191,7 @@
         <div>
           <span class="kanji text-accent block mb-4" style="font-size:32px;line-height:1">{c.kanji}</span>
           <h3 class="display text-ink m-0 text-lg" style="font-weight:400;letter-spacing:-0.01em">{c.title}</h3>
-          <p class="text-ink-soft mt-2 m-0 text-sm" style="line-height:1.65">{c.text}</p>
+          <p class="text-ink-mute mt-2 m-0 text-sm" style="line-height:1.65">{c.text}</p>
         </div>
       {/each}
     </div>
@@ -205,12 +205,12 @@
       <div>
         <div class="flex items-baseline gap-3 mb-4">
           <span class="kanji text-accent text-2xl" style="line-height:1">蔵</span>
-          <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Zō · to keep</span>
+          <span class="mono text-ink-soft text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Zō · to keep</span>
         </div>
         <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em;max-width:460px">
           Your prompts stay in your building.
         </h2>
-        <p class="text-ink-soft mt-4 m-0 text-base" style="line-height:1.7;max-width:460px">
+        <p class="text-ink-mute mt-4 m-0 text-base" style="line-height:1.7;max-width:460px">
           Both clients run on your own infrastructure. There is no Sensei HQ account, no
           telemetry back to us, and no copy of your traffic anywhere we can read it.
           You hold the provider keys; you choose the region; you can export or delete
@@ -218,12 +218,12 @@
         </p>
       </div>
       <div class="border border-paper-edge rounded-lg bg-paper-soft p-7">
-        <span class="mono text-ink-mute block mb-4 text-xs" style="letter-spacing:0.12em;text-transform:uppercase">What leaves your network</span>
+        <span class="mono text-ink-soft block mb-4 text-xs" style="letter-spacing:0.12em;text-transform:uppercase">What leaves your network</span>
         <div class="flex flex-col">
           {#each PRIVACY_ROWS as row, i (row.term)}
             <div class="ts-detail-row py-3 flex items-baseline justify-between gap-6" class:last={i === PRIVACY_ROWS.length - 1}>
               <span class="text-ink text-sm">{row.term}</span>
-              <span class="text-ink-mute text-sm" style="text-align:right;max-width:240px">{row.detail}</span>
+              <span class="text-ink-soft text-sm" style="text-align:right;max-width:240px">{row.detail}</span>
             </div>
           {/each}
         </div>
@@ -239,12 +239,12 @@
       <div>
         <div class="flex items-baseline gap-3 mb-4">
           <span class="kanji text-gateway text-2xl" style="line-height:1">基</span>
-          <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Ki · the foundation</span>
+          <span class="mono text-ink-soft text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Ki · the foundation</span>
         </div>
         <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em;max-width:460px">
           Both are built on Gateway.
         </h2>
-        <p class="text-ink-soft mt-4 m-0 text-base" style="line-height:1.7;max-width:460px">
+        <p class="text-ink-mute mt-4 m-0 text-base" style="line-height:1.7;max-width:460px">
           Gateway is our Rust library for talking to model providers: fallback chains,
           budget control, and one interface across every vendor you use. Torii and Seiki
           are what it looks like with a face on it — but the library stands alone, and
@@ -253,12 +253,12 @@
         <Button href={GATEWAY_URL} target="_blank" rel="noopener" style="outline" size="md" class="mt-6" label="Visit Gateway →" />
       </div>
       <div class="border border-paper-edge rounded-lg bg-paper-soft p-7">
-        <span class="mono text-ink-mute block mb-4 text-xs" style="letter-spacing:0.12em;text-transform:uppercase">What Gateway handles</span>
+        <span class="mono text-ink-soft block mb-4 text-xs" style="letter-spacing:0.12em;text-transform:uppercase">What Gateway handles</span>
         <div class="flex flex-col">
           {#each GATEWAY_ROWS as row, i (row.term)}
             <div class="ts-detail-row py-3 flex items-baseline justify-between gap-6" class:last={i === GATEWAY_ROWS.length - 1}>
               <span class="text-ink text-sm">{row.term}</span>
-              <span class="text-ink-mute text-sm" style="text-align:right;max-width:240px">{row.detail}</span>
+              <span class="text-ink-soft text-sm" style="text-align:right;max-width:240px">{row.detail}</span>
             </div>
           {/each}
         </div>
@@ -274,7 +274,7 @@
     <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;line-height:1.15;letter-spacing:-0.022em">
       Torii and Seiki are in private beta.
     </h2>
-    <p class="text-ink-soft mt-4 m-0 text-lg" style="line-height:1.6">
+    <p class="text-ink-mute mt-4 m-0 text-lg" style="line-height:1.6">
       Tell us how your organization works and we will tell you honestly whether the gate fits yet.
     </p>
     <div class="flex items-center justify-center flex-wrap gap-3 mt-8">
@@ -284,7 +284,7 @@
       </Button>
       <Button href="{base}/" style="outline" size="lg" label="See the whole workshop" />
     </div>
-    <a href="mailto:hi@sensei-hq.com" class="mono text-ink-mute mt-4 inline-block text-sm" style="letter-spacing:0.02em;white-space:nowrap">hi@sensei-hq.com</a>
+    <a href="mailto:hi@sensei-hq.com" class="mono text-ink-soft mt-4 inline-block text-sm" style="letter-spacing:0.02em;white-space:nowrap">hi@sensei-hq.com</a>
   </div>
 </section>
 
@@ -295,7 +295,7 @@
       <span class="i-brand:sensei-hq text-accent block flex-shrink-0" style="width:24px;height:24px" aria-hidden="true"></span>
       <span class="flex items-baseline gap-2">
         <span class="display text-ink text-base">Sensei</span>
-        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.08em">HQ</span>
+        <span class="mono text-ink-soft text-xs" style="letter-spacing:0.08em">HQ</span>
       </span>
     </a>
     <span class="mono text-ink-faint text-xs">門 · Torii · Seiki · built on Gateway</span>

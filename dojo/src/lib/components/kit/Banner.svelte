@@ -3,7 +3,7 @@
 	// oklch string for the warning edge; here every tone resolves to a named token
 	// so the banner stays theme-free.
 	const TONES = {
-		neutral: { bg: 'bg-paper-soft', edge: 'border-paper-edge', k: 'text-ink-mute' },
+		neutral: { bg: 'bg-paper-soft', edge: 'border-paper-edge', k: 'text-ink-soft' },
 		accent: { bg: 'bg-accent-soft', edge: 'border-accent-soft', k: 'text-accent' },
 		success: { bg: 'bg-success-soft', edge: 'border-success-soft', k: 'text-success' },
 		warning: { bg: 'bg-warning-soft', edge: 'border-warning-soft', k: 'text-warning' }
@@ -43,7 +43,7 @@
 	<div class="flex-1" style="min-width: 0">
 		{#if title}<div class="text-ink text-sm font-medium" style="line-height: 1.3">{title}</div>{/if}
 		{#if children}
-			<div class="text-ink-soft text-sm" style="line-height: 1.55; margin-top: {title ? 2 : 0}px">
+			<div class="text-ink-mute text-sm" style="line-height: 1.55; margin-top: {title ? 2 : 0}px">
 				{@render children()}
 			</div>
 		{/if}

@@ -52,7 +52,7 @@
   const toneClass = $derived(
     ({
       'accent':    'text-accent',
-      'muted':     'text-ink-mute',
+      'muted':     'text-ink-soft',
       'success':   'text-success',
       'warning':   'text-warning',
       'watermark': 'text-accent opacity-55',
