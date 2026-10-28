@@ -125,7 +125,7 @@ describe('DatapointDrilldown', () => {
         expect(row).toBeTruthy();
         expect(q(row!, '.font-mono')?.textContent?.trim()).toBe('abcdef12');
         expect(q(m.container, '[data-session-meta]')?.textContent?.trim()).toBe(
-            'completed · first-try · 3 turns',
+            'completed · first try · 3 turns',
         );
         expect(row!.textContent).toContain('Add the day-scoped drill-down');
         expect(row!.textContent).toContain('Wired the datapoint drill-down end to end.');

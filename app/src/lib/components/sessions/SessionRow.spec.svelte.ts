@@ -79,14 +79,14 @@ describe('SessionRow — meta', () => {
     const text = row(m).textContent ?? '';
     expect(text).toContain('09:14');
     expect(text).toContain('42m');
-    expect(text).toContain('first-try'); // 0 corrections
+    expect(text).toContain('no corrections'); // the shared correctionsView
     expect(text).toContain('sensei');
     expect(text).toContain('zed');
   });
 
-  it('labels non-zero corrections as "N× rework"', () => {
+  it('labels non-zero corrections as "N corrections"', () => {
     const m = mount({ corrections: 3, ftr: false, quality: 'bad' });
-    expect(row(m).textContent ?? '').toContain('3× rework');
+    expect(row(m).textContent ?? '').toContain('3 corrections');
   });
 
   it('falls back to "unlinked" for a workspace-less session', () => {

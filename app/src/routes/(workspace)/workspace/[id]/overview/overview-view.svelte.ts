@@ -7,6 +7,7 @@
 // the three stat blocks, the multi-repo chips, and the recent-session rows.
 // No component carries logic — it all lives here so it can be unit-tested in
 // isolation.
+import { correctionsView } from '$lib/ftr';
 import type {
   WorkspaceOverviewHeader,
   WorkspaceOverviewTopRec,
@@ -144,7 +145,7 @@ export function statBlocks(stats: WorkspaceOverviewStats): StatBlock[] {
 export interface SessionRow {
   id: string;
   title: string;
-  /** "{shortId} · {duration} · {corrections|first-try right}". */
+  /** "{shortId} · {duration} · {corrections}" — the shared corrections words. */
   meta: string;
   /** Relative time, e.g. "2h" / "3d". */
   time: string;
@@ -165,11 +166,6 @@ function shortId(id: string): string {
  *  back to a generic word rather than render an empty middle column. */
 function sessionTitle(title: string): string {
   return title.trim() || 'session';
-}
-
-/** "3 corrections" vs "first-try right" — matches the mockup's phrasing. */
-function correctionsPhrase(corrections: number): string {
-  return corrections > 0 ? `${corrections} corrections` : 'first-try right';
 }
 
 /** Elapsed wall-clock between start and completion, formatted m / h m / d h.
@@ -214,7 +210,7 @@ export function relativeTime(iso: string | null, now: number = Date.now()): stri
  *  chip (null passes straight through so the row renders no chip). */
 export function sessionRows(sessions: WorkspaceOverviewSession[], now: number = Date.now()): SessionRow[] {
   return sessions.map((s) => {
-    const parts = [shortId(s.id), sessionDuration(s.startedAt, s.completedAt), correctionsPhrase(s.corrections)]
+    const parts = [shortId(s.id), sessionDuration(s.startedAt, s.completedAt), correctionsView(s.corrections).label]
       .filter((p): p is string => Boolean(p));
     return {
       id: s.id,

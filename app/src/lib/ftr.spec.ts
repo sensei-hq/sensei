@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ftrPct, ftrPctLabel, ftrReadLabel, FTR_NONE, FTR_UNAVAILABLE, FTR_GOOD, FTR_OK, ftrBand, ftrBandView, sessionFtrView } from './ftr.js';
+import { ftrPct, ftrPctLabel, ftrReadLabel, FTR_NONE, FTR_UNAVAILABLE, FTR_GOOD, FTR_OK, ftrBand, ftrBandView, sessionFtrView, correctionsView } from './ftr.js';
 
 describe('ftrPct', () => {
   it('rounds a 0..1 rate to a whole-number percentage', () => {
@@ -73,3 +73,19 @@ describe('sessionFtrView — one session, whichever shape its FTR comes in', () 
     expect(sessionFtrView(undefined).firstTry).toBeNull();
   });
 });
+
+// Audit item 7 (2026-10-28): one count, four phrasings — "first-try right",
+// "1 corrections", "3× rework", "no corrections". Whether a session was
+// first-try is the FTR's (sessionFtrView); this says how many corrections.
+describe('correctionsView', () => {
+  it('counts corrections in words, singular and plural', () => {
+    expect(correctionsView(0)).toEqual({ label: 'no corrections', text: 'text-success' });
+    expect(correctionsView(1)).toEqual({ label: '1 correction', text: 'text-warning' });
+    expect(correctionsView(3)).toEqual({ label: '3 corrections', text: 'text-warning' });
+  });
+
+  it('a count not reported is a dash, not zero', () => {
+    expect(correctionsView(null)).toEqual({ label: '—', text: 'text-ink-mute' });
+  });
+});
+

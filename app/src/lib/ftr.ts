@@ -89,3 +89,17 @@ export function sessionFtrView(ftr: boolean | number | null | undefined): Sessio
     ? { firstTry, tone: 'success', dot: 'bg-success', text: 'text-success', label: 'first try' }
     : { firstTry, tone: 'warn', dot: 'bg-warning', text: 'text-warning', label: 'rework' };
 }
+
+/** A session's corrections, in words (audit 2026-10-28, item 7: it read
+ *  "first-try right", "1 corrections", "3× rework" and "no corrections" on four
+ *  screens). Whether it was first-try is `sessionFtrView`'s to say. */
+export interface CorrectionsView {
+  label: string;
+  text: string;
+}
+
+export function correctionsView(n: number | null | undefined): CorrectionsView {
+  if (n == null) return { label: FTR_NONE, text: 'text-ink-mute' };
+  if (n <= 0) return { label: 'no corrections', text: 'text-success' };
+  return { label: n === 1 ? '1 correction' : `${n.toLocaleString('en-US')} corrections`, text: 'text-warning' };
+}

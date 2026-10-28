@@ -51,7 +51,7 @@ test.describe('Workspace window — Sessions depth', () => {
     await tauriPage.waitForSelector('[data-session-row]', 15_000);
 
     // Every row carries a quality tone (data-quality) and the corrections
-    // vocabulary the observatory list uses ("first-try" / "N× rework" / "—").
+    // vocabulary every screen uses (lib/ftr correctionsView: "no corrections" / "N corrections" / "—").
     const rows = await tauriPage.evaluate(`
       Array.from(document.querySelectorAll('[data-session-row]')).map(el => ({
         quality: el.getAttribute('data-quality') ?? '',
@@ -61,7 +61,7 @@ test.describe('Workspace window — Sessions depth', () => {
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) {
       expect(['good', 'bad', 'ugly', 'neutral']).toContain(r.quality);
-      expect(r.text).toMatch(/first-try|× rework|—/);
+      expect(r.text).toMatch(/no corrections|\d+ corrections?|—/);
     }
   });
 });

@@ -1,3 +1,4 @@
+import { correctionsView, sessionFtrView } from '$lib/ftr';
 import { isoDay } from '../dates.js';
 // Pure view logic for workspace metrics: wire rows -> presentational card models.
 //
@@ -495,12 +496,6 @@ export function explainerForDay(series: MetricSeriesPoint[], day: string | null)
     return text ? text : null;
 }
 
-/** "no corrections" / "1 correction" / "N corrections" — a session's rework count. */
-function correctionsPhrase(n: number): string {
-    if (n <= 0) return 'no corrections';
-    return n === 1 ? '1 correction' : `${formatCount(n)} corrections`;
-}
-
 /** "1 turn" / "N turns" — a session's turn count. */
 function turnsPhrase(n: number): string {
     return n === 1 ? '1 turn' : `${formatCount(n)} turns`;
@@ -515,7 +510,7 @@ function turnsPhrase(n: number): string {
 export function sessionOneLiner(s: DrilldownSession): string {
     const parts: string[] = [];
     if (s.outcome && s.outcome.trim()) parts.push(s.outcome.trim());
-    parts.push(s.ftr === true ? 'first-try' : correctionsPhrase(s.corrections));
+    parts.push(s.ftr === true ? sessionFtrView(true).label : correctionsView(s.corrections).label);
     parts.push(turnsPhrase(s.turns));
     return parts.join(' · ');
 }

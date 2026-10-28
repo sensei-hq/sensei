@@ -199,9 +199,12 @@ describe('sessionRows', () => {
     expect(row.meta).toBe('c6dbe60f · 42m · 2 corrections');
   });
 
-  it('says "first-try right" for a clean session', () => {
-    const [row] = sessionRows([session({ corrections: 0 })], now);
-    expect(row.meta).toContain('first-try right');
+  it('says "no corrections" for a clean session, and "1 correction" in the singular', () => {
+    const [clean] = sessionRows([session({ corrections: 0 })], now);
+    expect(clean.meta).toContain('no corrections');
+    const [one] = sessionRows([session({ corrections: 1 })], now);
+    expect(one.meta).toContain('1 correction');
+    expect(one.meta).not.toContain('1 corrections');
   });
 
   it('falls back to a generic title when the session title is blank', () => {

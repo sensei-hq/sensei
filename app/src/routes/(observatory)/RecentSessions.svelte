@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { sessionFtrView } from '$lib/ftr';
+  import { correctionsView, sessionFtrView } from '$lib/ftr';
   interface Session {
     id: string;
     task: string;
@@ -10,14 +10,6 @@
     corrections?: number | null;
   }
 
-  // Compact "first-try" / "3× rework" tag per the mockup. `null` = daemon
-  // hasn't reported yet (session in flight) → show a dash so the column
-  // never collapses.
-  function correctionsLabel(c: number | null | undefined): string {
-    if (c == null) return '—';
-    if (c === 0)   return 'first-try';
-    return `${c}× rework`;
-  }
 
   interface Props {
     sessions: Session[];
@@ -70,12 +62,9 @@
           <span class="text-sm text-ink-soft truncate">{s.task}</span>
           <span
             data-corrections={s.corrections ?? ''}
-            class="font-mono text-xs min-w-[5rem] text-right"
-            class:text-success={s.corrections === 0}
-            class:text-warning={typeof s.corrections === 'number' && s.corrections > 0}
-            class:text-ink-mute={s.corrections == null}
+            class="font-mono text-xs min-w-[5rem] text-right {correctionsView(s.corrections).text}"
           >
-            {correctionsLabel(s.corrections)}
+            {correctionsView(s.corrections).label}
           </span>
           {#if mins !== null}
             <span data-duration class="font-mono text-xs text-ink-mute min-w-[3rem] text-right">

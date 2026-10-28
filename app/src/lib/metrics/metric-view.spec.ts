@@ -648,8 +648,8 @@ describe('sessionOneLiner', () => {
             ...over,
         };
     }
-    it('reads a first-try session as "outcome · first-try · N turns"', () => {
-        expect(sessionOneLiner(s())).toBe('completed · first-try · 3 turns');
+    it('reads a first-try session as "outcome · first try · N turns" — the shared session words', () => {
+        expect(sessionOneLiner(s())).toBe('completed · first try · 3 turns');
     });
     it('reads a corrected session as its correction count (pluralized)', () => {
         expect(sessionOneLiner(s({ ftr: false, corrections: 2, turns: 4, outcome: 'corrected' }))).toBe(
@@ -661,7 +661,7 @@ describe('sessionOneLiner', () => {
         expect(sessionOneLiner(s({ ftr: false, corrections: 0 }))).toContain('no corrections');
     });
     it('omits the outcome segment when the outcome is absent', () => {
-        expect(sessionOneLiner(s({ outcome: null }))).toBe('first-try · 3 turns');
+        expect(sessionOneLiner(s({ outcome: null }))).toBe('first try · 3 turns');
     });
 });
 
