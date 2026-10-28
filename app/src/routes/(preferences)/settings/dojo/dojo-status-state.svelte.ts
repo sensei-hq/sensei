@@ -52,6 +52,20 @@ export function syncTone(state: string): SyncTone {
   }
 }
 
+const SYNC_TONE_CLASS: Record<SyncTone, string> = {
+  success: 'text-success',
+  warn: 'text-warning',
+  danger: 'text-danger',
+  info: 'text-info',
+  muted: 'text-ink-soft',
+  ink: 'text-ink-soft',
+};
+
+/** The text colour a sync row's agreement line wears. */
+export function syncToneClass(state: string): string {
+  return SYNC_TONE_CLASS[syncTone(state)];
+}
+
 /** Pure: `sensei.sync_entity` → English. An unknown entity passes through with
  *  its underscores relaxed rather than blanking — a row nobody can name is still
  *  a row worth seeing. */

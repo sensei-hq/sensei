@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   syncTone,
+  syncToneClass,
   entityLabel,
   agreementLine,
   worstSyncState,
@@ -237,5 +238,16 @@ describe('groupSync', () => {
   it('a row never agreed nor tried has no day, and sorts after the dated ones', () => {
     const g = groupSync([row({ synced_at: null, attempted_at: null }), row({ entity_key: 'y' })], who);
     expect(g[0].days.map((d) => d.day)).toEqual(['2026-08-31', null]);
+  });
+});
+
+describe('syncToneClass', () => {
+  it('colours each sync state from the state module, skipped muted and never as a fault', () => {
+    expect(syncToneClass('synced')).toBe('text-success');
+    expect(syncToneClass('partial')).toBe('text-warning');
+    expect(syncToneClass('error')).toBe('text-danger');
+    expect(syncToneClass('pending')).toBe('text-info');
+    expect(syncToneClass('skipped')).toBe('text-ink-soft');
+    expect(syncToneClass('something_new')).toBe('text-ink-soft');
   });
 });

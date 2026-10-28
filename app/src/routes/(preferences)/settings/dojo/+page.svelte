@@ -9,7 +9,7 @@
     entityLabel,
     groupSync,
     summarise,
-    syncTone,
+    syncToneClass,
     type SyncItem,
   } from './dojo-status-state.svelte.js';
 
@@ -37,16 +37,6 @@
   const syncOf = (label: string | null) => grouped.find((g) => g.label === label);
   const unattributed = $derived(syncOf(null));
 
-  const toneClass = (tone: string) =>
-    tone === 'dead' || tone === 'danger'
-      ? 'text-danger'
-      : tone === 'warn'
-        ? 'text-warning'
-        : tone === 'ok' || tone === 'success'
-          ? 'text-success'
-          : tone === 'info'
-            ? 'text-info'
-            : 'text-ink-soft';
 </script>
 
 <Screen>
@@ -68,8 +58,11 @@
           item is a decision, not a fault.
         </p>
 
-        {#if data.sync && data.sync.count > 0}
-          <p class="text-xs text-ink-soft mt-0 mb-3" data-summary>{summarise(data.sync.counts)}</p>
+        {#if data.sync}
+          <!-- Empty is said in words, never as a healthy "all agreed". -->
+          <p class="text-xs text-ink-soft mt-0 mb-3" data-summary data-empty={data.sync.count === 0 || undefined}>
+            {summarise(data.sync.counts)}
+          </p>
         {/if}
         {#if data.error || !data.sync}
           <ScreenState
@@ -187,7 +180,7 @@
       <span class="text-ink-mute">
         {entityLabel(item.row.entity)} · {item.row.direction}{#if item.branch}<span class="text-ink-soft"> · {item.branch}</span>{/if}
       </span>
-      <span class={toneClass(syncTone(item.row.state))} data-agreement>{agreementLine(item.row)}</span>
+      <span class={syncToneClass(item.row.state)} data-agreement>{agreementLine(item.row)}</span>
     </div>
     {#if detail}
       <!-- Shown for `skipped` too, where it is the REASON (in words) rather than a
