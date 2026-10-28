@@ -1089,3 +1089,9 @@ export function seriesDistribution(values: number[]): SeriesDistribution | null 
     const mean = values.reduce((a, b) => a + b, 0) / values.length;
     return { high, mean, low };
 }
+
+/** The period a grain counts in, for "12 of 30 days" — "periods" for any other. */
+export function grainUnit(grain: string): string {
+    return grain === 'daily' ? 'days' : grain === 'weekly' ? 'weeks' : grain === 'monthly' ? 'months' : 'periods';
+}
+

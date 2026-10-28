@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+    grainUnit,
     formatMetricValue,
     metricTrend,
     isLowN,
@@ -814,3 +815,11 @@ describe('historyNote', () => {
         });
     });
 });
+
+// Audit item 15 (2026-10-28): the metric detail spelled the grain's unit inline.
+describe('grainUnit', () => {
+    it('names the period a grain counts in', () => {
+        expect(['daily', 'weekly', 'monthly', 'quarterly'].map(grainUnit)).toEqual(['days', 'weeks', 'months', 'periods']);
+    });
+});
+

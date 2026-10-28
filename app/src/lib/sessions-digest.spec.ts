@@ -23,8 +23,7 @@ import {
   activeMinutes,
   CHART_VARIANTS,
   MINI_MODES,
-  SESSION_RANGES,
-} from './sessions-digest.js';
+  SESSION_RANGES, dayTone, rollingFtr } from './sessions-digest.js';
 
 // Fixed reference "now" (local July 8 2026, noon) so relative labels + day
 // buckets are deterministic regardless of the runner's timezone.
@@ -361,3 +360,24 @@ describe('medianLabel', () => {
     expect(computeTotals([]).medianMins).toBeNull();
   });
 });
+
+// Audit item 15 (2026-10-28): the trend chart decided a day's tone and the
+// rolling FTR inside the component.
+describe('dayTone', () => {
+  const b = (o: Record<string, number>) => ({ good: 0, bad: 0, ugly: 0, ...o }) as never;
+  it('any ugly session marks the day; else more bad than good; else good; else neutral', () => {
+    expect([b({ ugly: 1, good: 5 }), b({ bad: 2, good: 1 }), b({ good: 1, bad: 1 }), b({})].map(dayTone)).toEqual(['ugly', 'bad', 'good', 'neutral']);
+  });
+});
+
+describe('rollingFtr', () => {
+  it('is the mean of the last seven scored days, only on a scored day', () => {
+    const days = [0.5, null, 1, 0.5, 1, 1, 0.5, 1, null].map((ftr) => ({ ftr }) as never);
+    const r = rollingFtr(days);
+    expect(r[0]).toBe(0.5);
+    expect(r[1]).toBeNull(); // no FTR that day — no point
+    expect(r[7]).toBeCloseTo((1 + 0.5 + 1 + 1 + 0.5 + 1) / 6); // window days 1..7, day 1 unscored
+    expect(r[8]).toBeNull();
+  });
+});
+

@@ -3,7 +3,7 @@
   // 7-day rolling average and daily dots colored by the day's dominant
   // quality. Pure presentation: the per-day rollup is computed upstream in
   // sessions-digest.ts and handed in as `buckets`.
-  import type { DayBucket, QualityTone } from '$lib/sessions-digest.js';
+  import { dayTone, rollingFtr, type DayBucket, type QualityTone } from '$lib/sessions-digest.js';
 
   interface Props {
     buckets: DayBucket[];
@@ -28,12 +28,6 @@
     ugly: 'var(--accent)',
     neutral: 'var(--ink-soft)',
   };
-  function dominant(b: DayBucket): QualityTone {
-    if (b.ugly > 0) return 'ugly';
-    if (b.bad > b.good) return 'bad';
-    if (b.good > 0) return 'good';
-    return 'neutral';
-  }
 
   function linePath(points: Array<[number, number]>): string {
     if (points.length === 0) return '';
@@ -53,14 +47,10 @@
       .map((b, i): [number, number] | null => (b.ftr == null ? null : [x(i), yFtr(b.ftr)]))
       .filter((p): p is [number, number] => p !== null),
   );
+  // The 7-day rolling FTR is the digest's (rollingFtr); the chart only places it.
   const rollingPts = $derived(
-    buckets
-      .map((b, i): [number, number] | null => {
-        const slice = buckets.slice(Math.max(0, i - 6), i + 1).filter((d) => d.ftr != null);
-        if (slice.length === 0 || b.ftr == null) return null;
-        const avg = slice.reduce((a, d) => a + (d.ftr ?? 0), 0) / slice.length;
-        return [x(i), yFtr(avg)];
-      })
+    rollingFtr(buckets)
+      .map((v, i): [number, number] | null => (v == null ? null : [x(i), yFtr(v)]))
       .filter((p): p is [number, number] => p !== null),
   );
 
@@ -101,7 +91,7 @@
           cx={x(i)}
           cy={yFtr(b.ftr)}
           r="3.5"
-          fill={TONE_COLOR[dominant(b)]}
+          fill={TONE_COLOR[dayTone(b)]}
           stroke="var(--paper)"
           stroke-width="1"
         />

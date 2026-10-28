@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { grainUnit } from '$lib/metrics/metric-view';
     import { page } from '$app/state';
     import { Kanji, Eyebrow, Screen } from '$lib/components';
     import {
@@ -138,13 +139,7 @@
                                     />
                                     <span class="shrink-0 tabular-nums"
                                         >{md.chartSeries.length} of {md.fullChartSeries.length}
-                                        {data.grain === 'daily'
-                                            ? 'days'
-                                            : data.grain === 'weekly'
-                                              ? 'weeks'
-                                              : data.grain === 'monthly'
-                                                ? 'months'
-                                                : 'periods'}</span
+                                        {grainUnit(data.grain)}</span
                                     >
                                 </div>
                             {/if}

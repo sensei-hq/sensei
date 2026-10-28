@@ -409,3 +409,23 @@ export function sessionsCopy(workspace: string | null): SessionsCopy {
     acrossWorkspaces: false,
   };
 }
+
+/** A day's quality tone, for its bar: any ugly session marks it; else more bad
+ *  than good is bad; else any good is good; else neutral. */
+export function dayTone(b: Pick<DayBucket, 'good' | 'bad' | 'ugly'>): QualityTone {
+  if (b.ugly > 0) return 'ugly';
+  if (b.bad > b.good) return 'bad';
+  if (b.good > 0) return 'good';
+  return 'neutral';
+}
+
+/** The 7-day rolling mean FTR at each day — over the scored days in the window,
+ *  and only on a day that is itself scored (null otherwise). */
+export function rollingFtr(days: Pick<DayBucket, 'ftr'>[]): (number | null)[] {
+  return days.map((d, i) => {
+    if (d.ftr == null) return null;
+    const scored = days.slice(Math.max(0, i - 6), i + 1).filter((x) => x.ftr != null);
+    return scored.reduce((a, x) => a + (x.ftr ?? 0), 0) / scored.length;
+  });
+}
+

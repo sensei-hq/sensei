@@ -131,3 +131,18 @@ export class YouSectionState {
 		}
 	}
 }
+
+/** What the forge said about a repository's visibility, or that it has not been
+ *  asked — never guessed. */
+export function visibilityLabel(v: MyRepoWire['forge_visibility']): string {
+	return v === null ? 'not yet captured' : v;
+}
+
+/** Who holds a repository's sharing choice. No derivable authority is a real
+ *  state — not "you" by default. */
+export function authorityLabel(r: Pick<MyRepoWire, 'authority' | 'owning_org'>): string {
+	if (r.authority === 'organization') return `${r.owning_org ?? 'the organisation'} decides`;
+	if (r.authority === 'user') return 'you decide';
+	return 'nobody yet';
+}
+

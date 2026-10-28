@@ -13,6 +13,7 @@
 	// upward; it never re-derives `sync_enabled`, because the view is the single
 	// place `may_share AND elected` is decided.
 	import type { MyRepoWire } from '$lib/client-data';
+	import { authorityLabel, visibilityLabel } from '$lib/you-state.svelte';
 
 	interface Props {
 		repos: MyRepoWire[];
@@ -25,18 +26,6 @@
 	}
 	let { repos, error = null, pending = new Set<string>(), onToggle }: Props = $props();
 
-	/** What the forge said, or that it has not been asked. Never guessed. */
-	function visibilityLabel(v: MyRepoWire['forge_visibility']): string {
-		return v === null ? 'not yet captured' : v;
-	}
-
-	/** Who holds the choice. `null` means no authority is derivable yet, which is
-	 *  a real state — not "user" by default. */
-	function authorityLabel(r: MyRepoWire): string {
-		if (r.authority === 'organization') return `${r.owning_org ?? 'the organisation'} decides`;
-		if (r.authority === 'user') return 'you decide';
-		return 'nobody yet';
-	}
 </script>
 
 <Screen>
