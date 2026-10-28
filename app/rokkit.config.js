@@ -21,7 +21,7 @@ export default {
   skin: {
     surface:   { light: "kami", dark: "sumi" },
     ink:       { light: "kami", dark: "sumi" },
-    primary:   "shu",       // vermillion — the one accent (朱); skin re-alignment deferred to Phase 2/3
+    primary:   "shu",       // vermillion — the one accent (朱); rokkit zen-sumi paints selection with it
     secondary: "murasaki",  // muted purple (紫)
     accent:    "shu",       // vermillion (朱) — was fuji; aligns skin with accent override
     success:   "hisui",     // jade green (翡翠)
@@ -80,13 +80,6 @@ export default {
     // Light value darkened shu.500 (0.58L, 4.27:1) → 0.520L (5.5:1) so vermillion
     // TEXT (stat numbers, arrows, kanji labels) passes WCAG AA. Dark keeps shu.400.
     accent:        { light: "oklch(0.500 0.145 35)", dark: "shu.400" },
-
-    // ── Primary named token — ink-colored CTA (design system: --primary: var(--ink)) ─
-    // Named `bg-primary` / `text-primary` = ink color (for ink-on-paper buttons).
-    // z-scale `text-primary-z*` still resolves via skin (primary: shu) = vermillion
-    // in unmigrated screens. Full skin re-alignment deferred to Phase 2/3.
-    primary:      { light: "kami.900", dark: "sumi.900" },
-    "on-primary": { light: "kami.100", dark: "sumi.50"  },
 
     // ── Status (solid/text) ────────────────────────────────────────────────────
     // Light values DARKENED for WCAG AA — the .500 shades read as light text on
