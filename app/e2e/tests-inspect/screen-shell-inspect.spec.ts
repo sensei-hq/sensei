@@ -71,6 +71,8 @@ const PROBE = `(() => {
   const screen = body?.closest('[data-component="screen"]');
   const header = screen?.querySelector(':scope > [data-component="screen-header"]');
   const main = screen?.closest('main');
+  // Marked even when it fails, so the next screen is probed rather than this one again.
+  body?.setAttribute('data-probed', '');
   if (!main || !screen || !header || !body) return null;
   const fill = body.dataset.fill === 'true';
   const spacer = document.createElement('div');
@@ -87,8 +89,6 @@ const PROBE = `(() => {
   };
   body.scrollTop = 0;
   spacer.remove();
-  // Marked, so the next navigation waits for ITS screen rather than this one.
-  body.setAttribute('data-probed', '');
   return out;
 })()`;
 

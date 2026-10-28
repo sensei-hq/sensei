@@ -13,6 +13,11 @@ import { navigateToScreen } from '../helpers';
 const MEASURE = `(async () => {
   for (let i = 0; i < 40 && !document.querySelector('aside[data-rail] [data-list-item][data-active="true"]'); i++)
     await new Promise((r) => setTimeout(r, 250));
+  // The List animates colour (150 ms) and an unpainted harness window never advances a
+  // transition, so a route change leaves the old highlight frozen; measure the settled styles.
+  const still = document.createElement('style');
+  still.textContent = '*, *::before, *::after { transition: none !important; }';
+  document.head.appendChild(still);
   const a = document.querySelector('aside[data-rail]');
   const pick = (el, props) => {
     if (!el) return null;
@@ -20,12 +25,14 @@ const MEASURE = `(async () => {
     return Object.fromEntries(props.map((p) => [p, c[p]]));
   };
   const entry = [...a.querySelectorAll('[data-list-item]')].find((e) => e.dataset.active !== 'true');
-  return JSON.stringify({
+  const out = JSON.stringify({
     frame: pick(a, ['width', 'paddingTop', 'paddingLeft', 'backgroundColor', 'borderRightColor', 'rowGap']),
     heading: pick(a.querySelector('[data-list-group]'), ['fontFamily', 'fontSize', 'fontWeight', 'letterSpacing', 'textTransform', 'color', 'margin']),
     entry: pick(entry, ['fontFamily', 'fontSize', 'fontWeight', 'color', 'padding', 'borderRadius', 'height']),
     current: pick(a.querySelector('[data-list-item][data-active="true"]'), ['color', 'backgroundColor', 'fontSize', 'padding']),
   });
+  still.remove();
+  return out;
 })()`;
 
 const PORT = parseInt(process.env.SENSEI_PORT ?? '7744', 10);

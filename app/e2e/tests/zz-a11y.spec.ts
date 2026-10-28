@@ -101,7 +101,7 @@ const OBSERVATORY: Array<{ route: string; sel: string }> = [
   { route: '/sessions',      sel: 'main' },
   { route: '/learnings',     sel: 'main' },
   { route: '/upgrades',      sel: 'main' },
-  { route: '/settings',      sel: 'main' },
+  { route: '/settings/general', sel: 'main' },
 ];
 
 test.describe('accessibility (axe) — light + dark', () => {

@@ -218,7 +218,13 @@ export async function navigateToScreen(
     await navigateTo(tauriPage, route);
     try {
       await tauriPage.waitForSelector(screenSelector, 8_000);
-      return;
+      // The selector can match on the page a redirect landed on — the boot gate sends an early
+      // navigation through /health to Today, and the rail is on both — so arrival is the path.
+      const at = (await tauriPage.evaluate('location.pathname')) as string;
+      if (at === route.split(/[?#]/)[0]) return;
+      lastErr = new Error(`navigateToScreen: asked for '${route}', the window is on '${at}'`);
+      if (Date.now() >= deadline) break;
+      continue;
     } catch (e) {
       lastErr = e;
       if (Date.now() >= deadline) break;
