@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	statusBadge,
 	segmentStateBadge,
+	sessionView,
+	runProgress,
 	progressWidth,
 	gateSeverity,
 	orderGatesByUrgency,
@@ -9,6 +11,7 @@ import {
 	gateHref
 } from './relay-view';
 import type { RelayRunStatus, SegmentState, RelayGate } from './relay-data';
+import { K2_NODE } from '$lib/components/kit/vocab';
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 
@@ -31,13 +34,15 @@ function gate(overrides: Partial<RelayGate> = {}): RelayGate {
 describe('relay-view', () => {
 	describe('statusBadge', () => {
 		it('maps every run status to a plain-language label + tone class', () => {
-			const cases: Record<RelayRunStatus, { label: string; toneClass: string }> = {
-				running: { label: 'Running', toneClass: 'text-accent' },
+			const cases: Record<RelayRunStatus, { label: string; toneClass: string; pulseClass?: string }> = {
+				// running is success, as the list's dot and the mockup's jade: accent
+				// is "needs you", and a running run does not (audit 2026-10-28, item 5).
+				running: { label: 'Running', toneClass: 'text-success', pulseClass: 'bg-success' },
 				paused: { label: 'Paused', toneClass: 'text-ink-soft' },
 				stalled: { label: 'Stuck', toneClass: 'text-warning' },
 				crashed: { label: 'Crashed', toneClass: 'text-danger' },
 				blocked: { label: 'Needs you', toneClass: 'text-accent' },
-				done: { label: 'Done', toneClass: 'text-success' },
+				done: { label: 'Done', toneClass: 'text-ink-soft' },
 				failed: { label: 'Failed', toneClass: 'text-danger' }
 			};
 			for (const [status, expected] of Object.entries(cases)) {
@@ -66,41 +71,69 @@ describe('relay-view', () => {
 	});
 
 	describe('segmentStateBadge', () => {
-		it('maps every segment state to a plain-language label + tone class', () => {
-			const cases: Record<SegmentState, { label: string; toneClass: string }> = {
-				pending: { label: 'Queued', toneClass: 'text-ink-soft' },
-				active: { label: 'In progress', toneClass: 'text-success' },
-				done: { label: 'Done', toneClass: 'text-ink-soft' },
-				skipped: { label: 'Skipped', toneClass: 'text-ink-faint' },
-				failed: { label: 'Failed', toneClass: 'text-danger' },
-				blocked: { label: 'Needs you', toneClass: 'text-accent' },
-				needs_review: { label: 'Needs you', toneClass: 'text-accent' }
+		// One step-colour table: the kit's K2_NODE, which the detail's outline and
+		// the list's pips also render (audit 2026-10-28, item 5: active was accent in
+		// the list pips and success in the detail; blocked danger vs accent).
+		it('takes every step colour from the kit, with plain-language labels', () => {
+			const cases: Record<SegmentState, { label: string; toneClass: string; pipClass: string }> = {
+				pending: { label: 'Queued', toneClass: K2_NODE.pending.text, pipClass: 'border border-paper-edge bg-transparent' },
+				active: { label: 'In progress', toneClass: K2_NODE.active.text, pipClass: K2_NODE.active.fill },
+				done: { label: 'Done', toneClass: K2_NODE.done.text, pipClass: K2_NODE.done.fill },
+				skipped: { label: 'Skipped', toneClass: K2_NODE.skipped.text, pipClass: 'border border-paper-edge bg-transparent' },
+				failed: { label: 'Failed', toneClass: K2_NODE.failed.text, pipClass: K2_NODE.failed.fill },
+				blocked: { label: 'Blocked', toneClass: K2_NODE.blocked.text, pipClass: K2_NODE.blocked.fill },
+				needs_review: { label: 'Needs you', toneClass: K2_NODE.needs_review.text, pipClass: K2_NODE.needs_review.fill }
 			};
 			for (const [state, expected] of Object.entries(cases)) {
-				expect(segmentStateBadge(state as SegmentState)).toEqual(expected);
+				expect(segmentStateBadge(state as SegmentState), state).toEqual(expected);
 			}
 		});
 
-		it('rises needs_review and blocked as accent-toned "Needs you" (they gate on you)', () => {
-			expect(segmentStateBadge('needs_review')).toEqual({ label: 'Needs you', toneClass: 'text-accent' });
-			expect(segmentStateBadge('blocked')).toEqual({ label: 'Needs you', toneClass: 'text-accent' });
-		});
-
-		it('reads active as the live "In progress" success tone', () => {
-			expect(segmentStateBadge('active').label).toBe('In progress');
-			expect(segmentStateBadge('active').toneClass).toBe('text-success');
-		});
-
-		it('tones failed danger and skipped faint', () => {
-			expect(segmentStateBadge('failed').toneClass).toBe('text-danger');
-			expect(segmentStateBadge('skipped').toneClass).toBe('text-ink-faint');
+		it('rises only the step that gates on you as "Needs you", in accent', () => {
+			expect(segmentStateBadge('needs_review')).toMatchObject({ label: 'Needs you', toneClass: 'text-accent' });
 		});
 
 		it('falls back to a muted "Unknown" for an unrecognized state', () => {
 			expect(segmentStateBadge('bogus' as SegmentState)).toEqual({
 				label: 'Unknown',
-				toneClass: 'text-ink-soft'
+				toneClass: 'text-ink-soft',
+				pipClass: 'border border-paper-edge bg-transparent'
 			});
+		});
+	});
+
+	describe('sessionView — the list card, from the same tables', () => {
+		const base = { status: 'running', needs: 0, attention: null, done: 5, total: 12, lastEventAt: null, plan: { phases: [] } };
+
+		it('a gate waiting on you is accent, whatever else is going on', () => {
+			const v = sessionView({ ...base, needs: 2, attention: 'stalled' } as never);
+			expect(v).toMatchObject({ dotClass: 'bg-accent', whyClass: 'text-accent font-semibold' });
+		});
+
+		it('a non-gate problem takes the kit status tone: stalled and blocked warn, failed is danger', () => {
+			expect(sessionView({ ...base, attention: 'stalled' } as never).dotClass).toBe('bg-warning');
+			expect(sessionView({ ...base, attention: 'blocked' } as never).dotClass).toBe('bg-warning');
+			expect(sessionView({ ...base, attention: 'failed' } as never).dotClass).toBe('bg-danger');
+		});
+
+		it('a running run with nothing wrong is success — as the detail badge', () => {
+			expect(sessionView(base as never).dotClass).toBe('bg-success');
+			expect(statusBadge('running').toneClass).toBe('text-success');
+		});
+
+		it('its pips are the detail\'s step colours, and it counts done/total', () => {
+			const phases = [{ id: 'a', state: 'done' }, { id: 'b', state: 'active' }, { id: 'c', state: 'blocked' }];
+			const v = sessionView({ ...base, plan: { phases } } as never);
+			expect(v.pips.map((p) => p.pipClass)).toEqual(phases.map((p) => segmentStateBadge(p.state as SegmentState).pipClass));
+			expect(v.count).toBe('5/12');
+		});
+	});
+
+	describe('runProgress', () => {
+		it('is the run\'s own counts: the stage is the first phase not done', () => {
+			const phases = [{ state: 'done' }, { state: 'active' }, { state: 'pending' }] as never;
+			expect(runProgress({ done: 5, total: 12, plan: { phases } } as never)).toEqual({ stage: 2, stages: 3, pct: 42, width: '42%' });
+			expect(runProgress({ done: 0, total: 0, plan: { phases: [] } } as never)).toEqual({ stage: 0, stages: 0, pct: 0, width: '0%' });
 		});
 	});
 

@@ -7,6 +7,10 @@
 // without a DOM or a live backend and the screen stays declarative.
 
 import type { RelayRunStatus, SegmentState, RelayGate } from './relay-data';
+import type { RelaySession } from './relay/types';
+import { K2_NODE, K2_STATUS, taskState } from '$lib/components/kit/vocab';
+import { relativeAge } from '$lib/triage/view';
+import * as m from '$lib/paraglide/messages';
 
 // ── run status → friendly label + tone class ─────────────────────────────────
 
@@ -15,18 +19,23 @@ interface StatusBadge {
 	label: string;
 	/** Token utility class tinting the pill (text-*, matching -soft fill via DojoChip). */
 	toneClass: string;
+	/** A live run's pulsing dot, in the run's own tone; absent otherwise. */
+	pulseClass?: string;
 }
 
 // The mockup (relay.jsx / dojo-relay.jsx) speaks in plain language: running reads
 // "Running", stalled reads "Stuck", blocked reads "Needs you". crashed ≠ failed —
 // both read danger but stay distinct labels.
+// running is success (the mockup's jade, the list's dot): accent means "needs
+// you", which a running run does not (audit 2026-10-28, item 5). blocked IS
+// "needs you" — dojo.relay_run_status: "waiting on a hard-block gate".
 const STATUS_BADGES: Record<RelayRunStatus, StatusBadge> = {
-	running: { label: 'Running', toneClass: 'text-accent' },
+	running: { label: 'Running', toneClass: 'text-success', pulseClass: 'bg-success' },
 	paused: { label: 'Paused', toneClass: 'text-ink-soft' },
 	stalled: { label: 'Stuck', toneClass: 'text-warning' },
 	crashed: { label: 'Crashed', toneClass: 'text-danger' },
 	blocked: { label: 'Needs you', toneClass: 'text-accent' },
-	done: { label: 'Done', toneClass: 'text-success' },
+	done: { label: 'Done', toneClass: 'text-ink-soft' },
 	failed: { label: 'Failed', toneClass: 'text-danger' }
 };
 
@@ -37,27 +46,99 @@ export function statusBadge(status: RelayRunStatus): StatusBadge {
 	return STATUS_BADGES[status] ?? FALLBACK_BADGE;
 }
 
-// ── segment state → friendly label + tone class ─────────────────────────────
+// ── segment state → label, text tone and pip ──────────────────────────────────
 
-// The outline (relay.jsx / relay-planner.jsx) reads in the same plain vocabulary
-// as the run status: a done step is "Done", the running one is "In progress", a
-// step still ahead is "Queued". needs_review + blocked both rise as "Needs you"
-// in the accent tone (they gate on the maintainer); failed reads danger; skipped
-// stays muted (deliberately passed over). Same shape as statusBadge so the markup
-// stays declarative and the mapping is unit-tested in one place.
-const SEGMENT_STATE_BADGES: Record<SegmentState, StatusBadge> = {
-	pending: { label: 'Queued', toneClass: 'text-ink-soft' },
-	active: { label: 'In progress', toneClass: 'text-success' },
-	done: { label: 'Done', toneClass: 'text-ink-soft' },
-	skipped: { label: 'Skipped', toneClass: 'text-ink-faint' },
-	failed: { label: 'Failed', toneClass: 'text-danger' },
-	blocked: { label: 'Needs you', toneClass: 'text-accent' },
-	needs_review: { label: 'Needs you', toneClass: 'text-accent' }
+// Every step colour is the kit's K2_NODE — the table the detail's outline renders —
+// so the list's pips, the detail's badges and the outline agree (audit 2026-10-28,
+// item 5: active was accent in the pips and success in the badge; blocked danger in
+// one, accent in another). The labels are the phone's plain language; only the step
+// that gates on you reads "Needs you".
+export interface SegmentView extends StatusBadge {
+	/** The step's pip fill; a hollow hairline pip when it has not run. */
+	pipClass: string;
+}
+
+const SEGMENT_LABELS: Record<SegmentState, string> = {
+	pending: 'Queued',
+	active: 'In progress',
+	done: 'Done',
+	skipped: 'Skipped',
+	failed: 'Failed',
+	blocked: 'Blocked',
+	needs_review: 'Needs you'
 };
 
-/** Friendly label + tone class for a segment state (defaults to a muted "Unknown"). */
-export function segmentStateBadge(state: SegmentState): StatusBadge {
-	return SEGMENT_STATE_BADGES[state] ?? FALLBACK_BADGE;
+const HOLLOW_PIP = 'border border-paper-edge bg-transparent';
+
+/** Label, text tone and pip for a step state (a muted "Unknown" for anything else). */
+export function segmentStateBadge(state: SegmentState): SegmentView {
+	const label = SEGMENT_LABELS[state];
+	if (!label) return { ...FALLBACK_BADGE, pipClass: HOLLOW_PIP };
+	const tone = K2_NODE[taskState(state)];
+	const hollow = state === 'pending' || state === 'skipped';
+	return { label, toneClass: tone.text, pipClass: hollow ? HOLLOW_PIP : tone.fill };
+}
+
+// ── the inbox list card ──────────────────────────────────────────────────────
+
+export interface SessionView {
+	dotClass: string;
+	why: string;
+	whyClass: string;
+	titleClass: string;
+	age: string;
+	pips: { id: string; pipClass: string }[];
+	count: string;
+}
+
+/**
+ * One list card, decided here. A gate waiting on you is accent; otherwise a
+ * non-gate problem takes the kit's run-status tone (stalled and blocked warn,
+ * failed is danger); a run going well is success, as the detail's badge.
+ */
+export function sessionView(session: RelaySession): SessionView {
+	const problem = session.attention ? K2_STATUS[session.attention] : null;
+	const statusLabels: Record<RelaySession['status'], string> = {
+		running: m.status_running(),
+		stalled: m.status_stalled(),
+		blocked: m.status_blocked(),
+		paused: m.status_paused(),
+		done: m.status_done(),
+		failed: m.status_failed()
+	};
+	const why =
+		session.needs > 0
+			? session.needs === 1
+				? m.card_needs_one()
+				: m.card_needs_many({ count: session.needs })
+			: session.attention === 'stalled'
+				? m.card_no_heartbeat()
+				: session.attention === 'blocked'
+					? m.card_blocked()
+					: session.attention === 'failed'
+						? m.card_failed()
+						: statusLabels[session.status];
+	return {
+		dotClass:
+			session.needs > 0
+				? 'bg-accent'
+				: problem
+					? problem.fill
+					: session.status === 'running'
+						? K2_STATUS.running.fill
+						: 'border border-ink-faint',
+		why,
+		whyClass:
+			session.needs > 0
+				? 'text-accent font-semibold'
+				: problem
+					? `${problem.text} font-semibold`
+					: 'text-ink-soft',
+		titleClass: session.status === 'done' ? 'text-ink-soft' : 'text-ink font-medium',
+		age: session.lastEventAt ? relativeAge(session.lastEventAt) : '',
+		pips: session.plan.phases.map((p) => ({ id: p.id, pipClass: segmentStateBadge(p.state).pipClass })),
+		count: `${session.done}/${session.total}`
+	};
 }
 
 // ── progress (done / total → clamped CSS percentage) ─────────────────────────
@@ -70,6 +151,20 @@ export function progressWidth(done: number, total: number): string {
 	if (!Number.isFinite(total) || total <= 0) return '0%';
 	const ratio = Math.max(0, Math.min(1, done / total));
 	return `${Math.round(ratio * 100)}%`;
+}
+
+/** A run's progress, from its own authoritative counts: the stage is the first
+ *  phase not done (its plan is summarised to one entry per phase). */
+export function runProgress(run: Pick<RelaySession, 'done' | 'total' | 'plan'>): {
+	stage: number;
+	stages: number;
+	pct: number;
+	width: string;
+} {
+	const stages = run.plan.phases.length;
+	const active = run.plan.phases.findIndex((p) => p.state !== 'done');
+	const width = progressWidth(run.done, run.total);
+	return { stage: active === -1 ? stages : active + 1, stages, pct: parseInt(width, 10), width };
 }
 
 // ── "blocked on you" home: gate urgency (P4.6) ───────────────────────────────

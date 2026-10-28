@@ -8,6 +8,7 @@
 	import RelayAskCard from './RelayAskCard.svelte';
 	import { relayInboxState, type SendReply } from './relay-inbox-state.svelte';
 	import { relativeAge } from '$lib/triage/view';
+	import { runProgress } from '$lib/relay-view';
 	import * as m from '$lib/paraglide/messages';
 
 	// The run detail (mockup RunDetail) — right panel of the two-panel inbox. Reads
@@ -40,12 +41,11 @@
 	const openCount = $derived(run ? run.asks.filter((a) => !st.answered[a.id]).length : 0);
 	const tone = $derived(openCount ? 'text-accent' : 'text-ink-soft');
 
-	// Progress: current phase = first not-done; the done/total numbers are the run's
-	// own authoritative counts (its plan graph is summarized to one pip per phase).
-	const activeIdx = $derived(run ? run.plan.phases.findIndex((p) => p.state !== 'done') : -1);
-	const stages = $derived(run?.plan.phases.length ?? 0);
-	const stage = $derived(activeIdx === -1 ? stages : activeIdx + 1);
-	const pct = $derived(run && run.total ? Math.round((run.done / run.total) * 100) : 0);
+	// Progress is runProgress's: the run's own counts, the stage the first phase not done.
+	const progress = $derived(run ? runProgress(run) : { stage: 0, stages: 0, pct: 0, width: '0%' });
+	const stages = $derived(progress.stages);
+	const stage = $derived(progress.stage);
+	const pct = $derived(progress.pct);
 
 	const sessionId = $derived((run?.id ?? '').slice(0, 8));
 	const meta = $derived(
