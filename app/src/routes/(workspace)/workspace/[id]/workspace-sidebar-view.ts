@@ -3,6 +3,8 @@
 // are unit-testable without mounting (the component itself only reads `page`
 // and renders these).
 import { ftrPctLabel } from '$lib/ftr.js';
+import { KANJI_ICONS } from '$lib/glyph-vocabulary';
+import { resolveActiveHref } from '$lib/rail';
 
 export interface SidebarSection {
     id: string;
@@ -27,6 +29,26 @@ export const SECTIONS: SidebarSection[] = [
     { id: 'integrations', kanji: '繋', label: 'Integrations' },
     { id: 'about', kanji: '情', label: 'About' },
 ];
+
+/** The workspace window's rail (user, 2026-10-28: the same Rail and List as the
+ *  main and settings windows): one group of section links, each with its kanji
+ *  and — for icon mode (#133) — the vocabulary's icon for that kanji. */
+export function buildWorkspaceNav(workspaceId: string) {
+    return [
+        {
+            text: 'This workspace',
+            children: SECTIONS.map((s) => {
+                const href = `/workspace/${workspaceId}/${s.id}`;
+                return { kanji: s.kanji, icon: KANJI_ICONS[s.kanji], text: s.label, href, value: href };
+            }),
+        },
+    ];
+}
+
+/** The href of the section the current route is in (the rails' one rule). */
+export function workspaceActiveHref(pathname: string, workspaceId: string): string {
+    return resolveActiveHref(pathname, SECTIONS.map((s) => `/workspace/${workspaceId}/${s.id}`));
+}
 
 /** True when the current path is within the given workspace section. */
 export function isSectionActive(pathname: string, workspaceId: string, sectionId: string): boolean {

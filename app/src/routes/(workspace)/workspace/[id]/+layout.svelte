@@ -41,6 +41,7 @@
 
     <div class="flex flex-1 overflow-hidden">
         <WorkspaceSidebar
+            glyphs={glyphMode(appState.config)}
             workspaceId={data.workspaceId}
             {icon}
             name={data.workspace?.name ?? '…'}

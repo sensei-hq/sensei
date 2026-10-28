@@ -24,3 +24,4 @@ export { default as Switch } from './Switch.svelte';
 export { default as TabBar } from './TabBar.svelte';
 export { default as TurnBar } from './TurnBar.svelte';
 export { default as Wordmark } from './Wordmark.svelte';
+export { default as Rail } from './Rail.svelte';
