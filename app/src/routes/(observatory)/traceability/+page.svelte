@@ -1,10 +1,10 @@
 <script lang="ts">
+    import { driftChipClasses } from '$lib/traceability.svelte.js';
     import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
   import { PageHeader, Screen, EmptyState, ScreenState, UnreadWorkspacesNotice } from '$lib/components';
   import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
   import {
-    driftChipClasses,
     rollupHeadline,
     type DriftGroup,
     type DriftRow,

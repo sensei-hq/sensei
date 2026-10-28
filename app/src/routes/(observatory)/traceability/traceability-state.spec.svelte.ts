@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { DriftItem } from '$lib/types.js';
 import {
-  driftTone,
-  driftChipClasses,
   rollupDrift,
   groupDriftByWorkspace,
   rollupHeadline,
@@ -44,22 +42,6 @@ describe('toDriftRow', () => {
     const item = { id: 'x', status: 'broken' } as unknown as DriftItem;
     expect(toDriftRow(item, { id: 'p', name: 'n' }).detail).toBe('');
   });
-});
-
-describe('driftTone', () => {
-  it('maps broken → danger', () => expect(driftTone('broken')).toBe('danger'));
-  it('maps drifted → warning', () => expect(driftTone('drifted')).toBe('warning'));
-  it('degrades an unexpected status to ink (never dropped)', () =>
-    expect(driftTone('flapping')).toBe('ink'));
-});
-
-describe('driftChipClasses', () => {
-  it('broken → danger tokens', () =>
-    expect(driftChipClasses('broken')).toEqual({ bg: 'bg-danger-soft', text: 'text-danger' }));
-  it('drifted → warning tokens', () =>
-    expect(driftChipClasses('drifted')).toEqual({ bg: 'bg-warning-soft', text: 'text-warning' }));
-  it('unknown → muted ink tokens', () =>
-    expect(driftChipClasses('whatever')).toEqual({ bg: 'bg-paper-mute', text: 'text-ink-soft' }));
 });
 
 describe('rollupDrift', () => {

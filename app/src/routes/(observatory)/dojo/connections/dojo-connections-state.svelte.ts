@@ -22,12 +22,8 @@ import type { DojoBoundWorkspace, DojoMembership } from '$lib/types.js';
  *  surface rather than drop (never a status colour). */
 export type SyncTone = 'success' | 'warning' | 'danger' | 'info' | 'ink';
 
-/** Named-token utility classes for a chip, plus the label to print. */
-export interface ChipClasses {
-  bg: string;
-  text: string;
-  label: string;
-}
+import type { ChipClasses } from '$lib/dojo-artifacts.js';
+export type { ChipClasses };
 
 /** A kind chip — kanji glyph + label + named-token classes. */
 export interface KindPill {

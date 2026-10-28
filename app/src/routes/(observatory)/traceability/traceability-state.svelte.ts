@@ -10,9 +10,8 @@
 // page component's follow-up note. Pure functions + types only; no runes.
 import type { DriftItem } from '$lib/types.js';
 
-/** Semantic tone a drift status maps to. `ink` = an unexpected status we still
- *  surface rather than drop (never a status colour). */
-export type DriftTone = 'danger' | 'warning' | 'ink';
+// The drift tone, chip and dot rules are shared with the workspace screen —
+// lib/traceability.svelte.ts (audit 2026-10-28, item 10).
 
 /** One cross-workspace drift row — a wire `DriftItem` annotated with the workspace
  *  it belongs to so the observatory-wide list can group + label it. */
@@ -44,12 +43,6 @@ export interface DriftRollup {
   workspacesAffected: number;
 }
 
-/** Chip utility classes for a drift status — all named tokens. */
-export interface ChipClasses {
-  bg: string;
-  text: string;
-}
-
 /** Pure: annotate a wire `DriftItem` with its owning workspace. Kept next to the
  *  loader so the two stay in lockstep. */
 export function toDriftRow(
@@ -63,28 +56,6 @@ export function toDriftRow(
     detail: item.detail ?? '',
     status: item.status,
   };
-}
-
-/** Pure: drift status → semantic tone. `broken` (the referenced symbol no
- *  longer exists) is the harder failure and reads danger; `drifted` (signature
- *  changed) reads warning; anything else degrades to muted ink. */
-export function driftTone(status: string): DriftTone {
-  if (status === 'broken') return 'danger';
-  if (status === 'drifted') return 'warning';
-  return 'ink';
-}
-
-/** Pure: named-token chip classes for a drift status. The lookup IS the
- *  rendering rule, so it lives with the domain rather than in the component. */
-export function driftChipClasses(status: string): ChipClasses {
-  switch (driftTone(status)) {
-    case 'danger':
-      return { bg: 'bg-danger-soft', text: 'text-danger' };
-    case 'warning':
-      return { bg: 'bg-warning-soft', text: 'text-warning' };
-    default:
-      return { bg: 'bg-paper-mute', text: 'text-ink-soft' };
-  }
 }
 
 /** Pure: cross-workspace rollup counts over every drift row. Plain object
