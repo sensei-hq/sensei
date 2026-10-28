@@ -26,3 +26,23 @@ state owns derivations, status, copy, thresholds and actions; components render.
 
 Clean: workspace overview, about, integrations, tickets, metrics list, health logs, sessions digest, consolidation,
 libraries, dōjō connections and sharing, share review, every `+page.ts` loader, most dōjō org and you screens.
+
+## Status — 2026-10-28
+
+| # | Done in | |
+|---|---|---|
+| 2, 4 | b60ea672 | identity write slot, phase, name, badge; ref-counted clock |
+| 3 | 09703055 | renewal joined the identity state; ForgeAuth removed |
+| 1 | 385ab7f8 | strengthView on the 1–5 scale; MemoryList (dead) removed |
+| 5 | 9abfbbc1 | relay step colours from the kit's K2_NODE; run table per the DB's meaning; sessionView, runProgress |
+| 6 | be7a787b | lib/ftr bands (0.8 / 0.6, neutral middle) and sessionFtrView |
+| 7 | 137bfab6 | correctionsView |
+| 8 | f031c884 | toolHealthView, toolUsageTotals, toolSourceView, toolKindView, callVerdictView |
+| 9 | 0c9bd0b4 | deltaView (tone from the rounded value), verdictToneVar |
+| 10 | 0b883bf2 | lib/traceability: driftDotStatus, DriftScan |
+| 11 | c3be0afd | componentStatusView |
+| 12 | 731a2821 | assistantViewOf / assistantView, configuredAssistants, watchAssistantEvents |
+| 13 | 7f885dde, 1b5255c6, cbf6dfde | saveRouterKey; ChainRoles + assignChainRoles; UpgradeRun (a run that cannot start is a failure; no simulated progress). RelayNotifyToggle is rendered nowhere — wire it into the relay inbox or remove it (user's call) |
+| 14 | 7b7fe532 | lib/clock — a ticking, ref-counted clock |
+| 15 | 241a1c2f, 4a7db153 | lib/format (fmtMs, fmtCount; "1 step"); scan progressOf. Open (single-site, low): setup Done summary sentences, RecentSessions time formats, local tone ternaries (upgrades, settings metrics, insights), the metric grain label, TrendChart, dōjō ScrSharing labels |
+

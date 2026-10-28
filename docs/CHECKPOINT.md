@@ -16,11 +16,14 @@ dojo.sensei-hq.com/version reports v0.21.1. Live verify of the list above happen
 The review index (docs/review/README.md) and the signing steps (docs/ops/apple-signing.md) are committed.
 Cloudflare's git integration for the dojo Worker: recommended disconnect (release.yml deploys it).
 
-**rokkit-first styling — DONE (2026-10-28):** no app overrides of rokkit (rokkit-defaults.spec). rokkit 1.10.0/1.10.1
-(guides rail List, AA inks, link Button target) → 1.11.0 (palette families: zen-sumi, sea-glass, sakura-ember,
-fuji-dusk, moss-garden) → 1.11.1 (no template text when an app scans rokkit's sources). App, dōjō, website import
-zenSumi (9758afc7); packages/sumi-palette deleted; ink-soft↔ink-mute swapped to rokkit's order. NEXT: the screen
-walk, one screen at a time, starting with Settings (docs/review/2026-10-27-settings-setup.md).
+**2026-10-28 (user): stability and consistency first.** Done and pushed: the three sidebars are one Rail
+(d4d9039c, Playwright-verified identical); Workspaces list query aggregates once (f5f9a631, 29.6→1.2 ms);
+identities — one PersonaList decides status/sentence/tone/button from daemon facts + its clock, renewal folded in,
+Settings and the overlay render it (0db67419, b60ea672, 09703055); the state/view audit
+(docs/review/2026-10-28-state-view-audit.md) items 1–14 and the duplicated parts of 15, each red-first. Open:
+item 15's single-site remainder; RelayNotifyToggle (unrendered) — wire or remove; a `make install` to see it all
+(one more Keychain prompt). rokkit main merge (publishes the site) is the user's: blocked for me. NEXT: the
+Settings screen walk.
 
 **Queued (burndown, UI walk):** Roots removal progress over the SSE stream (removal is one prune call today —
 needs steps that emit events); Libraries "sensei will wrap" claims docs not held; Instruments switch;
