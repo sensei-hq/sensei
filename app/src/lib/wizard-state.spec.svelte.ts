@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { WizardState, routerKeyStatus } from './wizard-state.svelte.js';
+import { WizardState, routerKeyStatus, saveRouterKey } from './wizard-state.svelte.js';
 import { scanState } from './scan-state.svelte.js';
 import { mockWizardLoadData, mockWatchRoot, mockRouter } from './setup/mock-contracts.js';
 
@@ -749,3 +749,32 @@ describe('WizardState — assistant and workspace writes that fail (#304)', () =
     await expect(ws.commitStage('workspaces')).rejects.toThrow(/app.*Conflict/);
   });
 });
+
+// Audit item 13 (2026-10-28): Settings · Providers carried a line-for-line copy of
+// the wizard's key save. One action, both callers.
+describe('saveRouterKey', () => {
+  const row = () => ({ id: 'openai', draftKey: '  sk-test  ', saveState: 'idle', saveError: '', configured: false, keyError: 'missing' } as never as Parameters<typeof saveRouterKey>[0]);
+
+  it('saves the trimmed key and clears the draft', async () => {
+    const r = row();
+    const api = { setGatewayRouterKey: vi.fn(async () => ({ ok: true, data: { configured: true } })) };
+    await saveRouterKey(r, api as never);
+    expect(api.setGatewayRouterKey).toHaveBeenCalledWith('openai', 'sk-test');
+    expect(r).toMatchObject({ saveState: 'done', configured: true, keyError: null, draftKey: '' });
+  });
+
+  it('says why a save failed and keeps the draft', async () => {
+    const r = row();
+    const api = { setGatewayRouterKey: vi.fn(async () => ({ ok: false, error: { message: 'keychain locked' } })) };
+    await saveRouterKey(r, api as never);
+    expect(r).toMatchObject({ saveState: 'failed', saveError: 'keychain locked', draftKey: '  sk-test  ' });
+  });
+
+  it('does nothing for an empty draft', async () => {
+    const r = { ...row(), draftKey: '   ' } as Parameters<typeof saveRouterKey>[0];
+    const api = { setGatewayRouterKey: vi.fn() };
+    await saveRouterKey(r, api as never);
+    expect(api.setGatewayRouterKey).not.toHaveBeenCalled();
+  });
+});
+

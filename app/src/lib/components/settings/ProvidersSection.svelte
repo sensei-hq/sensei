@@ -1,7 +1,7 @@
 <script lang="ts">
     import Kanji from '$lib/components/Kanji.svelte';
   import { onMount } from 'svelte';
-  import { wizardState, routerKeyStatus } from '$lib/wizard-state.svelte.js';
+  import { wizardState, routerKeyStatus, saveRouterKey, type RouterEntry } from '$lib/wizard-state.svelte.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
 
@@ -21,26 +21,9 @@
     }
   });
 
-  /** Per-row inline save. Settings has no Continue mechanic, so each row
-   *  persists on demand via the Save button — same daemon endpoint the
-   *  wizard's commit-hook used. Runs on the row's `router` object so the
-   *  status chips (`saveState`) reflect progress. */
-  async function saveKey(router: { id: string; draftKey: string; saveState: string; saveError: string; configured: boolean | null; keyError: string | null }): Promise<void> {
-    const trimmed = router.draftKey.trim();
-    if (trimmed.length === 0) return;
-    router.saveState = 'saving';
-    router.saveError = '';
-    const result = await senseiApi(appState.port).setGatewayRouterKey(router.id, trimmed);
-    if (result.ok) {
-      router.configured = result.data.configured;
-      router.keyError = null;
-      router.draftKey = '';
-      router.saveState = 'done';
-    } else {
-      router.saveState = 'failed';
-      router.saveError = result.error.message;
-    }
-  }
+  /** Per-row inline save — the wizard's own key save (saveRouterKey); Settings
+   *  has no Continue step, so each row saves on demand. */
+  const saveKey = (router: RouterEntry) => saveRouterKey(router, senseiApi(appState.port));
 </script>
 
 <div class="max-w-[820px]">

@@ -9,7 +9,7 @@
  * objects; status persists via commitStage; active flips on route change.
  */
 
-import { senseiApi, failureReason, daemonFailure, type ApiResult } from './api.js';
+import { senseiApi, failureReason, daemonFailure, type ApiResult, type SenseiApi } from './api.js';
 import { EventManager } from './events.js';
 import { roleAssignments } from './setup/role-meta.js';
 import { DEFAULT_PREFERENCES } from './setup/preferences.js';
@@ -104,6 +104,32 @@ export function routerKeyStatus(r: RouterEntry): { label: string; tone: 'success
   return r.configured
     ? { label: 'configured ✓', tone: 'success' }
     : { label: 'not configured', tone: 'mute' };
+}
+
+/**
+ * Save a provider's drafted key to the Keychain (through the daemon) and update
+ * the row's status — the one key save, for the wizard's commit step and
+ * Settings · Providers (audit 2026-10-28, item 13: Settings carried a copy).
+ * An empty draft is not a save.
+ */
+export async function saveRouterKey(
+  router: RouterEntry,
+  api: Pick<SenseiApi, 'setGatewayRouterKey'>,
+): Promise<void> {
+  const key = router.draftKey.trim();
+  if (key.length === 0) return;
+  router.saveState = 'saving';
+  router.saveError = '';
+  const result = await api.setGatewayRouterKey(router.id, key);
+  if (result.ok) {
+    router.configured = result.data.configured;
+    router.keyError = null;
+    router.draftKey = '';
+    router.saveState = 'done';
+  } else {
+    router.saveState = 'failed';
+    router.saveError = result.error.message;
+  }
 }
 
 export interface InferenceSlice {
@@ -242,19 +268,7 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
     // the UI shows progress. Failures are non-fatal — user can retry
     // later from settings — but we surface them via saveError.
     for (const router of ws.inference.routers) {
-      if (!router.needsKey || router.draftKey.trim().length === 0) continue;
-      router.saveState = 'saving';
-      router.saveError = '';
-      const result = await api.setGatewayRouterKey(router.id, router.draftKey.trim());
-      if (result.ok) {
-        router.configured = result.data.configured;
-        router.keyError = null;
-        router.draftKey = '';
-        router.saveState = 'done';
-      } else {
-        router.saveState = 'failed';
-        router.saveError = result.error.message;
-      }
+      if (router.needsKey) await saveRouterKey(router, api);
     }
   },
   assignments: async (ws, api) => {
