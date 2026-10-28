@@ -1,40 +1,27 @@
-# Checkpoint — 2026-10-27 (end of day; v0.21.1 tagged)
+# Checkpoint — 2026-10-28 (stability and consistency; e2e back to green)
 
-**Agenda — 2026-10-28 (user):**
-1. **Apple Developer ID → #282.** Sign senseid/sensei/sensei-mcp with it, so a reinstall stops revoking Keychain
-   approval. Then ONE signed install of everything waiting (below) and verify live: get_duplicates from qlty,
-   sync rows by identity, Make default, a dead credential → Sign in; rerun `bun run test:inspect -- tool-calls`.
-2. **Screen-by-screen feedback walk.** One screen at a time; the user gives feedback, changes are made, verified,
-   next. Start from the queue in `docs/roadmap/08-issue-burndown.md` (UI walk).
+**Slice:** stability + consistency (user, 2026-10-28) — one sidebar, identities from one state, the
+state/view audit, then `make test-app-e2e` green and `make install` verified live.
 
-**v0.21.1 tagged on main (PR #344) and installed locally (ad-hoc signed, so Keychain approval is asked again).**
-It carries everything built today: sync rows by identity, Make default, Settings · Dōjō by identity → day →
-repository, get_duplicates from qlty, dead credential → Sign in, General toggles, Settings as its own window
-(⌘,), Playground runs in watched workspaces, rokkit 1.9.1, the Supabase advisor fixes. The tag's release.yml
-waits on the user's approval of `deploy-dojo` (production DB), then deploys the Worker; done when
-dojo.sensei-hq.com/version reports v0.21.1. Live verify of the list above happens after the #282 signed install.
-The review index (docs/review/README.md) and the signing steps (docs/ops/apple-signing.md) are committed.
-Cloudflare's git integration for the dojo Worker: recommended disconnect (release.yml deploys it).
+**Done (develop, pushed):** three sidebars are one Rail (d4d9039c); Workspaces list query 29.6→1.2 ms
+(f5f9a631); identities from one PersonaList (b60ea672, 09703055); audit items 1–15 (f91d884d); "Notify me" in
+the relay inbox header (5206abfb); Settings · Dōjō says an empty sync list in words, tones from state
+(f500d1dc); e2e specs follow the app — data-screen="workspaces", Rail markup, 220px, #343 copy, the bogus
+/memories a11y route removed (c13568e0).
 
-**2026-10-28 (user): stability and consistency first.** Done and pushed: the three sidebars are one Rail
-(d4d9039c, Playwright-verified identical); Workspaces list query aggregates once (f5f9a631, 29.6→1.2 ms);
-identities — one PersonaList decides status/sentence/tone/button from daemon facts + its clock, renewal folded in,
-Settings and the overlay render it (0db67419, b60ea672, 09703055); the state/view audit
-(docs/review/2026-10-28-state-view-audit.md) items 1–14 and the duplicated parts of 15, each red-first. Open:
-item 15's single-site remainder; RelayNotifyToggle (unrendered) — wire or remove; a `make install` to see it all
-(one more Keychain prompt). rokkit main merge (publishes the site) is the user's: blocked for me. NEXT: the
-Settings screen walk.
+**rokkit develop (pushed, NOT released):** 4fd0cfeb primary/accent read as text by day (zen-sumi shu 600,
+others 700; 500 by night) and on-primary follows the painted fill → white labels on vermillion by day;
+5973a45c zen-sumi List resting items ink-mute in dark mode; 65e80bcf `text-on-{role}-soft`. Minor → 1.12.0.
 
-**Queued (burndown, UI walk):** Roots removal progress over the SSE stream (removal is one prune call today —
-needs steps that emit events); Libraries "sensei will wrap" claims docs not held; Instruments switch;
-Replay's scrolling and an easier call history; Svelte components as search symbols.
+**Next:**
+1. User: `! cd ~/Developer/rokkit && bun run bump minor` (release is blocked for me).
+2. Bump app/dōjō/website to rokkit 1.12.0; replace `text-accent` on `bg-accent-soft` (insights filter chip,
+   MemoryChip, dojo-artifacts, upgrades pills, DatapointDrilldown) with `text-on-accent-soft`; verify
+   `/__uno.css` 200 with no `${`.
+3. `make test-app-e2e` → green (a11y was the last red group); then `make install` and verify live.
+4. The Settings screen walk.
 
-**Supabase advisor (production dōjō):** fixed in DDL (0bbbc75c) — RLS on all 13 tables, search_path pinned,
-guarded by database/tests/dojo/advisor_guards.sql; reaches production with the next release's dōjō deploy.
-Production's Data API exposed `sensei`, unlike the repo (public, graphql_public, dojo); the user removed it
-(2026-10-27) — no code reads sensei through the API. The 47 SECURITY DEFINER warnings are the dōjō's caller-gated API + RLS
-helpers (by design); a test that calls each as a non-member is the proposed hardening.
+**Open:** rokkit main merge (publishes the guides site) is the user's. stash@{0} (abandoned daemon
+identity_status tests) can be dropped. #282 waits on the Apple Developer ID.
 
-**Known:** CI qlty workflows disabled (out of minutes; `gh workflow enable` restores). Long-lived Claude
-sessions keep an old sensei-mcp (404 on update_phase) — `/mcp` reconnect. Keychain tests fail on rebuilt
-test binaries (#282).
+**Known broken:** Keychain tests fail on rebuilt binaries (#282). CI qlty workflows disabled (minutes).
