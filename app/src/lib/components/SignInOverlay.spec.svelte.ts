@@ -6,7 +6,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
 import SignInOverlay from './SignInOverlay.svelte';
-import type { PersonaWire } from '$lib/personas.svelte.js';
+import type { Identity } from '$lib/personas.svelte.js';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -14,21 +14,27 @@ afterEach(() => {
   cleanup = [];
 });
 
-const persona = (over: Partial<PersonaWire> = {}): PersonaWire => ({
+// What PersonaList decides; the overlay renders it and nothing else.
+const persona = (over: Partial<Identity> = {}): Identity => ({
   label: 'sensei-hq-org',
   githubLogin: 'sensei-hq-org',
   sessionSlot: 'default',
-  connected: true,
-  forgeToken: { state: 'active', expiresAt: 1_788_204_679 },
-  action: 'none',
+  isDefault: false,
+  status: 'ready',
+  expiresAt: 1_788_204_679,
+  standing: '7.0 hours left',
+  tone: 'ok',
+  action: null,
+  busy: false,
+  buttonLabel: null,
   ...over
 });
+const connect = (over: Partial<Identity> = {}) =>
+  persona({ status: 'neverConnected', standing: 'never signed in on this machine', tone: 'idle', action: { kind: 'connect', label: 'Connect' }, buttonLabel: 'Connect', ...over });
 
 const BASE = {
   open: true,
-  personas: [persona()],
-  actionLabel: () => 'Sign in',
-  describe: () => '7.0 hours left'
+  identities: [persona()]
 };
 
 const root = (m: { container: HTMLElement }) =>
@@ -46,7 +52,7 @@ describe('SignInOverlay', () => {
   it('lists one row per identity', () => {
     const m = mountComponent(SignInOverlay, {
       ...BASE,
-      personas: [persona(), persona({ label: 'devuser', githubLogin: null, action: 'connect' })]
+      identities: [persona(), connect({ label: 'devuser', githubLogin: null })]
     });
     cleanup.push(m.destroy);
     expect(rows(m)).toHaveLength(2);
@@ -63,42 +69,50 @@ describe('SignInOverlay', () => {
     expect(rows(m)[0].textContent).toContain('ready');
   });
 
-  it('shows the action button only for identities that need one', () => {
-    const m = mountComponent(SignInOverlay, {
-      ...BASE,
-      personas: [persona({ action: 'signIn' })],
-      actionLabel: () => 'Sign in again'
+  it('renders the state\'s sentence, tone and button — it decides none of them', () => {
+    // The user (2026-10-28): "credential expired" beside "ready" came from the
+    // view combining fields its own way. It now shows what PersonaList says.
+    const expired = persona({
+      status: 'expired',
+      standing: 'credential expired',
+      tone: 'dead',
+      action: { kind: 'signIn', label: 'Sign in again' },
+      buttonLabel: 'Sign in again'
     });
+    const m = mountComponent(SignInOverlay, { ...BASE, identities: [expired] });
     cleanup.push(m.destroy);
-    const btn = rows(m)[0].querySelector('button') as HTMLButtonElement;
-    expect(btn.textContent).toContain('Sign in again');
+    const row = rows(m)[0] as HTMLElement;
+    expect(row.textContent).toContain('credential expired');
+    expect(row.textContent).not.toContain('ready');
+    expect(row.dataset.tone).toBe('dead');
+    expect((row.querySelector('button') as HTMLButtonElement).textContent).toContain('Sign in again');
   });
 
   it('reports which persona was clicked, not just that a click happened', () => {
     // The overlay is a list. A callback with no argument would leave the caller
     // guessing which identity to sign in.
-    const onSignIn = vi.fn();
-    const target = persona({ label: 'devuser', action: 'connect' });
+    const onAct = vi.fn();
+    const target = connect({ label: 'devuser' });
     const m = mountComponent(SignInOverlay, {
       ...BASE,
-      personas: [persona(), target],
-      onSignIn
+      identities: [persona(), target],
+      onAct
     });
     cleanup.push(m.destroy);
     (rows(m)[1].querySelector('button') as HTMLButtonElement).click();
-    expect(onSignIn).toHaveBeenCalledWith(target);
+    expect(onAct).toHaveBeenCalledWith(target);
   });
 
   it('disables only the row whose sign-in is in flight', () => {
-    const busy = persona({ label: 'a', action: 'connect' });
-    const idle = persona({ label: 'b', action: 'connect' });
+    const busy = connect({ label: 'a', busy: true, buttonLabel: 'opening…' });
+    const idle = connect({ label: 'b' });
     const m = mountComponent(SignInOverlay, {
       ...BASE,
-      personas: [busy, idle],
-      isBusy: (p: PersonaWire) => p.label === 'a'
+      identities: [busy, idle]
     });
     cleanup.push(m.destroy);
     expect((rows(m)[0].querySelector('button') as HTMLButtonElement).disabled).toBe(true);
+    expect(rows(m)[0].querySelector('button')!.textContent).toContain('opening…');
     expect((rows(m)[1].querySelector('button') as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -107,7 +121,7 @@ describe('SignInOverlay', () => {
     // against a registry that is merely unreachable.
     const m = mountComponent(SignInOverlay, {
       ...BASE,
-      personas: [],
+      identities: [],
       error: 'could not read the identity list'
     });
     cleanup.push(m.destroy);
@@ -118,14 +132,14 @@ describe('SignInOverlay', () => {
   it('says it is reading rather than claiming emptiness before the first read', () => {
     // Opening from the menu starts the read and shows the overlay in the same
     // tick, so "No identities yet" would be visible over data not yet fetched.
-    const m = mountComponent(SignInOverlay, { ...BASE, personas: [], loaded: false });
+    const m = mountComponent(SignInOverlay, { ...BASE, identities: [], loaded: false });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[data-component="sign-in-loading"]')).not.toBeNull();
     expect(root(m)!.textContent).not.toMatch(/no identities yet/i);
   });
 
   it('distinguishes a genuinely empty registry from a failure', () => {
-    const m = mountComponent(SignInOverlay, { ...BASE, personas: [], error: null, loaded: true });
+    const m = mountComponent(SignInOverlay, { ...BASE, identities: [], error: null, loaded: true });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[role="alert"]')).toBeNull();
     expect(root(m)!.textContent).toMatch(/no identities yet/i);
@@ -138,7 +152,7 @@ describe('SignInOverlay', () => {
     // old unit test did not, because it dispatched keydown onto the element.
     const m = mountComponent(SignInOverlay, {
       ...BASE,
-      personas: [persona({ action: 'connect' })]
+      identities: [connect()]
     });
     cleanup.push(m.destroy);
     const active = document.activeElement as HTMLElement;

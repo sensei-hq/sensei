@@ -13,45 +13,28 @@
   // The modal behaviour (scrim, Escape, click-outside, focus in, kept in and
   // given back) is ModalShell's.
   //
-  // PRESENTATIONAL. The list, the per-row action and the busy state come from
-  // personas.svelte.ts; this renders them and reports clicks upward.
-  import type { PersonaWire } from '$lib/personas.svelte.js';
+  // PRESENTATIONAL. Every identity's sentence, tone, button and busy state is
+  // decided by PersonaList (personas.svelte.ts) — the same state Settings · Dōjō
+  // renders — so the two cannot disagree. This renders it and reports clicks.
+  import { IDENTITY_TONE_CLASS, type Identity } from '$lib/personas.svelte.js';
   import ModalShell from './ModalShell.svelte';
   import SignInPending from './SignInPending.svelte';
 
   interface Props {
     open: boolean;
-    personas: PersonaWire[];
+    identities: Identity[];
     /** Non-null when the read or an attempt FAILED. Rendered instead of a
      *  list — "no identities" and "we could not ask" are different answers. */
     error?: string | null;
     /** False until a read has succeeded. Distinguishes "none" from "not yet
      *  asked" — without it the overlay claims emptiness on open. */
     loaded?: boolean;
-    /** Per-row, so one slow sign-in does not disable the others. */
-    isBusy?: (p: PersonaWire) => boolean;
-    actionLabel: (p: PersonaWire) => string;
-    describe: (p: PersonaWire) => string;
-    onSignIn?: (p: PersonaWire) => void;
+    onAct?: (identity: Identity) => void;
     onClose?: () => void;
     /** The sign-in in flight (#300): which account to use, and its link. */
     pending?: { label: string; expectedLogin: string | null; url: string } | null;
   }
-  let {
-    open,
-    personas,
-    error = null,
-    loaded = true,
-    isBusy = () => false,
-    actionLabel,
-    describe,
-    onSignIn,
-    onClose,
-    pending = null
-  }: Props = $props();
-
-  /** A row needs the user when it is not merely healthy. */
-  const needsUser = (p: PersonaWire) => p.action === 'signIn' || p.action === 'connect';
+  let { open, identities, error = null, loaded = true, onAct, onClose, pending = null }: Props = $props();
 
 </script>
 
@@ -70,30 +53,25 @@
         <p data-component="sign-in-loading" class="text-xs text-ink-mute">
           Reading identities…
         </p>
-      {:else if personas.length === 0}
+      {:else if identities.length === 0}
         <p class="text-xs text-ink-mute">
           No identities yet. They appear once sensei has scanned a repository and
           seen who authored the commits.
         </p>
       {:else}
         <ul class="m-0 flex list-none flex-col gap-2 p-0">
-          {#each personas as p (p.label)}
+          {#each identities as p (p.label)}
             <li
               data-persona={p.label}
+              data-tone={p.tone}
               class="flex items-center justify-between gap-3 rounded-md border border-paper-edge px-3 py-2"
             >
               <div class="flex min-w-0 flex-col">
                 <span class="truncate text-sm text-ink">{p.githubLogin ?? p.label}</span>
-                <span
-                  class="text-xs"
-                  class:text-warning={needsUser(p)}
-                  class:text-ink-mute={!needsUser(p)}
-                >
-                  {describe(p)}
-                </span>
+                <span class="text-xs {IDENTITY_TONE_CLASS[p.tone]}">{p.standing}</span>
               </div>
 
-              {#if p.action === 'none'}
+              {#if p.action === null}
                 <!-- Nothing to do. A button here would invite a needless
                      sign-in, which rotates a working credential for no reason. -->
                 <span class="whitespace-nowrap text-xs text-success">ready</span>
@@ -101,10 +79,10 @@
                 <button
                   type="button"
                   class="whitespace-nowrap rounded-md border border-paper-edge px-2 py-1 text-xs text-ink hover:bg-paper-mute disabled:opacity-50"
-                  disabled={isBusy(p)}
-                  onclick={() => onSignIn?.(p)}
+                  disabled={p.busy}
+                  onclick={() => onAct?.(p)}
                 >
-                  {isBusy(p) ? 'opening…' : actionLabel(p)}
+                  {p.buttonLabel}
                 </button>
               {/if}
             </li>

@@ -52,14 +52,6 @@
         dismissed = true;
     }
 
-    async function signIn(p: Parameters<typeof personaList.act>[0]) {
-        await personaList.act(p);
-        // Re-read rather than assume: the standing changes only once the daemon
-        // has observed the new credential, and reporting success from the click
-        // is how a failed sign-in looks like a successful one.
-        await personaList.load();
-    }
-
     // Expose appState + healthState on window for E2E test helpers (dev builds
     // only). Tests inject daemon config via `__sensei_state__.appState.config`
     // and can drive the boot gate via `__sensei_state__.healthState.status` to
@@ -102,10 +94,11 @@
         // enforced in ForgeAuth, not by the interval.
         if (duties.renewsCredentials) {
             forgeAuth.start();
-            // The identity list backs the overlay. Loaded once here and re-read
-            // after each attempt; the 5-minute forgeAuth poll is what notices a
-            // credential dying while the app sits open.
+            // The identity state backs the overlay. It re-reads every minute and
+            // moves its clock, so a credential that dies while the app sits open
+            // says so without a click.
             void personaList.load();
+            personaList.start();
         }
         const unlistens: Array<() => void> = [];
         // eslint-disable-next-line @typescript-eslint/no-floating-promises
@@ -131,12 +124,23 @@
             listen<{ from: string }>("config-saved", (e) => {
                 if (e.payload.from !== label) void appState.load();
             }).then((fn) => unlistens.push(fn));
+            // The same for identities: the overlay (main) and Settings · Dōjō
+            // (settings window) each hold the identity state; a sign-in, an
+            // approval or a new default in one is re-read by the other.
+            personaList.onChanged = () => void emit("identities-changed", { from: label });
+            listen<{ from: string }>("identities-changed", (e) => {
+                if (e.payload.from !== label) void personaList.load();
+            }).then((fn) => unlistens.push(fn));
         });
         return () => {
             for (const fn of unlistens) fn();
             daemonHealth.stop();
-            if (duties.renewsCredentials) forgeAuth.stop();
+            if (duties.renewsCredentials) {
+                forgeAuth.stop();
+                personaList.stop();
+            }
             appState.onConfigSaved = null;
+            personaList.onChanged = null;
         };
     });
 </script>
@@ -144,13 +148,10 @@
 <DaemonStatusBanner mode={daemonHealth.dbMode} />
 <SignInOverlay
     open={overlayOpen}
-    personas={personaList.personas}
+    identities={personaList.identities}
     error={personaList.error ?? forgeAuth.lastError}
     loaded={personaList.loaded}
-    isBusy={(p) => personaList.isBusy(p)}
-    actionLabel={(p) => personaList.actionLabel(p)}
-    describe={(p) => personaList.describe(p, Math.floor(Date.now() / 1000))}
-    onSignIn={signIn}
+    onAct={(i) => personaList.act(i)}
     onClose={closeOverlay}
     pending={personaList.pending}
 />

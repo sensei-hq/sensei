@@ -28,7 +28,7 @@
   // it from `sessionSlot` — never from `label`, which is a display string.
   $effect(() => {
     void personaList.load().then(() => {
-      state?.setPersona(signedInSlot(personaList.personas));
+      state?.setPersona(signedInSlot(personaList.identities));
     });
   });
 

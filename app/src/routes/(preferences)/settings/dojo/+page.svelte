@@ -2,7 +2,7 @@
     import { railIcon } from "../settings-nav";
   import { invalidateAll } from '$app/navigation';
   import { PageHeader, Screen, ScreenState, SignInPending } from "$lib/components";
-  import { personaList } from '$lib/personas.svelte.js';
+  import { IDENTITY_TONE_CLASS, personaList } from '$lib/personas.svelte.js';
   import {
     agreementLine,
     detailLine,
@@ -15,20 +15,13 @@
 
   let { data } = $props();
 
-  // The credential registry is the same singleton the sign-in overlay uses, so
-  // the standing shown here and the standing that opens the overlay can never
-  // disagree. `load()` resolves without throwing and records its own error.
+  // The identity state is the one the sign-in overlay renders: every sentence,
+  // tone and button below is decided there, and its clock moves while this
+  // screen is open, so "30 minutes left" reaches "credential expired" on its own.
   $effect(() => {
     void personaList.load();
-  });
-
-  // Recomputed on a timer, because the whole point of this screen is watching a
-  // credential approach expiry — a `now` captured once would freeze "30 minutes
-  // left" and never reach zero. 30s is well inside the one-hour warning band.
-  let now = $state(Math.floor(Date.now() / 1000));
-  $effect(() => {
-    const id = setInterval(() => (now = Math.floor(Date.now() / 1000)), 30_000);
-    return () => clearInterval(id);
+    personaList.start();
+    return () => personaList.stop();
   });
 
   // Each identity's sync, by day and repository, under the identity's NAME —
@@ -37,7 +30,7 @@
     data.sync
       ? groupSync(
           data.sync.entities,
-          personaList.personas.map((p) => ({ slot: p.sessionSlot, label: p.label })),
+          personaList.identities.map((p) => ({ slot: p.sessionSlot, label: p.label })),
         )
       : [],
   );
@@ -91,7 +84,7 @@
                connecting one, which is the wrong action against a registry that is
                merely unreachable. -->
           <p class="text-xs text-danger m-0" data-persona-error>{personaList.error}</p>
-        {:else if personaList.personas.length === 0}
+        {:else if personaList.identities.length === 0}
           <p class="text-sm text-ink-soft m-0" data-personas-empty>
             No identities yet. sensei infers them from commit authorship as you work.
           </p>
@@ -101,12 +94,12 @@
           {/if}
           <div class="mb-3" data-sign-in-pending><SignInPending pending={personaList.pending} /></div>
           <div class="flex flex-col gap-4" data-personas>
-            {#each personaList.personas as p (p.label)}
+            {#each personaList.identities as p (p.label)}
               <div
                 class="border border-paper-edge rounded-lg overflow-hidden"
                 data-identity={p.label}
                 data-persona={p.label}
-                data-tone={personaList.tone(p, now)}
+                data-tone={p.tone}
               >
                 <div class="grid grid-cols-[1fr_auto] gap-6 items-center px-4 py-3 bg-paper-soft">
                   <div>
@@ -119,7 +112,7 @@
                           type="button"
                           class="ml-2 text-xs text-ink-mute underline cursor-pointer bg-transparent border-0 p-0
                                  disabled:opacity-50"
-                          disabled={personaList.isBusy(p)}
+                          disabled={p.busy}
                           onclick={() => personaList.makeDefault(p)}
                           data-make-default
                         >
@@ -127,21 +120,17 @@
                         </button>
                       {/if}
                     </div>
-                    <!-- `describe` is PersonaList's, not this screen's: the overlay
-                         shows the same sentence, and a second copy would drift. -->
-                    <div class="text-xs mt-0.5 {toneClass(personaList.tone(p, now))}" data-standing>
-                      {personaList.describe(p, now)}
-                    </div>
+                    <div class="text-xs mt-0.5 {IDENTITY_TONE_CLASS[p.tone]}" data-standing>{p.standing}</div>
                   </div>
-                  {#if p.action !== 'none'}
+                  {#if p.action}
                     <button
                       type="button"
                       class="text-xs px-3 py-1.5 rounded-md border border-paper-edge text-ink
                              hover:bg-paper-soft cursor-pointer disabled:opacity-50"
-                      disabled={personaList.isBusy(p)}
-                      onclick={async () => { await personaList.act(p); await personaList.load(); }}
+                      disabled={p.busy}
+                      onclick={() => personaList.act(p)}
                     >
-                      {personaList.actionLabel(p)}
+                      {p.buttonLabel}
                     </button>
                   {/if}
                 </div>

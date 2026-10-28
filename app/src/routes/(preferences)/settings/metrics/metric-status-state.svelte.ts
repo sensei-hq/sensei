@@ -210,7 +210,7 @@ export function isConfigurable(repoKey: string | null): boolean {
 /**
  * The Keychain session slot to sign the activation write with, or null.
  *
- * `PersonaWire.sessionSlot` is the slot; `label` is a display string and
+ * An identity's `sessionSlot` is the slot; `label` is a display string and
  * explicitly NOT it. Signing against the label addresses a different credential
  * or none, so the daemon answers 401 and the screen would report a permissions
  * problem for what is really a wrong-field bug.

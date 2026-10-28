@@ -56,14 +56,25 @@ test.describe('sign-in overlay', () => {
     const res = await fetch(`${DAEMON_URL}/api/auth/personas`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      personas: Array<{ label: string; connected: boolean; action: string }>;
+      personas: Array<{
+        label: string;
+        connected: boolean;
+        renewalDue: boolean;
+        keychain: string | null;
+        forgeToken: { state: string; expiresAt: number | null };
+        action?: unknown;
+      }>;
     };
     expect(Array.isArray(body.personas)).toBe(true);
-    // Every row carries the fields the list renders, and an action the UI knows.
+    // Every row carries the FACTS the identity state decides from — and no
+    // decision of the daemon's own (user, 2026-10-28: one state decides).
     for (const p of body.personas) {
       expect(typeof p.label).toBe('string');
       expect(typeof p.connected).toBe('boolean');
-      expect(['connect', 'signIn', 'renew', 'none']).toContain(p.action);
+      expect(typeof p.renewalDue).toBe('boolean');
+      expect([null, 'readable', 'needsApproval', 'missing']).toContain(p.keychain);
+      expect(typeof p.forgeToken.state).toBe('string');
+      expect(p.action).toBeUndefined();
     }
   });
 

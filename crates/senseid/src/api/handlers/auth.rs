@@ -1081,27 +1081,16 @@ pub(crate) async fn status(
 pub(crate) async fn personas(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-    use crate::dojo_client::forge_token::{PersonaAction, persona_action};
-
     let rows = state.pg.persona_rows().await.map_err(|e| {
         tracing::error!(error = %e, "personas: could not read the registry");
         axum::http::StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let now = chrono::Utc::now().timestamp();
-    let actions: Vec<_> = rows
-        .iter()
-        .map(|r| persona_action(r.session_slot.as_deref(), r.verified, &r.state, r.expires_at, now))
-        .collect();
-    // One quiet read per connected persona whose credential is not known dead:
-    // a millisecond, and it cannot prompt. It is what tells "signed in" from
-    // "signed in, but the Keychain withholds the session" — the second needs the
-    // user's approval (#283). A dead one is a sign-in; reading it would only ask
-    // to approve a credential that is no use.
-    let slots: Vec<Option<String>> = rows
-        .iter()
-        .zip(&actions)
-        .map(|(r, a)| r.session_slot.clone().filter(|_| r.verified && *a != PersonaAction::SignIn))
-        .collect();
+    // One quiet read per connected persona: a millisecond, and it cannot prompt.
+    // What the Keychain SAID is reported as a fact; the identity state in the app
+    // decides what it means beside the expiry (user, 2026-10-28).
+    let slots: Vec<Option<String>> =
+        rows.iter().map(|r| r.session_slot.clone().filter(|_| r.verified)).collect();
     let sessions = tokio::task::spawn_blocking(move || {
         slots
             .iter()
@@ -1120,9 +1109,7 @@ pub(crate) async fn personas(
     let list: Vec<serde_json::Value> = rows
         .iter()
         .zip(&sessions)
-        .zip(&actions)
-        .map(|((r, session), action)| {
-            let action = *action;
+        .map(|(r, session)| {
             serde_json::json!({
                 "label": r.label,
                 // The DISPLAY label is rewritten to the verified login on
@@ -1135,7 +1122,10 @@ pub(crate) async fn personas(
                 "sessionSlot": r.session_slot,
                 "connected": r.session_slot.is_some() && r.verified,
                 "forgeToken": { "state": r.state, "expiresAt": r.expires_at },
-                "action": action_name(action, session.as_ref()),
+                // Facts, not a decision: the app's identity state decides the
+                // status from these and the clock.
+                "renewalDue": renewal_due(&r.state, r.expires_at, now),
+                "keychain": keychain_wire(session.as_ref()),
                 "isDefault": default_label.as_deref() == Some(r.label.as_str()),
             })
         })
@@ -1147,29 +1137,25 @@ pub(crate) async fn personas(
     })))
 }
 
-/// The wire name of a persona's action. `approve` when its stored session is
-/// there but the Keychain will not hand it over without the user (#283) —
-/// the daemon never prompts, so only a click can. `session` is the quiet read
-/// of a connected persona's session; `None` when there is nothing to read.
-fn action_name(
-    action: crate::dojo_client::forge_token::PersonaAction,
+/// What the Keychain said about a persona's stored session, as a wire name.
+/// `needsApproval` is the user's to grant (#283) — the daemon never prompts.
+/// `None` when nothing was read (the persona is not connected).
+fn keychain_wire(
     session: Option<&Result<(), crate::gateway_keys::KeychainError>>,
-) -> &'static str {
-    use crate::dojo_client::forge_token::PersonaAction;
-    // A credential known dead needs a sign-in whatever the Keychain says: the
-    // expiry is on record, and the sign-in's own write may prompt.
-    if action == PersonaAction::SignIn {
-        return "signIn";
+) -> Option<&'static str> {
+    use crate::gateway_keys::KeychainError;
+    match session? {
+        Ok(()) => Some("readable"),
+        Err(KeychainError::NeedsApproval) => Some("needsApproval"),
+        Err(_) => Some("missing"),
     }
-    if let Some(Err(crate::gateway_keys::KeychainError::NeedsApproval)) = session {
-        return "approve";
-    }
-    match action {
-        PersonaAction::Connect => "connect",
-        PersonaAction::SignIn => "signIn",
-        PersonaAction::Renew => "renew",
-        PersonaAction::None => "none",
-    }
+}
+
+/// Whether a renewal is due, by the scheduler's own rule (`forge_token_action`),
+/// so the margin lives in one place.
+fn renewal_due(state: &str, expires_at: Option<i64>, now: i64) -> bool {
+    use crate::dojo_client::forge_token::{ForgeTokenAction, forge_token_action, token_state_of};
+    forge_token_action(expires_at, now, token_state_of(state)) == ForgeTokenAction::Refresh
 }
 
 /// What approving a persona's Keychain item came to (#283). The refresh token
@@ -1827,29 +1813,28 @@ mod tests {
         assert!(!wants_html(None));
     }
 
-    /// #283: a session the Keychain will not hand over is the user's to
-    /// approve, whatever the forge standing says; otherwise the action is as
-    /// `persona_action` decided.
+    /// The persona list reports what the Keychain SAID, not a decision (user,
+    /// 2026-10-28: the identity state decides, the views render it). One wire
+    /// name per answer; `null` when nothing was read.
     #[test]
-    fn a_session_the_keychain_withholds_is_to_be_approved() {
-        use crate::dojo_client::forge_token::PersonaAction;
+    fn the_keychain_answer_is_reported_as_a_fact() {
         use crate::gateway_keys::KeychainError;
-        let withheld = Err(KeychainError::NeedsApproval);
-        assert_eq!(action_name(PersonaAction::None, Some(&withheld)), "approve");
-        assert_eq!(action_name(PersonaAction::Renew, Some(&withheld)), "approve");
-        assert_eq!(action_name(PersonaAction::None, Some(&Ok(()))), "none");
-        assert_eq!(action_name(PersonaAction::Renew, Some(&Ok(()))), "renew");
-        assert_eq!(action_name(PersonaAction::SignIn, None), "signIn");
-        // A credential known dead (its expiry is on record) is a sign-in,
-        // withheld or not: approving it would only reveal that it is dead, and
-        // the sign-in's own write may prompt (user, 2026-10-27).
-        assert_eq!(action_name(PersonaAction::SignIn, Some(&withheld)), "signIn");
-        assert_eq!(action_name(PersonaAction::Connect, None), "connect");
-        assert_eq!(
-            action_name(PersonaAction::None, Some(&Err(KeychainError::NotFound))),
-            "none",
-            "a missing item is the forge standing's to report, not an approval"
-        );
+        assert_eq!(keychain_wire(Some(&Ok(()))), Some("readable"));
+        assert_eq!(keychain_wire(Some(&Err(KeychainError::NeedsApproval))), Some("needsApproval"));
+        assert_eq!(keychain_wire(Some(&Err(KeychainError::NotFound))), Some("missing"));
+        assert_eq!(keychain_wire(None), None);
+    }
+
+    /// Renewal is due by the scheduler's own rule — the margin is not copied.
+    #[test]
+    fn renewal_is_due_by_the_schedulers_rule() {
+        use crate::dojo_client::forge_token::REFRESH_MARGIN_SECS;
+        let now = 1_788_120_000;
+        assert!(renewal_due("active", Some(now + REFRESH_MARGIN_SECS - 1), now));
+        assert!(!renewal_due("active", Some(now + REFRESH_MARGIN_SECS + 1), now));
+        assert!(!renewal_due("active", Some(now - 1), now), "past expiry is not a renewal");
+        assert!(!renewal_due("dead", Some(now + 60), now));
+        assert!(!renewal_due("active", None, now));
     }
 
     #[test]
