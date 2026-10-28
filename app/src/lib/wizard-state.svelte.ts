@@ -12,6 +12,7 @@
 import { senseiApi, failureReason, daemonFailure, type ApiResult, type SenseiApi } from './api.js';
 import { EventManager } from './events.js';
 import { roleAssignments } from './setup/role-meta.js';
+import { assignChainRoles } from './setup/chain-roles.svelte.js';
 import { DEFAULT_PREFERENCES } from './setup/preferences.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
@@ -272,10 +273,7 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
     }
   },
   assignments: async (ws, api) => {
-    // Diff pending vs. daemon truth so we PUT the minimal set. Two-phase
-    // order matters: CLEARS first (chain-role writes fail with 409 if
-    // another chain still owns the same role), THEN sets. Skip roles
-    // whose pending pick equals current truth.
+    // Diff pending vs. daemon truth so only the roles that changed are written.
     const roles: SenseiRole[] = ['inference', 'consolidation', 'embedding', 'voice'];
     const current = ws.assignments.roleAssignments;
     const pending = ws.assignments.pendingAssignments;
@@ -284,24 +282,9 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       .filter(r => (pending[r] ?? null) !== (current[r] ?? null))
       .map(r => ({ role: r, next: pending[r] ?? null, prev: current[r] ?? null }));
 
-    // A refused write fails the commit (#288) — it used to be logged and the
-    // stage marked done, with the role never assigned.
-    const refused: string[] = [];
-    // Phase 1 — clear every OLD chain that's losing its role.
-    // (Includes both "role unassigned" and "role moved to a different chain".)
-    for (const c of changes) {
-      if (c.prev) {
-        const result = await api.setGatewayChainRole(c.prev, null);
-        if (!result.ok) refused.push(`clearing ${c.role}: ${failureReason(result.error)}`);
-      }
-    }
-    // Phase 2 — set every NEW chain to its role.
-    for (const c of changes) {
-      if (c.next) {
-        const result = await api.setGatewayChainRole(c.next, c.role);
-        if (!result.ok) refused.push(`assigning ${c.role}: ${failureReason(result.error)}`);
-      }
-    }
+    // The one role write (clear old holders, then set new ones). A refusal
+    // fails the commit (#288) — it used to be logged and the stage marked done.
+    const refused = await assignChainRoles(api, changes);
     // Refresh state so `roleAssignments` reflects the daemon's truth — after a
     // refusal too, so the screen shows what actually stuck.
     await ws.refreshAssignments();

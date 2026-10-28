@@ -3,132 +3,16 @@
   import { onMount } from 'svelte';
   import { Select } from '@rokkit/ui';
   import { appState } from '$lib/appstate.svelte.js';
-  import { senseiApi, failureReason } from '$lib/api.js';
-  import { SENSEI_ROLES, type DaemonChain, type SenseiRole } from '$lib/setup/contracts.js';
-  import { ROLE_META, roleAssignments } from '$lib/setup/role-meta.js';
+  import { senseiApi } from '$lib/api.js';
+  import { SENSEI_ROLES } from '$lib/setup/contracts.js';
+  import { ROLE_META } from '$lib/setup/role-meta.js';
+  import { ChainRoles } from '$lib/setup/chain-roles.svelte.js';
 
-  let chains = $state<DaemonChain[]>([]);
-  let loading = $state(true);
-  let loadError = $state<string | null>(null);
-  // Role → chain id; daemon truth after each write.
-  let assignments = $state<Record<SenseiRole, string | null>>({
-    inference: null, consolidation: null, embedding: null, voice: null,
-  });
-  // Per-role save status so a slow write to one role doesn't hide the
-  // outcome for another.
-  let saveStatus = $state<Record<SenseiRole, 'idle' | 'saving' | 'saved' | 'error'>>({
-    inference: 'idle', consolidation: 'idle', embedding: 'idle', voice: 'idle',
-  });
-  let saveError = $state<Record<SenseiRole, string | null>>({
-    inference: null, consolidation: null, embedding: null, voice: null,
-  });
-  // Per-member busy so a slow move/remove on one row doesn't disable
-  // its neighbours. Keyed by fallback_chain_models.id.
-  let memberBusy = $state<Record<string, 'up' | 'down' | 'remove' | null>>({});
+  // Loading, the role picks, member order and every save status are ChainRoles'
+  // (audit 2026-10-28, item 13); this panel renders them.
+  const roles = new ChainRoles(() => senseiApi(appState.port));
 
-  async function loadChains(): Promise<void> {
-    // A failed read is said so (#288) — it used to show every role unassigned.
-    const result = await senseiApi(appState.port).tryListGatewayChains();
-    if (result.ok) {
-      chains = result.data.chains;
-      assignments = roleAssignments(chains);
-      loadError = null;
-    } else {
-      loadError = failureReason(result.error);
-    }
-    loading = false;
-  }
-
-  function optionsFor(role: SenseiRole): DaemonChain[] {
-    const meta = ROLE_META[role];
-    return chains.filter(c =>
-      c.isActive
-      && meta.capabilities.includes(c.capability)
-      && (c.role == null || c.role === role),
-    );
-  }
-
-  function chainById(id: string | null): DaemonChain | undefined {
-    if (!id) return undefined;
-    return chains.find(c => c.id === id);
-  }
-
-  async function pick(role: SenseiRole, nextChainId: string | null): Promise<void> {
-    const prev = assignments[role];
-    if ((nextChainId ?? null) === (prev ?? null)) return;
-    const api = senseiApi(appState.port);
-    saveStatus[role] = 'saving';
-    saveError[role] = null;
-
-    // Two-phase: CLEAR the old chain (frees the role), then SET the new.
-    // Same invariant as the wizard commit — otherwise the unique-when-set
-    // index rejects the second write.
-    if (prev) {
-      const cleared = await api.setGatewayChainRole(prev, null);
-      if (!cleared.ok) {
-        saveStatus[role] = 'error';
-        saveError[role] = cleared.error.message;
-        return;
-      }
-    }
-    if (nextChainId) {
-      const setResult = await api.setGatewayChainRole(nextChainId, role);
-      if (!setResult.ok) {
-        saveStatus[role] = 'error';
-        saveError[role] = setResult.error.message;
-        // Roll `assignments` back so the picker reflects daemon truth.
-        await loadChains();
-        return;
-      }
-    }
-    assignments[role] = nextChainId;
-    saveStatus[role] = 'saved';
-    setTimeout(() => { if (saveStatus[role] === 'saved') saveStatus[role] = 'idle'; }, 1500);
-  }
-
-  async function moveMember(role: SenseiRole, memberId: string, direction: -1 | 1): Promise<void> {
-    const chainId = assignments[role];
-    if (!chainId) return;
-    memberBusy[memberId] = direction === -1 ? 'up' : 'down';
-    saveStatus[role] = 'saving';
-    try {
-      const api = senseiApi(appState.port);
-      const res = await api.moveGatewayChainModel(chainId, memberId, direction);
-      if (!res.ok) {
-        saveStatus[role] = 'error';
-        saveError[role] = res.error.message;
-        return;
-      }
-      await loadChains();
-      saveStatus[role] = 'saved';
-      setTimeout(() => { if (saveStatus[role] === 'saved') saveStatus[role] = 'idle'; }, 1500);
-    } finally {
-      memberBusy[memberId] = null;
-    }
-  }
-
-  async function removeMember(role: SenseiRole, memberId: string): Promise<void> {
-    const chainId = assignments[role];
-    if (!chainId) return;
-    memberBusy[memberId] = 'remove';
-    saveStatus[role] = 'saving';
-    try {
-      const api = senseiApi(appState.port);
-      const res = await api.removeGatewayChainModel(chainId, memberId);
-      if (!res.ok) {
-        saveStatus[role] = 'error';
-        saveError[role] = res.error.message;
-        return;
-      }
-      await loadChains();
-      saveStatus[role] = 'saved';
-      setTimeout(() => { if (saveStatus[role] === 'saved') saveStatus[role] = 'idle'; }, 1500);
-    } finally {
-      memberBusy[memberId] = null;
-    }
-  }
-
-  onMount(loadChains);
+  onMount(() => roles.load());
 </script>
 
 <div class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg" data-testid="settings-inference">
@@ -138,18 +22,18 @@
     fallback list; change them here to try a different mix.
   </p>
 
-  {#if loading}
+  {#if roles.loading}
     <p class="text-sm text-ink-mute">Loading chains…</p>
-  {:else if loadError}
-    <p class="text-sm text-danger" data-testid="settings-inference-error">Could not load chains: {loadError}</p>
+  {:else if roles.loadError}
+    <p class="text-sm text-danger" data-testid="settings-inference-error">Could not load chains: {roles.loadError}</p>
   {:else}
     <div class="flex flex-col divide-y divide-paper-edge">
       {#each SENSEI_ROLES as role (role)}
         {@const meta = ROLE_META[role]}
-        {@const currentId = assignments[role]}
-        {@const current = chainById(currentId)}
-        {@const options = optionsFor(role)}
-        {@const status = saveStatus[role]}
+        {@const currentId = roles.assignments[role]}
+        {@const current = roles.chainById(currentId)}
+        {@const options = roles.optionsFor(role)}
+        {@const status = roles.saveStatus[role]}
         <div class="grid grid-cols-[28px_1fr_auto] gap-3 py-4 items-start" data-testid={`inference-role-${role}`}>
           <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xl text-accent leading-none mt-1" />
           <div class="min-w-0">
@@ -163,7 +47,7 @@
               <div class="flex flex-col gap-1 mt-2" data-testid={`inference-chain-members-${role}`}>
                 {#each current.models as m, i (m.memberId)}
                   {@const primary = i === 0}
-                  {@const busy = memberBusy[m.memberId]}
+                  {@const busy = roles.memberBusy[m.memberId]}
                   <div
                     class="grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-2 py-1 px-2 rounded"
                     class:bg-ink={primary}
@@ -180,7 +64,7 @@
                       disabled={i === 0 || !!busy}
                       title="Move up"
                       data-testid={`inference-member-up-${m.memberId}`}
-                      onclick={() => moveMember(role, m.memberId, -1)}
+                      onclick={() => roles.moveMember(role, m.memberId, -1)}
                     >▲</button>
                     <button
                       type="button"
@@ -189,7 +73,7 @@
                       disabled={i === current.models.length - 1 || !!busy}
                       title="Move down"
                       data-testid={`inference-member-down-${m.memberId}`}
-                      onclick={() => moveMember(role, m.memberId, 1)}
+                      onclick={() => roles.moveMember(role, m.memberId, 1)}
                     >▼</button>
                     <button
                       type="button"
@@ -198,15 +82,15 @@
                       disabled={!!busy}
                       title="Remove"
                       data-testid={`inference-member-remove-${m.memberId}`}
-                      onclick={() => removeMember(role, m.memberId)}
+                      onclick={() => roles.removeMember(role, m.memberId)}
                     >×</button>
                   </div>
                 {/each}
               </div>
             {/if}
-            {#if status === 'error' && saveError[role]}
+            {#if status === 'error' && roles.saveError[role]}
               <div class="text-xs text-danger mt-1" data-testid={`inference-role-error-${role}`}>
-                {saveError[role]}
+                {roles.saveError[role]}
               </div>
             {/if}
           </div>
@@ -233,7 +117,7 @@
                 items={[{ id: '', name: '— none —' }, ...options]}
                 fields={{ label: 'name', value: 'id' }}
                 value={currentId ?? ''}
-                onchange={(v) => pick(role, (v as string) || null)}
+                onchange={(v) => roles.pick(role, (v as string) || null)}
                 disabled={status === 'saving'}
               />
             </div>
