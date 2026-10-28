@@ -83,18 +83,11 @@
             <div class="flex flex-col gap-4">
                 {#each workspaces.sortedItems as proj (proj.id)}
                     {@const path = workspaces.workspacePath(proj)}
-                    {@const folderCount = proj.folders.length}
-                    {@const readyCount = proj.folders.filter(
-                        (f) => f.status === "indexed",
-                    ).length}
-                    {@const totalFiles = proj.folders.reduce(
-                        (s, f) => s + f.filesTotal,
-                        0,
-                    )}
-                    {@const completedFiles = proj.folders.reduce(
-                        (s, f) => s + f.filesCompleted,
-                        0,
-                    )}
+                    {@const progress = workspaces.progressOf(proj)}
+                    {@const folderCount = progress.folders}
+                    {@const readyCount = progress.ready}
+                    {@const totalFiles = progress.files}
+                    {@const completedFiles = progress.completed}
 
                     <div
                         class="bg-paper-mute rounded-lg p-5 border border-paper-edge"

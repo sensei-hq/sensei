@@ -52,6 +52,19 @@ describe('ScanWorkspaceState', () => {
     expect(state.totalFolders).toBe(0);
   });
 
+  // Audit item 15 (2026-10-28): the scan page recounted each workspace's
+  // folders and files in its template — a second copy of the totals' rule.
+  it('progressOf is one workspace\'s counts, and the totals are their sum', () => {
+    const state = new ScanWorkspaceState();
+    state.add(workspace('p1', 'Lumen', [
+      folder('f1', 'a', { filesTotal: 10, filesCompleted: 10, status: 'indexed' }),
+      folder('f2', 'b', { filesTotal: 5, filesCompleted: 2, status: 'indexing' }),
+    ]));
+    state.add(workspace('p2', 'Other', [folder('f3', 'c', { filesTotal: 4, filesCompleted: 0, status: 'queued' })]));
+    expect(state.progressOf(state.items[0]!)).toEqual({ folders: 2, ready: 1, files: 15, completed: 12 });
+    expect([state.totalFolders, state.readyFolders, state.totalFiles, state.completedFiles]).toEqual([3, 1, 19, 12]);
+  });
+
   it('add workspace', () => {
     const state = new ScanWorkspaceState();
     const p = workspace('p1', 'Lumen', [
