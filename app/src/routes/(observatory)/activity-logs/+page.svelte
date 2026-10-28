@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { clock } from '$lib/clock.svelte.js';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { EmptyState, PageHeader, Screen } from '$lib/components';
@@ -37,13 +38,13 @@
     return l;
   }
 
-  // Fresh "x ago" baseline, recomputed whenever a new page loads. Kept a pure
-  // derivation (not an $effect assigning state) — reading `data.rows` registers
-  // the dependency so the baseline moves forward on every refetch.
-  const now = $derived.by(() => {
-    data.rows.length;
-    return Date.now();
+  // "x ago", "running" and "next in …" read the app's ticking clock, so they
+  // move while the screen sits open (audit 2026-10-28, item 14).
+  $effect(() => {
+    clock.start();
+    return () => clock.stop();
   });
+  const now = $derived(clock.now);
 
   const sources = $derived(distinctSources(data.rows, data.filters.source));
   const modules = $derived(distinctModules(data.rows, data.filters.module));

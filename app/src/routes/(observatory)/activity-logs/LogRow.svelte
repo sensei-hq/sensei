@@ -10,7 +10,7 @@
 
   interface Props {
     row: LogRow;
-    /** `Date.now()` at render — kept a prop so relative time stays pure/testable. */
+    /** The app clock's now (lib/clock), passed in so relative time stays pure/testable. */
     now: number;
     expanded: boolean;
     onToggle: () => void;

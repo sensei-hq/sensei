@@ -13,7 +13,7 @@
 
   interface Props {
     task: ScheduledTask;
-    /** `Date.now()` at render — kept a prop so relative time stays pure/testable. */
+    /** The app clock's now (lib/clock), passed in so relative time stays pure/testable. */
     now: number;
     /** The worker's log tail (#96); absent where no tail is offered. */
     log?: TaskLog;
