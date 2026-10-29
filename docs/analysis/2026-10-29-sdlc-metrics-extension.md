@@ -37,6 +37,8 @@ the tracker.
 | D7 | Review defects (§6 Q3) | Detect two sources (§4 "Review defects"): **spec-driven tasks that turn out broken at build time** (e.g. OpenSpec tasks ticked done, then the build/test fails), and **cross-model review** (generated code reviewed by another model, and its findings fixed) |
 | D8 | Build/test classifier (§6 Q4) | **Every framework**, not a fixed list (§4 "Classifier") |
 | D9 | Write-back field set (§6 Q5) | Deferred; the user decides later. Design keeps every new figure write-back-capable but maps none by default |
+| D10 | A cross-model finding's identity (§6 Q1) | **A finding is one subsequent fix**: an Edit/Write on a file the review named, after the review. It works with every reviewer and needs no per-reviewer parsing. Known undercount: findings fixed in one edit count once |
+| D11 | Escaped defects across sessions (§6 Q2) | **Yes**: a defect counts against the ticked task even when the failure comes in a later session. Within one daemon, that means any later session linked to the same ticket. A teammate's failure is only visible once metrics sync to the Dōjō (out of scope here, §5) |
 
 ## 1 · What was read (grounding)
 
@@ -201,12 +203,6 @@ Every framework means the classifier must be data, not code branches:
 
 ## 6 · Open questions for design
 
-Q1–Q4 resolved as D5–D8; Q5 deferred (D9). Still open:
-
-1. **A finding's identity in another model's output.** A reviewer subagent or CLI
-   returns prose. Is a finding one item in its output (needs parsing per reviewer), or
-   one subsequent fix (an Edit on a file the review named)? The second is detectable
-   everywhere but undercounts findings fixed together.
-2. **Escaped defects across sessions.** A task ticked in one session and broken in the
-   next (or by another developer) — count it against the ticking task, or only within
-   the same session?
+All resolved: Q1–Q4 as D5–D8, Q5 deferred (D9), and the review-defect follow-ups as
+D10–D11. Design must still verify the Jira changelog and story-point field against a
+live board (§4 "Sprint history").
