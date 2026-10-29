@@ -1049,13 +1049,20 @@ impl PgStore {
 
     /// `(workspace_id, latest_session_activity)` for every workspace with attributed
     /// sessions — drives the analyzer scheduler's "what changed since last run"
-    /// check (#67).
+    /// check (#67). A session's activity is its start, its end, and the last of its
+    /// transcript turns to land: a transcript (re-)read changes what analysis derives
+    /// without any new session.
     pub async fn get_workspaces_with_session_activity(
         &self,
     ) -> Result<Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)>, String> {
         let rows: Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
-            "SELECT workspace_id, max(GREATEST(started_at, COALESCE(completed_at, started_at)))
-             FROM activity.sessions WHERE workspace_id IS NOT NULL GROUP BY workspace_id",
+            "SELECT s.workspace_id, max(GREATEST(s.started_at, s.completed_at, t.landed))
+               FROM activity.sessions s
+               LEFT JOIN (SELECT session_id, max(created_at) AS landed
+                            FROM activity.transcript_turns GROUP BY session_id) t
+                      ON t.session_id = s.client_session_id
+              WHERE s.workspace_id IS NOT NULL
+              GROUP BY s.workspace_id",
         )
         .fetch_all(&self.pool)
         .await

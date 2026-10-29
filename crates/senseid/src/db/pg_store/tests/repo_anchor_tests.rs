@@ -1753,6 +1753,67 @@ async fn workspaces_with_session_activity_reports_the_workspace() {
         .unwrap();
 }
 
+/// A transcript re-read under a new rule (automated turns, 2026-10-29) changes what
+/// analysis derives without any new session: the turns landing count as the
+/// workspace's activity, so the scheduler makes it due instead of waiting a day.
+#[tokio::test]
+async fn transcript_turns_landing_are_the_workspaces_activity() {
+    let s = pg_store().await;
+    let pid = s
+        .create_workspace(&format!("_test:act-tx-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
+    let fid = create_test_folder(&s, &format!("act-tx-{}", uuid::Uuid::new_v4())).await;
+    let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
+    sqlx_core::query::query(
+        "UPDATE activity.sessions SET started_at = now() - interval '10 days', completed_at = now() - interval '9 days' WHERE id = $1",
+    )
+    .bind(sid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO activity.transcript_turns (source, session_id, family, turn_index) VALUES ('test', $1, 'claude', 0)",
+    )
+    .bind(&csid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let activity = s.get_workspaces_with_session_activity().await.unwrap();
+    let latest = activity.iter().find(|(p, _)| *p == pid).expect("the workspace appears").1;
+
+    sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+        .bind(&csid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+        .bind(sid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    assert!(
+        latest > chrono::Utc::now() - chrono::Duration::hours(1),
+        "the turn that just landed is the latest activity, not the session's end 9 days ago: {latest}"
+    );
+}
+
 #[tokio::test]
 async fn workspace_ftr_and_quality_decode_numeric_metrics() {
     // Regression: the headline (Σ props / value) and the daily AVG(...) trend /
