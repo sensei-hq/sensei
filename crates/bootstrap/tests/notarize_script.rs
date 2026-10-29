@@ -21,7 +21,10 @@ fn run(dir: &Path, status: &str) -> (std::process::Output, String) {
             "xcrun",
             "#!/bin/sh\necho \"xcrun $*\" >> \"$CALLS\"\ncase \"$2\" in\n  submit) echo \"{\\\"id\\\":\\\"sub-1\\\",\\\"status\\\":\\\"$STATUS\\\"}\" ;;\n  log) echo 'The binary is not signed with a valid Developer ID certificate.' ;;\nesac\n",
         ),
-        ("ditto", "#!/bin/sh\necho \"ditto $*\" >> \"$CALLS\"\nfor last; do :; done\ntouch \"$last\"\n"),
+        (
+            "ditto",
+            "#!/bin/sh\necho \"ditto $*\" >> \"$CALLS\"\nfor last; do :; done\ntouch \"$last\"\n",
+        ),
     ] {
         let p = bin.join(name);
         std::fs::write(&p, body).unwrap();
@@ -62,7 +65,8 @@ fn a_rejected_submission_fails_and_shows_apples_log() {
     let (o, calls) = run(t.path(), "Invalid");
     assert!(!o.status.success(), "a rejected submission must fail the release");
     assert!(calls.contains("notarytool log sub-1"), "{calls}");
-    let said = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    let said =
+        format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
     assert!(said.contains("not signed with a valid Developer ID"), "{said}");
 }
 

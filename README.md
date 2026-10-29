@@ -32,6 +32,7 @@ Sibling repos (versioned independently, pulled in as dependencies):
 
 ```bash
 brew tap sensei-hq/tap
+brew trust sensei-hq/tap                   # Homebrew 7+ loads a third-party tap only once trusted
 brew install sensei-hq/tap/sensei          # CLI + daemon + MCP server
 brew install --cask sensei-hq/tap/senseihq # Desktop app
 ```

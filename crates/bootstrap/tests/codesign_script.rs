@@ -131,6 +131,7 @@ fn the_dev_identity_is_not_timestamped() {
 #[test]
 fn an_explicit_developer_id_is_timestamped() {
     let t = tempfile::tempdir().unwrap();
-    let (_, log) = run(t.path(), false, &[("SENSEI_SIGN_IDENTITY", "Developer ID Application: X (T)")]);
+    let (_, log) =
+        run(t.path(), false, &[("SENSEI_SIGN_IDENTITY", "Developer ID Application: X (T)")]);
     assert!(log.contains("--timestamp"), "{log}");
 }

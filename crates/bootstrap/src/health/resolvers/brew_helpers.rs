@@ -21,6 +21,8 @@ pub enum BrewError {
     LinkConflict { path: PathBuf },
     /// Formula not found — typically the tap isn't added.
     TapMissing,
+    /// Homebrew 7+ refuses a third-party tap until it is trusted (`brew trust`).
+    TapUntrusted { tap: String },
     /// Any other brew failure. Carries the last ~500 chars of stderr for
     /// display in the remedy.
     Other(String),
@@ -35,7 +37,17 @@ pub(crate) fn parse_brew_error(stderr: &str) -> BrewError {
     if stderr.contains("No available formula with the name") {
         return BrewError::TapMissing;
     }
+    if let Some(tap) = untrusted_tap(stderr) {
+        return BrewError::TapUntrusted { tap };
+    }
     BrewError::Other(truncate_to_tail(stderr, 500))
+}
+
+/// The tap named in Homebrew's "Refusing to load … from untrusted tap <tap>." refusal.
+fn untrusted_tap(stderr: &str) -> Option<String> {
+    let rest = stderr.split("from untrusted tap ").nth(1)?;
+    let tap = rest.split(|c: char| c.is_whitespace()).next()?.trim_end_matches('.');
+    (!tap.is_empty()).then(|| tap.to_string())
 }
 
 fn extract_target_path(stderr: &str) -> Option<PathBuf> {
@@ -115,9 +127,23 @@ pub(crate) fn tap_missing_remedy(formula: &str) -> Remedy {
         message: format!(
             "Couldn't find `{formula}`. Run the script below to add the tap, then re-check."
         ),
+        // Homebrew 7+ also refuses a third-party tap until it is trusted; an older one has
+        // no `brew trust`, so the step runs only where the command exists.
         script: format!(
-            "brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap && brew install {formula}"
+            "brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap && \
+             if brew commands --quiet | grep -qx trust; then brew trust sensei-hq/tap; fi && \
+             brew install {formula}"
         ),
+        url: None,
+    }
+}
+
+pub(crate) fn untrusted_tap_remedy(formula: &str, tap: &str) -> Remedy {
+    Remedy {
+        message: format!(
+            "Homebrew won't load `{formula}` until you trust the `{tap}` tap. Run the script below once, then re-check."
+        ),
+        script: format!("brew trust {tap} && brew install {formula}"),
         url: None,
     }
 }
@@ -157,6 +183,9 @@ pub(crate) fn brew_install_to_outcome(formula: &str, args: &[&str]) -> ResolveOu
             ResolveOutcome::NeedsHumanAction(overwrite_link_remedy(formula, &path))
         }
         Err(BrewError::TapMissing) => ResolveOutcome::NeedsHumanAction(tap_missing_remedy(formula)),
+        Err(BrewError::TapUntrusted { tap }) => {
+            ResolveOutcome::NeedsHumanAction(untrusted_tap_remedy(formula, &tap))
+        }
         Err(BrewError::Other(stderr)) => {
             ResolveOutcome::NeedsHumanAction(generic_brew_remedy(formula, &stderr))
         }
@@ -286,6 +315,38 @@ Please create a new installation in /opt/homebrew using one of the
     #[test]
     fn parses_tap_missing() {
         assert_eq!(parse_brew_error(TAP_MISSING), BrewError::TapMissing);
+    }
+
+    // Homebrew 7 refuses a third-party tap until it is trusted (Library/Homebrew/trust.rb).
+    const TAP_UNTRUSTED: &str = "Error: Refusing to load cask sensei-hq/tap/senseihq from untrusted tap sensei-hq/tap.\nRun `brew trust --cask sensei-hq/tap/senseihq` or `brew trust sensei-hq/tap` to trust it.\n";
+
+    #[test]
+    fn parses_an_untrusted_tap_and_names_it() {
+        assert_eq!(
+            parse_brew_error(TAP_UNTRUSTED),
+            BrewError::TapUntrusted { tap: "sensei-hq/tap".into() }
+        );
+    }
+
+    #[test]
+    fn an_untrusted_tap_is_trusted_then_the_install_retried() {
+        let r = untrusted_tap_remedy("sensei-hq/tap/sensei", "sensei-hq/tap");
+        assert_eq!(r.script, "brew trust sensei-hq/tap && brew install sensei-hq/tap/sensei");
+        assert!(r.message.contains("sensei-hq/tap"), "{}", r.message);
+    }
+
+    #[test]
+    fn adding_the_tap_also_trusts_it_where_homebrew_asks_for_trust() {
+        let r = tap_missing_remedy("sensei-hq/tap/sensei");
+        assert!(r.script.contains("brew tap sensei-hq/tap"), "{}", r.script);
+        assert!(
+            r.script.contains(
+                "if brew commands --quiet | grep -qx trust; then brew trust sensei-hq/tap; fi"
+            ),
+            "trusts on a Homebrew that has `brew trust`, skips it on one that does not: {}",
+            r.script
+        );
+        assert!(r.script.ends_with("brew install sensei-hq/tap/sensei"), "{}", r.script);
     }
 
     #[test]

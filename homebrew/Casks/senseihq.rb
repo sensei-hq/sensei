@@ -3,6 +3,7 @@
 #
 # Usage:
 #   brew tap sensei-hq/tap
+#   brew trust sensei-hq/tap        # Homebrew 7+: once per machine
 #   brew install --cask sensei-hq/tap/senseihq
 
 cask "senseihq" do
