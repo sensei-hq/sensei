@@ -199,7 +199,6 @@ test.describe('Workspace window — chrome', () => {
       { kanji: '録', label: 'Sessions'     },
       { kanji: '憶', label: 'Memories'     },
       { kanji: '跡', label: 'Traceability' },
-      { kanji: '構', label: 'Diagrams'     },
       { kanji: '蔵', label: 'Libraries'    },
       { kanji: '器', label: 'Instruments'  },
       { kanji: '型', label: 'Patterns'     },
@@ -207,6 +206,15 @@ test.describe('Workspace window — chrome', () => {
       { kanji: '札', label: 'Tickets'      },
       { kanji: '繋', label: 'Integrations' },
       { kanji: '情', label: 'About'        },
+      // The Diagrams subsection (M16): one entry per diagram.
+      { kanji: '構', label: 'Structure'         },
+      { kanji: '輪', label: 'Wheel'             },
+      { kanji: '域', label: 'Zones'             },
+      { kanji: '格', label: 'Dependency matrix' },
+      { kanji: '環', label: 'Cycles'            },
+      { kanji: '縁', label: 'Hidden coupling'   },
+      { kanji: '繁', label: 'Complexity'        },
+      { kanji: '表', label: 'Database · ER'     },
     ];
 
     expect(navItems).toHaveLength(expected.length);

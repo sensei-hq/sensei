@@ -17,9 +17,9 @@ feels this as *I can see why sensei believes this, and act on it here*. Below th
 sections, the **Diagrams** list opens the Code map (M17) and Database · ER.
 
 > **Status honesty.** Overview, Sessions, Memories, Traceability, Libraries,
-> Instruments, Patterns, Impact and About are built. The app still ships a separate
-> **Atlas** section and a Diagrams list of Structure · Layers · World · Cycles ·
-> Neighbourhood · Schema (`diagrams-nav.ts`); the list below is not built. The **solution-track
+> Instruments, Patterns, Impact and About are built. The Diagrams list is built
+> (2026-10-29): the sidebar's Diagrams subsection carries the eight entries, each with
+> its mark and hint (`diagrams-nav.ts`). The **solution-track
 > roll-up** is mock-only (C-7), and the **Tasks** section is unbuilt pending planner
 > persistence (C-1 → M20). The screen specs cite `app/src/routes/project/[id]/…`,
 > but the real routes live in the `(project)` route group
@@ -155,9 +155,8 @@ curl -s http://localhost:7744/api/projects/$ID/overview \
   stateless) → M20 — the workspace-window Tasks section stays unbuilt.
 - [C-8](../../../../reorg.md) — impact-alert full-screen (fold into Impact?) → M19;
   it touches this window's Impact pane.
-- **Diagrams list** — the app's `SECTIONS` and `DIAGRAM_VIEWS` still carry Atlas,
-  Layers, World and Neighbourhood, and use other kanji (Libraries is 蔵, not 庫);
-  converges with M17.
+- **Section kanji** — the app's `SECTIONS` use other kanji than this spec (Libraries
+  is 蔵, not 庫).
 - **Doc drift** — every screen spec cites `app/src/routes/project/[id]/…` without the
   `(project)` route group; fix as the legacy specs fold.
 

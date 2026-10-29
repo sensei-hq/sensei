@@ -5,6 +5,7 @@
 import { ftrPctLabel, ftrBandView, type FtrBandView } from '$lib/ftr.js';
 import { KANJI_ICONS } from '$lib/glyph-vocabulary';
 import { resolveActiveHref } from '$lib/rail';
+import { DIAGRAM_VIEWS } from './diagrams/diagrams-nav.js';
 
 export interface SidebarSection {
     id: string;
@@ -20,7 +21,6 @@ export const SECTIONS: SidebarSection[] = [
     { id: 'sessions', kanji: '録', label: 'Sessions' },
     { id: 'memories', kanji: '憶', label: 'Memories' },
     { id: 'traceability', kanji: '跡', label: 'Traceability' },
-    { id: 'diagrams', kanji: '構', label: 'Diagrams' },
     { id: 'libraries', kanji: '蔵', label: 'Libraries' },
     { id: 'instruments', kanji: '器', label: 'Instruments' },
     { id: 'patterns', kanji: '型', label: 'Patterns' },
@@ -31,8 +31,9 @@ export const SECTIONS: SidebarSection[] = [
 ];
 
 /** The workspace window's rail (user, 2026-10-28: the same Rail and List as the
- *  main and settings windows): one group of section links, each with its kanji
- *  and — for icon mode (#133) — the vocabulary's icon for that kanji. */
+ *  main and settings windows): the section links, each with its kanji and — for
+ *  icon mode (#133) — the vocabulary's icon for that kanji; then the Diagrams
+ *  subsection, one entry per diagram with its hint beneath (M16 mockup). */
 export function buildWorkspaceNav(workspaceId: string) {
     return [
         {
@@ -42,12 +43,24 @@ export function buildWorkspaceNav(workspaceId: string) {
                 return { kanji: s.kanji, icon: KANJI_ICONS[s.kanji], text: s.label, href, value: href };
             }),
         },
+        {
+            text: 'Diagrams',
+            children: DIAGRAM_VIEWS.map((d) => {
+                const href = diagramHref(workspaceId, d.id);
+                return { kanji: d.kanji, icon: d.icon, text: d.label, subtext: d.hint, href, value: href };
+            }),
+        },
     ];
 }
 
-/** The href of the section the current route is in (the rails' one rule). */
+const diagramHref = (workspaceId: string, id: string) => `/workspace/${workspaceId}/diagrams/${id}`;
+
+/** The href of the entry the current route is in (the rails' one rule). */
 export function workspaceActiveHref(pathname: string, workspaceId: string): string {
-    return resolveActiveHref(pathname, SECTIONS.map((s) => `/workspace/${workspaceId}/${s.id}`));
+    return resolveActiveHref(pathname, [
+        ...SECTIONS.map((s) => `/workspace/${workspaceId}/${s.id}`),
+        ...DIAGRAM_VIEWS.map((d) => diagramHref(workspaceId, d.id)),
+    ]);
 }
 
 /** True when the current path is within the given workspace section. */

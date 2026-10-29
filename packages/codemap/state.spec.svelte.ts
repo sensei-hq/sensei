@@ -71,6 +71,29 @@ describe('CodeMapState', () => {
     expect([s.level, s.error]).toEqual(['modules', 'Service Unavailable']);
   });
 
+  it('the Wheel, Zones and Matrix return to modules with the open module selected', async () => {
+    for (const lens of ['wheel', 'zones', 'matrix'] as const) {
+      const s = new CodeMapState();
+      const p = port();
+      await s.load(p);
+      await s.openModule(p, 'p/a');
+      await s.openFile(p, 'f1', 'a/x.rs');
+      await s.showLens(p, lens);
+      expect([s.lens, s.level, s.crumbs.length, s.l1, s.l2, s.selected], lens).toEqual([lens, 'modules', 1, null, null, 'p/a']);
+    }
+  });
+
+  it('Structure, Cycles, Hidden coupling and Complexity keep the level', async () => {
+    for (const lens of ['structure', 'cycles', 'coupling', 'complexity'] as const) {
+      const s = new CodeMapState();
+      const p = port();
+      await s.load(p);
+      await s.openModule(p, 'p/a');
+      await s.showLens(p, lens);
+      expect([s.lens, s.level, s.crumbs.length], lens).toEqual([lens, 'files', 2]);
+    }
+  });
+
   it('reads zones once, when the Zones lens first opens', async () => {
     const s = new CodeMapState();
     const p = port();

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
     SECTIONS,
+    buildWorkspaceNav,
+    workspaceActiveHref,
     isSectionActive,
     healthRows,
     ftrDelta,
@@ -21,6 +23,37 @@ describe('workspace-sidebar-view', () => {
         });
         it('scopes to the workspace id', () => {
             expect(isSectionActive('/workspace/other/overview', 'abc', 'overview')).toBe(false);
+        });
+    });
+
+    describe('the Diagrams subsection', () => {
+        it('lists each diagram under its own heading, with its hint', () => {
+            const [sections, diagrams] = buildWorkspaceNav('w');
+            expect(sections.children.some((c) => c.text === 'Diagrams')).toBe(false);
+            expect(diagrams.text).toBe('Diagrams');
+            expect(diagrams.children.map((c) => c.href)).toEqual(
+                ['structure', 'wheel', 'zones', 'matrix', 'cycles', 'coupling', 'complexity', 'schema'].map(
+                    (id) => `/workspace/w/diagrams/${id}`,
+                ),
+            );
+            expect(diagrams.children[1]).toMatchObject({
+                kanji: '輪',
+                icon: 'i-solar-refresh-circle-bold-duotone',
+                text: 'Wheel',
+                subtext: 'which groups lean on which',
+            });
+        });
+        it('repeats no mark anywhere in the sidebar, kanji or icon (M16)', () => {
+            const entries = buildWorkspaceNav('w').flatMap((g) => g.children);
+            for (const mark of ['kanji', 'icon'] as const) {
+                const seen = entries.map((e) => e[mark]);
+                expect(seen.every(Boolean), mark).toBe(true);
+                expect(new Set(seen).size, mark).toBe(seen.length);
+            }
+        });
+        it('marks the diagram in view as current', () => {
+            expect(workspaceActiveHref('/workspace/w/diagrams/zones', 'w')).toBe('/workspace/w/diagrams/zones');
+            expect(workspaceActiveHref('/workspace/w/sessions', 'w')).toBe('/workspace/w/sessions');
         });
     });
 

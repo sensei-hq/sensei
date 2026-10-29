@@ -11,7 +11,8 @@ import { DAEMON_URL } from '../helpers';
 /** Workspace-scoped screens on `Screen`; grows as screens move (#293). */
 const WORKSPACE_SCREENS = [
   'traceability', 'instruments', 'libraries', 'memories',
-  'diagrams/codemap', 'diagrams/cycles', 'diagrams/layers', 'diagrams/neighbourhood', 'diagrams/schema', 'diagrams/structure',
+  'diagrams/structure', 'diagrams/wheel', 'diagrams/zones', 'diagrams/matrix', 'diagrams/cycles',
+  'diagrams/coupling', 'diagrams/complexity', 'diagrams/schema',
   'overview', 'about', 'patterns', 'impact', 'intake', 'metrics', 'sessions',
 ];
 

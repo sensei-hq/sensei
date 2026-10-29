@@ -2,7 +2,6 @@ import type { CoChange, Level0, Level1, Level2, Zones } from '@sensei/codemap';
 import type {
   ServerWorkspace,
   SolutionAnalysis,
-  FunctionMatch,
   LibEntry, LibCapability, LibPage, SessionData, SessionsDigest,
   WorkspaceMemory, DriftItem, PatternEntry, Recommendation,
   WorkspaceListItem,
@@ -18,9 +17,6 @@ import type {
   SyncStateResponse,
   IntakeGuide, PlaybookRecommendation,
   ProvisionModel, ProvisionPhase,
-  StructureLevel, StructurePayload,
-  LayeringLevel, LayeringPayload,
-  NeighbourhoodPayload,
   SchemaPayload,
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
   TranscriptSourceConsent,
@@ -460,17 +456,6 @@ export function senseiApi(port: number) {
     // consensus for recommendations that carry a reasoning trace or a
     // non-pending verdict. Distinct from the manual `listImpactVerdicts`
     // retrospectives above.
-    /** #205 — the Structure diagram payload.
-     *
-     *  Result-based deliberately. This screen must tell "no edges here" apart
-     *  from "the daemon failed", and the fallback-returning `get` collapses
-     *  both into an empty graph — which is the one thing the spec names as a
-     *  wrong gate, being indistinguishable from an unindexed workspace. */
-    tryGetWorkspaceStructure: (id: string, level: StructureLevel, kinds: string[]) =>
-      tryGet<StructurePayload>(
-        `/api/workspaces/${enc(id)}/diagrams/structure?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
-      ),
-
     /** The Code map (M17): L0 modules, one module's files, one file's symbols. */
     tryGetCodemap: (id: string, groupBy: 'layers' | 'folders') =>
       tryGet<Level0>(`/api/workspaces/${enc(id)}/diagrams/codemap?groupBy=${enc(groupBy)}`),
@@ -480,29 +465,6 @@ export function senseiApi(port: number) {
       tryGet<Level2>(`/api/workspaces/${enc(id)}/diagrams/codemap/file?id=${enc(file)}`),
     tryGetZones: (id: string) => tryGet<Zones>(`/api/workspaces/${enc(id)}/diagrams/zones`),
     tryGetCochange: (id: string) => tryGet<CoChange>(`/api/workspaces/${enc(id)}/diagrams/codemap/cochange`),
-
-    /** #232 — the Layers/Cycles payload, one request serving both screens.
-     *
-     *  ONE CALL, TWO SCREENS. The layering, the cycles and the coverage all
-     *  come out of a single `analyse` over one read of `structure_edges`, and
-     *  that read is the whole cost (1.5 s to 74 s per workspace). Splitting it
-     *  into a layering endpoint and a cycles endpoint would pay it twice for
-     *  answers that have to agree.
-     *
-     *  Result-based for the reason the Structure one is: this screen must tell
-     *  "no cycles here" apart from "the daemon failed", and an empty canvas
-     *  reads as a clean architecture. */
-    tryGetWorkspaceLayering: (id: string, level: LayeringLevel, kinds: string[]) =>
-      tryGet<LayeringPayload>(
-        `/api/workspaces/${enc(id)}/diagrams/layering?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
-      ),
-
-    /** #220 — one symbol, its callers and callees, `depth` rings out.
-     *  `focus` is a node id; a missing one is a 400, never a default symbol. */
-    tryGetWorkspaceNeighbourhood: (id: string, focus: string, depth: number) =>
-      tryGet<NeighbourhoodPayload>(
-        `/api/workspaces/${enc(id)}/diagrams/neighbourhood?focus=${enc(focus)}&depth=${depth}`
-      ),
 
     /** #221 — the workspace's database structure: tables, keys, views and
      *  routines, and what depends on what (dbd `SchemaModel` v2's ER half).
@@ -642,14 +604,6 @@ export function senseiApi(port: number) {
       new EventSource(`${base}/api/index/progress`),
 
     // ── Graph ────────────────────────────────────────────────────────────
-    /** Functions and methods whose name or signature contains `q`.
-     *
-     *  Result-based, unlike the `get(…, [])` it replaces: a picker that shows
-     *  "no matches" when the daemon is down sends the reader looking for a
-     *  symbol that exists. */
-    trySearchFunctions: (repoId: string, q: string) =>
-      tryGet<FunctionMatch[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`),
-
     // ── Libraries ────────────────────────────────────────────────────────
     /** Every detected library (#288: a failure is an error, not an empty index). */
     tryGetLibs: (params?: { repoId?: string; workspaceId?: string; shared?: boolean }) => {

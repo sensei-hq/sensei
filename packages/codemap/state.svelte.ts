@@ -6,6 +6,8 @@ import type { CoChange, CodeMapPort, Column, GroupBy, Level0, Level1, Level2, Re
 export type Level = 'modules' | 'files' | 'symbols';
 export type Lens = 'structure' | 'wheel' | 'cycles' | 'matrix' | 'zones' | 'coupling' | 'complexity';
 export const ROLES: Role[] = ['code', 'test', 'docs', 'config', 'generated'];
+/** The lenses that draw modules only (M17). */
+const L0_LENSES: Lens[] = ['wheel', 'zones', 'matrix'];
 
 export interface Crumb {
   level: Level;
@@ -58,9 +60,15 @@ export class CodeMapState {
   }
 
   /** Switch lens; Zones and Hidden coupling read their data the first time
-   *  they open. */
+   *  they open. The Wheel, Zones and the Matrix draw modules only, so they climb
+   *  back to L0 with the module you were in selected; the others keep the level. */
   async showLens(port: CodeMapPort, lens: Lens): Promise<void> {
     this.lens = lens;
+    if (L0_LENSES.includes(lens) && this.level !== 'modules') {
+      const module = this.crumbs[1]?.id ?? null;
+      this.crumbTo(0);
+      this.selected = module;
+    }
     if (lens === 'zones' && !this.zones) {
       const data = await this.#read(() => port.zones());
       if (data) this.zones = data;

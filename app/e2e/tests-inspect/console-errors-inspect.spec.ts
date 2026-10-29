@@ -9,8 +9,9 @@ import { DAEMON_URL, navigateTo, takeConsoleErrors, watchConsole } from '../help
 
 const OBSERVATORY = ['/', '/workspaces', '/instruments', '/instruments?tab=replay', '/instruments?tab=insights',
   '/libraries', '/metrics', '/sessions', '/settings/general'];
-const WORKSPACE = ['overview', 'metrics', 'sessions', 'memories', 'traceability', 'diagrams/codemap',
-  'diagrams/structure', 'diagrams/layers', 'diagrams/cycles', 'diagrams/neighbourhood', 'diagrams/schema',
+const WORKSPACE = ['overview', 'metrics', 'sessions', 'memories', 'traceability', 
+  'diagrams/structure', 'diagrams/wheel', 'diagrams/zones', 'diagrams/matrix', 'diagrams/cycles',
+  'diagrams/coupling', 'diagrams/complexity', 'diagrams/schema',
   'libraries', 'instruments', 'patterns', 'impact', 'tickets', 'integrations', 'about', 'intake'];
 
 test('no screen logs a console error', async ({ tauriPage }) => {

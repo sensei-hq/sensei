@@ -17,7 +17,7 @@ test('the code map drills from modules to files to symbols', async ({ tauriPage 
   const biggest = l0.blocks.filter((b: { folded: string[]; hub: boolean }) => !b.folded.length && !b.hub)
     .sort((a: { files: number }, b: { files: number }) => b.files - a.files)[0];
 
-  await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/codemap`);
+  await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/structure`);
   await expect
     .poll(() => tauriPage.evaluate(`document.querySelectorAll('g[data-testid^="block-"]').length`), { timeout: 60_000 })
     .toBe(l0.blocks.length);
@@ -43,17 +43,14 @@ test('the code map drills from modules to files to symbols', async ({ tauriPage 
   expect([back, errors]).toEqual([true, 0]);
 });
 
-// Every lens draws on the same canvas without an error, against the daemon's data.
+// Every lens, opened from its own route, draws on the same canvas without an error,
+// against the daemon's data.
 test('each lens draws against the real daemon', async ({ tauriPage }) => {
   const workspaces = await json('/api/workspaces');
   const rows = Array.isArray(workspaces) ? workspaces : workspaces.workspaces;
   const ws = rows.find((w: { name: string }) => w.name === 'sensei') ?? rows[0];
   const cochange = await json(`/api/workspaces/${ws.id}/diagrams/codemap/cochange`);
 
-  await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/codemap`);
-  await expect
-    .poll(() => tauriPage.evaluate(`document.querySelectorAll('g[data-testid^="block-"]').length`), { timeout: 60_000 })
-    .toBeGreaterThan(0);
   const seen: Record<string, number> = {};
   for (const [lens, sel] of [
     ['wheel', '[data-testid^="wheel-node-"]'],
@@ -61,7 +58,7 @@ test('each lens draws against the real daemon', async ({ tauriPage }) => {
     ['zones', '[data-testid^="zone-"]'],
     ['coupling', '[data-testid^="band-"]'],
   ] as const) {
-    await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-lens-${lens}"]')?.click()`);
+    await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/${lens}`);
     await expect
       .poll(() => tauriPage.evaluate(`document.querySelectorAll('${sel}').length`), { timeout: 30_000 })
       .toBeGreaterThan(0);

@@ -1,10 +1,10 @@
 <script lang="ts">
   // The Code map (M17): one canvas, three levels — modules, files, symbols —
   // with a breadcrumb, a grouping, the roles shown, and lenses on the same
-  // canvas. The host passes the state and where to read from; this never
-  // fetches on its own.
+  // canvas. The host passes the state and where to read from, and lists the
+  // lenses itself (`state.showLens`); this never fetches on its own.
   import { onMount } from 'svelte';
-  import { ROLES, type CodeMapState, type Lens } from './state.svelte';
+  import { ROLES, type CodeMapState } from './state.svelte';
   import { complexityShare, couplingBands, cycleBands, cycleOf } from './lenses';
   import type { CodeMapPort, GroupBy } from './types';
   import ModuleMap from './ModuleMap.svelte';
@@ -20,16 +20,6 @@
   onMount(() => {
     if (!map.l0) void map.load(port);
   });
-
-  const LENSES: { id: Lens; label: string }[] = [
-    { id: 'structure', label: 'Structure' },
-    { id: 'wheel', label: 'Wheel' },
-    { id: 'cycles', label: 'Cycles' },
-    { id: 'matrix', label: 'Matrix' },
-    { id: 'zones', label: 'Zones' },
-    { id: 'coupling', label: 'Hidden coupling' },
-    { id: 'complexity', label: 'Complexity' },
-  ];
 
   // Complexity (M17): tinted by the share of functions over cyclomatic 10;
   // a block never measured stays neutral and says so.
@@ -77,14 +67,6 @@
             class:bg-ink={map.groupBy === g.id} class:text-paper={map.groupBy === g.id} class:bg-transparent={map.groupBy !== g.id}
             role="radio" aria-checked={map.groupBy === g.id}
             onclick={() => void map.setGroupBy(port, g.id)} data-testid={`codemap-group-${g.id}`}>{g.label}</button>
-        {/each}
-      </div>
-      <div class="flex gap-1" role="tablist" aria-label="Lens">
-        {#each LENSES as l (l.id)}
-          <button class="px-2 py-1 text-xs rounded border-none cursor-pointer"
-            class:bg-paper-mute={map.lens === l.id} class:bg-transparent={map.lens !== l.id}
-            role="tab" aria-selected={map.lens === l.id}
-            onclick={() => void map.showLens(port, l.id)} data-testid={`codemap-lens-${l.id}`}>{l.label}</button>
         {/each}
       </div>
     {:else if map.level === 'files'}

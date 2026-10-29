@@ -118,7 +118,7 @@ test.describe('accessibility (axe) — light + dark', () => {
       ? [
           { route: `/workspace/${pid}/overview`, sel: '[data-component="workspace-sidebar"]' },
           { route: `/workspace/${pid}/intake`,   sel: '[data-testid="intake-input"]' },
-          { route: `/workspace/${pid}/diagrams/codemap`, sel: '[data-testid="codemap-screen"]' },
+          { route: `/workspace/${pid}/diagrams/structure`, sel: '[data-testid="codemap-screen"]' },
           { route: `/workspace/${pid}/libraries`, sel: '[data-testid="library-search"]' },
           { route: `/workspace/${pid}/about`,    sel: 'main' },
           { route: `/workspace/${pid}/integrations`, sel: '[data-screen="integrations"]' },

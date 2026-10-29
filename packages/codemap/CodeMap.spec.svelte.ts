@@ -51,6 +51,13 @@ const q = (sel: string) => target.querySelector(sel);
 const settle = async () => { await new Promise((r) => setTimeout(r, 0)); flushSync(); };
 
 describe('CodeMap', () => {
+  it('draws no lens switch of its own — the host lists the lenses', async () => {
+    render(port());
+    await settle();
+    expect(q('[aria-label="Lens"]')).toBeNull();
+    expect(q('[data-testid^="codemap-lens-"]')).toBeNull();
+  });
+
   it('opens on modules with the budget, and an upward band in red', async () => {
     render(port());
     await settle();
@@ -93,9 +100,10 @@ describe('CodeMap', () => {
   });
 
   it('the Zones lens places components and names the furthest', async () => {
-    render(port());
+    const p = port();
+    const map = render(p);
     await settle();
-    (q('[data-testid="codemap-lens-zones"]') as HTMLButtonElement).click();
+    void map.showLens(p, 'zones');
     await settle();
     expect(q('[data-testid="zone-p/a"]')).not.toBeNull();
     expect(q('[data-testid="zone-p/b"]')).toBeNull();
@@ -104,9 +112,10 @@ describe('CodeMap', () => {
   });
 
   it('Hidden coupling draws co-change as dashed bands, a folded module to its block', async () => {
-    render(port());
+    const p = port();
+    const map = render(p);
     await settle();
-    (q('[data-testid="codemap-lens-coupling"]') as HTMLButtonElement).click();
+    void map.showLens(p, 'coupling');
     await settle();
     const band = q('[data-testid="band-p/a>fold:L1"]');
     expect(band?.getAttribute('stroke-dasharray')).toBe('6 4');
@@ -116,9 +125,9 @@ describe('CodeMap', () => {
 
   it('the Wheel puts the modules on a ring and opens one on double-click', async () => {
     const p = port();
-    render(p);
+    const map = render(p);
     await settle();
-    (q('[data-testid="codemap-lens-wheel"]') as HTMLButtonElement).click();
+    void map.showLens(p, 'wheel');
     flushSync();
     expect(target.querySelectorAll('[data-testid^="wheel-node-"]').length).toBe(3);
     expect(q('[data-testid="wheel-band-p/a>p/b"]')).not.toBeNull();
@@ -128,9 +137,10 @@ describe('CodeMap', () => {
   });
 
   it('Complexity tints each block by its share over cyclomatic 10, and names the unmeasured', async () => {
-    render(port());
+    const p = port();
+    const map = render(p);
     await settle();
-    (q('[data-testid="codemap-lens-complexity"]') as HTMLButtonElement).click();
+    void map.showLens(p, 'complexity');
     flushSync();
     expect(q('[data-testid="block-note-p/a"]')?.textContent?.trim()).toBe('30% over cx 10');
     expect(q('[data-testid="block-note-p/b"]')?.textContent?.trim()).toBe('not measured');
