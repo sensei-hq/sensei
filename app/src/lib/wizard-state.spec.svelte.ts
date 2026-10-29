@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WizardState, routerKeyStatus, saveRouterKey } from './wizard-state.svelte.js';
 import { scanState } from './scan-state.svelte.js';
-import { mockWizardLoadData, mockWatchRoot, mockRouter } from './setup/mock-contracts.js';
+import { mockWizardLoadData, mockWatchRoot, mockRouter, mockWorkspace, mockLibEntry } from './setup/mock-contracts.js';
 
 describe('WizardState', () => {
   let ws: WizardState;
@@ -792,3 +792,30 @@ describe('doneSummary', () => {
   });
 });
 
+
+// Settings · Libraries re-reads on every visit, but filtered by the folders the wizard read
+// once per session: right after a reinstall, while the daemon re-indexed, libraries of newly
+// indexed folders stayed hidden (180 → 198 → 209 shown of 209, live, 2026-10-28).
+describe('WizardState — refreshLibraries reads the folders it filters by', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('keeps a library of a folder indexed after the session loaded', async () => {
+    const later = mockWorkspace({
+      folders: [
+        { id: 'f-1', name: 'app', path: 'app', abs_path: '/Users/test/code/app', kind: 'git', role: 'frontend' },
+        { id: 'f-2', name: 'api', path: 'api', abs_path: '/Users/test/code/api', kind: 'git', role: 'backend' },
+      ],
+    });
+    const libs = [mockLibEntry({ id: 'svelte', name: 'svelte', repos: ['app'] }), mockLibEntry({ id: 'axum', name: 'axum', ecosystem: 'cargo', repos: ['api'] })];
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      const p = new URL(String(input), 'http://localhost').pathname;
+      if (p === '/api/libs') return new Response(JSON.stringify({ total: libs.length, libs }), { status: 200 });
+      if (p === '/api/workspaces') return new Response(JSON.stringify([later]), { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+    const ws = new WizardState();
+    ws.hydrate(mockWizardLoadData({ workspaces: [mockWorkspace()] }));
+    await ws.refreshLibraries();
+    expect(ws.libraries.libs.map((l) => l.name).sort()).toEqual(['axum', 'svelte']);
+  });
+});

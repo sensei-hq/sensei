@@ -950,16 +950,20 @@ export class WizardState {
    * to avoid showing stale libs from the persistent DB.
    */
   async refreshLibraries(): Promise<void> {
-    const read = await senseiApi(appState.port).tryGetLibs();
+    const api = senseiApi(appState.port);
+    // The folders are read with the libraries: the session's copy is a snapshot, and
+    // folders indexed since would hide their libraries until a restart.
+    const [read, folders] = await Promise.all([api.tryGetLibs(), api.tryListWorkspaces()]);
     // A failed read throws: the section shows why (#288), not "no libraries".
     if (!read.ok) throw new Error(failureReason(read.error));
+    if (!folders.ok) throw new Error(failureReason(folders.error));
     const fresh = read.data;
 
-    // Set of repo (folder) names scanned in this wizard run. Filter libs to those
+    // Repo (folder) names of the registered workspaces. Filter libs to those
     // touching at least one of these so we don't show the entire persistent DB.
     const scannedRepoNames = new Set<string>();
-    for (const p of this.workspaces.workspaces) {
-      for (const f of p.folders) scannedRepoNames.add(f.name);
+    for (const p of folders.data) {
+      for (const f of p.folders ?? []) scannedRepoNames.add(f.name);
     }
 
     const previous = new Map(this.libraries.libs.map(l => [l.name, l.enabled]));
