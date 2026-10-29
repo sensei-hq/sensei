@@ -3,9 +3,16 @@
 **Slice:** tracker SDLC metrics, on branch `feature/sdlc_metrics`. The branch was cut from
 `feature/tracker_metrics_writeback`, which is still unmerged.
 **Stage:** build, unattended (user, 2026-10-29). F1 done (`886b5df1c`), F2 + F3 done
-(`87c7d8316`), F4 done (`825593888`), F5 done (`4f688735f`); F6 (sprint replay +
-sprint/project figures) next. Run contract: `.sensei/slice-state.json` (amendments A1–A6;
-F6 carry-forward).
+(`87c7d8316`), F4 done (`825593888`), F5 done (`4f688735f`), F6 done (sprint replay +
+sprint/project figures; this commit); F7 (write-back keys, S9) next. Run contract:
+`.sensei/slice-state.json` (amendments A1–A8).
+
+**F6 in one line:** `/sprints` items carry `sdlc`, and `GET …/trackers` items carry
+`sdlc_project` (predictability, tokens and prompts per ticket over the distinct union of
+sessions, `sessions_without_tokens`). A sprint whose window has unread ticket history reads
+`history_pending` rather than replaying today's state (A8). The indexer ratchet is at its
+1,302 ceiling with no headroom: a derived `.clone()` or a new `state.pg` read in F7/F8 will
+trip it.
 
 **For the user:** the indexer's dangling-reference ceiling was raised 1,300 → 1,302 for
 the new settings handler's two `state.pg` reads (AppState type alias); and only 9 of 118

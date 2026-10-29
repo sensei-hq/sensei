@@ -911,13 +911,7 @@ mod tests {
 
     #[test]
     fn every_reason_is_a_registered_code() {
-        let registered: std::collections::HashSet<String> =
-            include_str!("../../../../database/import/staging/reason_codes.jsonl")
-                .lines()
-                .map(|l| serde_json::from_str::<serde_json::Value>(l).expect("a JSON line"))
-                .filter(|v| v["domain"] == "sdlc_metrics")
-                .map(|v| v["code"].as_str().unwrap().to_string())
-                .collect();
+        let registered = crate::sdlc::registered_reasons();
         let u = Usage::default();
         let s = settings(15);
         let a = [fixture_a()];

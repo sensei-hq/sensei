@@ -139,7 +139,7 @@ async fn finish(
 
 /// A tracker row for these tests (the shape `pg_store::trackers` tests insert).
 #[cfg(test)]
-async fn test_tracker(pg: &PgStore) -> uuid::Uuid {
+pub(crate) async fn test_tracker(pg: &PgStore) -> uuid::Uuid {
     let w = pg
         .create_workspace(&format!("_test:history:{}", uuid::Uuid::new_v4()), None, None)
         .await

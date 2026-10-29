@@ -77,6 +77,9 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         status(row.last_success_at, row.last_error.is_some(), interval as i64, chrono::Utc::now());
     let (history_error, history_at) =
         pg.tracker_history_state(row.id).await.map_err(|_| internal())?;
+    let sdlc_project = crate::sdlc::sprint_replay::project_sdlc(pg, row.id, chrono::Utc::now())
+        .await
+        .map_err(|_| internal())?;
     Ok(serde_json::json!({
         "id": row.id,
         "kind": row.kind,
@@ -102,6 +105,7 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         },
         // S4: the ticket-history task's last run.
         "history": {"error": history_error, "at": history_at},
+        "sdlc_project": sdlc_project,
     }))
 }
 
@@ -701,8 +705,14 @@ pub(crate) async fn list_sprints(
         Ok(t) => t,
         Err(r) => return r.into_response(),
     };
-    let sprints = match sprint_usages(&state.pg, tracker.id, chrono::Utc::now()).await {
+    let pg = &state.pg;
+    let now = chrono::Utc::now();
+    let sprints = match sprint_usages(pg, tracker.id, now).await {
         Ok(s) => s,
+        Err(_) => return internal().into_response(),
+    };
+    let mut sdlc = match crate::sdlc::sprint_replay::sprint_sdlc(pg, tracker.id, now).await {
+        Ok(f) => f,
         Err(_) => return internal().into_response(),
     };
     let rows: Vec<serde_json::Value> = sprints
@@ -712,6 +722,7 @@ pub(crate) async fn list_sprints(
             let mut row = serde_json::json!({
                 "id": s.id, "name": s.name, "state": s.state, "start_at": s.start_at,
                 "end_at": s.end_at, "complete_at": s.complete_at, "tasks": s.tasks,
+                "sdlc": sdlc.remove(&s.id),
             });
             let parts = match su.parts {
                 Ok(p) => serde_json::json!({
@@ -2072,6 +2083,95 @@ mod tests {
         let foreign =
             call(&h, "GET", &format!("{t}/sprints"), None, Some("https://evil.com")).await;
         assert_eq!(foreign.0, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn sprints_and_the_tracker_carry_their_sdlc_figures() {
+        use crate::tracker::test_support::{repo_in, session_with};
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let pg = &h.state.pg;
+        let repo = repo_in(pg, p).await;
+        let exec = |sql: &'static str, id: uuid::Uuid| async move {
+            sqlx_core::query::query(sql).bind(id).execute(pg.pool()).await.unwrap();
+        };
+        // One session on two tickets: its tokens and prompts count once, over two
+        // tickets. A second, on one of them, has no cache_write count yet.
+        let sess = session_with(pg, Some(repo), &["fix/AUTH-2", "fix/AUTH-3"], &[]).await;
+        let other = session_with(pg, Some(repo), &["fix/AUTH-2"], &[]).await;
+        exec(
+            "UPDATE activity.sessions SET tokens_fresh = 400, cache_read = 300, cache_write = 200,
+                    tokens_out = 100 WHERE id = $1",
+            sess,
+        )
+        .await;
+        exec(
+            "UPDATE activity.sessions SET tokens_fresh = 100, cache_read = 100, tokens_out = 100
+              WHERE id = $1",
+            other,
+        )
+        .await;
+        exec(
+            "INSERT INTO activity.assistant_events (session_id, family, event_type, tool_name, ts, payload)
+             SELECT s.client_session_id, 'claude', e.kind, e.tool,
+                    (extract(epoch from now()) * 1000)::bigint - 3600000 + e.ts, '{}'::jsonb
+               FROM activity.sessions s,
+                    (VALUES ('UserPromptSubmit', NULL, 1000), ('UserPromptSubmit', NULL, 2000),
+                            ('UserPromptSubmit', NULL, 3000), ('Stop', NULL, 4000)) e(kind, tool, ts)
+              WHERE s.id = $1",
+            sess,
+        )
+        .await;
+        connect(&h, p, &s).await;
+        let listed = settled(&h, p).await;
+        let project = &listed[0]["sdlc_project"];
+        assert_eq!(project["tickets_with_sessions"], json!(2), "{listed}");
+        assert_eq!(project["tokens_per_ticket"], Value::Null);
+        assert_eq!(project["reasons"]["tokens_per_ticket"], json!("partial_tokens"));
+        assert_eq!(project["sessions_without_tokens"], json!(1));
+        assert_eq!(project["prompts_per_ticket"], Value::Null, "before the pass");
+        assert_eq!(project["reasons"]["prompts_per_ticket"], json!("not_derived"));
+        assert_eq!(project["reasons"]["predictability"], json!("too_few_sprints"));
+
+        exec("UPDATE activity.sessions SET cache_write = 100 WHERE id = $1", other).await;
+        let rep =
+            crate::tasks::session_signals::pass(pg, chrono::Utc::now().timestamp_millis(), 10_000)
+                .await
+                .unwrap();
+        assert_eq!(rep.failed, 0, "{rep:?}");
+        let (_, listing) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
+        let project = &json(&listing)[0]["sdlc_project"];
+        assert_eq!(project["tokens_per_ticket"], json!(700.0), "(1000 + 400) / 2: {project}");
+        assert_eq!(project["sessions_without_tokens"], json!(0));
+        assert_eq!(project["prompts_per_ticket"], json!(1.5), "3 prompts / 2: {project}");
+
+        // The standard board has no configuration route, so no history was read:
+        // every sprint with a window waits for it rather than replaying today.
+        let t = format!("/api/workspaces/{p}/trackers/{}", tracker(&h, p).await);
+        let (st, b) = call(&h, "GET", &format!("{t}/sprints"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let sprints = json(&b);
+        let registered = crate::sdlc::registered_reasons();
+        for sprint in sprints.as_array().unwrap() {
+            let sdlc = &sprint["sdlc"];
+            assert!(sdlc.is_object(), "every sprint carries its figures: {b}");
+            assert_eq!(sdlc["commitment_reliability"], Value::Null, "{sdlc}");
+            for (key, code) in sdlc["reasons"].as_object().unwrap() {
+                assert!(registered.contains(code.as_str().unwrap()), "{key}: {code}");
+            }
+        }
+        let active = sprints.as_array().unwrap().iter().find(|s| s["state"] == "active").unwrap();
+        assert_eq!(
+            active["sdlc"]["reasons"]["commitment_reliability"],
+            json!("history_pending"),
+            "{b}"
+        );
+        for code in project["reasons"].as_object().unwrap().values() {
+            assert!(registered.contains(code.as_str().unwrap()), "{code}");
+        }
     }
 
     #[tokio::test]

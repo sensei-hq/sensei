@@ -489,11 +489,23 @@ transport, and writeback gate 13's per-file loop includes `history`.
 
 ### S5 · Sprint replay (pure, at read)
 
+*Amendment A7 (F6 build):*
+- *R7's `not_started` reaches a sprint as `sprint_not_started`, since the ticket figures already use `not_started` for "no code edit". `no_dates` keeps its name.*
+- *The project figures `tokens_per_ticket` and `prompts_per_ticket` are built in F6 with predictability. A session shared by two tickets counts once.*
+- *A sprint state outside `future`/`active`/`closed`, or a missing tracker row, is an error and never a default.*
+
+*Amendment A8 (F6 post-implementation swarm):*
+- *History is complete through `history_through`. A sprint whose window ends after some ticket's unread history begins gets `history_pending` on every key, never a replay of today's state. "Unread" means never read, or updated since it was read. Tickets created after the window ends don't count.*
+- *A status id at `E` that is not among the board's statuses counts in `unknown_status`. Every completion-based key is null with `unknown_status`; `scope_change` stands.*
+- *Same-instant changes apply in the provider's change-id order: numeric, so shorter ids first.*
+- *`predictability` drops null sprints before it takes six.*
+- *With the board's points in use and no ticket completed, `velocity` is 0 and `points_commitment_reliability` is 0% of a non-zero commitment (S6: "a 0 means the inputs exist"). The S5 null-at-`_n = 0` rule still holds for the facts' sums.*
+
 `sdlc/sprint_replay.rs`: `replay(sprint, sprints_of_tracker, tasks, changes, statuses) -> SprintFacts`.
 
 - **Window.** Reuse `tracker::usage::sprint_window` (R7): `S = start_at`, and
   `E = coalesce(complete_at, end_at)` for closed or `now()` for active. Its reasons apply
-  as they are (`not_started`, `no_dates`).
+  as they are (`no_dates`; `not_started` as `sprint_not_started`, A7).
 - **Membership at t.**
   - The initial state is the `from_value` of the issue's earliest `sprint` change, or its
     current `tracker_task_sprints` membership when it has none.
@@ -594,8 +606,8 @@ Where `runs_unknown > 0`, the defect counts are lower bounds. The screen shows t
 | `scope_change` | `(added + removed) / committed × 100` | same |
 | `carry_over_rate` | `carried_over / committed × 100` | same |
 | `unplanned_work_ratio` | `completed_added / (completed_committed + completed_added) × 100` | denominator 0 (`nothing_completed`) |
-| `velocity` | `completed_committed_points + completed_added_points` (a null part counts as absent; null when both are null) | `no_estimation_field`; both sums null (`not_estimated`) |
-| `points_commitment_reliability` | `completed_committed_points / committed_points × 100` | `no_estimation_field`; either sum null (`not_estimated`); committed_points 0 |
+| `velocity` | `completed_committed_points + completed_added_points` (a null part counts as absent); 0 when nothing was completed (A8) | `no_estimation_field`; tickets completed but both sums null (`not_estimated`) |
+| `points_commitment_reliability` | `completed_committed_points / committed_points × 100`; the completed sum is 0 when nothing committed was completed (A8) | `no_estimation_field`; either sum otherwise null (`not_estimated`); committed 0 or committed_points 0 (`no_commitment`) |
 
 **Project (tracker).**
 

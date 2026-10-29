@@ -194,6 +194,152 @@ impl PgStore {
         .map(|r| r.unwrap_or((None, None)))
         .map_err(|e| format!("tracker_history_state({tracker_id}): {e}"))
     }
+
+    /// Everything the sprint replay reads for a tracker (S5): its sprints, its
+    /// tickets with their history, its statuses, and whether its points are usable.
+    pub async fn replay_inputs(&self, tracker_id: uuid::Uuid) -> Result<ReplayInputs, String> {
+        use crate::sdlc::sprint_replay::{Change, ChangeField, ReplayTask};
+        let db = |e: sqlx_core::Error| format!("replay_inputs({tracker_id}): {e}");
+        type SprintRow = (
+            uuid::Uuid,
+            String,
+            i64,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        );
+        let sprints: Vec<SprintRow> = sqlx_core::query_as::query_as(
+            "SELECT id, external_id, seq, state, start_at, end_at, complete_at
+               FROM sensei.sprints WHERE tracker_id = $1 AND removed_at IS NULL ORDER BY seq DESC",
+        )
+        .bind(tracker_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        type TaskRow = (
+            uuid::Uuid,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<String>,
+            Option<f64>,
+            Vec<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        );
+        let tasks: Vec<TaskRow> = sqlx_core::query_as::query_as(
+            "SELECT t.id, t.issue_created_at, t.status_category, t.points::float8,
+                    coalesce(array_agg(s.external_id) FILTER (WHERE s.id IS NOT NULL), '{}'),
+                    t.issue_updated_at, t.history_through
+               FROM sensei.tracker_tasks t
+               LEFT JOIN sensei.tracker_task_sprints m ON m.task_id = t.id
+               LEFT JOIN sensei.sprints s ON s.id = m.sprint_id AND s.removed_at IS NULL
+              WHERE t.tracker_id = $1 AND t.removed_at IS NULL
+              GROUP BY t.id",
+        )
+        .bind(tracker_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        type ChangeRow =
+            (uuid::Uuid, String, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>);
+        let changes: Vec<ChangeRow> = sqlx_core::query_as::query_as(
+            "SELECT c.task_id, c.field::text, c.at, c.from_value, c.to_value
+               FROM sensei.tracker_task_changes c JOIN sensei.tracker_tasks t ON t.id = c.task_id
+              WHERE t.tracker_id = $1
+              ORDER BY c.at, length(c.change_id), c.change_id",
+        )
+        .bind(tracker_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        let statuses: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT status_id, category FROM sensei.tracker_statuses WHERE tracker_id = $1",
+        )
+        .bind(tracker_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        let (field, learned): (Option<String>, bool) = sqlx_core::query_as::query_as(
+            "SELECT estimation_field,
+                    terms_at IS NOT NULL AND points_field IS NOT DISTINCT FROM coalesce(estimation_field, 'none')
+               FROM sensei.trackers WHERE id = $1",
+        )
+        .bind(tracker_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| format!("replay_inputs: tracker {tracker_id} not found"))?;
+
+        let mut by_task: std::collections::HashMap<uuid::Uuid, Vec<Change>> = Default::default();
+        for (task, field, at, from, to) in changes {
+            let field = match field.as_str() {
+                "sprint" => ChangeField::Sprint,
+                "status" => ChangeField::Status,
+                "estimate" => ChangeField::Estimate,
+                other => return Err(format!("unknown change field {other}")),
+            };
+            by_task.entry(task).or_default().push(Change {
+                field,
+                at: at.timestamp_millis(),
+                from,
+                to,
+            });
+        }
+        Ok(ReplayInputs {
+            sprints: sprints
+                .into_iter()
+                .map(|(id, external_id, seq, state, start_at, end_at, complete_at)| ReplaySprint {
+                    id,
+                    external_id,
+                    seq,
+                    state,
+                    start_at,
+                    end_at,
+                    complete_at,
+                })
+                .collect(),
+            tasks: tasks
+                .into_iter()
+                .map(|(id, created, category, points, current, updated, through)| ReplayTask {
+                    created_at: created.map(|c| c.timestamp_millis()),
+                    current_sprints: current,
+                    current_category: category,
+                    current_points: points,
+                    changes: by_task.remove(&id).unwrap_or_default(),
+                    // S4 reads a ticket's changelog through its update time.
+                    history_gap_from: match (updated, through) {
+                        (Some(u), Some(h)) if u <= h => None,
+                        (_, Some(h)) => Some(h.timestamp_millis()),
+                        (_, None) => Some(i64::MIN),
+                    },
+                })
+                .collect(),
+            statuses: statuses.into_iter().collect(),
+            estimation: match (learned, field) {
+                (false, _) => Err("not_synced"),
+                (true, None) => Err("no_estimation_field"),
+                (true, Some(_)) => Ok(()),
+            },
+        })
+    }
+
+    /// The token totals of these sessions (S6 project), and how many lack one of the
+    /// four token fields.
+    pub async fn session_token_totals(
+        &self,
+        session_ids: &[uuid::Uuid],
+    ) -> Result<(i64, i64), String> {
+        sqlx_core::query_as::query_as(
+            "SELECT coalesce(sum(tokens_fresh + cache_read + cache_write + tokens_out), 0)::int8,
+                    count(*) FILTER (WHERE tokens_fresh IS NULL OR cache_read IS NULL
+                                        OR cache_write IS NULL OR tokens_out IS NULL)
+               FROM activity.sessions WHERE id = ANY($1)",
+        )
+        .bind(session_ids)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("session_token_totals: {e}"))
+    }
 }
 
 /// A ticket's history-derived facts (S6).
@@ -206,4 +352,27 @@ pub struct TicketHistoryFacts {
     /// The history task has read the board's configuration, and the last sync read
     /// points under the field it learned (A6).
     pub learned: bool,
+}
+
+/// A sprint as the replay reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplaySprint {
+    pub id: uuid::Uuid,
+    pub external_id: String,
+    pub seq: i64,
+    pub state: String,
+    pub start_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub end_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub complete_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// What [`PgStore::replay_inputs`] returns.
+#[derive(Debug, Clone)]
+pub struct ReplayInputs {
+    /// Newest first (by `seq`).
+    pub sprints: Vec<ReplaySprint>,
+    pub tasks: Vec<crate::sdlc::sprint_replay::ReplayTask>,
+    pub statuses: std::collections::HashMap<String, String>,
+    /// Whether the board's points may be used, or why not.
+    pub estimation: Result<(), &'static str>,
 }

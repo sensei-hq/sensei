@@ -15,14 +15,15 @@
     "F8",
     "F9"
   ],
-  "current_phase": "F6",
+  "current_phase": "F7",
   "completed": [
     "F1 (classifier + catalogue; this commit)",
     "F3 (settings) + F2 (session signals); this commit",
     "F4 (ticket figures + reason codes + sdlc on ticket routes); this commit",
-    "F5 (ticket history: sync fields, history task, board terms, changelog, points_field); this commit"
+    "F5 (ticket history: sync fields, history task, board terms, changelog, points_field); this commit",
+    "F6 (sprint replay + sprint/project figures, A7/A8); this commit"
   ],
-  "gate_status": "F5 pass: full senseid suite 4077/0, clippy -D warnings clean; pre/post swarm findings fixed (A6: +0000 parser, sprint by id, from/to vs strings, terms_at, points_field)",
+  "gate_status": "F6 pass: full senseid suite 4092/0, clippy -D warnings clean, fmt clean, ratchet 1302/1302; post swarm (data-correctness + test review) findings fixed red-first (A8)",
   "decomposition": {
     "F1": "DDL sensei.command_patterns + sensei.command_markers (+staging tables, 2 import procs, 2 jsonl seeds); categorise(check)->typecheck; sdlc/classify.rs: tokenize (quote/heredoc aware) -> elements/stages, strip, stage_category, ownership attribution, exit attribution; pg_store command_catalogue() with md5 hash; tests: sdlc::classify cases + pg_store command_catalogue_import",
     "F3": "DDL sensei.workspace_metric_settings; sdlc/settings.rs pure parse_patch/apply; pg_store metric_settings get/put; api/handlers/metric_settings.rs GET/PUT under local_caller_guard (reuse trackers::known_workspace)",
@@ -64,6 +65,18 @@
       "phase": "F5",
       "spec": "S4, S7",
       "reason": "F5 audits: sync gains fields only; history task reads board terms (estimation field, sprint field id via /field, statuses); Jira +0000 timestamps; sprint matched by fieldId; from/to vs fromString/toString per field; created/updated optional and NULL-updated never selected; estimation learned via terms_at (a failed run teaches nothing); points trusted only under points_field == estimation_field; history_error/history_at on the tracker listing; gate 13 loop covers history"
+    },
+    {
+      "id": "A7",
+      "phase": "F6",
+      "spec": "S5, S6",
+      "reason": "R7 not_started surfaces as sprint_not_started (ticket not_started means no code edit); project figures tokens/prompts per ticket built in F6 over the distinct union of sessions; unknown sprint state and missing tracker row are errors, not defaults"
+    },
+    {
+      "id": "A8",
+      "phase": "F6",
+      "spec": "S5, S6",
+      "reason": "F6 post swarm: history_pending when unread history precedes a sprint end; unknown_status nulls completion keys; same-instant changes by numeric change id; predictability drops nulls before taking six; velocity/points reliability 0 when nothing completed; sessions_without_tokens surfaced"
     }
   ],
   "open_questions": [],
@@ -78,7 +91,7 @@
     "F4: lead_hours and estimated_points read not_synced until F5 supplies issue_created_at and points (orchestrator passes None/NotSynced)",
     "F4: project figures (tokens_per_ticket, prompts_per_ticket) moved to F6 with sdlc_project"
   ],
-  "next_command": "/sensei:build docs/plans/2026-10-29-tracker-sdlc-metrics.md (resume at F6: sprint replay + sprint/project figures)",
+  "next_command": "/sensei:build docs/plans/2026-10-29-tracker-sdlc-metrics.md (resume at F7: write-back keys, S9)",
   "order_note": "F3 before F2 (F2 no longer needs the threshold after A3, but F3 is small and started first)",
   "carry_forward": {
     "F6": [
@@ -86,6 +99,10 @@
       "project figures tokens_per_ticket/prompts_per_ticket moved here from F4 (distinct union of sessions)",
       "sdlc_project on GET .../trackers items and PATCH response (view()); sdlc on each /sprints item",
       "the indexer ratchet is at its ceiling: read through the existing `pg` binding in handlers"
+    ],
+    "F7": [
+      "ratchet has 0 headroom: no derived .clone() on new types, read state.pg through an existing binding",
+      "sprint figures may be history_pending; write-back is per ticket only (S9)"
     ]
   }
 }
