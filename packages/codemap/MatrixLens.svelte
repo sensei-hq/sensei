@@ -10,7 +10,9 @@
   const LABEL = 180;
 </script>
 
-<div class="overflow-auto" data-testid="codemap-matrix">
+<!-- A scrollable region must take focus for keyboard users (axe scrollable-region-focusable). -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div class="overflow-auto" tabindex="0" role="region" aria-label="Dependency matrix, scrollable" data-testid="codemap-matrix">
   <svg width={LABEL + m.ids.length * CELL + 8} height={LABEL + m.ids.length * CELL + 8} role="img" aria-label="Dependency matrix">
     {#each m.ids as id, i (id)}
       <text x={LABEL - 6} y={LABEL + i * CELL + CELL - 2} text-anchor="end" class="text-xs cursor-pointer" fill="var(--ink-soft)"

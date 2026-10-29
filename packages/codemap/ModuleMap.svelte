@@ -59,7 +59,9 @@
     b.folded.length || b.hub ? onselect(selected === b.id ? null : b.id) : onopen(b.id);
 </script>
 
-<div class="w-full overflow-auto" bind:clientWidth={column} data-testid="codemap-modules" data-zoom={zoom}>
+<!-- A scrollable region must take focus for keyboard users (axe scrollable-region-focusable). -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div class="w-full overflow-auto" tabindex="0" role="region" aria-label="Modules and their dependencies, scrollable" bind:clientWidth={column} data-testid="codemap-modules" data-zoom={zoom}>
   <svg
     width={Math.round(layout.width * scale)}
     height={Math.round(layout.height * scale)}

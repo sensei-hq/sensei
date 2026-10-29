@@ -18,6 +18,8 @@
     });
 </script>
 
+<!-- Each diagram is its own screen; the map they share lives in the layout. -->
+{#key data.lens}
 <Screen>
     {#snippet header()}
     <DiagramHeader view={data.view} {about} />
@@ -28,3 +30,4 @@
         {/key}
     </div>
 </Screen>
+{/key}

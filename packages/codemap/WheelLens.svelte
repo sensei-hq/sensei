@@ -22,7 +22,9 @@
   const touches = (s: string, t: string) => !focus || s === focus || t === focus;
 </script>
 
-<div class="w-full overflow-auto" bind:clientWidth={width} data-testid="codemap-wheel">
+<!-- A scrollable region must take focus for keyboard users (axe scrollable-region-focusable). -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div class="w-full overflow-auto" tabindex="0" role="region" aria-label="Modules on a ring, scrollable" bind:clientWidth={width} data-testid="codemap-wheel">
   <svg width={size} height={size} role="img" aria-label="Modules on a ring, dependencies bundled by group">
     {#each wheel.arcs as a (a.group)}
       {@const mid = (a.start + a.end) / 2}
