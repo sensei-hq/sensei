@@ -23,7 +23,7 @@ import {
   activeMinutes,
   CHART_VARIANTS,
   MINI_MODES,
-  SESSION_RANGES, dayTone, rollingFtr } from './sessions-digest.js';
+  SESSION_RANGES, dayTone, rollingFtr, recencyRange, labelStride, bandsView } from './sessions-digest.js';
 
 // Fixed reference "now" (local July 8 2026, noon) so relative labels + day
 // buckets are deterministic regardless of the runner's timezone.
@@ -381,3 +381,73 @@ describe('rollingFtr', () => {
   });
 });
 
+
+// The range a Sessions page opens on follows the workspace's recency (user, 2026-10-28):
+// 7 days when it ran within 7, 30 when within 30, 90 otherwise.
+describe('recencyRange', () => {
+  it('opens on the narrowest window that holds the newest session', () => {
+    expect(recencyRange([isoDaysAgo(0)], NOW)).toBe('7d');
+    expect(recencyRange([isoDaysAgo(40), isoDaysAgo(6)], NOW)).toBe('7d');
+    expect(recencyRange([isoDaysAgo(8)], NOW)).toBe('30d');
+    expect(recencyRange([isoDaysAgo(29)], NOW)).toBe('30d');
+    expect(recencyRange([isoDaysAgo(31)], NOW)).toBe('90d');
+  });
+
+  it('opens on 90 days when nothing ran', () => {
+    expect(recencyRange([], NOW)).toBe('90d');
+  });
+});
+
+describe('labelStride', () => {
+  it('labels every day up to two weeks, then about eight labels', () => {
+    expect(labelStride(7)).toBe(1);
+    expect(labelStride(14)).toBe(1);
+    expect(labelStride(30)).toBe(4);
+    expect(labelStride(90)).toBe(12);
+  });
+});
+
+// Bands drew one 18 px row per day in 320 px: at 90 days the rows and labels overlapped
+// (user, 2026-10-28). One vertical bar per day, stacked good · corrected · abandoned.
+describe('bandsView', () => {
+  const days = buildDays('90d', NOW);
+  const buckets = aggregateByDay(
+    enrich([
+      wire({ id: 'a', startedAt: isoDaysAgo(0), completedAt: isoDaysAgo(0, 11, 5), outcome: 'completed', ftr: true }),
+      wire({ id: 'b', startedAt: isoDaysAgo(0, 12, 5), completedAt: isoDaysAgo(0, 12, 35), outcome: 'corrected', ftr: false }),
+    ], NOW),
+    days,
+    NOW,
+  );
+  const v = bandsView(buckets, 1100, 320);
+
+  it('draws one bar per day, oldest left, inside the plot', () => {
+    expect(v.bars).toHaveLength(90);
+    expect(v.bars[0].x).toBeLessThan(v.bars[89].x);
+    for (const b of v.bars) {
+      expect(b.x).toBeGreaterThanOrEqual(v.plot.left);
+      expect(b.x + b.w).toBeLessThanOrEqual(v.plot.right + 0.001);
+      expect(b.w).toBeGreaterThan(0);
+    }
+  });
+
+  it('stacks a day bottom-up good → corrected → abandoned, heights in proportion to minutes', () => {
+    const today = v.bars[89];
+    expect(today.segments.map((s) => s.tone)).toEqual(['good', 'bad']);
+    const [good, bad] = today.segments;
+    expect(good.y + good.h).toBeCloseTo(v.plot.bottom);
+    expect(bad.y + bad.h).toBeCloseTo(good.y);
+    expect(good.h / bad.h).toBeCloseTo(60 / 30);
+  });
+
+  it('labels a readable subset of days, never two closer than the stride', () => {
+    expect(v.ticks.length).toBeGreaterThan(1);
+    expect(v.ticks.length).toBeLessThanOrEqual(9);
+    expect(v.ticks.at(-1)!.label).toBe('Today');
+  });
+
+  it('scales the minutes axis to the busiest day, an hour at least', () => {
+    expect(v.maxMins).toBeGreaterThanOrEqual(90);
+    expect(v.yTicks.map((t) => t.label)).toContain('0m');
+  });
+});

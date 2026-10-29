@@ -429,3 +429,76 @@ export function rollingFtr(days: Pick<DayBucket, 'ftr'>[]): (number | null)[] {
   });
 }
 
+
+/** The range a Sessions page opens on: the narrowest window that holds the newest
+ *  session — 7 days when it ran within the week, 30 within the month, else 90
+ *  (also when nothing ran). A quiet workspace no longer opens on an empty week. */
+export function recencyRange(startedAts: string[], now: Date = new Date()): SessionRange {
+  if (startedAts.length === 0) return '90d';
+  const newest = Math.min(...startedAts.map((iso) => calendarDaysAgo(new Date(iso), now)));
+  return newest < rangeDays('7d') ? '7d' : newest < rangeDays('30d') ? '30d' : '90d';
+}
+
+/** Every how-many days a day axis is labelled: each day up to two weeks, then
+ *  about eight labels across. */
+export function labelStride(days: number): number {
+  return days > 14 ? Math.ceil(days / 8) : 1;
+}
+
+/** One stacked segment of a bands bar. */
+export interface BandSegment {
+  tone: 'good' | 'bad' | 'ugly';
+  y: number;
+  h: number;
+}
+
+/** The bands chart laid out: a vertical bar per day, oldest left, stacked
+ *  good · corrected · abandoned by minutes; date labels at `labelStride`, the
+ *  newest day always labelled. */
+export interface BandsView {
+  plot: { left: number; right: number; top: number; bottom: number };
+  bars: { day: string; label: string; x: number; w: number; segments: BandSegment[]; total: number; mins: number }[];
+  ticks: { x: number; label: string }[];
+  yTicks: { y: number; label: string }[];
+  maxMins: number;
+}
+
+/** Fill per segment tone — the quality colours the other session charts use. */
+export const BAND_FILL: Record<BandSegment['tone'], string> = {
+  good: 'var(--success)',
+  bad: 'var(--warning)',
+  ugly: 'var(--accent)',
+};
+
+export function bandsView(buckets: DayBucket[], width: number, height: number): BandsView {
+  const plot = { left: 44, right: width - 12, top: 12, bottom: height - 26 };
+  const n = Math.max(buckets.length, 1);
+  const slot = (plot.right - plot.left) / n;
+  const w = Math.max(1, slot * 0.7);
+  // An hour at least, rounded up to half hours under four hours, whole hours above.
+  const busiest = Math.max(60, ...buckets.map((b) => b.chartedMins));
+  const step = busiest <= 240 ? 30 : 60;
+  const maxMins = Math.ceil(busiest / step) * step;
+  const scale = (plot.bottom - plot.top) / maxMins;
+  const bars = buckets.map((b, i) => {
+    const x = plot.left + i * slot + (slot - w) / 2;
+    let base = plot.bottom;
+    const segments: BandSegment[] = [];
+    for (const [tone, mins] of [['good', b.goodMins], ['bad', b.badMins], ['ugly', b.uglyMins]] as const) {
+      if (mins <= 0) continue;
+      const h = mins * scale;
+      base -= h;
+      segments.push({ tone, y: base, h });
+    }
+    return { day: b.day, label: b.label, x, w, segments, total: b.total, mins: b.chartedMins };
+  });
+  const stride = labelStride(buckets.length);
+  const last = buckets.length - 1;
+  // Counted back from the newest day, so "Today" is always labelled and the
+  // labels keep an even spacing behind it.
+  const ticks = bars
+    .filter((_, i) => (last - i) % stride === 0)
+    .map((b) => ({ x: b.x + b.w / 2, label: b.label }));
+  const yTicks = [0, maxMins / 2, maxMins].map((m) => ({ y: plot.bottom - m * scale, label: compactDuration(Math.round(m)) }));
+  return { plot, bars, ticks, yTicks, maxMins };
+}

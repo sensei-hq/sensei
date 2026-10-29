@@ -3,7 +3,7 @@
   // 7-day rolling average and daily dots colored by the day's dominant
   // quality. Pure presentation: the per-day rollup is computed upstream in
   // sessions-digest.ts and handed in as `buckets`.
-  import { dayTone, rollingFtr, type DayBucket, type QualityTone } from '$lib/sessions-digest.js';
+  import { dayTone, labelStride, rollingFtr, type DayBucket, type QualityTone } from '$lib/sessions-digest.js';
 
   interface Props {
     buckets: DayBucket[];
@@ -54,7 +54,7 @@
       .filter((p): p is [number, number] => p !== null),
   );
 
-  const labelStride = $derived(n > 14 ? Math.ceil(n / 8) : 1);
+  const stride = $derived(labelStride(n));
   const hasData = $derived(dailyPts.length > 0);
 </script>
 
@@ -105,7 +105,7 @@
 
   <!-- X labels -->
   {#each buckets as b, i (b.day)}
-    {#if i % labelStride === 0 || i === n - 1}
+    {#if i % stride === 0 || i === n - 1}
       <text x={x(i)} y={height - 10} font-size="10" fill="var(--ink-mute)" text-anchor="middle">
         {b.label}
       </text>

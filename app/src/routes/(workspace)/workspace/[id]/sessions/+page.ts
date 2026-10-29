@@ -7,6 +7,6 @@ import { loadSessionsDigest, sessionsFetcher } from '$lib/sessions-digest.svelte
 // this workspace. A failed read is carried as its error.
 export const load: PageLoad = async ({ params, parent }) => {
   const { workspace } = await parent();
-  const digest = await loadSessionsDigest(sessionsFetcher(senseiApi(appState.port), params.id), '7d');
+  const digest = await loadSessionsDigest(sessionsFetcher(senseiApi(appState.port), params.id));
   return { workspace, workspaceId: params.id, ...digest };
 };

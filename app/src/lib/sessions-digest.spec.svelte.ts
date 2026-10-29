@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
-import { SessionsDigestState, sessionsFetcher } from './sessions-digest.svelte.js';
+import { SessionsDigestState, sessionsFetcher, loadSessionsDigest } from './sessions-digest.svelte.js';
 import type { ApiResult } from './api.js';
 import type { SessionRow } from '$lib/types.js';
 
@@ -125,5 +125,35 @@ describe('sessionsFetcher', () => {
   it('passes a failed read through', async () => {
     const read = await sessionsFetcher({ tryGetSessionsDigest: async () => down })('7d');
     expect(read).toEqual(down);
+  });
+});
+
+// A Sessions page opens on the workspace's recency (user, 2026-10-28): the widest window is
+// read to find the newest session, then the chosen range is read from the server.
+describe('loadSessionsDigest — the range follows recency', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+
+  it('opens on 30 days when the newest session is ten days old, read from the server', async () => {
+    const asked: string[] = [];
+    const rows = [wire({ id: 'old', startedAt: daysAgo(10) })];
+    const fetcher = vi.fn(async (range: string) => { asked.push(range); return ok(rows); });
+    const d = await loadSessionsDigest(fetcher);
+    expect(asked).toEqual(['90d', '30d']);
+    expect(d.range).toBe('30d');
+    expect(d.sessions).toEqual(rows);
+    expect(d.error).toBeNull();
+  });
+
+  it('reads once when the workspace is quiet: 90 days', async () => {
+    const fetcher = vi.fn(async () => ok<SessionRow[]>([]));
+    const d = await loadSessionsDigest(fetcher);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(d.range).toBe('90d');
+  });
+
+  it('says why when the read fails, rather than choosing a range from nothing', async () => {
+    const d = await loadSessionsDigest(async () => down);
+    expect(d.sessions).toBeNull();
+    expect(d.error).toMatch(/Service Unavailable/);
   });
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { labelStride } from '$lib/sessions-digest.js';
   // STREAM — minutes per day stacked by quality (ugly → bad → good, bottom
   // up) as three filled areas over the range. Pure presentation over the
   // per-day rollup from sessions-digest.ts.
@@ -45,7 +46,7 @@
   }
 
   const yTicks = $derived([0, Math.round(maxTotal / 2), maxTotal]);
-  const labelStride = $derived(n > 14 ? Math.ceil(n / 8) : 1);
+  const stride = $derived(labelStride(n));
   const fmtMins = (t: number) => (t < 60 ? `${t}m` : `${Math.floor(t / 60)}h`);
 </script>
 
@@ -62,7 +63,7 @@
   {/each}
 
   {#each buckets as b, i (b.day)}
-    {#if i % labelStride === 0 || i === n - 1}
+    {#if i % stride === 0 || i === n - 1}
       <text x={x(i)} y={height - 8} font-size="10" fill="var(--ink-mute)" text-anchor="middle">
         {b.label}
       </text>

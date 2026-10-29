@@ -2,7 +2,7 @@
   // CONSTELLATION — one dot per session · x = duration · y = day · color =
   // quality. Reads the enriched rows directly (needs per-session minutes,
   // not the day rollup). Pure presentation.
-  import { shortDayLabel, type EnrichedSession, type QualityTone } from '$lib/sessions-digest.js';
+  import { labelStride, shortDayLabel, type EnrichedSession, type QualityTone } from '$lib/sessions-digest.js';
 
   interface Props {
     sessions: EnrichedSession[];
@@ -35,12 +35,12 @@
       .map((s) => ({ s, rowIdx: dayRows.indexOf(s.dayKey) }))
       .filter((d) => d.rowIdx >= 0 && d.s.mins != null),
   );
-  const labelStride = $derived(dayRows.length > 14 ? Math.ceil(dayRows.length / 8) : 1);
+  const stride = $derived(labelStride(dayRows.length));
 </script>
 
 <svg viewBox={`0 0 ${width} ${height}`} width="100%" class="block" data-component="constellation-chart">
   {#each dayRows as day, i (day)}
-    {#if i % labelStride === 0 || i === dayRows.length - 1}
+    {#if i % stride === 0 || i === dayRows.length - 1}
       <line x1={padL} x2={width - padR} y1={y(i)} y2={y(i)} stroke="var(--paper-edge)" stroke-dasharray="1 3" />
       <text x={padL - 10} y={y(i) + 3} font-size="10.5" fill="var(--ink-mute)" text-anchor="end">
         {shortDayLabel(day)}

@@ -4,7 +4,7 @@
   // day's AI usage was, and the input(cache)-vs-output balance. Pure
   // presentation over the per-day rollup from sessions-digest.ts.
   import type { DayBucket } from '$lib/sessions-digest.js';
-  import { compactTokens } from '$lib/sessions-digest.js';
+  import { labelStride, compactTokens } from '$lib/sessions-digest.js';
 
   interface Props {
     buckets: DayBucket[];
@@ -29,7 +29,7 @@
   const baseY = $derived(padT + innerH);
 
   const yTicks = $derived([0, Math.round(maxTotal / 2), maxTotal]);
-  const labelStride = $derived(n > 14 ? Math.ceil(n / 8) : 1);
+  const stride = $derived(labelStride(n));
 </script>
 
 <svg viewBox={`0 0 ${width} ${height}`} width="100%" class="block" data-component="tokens-chart">
@@ -58,7 +58,7 @@
   {/each}
 
   {#each buckets as b, i (b.day)}
-    {#if i % labelStride === 0 || i === n - 1}
+    {#if i % stride === 0 || i === n - 1}
       <text x={cx(i)} y={height - 8} font-size="10" fill="var(--ink-mute)" text-anchor="middle">
         {b.label}
       </text>

@@ -18,6 +18,7 @@ import {
   computeTotals,
   enrich,
   nextMiniMode,
+  recencyRange,
   type ChartVariant,
   type DayBucket,
   type DigestTotals,
@@ -44,11 +45,19 @@ export function sessionsFetcher(
   };
 }
 
-/** A Sessions page's first load: the default range's rows, or why they could
- *  not be read (#288) — never the empty digest that read as a quiet week. */
-export async function loadSessionsDigest(fetcher: SessionsFetcher, range: SessionRange) {
-  const { data, error } = readOutcome(await fetcher(range));
-  return { sessions: data, range, error };
+/** A Sessions page's first load: the rows, or why they could not be read (#288) —
+ *  never the empty digest that read as a quiet week. Without a range it opens on
+ *  the workspace's recency (`recencyRange`): the widest window finds the newest
+ *  session, and a narrower range is then read from the server, which owns what a
+ *  range holds. */
+export async function loadSessionsDigest(fetcher: SessionsFetcher, range?: SessionRange) {
+  const widest: SessionRange = '90d';
+  const first = readOutcome(await fetcher(range ?? widest));
+  if (range || first.data === null) return { sessions: first.data, range: range ?? widest, error: first.error };
+  const chosen = recencyRange(first.data.map((s) => s.startedAt));
+  if (chosen === widest) return { sessions: first.data, range: chosen, error: null };
+  const { data, error } = readOutcome(await fetcher(chosen));
+  return { sessions: data, range: chosen, error };
 }
 
 export class SessionsDigestState {
