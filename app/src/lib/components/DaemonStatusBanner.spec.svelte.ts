@@ -30,4 +30,16 @@ describe('DaemonStatusBanner', () => {
     cleanup.push(m.destroy);
     expect(root(m)).toBeNull();
   });
+
+  // A failed settings read keeps the last settings (appState); the window says so
+  // rather than quietly running on something it could not read.
+  it('says when the settings could not be read, and that the last ones are kept', () => {
+    const m = mountComponent(DaemonStatusBanner, { mode: 'full', configError: 'Load failed' });
+    cleanup.push(m.destroy);
+    const el = root(m);
+    expect(el).toBeTruthy();
+    expect(el!.getAttribute('role')).toBe('status');
+    expect(el!.textContent).toMatch(/settings/i);
+    expect(el!.textContent).toMatch(/Load failed/);
+  });
 });

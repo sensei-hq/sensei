@@ -136,7 +136,7 @@
     });
 </script>
 
-<DaemonStatusBanner mode={daemonHealth.dbMode} />
+<DaemonStatusBanner mode={daemonHealth.dbMode} configError={appState.configError} />
 <SignInOverlay
     open={overlayOpen}
     identities={personaList.identities}

@@ -3,7 +3,7 @@
  * Only `sensei:port` and `sensei:setup-complete` stay in localStorage.
  * The health gate (`sensei:health` in sessionStorage) is owned by HealthState.
  */
-import { senseiApi } from './api.js';
+import { failureReason, senseiApi } from './api.js';
 import { hasTauri } from './bootstrap.js';
 import { healthState } from './health-state.svelte.js';
 import { wizardState } from './wizard-state.svelte.js';
@@ -21,6 +21,9 @@ export class AppState {
   readonly port = DEFAULT_PORT;
   config = $state<Record<string, string>>({});
   loaded = $state(false);
+  /** Why the last config read failed, or null. The config keeps its last good value. */
+  configError = $state<string | null>(null);
+  #retry: ReturnType<typeof setTimeout> | null = null;
 
   /** Cached workspace count for the observatory rail badge. Workspaces change
    *  rarely, so this is fetched once (on layout mount via loadWorkspaceCount)
@@ -165,16 +168,21 @@ export class AppState {
     const api = senseiApi(this.port);
     const result = await api.tryGetConfig();
     if (!result.ok) {
-      // Daemon unreachable — fall back to empty defaults. Don't throw,
-      // don't redirect — the boot gate (routes/+layout.ts) is the single source of truth for
-      // routing decisions; if health isn't ok it'll bounce to /health,
-      // where the resolver chain handles the actual repair.
-      console.warn('[appState] load() falling back to defaults — daemon-config fetch failed', result.error);
-      this.config = {};
+      // Daemon unreachable — a restart refuses reads for a few seconds. The
+      // config keeps its last good value (never {} — that reset every
+      // preference in the window), the error is said, and the read is retried
+      // once shortly after. Routing stays the boot gate's (routes/+layout.ts):
+      // if health isn't ok it bounces to /health.
+      this.configError = failureReason(result.error);
       this.loaded = true;
+      this.#retry ??= setTimeout(() => {
+        this.#retry = null;
+        void this.load();
+      }, 2_000);
       return;
     }
 
+    this.configError = null;
     this.config = result.data;
     // `setup_complete` ↔ localStorage reconciliation lives in
     // wizardState.hydrate() now (single owner). appState just caches the
