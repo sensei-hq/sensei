@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { labelStride, type TurnDay } from '$lib/sessions-digest.js';
+  import { labelStride, type TurnDay, axisTicks } from '$lib/sessions-digest.js';
   // STREAM — turns per day, the corrected ones under the first-try ones, as two
   // filled areas over the range. Pure presentation over the turns filed by day
   // upstream (turnsByDay), so a session that ran for days counts on each day.
@@ -42,7 +42,7 @@
     return `M ${top.join(' L ')} L ${bottom.join(' L ')} Z`;
   }
 
-  const yTicks = $derived([0, Math.round(maxTotal / 2), maxTotal]);
+  const yTicks = $derived(axisTicks(maxTotal));
   const stride = $derived(labelStride(n));
 </script>
 

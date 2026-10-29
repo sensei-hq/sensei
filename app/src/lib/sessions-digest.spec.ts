@@ -22,7 +22,7 @@ import {
   activeMinutes,
   CHART_VARIANTS,
   MINI_MODES,
-  SESSION_RANGES, rollingFtr, recencyRange, labelStride, bandsView, activityByDay, unmeasuredLine, sessionSpans, turnsByDay } from './sessions-digest.js';
+  SESSION_RANGES, rollingFtr, recencyRange, labelStride, bandsView, activityByDay, unmeasuredLine, sessionSpans, turnsByDay, axisTicks } from './sessions-digest.js';
 
 // Fixed reference "now" (local July 8 2026, noon) so relative labels + day
 // buckets are deterministic regardless of the runner's timezone.
@@ -333,6 +333,13 @@ describe('recencyRange', () => {
 
   it('opens on 90 days when nothing ran', () => {
     expect(recencyRange([], NOW)).toBe('90d');
+  });
+});
+
+describe('axisTicks', () => {
+  it('is 0, half-way and the top, and never repeats a tick', () => {
+    expect(axisTicks(4)).toEqual([0, 2, 4]);
+    expect(axisTicks(1)).toEqual([0, 1]);
   });
 });
 

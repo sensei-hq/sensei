@@ -79,8 +79,8 @@ test.describe('Workspace window — Sessions digest (workspace-scoped)', () => {
     for (const [chip, component] of [
       ['trend', 'trend-chart'],
       ['stream', 'stream-chart'],
-      ['constellation', 'constellation-chart'],
       ['bands', 'bands-chart'],
+      ['tokens', 'tokens-chart'],
     ] as const) {
       await tauriPage.locator(`[data-testid="chip-${chip}"]`).click();
       await tauriPage.waitForSelector(`[data-testid="chart-body"] [data-component="${component}"]`, 10_000);

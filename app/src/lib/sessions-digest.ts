@@ -414,6 +414,12 @@ export function activityByDay(
 
 /** One local day of turns: how many, how many a correction followed, the first-try
  *  rate, and the tokens spent (null where none were captured — unknown, not 0). */
+/** A chart's y-axis ticks for `max`: 0, half-way, and the top — distinct, since
+ *  over a tiny range the half-way tick rounds onto the top (each_key_duplicate). */
+export function axisTicks(max: number): number[] {
+  return [...new Set([0, Math.round(max / 2), max])];
+}
+
 export interface TurnDay {
   day: string;
   label: string;

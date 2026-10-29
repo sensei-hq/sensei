@@ -5,7 +5,7 @@
   // presentation over the tokens filed by the day each turn ran (turnsByDay). A
   // day that had turns but no captured transcript has no bar: its tokens are
   // unknown, and a tick says so rather than a zero.
-  import { labelStride, compactTokens, type TurnDay } from '$lib/sessions-digest.js';
+  import { labelStride, compactTokens, type TurnDay, axisTicks } from '$lib/sessions-digest.js';
 
   interface Props {
     days: TurnDay[];
@@ -29,7 +29,7 @@
   const h = (v: number) => (v / maxTotal) * innerH;
   const baseY = $derived(padT + innerH);
 
-  const yTicks = $derived([0, Math.round(maxTotal / 2), maxTotal]);
+  const yTicks = $derived(axisTicks(maxTotal));
   const stride = $derived(labelStride(n));
 </script>
 
