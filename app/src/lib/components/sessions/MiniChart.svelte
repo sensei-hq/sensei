@@ -1,15 +1,16 @@
 <script lang="ts">
   // Compact visualization for the collapsed-header mini-cycler. Renders one of
-  // the five chart-ish modes (trend / stream / constellation / bands / pulse);
+  // the chart-ish modes (trend / stream / bands / pulse);
   // the sixth cycler mode, `numbers`, is the resting stat trio drawn by the
   // hero itself. `pulse` is reachable ONLY through the cycler — never a chip.
-  import { BAND_FILL, type ActivityDay, type DayBucket, type EnrichedSession, type QualityTone } from '$lib/sessions-digest.js';
+  import { BAND_FILL, type ActivityDay, type TurnDay, type EnrichedSession, type QualityTone } from '$lib/sessions-digest.js';
 
-  type MiniChartMode = 'trend' | 'stream' | 'constellation' | 'bands' | 'pulse';
+  type MiniChartMode = 'trend' | 'stream' | 'bands' | 'pulse';
 
   interface Props {
     mode: MiniChartMode;
-    buckets: DayBucket[];
+    /** Turns per local day (turnsByDay) — the trend and stream modes. */
+    buckets: TurnDay[];
     sessions: EnrichedSession[];
     days: string[];
     /** Agent and your time per day — the bands mode, as the bands chart draws it. */
@@ -27,7 +28,7 @@
   };
   const n = $derived(buckets.length);
   const xStep = $derived(n > 1 ? width / (n - 1) : 0);
-  const qTotal = (b: DayBucket) => b.good + b.bad + b.ugly;
+
 
   // ── trend — per-day FTR sparkline ──────────────────────────────────────
   const trendPts = $derived(
@@ -46,16 +47,14 @@
       : '',
   );
 
-  // ── stream — stacked quality counts per day ────────────────────────────
-  const streamMax = $derived(Math.max(1, ...buckets.map(qTotal)));
-  const STREAM_LAYERS: Array<{ tone: 'ugly' | 'bad' | 'good'; below: Array<'ugly' | 'bad' | 'good'> }> = [
-    { tone: 'ugly', below: [] },
-    { tone: 'bad', below: ['ugly'] },
-    { tone: 'good', below: ['ugly', 'bad'] },
+  // ── stream — turns per day, corrected under first-try ──────────────────
+  const streamMax = $derived(Math.max(1, ...buckets.map((b) => b.turns)));
+  const STREAM_LAYERS: Array<{ tone: 'bad' | 'good'; below: Array<'bad' | 'good'> }> = [
+    { tone: 'bad', below: [] },
+    { tone: 'good', below: ['bad'] },
   ];
-  const count = (b: DayBucket, tone: 'ugly' | 'bad' | 'good') =>
-    tone === 'good' ? b.good : tone === 'bad' ? b.bad : b.ugly;
-  function streamPath(tone: 'ugly' | 'bad' | 'good', below: Array<'ugly' | 'bad' | 'good'>): string {
+  const count = (b: TurnDay, tone: 'bad' | 'good') => (tone === 'good' ? b.turns - b.corrections : b.corrections);
+  function streamPath(tone: 'bad' | 'good', below: Array<'bad' | 'good'>): string {
     if (n === 0) return '';
     const top = buckets.map((b, i) => {
       const base = below.reduce((s, k) => s + count(b, k), 0);
@@ -82,7 +81,7 @@
     return out;
   }
 
-  // ── constellation / pulse — per-session marks ──────────────────────────
+  // ── pulse — per-session marks ──────────────────────────
   const maxMins = $derived(Math.max(60, ...sessions.map((s) => s.mins ?? 0)));
   const marks = $derived(
     sessions
@@ -113,16 +112,6 @@
       {#each barSegments(d, i) as seg, s (s)}
         <rect x={seg.x} y={seg.y} width={barW} height={seg.h} fill={seg.color} opacity="0.85" />
       {/each}
-    {/each}
-  {:else if mode === 'constellation'}
-    {#each marks as m (m.s.id)}
-      <circle
-        cx={m.idx * xStep}
-        cy={height - 2 - ((m.s.mins ?? 0) / maxMins) * (height - 4)}
-        r="2.2"
-        fill={TONE_COLOR[m.s.quality]}
-        opacity="0.85"
-      />
     {/each}
   {:else}
     <line x1="0" x2={width} y1={height - 2} y2={height - 2} stroke="var(--paper-edge)" stroke-width="0.5" />

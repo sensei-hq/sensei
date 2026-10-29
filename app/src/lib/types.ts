@@ -534,8 +534,14 @@ export interface SessionRow {
   activeByHour?: [number, number, number][] | null;
 }
 
+/** Work in one hour: `[epoch hour, turns, corrected turns, tokens in, tokens out]`;
+ *  tokens are null where no transcript turn was captured (unknown, not 0). */
+export type HourActivity = [number, number, number, number | null, number | null];
+
 export interface SessionsDigest {
   sessions: SessionRow[];
+  /** The work by the hour it happened — what the day charts file by local day. */
+  activity: HourActivity[];
 }
 
 // ── Observatory · Today (home screen) ──────────────────────────────────────

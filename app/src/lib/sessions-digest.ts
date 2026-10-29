@@ -12,17 +12,17 @@
 // Screens: docs/spec/screen/observatory-sessions.md
 //          docs/spec/screen/workspace-sessions.md
 // Mockup:  docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
-import type { SessionRow } from '$lib/types.js';
+import type { HourActivity, SessionRow } from '$lib/types.js';
 
 /** The chart chips (pulse is deliberately NOT here — it is a mini-cycler-only
  *  mode, see MINI_MODES). `tokens` is the per-day token-volume bars. */
-export type ChartVariant = 'trend' | 'stream' | 'constellation' | 'bands' | 'tokens';
-export const CHART_VARIANTS: ChartVariant[] = ['trend', 'stream', 'constellation', 'bands', 'tokens'];
+export type ChartVariant = 'trend' | 'stream' | 'bands' | 'tokens';
+export const CHART_VARIANTS: ChartVariant[] = ['trend', 'stream', 'bands', 'tokens'];
 
 /** The collapsed-header mini-cycler modes. `numbers` is the resting stat trio;
  *  `pulse` lives ONLY here — it is never one of the CHART_VARIANTS chips. */
-export type MiniMode = 'numbers' | 'trend' | 'stream' | 'constellation' | 'bands' | 'pulse';
-export const MINI_MODES: MiniMode[] = ['numbers', 'trend', 'stream', 'constellation', 'bands', 'pulse'];
+export type MiniMode = 'numbers' | 'trend' | 'stream' | 'bands' | 'pulse';
+export const MINI_MODES: MiniMode[] = ['numbers', 'trend', 'stream', 'bands', 'pulse'];
 
 /** Time-window chips. Each refetches `/api/sessions?range=`. */
 export type SessionRange = '7d' | '30d' | '90d';
@@ -261,71 +261,6 @@ export function buildDays(range: SessionRange, now: Date = new Date()): string[]
   return out;
 }
 
-/** Per-day rollup used by the trend / stream / bands charts. */
-export interface DayBucket {
-  day: string;
-  label: string;
-  total: number;
-  good: number;
-  bad: number;
-  ugly: number;
-  neutral: number;
-  mins: number;
-  goodMins: number;
-  badMins: number;
-  uglyMins: number;
-  /** Minutes actually drawn in the quality charts = good + bad + ugly. Excludes
-   *  neutral (blocked/partial) sessions, which have no quality tone/segment — so
-   *  chart scales and per-day captions agree with the rendered bars/areas. */
-  chartedMins: number;
-  /** first-try rate for the day (good / total), or null when the day is empty. */
-  ftr: number | null;
-  /** Token volume for the day (sum over sessions carrying usage). `tokens` is
-   *  in+out; the split feeds the input/output balance. 0 when no session that day
-   *  carried tokens — a real absence at day grain, safe to draw as an empty bar. */
-  tokensIn: number;
-  tokensOut: number;
-  tokens: number;
-}
-
-/** Bucket enriched sessions into the ordered `days` axis by calendar day. */
-export function aggregateByDay(
-  sessions: EnrichedSession[],
-  days: string[],
-  now: Date = new Date(),
-): DayBucket[] {
-  return days.map((day) => {
-    const ofDay = sessions.filter((s) => s.dayKey === day);
-    const by = (tone: QualityTone) => ofDay.filter((s) => s.quality === tone);
-    const good = by('good');
-    const bad = by('bad');
-    const ugly = by('ugly');
-    const neutral = by('neutral');
-    const sumMins = (xs: EnrichedSession[]) => xs.reduce((a, s) => a + (s.mins ?? 0), 0);
-    const tokensIn = ofDay.reduce((a, s) => a + (s.tokensIn ?? 0), 0);
-    const tokensOut = ofDay.reduce((a, s) => a + (s.tokensOut ?? 0), 0);
-    const total = ofDay.length;
-    return {
-      day,
-      label: shortDayLabel(day, now),
-      total,
-      good: good.length,
-      bad: bad.length,
-      ugly: ugly.length,
-      neutral: neutral.length,
-      mins: sumMins(ofDay),
-      goodMins: sumMins(good),
-      badMins: sumMins(bad),
-      uglyMins: sumMins(ugly),
-      chartedMins: sumMins(good) + sumMins(bad) + sumMins(ugly),
-      ftr: total ? good.length / total : null,
-      tokensIn,
-      tokensOut,
-      tokens: tokensIn + tokensOut,
-    };
-  });
-}
-
 /** Median of a numeric list (0 for empty). */
 export function median(xs: number[]): number {
   if (xs.length === 0) return 0;
@@ -410,18 +345,10 @@ export function sessionsCopy(workspace: string | null): SessionsCopy {
   };
 }
 
-/** A day's quality tone, for its bar: any ugly session marks it; else more bad
- *  than good is bad; else any good is good; else neutral. */
-export function dayTone(b: Pick<DayBucket, 'good' | 'bad' | 'ugly'>): QualityTone {
-  if (b.ugly > 0) return 'ugly';
-  if (b.bad > b.good) return 'bad';
-  if (b.good > 0) return 'good';
-  return 'neutral';
-}
 
 /** The 7-day rolling mean FTR at each day — over the scored days in the window,
  *  and only on a day that is itself scored (null otherwise). */
-export function rollingFtr(days: Pick<DayBucket, 'ftr'>[]): (number | null)[] {
+export function rollingFtr(days: { ftr: number | null }[]): (number | null)[] {
   return days.map((d, i) => {
     if (d.ftr == null) return null;
     const scored = days.slice(Math.max(0, i - 6), i + 1).filter((x) => x.ftr != null);
@@ -483,6 +410,43 @@ export function activityByDay(
     }),
     unmeasured,
   };
+}
+
+/** One local day of turns: how many, how many a correction followed, the first-try
+ *  rate, and the tokens spent (null where none were captured — unknown, not 0). */
+export interface TurnDay {
+  day: string;
+  label: string;
+  turns: number;
+  corrections: number;
+  /** Turns not followed by a correction ÷ turns; null on a day with no turns. */
+  ftr: number | null;
+  /** The day's dot: corrected turns → bad, all first-try → good, none → neutral. */
+  tone: QualityTone;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  tokens: number | null;
+}
+
+/** The hours summed per local day of the axis, so a session that ran for days counts
+ *  on each of them (Trend, Stream and Tokens; user, 2026-10-29). */
+export function turnsByDay(hours: HourActivity[], days: string[], now: Date = new Date()): TurnDay[] {
+  const byDay = new Map(days.map((d) => [d, { turns: 0, corrections: 0, tin: null as number | null, tout: null as number | null }]));
+  for (const [hour, turns, corrections, tin, tout] of hours) {
+    const slot = byDay.get(dayKey(new Date(hour * 3_600_000).toISOString()));
+    if (!slot) continue;
+    slot.turns += turns;
+    slot.corrections += corrections;
+    if (tin !== null) slot.tin = (slot.tin ?? 0) + tin;
+    if (tout !== null) slot.tout = (slot.tout ?? 0) + tout;
+  }
+  return days.map((day) => {
+    const { turns, corrections, tin, tout } = byDay.get(day)!;
+    const ftr = turns > 0 ? (turns - corrections) / turns : null;
+    const tone: QualityTone = turns === 0 ? 'neutral' : corrections > 0 ? 'bad' : 'good';
+    const tokens = tin === null && tout === null ? null : (tin ?? 0) + (tout ?? 0);
+    return { day, label: shortDayLabel(day, now), turns, corrections, ftr, tone, tokensIn: tin, tokensOut: tout, tokens };
+  });
 }
 
 /** A session active on more than one local day of the axis, and those days, in order. */

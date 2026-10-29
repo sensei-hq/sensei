@@ -13,7 +13,6 @@ import {
   shortDayLabel,
   enrich,
   buildDays,
-  aggregateByDay,
   computeTotals,
   median,
   replayHref,
@@ -23,7 +22,7 @@ import {
   activeMinutes,
   CHART_VARIANTS,
   MINI_MODES,
-  SESSION_RANGES, dayTone, rollingFtr, recencyRange, labelStride, bandsView, activityByDay, unmeasuredLine, sessionSpans } from './sessions-digest.js';
+  SESSION_RANGES, rollingFtr, recencyRange, labelStride, bandsView, activityByDay, unmeasuredLine, sessionSpans, turnsByDay } from './sessions-digest.js';
 
 // Fixed reference "now" (local July 8 2026, noon) so relative labels + day
 // buckets are deterministic regardless of the runner's timezone.
@@ -80,21 +79,6 @@ describe('token enrichment + aggregation', () => {
     // one side present ⇒ the other counts as 0 in the sum (a real partial capture)
     const [c] = enrich([wire({ tokensIn: 100, tokensOut: null })], NOW);
     expect(c.tokens).toBe(100);
-  });
-  it('aggregateByDay sums token volume per day', () => {
-    const sessions = enrich(
-      [
-        wire({ id: 'a', startedAt: isoDaysAgo(0), tokensIn: 100, tokensOut: 20 }),
-        wire({ id: 'b', startedAt: isoDaysAgo(0), tokensIn: 300, tokensOut: 80 }),
-      ],
-      NOW,
-    );
-    const days = buildDays('7d', NOW);
-    const buckets = aggregateByDay(sessions, days, NOW);
-    const today = buckets[buckets.length - 1];
-    expect(today.tokensIn).toBe(400);
-    expect(today.tokensOut).toBe(100);
-    expect(today.tokens).toBe(500);
   });
   it('computeTotals reports total + median tokens, null when none carry usage', () => {
     const withTokens = enrich(
@@ -230,43 +214,6 @@ describe('buildDays', () => {
   });
 });
 
-describe('aggregateByDay', () => {
-  it('buckets sessions into the day axis with per-quality counts', () => {
-    const rows = [
-      wire({ id: 'a', outcome: 'completed', ftr: true, startedAt: isoDaysAgo(0), completedAt: isoDaysAgo(0, 10, 45) }),
-      wire({ id: 'b', outcome: 'completed', ftr: true, startedAt: isoDaysAgo(0) }),
-      wire({ id: 'c', outcome: 'corrected', ftr: false, startedAt: isoDaysAgo(0) }),
-      wire({ id: 'd', outcome: 'abandoned', ftr: null, startedAt: isoDaysAgo(1) }),
-    ];
-    const buckets = aggregateByDay(enrich(rows, NOW), buildDays('7d', NOW), NOW);
-    const today = buckets[buckets.length - 1];
-    expect(today.total).toBe(3);
-    expect(today.good).toBe(2);
-    expect(today.bad).toBe(1);
-    expect(today.ftr).toBeCloseTo(2 / 3);
-    expect(today.goodMins).toBe(40); // only row 'a' has a completion
-    const yesterday = buckets[buckets.length - 2];
-    expect(yesterday.total).toBe(1);
-    expect(yesterday.ugly).toBe(1);
-    expect(yesterday.ftr).toBe(0);
-  });
-  it('chartedMins = good+bad+ugly minutes and excludes neutral (blocked/partial) time', () => {
-    const rows = [
-      wire({ id: 'g', outcome: 'completed', ftr: true, startedAt: isoDaysAgo(0), completedAt: isoDaysAgo(0, 10, 20) }),
-      wire({ id: 'n', outcome: 'blocked', ftr: null, startedAt: isoDaysAgo(0), completedAt: isoDaysAgo(0, 10, 40) }),
-    ];
-    const today = aggregateByDay(enrich(rows, NOW), buildDays('7d', NOW), NOW).at(-1)!;
-    expect(today.neutral).toBe(1);
-    expect(today.chartedMins).toBe(today.goodMins + today.badMins + today.uglyMins);
-    // neutral session time is counted in `mins` but never drawn, so chartedMins < mins.
-    expect(today.chartedMins).toBeLessThan(today.mins);
-  });
-  it('leaves empty days with a null ftr so the trend line skips them', () => {
-    const buckets = aggregateByDay([], buildDays('7d', NOW), NOW);
-    expect(buckets.every((b) => b.total === 0 && b.ftr === null)).toBe(true);
-  });
-});
-
 describe('computeTotals', () => {
   it('counts by quality, distinct workspaces, and the median duration', () => {
     const rows = [
@@ -304,12 +251,12 @@ describe('replayHref', () => {
 
 describe('chart / cycler vocab', () => {
   it('the chip group is exactly the five charts — pulse is never a chip', () => {
-    expect(CHART_VARIANTS).toEqual(['trend', 'stream', 'constellation', 'bands', 'tokens']);
+    expect(CHART_VARIANTS).toEqual(['trend', 'stream', 'bands', 'tokens']);
     expect(CHART_VARIANTS).not.toContain('pulse');
   });
   it('pulse exists only on the mini-cycler', () => {
     expect(MINI_MODES).toContain('pulse');
-    expect(MINI_MODES).toEqual(['numbers', 'trend', 'stream', 'constellation', 'bands', 'pulse']);
+    expect(MINI_MODES).toEqual(['numbers', 'trend', 'stream', 'bands', 'pulse']);
   });
   it('nextMiniMode advances and wraps past pulse back to numbers', () => {
     expect(nextMiniMode('numbers')).toBe('trend');
@@ -358,15 +305,6 @@ describe('medianLabel', () => {
   });
   it('is null when no session carries a duration', () => {
     expect(computeTotals([]).medianMins).toBeNull();
-  });
-});
-
-// Audit item 15 (2026-10-28): the trend chart decided a day's tone and the
-// rolling FTR inside the component.
-describe('dayTone', () => {
-  const b = (o: Record<string, number>) => ({ good: 0, bad: 0, ugly: 0, ...o }) as never;
-  it('any ugly session marks the day; else more bad than good; else good; else neutral', () => {
-    expect([b({ ugly: 1, good: 5 }), b({ bad: 2, good: 1 }), b({ good: 1, bad: 1 }), b({})].map(dayTone)).toEqual(['ugly', 'bad', 'good', 'neutral']);
   });
 });
 
@@ -517,5 +455,33 @@ describe('sessionSpans and the bands links', () => {
     const overlap = v.links.find((l) => l.id === 'overlap')!;
     expect(overlap.y).not.toBe(long.y);
     for (const l of v.links) expect(l.y).toBeLessThan(v.plot.top);
+  });
+});
+
+// Trend, Stream and Tokens filed a session whole on the day it started, so an 11-day
+// session made 11 days of work one point (user, 2026-10-29). They read the turns instead:
+// per local day, the turns, the corrected ones, the first-try rate and the tokens.
+describe('turnsByDay', () => {
+  const days = buildDays('7d', NOW);
+
+  it('files each hour under the local day it happened, and rates the day by its turns', () => {
+    const t = turnsByDay([
+      [hourOf(1, 23), 4, 1, 1000, 100],
+      [hourOf(0, 0), 3, 0, 500, 50],
+      [hourOf(0, 9), 1, 0, 200, 20],
+    ], days, NOW);
+    expect(t.at(-2)).toMatchObject({ turns: 4, corrections: 1, ftr: 0.75, tokensIn: 1000, tokensOut: 100, tokens: 1100, tone: 'bad' });
+    expect(t.at(-1)).toMatchObject({ turns: 4, corrections: 0, ftr: 1, tokens: 770, tone: 'good', label: 'Today' });
+  });
+
+  it('keeps a day with no turns unrated, and tokens unknown — never 0 — where none were captured', () => {
+    const t = turnsByDay([[hourOf(0, 10), 5, 0, null, null]], days, NOW);
+    expect(t.at(-1)).toMatchObject({ turns: 5, ftr: 1, tokens: null, tokensIn: null, tokensOut: null });
+    expect(t[0]).toMatchObject({ turns: 0, ftr: null, tokens: null, tone: 'neutral' });
+  });
+
+  it('leaves out hours outside the axis', () => {
+    const t = turnsByDay([[hourOf(30, 10), 9, 9, 9, 9]], days, NOW);
+    expect(t.every((d) => d.turns === 0)).toBe(true);
   });
 });

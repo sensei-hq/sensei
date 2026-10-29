@@ -12,7 +12,6 @@
   import { Screen } from '$lib/components';
   import TrendChart from './TrendChart.svelte';
   import StreamChart from './StreamChart.svelte';
-  import ConstellationChart from './ConstellationChart.svelte';
   import BandsChart from './BandsChart.svelte';
   import TokensChart from './TokensChart.svelte';
   import MiniChart from './MiniChart.svelte';
@@ -34,7 +33,6 @@
 
   // Memoized slices so the header and the chart read one filtered source.
   const enriched = $derived(digest.enriched);
-  const buckets = $derived(digest.dayBuckets);
   const days = $derived(digest.days);
   const totals = $derived(digest.totals);
   const miniChartMode = $derived(
@@ -44,9 +42,8 @@
 
   // Chip metadata + cycler glyphs (kanji per mode).
   const CHIP_META: Record<ChartVariant, { kanji: string; sub: string }> = {
-    trend: { kanji: '線', sub: 'first-try-right over time' },
-    stream: { kanji: '流', sub: 'time spent, stacked' },
-    constellation: { kanji: '星', sub: 'duration vs day' },
+    trend: { kanji: '線', sub: 'first-try turns, per day' },
+    stream: { kanji: '流', sub: 'turns per day, corrected under first-try' },
     bands: { kanji: '帯', sub: 'agent and your time, per day' },
     tokens: { kanji: '燃', sub: 'token volume per day' },
   };
@@ -54,7 +51,6 @@
     numbers: '数',
     trend: '線',
     stream: '流',
-    constellation: '星',
     bands: '帯',
     pulse: '脈',
   };
@@ -111,7 +107,7 @@
 
       {#if !digest.error}
       <!-- Right cluster — numbers at rest, mini chart when cycled; the cycler
-           badge steps through numbers/trend/stream/constellation/bands/pulse.
+           badge steps through numbers/trend/stream/bands/pulse.
            Pulse lives ONLY on the cycler, never in the chip group below. -->
       <div class="flex items-center gap-3 pl-5 border-l border-paper-edge shrink-0">
         {#if digest.miniMode === 'numbers'}
@@ -127,7 +123,7 @@
           </div>
         {:else}
           <div class="flex items-center gap-3" data-testid="mini-view">
-            <MiniChart mode={miniChartMode} {buckets} sessions={enriched} {days} activity={digest.activity.days} />
+            <MiniChart mode={miniChartMode} buckets={digest.turnDays} sessions={enriched} {days} activity={digest.activity.days} />
             <div class="min-w-[56px]">
               <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{totals.count}</div>
               <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">sessions</div>
@@ -205,13 +201,11 @@
 
       <div class="bg-paper-soft border border-paper-edge rounded-lg pt-5 pb-4 px-5" data-testid="chart-body">
         {#if digest.chart === 'trend'}
-          <TrendChart {buckets} />
+          <TrendChart days={digest.turnDays} />
         {:else if digest.chart === 'stream'}
-          <StreamChart {buckets} />
-        {:else if digest.chart === 'constellation'}
-          <ConstellationChart sessions={enriched} {days} />
+          <StreamChart days={digest.turnDays} />
         {:else if digest.chart === 'tokens'}
-          <TokensChart {buckets} />
+          <TokensChart days={digest.turnDays} />
         {:else}
           <BandsChart activity={digest.activity} />
         {/if}
