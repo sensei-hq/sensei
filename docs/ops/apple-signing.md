@@ -25,9 +25,13 @@ If the administrator is not the Account Holder, the Account Holder does step 1.
    ```sh
    openssl x509 -inform DER -in developerID_application.cer -out developer-id.pem
    openssl pkcs12 -export -inkey developer-id.key -in developer-id.pem \
+     -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
      -out developer-id.p12 -name "Developer ID Application"
    ```
-   (Choose a strong export password.) Then the signing identity's name is
+   (Choose a strong export password.) The three algorithm flags matter: OpenSSL 3 and later default
+   to AES/PBKDF2 with a SHA-256 MAC, which macOS's `security import` — on a Mac and on the CI runner —
+   cannot read, and it reports that as "MAC verification failed (wrong password?)" even when the
+   password is right. Then the signing identity's name is
    `Developer ID Application: <Company Name> (<TEAM ID>)` — shown on the certificate's page.
 
 Not needed: "Developer ID Installer" (only for `.pkg` installers — sensei ships the `.app` and archives).
