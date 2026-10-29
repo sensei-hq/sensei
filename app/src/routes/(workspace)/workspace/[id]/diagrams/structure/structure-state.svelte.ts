@@ -171,15 +171,27 @@ export class StructureState {
     this.kinds = next;
   }
 
-  async load() {
+  /** Payloads already read, by workspace · level · kinds. Only answers are kept: a
+   *  failure is asked again. The numbers shown are always the daemon's. */
+  #read = new Map<string, StructurePayload>();
+
+  /** Read the graph for the current level and kinds — from memory when this
+   *  combination was read before, unless `fresh` asks the daemon again (Retry). */
+  async load({ fresh = false }: { fresh?: boolean } = {}) {
+    const id = this.#workspaceId();
+    const key = `${id}|${this.level}|${this.kinds.join(',')}`;
+    const known = fresh ? undefined : this.#read.get(key);
+    if (known) {
+      this.payload = known;
+      this.failure = null;
+      this.loading = false;
+      return;
+    }
     this.loading = true;
     this.failure = null;
-    const res = await this.#api.tryGetWorkspaceStructure(
-      this.#workspaceId(),
-      this.level,
-      this.kinds,
-    );
+    const res = await this.#api.tryGetWorkspaceStructure(id, this.level, this.kinds);
     if (res.ok) {
+      this.#read.set(key, res.data);
       this.payload = res.data;
     } else {
       // The previous payload is DROPPED. A stale graph under an error banner

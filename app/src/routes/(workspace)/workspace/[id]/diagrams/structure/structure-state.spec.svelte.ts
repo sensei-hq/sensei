@@ -88,7 +88,7 @@ describe('StructureState', () => {
     await s.load();
     expect(s.nodes).toHaveLength(2);
     fail = true;
-    await s.load();
+    await s.load({ fresh: true });
     expect(s.view).toBe('error');
     expect(s.nodes).toEqual([]);
   });
@@ -144,5 +144,41 @@ describe('StructureState', () => {
     s.toggleKind('imports');
     await s.load();
     expect(seen).toEqual([['proj-7', 'package', ['calls', 'imports']]]);
+  });
+});
+
+// Every level or kind change fetched and redrew the whole graph, the way back included —
+// 1.2 MB at file level on sensei (user, 2026-10-28: "can't we … cache?"). A combination
+// already read is served from memory; the daemon's numbers are shown as they came.
+describe('StructureState — a combination read once is not read again', () => {
+  it('serves a revisited level and kind set from memory', async () => {
+    const asked: string[] = [];
+    const api: StructureApi = {
+      tryGetWorkspaceStructure: async (id, level, kinds) => {
+        asked.push(`${id}|${level}|${kinds.join(',')}`);
+        return { ok: true, data: payload() };
+      },
+    };
+    const s = new StructureState(api, () => 'w');
+    await s.load();
+    s.setLevel('module' as StructureLevel);
+    await s.load();
+    s.setLevel('file' as StructureLevel);
+    await s.load();
+    expect(asked).toEqual(['w|file|calls', 'w|module|calls']);
+    expect(s.view).toBe('graph');
+  });
+
+  it('does not keep a failure: the next load asks again', async () => {
+    let calls = 0;
+    const api: StructureApi = {
+      tryGetWorkspaceStructure: async () => (++calls === 1 ? { ok: false, error: { status: 503, message: 'busy' } } : { ok: true, data: payload() }),
+    };
+    const s = new StructureState(api, () => 'w');
+    await s.load();
+    expect(s.view).toBe('error');
+    await s.load();
+    expect(calls).toBe(2);
+    expect(s.view).toBe('graph');
   });
 });

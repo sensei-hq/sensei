@@ -60,7 +60,7 @@
                     type="button"
                     class="mt-2 px-3 py-1 text-sm rounded border border-paper-edge bg-transparent cursor-pointer"
                     data-testid="structure-retry"
-                    onclick={() => view.load()}
+                    onclick={() => view.load({ fresh: true })}
                 >
                     Retry
                 </button>
