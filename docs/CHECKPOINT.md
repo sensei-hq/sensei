@@ -28,6 +28,10 @@ Fit/100%; 4 Database · ER inspector and mobile lists.
 **Next command:** Diagrams slice 2 — start from `app/src/routes/(workspace)/workspace/[id]/diagrams/[lens]/+page.svelte`
 (shared header) and `packages/codemap/CodeMap.svelte` (inspector).
 
+**After Diagrams (user, 2026-10-29):** #347 per-repository attribution across all transcript
+adapters (a session's cross-repo work counts against its start repo today); then adapters #348
+Muse, #349 Freebuff.
+
 **rokkit:** d9cbf302 (dark paper-edge at 200) on develop, unreleased — user cuts 1.12.2, then
 bump app/dōjō/website.
 
