@@ -9,15 +9,16 @@ landmark + harness fixes (5e145495); Settings · Libraries filtered by a stale f
 settings read keeps the last settings, shows it in the status strip, retries (e6b154d3); bands are
 vertical bars with clean dates, Sessions opens on recency 7/30/90 (bf528427); Layers has rokkit's
 zoom overlay (2a9c3ba0); Cycles draws each loop (08a0fcdf); Structure caches each level·kinds read
-(6dbcc4a1). Website split filed as #346.
+(6dbcc4a1). Website split filed as #346. Bands = agent vs your active time per local day from
+activity.sessions.active_by_hour (ce8b8ef9 daemon + DDL, f9bafea5 app); live DB reconciled, installed,
+dbd backfilled 58/58 and conserving (hours = claude_time/user_time exactly).
 
 **rokkit develop (pushed, NOT released):** daef55a0 etched dark paper-edge (dividers); af4701a2 pinch
 zoom proportional to wheel travel; db3ae1f5 cli bundle/build await every folder (the 1.12.1 bump
 failure). Next: user runs `bun run bump patch` → bump app/dōjō/website to 1.12.1.
 
 **Open / to ask:** dbd title-bar "scribble" — not reproduced (no graphic near the titlebar on
-overview, sessions, structure, layers, cycles); need a screenshot. Bands' minutes are wall-clock
-(dbd has 20h–2d sessions) — chart active time instead? Structure's per-kind unplaced count needs a
+overview, sessions, structure, layers, cycles); need a screenshot. Structure's per-kind unplaced count needs a
 daemon change before kinds can filter client-side. Live inspect still red: layers crawl blocks
 >30 s on large graphs (rokkit layout perf); tool-calls index freshness (recheck after re-index);
 glyphs spec waits for a kanji on a workspace overview that may never render one.
