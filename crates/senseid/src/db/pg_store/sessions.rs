@@ -65,6 +65,48 @@ impl PgStore {
             .map_err(|e| e.to_string())
     }
 
+    /// Work by the hour it happened, for the Sessions charts (user, 2026-10-29): per hour
+    /// (ms since the epoch ÷ 3600000), `[hour, turns, corrected turns, tokens in, tokens out]`
+    /// from the turns themselves, so a session that ran for days counts on every day it
+    /// ran. Tokens are NULL in an hour no transcript turn was captured for — unknown,
+    /// never 0. Scoped like [`Self::list_all_sessions`]: `range_days` back from now, and
+    /// the session's workspace.
+    pub async fn activity_by_hour(
+        &self,
+        range_days: Option<i64>,
+        workspace: Option<&uuid::Uuid>,
+    ) -> Result<serde_json::Value, String> {
+        let rows: Vec<(i64, i64, i64, Option<i64>, Option<i64>)> = sqlx_core::query_as::query_as(
+            "WITH t AS (
+                SELECT floor(extract(epoch FROM t.started_at) / 3600)::bigint AS h,
+                       count(*) AS turns, count(*) FILTER (WHERE t.is_correction) AS corrections
+                  FROM activity.turns t JOIN activity.sessions s ON s.id = t.session_id
+                 WHERE ($1::int IS NULL OR t.started_at >= now() - make_interval(days => $1::int))
+                   AND ($2::uuid IS NULL OR s.workspace_id = $2)
+                 GROUP BY 1),
+             k AS (
+                SELECT floor(extract(epoch FROM tt.started_at) / 3600)::bigint AS h,
+                       sum(tt.tokens_in)::bigint AS tokens_in, sum(tt.tokens_out)::bigint AS tokens_out
+                  FROM activity.transcript_turns tt JOIN activity.sessions s ON s.client_session_id = tt.session_id
+                 WHERE ($1::int IS NULL OR tt.started_at >= now() - make_interval(days => $1::int))
+                   AND ($2::uuid IS NULL OR s.workspace_id = $2)
+                 GROUP BY 1)
+             SELECT coalesce(t.h, k.h), coalesce(t.turns, 0), coalesce(t.corrections, 0), k.tokens_in, k.tokens_out
+               FROM t FULL JOIN k ON k.h = t.h
+              ORDER BY 1",
+        )
+        .bind(range_days)
+        .bind(workspace)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(serde_json::Value::Array(
+            rows.into_iter()
+                .map(|(h, turns, corr, tin, tout)| serde_json::json!([h, turns, corr, tin, tout]))
+                .collect(),
+        ))
+    }
+
     // ── Extensions ────────────────────────────────────────────────────
 
     pub async fn create_snapshot(&self, snap: &SnapshotRow<'_>) -> Result<uuid::Uuid, String> {
