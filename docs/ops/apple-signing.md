@@ -76,5 +76,9 @@ manager, never as a chat or email attachment. Afterwards, delete the loose `.key
   security import developer-id.p12 -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign
   ```
 
-  After that, every `make install` signs with the Developer ID, so Keychain "Always Allow" and folder
-  access survive rebuilds — granted once, then kept.
+  After that, every `make install` signs with the Developer ID — the three binaries as
+  `dev.sensei.<binary>`, and `Sensei.app` under its own `com.senseihq.desktop`, the identity the release
+  signs it with — so Keychain "Always Allow" and folder access survive rebuilds: granted once, then kept.
+  The certificate is issued under Apple's **G2** intermediate; if the identity shows as invalid in
+  `security find-identity -p codesigning`, install `DeveloperIDG2CA.cer` from
+  apple.com/certificateauthority.

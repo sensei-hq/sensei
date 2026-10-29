@@ -2,7 +2,7 @@
 # Sign sensei binaries with a STABLE identity — local installs, and the release (CI
 # names the Developer ID through $SENSEI_SIGN_IDENTITY, #282).
 #
-#   scripts/codesign-local.sh <binary>...
+#   scripts/codesign-local.sh [--keep-identifier] <binary>...
 #
 # macOS ties a keychain item's "Always Allow", and folder-access (TCC) grants,
 # to the program's code signature. An ad-hoc signature (`--sign -`) changes
@@ -15,9 +15,17 @@
 # else `sensei-dev` (create it once with `make dev-signing-cert`), else ad-hoc —
 # said out loud. A Developer ID signature carries a secure timestamp, which
 # notarization requires; the self-signed one does not, so a local install needs
-# no network. The identifier is always `dev.sensei.<binary name>`, never the
-# hash-bearing default.
+# no network. The identifier is `dev.sensei.<binary name>`, never the
+# hash-bearing default; `--keep-identifier` signs a bundle under its own
+# CFBundleIdentifier instead (the installed app, `com.senseihq.desktop`, the
+# identity the release signs it with).
 set -euo pipefail
+
+keep_identifier=0
+if [[ "${1:-}" == "--keep-identifier" ]]; then
+  keep_identifier=1
+  shift
+fi
 
 identity="${SENSEI_SIGN_IDENTITY:-}"
 if [[ -z "$identity" ]]; then
@@ -50,6 +58,8 @@ for f in "$@"; do
   else
     id="dev.sensei.$name"
   fi
-  codesign --sign "$identity" --identifier "$id" --options runtime ${timestamp[@]+"${timestamp[@]}"} --force "$f"
+  identifier=(--identifier "$id")
+  [[ $keep_identifier == 1 ]] && identifier=()
+  codesign --sign "$identity" ${identifier[@]+"${identifier[@]}"} --options runtime ${timestamp[@]+"${timestamp[@]}"} --force "$f"
 done
 echo "codesign-local: signed $# binary(ies) as '$identity'"

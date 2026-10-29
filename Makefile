@@ -248,6 +248,7 @@ install-app: db-backup-essential
 	  fi; \
 	  rm -rf /Applications/Sensei.app; \
 	  cp -R app/src-tauri/target/release/bundle/macos/Sensei.app /Applications/; \
+	  scripts/codesign-local.sh --keep-identifier /Applications/Sensei.app; \
 	  echo "Installed Sensei.app to /Applications/"; \
 	else \
 	  echo "Warning: app/src-tauri/target/release/bundle/macos/Sensei.app not found — skipping /Applications copy"; \

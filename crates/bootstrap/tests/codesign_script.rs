@@ -135,3 +135,33 @@ fn an_explicit_developer_id_is_timestamped() {
         run(t.path(), false, &[("SENSEI_SIGN_IDENTITY", "Developer ID Application: X (T)")]);
     assert!(log.contains("--timestamp"), "{log}");
 }
+
+/// The installed app keeps its own bundle identifier (`com.senseihq.desktop`, the one the
+/// release signs it with), so local and released builds share their grants; the e2e bundle
+/// still gets `dev.sensei.app.<name>` (#284).
+#[test]
+fn keep_identifier_signs_a_bundle_under_its_own_identifier() {
+    let t = tempfile::tempdir().unwrap();
+    let bin = t.path().join("bin");
+    let (o, log) = {
+        // Prime the fakes and target with the usual run, then sign again with the flag.
+        let _ = run_on(t.path(), "Sensei.app", true, &[("HAS_DEVELOPER_ID", "1")]);
+        std::fs::write(t.path().join("codesign.log"), "").unwrap();
+        let out = Command::new("bash")
+            .arg(script())
+            .arg("--keep-identifier")
+            .arg(t.path().join("Sensei.app"))
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("HAS_DEV_ID", "1")
+            .env("HAS_DEVELOPER_ID", "1")
+            .env("CODESIGN_LOG", t.path().join("codesign.log"))
+            .env_remove("SENSEI_SIGN_IDENTITY")
+            .output()
+            .unwrap();
+        (out, std::fs::read_to_string(t.path().join("codesign.log")).unwrap())
+    };
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(!log.contains("--identifier"), "the bundle's own identifier is kept: {log}");
+    assert!(log.contains("--sign Developer ID Application"), "{log}");
+    assert!(log.contains("Sensei.app"), "{log}");
+}
