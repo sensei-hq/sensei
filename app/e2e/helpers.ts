@@ -199,9 +199,9 @@ function sleep(ms: number): Promise<void> {
  * In both cases a SINGLE navigation lands on the wrong route and the target
  * selector never appears — waiting longer on it can't help (we're elsewhere).
  * Re-navigating once the conditions settle mounts the screen, so we retry the
- * whole navigation. The budget must comfortably exceed the observed cold-boot
- * health-ready time (~50s on a loaded box). Deterministic: polls for a stable
- * selector, no fixed sleeps.
+ * whole navigation — from the page the gate settled on, or after 30s with nothing
+ * moved; never while a slow load is still in flight. The budget must comfortably
+ * exceed the observed cold-boot health-ready time (~50s on a loaded box).
  */
 export async function navigateToScreen(
   tauriPage: {
@@ -213,26 +213,43 @@ export async function navigateToScreen(
   totalMs = 120_000,
 ): Promise<void> {
   const deadline = Date.now() + totalMs;
-  let lastErr: unknown;
-  for (;;) {
-    await navigateTo(tauriPage, route);
-    try {
-      await tauriPage.waitForSelector(screenSelector, 8_000);
-      // The selector can match on the page a redirect landed on — the boot gate sends an early
-      // navigation through /health to Today, and the rail is on both — so arrival is the path.
-      const at = (await tauriPage.evaluate('location.pathname')) as string;
-      if (at === route.split(/[?#]/)[0]) return;
-      lastErr = new Error(`navigateToScreen: asked for '${route}', the window is on '${at}'`);
-      if (Date.now() >= deadline) break;
-      continue;
-    } catch (e) {
-      lastErr = e;
-      if (Date.now() >= deadline) break;
+  const target = route.split(/[?#]/)[0];
+  const sel = JSON.stringify(screenSelector);
+  // Arrival is the path AND the selector: the selector alone can match on the page a
+  // redirect landed on (the boot gate sends an early navigation through /health to Today,
+  // and the rail is on both). The path moves only once the route's loaders finish, so a
+  // slow load is waited out, not re-issued: re-navigating restarts the load, and under a
+  // busy daemon a load slower than the retry interval never landed at all.
+  let origin = (await tauriPage.evaluate('location.pathname')) as string;
+  await navigateTo(tauriPage, route);
+  let issued = Date.now();
+  let at = origin;
+  while (Date.now() < deadline) {
+    const probe = (await tauriPage
+      .evaluate(`JSON.stringify({ at: location.pathname, ready: !!document.querySelector(${sel}) })`)
+      .catch(() => null)) as string | null;
+    if (probe) {
+      const now = JSON.parse(probe) as { at: string; ready: boolean };
+      at = now.at;
+      if (at === target && now.ready) return;
+      const redirected = at !== target && at !== origin;
+      const stalled = at !== target && Date.now() - issued > 30_000;
+      if (redirected || stalled) {
+        // Somewhere else (a gate), or nothing moved: once settled, ask again from there.
+        await new Promise((r) => setTimeout(r, 1_000));
+        origin = at;
+        await navigateTo(tauriPage, route);
+        issued = Date.now();
+        continue;
+      }
     }
+    await new Promise((r) => setTimeout(r, 300));
   }
-  throw lastErr instanceof Error
-    ? lastErr
-    : new Error(`navigateToScreen: '${route}' never mounted '${screenSelector}' within ${totalMs}ms`);
+  throw new Error(
+    at === target
+      ? `navigateToScreen: '${route}' never mounted '${screenSelector}' within ${totalMs}ms`
+      : `navigateToScreen: asked for '${route}', the window is on '${at}'`,
+  );
 }
 
 /** Captured runtime-error buffers from the webview. */
