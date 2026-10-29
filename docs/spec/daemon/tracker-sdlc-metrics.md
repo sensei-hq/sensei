@@ -221,62 +221,118 @@ failing session is retried next pass.
 
 ### S3 · Build/test classifier (D8)
 
-**The catalogue is data.** The new table `sensei.command_patterns` (`toolchain`, `pattern`
-regex anchored on a segment, `category`, `fail_markers text[]`, `ok_markers text[]`) is
-seeded from `database/import/staging/command_patterns.jsonl` by a new
-`staging.import_command_patterns`, the same pattern as `metrics.jsonl`. Adding a toolchain
-is a jsonl row, not a code change. `catalogue_hash` is the md5 of the table's rows in key
-order, so any change re-derives.
+*Amended 2026-10-29 at build start, after the F1 pre-implementation swarm (amendment A1).
+The previous version attributed markers by category alone. It gave two `test_fail`s for one
+passing and one failing `cargo test` (row 1735), and missed compile errors inside `cargo
+test` (9 rows), loop bodies (9 rows), `bun run check` (38 rows), `make test-template` as a
+non-test (12 rows) and `pnpm --filter` (33 rows).*
 
-The seed covers at least:
-- cargo (`build|check|b|c`, `test|t|nextest`)
+**The catalogue is data**, in two tables seeded from staging jsonl by
+`staging.import_command_patterns` and `staging.import_command_markers` (the same pattern as
+`reason_codes`). Adding a toolchain or a marker is a jsonl row, not a code change.
+
+`sensei.command_patterns`, PK `(toolchain, pattern)`:
+
+| column | meaning |
+|---|---|
+| `toolchain` | e.g. `cargo`, `vitest`, `make`. `wrapper` = true for script and target runners |
+| `pattern` | regex anchored at the start of a stage (after S3.1 stripping). Workspace options are allowed between the tool and its verb (`pnpm --filter a run x`, `-F`, `-C`, `--dir`, `-r`, `-w`) |
+| `category` | `build`, `typecheck`, `test`, `e2e`, or `none` (a known command that isn't a run, e.g. `cargo clippy`, `make test-template`). NULL = derive from the pattern's first capture group (S3.2) |
+| `wrapper` | boolean. The stage runs a named script or target whose toolchain is unknown (`bun run <name>`, `make <target>`, `just <target>`) |
+| `compiles` | boolean. The stage compiles before it runs (`cargo test`, `cargo clippy`, `go test`, `dotnet test`, `mvn test`) |
+| `priority` | integer, higher first. A specific row (`make test-template` → `none`) beats a general one (`make <target>`) |
+| `modified_at` | import guard |
+
+`sensei.command_markers`, PK `(toolchain, category, kind, marker)`. `kind` is `fail` or
+`ok`, and `marker` is a literal substring. Seed examples:
+- cargo/build: fail `error: could not compile`, `error[E`; ok `Finished `
+- cargo/test: fail `test result: FAILED`; ok `test result: ok`
+- vitest/test: fail ` failed |`, `Tests  ` with ` failed`; ok ` passed (`
+- svelte-check/typecheck: fail `svelte-check found ` (with a nonzero count); ok `svelte-check found 0 errors`
+- tsc/typecheck: fail `error TS`
+- pytest/test: fail ` failed`, `= FAILURES =`; ok ` passed in `
+- go/test: fail `FAIL\t`, `--- FAIL`; ok `ok  \t`
+- go/build: fail `# ` package-error header
+
+A marker may need a numeric guard ("found 0 errors" vs "found 2 errors"). That is
+expressed as a regex marker (`kind` = `fail_re` / `ok_re`). Plain substrings stay the norm.
+
+`catalogue_hash` = Postgres `md5()` over both tables' rows in key order. Any catalogue
+change re-derives every session (S2).
+
+**The seed covers at least:**
+- cargo `build|check|b|c` (build), `test|t|nextest` (test, compiles), `clippy` (none, compiles), `fmt` (none)
 - go, dotnet, mvn/`./mvnw`, gradle/`./gradlew`
-- npm/pnpm/yarn/bun `run <name>` and `test`, `bun test`
+- npm/pnpm/yarn/bun `run <name>` and `test` (wrapper), `bun test`
 - npx/bunx/`pnpm exec` with `tsc`, `vitest`, `jest`, `playwright`, `svelte-check`
-- make/just `<target>` and bare `make`
+- make/just `<target>` (wrapper) and bare `make`, with `none` rows for `make test-template`
+  and other known non-runs in this repo's Makefile
 - pytest/`python -m pytest`/`uv run pytest`/tox/nox
 - tsc, svelte-check, mypy, pyright
 - cmake `--build`, ninja, msbuild, xcodebuild
 - swift, mix, rspec/`bundle exec rspec`/`rake test`
 - vitest, jest, `playwright test`
 
-For script and target names (`run <name>`, `make <target>`), the category comes from
-`adapters::manifest::command_category::categorise`, which is reused, not copied. The seed
-markers include cargo's `test result: FAILED`, `error: could not compile` and `error[E…]`
-for failure, and `test result: ok` and `Finished` for success.
+**`classify(command, output_text, exit, catalogue, folder_commands)` → `Vec<RunSignal>`**
+(`exit` is `PostToolUse` or `PostToolUseFailure`):
 
-**`classify(command, stdout+stderr, outcome_event, catalogue, folder_commands)`** →
-zero or more run signals:
+1. **Tokenize** with shell quoting rules:
+   - Single and double quotes and backslash escapes make one word.
+   - A heredoc body (`<<EOF … EOF`, `<<'EOF'`, `<<-EOF`) is skipped.
+   - `$(…)` and backticks are opaque words.
 
-1. **Split** into list elements on `&&`, `||`, `;` and newlines, keeping each element's
-   operator, and split each element on `|` into pipeline stages. Strip leading env
-   assignments, `cd <dir>`, `time`, `timeout <n>`, `nice` and `sudo`.
-2. **Find classified stages.** First match `sensei.folder_commands.command_line` for the
-   session's repository folder and its descendants (longest prefix wins, its `category`
-   decides), then `command_patterns`. Lint, format, docs, run, dev and start are not
-   classified.
-3. **Outcome from output first.** Markers belong to a **category**, not a toolchain. cargo
-   build markers are `could not compile`, `error[E` (fail) and `Finished` (ok). cargo test
-   markers are `test result: FAILED` (fail) and `test result: ok` (ok). For each classified
-   stage, look only for **its category's** markers in the response text:
-   - any fail marker → `{category}_fail`
-   - otherwise, any ok marker → `{category}_ok`, **except** on a `PostToolUseFailure`, where
-     an ok marker never yields `_ok` (a crash or timeout after `Finished` is no success)
-   - neither → step 4
+   Split on the operators `&&`, `||`, `;`, `&`, newline (list elements, each keeping the
+   operator that **enters** it) and `|` (pipeline stages). At each stage's start, strip:
+   - env assignments (`X=1`) and `time`, `timeout <n>`, `nice`, `sudo`, `exec`, `!`
+   - grouping and keyword tokens: `{`, `(`, `do`, `then`, `else`, `elif`
 
-   Real data has 190 fail-marker and 209 ok-marker outputs among 370 build/test runs, so
-   this is the main path. In rows 10477, 10729, 10737 and 10794 (`cargo build … ; cargo test …`
-   with `test result: FAILED` and no compile marker), the build stage stays unknown and
-   is never a compile defect.
-4. **Otherwise outcome from the exit**, only when it is attributable:
-   - Success (`PostToolUse`) where every classified stage is the **last stage** of its
-     element and every element after the first classified one is joined by `&&` → `_ok`
-     for each classified stage. Under `&&`, success means every step succeeded.
-   - Failure (`PostToolUseFailure`) with **exactly one** classified stage that is the last
-     stage of the **last** element → `_fail`.
-   - Anything else (a pipe after it, a `;`/`||` after it, or several classified stages in a
-     failure) → `run_unknown`.
-5. A failure with no classified stage → `unclassified_fail`.
+   A stage that is then `cd <dir>`, or that starts with `for`, `while`, `until`, `if`,
+   `case`, `done`, `fi`, `esac`, `}` or `)`, is a **no-op stage** (not a command). The words
+   of `bash -c`, `sh -c` and `eval` are not analysed (known limit).
+2. **Classify each stage.**
+   - First, `sensei.folder_commands` for the session's repository folder and its
+     descendants: the longest `command_line` that prefixes the stage. A non-NULL `category`
+     decides, and a NULL one falls through.
+   - Then `command_patterns`, by `priority` descending, then pattern length descending.
+     The first match decides.
+   - A NULL row category is derived from the capture group (the script or target name):
+     `categorise(name)`, applied to the name's **first token** (the name split on `:`, `-`,
+     `_`), so `test-template` → `test` is only accepted when no higher-priority `none` row
+     matched, and `check:all` → `check`.
+   - `adapters::manifest::command_category::categorise` gains exact `check` and `check:*`
+     → `typecheck`. This is a shared change, and the indexer's `folder_commands` writer
+     benefits.
+   - Categories other than `build`, `typecheck`, `test` and `e2e` (lint, format, docs, run,
+     dev, start, bench, none) are **not runs**: no signal. But a `compiles` stage still
+     **owns** build-fail markers (step 3).
+3. **Outcome from markers, by ownership.** Find every catalogue marker in the output. A
+   marker `(T, C, kind)` is **owned** by:
+   - the stages with toolchain `T` and category `C`; or
+   - for `C = build` and kind `fail`, also every `compiles` stage of toolchain `T`, whatever
+     its category, `none` included; or
+   - when no stage has toolchain `T`, the **wrapper** stages of category `C`.
+
+   A marker with **exactly one owner** is attributed to it. A marker with several owners
+   is **ambiguous** for each of them. Per classified stage, the first rule that applies:
+   1. an attributed build-fail marker on a `compiles` stage → `build_fail` (a compile error,
+      whichever command compiled)
+   2. an attributed fail marker of its category → `{category}_fail`
+   3. it co-owns an ambiguous **fail** marker → `run_unknown`. An ambiguous failure
+      outranks this stage's own ok marker
+   4. an attributed ok marker, on `PostToolUse` → `{category}_ok`. On `PostToolUseFailure`,
+      an ok marker never yields `_ok`
+   5. it co-owns an ambiguous ok marker → `run_unknown`
+   6. otherwise → step 4
+
+   A non-run stage (`none`, lint, …) emits nothing, but its ownership still counts.
+4. **Outcome from the exit**, only when it is attributable:
+   - **Failure** (`PostToolUseFailure`): the command, without no-op stages, is exactly one
+     element of one stage, and that stage is classified → `_fail`.
+   - **Success** (`PostToolUse`): for each classified stage, `_ok` only when it is the last
+     stage of its element, its element was not entered by `||`, and every later element is
+     entered by `&&`.
+   - Anything else → `run_unknown`.
+5. A `PostToolUseFailure` with no classified stage → `unclassified_fail`.
 
 ### S4 · Ticket history (D2)
 
@@ -485,21 +541,47 @@ comment `render` is unchanged.
 
 ## Done gate
 
-1. **Classifier.** `cargo test -p senseid sdlc::classify` passes, with one case per seed
-   toolchain and these asserted outcomes:
-   - `cargo test 2>&1 | tail -3` with output `test result: FAILED` → `test_fail`
-   - with no marker → `run_unknown`
-   - `cargo test > l 2>&1; echo $?` (PostToolUse, no marker) → `run_unknown`
-   - `cargo build || true` → `run_unknown`
-   - failing `cargo build && cargo test` with no marker → `run_unknown`
-   - `cargo build …; cargo test …` with `Finished` and `test result: FAILED` → `build_ok` +
-     `test_fail`. With `test result: FAILED` and no build marker → build `run_unknown` +
-     `test_fail`, never `build_fail`
-   - `PostToolUseFailure` of `cargo test` whose output has only `Finished` → not `test_ok`
-   - passing `cargo build && cargo test` → `build_ok` + `test_ok`
-   - a folder command `bun run check:all` with category `typecheck` beats the table
-   - a new jsonl row classifies a new toolchain with no code change, and changes
-     `catalogue_hash`
+1. **Classifier.**
+   - **Pure:** `cargo test -p senseid sdlc::classify` passes, with one case per seed
+     toolchain and these outcomes:
+     - `cargo test 2>&1 | tail -3` with output `test result: FAILED` → `test_fail`;
+       with no marker → `run_unknown`
+     - `cargo test 2>&1 | tail -3` with `error: could not compile` → `build_fail`
+     - `cargo test > l 2>&1; echo $?` (PostToolUse, no marker) → `run_unknown`
+     - `cargo build || true` → `run_unknown`
+     - `cargo fmt --check && cargo test`, PostToolUseFailure, no marker → `run_unknown`,
+       never `test_fail`
+     - failing `cargo build && cargo test`, no marker → `run_unknown` ×2
+     - passing `cargo build && cargo test` → `build_ok` + `test_ok`
+     - `cargo build …; cargo test …` with `Finished` and `test result: FAILED` →
+       `build_ok` + `test_fail`; with `test result: FAILED` and no build marker →
+       build `run_unknown` + `test_fail`, never `build_fail`
+     - row 1735's shape (two `cargo test` stages, outputs `ok` and `FAILED`) →
+       `run_unknown` ×2, never two `test_fail`
+     - row 3508's shape (`cargo test …; bun run test:unit …`, `test result: ok` and vitest
+       ` 1 failed |`) → `test_ok` (cargo) + `test_fail` (bun)
+     - `for i in 1 2; do cargo test 2>&1 | grep "test result"; done` with
+       `test result: FAILED` → `test_fail`
+     - `make test-template 2>&1 | grep stamped; cargo test … | grep …` with
+       `test result: FAILED` → exactly one `test_fail`
+     - `cargo build 2>&1 | tail -1; cargo clippy -- -D warnings` with `Finished` and
+       `could not compile` → build `run_unknown` (clippy co-owns the compile marker), never
+       `build_fail`, and no signal for clippy
+     - `bun run check` (no folder command) with `svelte-check found 2 errors` →
+       `build_fail` (typecheck)
+     - `pnpm --filter a run typecheck 2>&1 | tail -3`, no marker → `run_unknown`
+       (typecheck)
+     - `rg 'cargo test|make test' f.yml | head` and a PR-body heredoc mentioning
+       `cargo test` → no signals
+     - `PostToolUseFailure` of `cargo test` whose output has only `Finished` → not `test_ok`
+     - a folder command with category `typecheck` beats the table; one with NULL category
+       falls through
+     - `cargo bench` / `npm run bench` → no run signal
+   - `categorise("check")` and `categorise("check:all")` → `typecheck`, and the existing
+     `categorise` tests still pass.
+   - **DB:** the `pg_store` test `command_catalogue_import` inserts a staging row and calls
+     the import. The new toolchain classifies through `command_catalogue()`, and
+     `catalogue_hash` changes.
 2. **Session fixture A.** Events by `ts` (min): 0 Edit `src/a.rs`; 1 failing `cargo build`
    (PostToolUseFailure); 2 Stop; 30 Edit `src/a.rs`; 31 passing `cargo build`; 32
    `gh pr create`; 50 Edit `src/a.rs`; 52 `git push`; 53 SessionEnd. Threshold 15.
