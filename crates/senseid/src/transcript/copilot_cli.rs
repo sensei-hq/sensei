@@ -90,6 +90,8 @@ fn parse_events_jsonl_turns(content: &str) -> Vec<TranscriptTurn> {
                     }
                     cur = Some(TranscriptTurn {
                         turn_index: turns.len() as i32 + 1,
+                        origin: "human".to_string(),
+                        prompt_id: None,
                         user_text: Some(text.to_string()),
                         assistant_text: String::new(),
                         started_at: parse_timestamp(&v),
@@ -339,6 +341,8 @@ fn parse_sqlite_turns(db_path: &Path, session_id: &str) -> Vec<TranscriptTurn> {
         }
         turns.push(TranscriptTurn {
             turn_index: i as i32 + 1,
+            origin: "human".to_string(),
+            prompt_id: None,
             user_text: if user_msg.is_empty() { None } else { Some(user_msg) },
             assistant_text,
             started_at: None,

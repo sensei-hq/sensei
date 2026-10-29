@@ -48,12 +48,29 @@ pub(crate) const INJECTED_MARKERS: &[&str] = &[
     "## Security Guidance",
 ];
 
-/// The human prompt text of a `user` record, or `None` if it's a tool result,
-/// a meta/injected message, or empty.
-pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
-    if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
-        return None;
+/// Origins Claude Code labels a turn it started itself with (`turnOrigin`): a loop or
+/// cron tick, an agent's hand-back, a background task's notification, a continuation.
+/// Each starts an assistant turn that spends tokens (user, 2026-10-29).
+pub(crate) const AUTOMATED_ORIGINS: &[&str] =
+    &["scheduled", "task_notification", "peer", "auto_continuation"];
+
+/// The turn a `user` record starts — its origin and prompt text — or `None` when it
+/// starts none (a tool result, an injected skill body or notice, an empty prompt). A
+/// record labelled with an automated `turnOrigin` starts one with that origin; anything
+/// else is a turn only when it is a human prompt, as before origins were labelled.
+pub(crate) fn turn_start(v: &serde_json::Value) -> Option<(String, String)> {
+    if let Some(origin) = v.get("turnOrigin").and_then(|o| o.as_str())
+        && AUTOMATED_ORIGINS.contains(&origin)
+    {
+        let text = record_text(v).map(|t| t.trim().to_string()).unwrap_or_default();
+        return Some((origin.to_string(), text));
     }
+    human_prompt_text(v).map(|t| ("human".to_string(), t))
+}
+
+/// The text a `user` record carries — the string content, or its `text` blocks joined —
+/// or `None` for a tool result or a record without content.
+fn record_text(v: &serde_json::Value) -> Option<String> {
     let content = v.get("message").and_then(|m| m.get("content"))?;
     let text = match content {
         serde_json::Value::String(s) => s.clone(),
@@ -77,6 +94,16 @@ pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
         }
         _ => return None,
     };
+    Some(text)
+}
+
+/// The human prompt text of a `user` record, or `None` if it's a tool result,
+/// a meta/injected message, or empty.
+pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
+    if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
+        return None;
+    }
+    let text = record_text(v)?;
     let trimmed = text.trim();
     if let Some(command) = slash_command(trimmed) {
         return Some(command);
@@ -202,6 +229,10 @@ pub(crate) fn turn_attrs(v: &serde_json::Value, drop_keys: &[&str]) -> serde_jso
 #[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptTurn {
     pub turn_index: i32,
+    /// Who started the turn: `human`, or an automated origin (see [`AUTOMATED_ORIGINS`]).
+    pub origin: String,
+    /// The transcript's `promptId` — the hook's `prompt_id` for the same prompt.
+    pub prompt_id: Option<String>,
     pub user_text: Option<String>,
     pub assistant_text: String,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -225,6 +256,8 @@ impl Default for TranscriptTurn {
     fn default() -> Self {
         Self {
             turn_index: 0,
+            origin: "human".to_string(),
+            prompt_id: None,
             user_text: None,
             assistant_text: String::new(),
             started_at: None,
@@ -962,6 +995,11 @@ const WATERMARK_RESETS: &[(&str, &[&str], &str)] = &[
         &["claude_code", "cursor"],
         "a slash command is a prompt (decisions 2026-10-28)",
     ),
+    (
+        "transcripts.turn_origins_v1",
+        &["claude_code"],
+        "an automated prompt is a turn, labelled with its origin (user, 2026-10-29)",
+    ),
 ];
 
 /// Scan all adapters and enqueue one `IngestCapture` task per
@@ -1053,6 +1091,19 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Claude Code transcripts read before automated prompts were turns are read once
+    /// more, so their scheduled, peer and task-notification turns — and tokens — land.
+    #[test]
+    fn claude_transcripts_are_re_read_once_for_automated_turns() {
+        assert!(
+            WATERMARK_RESETS
+                .iter()
+                .any(|&(done, sources, _)| done == "transcripts.turn_origins_v1"
+                    && sources == ["claude_code"]),
+            "no once-only re-read for turn origins"
+        );
+    }
 
     /// #280: a backfill's repair pass brings existing sessions to their turn sums.
     /// A fully-ingested transcript is skipped as fresh, so without this pass a

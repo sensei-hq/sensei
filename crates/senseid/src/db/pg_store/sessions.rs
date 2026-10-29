@@ -68,8 +68,9 @@ impl PgStore {
     /// Work by the hour it happened, for the Sessions charts (user, 2026-10-29): per hour
     /// (ms since the epoch ÷ 3600000), `[hour, turns, corrected turns, tokens in, tokens out]`
     /// from the turns themselves, so a session that ran for days counts on every day it
-    /// ran. Tokens are NULL in an hour no transcript turn was captured for — unknown,
-    /// never 0. Scoped like [`Self::list_all_sessions`]: `range_days` back from now, and
+    /// ran. Turns and corrections are yours: an automated prompt's turn (a `/loop` tick,
+    /// a peer message) is left out, an unlabelled one counted. Tokens are every turn's,
+    /// NULL in an hour no transcript turn was captured for — unknown, never 0. Scoped like [`Self::list_all_sessions`]: `range_days` back from now, and
     /// the session's workspace.
     pub async fn activity_by_hour(
         &self,
@@ -83,6 +84,7 @@ impl PgStore {
                   FROM activity.turns t JOIN activity.sessions s ON s.id = t.session_id
                  WHERE ($1::int IS NULL OR t.started_at >= now() - make_interval(days => $1::int))
                    AND ($2::uuid IS NULL OR s.workspace_id = $2)
+                   AND coalesce(t.origin, 'human') = 'human'
                  GROUP BY 1),
              k AS (
                 SELECT floor(extract(epoch FROM tt.started_at) / 3600)::bigint AS h,
@@ -921,7 +923,7 @@ impl PgStore {
 
     /// `(session uuid, client_session_id)` for a workspace's sessions that NEED
     /// (re)enrichment — never analyzed (`analyzed_at IS NULL`), or with
-    /// assistant_events newer than the last analysis. Lets the scheduler skip
+    /// assistant_events or transcript turns newer than the last analysis. Lets the scheduler skip
     /// unchanged sessions so enrichment cost scales with NEW activity, not total
     /// history (#67 incremental).
     pub async fn get_workspace_sessions_needing_enrichment(
@@ -939,7 +941,10 @@ impl PgStore {
                     OR (s.duration IS NOT NULL AND s.active_by_hour IS NULL)
                     OR EXISTS (SELECT 1 FROM activity.assistant_events e
                                WHERE e.session_id = s.client_session_id
-                                 AND to_timestamp(e.ts / 1000.0) > s.analyzed_at))"
+                                 AND to_timestamp(e.ts / 1000.0) > s.analyzed_at)
+                    OR EXISTS (SELECT 1 FROM activity.transcript_turns tt
+                               WHERE tt.session_id = s.client_session_id
+                                 AND tt.created_at > s.analyzed_at))"
         ).bind(workspace_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
@@ -1578,12 +1583,12 @@ impl PgStore {
             .map_err(|e| e.to_string())?;
         sqlx_core::query::query(
             "INSERT INTO activity.turns
-               (session_id, turn_number, segment, started_at, ended_at, duration, is_correction, triage_signal, tool_calls)
+               (session_id, turn_number, segment, started_at, ended_at, duration, is_correction, triage_signal, tool_calls, origin)
              SELECT $1, (t->>'turn_number')::int, (t->>'segment')::int,
                     to_timestamp((t->>'started_ms')::bigint / 1000.0),
                     to_timestamp((t->>'ended_ms')::bigint / 1000.0),
                     make_interval(secs => (t->>'duration_ms')::bigint / 1000.0),
-                    (t->>'is_correction')::bool, t->>'triage_signal', (t->>'tool_calls')::int
+                    (t->>'is_correction')::bool, t->>'triage_signal', (t->>'tool_calls')::int, t->>'origin'
              FROM jsonb_array_elements($2::jsonb) t"
         ).bind(session_id).bind(turns).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())

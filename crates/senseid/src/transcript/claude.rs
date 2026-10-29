@@ -7,7 +7,7 @@
 use super::{
     MAX_LINE_BYTES, MAX_TRANSCRIPT_BYTES, MAX_TURN_CHARS, ParsedTranscript, SessionTokens,
     SynthEvent, SynthSession, TranscriptAdapter, TranscriptMessage, TranscriptTurn, TurnFacts,
-    UnitRef, human_prompt_text, merge_facts, parse_timestamp, turn_attrs,
+    UnitRef, human_prompt_text, merge_facts, parse_timestamp, turn_attrs, turn_start,
 };
 use std::path::{Path, PathBuf};
 
@@ -477,7 +477,7 @@ impl Reader for TurnsReader {
     fn push(&mut self, _n: usize, v: &serde_json::Value) {
         match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
             "user" => {
-                if let Some(prompt) = human_prompt_text(v) {
+                if let Some((origin, prompt)) = turn_start(v) {
                     if let Some(t) = self.cur.take() {
                         self.turns.push(t);
                     }
@@ -486,14 +486,16 @@ impl Reader for TurnsReader {
                     merge_facts(&mut facts, v);
                     self.cur = Some(TranscriptTurn {
                         turn_index: self.idx,
-                        user_text: Some(prompt),
+                        origin,
+                        prompt_id: v.get("promptId").and_then(|p| p.as_str()).map(str::to_string),
+                        user_text: (!prompt.is_empty()).then_some(prompt),
                         assistant_text: String::new(),
                         started_at: parse_timestamp(v),
                         attrs: turn_attrs(v, &["message", "attachment", "toolUseResult"]),
                         facts,
                     });
                 }
-                // tool_result / meta / injected → not a boundary, ignore.
+                // tool_result / skill body / unlabelled injected notice → not a boundary.
             }
             "assistant" => {
                 if let Some(t) = self.cur.as_mut() {
@@ -756,6 +758,55 @@ mod tests {
         assert_eq!(turns[1].turn_index, 2);
         assert_eq!(turns[1].user_text.as_deref(), Some("now wire it up"));
         assert_eq!(turns[1].assistant_text, "Wired.");
+    }
+
+    // Claude Code labels each turn's origin (`turnOrigin`): human, scheduled (a loop or a
+    // cron tick), peer (an agent's hand-back), task_notification, auto_continuation. Each
+    // starts an assistant turn that spends tokens; only human ones were recorded, so a day
+    // of loop ticks had no tokens at all (user, 2026-10-29). Every origin is a turn now,
+    // labelled, with its promptId (which the hook's prompt_id matches); a skill body
+    // injected after a prompt (`turnCompanion`) is still not one.
+    const ORIGINS: &str = r#"
+{"type":"user","timestamp":"2026-10-24T10:00:00.000Z","turnOrigin":"human","promptId":"p1","message":{"role":"user","content":"add a login page"}}
+{"type":"user","timestamp":"2026-10-24T10:00:00.100Z","isMeta":true,"turnCompanion":true,"promptId":"p1","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: ..."}]}}
+{"type":"assistant","timestamp":"2026-10-24T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Adding it."}],"usage":{"input_tokens":100,"output_tokens":10}}}
+{"type":"user","timestamp":"2026-10-24T11:00:00.000Z","isMeta":true,"turnOrigin":"scheduled","promptId":"p2","scheduledTaskId":"t1","message":{"role":"user","content":"Burndown tick. Read docs/CHECKPOINT.md"}}
+{"type":"assistant","timestamp":"2026-10-24T11:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Ticked."}],"usage":{"input_tokens":500,"output_tokens":50}}}
+{"type":"user","timestamp":"2026-10-24T12:00:00.000Z","isMeta":true,"turnOrigin":"peer","promptId":"p3","message":{"role":"user","content":"Another Claude session sent a message: done"}}
+{"type":"assistant","timestamp":"2026-10-24T12:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Noted."}]}}
+{"type":"user","timestamp":"2026-10-24T13:00:00.000Z","turnOrigin":"task_notification","promptId":"p4","message":{"role":"user","content":"<task-notification>build finished</task-notification>"}}
+{"type":"assistant","timestamp":"2026-10-24T13:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Checked."}]}}
+"#;
+
+    #[test]
+    fn every_turn_origin_is_a_turn_labelled_with_its_origin_and_prompt() {
+        let turns = parse_claude_transcript(ORIGINS);
+        let got: Vec<_> =
+            turns.iter().map(|t| (t.origin.as_str(), t.prompt_id.as_deref())).collect();
+        assert_eq!(
+            got,
+            [
+                ("human", Some("p1")),
+                ("scheduled", Some("p2")),
+                ("peer", Some("p3")),
+                ("task_notification", Some("p4"))
+            ]
+        );
+        assert_eq!(turns[0].user_text.as_deref(), Some("add a login page"));
+        assert_eq!(turns[0].assistant_text, "Adding it.", "the skill body did not start a turn");
+        assert_eq!(turns[1].user_text.as_deref(), Some("Burndown tick. Read docs/CHECKPOINT.md"));
+        assert_eq!(
+            (turns[1].facts.tokens_in, turns[1].facts.tokens_out),
+            (Some(500), Some(50)),
+            "the tick's tokens are its own"
+        );
+    }
+
+    #[test]
+    fn a_transcript_without_origins_reads_as_before() {
+        let turns = parse_claude_transcript(SAMPLE);
+        assert!(turns.iter().all(|t| t.origin == "human"), "an unlabelled prompt is a human one");
+        assert_eq!(turns.len(), 2, "an unlabelled task notification is still not a turn");
     }
 
     #[test]

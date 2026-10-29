@@ -55,6 +55,8 @@ pub struct HookEvent {
     /// `command_invoked.payload.action` (e.g. `"resume"`) — the in-session marker
     /// that a session was reopened/continued (Phase B). `None` for other events.
     pub action: Option<String>,
+    /// A `UserPromptSubmit`'s `prompt_id` — the transcript's `promptId` for the same prompt.
+    pub prompt_id: Option<String>,
 }
 
 /// One turn: a `UserPromptSubmit` and the work until the next prompt.
@@ -68,6 +70,9 @@ pub struct Turn {
     pub is_correction: bool,
     pub triage_signal: Option<&'static str>,
     pub tool_calls: i32,
+    /// Who started the turn, from the transcript turn with the same prompt id:
+    /// `human` or an automated origin. `None` when the transcript has no such prompt.
+    pub origin: Option<String>,
 }
 
 /// Derived per-session metrics written to `activity.sessions` (+ the per-turn
@@ -315,6 +320,7 @@ fn split_into_turns(events: &[HookEvent], idle_ms: i64) -> Vec<Turn> {
                 is_correction: triage_signal.is_some(),
                 triage_signal,
                 tool_calls: slice.iter().filter(|e| e.event_type == "PostToolUse").count() as i32,
+                origin: None,
             }
         })
         .collect();
@@ -379,6 +385,7 @@ fn derive_outcome(
         && !has_end
         && transcript
             .iter()
+            .filter(|t| t.origin == "human")
             .any(|t| abandonment_signal(t.user_text.as_deref().unwrap_or(""), &t.assistant_text));
     if abandoned {
         return "abandoned";
@@ -452,18 +459,23 @@ pub fn derive_session_metrics(
         return None;
     }
     // Hook-derived per-turn detail (timings, tool calls) — supplementary rows.
-    let turns = split_into_turns(events, IDLE_GAP_MS);
+    let mut turns = split_into_turns(events, IDLE_GAP_MS);
+    label_origins(&mut turns, events, transcript);
     // Transcript-first turn count + corrections; hooks are the fallback only when
     // no transcript exists. Corrections reuse `correction_signal` over the real
     // `user_text`, so `792d7ce4` reads its 94 turns rather than the hooks' 1.
     let (turn_count, corrections) = if transcript.is_empty() {
         (turns.len() as i32, turns.iter().filter(|t| t.is_correction).count() as i32)
     } else {
-        let c = transcript
+        // Scheduled, peer and other automated prompts are turns of their own, but
+        // not yours: they neither count as a turn nor can correct one.
+        let yours: Vec<&TranscriptTurn> =
+            transcript.iter().filter(|t| t.origin == "human").collect();
+        let c = yours
             .iter()
             .filter(|t| t.user_text.as_deref().is_some_and(|u| correction_signal(u).is_some()))
             .count() as i32;
-        (transcript.len() as i32, c)
+        (yours.len() as i32, c)
     };
     let real_turns = (turn_count as usize).max(turns.len());
     let resumed = was_resumed(events);
@@ -489,6 +501,19 @@ pub fn derive_session_metrics(
     })
 }
 
+/// Label each hook turn with the origin of the transcript turn its prompt started.
+fn label_origins(turns: &mut [Turn], events: &[HookEvent], transcript: &[TranscriptTurn]) {
+    let by_prompt: std::collections::HashMap<&str, &str> = transcript
+        .iter()
+        .filter_map(|t| Some((t.prompt_id.as_deref()?, t.origin.as_str())))
+        .collect();
+    let prompts = events.iter().filter(|e| e.event_type == "UserPromptSubmit");
+    for (turn, prompt) in turns.iter_mut().zip(prompts) {
+        turn.origin =
+            prompt.prompt_id.as_deref().and_then(|p| by_prompt.get(p)).map(|o| o.to_string());
+    }
+}
+
 /// Serialize turns to the JSON array shape `replace_session_turns` expands into
 /// rows (ms epochs / ms durations → timestamptz / interval in SQL).
 fn turns_to_json(turns: &[Turn]) -> serde_json::Value {
@@ -505,6 +530,7 @@ fn turns_to_json(turns: &[Turn]) -> serde_json::Value {
                     "is_correction": t.is_correction,
                     "triage_signal": t.triage_signal,
                     "tool_calls": t.tool_calls,
+                    "origin": t.origin,
                 })
             })
             .collect(),
@@ -518,6 +544,7 @@ fn hook_event_from_row(row: &serde_json::Value) -> HookEvent {
     let payload = row.get("payload").cloned().unwrap_or(serde_json::Value::Null);
     let prompt = payload.get("prompt").and_then(|v| v.as_str()).map(str::to_string);
     let action = payload.get("action").and_then(|v| v.as_str()).map(str::to_string);
+    let prompt_id = payload.get("prompt_id").and_then(|v| v.as_str()).map(str::to_string);
     let file_path = payload
         .get("file_path")
         .and_then(|v| v.as_str())
@@ -539,6 +566,7 @@ fn hook_event_from_row(row: &serde_json::Value) -> HookEvent {
         file_path,
         tool_failed,
         action,
+        prompt_id,
     }
 }
 
@@ -1038,6 +1066,7 @@ mod tests {
             file_path: None,
             tool_failed: false,
             action: None,
+            prompt_id: None,
         }
     }
     /// A `command_invoked` event carrying an action (e.g. a resume marker).
@@ -1296,6 +1325,69 @@ mod tests {
         assert_eq!(trouble["duration_ms"], 5000);
         let clean = detect_session_trouble(&[], &[tt(0, "add a test", "done")], 3, Some(100));
         assert!(clean.is_null(), "a clean session is not a trouble case");
+    }
+
+    /// A transcript turn started by `origin` under the transcript's `promptId`.
+    fn tt_from(idx: i32, origin: &str, prompt_id: &str, user: &str) -> TranscriptTurn {
+        TranscriptTurn {
+            origin: origin.into(),
+            prompt_id: Some(prompt_id.into()),
+            ..tt(idx, user, "done")
+        }
+    }
+
+    #[test]
+    fn automated_turns_count_neither_as_turns_nor_as_corrections() {
+        let transcript = vec![
+            tt_from(0, "human", "p1", "implement the parser"),
+            tt_from(1, "scheduled", "p2", "actually, that's wrong — check the build again"),
+            tt_from(2, "peer", "p3", "no, revert that"),
+            tt_from(3, "human", "p4", "actually, that's wrong — revert it"),
+        ];
+        let m = derive_session_metrics(&[], &transcript).unwrap();
+        assert_eq!(m.turn_count, 2, "only the turns you started are turns");
+        assert_eq!(m.corrections, 1, "an automated prompt is never your correction");
+    }
+
+    #[test]
+    fn an_automated_prompt_giving_up_does_not_abandon_your_session() {
+        let transcript = vec![
+            tt_from(0, "human", "p1", "implement the parser"),
+            tt_from(1, "peer", "p2", "i give up on this, forget it"),
+        ];
+        let m = derive_session_metrics(&[], &transcript).unwrap();
+        assert_ne!(m.outcome, "abandoned", "only you can abandon your session");
+        let yours = vec![tt_from(0, "human", "p1", "i give up on this, forget it")];
+        assert_eq!(derive_session_metrics(&[], &yours).unwrap().outcome, "abandoned");
+    }
+
+    #[test]
+    fn each_hook_turn_takes_the_origin_of_its_transcript_prompt() {
+        let prompt = |text: &str, pid: &str, ts: i64| HookEvent {
+            prompt_id: Some(pid.into()),
+            ..prompt_ev(text, ts)
+        };
+        let events = vec![
+            prompt("go", "p1", 0),
+            prompt("tick", "p2", MIN),
+            prompt("unseen", "p9", 2 * MIN),
+            prompt_ev("no id", 3 * MIN),
+        ];
+        let transcript =
+            vec![tt_from(0, "human", "p1", "go"), tt_from(1, "scheduled", "p2", "tick")];
+        let m = derive_session_metrics(&events, &transcript).unwrap();
+        let origins: Vec<Option<&str>> = m.turns.iter().map(|t| t.origin.as_deref()).collect();
+        assert_eq!(origins, vec![Some("human"), Some("scheduled"), None, None]);
+        assert_eq!(turns_to_json(&m.turns)[1]["origin"], "scheduled");
+    }
+
+    #[test]
+    fn a_hook_prompt_reads_its_prompt_id() {
+        let row = serde_json::json!({
+            "event_type": "UserPromptSubmit", "ts": 5,
+            "payload": {"prompt": "hi", "prompt_id": "abc"}
+        });
+        assert_eq!(hook_event_from_row(&row).prompt_id.as_deref(), Some("abc"));
     }
 
     #[test]
@@ -1929,6 +2021,82 @@ mod tests {
             .ok();
 
         assert_eq!((reset, due), (1, vec![sid]));
+    }
+
+    /// The transcript is ground truth for a session's turns, so a transcript turn that
+    /// landed after the session was analysed makes it due again — as a newer hook event
+    /// does. That is also how re-reading transcripts under a new rule (automated prompts
+    /// as turns, 2026-10-29) reaches sessions analysed under the old one.
+    #[tokio::test]
+    async fn a_transcript_turn_newer_than_the_analysis_makes_the_session_due() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let pid = pg
+            .create_workspace(&format!("_test:tx-{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let fid = crate::db::pg_store::tests::create_test_folder(
+            pg,
+            &format!("tx-{}", uuid::Uuid::new_v4()),
+        )
+        .await;
+        let mut ids = Vec::new();
+        let mut csids = Vec::new();
+        for landed in ["now()", "now() - interval '2 hours'"] {
+            let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+            let sid = pg
+                .record_session_event(&crate::db::pg_store::SessionEventRow {
+                    client_session_id: &csid,
+                    folder_id: &fid,
+                    workspace_id: Some(&pid),
+                    family: "claude",
+                    is_end: true,
+                })
+                .await
+                .unwrap();
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET analyzed_at = now() - interval '1 hour' WHERE id = $1",
+            )
+            .bind(sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            sqlx_core::query::query(&format!(
+                "INSERT INTO activity.transcript_turns (source, session_id, family, turn_index, created_at)
+                 VALUES ('test', $1, 'claude', 0, {landed})"
+            ))
+            .bind(&csid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            ids.push(sid);
+            csids.push(csid);
+        }
+        let due: Vec<uuid::Uuid> = pg
+            .get_workspace_sessions_needing_enrichment(&pid)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        for (sid, csid) in ids.iter().zip(&csids) {
+            sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+                .bind(csid)
+                .execute(pg.pool())
+                .await
+                .ok();
+            sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+                .bind(sid)
+                .execute(pg.pool())
+                .await
+                .ok();
+        }
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .ok();
+        assert_eq!(due, vec![ids[0]], "only the session whose transcript grew since");
     }
 
     /// R12: a session analysed before the split (active time, no split) is due

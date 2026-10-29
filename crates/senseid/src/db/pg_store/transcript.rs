@@ -16,9 +16,11 @@ impl PgStore {
             sqlx_core::query::query(
                 "INSERT INTO activity.transcript_turns
                     (source, session_id, family, provider, model, turn_index, user_text, assistant_text, char_count, started_at,
-                     attrs, tokens_in, tokens_out, cache_read, cache_write, stop_reason, is_sidechain, skill, plugin, git_branch, effort, service_tier)
+                     attrs, tokens_in, tokens_out, cache_read, cache_write, stop_reason, is_sidechain, skill, plugin, git_branch, effort, service_tier,
+                     origin, prompt_id)
                  VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+                        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+                        $23, $24)
                  ON CONFLICT(source, session_id, turn_index) DO UPDATE SET
                    provider       = EXCLUDED.provider,
                    model          = EXCLUDED.model,
@@ -42,7 +44,9 @@ impl PgStore {
                    plugin         = COALESCE(EXCLUDED.plugin,       activity.transcript_turns.plugin),
                    git_branch     = COALESCE(EXCLUDED.git_branch,   activity.transcript_turns.git_branch),
                    effort         = COALESCE(EXCLUDED.effort,       activity.transcript_turns.effort),
-                   service_tier   = COALESCE(EXCLUDED.service_tier, activity.transcript_turns.service_tier)"
+                   service_tier   = COALESCE(EXCLUDED.service_tier, activity.transcript_turns.service_tier),
+                   origin         = EXCLUDED.origin,
+                   prompt_id      = COALESCE(EXCLUDED.prompt_id,    activity.transcript_turns.prompt_id)"
             )
             .bind(source).bind(session_id).bind(family).bind(provider).bind(model).bind(t.turn_index)
             .bind(&t.user_text).bind(&t.assistant_text).bind(char_count).bind(t.started_at)
@@ -52,6 +56,7 @@ impl PgStore {
             .bind(&t.facts.stop_reason).bind(t.facts.is_sidechain)
             .bind(&t.facts.skill).bind(&t.facts.plugin)
             .bind(&t.facts.git_branch).bind(&t.facts.effort).bind(&t.facts.service_tier)
+            .bind(&t.origin).bind(&t.prompt_id)
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
             n += 1;
         }
@@ -255,8 +260,10 @@ impl PgStore {
             String,
             Option<chrono::DateTime<chrono::Utc>>,
             Option<String>,
+            String,
+            Option<String>,
         )> = sqlx_core::query_as::query_as(
-            "SELECT turn_index, user_text, assistant_text, started_at, family
+            "SELECT turn_index, user_text, assistant_text, started_at, family, origin, prompt_id
                    FROM activity.transcript_turns
                   WHERE session_id = $1 ORDER BY turn_index",
         )
@@ -268,15 +275,27 @@ impl PgStore {
         let family = rows.iter().find_map(|r| r.4.clone().filter(|f| !f.trim().is_empty()));
         let turns = rows
             .into_iter()
-            .map(|(turn_index, user_text, assistant_text, started_at, _family)| {
-                crate::transcript::TranscriptTurn {
+            .map(
+                |(
                     turn_index,
                     user_text,
                     assistant_text,
                     started_at,
-                    ..Default::default()
-                }
-            })
+                    _family,
+                    origin,
+                    prompt_id,
+                )| {
+                    crate::transcript::TranscriptTurn {
+                        turn_index,
+                        origin,
+                        prompt_id,
+                        user_text,
+                        assistant_text,
+                        started_at,
+                        ..Default::default()
+                    }
+                },
+            )
             .collect();
         Ok((turns, family))
     }

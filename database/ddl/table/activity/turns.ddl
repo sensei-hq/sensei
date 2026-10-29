@@ -10,6 +10,7 @@ create table if not exists turns (
 , is_correction boolean     not null default false
 , triage_signal text
 , tool_calls    integer     not null default 0
+, origin        text
 , unique (session_id, turn_number)
 );
 
@@ -36,3 +37,4 @@ comment on column turns.duration      is 'Active time within the turn (gap-aware
 comment on column turns.is_correction is 'True if this turn''s prompt corrected the previous turn (FTR detractor).';
 comment on column turns.triage_signal is 'Which correction heuristic matched (revert/correction/actually/...). Null if not a correction.';
 comment on column turns.tool_calls    is 'Number of tool invocations (PostToolUse) in the turn.';
+comment on column turns.origin        is 'Who started the turn — human, or an automated prompt (scheduled, peer, task_notification, auto_continuation) — from the transcript turn with the same prompt id. Null when no transcript turn matched.';

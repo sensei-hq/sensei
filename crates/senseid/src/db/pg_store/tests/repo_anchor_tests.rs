@@ -2057,3 +2057,88 @@ async fn activity_by_hour_counts_turns_corrections_and_tokens_where_they_happene
         .await
         .unwrap();
 }
+
+/// Automated prompts (a `/loop` tick, a peer message, a task notification) are turns
+/// that spend tokens, but not turns you took (user, 2026-10-29): an hour counts your
+/// turns and corrections only — a turn whose origin is unknown counts as yours, as
+/// before — while its tokens include every turn.
+#[tokio::test]
+async fn activity_by_hour_counts_your_turns_and_every_turns_tokens() {
+    let s = pg_store().await;
+    let pid = s
+        .create_workspace(&format!("_test:origin-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
+    let fid = create_test_folder(&s, "origin").await;
+    let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
+    let h = chrono::Utc::now().timestamp() / 3600 - 5;
+    let ms = |m: i64| (h * 3600 + m * 60) * 1000;
+    let turn = |n: i32, m: i64, corrected: bool, origin: Option<&str>| {
+        serde_json::json!({
+            "turn_number": n, "segment": 1, "started_ms": ms(m), "ended_ms": ms(m),
+            "duration_ms": 0, "is_correction": corrected, "triage_signal": null,
+            "tool_calls": 0, "origin": origin,
+        })
+    };
+    let turns = serde_json::json!([
+        turn(1, 1, false, Some("human")),
+        turn(2, 10, true, Some("scheduled")),
+        turn(3, 20, true, None),
+        turn(4, 30, false, Some("peer")),
+    ]);
+    s.replace_session_turns(&sid, &turns).await.unwrap();
+    let stored: Vec<(Option<String>,)> = sqlx_core::query_as::query_as(
+        "SELECT origin FROM activity.turns WHERE session_id = $1 ORDER BY turn_number",
+    )
+    .bind(sid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let stored: Vec<Option<&str>> = stored.iter().map(|(o,)| o.as_deref()).collect();
+    assert_eq!(stored, vec![Some("human"), Some("scheduled"), None, Some("peer")]);
+
+    let at = |m: i64| chrono::DateTime::from_timestamp(h * 3600 + m * 60, 0).unwrap();
+    for (n, (m, origin, tin)) in [(2, "human", 100_i64), (11, "scheduled", 40)].iter().enumerate() {
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_turns (source, session_id, family, turn_index, started_at, tokens_in, tokens_out, origin)
+             VALUES ('test', $1, 'claude', $2, $3, $4, 1, $5)",
+        )
+        .bind(&csid)
+        .bind(n as i32)
+        .bind(at(*m))
+        .bind(*tin)
+        .bind(*origin)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+
+    let hours = s.activity_by_hour(Some(7), Some(&pid)).await.unwrap();
+    assert_eq!(hours, serde_json::json!([[h, 2, 1, 140, 2]]));
+
+    sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+        .bind(&csid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+        .bind(sid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
