@@ -133,27 +133,36 @@ idle_threshold_minutes: 15}`.
   - A non-finite value, an out-of-range value, a wrong type or an unknown key → 400
     `invalid_setting`, naming the key.
   - Returns 200 with the full settings.
-  - A changed `idle_threshold_minutes` makes the workspace's session derivations stale
-    (S2 marks).
+  - `idle_threshold_minutes` is applied **at read** (S6), so changing it re-derives nothing.
 
 ### S2 · Session signals (derived once, stored)
+
+*Amended 2026-10-29 before F2 (amendment A3, pre-implementation swarm):*
+- *slices are cut at a fixed 1-minute base and merged by the workspace threshold at read, because a session can belong to several workspaces, or none;*
+- *a failing session is recorded and skipped, never blocking the queue;*
+- *staleness uses `max(id)` and `count(*)` over a new `(session_id, id)` index;*
+- *events are read projected and ordered by `(ts, id)`;*
+- *an Agent review's text and time come from its `SubagentHandback`.*
 
 **Event time.** Every derived time comes from `assistant_events.ts`
 (`to_timestamp(ts / 1000.0)`, "when the event fired"), and events are ordered by `(ts, id)`.
 `created_at` is the insert time and is never used. A drained event is inserted hours later,
 but its `ts` is the event's own. Known limit, as documented at `capture_drain.rs:24-27`:
-legacy dead-letter lines without a client `ts` import with `ts` = drain time.
+legacy dead-letter lines without a client `ts` import with `ts` = drain time. A `ts` outside
+`[2000-01-01, now + 1 day]` makes that session's derivation fail (recorded, see the
+incremental pass). It never fails the pass.
 
 **Tables.**
 
-`activity.session_signal_marks`: one row per derived session.
+`activity.session_signal_marks`: one row per derived (or failed) session.
 
 | column | meaning |
 |---|---|
 | `session_id` uuid PK → `activity.sessions` on delete cascade | |
-| `through_event_id` bigint not null | highest `assistant_events.id` folded in |
-| `idle_threshold_minutes` integer not null | threshold the slices were cut with |
+| `through_event_id` bigint not null | highest `assistant_events.id` read; 0 for a session with no events |
+| `event_count` integer not null | events read. A lower id committing after a higher one raises the count, not the max |
 | `catalogue_hash` text not null | S3 catalogue hash at derivation |
+| `error` text | NULL when derived. Otherwise why derivation failed, and the session's signals are absent |
 | `derived_at` timestamptz not null default now() | |
 
 `activity.session_signals`: PK `(session_id, seq)`.
@@ -178,26 +187,44 @@ legacy dead-letter lines without a client `ts` import with `ts` = drain time.
 `sensei.hold_reason` takes these values: `build_failure`, `test_failure`, `permission_wait`,
 `interrupted`, `session_ended`, `unknown`.
 
-**Joining.** A session's events are `assistant_events.session_id = sessions.client_session_id`,
-the idiom used across `pg_store`.
+New index: `activity.assistant_events (session_id, id)`, used for staleness and for the
+read.
 
-**Derivation**: the pure function `derive_signals(events, catalogue, folder_commands,
-threshold) -> Vec<Signal>` in `crates/senseid/src/sdlc/signals.rs`.
+**Reading a session's events.** `assistant_events.session_id = sessions.client_session_id`
+(the idiom across `pg_store`). Sessions with a NULL `client_session_id` are never selected:
+they have no events.
+
+The new reader `session_events_for_signals(client_session_id)` orders by `(ts, id)` and
+projects only what derivation reads:
+- `id`, `event_type`, `tool_name`, `ts`, `success`
+- `tool_input`: `command`, `file_path`, `notebook_path`, `subagent_type`, `state`, `message`
+- `tool_response`: `type`, `agentId`
+- `old_string` / `new_string` / `content` / `originalFile`, only for paths ending `tasks.md`
+- the output text `stdout + stderr` (or `error` for a `PostToolUseFailure`), capped at its
+  **last 64 KiB**, where result lines are
+- `agent_id`, `notification_type`, `is_interrupt`
+
+The existing `get_hook_events_for_session_with_id` (whole payloads, `ts` order only) is not
+used.
+
+**Derivation**: the pure function `derive_signals(events, catalogue, folder_commands) ->
+Result<Vec<Signal>, String>` in `crates/senseid/src/sdlc/signals.rs`. No threshold: slices
+are cut at the fixed base.
 
 | signal | rule |
 |---|---|
 | `prompt` | each `UserPromptSubmit` |
 | `code_edit` | each `PostToolUse` of `Edit`, `MultiEdit` or `Write` (path `tool_input.file_path`) or `NotebookEdit` (path `tool_input.notebook_path`) whose path is **code**: no path segment in {`docs`, `doc`, `spec`, `specs`, `openspec`, `.sensei`, `.claude`}, and extension not `.md`/`.mdx` |
-| run signals | each Bash call, classified by S3 into `{category}_ok`, `{category}_fail`, `run_unknown` or `unclassified_fail`. `build`/`typecheck` → `build_*`; `test`/`e2e` → `test_*` |
-| `unmatched_call` | a Bash `PreToolUse` whose `tool_use_id` has no `PostToolUse`/`PostToolUseFailure` in the session (`category` set when S3 classifies it). A plugin without `PostToolUseFailure` (C1) loses failures exactly this way, so a lost failure is **counted**, never read as 0 |
+| run signals | each Bash `PostToolUse`/`PostToolUseFailure`, classified by S3 (`classify(command, output, exit, catalogue, folder_commands)`) into `{category}_ok`, `{category}_fail`, `run_unknown` or `unclassified_fail`. `build`/`typecheck` → `build_*`; `test`/`e2e` → `test_*` |
+| `unmatched_call` | a Bash `PreToolUse` whose `tool_use_id` has no `PostToolUse`/`PostToolUseFailure` in the session. `category` is set from S3's `run_categories(command, …)` (the same tokenizer and recognition, no outcome) when it names a run. A plugin without `PostToolUseFailure` (C1) loses failures exactly this way, so a lost failure is **counted**, never read as 0 |
 | `pr_created` | a successful Bash whose command contains `gh pr create` or `glab mr create` |
 | `pushed` | a successful Bash whose command contains `git push` |
 | `task_tick` | (a) an `Edit` on a path ending `tasks.md`: one per line that is `- [ ] …` in `old_string` and `- [x] …` in `new_string`. (b) a `Write` with `tool_response.type = "update"` on such a path: one per line that is unchecked in `tool_response.originalFile` and checked in `tool_input.content` (matched on the text after the box). (c) `mcp__plugin_sensei_sensei__update_task_status` with `tool_input.state = "done"` (`crates/mcp/src/lib.rs:878`) |
-| `review` | a `PostToolUse` of `Agent` whose `tool_input.subagent_type` (after any `plugin:` prefix) contains `review`, `auditor`, `verifier` or `hunter`; a Bash whose first word after S3 prefix-stripping is in {`codex`, `gemini`, `aider`, `cursor-agent`, `opencode`, `claude`}; any `mcp__*__consensus` tool |
-| `review_fix` (D10) | the first `code_edit` after a `review`, before the session's next `review`, of a file **named** in that review's response text. Path tokens are taken from the text: runs of non-space characters containing `/`. Strip surrounding quotes and backticks and trailing `.,;:)]`, then strip a `:N`, `:N-M` or `:N:M` suffix. Expand a brace list (`api/{server.rs,routes.rs}` gives two tokens). Keep tokens ending in `.<ext>`. Over 66 real reviewer responses, this keeps the 73 tokens the plain rule missed (`main.rs.`, `server.rs,`). The edited path is named when a token with ≥2 segments equals a **segment-aligned suffix** of it. `crates/cli/src/lib.rs` names `/repo/crates/cli/src/lib.rs` but not `/repo/crates/senseid/src/lib.rs`. A bare basename never matches (`mod.rs` ×42, `+page.svelte` ×82 in this repo). One per distinct file per review |
-| `slice` | the session's events cut where consecutive `ts` differ by > `idle_threshold_minutes`. `at` is the first event, `until` the last |
+| `review` | (a) an `Agent` review: the `PostToolUse` of `Agent` whose `tool_input.subagent_type` (after any `plugin:` prefix) contains `review`, `auditor`, `verifier` or `hunter` is a launch receipt (`tool_response.status = async_launched`, no text). The review is the matching `SubagentHandback` `PostToolUse` (`payload.agent_id` = the launch's `tool_response.agentId`), at **its** time, with text `tool_input.message`; failing that, the matching `SubagentStop`'s `last_assistant_message`. A launch with neither yields no review. (b) a Bash whose first word after S3 prefix-stripping is in {`codex`, `gemini`, `aider`, `cursor-agent`, `opencode`, `claude`}, with its output text. (c) any `mcp__*__consensus` tool, with its output text |
+| `review_fix` (D10) | the first `code_edit` after a `review` (its text's arrival), before the session's next `review`, of a file **named** in that review's text. Path tokens are taken from the text: runs of non-space characters containing `/`. Strip surrounding quotes and backticks and trailing `.,;:)]`, then strip a `:N`, `:N-M` or `:N:M` suffix. Expand a brace list (`api/{server.rs,routes.rs}` gives two tokens). Keep tokens ending in `.<ext>`. Over 66 real reviewer responses, this keeps the 73 tokens the plain rule missed (`main.rs.`, `server.rs,`). The edited path is named when a token with ≥2 segments equals a **segment-aligned suffix** of it. `crates/cli/src/lib.rs` names `/repo/crates/cli/src/lib.rs` but not `/repo/crates/senseid/src/lib.rs`. A bare basename never matches (`mod.rs` ×42, `+page.svelte` ×82 in this repo). One per distinct file per review |
+| `slice` | **base slices**: the session's events cut where consecutive `ts` differ by more than **1 minute** (`BASE_SLICE_GAP`). `at` is the first event, `until` the last. The workspace threshold T (1–240 min) is applied at read (S6) by merging consecutive base slices whose gap ≤ T. Because T ≥ 1 minute, that gives exactly the slices a cut at T would |
 
-**Slice reason.**
+**Slice reason** (per base slice; a merged slice takes its last base slice's reason):
 - The slice's last event is `SessionEnd` → `session_ended`.
 - Otherwise drop trailing `Stop`, `SubagentStop`, `PreCompact` and `UserPromptSubmit` events
   (the turn's tail), then take the last remaining event:
@@ -207,17 +234,28 @@ threshold) -> Vec<Signal>` in `crates/senseid/src/sdlc/signals.rs`.
   - `Notification` with `notification_type = permission_prompt` → `permission_wait`
   - anything else → `unknown`
 
-**Incremental pass.** The task `derive_session_signals`, registered in the scheduler's
-`SCHEDULABLE` (`tasks/schedule.rs:23`), runs every 10 minutes. It takes up to 500 sessions
-per pass, oldest first. A session is (re)derived when any of these holds:
-- it has no mark;
-- its events' `max(id)` > `through_event_id`;
-- the mark's threshold ≠ the workspace's setting;
-- the mark's `catalogue_hash` ≠ the current hash.
+**Incremental pass.** The task `derive_session_signals` runs every 10 minutes. It is registered
+in `SCHEDULABLE` (`tasks/schedule.rs:23`), `DESCRIPTIONS` (`api/handlers/scheduled_tasks.rs`)
+and `database/import/staging/schedules.jsonl`, and spawned in `api/server.rs` like
+`capture_drain`.
 
-One transaction per session deletes its signals, inserts the new ones and upserts the mark.
-A read error ends the pass with `Err`. Sessions already committed stay committed, and the
-failing session is retried next pass.
+1. Read the catalogue once (`command_catalogue()`). If it fails (a read error or a row that
+   doesn't compile, named), the **pass** fails, loudly, and no session is touched. A
+   catalogue is configuration, and deriving with part of it would be a quiet wrong answer.
+2. Select up to 500 sessions with a non-NULL `client_session_id`, oldest `started_at` first,
+   where:
+   - there is no mark; or
+   - the events' `max(id)` ≠ `through_event_id` or `count(*)` ≠ `event_count`; or
+   - `catalogue_hash` ≠ the current hash.
+
+   A mark with an `error` is selected again only when one of these inputs changed. A
+   failed session is not retried until then.
+3. Per session, in one transaction: read its events, derive, delete its signals, insert the
+   new ones, and upsert the mark with the `max(id)` and `count` **actually read**. A
+   derivation error, an out-of-range `ts`, or a write error rolls that session back. Its
+   mark is then upserted alone, in a new statement, with `error` set and the inputs it
+   failed on, and the pass **continues** with the next session. The pass reports the count
+   derived and the count failed. A failed session's figures read as `not_derived` (S6).
 
 ### S3 · Build/test classifier (D8)
 
@@ -260,7 +298,8 @@ handled.*
 A marker may need a numeric guard ("found 0 errors" vs "found 2 errors"). That is
 expressed as a regex marker (`kind` = `fail_re` / `ok_re`). Plain substrings stay the norm.
 
-`catalogue_hash` = Postgres `md5()` over both tables' rows in key order. Any catalogue
+`catalogue_hash` = SHA-256 (hex) computed in Rust over the rows `command_catalogue()` actually
+read, in key order, so the hash always describes the compiled rules (A3). Any catalogue
 change re-derives every session (S2).
 
 **The seed covers at least:**
@@ -439,10 +478,14 @@ existing reason lookup (`pg_store/reasons.rs`). A `0` means the inputs exist and
 is zero.
 
 **Ticket.** The ticket's sessions are R7's ticket `S` (linked R1 candidates). Their signals
-are merged by `at` (D11).
+are merged by `at` (D11). **Slices at read:** each session's base slices are merged where
+consecutive base slices are ≤ T apart, with T = the tracker's workspace
+`idle_threshold_minutes` (S1; a tracker belongs to exactly one workspace). Below, "slices"
+means these merged slices.
 
-**Derivation must be current.** Every session in `S` needs a mark whose `through_event_id`
-≥ its events' `max(id)`, and whose threshold and catalogue hash are current. Otherwise every
+**Derivation must be current.** Every session in `S` needs a mark with no `error`, whose
+`through_event_id` and `event_count` equal its events' `max(id)` and `count(*)`, and whose
+catalogue hash is current. Otherwise every
 signal-based figure (everything below except `ai_token_cost`, `estimated_points` and
 `expected_minutes`) is null with reason `not_derived`. A not-yet-derived session never reads
 as zeros.
@@ -535,7 +578,10 @@ wrong gates, in this slice (P-SCREEN):
 ### S9 · Write-back (D1, D9)
 
 `sensei.tracker_metric` and `TrackerMetric` gain exactly these keys, appended after the 13
-existing ones in this order. Each value is the S6 figure. A null S6 figure is
+existing ones in this order. Each value is the S6 figure. **A ticket whose figures carry
+`not_derived` is not ready: write-back skips its field writes this pass** (no request, and its
+`writeback_at` stays as it was), so a derivation lag never erases a value in Jira (A3).
+Otherwise a null S6 figure is
 `FieldValue::Null`, as W3 does for a `None`.
 
 | metric | kind | rounding (W3 rules: half away from zero, division last, `-0.0` → `0.0`) |
@@ -600,7 +646,9 @@ comment `render` is unchanged.
    `gh pr create`; 50 Edit `src/a.rs`; 52 `git push`; 53 SessionEnd. Threshold 15.
    - Signals: `code_edit`@0, `build_fail`@1, `code_edit`@30, `build_ok`@31, `pr_created`@32,
      `code_edit`@50, `pushed`@52.
-   - Slices: [0–2, reason `build_failure`], [30–32, `unknown`], [50–53, `session_ended`].
+   - Base slices (1 min): [0–2, `build_failure`], [30–32, `unknown`], [50, `unknown`],
+     [52–53, `session_ended`]. Merged at T = 15: [0–2, `build_failure`], [30–32, `unknown`],
+     [50–53, `session_ended`].
    - Ticket figures:
      - defects and builds: `compile_defects=1`, `build_runs=2`, `build_failure_rate=50`,
        `mean_build_recovery_minutes=30`
@@ -609,6 +657,21 @@ comment `render` is unchanged.
      - rework: `rework_minutes=3`, `rework_cycles=1`
      - `worked_minutes=7`
    - The same events inserted with `created_at` = now + 3 h give identical signals.
+   - At T = 1 the holds are every gap over 1 minute inside [0, 32]: `on_hold_count=1`
+     ([2, 30]). At T = 30 the first two slices merge, so `on_hold_count=0`. The marks are
+     unchanged between the two reads.
+2b. **Pass resilience (A3, DB).**
+   - The oldest selected session has an event with `ts` = 9e18, and a newer one is valid.
+     After one pass the newer one has a mark with no `error`. The bad one has a mark with
+     `error` naming the `ts`, and a second pass doesn't select it again.
+   - A session derived at `count` N gains an event with a **lower** id than its
+     `through_event_id`. The next pass selects it (count ≠ N), and its signals include that
+     event.
+   - Two events with the same `ts`, inserted in reverse id order, derive in id order.
+   - An `Agent` review launch at t, a code edit at t+1, then its `SubagentHandback` naming
+     that file at t+2, and another edit at t+3 → one `review` at t+2 and one `review_fix` at
+     t+3, never at t+1.
+   - A catalogue row that doesn't compile fails the pass, naming it, and no mark changes.
 3. **Fixture B, across sessions (D11).**
    - Session 1: tick `openspec/changes/x/tasks.md` line 3 (Edit `- [ ]`→`- [x]`). Session 2,
      linked to the same ticket: failing `cargo test` with `test result: FAILED`, then a
@@ -665,13 +728,19 @@ comment `render` is unchanged.
    removed_at is null and (history_through is null or issue_updated_at > history_through)`
    = 0, and `tracker_task_changes` has ≥1 `sprint` row for that tracker.
 10. **Settings.**
-    - `GET` with no row → `{null, null, 15}`, and cost figures are null with `no_rate`.
-    - `PUT {"hourly_rate": 50}` → 200 and the cost figures become numbers.
+    - **F3:** `GET` with no row → `{hourly_rate: null, minutes_per_point: null, idle_threshold_minutes: 15}`.
+      `PUT {"hourly_rate": 50}` → 200 with the full settings, and a later `GET` returns them.
+      `PUT {"hourly_rate": null}` clears it.
+    - **F4:** with no rate, cost figures are null with `no_rate`; after the PUT they are numbers.
     - `PUT {"hourly_rate": "NaN"}`, `{"hourly_rate": -1}`, `{"idle_threshold_minutes": null}`
       and `{"x": 1}` → 400 `invalid_setting`.
     - A request with a foreign `Origin` → 403.
-    - Changing the threshold re-derives: every mark of the workspace then carries it.
+    - **F4:** changing the threshold changes holds and `worked_minutes` at the next read,
+      with no re-derivation (marks unchanged).
 11. **Write-back.**
+    - A ticket with a mapped `compile_defects` field and one linked session whose mark is
+      behind its events: the pass makes no field request for that ticket, and its
+      `writeback_at` is unchanged (A3).
     - A field mapped to `compile_defects` is written with the S6 value.
     - Under a fixed `TicketFigures`, `metric_value` of each new key yields the canonical
       string its S9 kind implies (e.g. `on_hold_ratio` 33.333… → `"33.33"`, `worked_minutes`

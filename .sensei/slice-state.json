@@ -21,7 +21,9 @@
   ],
   "gate_status": "F1 pass: 46 F1 tests, full senseid suite 4000/0, clippy -D warnings clean, DDL checks pass; swarm (test + data) findings fixed red-first; real-row probe re-checked",
   "decomposition": {
-    "F1": "DDL sensei.command_patterns + sensei.command_markers (+staging tables, 2 import procs, 2 jsonl seeds); categorise(check)->typecheck; sdlc/classify.rs: tokenize (quote/heredoc aware) -> elements/stages, strip, stage_category, ownership attribution, exit attribution; pg_store command_catalogue() with md5 hash; tests: sdlc::classify cases + pg_store command_catalogue_import"
+    "F1": "DDL sensei.command_patterns + sensei.command_markers (+staging tables, 2 import procs, 2 jsonl seeds); categorise(check)->typecheck; sdlc/classify.rs: tokenize (quote/heredoc aware) -> elements/stages, strip, stage_category, ownership attribution, exit attribution; pg_store command_catalogue() with md5 hash; tests: sdlc::classify cases + pg_store command_catalogue_import",
+    "F3": "DDL sensei.workspace_metric_settings; sdlc/settings.rs pure parse_patch/apply; pg_store metric_settings get/put; api/handlers/metric_settings.rs GET/PUT under local_caller_guard (reuse trackers::known_workspace)",
+    "F2": "index assistant_events(session_id,id); enums + session_signals + session_signal_marks(through_event_id,event_count,catalogue_hash,error); pg_store session_events_for_signals (projected, (ts,id)); classify::run_categories; sdlc/signals.rs derive_signals (base slices 1 min); pass task derive_session_signals (catalogue once; select by count/max/hash; per-session tx; failure mark; continue); command_catalogue hash -> sha256 in Rust"
   },
   "amendments": [
     {
@@ -35,6 +37,12 @@
       "phase": "F1",
       "spec": "S3",
       "reason": "F1 post-implementation swarm (test + data reviews): catalogue before folder commands (an explicit toolchain keeps its markers), categorise the whole script name (type-check, test:e2e), prefix commands skip option arguments (timeout -k 5), & backgrounds, <<< here-string, case-arm ), cargo check -> build, option args for make/just/npm run, pytest/go/jest/vitest markers"
+    },
+    {
+      "id": "A3",
+      "phase": "F2/F3",
+      "spec": "S1, S2, S3 hash, S6, S9, gates 2/2b/10/11",
+      "reason": "F2+F3 pre-implementation swarm: poison-pill session blocking the oldest-first queue; per-session max(id) scan (new (session_id,id) index; count+max staleness catches out-of-order commits); not_derived would null Jira fields (write-back skips); ts-only ordering; whole-payload reads (projected reader, 64 KiB output tail); Agent review text lives in SubagentHandback (joined by agent id); a session's workspace threshold undefined for M:N repos -> fixed 1-minute base slices merged by T at read; catalogue rows and hash read non-atomically -> SHA-256 in Rust over rows read; bad catalogue row fails the pass loudly; gate 10 split F3/F4."
     }
   ],
   "open_questions": [],
@@ -56,5 +64,6 @@
       "catalogue_hash (Catalogue.hash) stamps session_signal_marks.catalogue_hash",
       "remove #![allow(dead_code)] from sdlc/mod.rs once derive_session_signals consumes classify"
     ]
-  }
+  },
+  "order_note": "F3 before F2 (F2 no longer needs the threshold after A3, but F3 is small and started first)"
 }
