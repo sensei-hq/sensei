@@ -1,7 +1,7 @@
 <script lang="ts">
   // The one modal shell: `--scrim` backdrop, Escape and click-outside to close,
   // focus moved in on open, kept in while open, and given back on close.
-  // Extracted from SignInOverlay and the logs report modal when a third modal
+  // Extracted from the identities overlay (since removed) and the logs report modal when a third modal
   // (the tracker disconnect dialog) appeared, so the keyboard contract lives
   // and is tested in one place.
   //

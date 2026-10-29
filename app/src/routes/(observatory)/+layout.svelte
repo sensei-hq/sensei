@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { personaList } from '$lib/personas.svelte.js';
     import { onMount } from 'svelte';
     import { page } from '$app/state';
     import { beforeNavigate, goto } from '$app/navigation';
@@ -93,6 +94,8 @@
             pathname={page.url.pathname}
             workspaceCount={appState.workspaceCount ?? undefined}
             glyphs={glyphMode(appState.config)}
+            attention={personaList.attentionLine}
+            onAttention={() => void openSettingsWindow('/settings/dojo')}
         />
 
         <!-- Not a scroller: each screen's body is, and takes focus itself (#245, #293). -->

@@ -128,3 +128,28 @@ describe("ObservatorySidebar glyphs", () => {
     expect(c.querySelector("[data-item-icon-literal]")).toBeNull();
   });
 });
+
+// An identity that needs you is said in the footer while it lasts (user, 2026-10-29),
+// instead of an overlay over the screen; clicking it goes where it can be handled.
+describe("ObservatorySidebar — attention in the footer", () => {
+  it("shows the sentence while something needs you, and clicking it opens the identities", () => {
+    let opened = 0;
+    const m = mountComponent(ObservatorySidebar, {
+      port: 7744,
+      pathname: "/",
+      attention: "Sync paused — 1 identity needs sign-in",
+      onAttention: () => opened++,
+    });
+    cleanup.push(m.destroy);
+    flushSync();
+    const row = m.container.querySelector<HTMLButtonElement>("[data-attention]");
+    expect(row?.textContent).toContain("Sync paused — 1 identity needs sign-in");
+    row!.click();
+    expect(opened).toBe(1);
+  });
+
+  it("shows nothing when nothing needs you", () => {
+    const { container } = mount("/");
+    expect(container.querySelector("[data-attention]")).toBeNull();
+  });
+});

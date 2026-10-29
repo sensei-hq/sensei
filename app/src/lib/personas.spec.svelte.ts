@@ -546,3 +546,49 @@ describe('automatic renewal', () => {
     expect(r.list.error).toMatch(/could not start/i);
   });
 });
+
+// The identities overlay covered the screen whenever something needed you (user,
+// 2026-10-29). The state now says it in one sentence for the sidebar footer, and
+// announces a NEW need once — for a toast that fades — rather than on every check.
+describe('attention: one sentence, and an announcement only when it starts', () => {
+  const expired: PersonaWire = { ...live, label: 'a', forgeToken: { state: 'dead', expiresAt: NOW - H } };
+  const locked: PersonaWire = { ...live, label: 'b', keychain: 'needsApproval' };
+
+  it('says nothing when nothing needs you, and names the cause when something does', async () => {
+    const line = async (personas: PersonaWire[]) => {
+      const h = harness({ personas });
+      await h.list.load();
+      return h.list.attentionLine;
+    };
+    expect(await line([live, fresh])).toBeNull();
+    expect(await line([expired])).toBe('Sync paused — 1 identity needs sign-in');
+    expect(await line([locked, { ...locked, label: 'c' }])).toBe('Sync paused — 2 identities need Keychain approval');
+    expect(await line([expired, locked])).toBe('Sync paused — 2 identities need you');
+  });
+
+  it('announces once when an identity starts needing you, again only after it recovered', async () => {
+    let personas: PersonaWire[] = [live];
+    const list = new PersonaList({
+      fetchPersonas: vi.fn(async () => ({ personas })),
+      startSignIn: vi.fn(async () => null),
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async () => {}),
+      makeDefault: vi.fn(async () => null),
+      now: () => NOW
+    });
+    const announced: string[] = [];
+    list.onAttention = (line) => announced.push(line);
+
+    await list.load();
+    expect(announced).toEqual([]);
+    personas = [{ ...live, forgeToken: { state: 'dead', expiresAt: NOW - H } }];
+    await list.load();
+    await list.load();
+    expect(announced).toEqual(['Sync paused — 1 identity needs sign-in']);
+    personas = [live];
+    await list.load();
+    personas = [{ ...live, keychain: 'needsApproval' }];
+    await list.load();
+    expect(announced).toEqual(['Sync paused — 1 identity needs sign-in', 'Sync paused — 1 identity needs Keychain approval']);
+  });
+});

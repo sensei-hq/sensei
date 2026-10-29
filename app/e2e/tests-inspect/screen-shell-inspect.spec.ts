@@ -35,14 +35,8 @@ const FRESH_BODY = '[data-component="screen-body"]:not([data-probed])';
 
 type Page = { evaluate: (script: string) => Promise<unknown> };
 
-/** Navigate and wait for the new screen's body to be in the DOM. The identities
- *  dialog (#283) is modal and holds navigation while a credential needs
- *  approval, so it is closed first — it can open at any point, once the
- *  personas load. */
+/** Navigate and wait for the new screen's body to be in the DOM. */
 async function openScreen(page: Page, route: string) {
-  await page.evaluate(
-    `document.querySelector('[data-component="sign-in-overlay"] footer button')?.click()`,
-  );
   // Navigated ONCE and not awaited: re-issuing restarts a slow loader, and
   // awaiting the navigation inside evaluate trips the harness's 30s call limit
   // on a screen whose load is slower than that (workspace Instruments, #298).

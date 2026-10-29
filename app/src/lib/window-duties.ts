@@ -9,15 +9,15 @@ import { isSettingsPath } from './settings-path.js';
  */
 export interface WindowDuties {
   renewsCredentials: boolean;
-  showsIdentityOverlay: boolean;
+  announcesIdentities: boolean;
   handlesMenu: boolean;
   goesTo: (path: string) => boolean;
 }
 
 export function windowDuties(label: string): WindowDuties {
   if (label === 'main') {
-    return { renewsCredentials: true, showsIdentityOverlay: true, handlesMenu: true, goesTo: () => true };
+    return { renewsCredentials: true, announcesIdentities: true, handlesMenu: true, goesTo: () => true };
   }
   const own = label === 'settings' ? isSettingsPath : (path: string) => path.startsWith('/workspace/');
-  return { renewsCredentials: false, showsIdentityOverlay: false, handlesMenu: false, goesTo: own };
+  return { renewsCredentials: false, announcesIdentities: false, handlesMenu: false, goesTo: own };
 }

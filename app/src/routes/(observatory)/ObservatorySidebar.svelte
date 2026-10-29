@@ -12,8 +12,12 @@
         workspaceCount?: number;
         /** Kanji or icons (#133); the layout reads it from the preference. */
         glyphs?: GlyphMode;
+        /** What needs you, in one sentence (PersonaList.attentionLine), or null. */
+        attention?: string | null;
+        /** Where that is handled — Settings · Dōjō. */
+        onAttention?: () => void;
     }
-    let { port, pathname, workspaceCount, glyphs = 'kanji' }: Props = $props();
+    let { port, pathname, workspaceCount, glyphs = 'kanji', attention = null, onAttention }: Props = $props();
 
     const items = $derived(buildNavItems({ workspaceCount }));
     const activeHref = $derived(resolveActiveHref(pathname));
@@ -29,6 +33,17 @@
         </div>
     {/snippet}
     {#snippet footer()}
+        {#if attention}
+            <button
+                type="button"
+                data-attention
+                class="flex items-start gap-2 w-full text-left text-xs leading-snug text-warning bg-transparent border-0 p-1 rounded-sm cursor-pointer hover:bg-paper-mute"
+                onclick={() => onAttention?.()}
+            >
+                <span class="mt-1 w-1.5 h-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
+                <span>{attention}</span>
+            </button>
+        {/if}
         <div class="border-t border-paper-edge pt-2 text-xs leading-relaxed">
             <span class="font-mono text-ink-soft">daemon · running</span><br />
             <span class="font-mono text-ink-faint">port {port}</span>

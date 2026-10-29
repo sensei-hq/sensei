@@ -8,7 +8,7 @@
  * Run: `bun run test:inspect -- glyphs`.
  */
 import { expect, test } from '../fixtures';
-import { DAEMON_URL, dismissSignIn, navigateToScreen, shot } from '../helpers';
+import { DAEMON_URL, navigateToScreen, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -51,7 +51,6 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
   const before = await storedGlyphs();
   try {
     await navigateToScreen(tauriPage, '/settings/general', '[data-testid="pref-glyphs"]');
-    await dismissSignIn(tauriPage);
 
     await choose(tauriPage, 'Icons');
     await tauriPage.waitForSelector('[data-component="settings-sidebar"] [data-item-icon]', 10_000);

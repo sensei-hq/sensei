@@ -197,12 +197,41 @@ export class PersonaList {
     return this.identities.find(usable)?.sessionSlot ?? null;
   }
 
-  /** Whether something is BROKEN enough to open the overlay unasked: an
-   *  expired credential, or a live one the Keychain withholds. Never-connected
-   *  ones do not summon it (an install infers several), nor does a renewal
-   *  (automatic and prompt-free). */
+  /** The identities that need you: an expired credential, or a live one the
+   *  Keychain withholds. Never-connected ones do not (an install infers several),
+   *  nor does a renewal (automatic and prompt-free). */
+  get #needing(): Identity[] {
+    return this.identities.filter((i) => i.status === 'expired' || i.status === 'needsKeychain');
+  }
+
+  /** Whether something needs you — sync is paused until it is handled. */
   get needsAttention(): boolean {
-    return this.identities.some((i) => i.status === 'expired' || i.status === 'needsKeychain');
+    return this.#needing.length > 0;
+  }
+
+  /** The sidebar footer's one sentence while something needs you, else null. */
+  get attentionLine(): string | null {
+    const needing = this.#needing;
+    if (needing.length === 0) return null;
+    const n = needing.length;
+    const who = n === 1 ? '1 identity needs' : `${n} identities need`;
+    const kinds = new Set(needing.map((i) => i.status));
+    const what = kinds.size > 1 ? 'you' : kinds.has('expired') ? 'sign-in' : 'Keychain approval';
+    return `Sync paused — ${who} ${what}`;
+  }
+
+  /** Called with `attentionLine` when an identity STARTS needing you — once, not on
+   *  every check; again only if it recovers and breaks again. The main window turns
+   *  it into a toast that fades (the overlay that covered the screen is gone). */
+  onAttention: ((line: string) => void) | null = null;
+  #announced = new Set<string>();
+
+  #announce(): void {
+    const needing = new Set(this.#needing.map((i) => i.label));
+    const isNew = [...needing].some((label) => !this.#announced.has(label));
+    this.#announced = needing;
+    const line = this.attentionLine;
+    if (isNew && line) this.onAttention?.(line);
   }
 
   #status(w: PersonaWire): IdentityStatus {
@@ -271,6 +300,7 @@ export class PersonaList {
     this.error = null;
     this.loaded = true;
     this.#settle();
+    this.#announce();
     await this.#renewDue();
   }
 

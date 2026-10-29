@@ -9,26 +9,17 @@
     import { daemonHealth } from "$lib/daemon-health.svelte.js";
     import { glyphMode, setGlyphMode } from "$lib/glyphs";
     import { personaList } from "$lib/personas.svelte.js";
-    import { DaemonStatusBanner, SignInOverlay } from "$lib/components";
+    import { DaemonStatusBanner } from "$lib/components";
     import { windowDuties } from "$lib/window-duties.js";
+    import { openSettingsWindow } from "$lib/stores/windows.svelte.js";
+    import { AlertList } from "@rokkit/ui";
+    import { alerts } from "@rokkit/states";
 
     let { children } = $props();
 
-    // The overlay is opened by need, and closable. An expired credential stops
-    // syncing but does not stop sensei, so blocking the app behind it would be
-    // out of proportion.
     // The glyph preference, for every mark below (#133).
     setGlyphMode(() => glyphMode(appState.config));
 
-    let dismissed = $state(false);
-    // Asked for explicitly, from View → Identities…. Kept separate from the
-    // automatic path so opening it by hand is not undone by `dismissed`, and so
-    // it works when nothing is wrong — connecting a new identity is an
-    // intentional act, not a repair.
-    let requested = $state(false);
-    // The automatic half opens only when a CONNECTED identity has broken. It
-    // deliberately ignores never-connected personas (an install has several) and
-    // renewal (which is silent), or the overlay would appear on every launch.
     // Which window this is decides what it does beyond its own pages: the
     // global work is the main window's alone (a second copy in Settings opened
     // a second browser tab for one renewal). No Tauri (a browser, a test): main.
@@ -42,14 +33,12 @@
         }
     })();
     const duties = windowDuties(label);
-    let overlayOpen = $derived(
-        duties.showsIdentityOverlay && (requested || (!dismissed && personaList.needsAttention)),
-    );
 
-    function closeOverlay() {
-        requested = false;
-        dismissed = true;
-    }
+    // An identity that needs you pauses sync but not sensei: no screen-covering
+    // overlay (user, 2026-10-29). The sidebar footer says so while it lasts, and a
+    // NEW need is announced once, in the main window, as a toast that fades —
+    // with the way to Settings · Dōjō, where every identity has its action.
+    const openIdentities = () => void openSettingsWindow("/settings/dojo");
 
     // Expose appState + healthState on window for E2E test helpers (dev builds
     // only). Tests inject daemon config via `__sensei_state__.appState.config`
@@ -86,6 +75,10 @@
         // Tauri-only. A browser dev session has no opener plugin, and polling
         // there would report a standing nobody can act on.
         if (!hasTauri()) return () => daemonHealth.stop();
+        if (duties.announcesIdentities) {
+            personaList.onAttention = (text) =>
+                void alerts.push({ type: "warning", text, timeout: 8000, actions: openSettingsAction });
+        }
         if (duties.renewsCredentials) {
             personaList.renews = true;
             void personaList.load();
@@ -98,12 +91,7 @@
                 listen<void>("open-logs", () => {
                     goto("/logs");
                 }).then((fn) => unlistens.push(fn));
-                listen<void>("open-identities", () => {
-                    // Re-read on open: the list is polled every five minutes, and a
-                    // stale standing is what makes a "ready" row fail on click.
-                    void personaList.load();
-                    requested = true;
-                }).then((fn) => unlistens.push(fn));
+                listen<void>("open-identities", openIdentities).then((fn) => unlistens.push(fn));
             }
             // A navigation for another window is that window's to take.
             listen<string>("dev-navigate", (e) => {
@@ -115,7 +103,7 @@
             listen<{ from: string }>("config-saved", (e) => {
                 if (e.payload.from !== label) void appState.load();
             }).then((fn) => unlistens.push(fn));
-            // The same for identities: the overlay (main) and Settings · Dōjō
+            // The same for identities: the sidebar footer (main) and Settings · Dōjō
             // (settings window) each hold the identity state; a sign-in, an
             // approval or a new default in one is re-read by the other.
             personaList.onChanged = () => void emit("identities-changed", { from: label });
@@ -132,18 +120,17 @@
             }
             appState.onConfigSaved = null;
             personaList.onChanged = null;
+            personaList.onAttention = null;
         };
     });
 </script>
 
+{#snippet openSettingsAction()}
+    <button type="button" data-open-identities onclick={openIdentities}>Open Settings</button>
+{/snippet}
+
 <DaemonStatusBanner mode={daemonHealth.dbMode} configError={appState.configError} />
-<SignInOverlay
-    open={overlayOpen}
-    identities={personaList.identities}
-    phase={personaList.phase}
-    error={personaList.error}
-    onAct={(i) => personaList.act(i)}
-    onClose={closeOverlay}
-    pending={personaList.pending}
-/>
+{#if duties.announcesIdentities}
+    <AlertList position="bottom-right" />
+{/if}
 {@render children()}
