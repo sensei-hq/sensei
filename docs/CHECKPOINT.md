@@ -2,7 +2,8 @@
 
 **Slice:** tracker SDLC metrics, on branch `feature/sdlc_metrics`. The branch was cut from
 `feature/tracker_metrics_writeback`, which is still unmerged.
-**Stage:** design is done and the gate passes. Next is build.
+**Stage:** build, unattended (user, 2026-10-29). F1 done (`886b5df1c`); F2 next. Run
+contract: `.sensei/slice-state.json` (amendments A1, A2; F2 carry-forward).
 - Analysis: `docs/analysis/2026-10-29-sdlc-metrics-extension.md` (decisions D1–D11)
 - Spec (reviewed): `docs/spec/daemon/tracker-sdlc-metrics.md` (S1–S9, gates 1–13, claims
   C1–C39)
