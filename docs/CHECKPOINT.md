@@ -9,11 +9,8 @@ Diagrams rework (mockup: sidebar subsection, per-diagram routes, levels, inspect
   yours only; hook turns take their origin by prompt id (`activity.turns.origin`); hourly charts
   count your turns, tokens count all; a transcript turn newer than the analysis re-queues the
   session; Claude transcripts re-read once (`transcripts.turn_origins_v1`). Live DB reconciled.
-- e6da28452 — Diagrams slice 1: sidebar Diagrams subsection (8 entries, mark + hint), one
-  `diagrams/[lens]` route over one shared CodeMapState, schema stays; map's own lens tabs gone;
-  Layers / Neighbourhood / standalone Structure / Cycles / codemap pages retired; glyph table
-  follows the mockup. e2e: diagrams-nav, multi-window, a11y, schema green.
-
+- e6da28452 — Diagrams slice 1: sidebar subsection (8 entries), one `diagrams/[lens]` route on a
+  shared CodeMapState; old tabs and Layers/Neighbourhood/Structure/Cycles/codemap pages retired.
 - cb8087e86 — transcript turns landing make a workspace due (analyzer read session start/end only).
 - 7b9a872c2 — a lens switch kept minting a new, unread CodeMapState (page.params is replaced per
   navigation); map now kept by id value. Live inspect: every lens draws on sensei, 0 errors.
