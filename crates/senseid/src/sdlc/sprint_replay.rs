@@ -449,8 +449,8 @@ pub async fn project_sdlc(
     }
     let hash = pg.command_catalogue().await?.hash;
     let signals = pg.session_signals_for(&sessions, &hash).await?;
-    if signals.iter().any(|(_, s)| !s.current) {
-        p.reasons.insert("prompts_per_ticket", "not_derived");
+    if let Some(why) = crate::sdlc::ticket::underived(signals.iter().map(|(_, s)| s)) {
+        p.reasons.insert("prompts_per_ticket", why);
     } else {
         let prompts = signals
             .iter()

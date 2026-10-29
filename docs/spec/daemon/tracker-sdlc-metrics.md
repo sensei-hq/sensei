@@ -266,7 +266,7 @@ and `database/import/staging/schedules.jsonl`, and spawned in `api/server.rs` li
    can have (`-1`), so the session is retried next pass (A4). Either way the session's
    signals are removed and the pass **continues** with the next session. A pass in which
    any session failed reports a failed run to the schedule (`N of M session(s)
-   failed`). A failed session's figures read as `not_derived` (S6).
+   failed`). A failed session's figures read as `derivation_failed` (A9, S6): a failure on unchanged inputs is not a lag.
 
 ### S3 · Build/test classifier (D8)
 
@@ -615,7 +615,7 @@ Where `runs_unknown > 0`, the defect counts are lower bounds. The screen shows t
 |---|---|---|
 | `predictability` | population stddev of `commitment_reliability` over the tracker's last **6** closed sprints (by `seq`) with a non-null value | fewer than 2 (`too_few_sprints`) |
 | `tokens_per_ticket` | over the **distinct union** `U` of the tracker's tickets' candidate sessions (a shared session counts once): Σ (`tokens_fresh + cache_read + cache_write + tokens_out`) / the number of tickets with a non-empty `S`. Null when any session in `U` lacks one of the four fields (`partial_tokens`, with `sessions_without_tokens` beside it) | no such ticket (`no_usage`) |
-| `prompts_per_ticket` | Σ `prompt` signals over `U` / tickets with a non-empty `S` | none (`no_usage`); any session in `U` not derived (`not_derived`) |
+| `prompts_per_ticket` | Σ `prompt` signals over `U` / tickets with a non-empty `S` | none (`no_usage`); any session in `U` not derived (`not_derived`), else any failed (`derivation_failed`, A9) |
 
 **Out of v1** (analysis §5): `actual_points`, `points_variance`.
 
@@ -647,8 +647,13 @@ wrong gates, in this slice (P-SCREEN):
 
 ### S9 · Write-back (D1, D9)
 
+*Amendment A9 (F7 post-implementation swarm):*
+- *Only a lag waits. `not_derived` means a session is still to be derived; a session whose derivation failed on its current events and catalogue reads `derivation_failed`. That is a null like any other, so its field is written null and the ticket is never held back for ever. A session still waiting outranks a failed one.*
+- *A ticket waits only when one of its **mapped** metrics carries `not_derived`. A board that maps only usage keys writes as W3 always did.*
+- *Minutes and hours round from their whole-millisecond span with the division last (W3, C41), not from the already-divided figure.*
+
 `sensei.tracker_metric` and `TrackerMetric` gain exactly these keys, appended after the 13
-existing ones in this order. Each value is the S6 figure. **A ticket whose figures carry
+existing ones in this order. Each value is the S6 figure. **A ticket any of whose mapped metrics carries
 `not_derived` is not ready: write-back skips its field writes this pass** (no request, and its
 `writeback_at` stays as it was), so a derivation lag never erases a value in Jira (A3).
 Otherwise a null S6 figure is

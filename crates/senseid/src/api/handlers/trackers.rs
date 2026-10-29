@@ -1989,7 +1989,11 @@ mod tests {
         )
         .await;
         let failed = auth2(&call(&h, "GET", &uri, None, None).await.1);
-        assert_eq!(failed["reasons"]["compile_defects"], json!("not_derived"), "a failed mark");
+        assert_eq!(
+            failed["reasons"]["compile_defects"],
+            json!("derivation_failed"),
+            "a failed mark (A9)"
+        );
 
         stale(
             "UPDATE activity.session_signal_marks SET error = NULL, catalogue_hash = 'old'

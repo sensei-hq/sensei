@@ -100,7 +100,9 @@ build.
 - docs: `docs/spec/screen/workspace-tickets.md` gains the SDLC group, the lane-header
   sprint/project row and "≥ n" defects, each with done and wrong gates.
 - app: `api.ts` types and `try*` wrappers; Tickets detail SDLC group; lane header row;
-  workspace metrics settings panel (PUT + named-key 400).
+  workspace metrics settings panel (PUT + named-key 400); the Fields editor's metric list
+  (`METRICS` in `integrations-state.svelte.ts`) and the `TrackerMetric` union in
+  `types.ts` gain the 21 S9 keys in order, pinned to the DDL labels by an app spec (F7 swarm).
 - **Done:** the screen spec's new gates, through the app's spec tests (`bun run` the root
   test script).
 

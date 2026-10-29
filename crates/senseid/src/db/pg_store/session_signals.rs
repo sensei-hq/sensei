@@ -189,12 +189,9 @@ impl PgStore {
         catalogue_hash: &str,
     ) -> Result<Vec<(uuid::Uuid, SessionSignals)>, String> {
         let db = |e: sqlx_core::Error| format!("session_signals_for: {e}");
-        let state: Vec<(uuid::Uuid, bool)> = sqlx_core::query_as::query_as(
-            "SELECT s.id,
-                    coalesce(m.error IS NULL
-                             AND m.catalogue_hash = $2
-                             AND m.through_event_id = ev.max_id
-                             AND m.event_count = ev.n, false)
+        let state: Vec<(uuid::Uuid, bool, bool)> = sqlx_core::query_as::query_as(
+            "SELECT s.id, coalesce(m.error IS NULL AND fresh, false),
+                    coalesce(m.error IS NOT NULL AND fresh, false)
                FROM activity.sessions s
                LEFT JOIN activity.session_signal_marks m ON m.session_id = s.id
                CROSS JOIN LATERAL (
@@ -202,6 +199,10 @@ impl PgStore {
                      FROM activity.assistant_events e
                     WHERE e.session_id = s.client_session_id
                ) ev
+               CROSS JOIN LATERAL (
+                   SELECT m.catalogue_hash = $2 AND m.through_event_id = ev.max_id
+                          AND m.event_count = ev.n AS fresh
+               ) f
               WHERE s.id = ANY($1)
               ORDER BY s.started_at, s.id",
         )
@@ -244,9 +245,9 @@ impl PgStore {
         }
         Ok(state
             .into_iter()
-            .map(|(id, current)| {
+            .map(|(id, current, failed)| {
                 let signals = by_session.remove(&id).unwrap_or_default();
-                (id, SessionSignals { current, signals })
+                (id, SessionSignals { current, failed, signals })
             })
             .collect())
     }

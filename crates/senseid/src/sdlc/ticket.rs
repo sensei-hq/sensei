@@ -17,7 +17,30 @@ use crate::tracker::usage::Usage;
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SessionSignals {
     pub current: bool,
+    /// Derivation failed on these very events and catalogue: it will not be
+    /// retried until they change, so the figures are not merely late (A9).
+    pub failed: bool,
     pub signals: Vec<Signal>,
+}
+
+/// Why a set of linked sessions has no signal figures yet: one still waits for
+/// derivation (`not_derived`), or one failed on its current inputs
+/// (`derivation_failed`, A9). Waiting outranks failing: it may yet resolve.
+pub fn underived<'a>(
+    sessions: impl IntoIterator<Item = &'a SessionSignals>,
+) -> Option<&'static str> {
+    let (mut waiting, mut failed) = (false, false);
+    for s in sessions {
+        waiting |= !s.current && !s.failed;
+        failed |= s.failed;
+    }
+    if waiting {
+        Some("not_derived")
+    } else if failed {
+        Some("derivation_failed")
+    } else {
+        None
+    }
 }
 
 /// The ticket's story points as the tracker states them (D6).
@@ -166,13 +189,8 @@ pub fn compute(input: &TicketInput) -> TicketSdlc {
         }
     }
 
-    let blocked = if input.sessions.is_empty() {
-        Some("no_sessions")
-    } else if input.sessions.iter().any(|s| !s.current) {
-        Some("not_derived")
-    } else {
-        None
-    };
+    let blocked =
+        if input.sessions.is_empty() { Some("no_sessions") } else { underived(input.sessions) };
     if let Some(why) = blocked {
         for key in SIGNAL_FIGURES {
             t.reasons.insert(key, why);
@@ -577,7 +595,7 @@ mod tests {
         Signal { until: Some(to * MIN), reason, ..sig(Slice, from) }
     }
     fn current(signals: Vec<Signal>) -> SessionSignals {
-        SessionSignals { current: true, signals }
+        SessionSignals { current: true, failed: false, signals }
     }
     fn settings(t: i32) -> MetricSettings {
         MetricSettings { idle_threshold_minutes: t, ..Default::default() }
@@ -725,7 +743,7 @@ mod tests {
 
     #[test]
     fn a_session_not_derived_nulls_every_signal_figure() {
-        let sessions = [fixture_a(), SessionSignals { current: false, signals: vec![] }];
+        let sessions = [fixture_a(), SessionSignals { current: false, ..Default::default() }];
         let u = Usage { api_cost: Some(1.5), api_cost_n: 2, sessions: 2, ..Default::default() };
         let s = settings(15);
         let t = compute(&input(&sessions, &u, &s));
@@ -909,13 +927,30 @@ mod tests {
         assert!(t.post_review_rework_ratio.unwrap() <= 100.0);
     }
 
+    /// A9: a failed derivation is not a lag. It is named apart, so write-back
+    /// does not wait on it for ever; a session still waiting outranks it.
+    #[test]
+    fn a_failed_derivation_is_named_apart_from_one_still_waiting() {
+        let waiting = SessionSignals { current: false, ..Default::default() };
+        let failed = SessionSignals { failed: true, ..Default::default() };
+        let done = current(vec![]);
+        assert_eq!(underived([&done]), None);
+        assert_eq!(underived([&done, &failed]), Some("derivation_failed"));
+        assert_eq!(underived([&failed, &waiting]), Some("not_derived"));
+        let sessions = [failed];
+        let t = compute(&input(&sessions, &Usage::default(), &settings(15)));
+        assert_eq!(t.compile_defects, None);
+        assert_eq!(t.reasons.get("compile_defects"), Some(&"derivation_failed"));
+    }
+
     #[test]
     fn every_reason_is_a_registered_code() {
         let registered = crate::sdlc::registered_reasons();
         let u = Usage::default();
         let s = settings(15);
         let a = [fixture_a()];
-        let stale = [SessionSignals { current: false, signals: vec![] }];
+        let stale = [SessionSignals { current: false, ..Default::default() }];
+        let broken = [SessionSignals { failed: true, ..Default::default() }];
         let idle = [current(vec![sig(Prompt, 0)])];
         let mut seen = std::collections::BTreeSet::new();
         for (sessions, estimate, created) in [
@@ -924,6 +959,7 @@ mod tests {
             (&a[..], Estimate::NotEstimated, Some(40 * MIN)),
             (&a[..], Estimate::Points(1.0), None),
             (&idle[..], Estimate::NotSynced, None),
+            (&broken[..], Estimate::NotSynced, None),
         ] {
             let t = compute(&TicketInput {
                 estimate,

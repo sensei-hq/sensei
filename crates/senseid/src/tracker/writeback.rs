@@ -128,7 +128,9 @@ pub fn is_sticky(status: WritebackStatus) -> bool {
     )
 }
 
-/// A usage metric a field can be mapped to — the `sensei.tracker_metric` enum (W3).
+/// A usage (W3) or SDLC (S9) metric a field can be mapped to — the
+/// `sensei.tracker_metric` enum. Rate- and calibration-derived figures and the
+/// tracker's own estimate are never mappable (S9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TrackerMetric {
     Sessions,
@@ -144,11 +146,32 @@ pub enum TrackerMetric {
     TokensReasoning,
     MeteredCost,
     ApiCost,
+    CompileDefects,
+    TestDefects,
+    ReviewFixes,
+    EscapedTaskDefects,
+    ReviewDefects,
+    TotalDefects,
+    BuildRuns,
+    ReworkCycles,
+    Prompts,
+    TestingEfficiency,
+    ReviewEfficiency,
+    BuildFailureRate,
+    OnHoldRatio,
+    PostReviewReworkRatio,
+    MeanBuildRecoveryMinutes,
+    OnHoldMinutes,
+    ReworkMinutes,
+    WorkedMinutes,
+    ExecutionHours,
+    LeadHours,
+    CostPerPromptCycle,
 }
 
 impl TrackerMetric {
     /// In the enum's declared order, the order fields are written and hashed in.
-    pub const ALL: [TrackerMetric; 13] = [
+    pub const ALL: [TrackerMetric; 34] = [
         TrackerMetric::Sessions,
         TrackerMetric::ActiveHours,
         TrackerMetric::ClaudeHours,
@@ -162,6 +185,27 @@ impl TrackerMetric {
         TrackerMetric::TokensReasoning,
         TrackerMetric::MeteredCost,
         TrackerMetric::ApiCost,
+        TrackerMetric::CompileDefects,
+        TrackerMetric::TestDefects,
+        TrackerMetric::ReviewFixes,
+        TrackerMetric::EscapedTaskDefects,
+        TrackerMetric::ReviewDefects,
+        TrackerMetric::TotalDefects,
+        TrackerMetric::BuildRuns,
+        TrackerMetric::ReworkCycles,
+        TrackerMetric::Prompts,
+        TrackerMetric::TestingEfficiency,
+        TrackerMetric::ReviewEfficiency,
+        TrackerMetric::BuildFailureRate,
+        TrackerMetric::OnHoldRatio,
+        TrackerMetric::PostReviewReworkRatio,
+        TrackerMetric::MeanBuildRecoveryMinutes,
+        TrackerMetric::OnHoldMinutes,
+        TrackerMetric::ReworkMinutes,
+        TrackerMetric::WorkedMinutes,
+        TrackerMetric::ExecutionHours,
+        TrackerMetric::LeadHours,
+        TrackerMetric::CostPerPromptCycle,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -179,6 +223,27 @@ impl TrackerMetric {
             TrackerMetric::TokensReasoning => "tokens_reasoning",
             TrackerMetric::MeteredCost => "metered_cost",
             TrackerMetric::ApiCost => "api_cost",
+            TrackerMetric::CompileDefects => "compile_defects",
+            TrackerMetric::TestDefects => "test_defects",
+            TrackerMetric::ReviewFixes => "review_fixes",
+            TrackerMetric::EscapedTaskDefects => "escaped_task_defects",
+            TrackerMetric::ReviewDefects => "review_defects",
+            TrackerMetric::TotalDefects => "total_defects",
+            TrackerMetric::BuildRuns => "build_runs",
+            TrackerMetric::ReworkCycles => "rework_cycles",
+            TrackerMetric::Prompts => "prompts",
+            TrackerMetric::TestingEfficiency => "testing_efficiency",
+            TrackerMetric::ReviewEfficiency => "review_efficiency",
+            TrackerMetric::BuildFailureRate => "build_failure_rate",
+            TrackerMetric::OnHoldRatio => "on_hold_ratio",
+            TrackerMetric::PostReviewReworkRatio => "post_review_rework_ratio",
+            TrackerMetric::MeanBuildRecoveryMinutes => "mean_build_recovery_minutes",
+            TrackerMetric::OnHoldMinutes => "on_hold_minutes",
+            TrackerMetric::ReworkMinutes => "rework_minutes",
+            TrackerMetric::WorkedMinutes => "worked_minutes",
+            TrackerMetric::ExecutionHours => "execution_hours",
+            TrackerMetric::LeadHours => "lead_hours",
+            TrackerMetric::CostPerPromptCycle => "cost_per_prompt_cycle",
         }
     }
     pub fn parse(s: &str) -> Option<TrackerMetric> {
@@ -193,13 +258,26 @@ pub fn cycle_secs(u: &Usage) -> Option<f64> {
     (span >= chrono::TimeDelta::zero()).then(|| span.as_seconds_f64())
 }
 
-/// What a field mapped to `metric` is written for this usage (W3): the comment's
-/// numbers, as numbers.
-pub fn metric_value(metric: TrackerMetric, u: &Usage) -> crate::tracker::FieldValue {
+/// What a mapped field is written from: a ticket's usage and its SDLC figures.
+#[derive(Debug, Clone, Copy)]
+pub struct TicketFigures<'a> {
+    pub usage: &'a Usage,
+    pub sdlc: &'a crate::sdlc::ticket::TicketSdlc,
+}
+
+/// What a field mapped to `metric` is written (W3, S9): the comment's numbers and
+/// the SDLC figures, as numbers. Percents and costs round as W3's amounts; times
+/// round from their millisecond span with the division last, as W3's hours do.
+pub fn metric_value(metric: TrackerMetric, f: &TicketFigures) -> crate::tracker::FieldValue {
     use crate::tracker::FieldValue as V;
+    let (u, s) = (f.usage, f.sdlc);
     let h = |secs: Option<f64>| secs.and_then(hours).map_or(V::Null, V::Dec);
     let n = |x: Option<i64>| x.map_or(V::Null, V::Int);
     let money = |x: Option<f64>| x.map(amount).map_or(V::Null, V::Dec);
+    let mins = |x: Option<f64>| x.map(|m| per_unit(m, 60_000.0)).map_or(V::Null, V::Dec);
+    let span = |x: Option<f64>| {
+        x.filter(|h| *h >= 0.0).map(|h| per_unit(h, 3_600_000.0)).map_or(V::Null, V::Dec)
+    };
     match metric {
         TrackerMetric::Sessions => V::Int(u.sessions),
         TrackerMetric::ActiveHours => h(u.active_secs),
@@ -214,7 +292,34 @@ pub fn metric_value(metric: TrackerMetric, u: &Usage) -> crate::tracker::FieldVa
         TrackerMetric::TokensReasoning => n(u.tokens_reasoning),
         TrackerMetric::MeteredCost => money(u.metered_cost),
         TrackerMetric::ApiCost => money(u.api_cost),
+        TrackerMetric::CompileDefects => n(s.compile_defects),
+        TrackerMetric::TestDefects => n(s.test_defects),
+        TrackerMetric::ReviewFixes => n(s.review_fixes),
+        TrackerMetric::EscapedTaskDefects => n(s.escaped_task_defects),
+        TrackerMetric::ReviewDefects => n(s.review_defects),
+        TrackerMetric::TotalDefects => n(s.total_defects),
+        TrackerMetric::BuildRuns => n(s.build_runs),
+        TrackerMetric::ReworkCycles => n(s.rework_cycles),
+        TrackerMetric::Prompts => n(s.prompts),
+        TrackerMetric::TestingEfficiency => money(s.testing_efficiency),
+        TrackerMetric::ReviewEfficiency => money(s.review_efficiency),
+        TrackerMetric::BuildFailureRate => money(s.build_failure_rate),
+        TrackerMetric::OnHoldRatio => money(s.on_hold_ratio),
+        TrackerMetric::PostReviewReworkRatio => money(s.post_review_rework_ratio),
+        TrackerMetric::MeanBuildRecoveryMinutes => mins(s.mean_build_recovery_minutes),
+        TrackerMetric::OnHoldMinutes => mins(s.on_hold_minutes),
+        TrackerMetric::ReworkMinutes => mins(s.rework_minutes),
+        TrackerMetric::WorkedMinutes => mins(s.worked_minutes),
+        TrackerMetric::CostPerPromptCycle => money(s.cost_per_prompt_cycle),
+        TrackerMetric::ExecutionHours => span(s.execution_hours),
+        TrackerMetric::LeadHours => span(s.lead_hours),
     }
+}
+
+/// Whether a field mapped to `metric` must wait: its figure is not derived yet
+/// (S9, A3), so writing now would erase what the tracker holds.
+pub fn awaits_derivation(metric: TrackerMetric, f: &TicketFigures) -> bool {
+    f.sdlc.reasons.get(metric.as_str()) == Some(&"not_derived")
 }
 
 /// The fields surface's change key (W4): the pairs as written, in metric order.
@@ -245,6 +350,15 @@ pub fn hours(secs: f64) -> Option<String> {
 fn two_dp(hundredths: f64) -> String {
     let x = hundredths / 100.0;
     format!("{:.2}", if x == 0.0 { 0.0 } else { x })
+}
+
+/// A time `x` in units of `unit_ms` to 2 dp with the division last (W3, C41).
+/// The figures are spans of whole milliseconds (a mean need not be), so the
+/// span is recovered before the one division that rounds.
+fn per_unit(x: f64, unit_ms: f64) -> String {
+    let ms = x * unit_ms;
+    let ms = if (ms - ms.round()).abs() < 1e-6 { ms.round() } else { ms };
+    two_dp((ms * 100.0 / unit_ms).round())
 }
 
 /// A decimal amount to 2 dp, half away from zero (W3).
@@ -512,6 +626,23 @@ impl Pass<'_> {
         else {
             return self.stop(TrackerError::Db.code()).await;
         };
+        // The fields surface reads the SDLC figures too (S9); the comment does not.
+        let mut figures = if on_fields {
+            match crate::sdlc::ticket::ticket_figures(
+                self.pg,
+                self.tracker_id,
+                row.workspace_id,
+                &ids,
+                &usages,
+            )
+            .await
+            {
+                Ok(f) => f,
+                Err(_) => return self.stop(TrackerError::Db.code()).await,
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
 
         let (mut written, mut unchanged, mut failed, mut rate_limited) = (0, 0, 0, 0);
         for task in tasks {
@@ -534,9 +665,20 @@ impl Pass<'_> {
                 .filter(|(_, retired_at)| clear_pending(&task, *retired_at))
                 .map(|(r, _)| (r.clone(), crate::tracker::FieldValue::Null))
                 .collect();
+            let pairs: Vec<(String, crate::tracker::FieldValue)> = if on_fields {
+                let Some(sdlc) = figures.remove(&task.id) else {
+                    return self.stop(TrackerError::Db.code()).await;
+                };
+                let f = TicketFigures { usage: &usage, sdlc: &sdlc };
+                // Not ready: no request, and `writeback_at` stays as it was (S9).
+                if mapped.iter().any(|(m, _)| awaits_derivation(*m, &f)) {
+                    continue;
+                }
+                mapped.iter().map(|(m, r)| (r.clone(), metric_value(*m, &f))).collect()
+            } else {
+                Vec::new()
+            };
             let report = render(&usage, chrono::Utc::now());
-            let pairs: Vec<(String, crate::tracker::FieldValue)> =
-                mapped.iter().map(|(m, r)| (r.clone(), metric_value(*m, &usage))).collect();
             let hash = if on_fields { fields_hash(&pairs) } else { comment_hash(&report) };
             // Unchanged only if that hash is what last landed (a failed write keeps the old
             // one) and no retired field is left to clear.
@@ -921,17 +1063,125 @@ mod tests {
             (TrackerMetric::MeteredCost, V::Null),
             (TrackerMetric::ApiCost, dec("4.32")),
         ];
+        let sdlc = crate::sdlc::ticket::TicketSdlc::default();
+        let of = |u| TicketFigures { usage: u, sdlc: &sdlc };
         for (m, v) in want {
-            assert_eq!(metric_value(m, &u), v, "{m:?}");
+            assert_eq!(metric_value(m, &of(&u)), v, "{m:?}");
         }
-        assert_eq!(metric_value(TrackerMetric::Sessions, &Usage::default()), V::Int(0));
-        assert_eq!(metric_value(TrackerMetric::ApiCost, &Usage::default()), V::Null);
+        let none = Usage::default();
+        assert_eq!(metric_value(TrackerMetric::Sessions, &of(&none)), V::Int(0));
+        assert_eq!(metric_value(TrackerMetric::ApiCost, &of(&none)), V::Null);
         assert_eq!(V::Dec("2.05".into()).to_json(), serde_json::json!(2.05));
         assert_eq!(V::Int(120000).to_json(), serde_json::json!(120000));
         assert_eq!(V::Null.to_json(), serde_json::Value::Null);
         assert_eq!(
             (V::Dec("2.05".into()).canonical(), V::Int(3).canonical(), V::Null.canonical()),
             ("2.05".to_string(), "3".to_string(), "null".to_string())
+        );
+    }
+
+    /// S9 under fixed figures: integers as integers, everything else to 2 dp.
+    #[test]
+    fn each_sdlc_key_writes_its_figure_as_its_kind_implies() {
+        use crate::tracker::FieldValue as V;
+        use TrackerMetric as M;
+        let dec = |s: &str| V::Dec(s.into());
+        let sdlc = crate::sdlc::ticket::TicketSdlc {
+            compile_defects: Some(2),
+            test_defects: Some(1),
+            review_fixes: Some(0),
+            escaped_task_defects: Some(4),
+            review_defects: Some(3),
+            total_defects: Some(6),
+            build_runs: Some(7),
+            rework_cycles: Some(5),
+            prompts: Some(12),
+            testing_efficiency: Some(50.0),
+            review_efficiency: Some(100.0 / 3.0),
+            build_failure_rate: Some(200.0 / 7.0),
+            on_hold_ratio: Some(100.0 / 6.0),
+            post_review_rework_ratio: Some(12.5),
+            mean_build_recovery_minutes: Some(4.0 / 3.0),
+            on_hold_minutes: Some(0.0),
+            rework_minutes: Some(10.125),
+            worked_minutes: Some(90.0 / 60.0),
+            execution_hours: Some(2.5),
+            lead_hours: Some(-0.01),
+            cost_per_prompt_cycle: Some(0.125),
+            ..Default::default()
+        };
+        let u = Usage::default();
+        let f = TicketFigures { usage: &u, sdlc: &sdlc };
+        let want = [
+            (M::CompileDefects, V::Int(2)),
+            (M::TestDefects, V::Int(1)),
+            (M::ReviewFixes, V::Int(0)),
+            (M::EscapedTaskDefects, V::Int(4)),
+            (M::ReviewDefects, V::Int(3)),
+            (M::TotalDefects, V::Int(6)),
+            (M::BuildRuns, V::Int(7)),
+            (M::ReworkCycles, V::Int(5)),
+            (M::Prompts, V::Int(12)),
+            (M::TestingEfficiency, dec("50.00")),
+            (M::ReviewEfficiency, dec("33.33")),
+            (M::BuildFailureRate, dec("28.57")),
+            (M::OnHoldRatio, dec("16.67")),
+            (M::PostReviewReworkRatio, dec("12.50")),
+            (M::MeanBuildRecoveryMinutes, dec("1.33")),
+            (M::OnHoldMinutes, dec("0.00")),
+            (M::ReworkMinutes, dec("10.13")),
+            (M::WorkedMinutes, dec("1.50")),
+            (M::ExecutionHours, dec("2.50")),
+            (M::LeadHours, V::Null),
+            (M::CostPerPromptCycle, dec("0.13")),
+        ];
+        assert_eq!(want.len(), 21, "every S9 key");
+        let distinct: std::collections::HashSet<String> =
+            want.iter().map(|(_, v)| v.canonical()).collect();
+        assert_eq!(distinct.len(), 21, "a value read from the wrong figure shows");
+        for (m, v) in &want {
+            assert_eq!(&metric_value(*m, &f), v, "{m:?}");
+        }
+        let empty = crate::sdlc::ticket::TicketSdlc::default();
+        let f = TicketFigures { usage: &u, sdlc: &empty };
+        for (m, _) in want {
+            assert_eq!(metric_value(m, &f), V::Null, "a null figure is the field's null: {m:?}");
+        }
+    }
+
+    /// W3's C41 for the SDLC times: a span on a half hundredth rounds up, as
+    /// `cycle_hours` does, never down through an early division.
+    #[test]
+    fn sdlc_times_round_with_the_division_last() {
+        use crate::tracker::FieldValue as V;
+        let sdlc = crate::sdlc::ticket::TicketSdlc {
+            execution_hours: Some(3_618_000.0 / 3_600_000.0),
+            worked_minutes: Some(60_300.0 / 60_000.0),
+            ..Default::default()
+        };
+        let u = Usage::default();
+        let f = TicketFigures { usage: &u, sdlc: &sdlc };
+        assert_eq!(metric_value(TrackerMetric::ExecutionHours, &f), V::Dec("1.01".into()));
+        assert_eq!(metric_value(TrackerMetric::WorkedMinutes, &f), V::Dec("1.01".into()));
+        assert_eq!(hours(3618.0), Some("1.01".into()), "as W3 rounds the same span");
+    }
+
+    #[test]
+    fn rate_and_calibration_figures_and_the_trackers_estimate_are_never_mappable() {
+        for key in [
+            "effort_cost",
+            "rework_cost",
+            "expected_minutes",
+            "time_variance_minutes",
+            "estimated_points",
+        ] {
+            assert_eq!(TrackerMetric::parse(key), None, "{key}");
+        }
+        assert_eq!(TrackerMetric::parse("compile_defects"), Some(TrackerMetric::CompileDefects));
+        assert_eq!(
+            &TrackerMetric::ALL[13..15],
+            &[TrackerMetric::CompileDefects, TrackerMetric::TestDefects],
+            "appended after the 13 usage keys"
         );
     }
 
@@ -964,7 +1214,11 @@ mod tests {
         };
         assert_eq!(cycle_secs(&u), None);
         assert_eq!(render(&u, at(UPDATED)).lines[3], "Cycle time: —");
-        assert_eq!(metric_value(TrackerMetric::CycleHours, &u), crate::tracker::FieldValue::Null);
+        let sdlc = crate::sdlc::ticket::TicketSdlc::default();
+        assert_eq!(
+            metric_value(TrackerMetric::CycleHours, &TicketFigures { usage: &u, sdlc: &sdlc }),
+            crate::tracker::FieldValue::Null
+        );
         let same = Usage { last_at: Some(t), ..u };
         assert_eq!(cycle_secs(&same), Some(0.0));
     }
@@ -1662,6 +1916,68 @@ mod pass_tests {
         assert_eq!(sent.len(), 1, "{sent:?}");
         assert_eq!((sent[0].method, sent[0].path.as_str()), (WriteMethod::Put, ISSUE_1));
         assert_eq!(sent[0].body, json!({"fields": {"customfield_10050": 2.05}}));
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
+    }
+
+    /// S9 (A3): a figure not derived yet holds the ticket's field writes back, so
+    /// a derivation lag never erases a value in the tracker.
+    #[tokio::test]
+    async fn a_field_waits_for_its_figure_to_be_derived() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.map(&[("compile_defects", "customfield_10060")]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        assert!(w.sent().is_empty(), "{:?}", w.sent());
+        let (at,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+            "SELECT writeback_at FROM sensei.tracker_tasks WHERE tracker_id = $1 AND external_id = '10001'",
+        )
+        .bind(f.t)
+        .fetch_one(f.pg.pool())
+        .await
+        .unwrap();
+        assert_eq!((at, f.status_of("10001").await), (None, None), "nothing was recorded");
+
+        crate::tasks::session_signals::pass(&f.pg, chrono::Utc::now().timestamp_millis(), 10_000)
+            .await
+            .unwrap();
+        f.pass().await;
+        let sent = w.sent();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(
+            sent[0].body,
+            json!({"fields": {"customfield_10060": 0}}),
+            "derived: no defects"
+        );
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
+    }
+
+    /// A9: a derivation that failed on its current inputs is not waited on: the
+    /// field gets its null, and the ticket is not held back for ever.
+    #[tokio::test]
+    async fn a_failed_derivation_writes_null_rather_than_waiting_for_ever() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.map(&[("compile_defects", "customfield_10060"), ("sessions", "customfield_10061")]).await;
+        crate::tasks::session_signals::pass(&f.pg, chrono::Utc::now().timestamp_millis(), 10_000)
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "UPDATE activity.session_signal_marks SET error = 'event 1 has ts 0 outside the range'
+              WHERE session_id IN (SELECT id FROM activity.sessions WHERE repo_folder_id = $1)",
+        )
+        .bind(f.repo)
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        let sent = w.sent();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(
+            sent[0].body["fields"]["customfield_10060"],
+            serde_json::Value::Null,
+            "{:?}",
+            sent[0].body
+        );
         assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
     }
 

@@ -3,9 +3,14 @@
 **Slice:** tracker SDLC metrics, on branch `feature/sdlc_metrics`. The branch was cut from
 `feature/tracker_metrics_writeback`, which is still unmerged.
 **Stage:** build, unattended (user, 2026-10-29). F1 done (`886b5df1c`), F2 + F3 done
-(`87c7d8316`), F4 done (`825593888`), F5 done (`4f688735f`), F6 done (sprint replay +
-sprint/project figures; this commit); F7 (write-back keys, S9) next. Run contract:
-`.sensei/slice-state.json` (amendments A1–A8).
+(`87c7d8316`), F4 done (`825593888`), F5 done (`4f688735f`), F6 done (`8e353ecb5`), F7 done
+(write-back keys, S9; this commit); F8 (screens, incl. the Fields editor's 21 new metric
+keys) next. Run contract: `.sensei/slice-state.json` (amendments A1–A9).
+
+**F7 in one line:** the 21 S9 keys are mappable to tracker fields. Times round with the division
+last (C41). A mapped figure still being derived holds that ticket's field writes back; a
+derivation that failed reads `derivation_failed` and writes null (A9), so nothing is held for
+ever.
 
 **F6 in one line:** `/sprints` items carry `sdlc`, and `GET …/trackers` items carry
 `sdlc_project` (predictability, tokens and prompts per ticket over the distinct union of
