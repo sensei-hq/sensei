@@ -38,6 +38,10 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("capture_drain", "Capture-spool drain — re-imports hook events dead-lettered to disk"),
     ("contribute", "Dōjō upstream contribute cadence"),
     (
+        "derive_session_signals",
+        "SDLC signals — derives each changed session's builds, tests, reviews and work slices from its hook events",
+    ),
+    (
         "dojo_sync",
         "Dōjō sync — maps shared repositories to tenants, fetches the sync plan, and pushes allowed metric rows",
     ),

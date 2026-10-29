@@ -7,7 +7,7 @@ use crate::sdlc::classify::{Catalogue, MarkerRow, PatternRow};
 
 impl PgStore {
     /// The whole catalogue, compiled, with the hash a session's derivation is
-    /// stamped with. The hash covers every column the classifier reads (not
+    /// stamped with: SHA-256 over every column the classifier reads (not
     /// `modified_at`), so a re-seed that changes nothing re-derives nothing.
     ///
     /// A read failure or a row that does not compile is an `Err` naming it: a
@@ -30,20 +30,25 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| format!("command_markers: {e}"))?;
-        let (hash,): (String,) = sqlx_core::query_as::query_as(
-            "SELECT md5(
-                 coalesce((SELECT string_agg(concat_ws(E'\\x1f', toolchain, pattern, coalesce(category, ''),
-                                                       wrapper, compiles, coalesce(array_to_string(owns, ','), '*'), priority),
-                                             E'\\x1e' ORDER BY toolchain, pattern)
-                             FROM sensei.command_patterns), '')
-                 || E'\\x1d' ||
-                 coalesce((SELECT string_agg(concat_ws(E'\\x1f', toolchain, category, kind, marker),
-                                             E'\\x1e' ORDER BY toolchain, category, kind, marker)
-                             FROM sensei.command_markers), ''))",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| format!("command catalogue hash: {e}"))?;
+        // The hash describes exactly the rows read (spec S3, A3): computed here, not
+        // in a separate statement that could see a different catalogue.
+        let hash = {
+            use sha2::Digest;
+            let mut h = sha2::Sha256::new();
+            for (toolchain, pattern, category, wrapper, compiles, owns, priority) in &patterns {
+                let owns = owns.as_ref().map_or("*".to_string(), |o| o.join(","));
+                let category = category.as_deref().unwrap_or("");
+                let line = format!(
+                    "{toolchain}\x1f{pattern}\x1f{category}\x1f{wrapper}\x1f{compiles}\x1f{owns}\x1f{priority}\x1e"
+                );
+                h.update(line.as_bytes());
+            }
+            h.update(b"\x1d");
+            for (toolchain, category, kind, marker) in &markers {
+                h.update(format!("{toolchain}\x1f{category}\x1f{kind}\x1f{marker}\x1e").as_bytes());
+            }
+            hex::encode(h.finalize())
+        };
 
         Catalogue::compile(
             patterns

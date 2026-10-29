@@ -18,6 +18,7 @@ pub(crate) mod logs;
 pub(crate) mod mcp;
 pub(crate) mod mcp_manifests;
 pub(crate) mod mcp_servers;
+pub(crate) mod metric_settings;
 pub(crate) mod metrics;
 pub(crate) mod model_provisioning;
 pub(crate) mod observatory;

@@ -540,6 +540,26 @@ fn prefixes(line: &str, command: &str) -> bool {
     command == line || command.starts_with(&format!("{line} "))
 }
 
+/// The commands `command` runs, one per stage, with prefixes stripped and no-op
+/// stages dropped (spec S3.1) — for recognising a command by its first word.
+pub fn stage_commands(command: &str) -> Vec<String> {
+    tokenize(command).iter().flat_map(|e| e.stages.iter().filter_map(|w| command_of(w))).collect()
+}
+
+/// The runs `command` would make, with no outcome: for a call that never
+/// reported one (spec S2 `unmatched_call`).
+pub fn run_categories(
+    command: &str,
+    catalogue: &Catalogue,
+    folder_commands: &[FolderCommand],
+) -> Vec<Category> {
+    stage_commands(command)
+        .iter()
+        .filter_map(|cmd| recognise(cmd, catalogue, folder_commands))
+        .filter_map(|(_, run, ..)| run)
+        .collect()
+}
+
 /// The runs `command` made and their outcomes, in the order they appear.
 pub fn classify(
     command: &str,
@@ -654,6 +674,14 @@ fn by_exit(s: &Stage, cat: Category, exit: Exit, lone: bool, elements: &[Element
     }
 }
 
+/// The seeded catalogue, for other modules' tests.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    pub(crate) fn seed() -> super::Catalogue {
+        super::tests::seed()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Category::{Build, E2e, Test, Typecheck};
@@ -661,7 +689,7 @@ mod tests {
     use super::*;
 
     /// The catalogue exactly as seeded, so every case also checks the datafiles.
-    fn seed() -> Catalogue {
+    pub(super) fn seed() -> Catalogue {
         fn rows(file: &str) -> Vec<serde_json::Value> {
             file.lines().map(|l| serde_json::from_str(l).expect("seed line is JSON")).collect()
         }
@@ -1240,5 +1268,18 @@ mod tests {
             run("pnpm run test 2>&1 | tail -3", "ℹ pass 12\nℹ fail 1\n", Exit::Ok),
             [Fail(Test)]
         );
+    }
+
+    #[test]
+    fn stage_commands_and_run_categories() {
+        assert_eq!(
+            stage_commands("cd x && RUST_LOG=1 codex review 2>&1 | tail"),
+            ["codex review 2>&1", "tail"]
+        );
+        assert_eq!(
+            run_categories("cargo build && bun run test:unit | tail", &seed(), &[]),
+            [Build, Test]
+        );
+        assert!(run_categories("ls", &seed(), &[]).is_empty());
     }
 }

@@ -29,6 +29,7 @@ mod personas_tests;
 mod receivers_tests;
 mod repo_anchor_tests;
 mod scan_tests;
+mod session_signals_tests;
 mod stub_gc_tests;
 mod tasks_tests;
 mod turn_usage_tests;

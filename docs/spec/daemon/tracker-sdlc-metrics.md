@@ -144,6 +144,14 @@ idle_threshold_minutes: 15}`.
 - *events are read projected and ordered by `(ts, id)`;*
 - *an Agent review's text and time come from its `SubagentHandback`.*
 
+*Amendment A4 (F2 post-implementation swarm):*
+- *every review stays open for the session;*
+- *a tail-only base slice has no reason of its own;*
+- *documentation is a file type, not a folder name;*
+- *task ticks reference the task text;*
+- *a write error is retried like a read error;*
+- *a pass with failures is a failed run.*
+
 **Event time.** Every derived time comes from `assistant_events.ts`
 (`to_timestamp(ts / 1000.0)`, "when the event fired"), and events are ordered by `(ts, id)`.
 `created_at` is the insert time and is never used. A drained event is inserted hours later,
@@ -176,7 +184,7 @@ incremental pass). It never fails the pass.
 | `until` timestamptz | `slice` only: last event time |
 | `category` text | run signals: `build`, `typecheck`, `test`, `e2e` |
 | `reason` `sensei.hold_reason` | `slice` only |
-| `ref` text | `review`: reviewer name. `review_fix`: the matched token from the review text (repo-relative, e.g. `crates/cli/src/lib.rs`). `task_tick`: `path:line` or `plan:<task id>` |
+| `ref` text | `review`: reviewer name. `review_fix`: the matched token from the review text (repo-relative, e.g. `crates/cli/src/lib.rs`). `task_tick`: `path: <task text>` (an Edit carries no line number) or `plan:<task id>` |
 
 `sensei.session_signal_kind` takes these values:
 - `slice`, `prompt`, `code_edit`
@@ -214,17 +222,17 @@ are cut at the fixed base.
 | signal | rule |
 |---|---|
 | `prompt` | each `UserPromptSubmit` |
-| `code_edit` | each `PostToolUse` of `Edit`, `MultiEdit` or `Write` (path `tool_input.file_path`) or `NotebookEdit` (path `tool_input.notebook_path`) whose path is **code**: no path segment in {`docs`, `doc`, `spec`, `specs`, `openspec`, `.sensei`, `.claude`}, and extension not `.md`/`.mdx` |
+| `code_edit` | each `PostToolUse` of `Edit`, `MultiEdit` or `Write` (path `tool_input.file_path`) or `NotebookEdit` (path `tool_input.notebook_path`) whose path is **code**: its extension is not a documentation type (`md`, `mdx`, `rst`, `adoc`, `txt`), and no path segment is `openspec`, `.sensei` or `.claude`. A route under `docs/` or an RSpec file under `spec/` is code (A4) |
 | run signals | each Bash `PostToolUse`/`PostToolUseFailure`, classified by S3 (`classify(command, output, exit, catalogue, folder_commands)`) into `{category}_ok`, `{category}_fail`, `run_unknown` or `unclassified_fail`. `build`/`typecheck` → `build_*`; `test`/`e2e` → `test_*` |
 | `unmatched_call` | a Bash `PreToolUse` whose `tool_use_id` has no `PostToolUse`/`PostToolUseFailure` in the session. `category` is set from S3's `run_categories(command, …)` (the same tokenizer and recognition, no outcome) when it names a run. A plugin without `PostToolUseFailure` (C1) loses failures exactly this way, so a lost failure is **counted**, never read as 0 |
 | `pr_created` | a successful Bash whose command contains `gh pr create` or `glab mr create` |
 | `pushed` | a successful Bash whose command contains `git push` |
 | `task_tick` | (a) an `Edit` on a path ending `tasks.md`: one per line that is `- [ ] …` in `old_string` and `- [x] …` in `new_string`. (b) a `Write` with `tool_response.type = "update"` on such a path: one per line that is unchecked in `tool_response.originalFile` and checked in `tool_input.content` (matched on the text after the box). (c) `mcp__plugin_sensei_sensei__update_task_status` with `tool_input.state = "done"` (`crates/mcp/src/lib.rs:878`) |
 | `review` | (a) an `Agent` review: the `PostToolUse` of `Agent` whose `tool_input.subagent_type` (after any `plugin:` prefix) contains `review`, `auditor`, `verifier` or `hunter` is a launch receipt (`tool_response.status = async_launched`, no text). The review is the matching `SubagentHandback` `PostToolUse` (`payload.agent_id` = the launch's `tool_response.agentId`), at **its** time, with text `tool_input.message`; failing that, the matching `SubagentStop`'s `last_assistant_message`. A launch with neither yields no review. (b) a Bash whose first word after S3 prefix-stripping is in {`codex`, `gemini`, `aider`, `cursor-agent`, `opencode`, `claude`}, with its output text. (c) any `mcp__*__consensus` tool, with its output text |
-| `review_fix` (D10) | the first `code_edit` after a `review` (its text's arrival), before the session's next `review`, of a file **named** in that review's text. Path tokens are taken from the text: runs of non-space characters containing `/`. Strip surrounding quotes and backticks and trailing `.,;:)]`, then strip a `:N`, `:N-M` or `:N:M` suffix. Expand a brace list (`api/{server.rs,routes.rs}` gives two tokens). Keep tokens ending in `.<ext>`. Over 66 real reviewer responses, this keeps the 73 tokens the plain rule missed (`main.rs.`, `server.rs,`). The edited path is named when a token with ≥2 segments equals a **segment-aligned suffix** of it. `crates/cli/src/lib.rs` names `/repo/crates/cli/src/lib.rs` but not `/repo/crates/senseid/src/lib.rs`. A bare basename never matches (`mod.rs` ×42, `+page.svelte` ×82 in this repo). One per distinct file per review |
+| `review_fix` (D10) | a `code_edit` after a `review` (its text's arrival) of a file **named** in that review's text. Every review stays open for the session (A4), because parallel reviewers hand back minutes apart. One edit is at most one fix, credited to the earliest open review that named the file and has not yet been credited for it. Path tokens are taken from the text: runs of non-space characters containing `/`. Strip surrounding quotes and backticks and trailing `.,;:)]`, then strip a `:N`, `:N-M` or `:N:M` suffix, with any `,N(-M)` list after it. Expand a brace list (`api/{server.rs,routes.rs}` gives two tokens). Keep tokens ending in `.<ext>`. Over 66 real reviewer responses, this keeps the 73 tokens the plain rule missed (`main.rs.`, `server.rs,`). The edited path is named when a token with ≥2 segments equals a **segment-aligned suffix** of it. `crates/cli/src/lib.rs` names `/repo/crates/cli/src/lib.rs` but not `/repo/crates/senseid/src/lib.rs`. A bare basename never matches (`mod.rs` ×42, `+page.svelte` ×82 in this repo). One per distinct file per review |
 | `slice` | **base slices**: the session's events cut where consecutive `ts` differ by more than **1 minute** (`BASE_SLICE_GAP`). `at` is the first event, `until` the last. The workspace threshold T (1–240 min) is applied at read (S6) by merging consecutive base slices whose gap ≤ T. Because T ≥ 1 minute, that gives exactly the slices a cut at T would |
 
-**Slice reason** (per base slice; a merged slice takes its last base slice's reason):
+**Slice reason** (per base slice). A base slice of only tail events (below) stores **no** reason. A merged slice takes the reason of its last base slice that has one, which is what a cut at T would give (A4):
 - The slice's last event is `SessionEnd` → `session_ended`.
 - Otherwise drop trailing `Stop`, `SubagentStop`, `PreCompact` and `UserPromptSubmit` events
   (the turn's tail), then take the last remaining event:
@@ -252,10 +260,13 @@ and `database/import/staging/schedules.jsonl`, and spawned in `api/server.rs` li
    failed session is not retried until then.
 3. Per session, in one transaction: read its events, derive, delete its signals, insert the
    new ones, and upsert the mark with the `max(id)` and `count` **actually read**. A
-   derivation error, an out-of-range `ts`, or a write error rolls that session back. Its
-   mark is then upserted alone, in a new statement, with `error` set and the inputs it
-   failed on, and the pass **continues** with the next session. The pass reports the count
-   derived and the count failed. A failed session's figures read as `not_derived` (S6).
+   derivation error or an out-of-range `ts` is deterministic: the session's mark is
+   upserted with `error` set and the inputs it failed on, so it is skipped until they
+   change. A read or write error may be transient: the mark records inputs no session
+   can have (`-1`), so the session is retried next pass (A4). Either way the session's
+   signals are removed and the pass **continues** with the next session. A pass in which
+   any session failed reports a failed run to the schedule (`N of M session(s)
+   failed`). A failed session's figures read as `not_derived` (S6).
 
 ### S3 · Build/test classifier (D8)
 

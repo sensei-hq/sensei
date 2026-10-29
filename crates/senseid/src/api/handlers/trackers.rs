@@ -25,7 +25,7 @@ const FIRST_SYNC_BUSY_RETRIES: u32 = 15 * 60;
 
 /// The house error envelope (`handlers::err`): a status and `{"error": code}`.
 /// Helpers return it as their `Err`; handlers turn it into a response at the edge.
-type ApiErr = (StatusCode, Json<serde_json::Value>);
+pub(crate) type ApiErr = (StatusCode, Json<serde_json::Value>);
 
 fn fail(status: StatusCode, code: &str) -> ApiErr {
     err(status, code)
@@ -37,7 +37,7 @@ fn internal() -> ApiErr {
 
 /// The workspace's uuid, or the response to return (404 for an unknown workspace:
 /// `resolve_workspace_uuid` accepts any well-formed uuid without checking it).
-async fn known_workspace(state: &AppState, id: &str) -> Result<uuid::Uuid, ApiErr> {
+pub(crate) async fn known_workspace(state: &AppState, id: &str) -> Result<uuid::Uuid, ApiErr> {
     let uuid = crate::api::util::resolve_workspace_uuid(state, id)
         .await
         .map_err(|_| internal())?
@@ -911,7 +911,17 @@ mod tests {
                 call(h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
             let v = json(&body);
             if v[0]["status"] != json!("pending") {
-                return v;
+                // The sync's write-back pass (W2) still holds the board's lock for a
+                // moment after the status settles; under load a call made now is
+                // `busy`. Wait for the lock too.
+                let id: uuid::Uuid = v[0]["id"].as_str().unwrap().parse().unwrap();
+                for _ in 0..1_000 {
+                    if h.rt.locks.try_lock(id).is_some() {
+                        return v;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                panic!("the post-sync write-back pass never released the board");
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }

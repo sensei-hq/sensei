@@ -195,6 +195,15 @@ Enum "sensei"."goal_outcome" {
   "unclear"
 }
 
+Enum "sensei"."hold_reason" {
+  "build_failure"
+  "test_failure"
+  "permission_wait"
+  "interrupted"
+  "session_ended"
+  "unknown"
+}
+
 Enum "sensei"."impact_verdict" {
   "pending"
   "success"
@@ -566,6 +575,24 @@ Enum "sensei"."session_outcome" {
   "blocked"
   "partial"
   "abandoned"
+}
+
+Enum "sensei"."session_signal_kind" {
+  "slice"
+  "prompt"
+  "code_edit"
+  "build_ok"
+  "build_fail"
+  "test_ok"
+  "test_fail"
+  "run_unknown"
+  "unclassified_fail"
+  "unmatched_call"
+  "pr_created"
+  "pushed"
+  "task_tick"
+  "review"
+  "review_fix"
 }
 
 Enum "sensei"."snapshot_kind" {
@@ -2235,6 +2262,7 @@ Table "activity"."assistant_events" {
 
   indexes {
     (session_id, created_at) [name: 'assistant_events_session_id_idx', note: 'order: asc, desc']
+    (session_id, id) [name: 'assistant_events_session_id_id_idx']
     (event_type, created_at) [name: 'assistant_events_event_type_idx', note: 'order: asc, desc']
     created_at [name: 'assistant_events_created_at_idx', note: 'order: desc']
     (family, created_at) [name: 'assistant_events_family_idx', note: 'order: asc, desc']
@@ -2872,6 +2900,22 @@ Table "sensei"."trackers" {
   }
 
   Note: 'An issue-tracker board connected to a sensei workspace at a level (epic, sprint, task): a workspace may hold several, and a board belongs to one workspace. Trackers of one workspace on one site share its credential (D14). Mirror source for sensei.sprints / sensei.tracker_tasks; writes back usage metrics only, to tickets assigned to the token owner (spec tracker-metrics-writeback). The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.'
+}
+
+Table "sensei"."workspace_metric_settings" {
+  "workspace_id" uuid [pk, not null, note: 'The workspace these settings apply to.']
+  "hourly_rate" numeric [note: 'Blended cost of an hour of work, for effort and rework cost. NULL: those costs are null with reason no_rate. The upper bound also rejects NaN, which Postgres orders above every number.']
+  "minutes_per_point" numeric [note: 'Active minutes a story point is expected to take, for expected time and time variance. NULL: those are null with reason no_calibration.']
+  "idle_threshold_minutes" int [not null, default: 15, note: 'A gap between hook events longer than this ends a work slice (spec S2) and counts as a hold. Changing it re-derives the workspace\'s sessions.']
+  "modified_at" timestamptz [not null, default: `now()`, note: 'When the settings last changed.']
+
+  checks {
+    `hourly_rate > 0 AND hourly_rate <= 10000`
+    `minutes_per_point > 0 AND minutes_per_point <= 10080`
+    `idle_threshold_minutes BETWEEN 1 AND 240`
+  }
+
+  Note: 'SDLC metric settings per workspace (spec tracker-sdlc-metrics S1). No row = defaults (no rate, no calibration, 15-minute idle gap). Never per person, and never written to a tracker.'
 }
 
 Table "activity"."run_events" {
@@ -3771,6 +3815,34 @@ v1 logs with session_id NULL (per-memory COUNT needs no session join);
 per-session correlation is a deferred follow-up.'''
 }
 
+Table "activity"."session_signal_marks" {
+  "session_id" uuid [pk, not null, note: 'The session.']
+  "through_event_id" bigint [not null, note: 'Highest assistant_events.id read; 0 for a session with no events.']
+  "event_count" int [not null, note: 'Events read. A lower id committed after a higher one raises the count, not the max.']
+  "catalogue_hash" text [not null, note: 'The build/test command catalogue the signals were derived with.']
+  "error" text [note: 'NULL when derived. Otherwise why derivation failed; the session then has no signals and is not retried until its inputs change.']
+  "derived_at" timestamptz [not null, default: `now()`, note: 'When the mark was written.']
+
+  Note: 'Derivation watermark per session (spec tracker-sdlc-metrics S2). A session is derived again when its events\' max(id) or count, or the catalogue hash, differ from the mark.'
+}
+
+Table "activity"."session_signals" {
+  "session_id" uuid [pk, not null, note: 'The session.']
+  "seq" int [pk, not null, note: 'Order within the session, by event time then event id.']
+  "kind" sensei.session_signal_kind [not null, note: 'What happened (sensei.session_signal_kind).']
+  "at" timestamptz [not null, note: 'When: the hook event\'s own time (assistant_events.ts), never its insert time.']
+  "until" timestamptz [note: 'slice only: its last event\'s time.']
+  "category" text [note: 'Run signals and unmatched calls: build, typecheck, test or e2e.']
+  "reason" sensei.hold_reason [note: 'slice only: why it ended.']
+  "ref" text [note: 'review: the reviewer. review_fix: the path token the review named. task_tick: the task.']
+
+  checks {
+    `category IN ('build', 'typecheck', 'test', 'e2e')`
+  }
+
+  Note: 'Derived SDLC signals per session (spec tracker-sdlc-metrics S2). Replaced whole per session by the derive_session_signals pass.'
+}
+
 Table "activity"."snapshots" {
   "id" uuid [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "session_id" uuid [not null, note: 'Foreign key to sessions.']
@@ -4508,6 +4580,7 @@ Ref: "sensei"."repository_metrics"."persona_id" > "sensei"."personas"."id" [dele
 Ref: "sensei"."service_workspaces"."service_id" > "sensei"."services"."id" [delete: cascade]
 Ref: "sensei"."service_workspaces"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
 Ref: "sensei"."trackers"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
+Ref: "sensei"."workspace_metric_settings"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
 Ref: "activity"."run_events"."run_id" > "activity"."runs"."id" [delete: cascade]
 Ref: "activity"."sessions"."folder_id" > "sensei"."folders"."id" [delete: set null]
 Ref: "activity"."sessions"."repo_folder_id" > "sensei"."folders"."id" [delete: set null]
@@ -4553,6 +4626,8 @@ Ref: "sensei"."tracker_unknown_keys"."tracker_id" > "sensei"."trackers"."id" [de
 Ref: "activity"."memory_loads"."session_id" > "activity"."sessions"."id" [delete: set null]
 Ref: "activity"."memory_loads"."workspace_id" > "sensei"."workspaces"."id" [delete: set null]
 Ref: "activity"."memory_loads"."memory_id" > "sensei"."memories"."id" [delete: cascade]
+Ref: "activity"."session_signal_marks"."session_id" > "activity"."sessions"."id" [delete: cascade]
+Ref: "activity"."session_signals"."session_id" > "activity"."sessions"."id" [delete: cascade]
 Ref: "activity"."snapshots"."session_id" > "activity"."sessions"."id" [delete: cascade]
 Ref: "activity"."snapshots"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "activity"."task_sessions"."session_id" > "activity"."sessions"."id" [delete: set null]

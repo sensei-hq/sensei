@@ -45,6 +45,7 @@ pub mod resume;
 pub mod retry;
 pub mod schedule;
 pub mod schema_deploy;
+pub mod session_signals;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod ticker;

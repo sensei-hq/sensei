@@ -4572,14 +4572,17 @@ mod tests {
         // stands, so the headroom is never known at the moment it matters — the
         // one before a change that spends it. This is the second ratchet in
         // this slice to earn a print for that reason.
+        // 1,300 → 1,302 (2026-10-29, tracker-sdlc-metrics F3): the two `state.pg`
+        // reads of `api/handlers/metric_settings.rs`, the TYPE ALIAS case above —
+        // a new handler cannot read the store without one.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,300, headroom {})",
+             (ceiling 1,302, headroom {})",
             elsewhere.len(),
-            1_300_i64 - other as i64
+            1_302_i64 - other as i64
         );
         assert!(
-            other <= 1_300,
+            other <= 1_302,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,260 S7 was measured at. Worst: {:?}",
             elsewhere.len(),

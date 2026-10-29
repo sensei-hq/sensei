@@ -76,6 +76,32 @@ async fn the_hash_covers_markers_and_flags_but_not_timestamps() {
         .await;
     let flipped = s.command_catalogue().await.unwrap().hash;
     assert_ne!(flipped, with_marker, "a flag-only change changes the hash");
+
+    let mut last = flipped;
+    for (what, sql) in [
+        (
+            "owns",
+            "UPDATE sensei.command_patterns SET owns = array['vitest'] WHERE toolchain = 'npm'",
+        ),
+        (
+            "priority",
+            "UPDATE sensei.command_patterns SET priority = priority + 1 WHERE toolchain = 'go'",
+        ),
+        (
+            "wrapper",
+            "UPDATE sensei.command_patterns SET wrapper = NOT wrapper WHERE toolchain = 'go'",
+        ),
+        (
+            "category",
+            "UPDATE sensei.command_patterns SET category = 'none' WHERE toolchain = 'swift'",
+        ),
+        ("a deleted row", "DELETE FROM sensei.command_markers WHERE toolchain = 'mix'"),
+    ] {
+        exec(&s, sql).await;
+        let now = s.command_catalogue().await.unwrap().hash;
+        assert_ne!(now, last, "{what} changes the hash");
+        last = now;
+    }
 }
 
 #[tokio::test]

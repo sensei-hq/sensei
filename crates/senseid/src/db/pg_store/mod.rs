@@ -538,6 +538,8 @@ mod git_history;
 mod governance;
 mod graph;
 mod graph_push;
+mod metric_settings;
+pub mod session_signals;
 mod test_db;
 pub use graph_push::GraphCheckout;
 mod indexer;

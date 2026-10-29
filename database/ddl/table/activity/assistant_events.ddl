@@ -27,6 +27,11 @@ create table if not exists assistant_events (
 create index if not exists assistant_events_session_id_idx
     on assistant_events(session_id, created_at desc);
 
+-- SDLC signal staleness and reads (spec tracker-sdlc-metrics S2): max(id) and count(*)
+-- per session as an index-only scan.
+create index if not exists assistant_events_session_id_id_idx
+    on assistant_events(session_id, id);
+
 create index if not exists assistant_events_event_type_idx
     on assistant_events(event_type, created_at desc);
 

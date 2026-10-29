@@ -71,6 +71,18 @@ fn tracker_routes() -> Router<AppState> {
         .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
 }
 
+/// A workspace's SDLC metric settings (spec tracker-sdlc-metrics S1), guarded like
+/// the tracker routes: the hourly rate is not for other origins to read.
+fn metric_settings_routes() -> Router<AppState> {
+    use crate::api::handlers::metric_settings;
+    Router::new()
+        .route(
+            "/api/workspaces/{id}/metric-settings",
+            get(metric_settings::get_metric_settings).put(metric_settings::put_metric_settings),
+        )
+        .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
+}
+
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Health
@@ -544,6 +556,7 @@ pub fn create_router(state: AppState) -> Router {
         // Tracker integrations (spec docs/spec/daemon/tracker-jira-linkage.md R8):
         // a route group behind the local-caller guard (foreign Origin / rebound Host → 403).
         .merge(tracker_routes())
+        .merge(metric_settings_routes())
         .with_state(state)
         .layer(axum::middleware::from_fn(crate::api::origin_guard::caller_guard))
 }
