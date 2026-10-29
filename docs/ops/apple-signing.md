@@ -58,6 +58,19 @@ manager, never as a chat or email attachment. Afterwards, delete the loose `.key
 
 ## Then (engineering, #282)
 
-`release.yml` signs `senseid`, `sensei`, `sensei-mcp` and `Sensei.app` with the hardened runtime and fixed
-identifiers, notarizes and staples; `scripts/codesign-local.sh` prefers the Developer ID identity when it is
-in the login keychain.
+- **Release.** `release.yml`'s macOS daemon legs import the certificate into a throwaway keychain
+  (`scripts/ci-import-signing-cert.sh`), sign `senseid`, `sensei` and `sensei-mcp` through
+  `scripts/codesign-local.sh` (fixed `dev.sensei.<binary>` identifiers, hardened runtime, secure
+  timestamp) and notarize them (`scripts/ci-notarize.sh`, which fails the release unless Apple returns
+  `Accepted` and prints Apple's log when it does not). A bare binary cannot be stapled; Gatekeeper
+  checks its ticket online. `Sensei.app` is signed, notarized and stapled by `tauri-action` from the
+  same secrets.
+- **Local installs.** `scripts/codesign-local.sh` prefers a `Developer ID Application` identity in the
+  login keychain over the self-signed `sensei-dev`. Import the `.p12` once:
+
+  ```sh
+  security import developer-id.p12 -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign
+  ```
+
+  After that, every `make install` signs with the Developer ID, so Keychain "Always Allow" and folder
+  access survive rebuilds — granted once, then kept.

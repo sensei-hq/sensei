@@ -116,6 +116,35 @@ jobs:
           FEATURES: ${{ matrix.embedded && '--features senseid/embedded-llama-cpp' || '' }}
         run: cargo build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp $FEATURES
 
+      # #282: Developer ID signing and notarization, macOS legs only. An ad-hoc
+      # signature changes every build, so every user was asked again for keychain
+      # and folder access after each upgrade. The certificate goes into a throwaway
+      # keychain for this job; the signing itself is the same script local installs
+      # use (fixed `dev.sensei.<binary>` identifiers, hardened runtime, and — for a
+      # Developer ID — a secure timestamp). Secrets reach the steps as env only.
+      - name: Import the Developer ID certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: scripts/ci-import-signing-cert.sh
+
+      - name: Sign the binaries
+        if: runner.os == 'macOS'
+        env:
+          SENSEI_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          BUILD_TARGET: ${{ matrix.target }}
+        run: scripts/codesign-local.sh "target/${BUILD_TARGET}/release/senseid" "target/${BUILD_TARGET}/release/sensei" "target/${BUILD_TARGET}/release/sensei-mcp"
+
+      - name: Notarize the binaries
+        if: runner.os == 'macOS'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          BUILD_TARGET: ${{ matrix.target }}
+        run: scripts/ci-notarize.sh "target/${BUILD_TARGET}/release/senseid" "target/${BUILD_TARGET}/release/sensei" "target/${BUILD_TARGET}/release/sensei-mcp"
+
       - name: Package binaries
         env:
           BUILD_TARGET: ${{ matrix.target }}
@@ -162,10 +191,26 @@ jobs:
         working-directory: app
         run: bun install
 
+      # #282: Tauri signs the app with the Developer ID (hardened runtime) and
+      # notarizes and staples it when these are set. Its notarization reads the API
+      # key from a file, written private for this job.
+      - name: Write the notarization key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          umask 077
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
+
       - name: Build app
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         with:
           projectPath: app
           args: --target universal-apple-darwin
