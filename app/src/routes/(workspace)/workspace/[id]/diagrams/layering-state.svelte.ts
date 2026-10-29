@@ -208,6 +208,19 @@ export class LayersState {
    *
    *  A cycle with no cut is a real state and gets its own sentence: saying
    *  nothing would read as a loop that needs no action. */
+  /** One cycle drawn on its own: its units, only the dependencies among them, and the cut
+   *  (the weakest link, which opens the loop) marked so the diagram can show where it is. */
+  cycleGraph(cycle: LayeringCycle): { nodes: LayeringNode[]; edges: (LayeringEdge & { cut: boolean })[] } {
+    const members = new Set(cycle.members);
+    const isCut = (e: LayeringEdge) => cycle.cut?.source === e.source && cycle.cut?.target === e.target;
+    return {
+      nodes: this.nodes.filter((n) => members.has(n.id)),
+      edges: this.edges
+        .filter((e) => members.has(e.source) && members.has(e.target) && e.source !== e.target)
+        .map((e) => ({ ...e, cut: isCut(e) })),
+    };
+  }
+
   cutLine(cycle: LayeringCycle | undefined): string {
     if (!cycle) return '';
     if (!cycle.cut) {

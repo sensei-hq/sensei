@@ -152,3 +152,17 @@ describe('LayersState · cycles', () => {
     expect(s.cycles).toHaveLength(1);
   });
 });
+
+// Cycles was a list of names (user, 2026-10-28: "I only see text, no graph, no lines"). Each
+// cycle is drawn: its units and only the dependencies among them, the cut marked.
+describe('LayersState.cycleGraph', () => {
+  it('holds the cycle\'s units and the dependencies among them, the cut marked', async () => {
+    const s = new LayersState(okApi(), () => 'w');
+    await s.load();
+    const g = s.cycleGraph(s.cycles[0]);
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(['senseid/db', 'senseid/tasks']);
+    expect(g.edges.map((e) => e.id).sort()).toEqual(['senseid/db→senseid/tasks', 'senseid/tasks→senseid/db']);
+    expect(g.edges.find((e) => e.cut)?.id).toBe('senseid/db→senseid/tasks');
+    expect(g.edges.filter((e) => e.cut)).toHaveLength(1);
+  });
+});

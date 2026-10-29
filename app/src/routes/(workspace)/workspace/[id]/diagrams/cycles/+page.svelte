@@ -1,10 +1,11 @@
 <script lang="ts">
     import { Toolbar } from '@rokkit/ui';
+    import { LayersDiagram } from '@rokkit/graph';
     import { PageHeader, Screen } from '$lib/components';
     import { senseiApi } from '$lib/api.js';
     import { appState } from '$lib/appstate.svelte.js';
     import { DIAGRAM_VIEWS } from '../diagrams-nav.js';
-    import { LayersState } from '../layering-state.svelte.js';
+    import { LAYERS_FIELDS, LayersState } from '../layering-state.svelte.js';
     import type { LayeringLevel } from '$lib/types.js';
 
     let { data } = $props();
@@ -73,6 +74,7 @@
 
                 <ul class="flex flex-col gap-4 list-none p-0 m-0" data-testid="cycles-list">
                     {#each view.cycles as cycle (cycle.component)}
+                        {@const graph = view.cycleGraph(cycle)}
                         <li
                             class="p-4 border border-paper-edge rounded"
                             data-testid={`cycle-${cycle.component}`}
@@ -81,11 +83,16 @@
                                 Cycle · {cycle.members.length} units · layer {cycle.layer}
                             </p>
 
-                            <ul class="flex flex-col list-none p-0 mt-2 mb-0">
-                                {#each cycle.members as member (member)}
-                                    <li class="text-sm text-ink">{member}</li>
-                                {/each}
-                            </ul>
+                            <!-- The loop drawn: its units and only the dependencies among them. -->
+                            <div class="h-[320px] mt-2" data-testid={`cycle-diagram-${cycle.component}`}>
+                                <LayersDiagram
+                                    nodes={graph.nodes}
+                                    edges={graph.edges}
+                                    fields={LAYERS_FIELDS}
+                                    controls
+                                    legend
+                                />
+                            </div>
 
                             <!-- One line per inner dependency, heaviest first as the
                                  daemon ships them, with the cut called out. The cut
