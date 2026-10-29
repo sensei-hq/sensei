@@ -15,12 +15,13 @@
     "F8",
     "F9"
   ],
-  "current_phase": "F4",
+  "current_phase": "F5",
   "completed": [
     "F1 (classifier + catalogue; this commit)",
-    "F3 (settings) + F2 (session signals); this commit"
+    "F3 (settings) + F2 (session signals); this commit",
+    "F4 (ticket figures + reason codes + sdlc on ticket routes); this commit"
   ],
-  "gate_status": "F2+F3 pass: full senseid suite 4036/0, clippy -D warnings clean, DDL checks pass, DBML regenerated; swarm findings (data, failure-mode, test, security) fixed red-first; A3, A4 recorded",
+  "gate_status": "F4 pass: full senseid suite 4063/0, clippy -D warnings clean; pre- and post-implementation swarm findings fixed (A5)",
   "decomposition": {
     "F1": "DDL sensei.command_patterns + sensei.command_markers (+staging tables, 2 import procs, 2 jsonl seeds); categorise(check)->typecheck; sdlc/classify.rs: tokenize (quote/heredoc aware) -> elements/stages, strip, stage_category, ownership attribution, exit attribution; pg_store command_catalogue() with md5 hash; tests: sdlc::classify cases + pg_store command_catalogue_import",
     "F3": "DDL sensei.workspace_metric_settings; sdlc/settings.rs pure parse_patch/apply; pg_store metric_settings get/put; api/handlers/metric_settings.rs GET/PUT under local_caller_guard (reuse trackers::known_workspace)",
@@ -50,26 +51,35 @@
       "phase": "F2",
       "spec": "S2",
       "reason": "F2 post-implementation swarm (data, failure-mode, test reviews): reviews stay open (parallel reviewers: real data 1 vs 9 fixes); tail-only base slices inherit reason; is_code by file type not folder (docs/ route, spec/ rspec); task_tick ref path: text; ,N line lists; write errors retried (-1) like read errors; failed sessions fail the scheduled run; typed SignalMark (#161)"
+    },
+    {
+      "id": "A5",
+      "phase": "F4",
+      "spec": "S6",
+      "reason": "F4 pre-implementation audit: rework over the union (ratio <= 100%); NULL-reason holds -> unknown; escape category = category column; deterministic tie-break by session start order; S6 unrounded"
     }
   ],
   "open_questions": [],
-  "known_broken": [],
+  "known_broken": [
+    "sdlc/ticket.rs Estimate carries #[allow(dead_code)] until F5 constructs NoField/NotEstimated/Points \u2014 remove it in F5"
+  ],
   "notes": [
     "daemon down: sensei MCP tools unavailable; locate via rg (said aloud)",
     "cargo -j 2 (OOM at -j 4); make test-template after any database/ change",
     "installed plugin 0.11.0 lacks PostToolUseFailure (human to update)",
     "previous slice state saved to .sensei/slice-state.tracker-metrics-writeback.json (write-back F6 live check pending with user)",
     "indexer ratchet ceiling raised 1,300 -> 1,302 for the two state.pg reads in metric_settings.rs (AppState type alias); flagged to the user",
-    "only 9 of 118 hook-event sessions have an activity.sessions row on this machine (backlog P0, Linux session synthesis): F2+ ticket metrics will be sparse here until P0 lands"
+    "only 9 of 118 hook-event sessions have an activity.sessions row on this machine (backlog P0, Linux session synthesis): F2+ ticket metrics will be sparse here until P0 lands",
+    "F4: lead_hours and estimated_points read not_synced until F5 supplies issue_created_at and points (orchestrator passes None/NotSynced)",
+    "F4: project figures (tokens_per_ticket, prompts_per_ticket) moved to F6 with sdlc_project"
   ],
-  "next_command": "/sensei:build docs/plans/2026-10-29-tracker-sdlc-metrics.md (resume at F4: ticket figures + reason codes)",
+  "next_command": "/sensei:build docs/plans/2026-10-29-tracker-sdlc-metrics.md (resume at F5: ticket history)",
   "order_note": "F3 before F2 (F2 no longer needs the threshold after A3, but F3 is small and started first)",
   "carry_forward": {
-    "F4": [
-      "slices at read: merge base slices whose gap <= T (tracker's workspace idle_threshold_minutes); a merged slice takes its last base slice's reason that is non-NULL",
-      "not_derived when any session's mark has error, or through/count differ from the session's events, or catalogue hash != current",
-      "reasons go in reason_codes.jsonl domain sdlc_metrics",
-      "the indexer ratchet is at its 1,302 ceiling: any new state.pg read in a handler needs a decision; prefer extending existing tracker handlers' reads via pg_store calls already present"
+    "F5": [
+      "ticket_figures passes issue_created_at None and Estimate::NotSynced: F5 must supply tracker_tasks.issue_created_at and points/estimation_field, then remove #[allow(dead_code)] on Estimate",
+      "history task chains inside writeback::spawn_after_sync's guard (W2 override); write-back must skip not_derived tickets (S9, A3) \u2014 that is F7's",
+      "the tracker handler tests' settled() waits for the post-sync lock; history extends the time the lock is held"
     ]
   }
 }

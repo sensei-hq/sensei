@@ -11,6 +11,7 @@ use crate::api::state::AppState;
 
 use crate::api::handlers::err;
 use crate::db::pg_store::trackers::TrackerRow;
+use crate::sdlc::ticket::ticket_figures;
 use crate::tracker::connect::{ConnectError, connect, disconnect};
 use crate::tracker::runtime::sync_stored;
 use crate::tracker::status::{WritebackFacts, status, writeback_state};
@@ -520,6 +521,11 @@ pub(crate) async fn get_tracker_task(
         Ok(r) => r,
         Err(_) => return internal().into_response(),
     };
+    let own = std::collections::HashMap::from([(task.id, usage.clone())]);
+    let sdlc = match ticket_figures(pg, task.tracker_id, workspace, &[task.id], &own).await {
+        Ok(mut f) => f.remove(&task.id),
+        Err(_) => return internal().into_response(),
+    };
     let sessions: Vec<serde_json::Value> = task
         .sessions
         .iter()
@@ -543,6 +549,7 @@ pub(crate) async fn get_tracker_task(
             "writeback_status": task.writeback_status, "writeback_at": task.writeback_at,
         },
         "usage": usage,
+        "sdlc": sdlc,
         "by_repo": by_repo,
         "sessions": sessions,
     }))
@@ -758,6 +765,10 @@ pub(crate) async fn list_tracker_tasks(
         Ok(u) => u,
         Err(_) => return internal().into_response(),
     };
+    let mut sdlc = match ticket_figures(pg, tracker.id, tracker.workspace_id, &ids, &usage).await {
+        Ok(f) => f,
+        Err(_) => return internal().into_response(),
+    };
     let named = |(id, name): &(uuid::Uuid, String)| serde_json::json!({"id": id, "name": name});
     let rows: Vec<serde_json::Value> = tasks
         .iter()
@@ -770,6 +781,7 @@ pub(crate) async fn list_tracker_tasks(
                 "sprints": t.sprints.iter().map(named).collect::<Vec<_>>(),
                 // No linked sessions is a genuinely empty set: zero sessions, null sums.
                 "usage": usage.remove(&t.id).unwrap_or_default(),
+                "sdlc": sdlc.remove(&t.id),
             })
         })
         .collect();
@@ -1819,6 +1831,151 @@ mod tests {
             call(&h, "GET", &format!("/api/workspaces/{unknown}/tracker-tasks/AUTH-3"), None, None)
                 .await;
         assert_eq!(json(&gone.1)["error"], json!("workspace_not_found"));
+    }
+
+    #[tokio::test]
+    async fn ticket_reads_carry_sdlc_figures_with_their_reasons() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let id = tracker(&h, p).await;
+        let (st, body) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers/{id}/tasks"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let rows = json(&body);
+        let rows = rows.as_array().unwrap();
+        assert!(!rows.is_empty());
+        for r in rows {
+            assert_eq!(r["sdlc"]["worked_minutes"], Value::Null);
+            assert_eq!(r["sdlc"]["reasons"]["worked_minutes"], json!("no_sessions"), "{r}");
+        }
+        let key = rows[0]["key"].as_str().unwrap();
+        let (st, body) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/{key}"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(json(&body)["sdlc"]["reasons"]["prompts"], json!("no_sessions"));
+    }
+
+    /// End to end: a linked session's hook events, derived by the pass, become the
+    /// ticket's figures; before the pass they read `not_derived`.
+    #[tokio::test]
+    async fn a_linked_sessions_signals_become_the_tickets_figures() {
+        use crate::tracker::test_support::{repo_in, session_with};
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let repo = repo_in(&h.state.pg, p).await;
+        let sess = session_with(&h.state.pg, Some(repo), &["fix/AUTH-2"], &[]).await;
+        let (client,): (String,) = sqlx_core::query_as::query_as(
+            "SELECT client_session_id FROM activity.sessions WHERE id = $1",
+        )
+        .bind(sess)
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        let t0 = chrono::Utc::now().timestamp_millis() - 3_600_000;
+        for (i, (kind, tool, payload)) in [
+            ("PostToolUse", "Edit", json!({"tool_input": {"file_path": "/r/src/a.rs"}})),
+            ("PostToolUseFailure", "Bash", json!({"tool_use_id": "b1", "tool_input": {"command": "cargo build"}, "error": "Exit code 101"})),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            sqlx_core::query::query(
+                "INSERT INTO activity.assistant_events (session_id, family, event_type, tool_name, ts, payload)
+                 VALUES ($1, 'claude', $2, $3, $4, $5)",
+            )
+            .bind(&client)
+            .bind(kind)
+            .bind(tool)
+            .bind(t0 + i as i64 * 30_000)
+            .bind(payload)
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        }
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{}/tasks", tracker(&h, p).await);
+        let auth2 = |body: &str| {
+            json(body).as_array().unwrap().iter().find(|t| t["key"] == "AUTH-2").unwrap()["sdlc"]
+                .clone()
+        };
+
+        let before = auth2(&call(&h, "GET", &uri, None, None).await.1);
+        assert_eq!(before["reasons"]["compile_defects"], json!("not_derived"), "{before}");
+
+        crate::tasks::session_signals::pass(
+            &h.state.pg,
+            chrono::Utc::now().timestamp_millis(),
+            10_000,
+        )
+        .await
+        .unwrap();
+        let after = auth2(&call(&h, "GET", &uri, None, None).await.1);
+        assert_eq!(after["compile_defects"], json!(1), "{after}");
+        assert_eq!(after["build_runs"], json!(1));
+        assert_eq!(after["worked_minutes"], json!(0.5));
+        let started = after["work_started_at"].as_str().expect("an RFC 3339 instant");
+        assert!(chrono::DateTime::parse_from_rfc3339(started).is_ok(), "{started}");
+        assert_eq!(after["reasons"]["submitted_at"], json!("not_submitted"));
+
+        // Another ticket is not fed AUTH-2's session.
+        let body = call(&h, "GET", &uri, None, None).await.1;
+        let auth1 = json(&body).as_array().unwrap().iter().find(|t| t["key"] == "AUTH-1").unwrap()
+            ["sdlc"]
+            .clone();
+        assert_eq!(auth1["reasons"]["compile_defects"], json!("no_sessions"), "{auth1}");
+
+        // Each staleness the pass would act on reads as not derived (S6).
+        let stale = |sql: &'static str| {
+            let h = &h;
+            let client = client.clone();
+            async move {
+                sqlx_core::query::query(sql)
+                    .bind(&client)
+                    .bind(sess)
+                    .execute(h.state.pg.pool())
+                    .await
+                    .unwrap();
+            }
+        };
+        stale(
+            "INSERT INTO activity.assistant_events (session_id, family, event_type, ts, payload)
+             SELECT $1, 'claude', 'Stop', (extract(epoch from now()) * 1000)::bigint, '{}'::jsonb
+              WHERE $2::uuid IS NOT NULL",
+        )
+        .await;
+        let new_event = auth2(&call(&h, "GET", &uri, None, None).await.1);
+        assert_eq!(new_event["reasons"]["compile_defects"], json!("not_derived"), "a new event");
+
+        crate::tasks::session_signals::pass(
+            &h.state.pg,
+            chrono::Utc::now().timestamp_millis(),
+            10_000,
+        )
+        .await
+        .unwrap();
+        assert_eq!(auth2(&call(&h, "GET", &uri, None, None).await.1)["compile_defects"], json!(1));
+        stale(
+            "UPDATE activity.session_signal_marks SET error = 'x'
+              WHERE session_id = $2 AND $1::text IS NOT NULL",
+        )
+        .await;
+        let failed = auth2(&call(&h, "GET", &uri, None, None).await.1);
+        assert_eq!(failed["reasons"]["compile_defects"], json!("not_derived"), "a failed mark");
+
+        stale(
+            "UPDATE activity.session_signal_marks SET error = NULL, catalogue_hash = 'old'
+              WHERE session_id = $2 AND $1::text IS NOT NULL",
+        )
+        .await;
+        let old = auth2(&call(&h, "GET", &uri, None, None).await.1);
+        assert_eq!(old["reasons"]["compile_defects"], json!("not_derived"), "an old catalogue");
     }
 
     #[tokio::test]

@@ -96,6 +96,29 @@ impl SignalKind {
             SignalKind::ReviewFix => "review_fix",
         }
     }
+
+    pub fn parse(s: &str) -> Option<SignalKind> {
+        use SignalKind::*;
+        [
+            Slice,
+            Prompt,
+            CodeEdit,
+            BuildOk,
+            BuildFail,
+            TestOk,
+            TestFail,
+            RunUnknown,
+            UnclassifiedFail,
+            UnmatchedCall,
+            PrCreated,
+            Pushed,
+            TaskTick,
+            Review,
+            ReviewFix,
+        ]
+        .into_iter()
+        .find(|k| k.as_str() == s)
+    }
 }
 
 /// Why a slice ended: the `sensei.hold_reason` label.
@@ -119,6 +142,13 @@ impl HoldReason {
             HoldReason::SessionEnded => "session_ended",
             HoldReason::Unknown => "unknown",
         }
+    }
+
+    pub fn parse(s: &str) -> Option<HoldReason> {
+        use HoldReason::*;
+        [BuildFailure, TestFailure, PermissionWait, Interrupted, SessionEnded, Unknown]
+            .into_iter()
+            .find(|r| r.as_str() == s)
     }
 }
 

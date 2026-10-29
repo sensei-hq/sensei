@@ -494,6 +494,16 @@ consecutive base slices are ≤ T apart, with T = the tracker's workspace
 `idle_threshold_minutes` (S1; a tracker belongs to exactly one workspace). Below, "slices"
 means these merged slices.
 
+*Amendment A5 (F4 pre-implementation audit):*
+- *the sessions' merged slices are unioned, and rework, worked time and holds all use that union, so the rework ratio stays ≤ 100%;*
+- *a hold whose slice has no reason counts under `unknown`;*
+- *an escape's category is the signal's `category` column (build, typecheck, test, e2e), as for build recovery;*
+- *ties are broken by session start order, then sequence, never by id;*
+- *figures are unrounded, and write-back rounds once (S9).*
+- *a ticket whose current sessions have no slices reads `no_activity`, not `no_sessions`, since its sessions exist but recorded nothing;*
+- *instants (`work_started_at`, `submitted_at`) serialise as RFC 3339, like every other API timestamp;*
+- *every null in `sdlc`, `submitted_via` included, has a `reasons` entry.*
+
 **Derivation must be current.** Every session in `S` needs a mark with no `error`, whose
 `through_event_id` and `event_count` equal its events' `max(id)` and `count(*)`, and whose
 catalogue hash is current. Otherwise every
@@ -503,7 +513,7 @@ as zeros.
 
 | key | definition | null when (reason) |
 |---|---|---|
-| `worked_minutes` | Σ over the union of the sessions' slices of `until − at`. This is the SDLC base, consistent with holds | no slices (`no_sessions`) |
+| `worked_minutes` | Σ over the union of the sessions' slices of `until − at`. This is the SDLC base, consistent with holds | no sessions (`no_sessions`); sessions with no slices (`no_activity`) |
 | `prompts` | count `prompt` | no sessions |
 | `ai_token_cost` | R7 `api_cost` | as R7 |
 | `cost_per_prompt_cycle` | `api_cost / prompts` | `api_cost_n < sessions` or `api_cost_partial > 0` (`partial_cost`); prompts 0 (`no_prompts`) |
@@ -526,7 +536,7 @@ as zeros.
 | `lead_hours` | `submitted_at − issue_created_at` | either null; `submitted_at < issue_created_at` (`created_after_submit`; tickets are often filed after the work) |
 | `on_hold_minutes`, `on_hold_count`, `on_hold_by_reason` | take the union of the sessions' slices, clipped to `[work_started_at, submitted_at]`. Each gap **longer than `idle_threshold_minutes`** between consecutive union intervals is a hold, with reason = the slice ending before the gap. Shorter gaps between back-to-back sessions are not holds | window null |
 | `on_hold_ratio` | `on_hold_minutes / (submitted − work_started, minutes) × 100` | window null or 0 (`no_window`) |
-| `rework_minutes` | for each slice with a `code_edit` at ≥ `submitted_at`: `until − max(at, first such code_edit.at)` | `submitted_at` null |
+| `rework_minutes` | for each **union interval** with a `code_edit` at ≥ `submitted_at`: `until −` that interval's first such `code_edit` (A5) | `submitted_at` null |
 | `rework_cycles` | `pushed` signals after `submitted_at` with ≥1 `code_edit` since the previous push (or since `submitted_at`) | `submitted_at` null |
 | `post_review_rework_ratio` (D5) | `rework_minutes / worked_minutes × 100` | either null or active 0 |
 | `estimated_points` | `tracker_tasks.points` | `estimation_field` NULL (`no_estimation_field`) or no value (`not_estimated`) |

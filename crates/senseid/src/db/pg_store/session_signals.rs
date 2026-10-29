@@ -2,8 +2,10 @@
 //! `activity.session_signal_marks`; spec tracker-sdlc-metrics S2).
 
 use super::*;
+use crate::sdlc::classify::Category;
 use crate::sdlc::classify::FolderCommand;
-use crate::sdlc::signals::{Signal, SignalEvent, TEXT_TAIL_BYTES};
+use crate::sdlc::signals::{HoldReason, Signal, SignalEvent, SignalKind, TEXT_TAIL_BYTES};
+use crate::sdlc::ticket::SessionSignals;
 
 /// A session's derivation mark (`activity.session_signal_marks`): the inputs its
 /// signals reflect, or failed on.
@@ -175,6 +177,77 @@ impl PgStore {
         Ok(rows
             .into_iter()
             .map(|(command_line, category)| FolderCommand { command_line, category })
+            .collect())
+    }
+
+    /// The stored signals of these sessions, each with whether they reflect its
+    /// current events and `catalogue_hash` (spec S6 "Derivation must be current"),
+    /// in the sessions' start order.
+    pub async fn session_signals_for(
+        &self,
+        session_ids: &[uuid::Uuid],
+        catalogue_hash: &str,
+    ) -> Result<Vec<(uuid::Uuid, SessionSignals)>, String> {
+        let db = |e: sqlx_core::Error| format!("session_signals_for: {e}");
+        let state: Vec<(uuid::Uuid, bool)> = sqlx_core::query_as::query_as(
+            "SELECT s.id,
+                    coalesce(m.error IS NULL
+                             AND m.catalogue_hash = $2
+                             AND m.through_event_id = ev.max_id
+                             AND m.event_count = ev.n, false)
+               FROM activity.sessions s
+               LEFT JOIN activity.session_signal_marks m ON m.session_id = s.id
+               CROSS JOIN LATERAL (
+                   SELECT coalesce(max(e.id), 0) AS max_id, count(*)::int AS n
+                     FROM activity.assistant_events e
+                    WHERE e.session_id = s.client_session_id
+               ) ev
+              WHERE s.id = ANY($1)
+              ORDER BY s.started_at, s.id",
+        )
+        .bind(session_ids)
+        .bind(catalogue_hash)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        type Row = (
+            uuid::Uuid,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let rows: Vec<Row> = sqlx_core::query_as::query_as(
+            "SELECT session_id, kind::text, at, until, category, reason::text, ref
+               FROM activity.session_signals
+              WHERE session_id = ANY($1)
+              ORDER BY session_id, seq",
+        )
+        .bind(session_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        let mut by_session: std::collections::HashMap<uuid::Uuid, Vec<Signal>> = Default::default();
+        for (session_id, kind, at, until, category, reason, reference) in rows {
+            let kind =
+                SignalKind::parse(&kind).ok_or_else(|| format!("unknown signal kind {kind}"))?;
+            by_session.entry(session_id).or_default().push(Signal {
+                kind,
+                at: at.timestamp_millis(),
+                until: until.map(|u| u.timestamp_millis()),
+                category: category.as_deref().and_then(Category::parse),
+                reason: reason.as_deref().and_then(HoldReason::parse),
+                reference,
+            });
+        }
+        Ok(state
+            .into_iter()
+            .map(|(id, current)| {
+                let signals = by_session.remove(&id).unwrap_or_default();
+                (id, SessionSignals { current, signals })
+            })
             .collect())
     }
 
