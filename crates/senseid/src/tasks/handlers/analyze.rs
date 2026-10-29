@@ -93,6 +93,8 @@ pub struct SessionMetrics {
     /// The parts of `duration_ms` Claude was working and spent on you (R12).
     pub claude_ms: Option<i64>,
     pub user_ms: Option<i64>,
+    /// That split by the hour it happened: `[[epoch hour, claude ms, user ms], …]`.
+    pub active_by_hour: Option<serde_json::Value>,
     pub module: Option<String>,
     pub tool_usage: serde_json::Value, // { "<tool>": { "pre", "post", "failed" } }
 }
@@ -234,16 +236,28 @@ fn counted_gap(from: &HookEvent, to: &HookEvent, idle_ms: i64) -> i64 {
     if gap > 0 && gap <= idle_ms { gap } else { 0 }
 }
 
-/// Active time split by whom the session was waiting on (spec R12):
-/// `(claude_ms, user_ms)`, summing to [`active_duration_ms`]. A gap is Claude's
-/// from a prompt until `Stop`, except after a `Notification` (an approval or a
-/// question) until Claude's next tool event; every other gap is yours. `None`
-/// with no events: nothing was seen, so nothing is known.
-fn active_split_ms(events: &[HookEvent], idle_ms: i64) -> Option<(i64, i64)> {
+/// The R12 split's totals: `(claude_ms, user_ms)`, summing to [`active_duration_ms`].
+/// A gap is Claude's from a prompt until `Stop`, except after a `Notification` (an
+/// approval or a question) until Claude's next tool event; every other gap is yours.
+/// Summed from [`active_split_by_hour`], so the totals and the hours never disagree.
+fn split_totals(hours: &std::collections::BTreeMap<i64, (i64, i64)>) -> (i64, i64) {
+    hours.values().fold((0, 0), |(c, u), (hc, hu)| (c + hc, u + hu))
+}
+
+/// One hour, in ms since the epoch.
+const HOUR_MS: i64 = 60 * 60 * 1000;
+
+/// The R12 split filed under the hour (ms since the epoch ÷ [`HOUR_MS`]) each part of it
+/// happened in — the activity hotspots the app charts by local day. A gap that crosses an
+/// hour is split at the boundary. `None` with no events.
+fn active_split_by_hour(
+    events: &[HookEvent],
+    idle_ms: i64,
+) -> Option<std::collections::BTreeMap<i64, (i64, i64)>> {
     if events.is_empty() {
         return None;
     }
-    let (mut claude, mut user) = (0, 0);
+    let mut hours: std::collections::BTreeMap<i64, (i64, i64)> = std::collections::BTreeMap::new();
     let mut in_turn = false;
     let mut on_claude = false;
     for w in events.windows(2) {
@@ -254,10 +268,24 @@ fn active_split_ms(events: &[HookEvent], idle_ms: i64) -> Option<(i64, i64)> {
             "PreToolUse" | "PostToolUse" => on_claude = in_turn,
             _ => {}
         }
-        let gap = counted_gap(&w[0], &w[1], idle_ms);
-        if on_claude { claude += gap } else { user += gap }
+        if counted_gap(&w[0], &w[1], idle_ms) == 0 {
+            continue;
+        }
+        // Walk the gap hour by hour, so each hour holds only what happened in it.
+        let mut at = w[0].ts;
+        while at < w[1].ts {
+            let hour = at.div_euclid(HOUR_MS);
+            let until = ((hour + 1) * HOUR_MS).min(w[1].ts);
+            let slot = hours.entry(hour).or_default();
+            if on_claude {
+                slot.0 += until - at
+            } else {
+                slot.1 += until - at
+            }
+            at = until;
+        }
     }
-    Some((claude, user))
+    Some(hours)
 }
 
 /// Split a session's events into turns at `UserPromptSubmit` boundaries and
@@ -439,8 +467,14 @@ pub fn derive_session_metrics(
     };
     let real_turns = (turn_count as usize).max(turns.len());
     let resumed = was_resumed(events);
-    let split = active_split_ms(events, IDLE_GAP_MS);
+    let hours = active_split_by_hour(events, IDLE_GAP_MS);
+    let split = hours.as_ref().map(split_totals);
     Some(SessionMetrics {
+        active_by_hour: hours.map(|h| {
+            serde_json::Value::Array(
+                h.into_iter().map(|(hour, (c, u))| serde_json::json!([hour, c, u])).collect(),
+            )
+        }),
         outcome: derive_outcome(events, transcript, real_turns, corrections, resumed),
         ftr: corrections == 0,
         duration_ms: split.map(|(c, u)| c + u),
@@ -699,6 +733,7 @@ pub async fn enrich_session(
                     duration_ms: m.duration_ms,
                     claude_ms: m.claude_ms,
                     user_ms: m.user_ms,
+                    active_by_hour: m.active_by_hour.as_ref(),
                     module: m.module.as_deref(),
                     tool_usage: &m.tool_usage,
                 })
@@ -1319,6 +1354,39 @@ mod tests {
         assert_eq!(m.duration_ms, Some(22 * MIN), "active = Claude + you");
     }
 
+    // Hotspots (user, 2026-10-28): active time is filed under the hour it happened, so the
+    // app can chart each local day; a gap that crosses an hour is split at the boundary,
+    // and the hours add up to the session's split exactly.
+    #[test]
+    fn active_time_is_filed_by_the_hour_it_happened() {
+        const HOUR: i64 = 60 * MIN;
+        let t0 = 10 * HOUR + 50 * MIN; // 10:50
+        let events = vec![
+            prompt_ev("a", t0), // Claude 10:50 → 11:10
+            ev("Stop", t0 + 20 * MIN),
+            prompt_ev("b", t0 + 25 * MIN), // 11:10 → 11:15 yours
+            ev("Stop", t0 + 30 * MIN),     // 11:15 → 11:20 Claude
+            prompt_ev("c", t0 + 30 * MIN + 2 * HOUR), // a two-hour gap: nobody's
+            ev("Stop", t0 + 35 * MIN + 2 * HOUR), // 13:20 → 13:25 Claude
+        ];
+        let by_hour = active_split_by_hour(&events, IDLE_GAP_MS).unwrap();
+        assert_eq!(
+            by_hour,
+            std::collections::BTreeMap::from([
+                (10, (10 * MIN, 0)),
+                (11, (15 * MIN, 5 * MIN)),
+                (13, (5 * MIN, 0))
+            ])
+        );
+        let m = derive_session_metrics(&events, &[]).unwrap();
+        let claude: i64 = by_hour.values().map(|v| v.0).sum();
+        let user: i64 = by_hour.values().map(|v| v.1).sum();
+        assert_eq!(m.claude_ms, Some(claude), "the hours hold all of Claude's time");
+        assert_eq!(m.user_ms, Some(user), "and all of yours");
+        assert_eq!(m.duration_ms, Some(claude + user), "and the session's active time");
+        assert_eq!(active_split_by_hour(&[], IDLE_GAP_MS), None, "no events: nothing is known");
+    }
+
     #[test]
     fn a_notification_hands_the_wait_to_you_until_claude_moves_again() {
         let events = vec![
@@ -1574,6 +1642,23 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(split, (Some(2000.0), Some(0.0)));
+        // Hotspots: the same split, filed by the hour it happened, is stored beside it and
+        // adds up to it.
+        let hours: Option<serde_json::Value> = sqlx_core::query_scalar::query_scalar(
+            "SELECT active_by_hour FROM activity.sessions WHERE id = $1",
+        )
+        .bind(sid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        let hours = hours.expect("the hours are stored");
+        let total: i64 = hours
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h[1].as_i64().unwrap() + h[2].as_i64().unwrap())
+            .sum();
+        assert_eq!(total, 2000);
 
         // retrospective summary persisted by enrichment. The test gateway has no
         // narration-cache chain, so `generate_and_cache` misses → the deterministic
@@ -1864,8 +1949,10 @@ mod tests {
         let mut ids = Vec::new();
         for set in [
             "duration = interval '20 min', claude_time = NULL, user_time = NULL",
-            "duration = interval '20 min', claude_time = interval '15 min', user_time = interval '5 min'",
+            "duration = interval '20 min', claude_time = interval '15 min', user_time = interval '5 min', active_by_hour = '[[490000, 900000, 300000]]'",
             "duration = NULL, claude_time = NULL, user_time = NULL",
+            // Hotspots: the split without its hours is due again, once, to file them.
+            "duration = interval '20 min', claude_time = interval '15 min', user_time = interval '5 min', active_by_hour = NULL",
         ] {
             let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
             let sid = pg
@@ -1906,7 +1993,11 @@ mod tests {
             .execute(pg.pool())
             .await
             .ok();
-        assert_eq!(due, vec![ids[0]]);
+        let mut due = due;
+        due.sort();
+        let mut want = vec![ids[0], ids[3]];
+        want.sort();
+        assert_eq!(due, want);
     }
 
     #[tokio::test]

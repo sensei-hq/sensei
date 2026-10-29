@@ -23,6 +23,7 @@ create table if not exists sessions (
 , duration                 interval
 , claude_time              interval    -- the part of duration Claude was working (prompt → Stop); NULL with no hook events
 , user_time                interval    -- the part of duration spent on you (reading, approving, typing); claude_time + user_time = duration
+, active_by_hour           jsonb       -- [[epoch hour, claude ms, user ms], …]: the split filed by the hour it happened (activity hotspots); NULL with no hook events
 , module                   text
 , summary                  text
 , provider                 text

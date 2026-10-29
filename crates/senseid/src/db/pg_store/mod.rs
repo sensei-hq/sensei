@@ -1625,6 +1625,8 @@ pub struct SessionMetricsRow<'a> {
     pub duration_ms: Option<i64>,
     pub claude_ms: Option<i64>,
     pub user_ms: Option<i64>,
+    /// The split by the hour it happened (`[[epoch hour, claude ms, user ms], …]`).
+    pub active_by_hour: Option<&'a serde_json::Value>,
     pub module: Option<&'a str>,
     pub tool_usage: &'a serde_json::Value,
 }

@@ -1401,6 +1401,20 @@ async fn list_all_sessions_joins_workspace_and_uses_camelcase_times() {
         "durationSecs = gap-aware active seconds"
     );
     assert_eq!(row2["model"].as_str(), Some("claude-opus-4-8"), "model surfaced");
+    assert!(row2["activeByHour"].is_null(), "not analysed: the hours are unknown, never []");
+
+    // Hotspots: the split filed by the hour it happened reaches the digest as stored.
+    sqlx_core::query::query(
+        "UPDATE activity.sessions SET active_by_hour = '[[490000, 600000, 120000]]' WHERE id=$1",
+    )
+    .bind(session_id)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let all3 = s.list_all_sessions(500, None, None).await.unwrap();
+    let row3 =
+        all3.iter().find(|r| r["id"].as_str() == Some(session_id.to_string().as_str())).unwrap();
+    assert_eq!(row3["activeByHour"], serde_json::json!([[490000, 600000, 120000]]));
 
     sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
         .bind(session_id)
@@ -1773,6 +1787,7 @@ async fn workspace_ftr_and_quality_decode_numeric_metrics() {
         duration_ms: Some(1000),
         claude_ms: Some(1000),
         user_ms: Some(0),
+        active_by_hour: None,
         module: None,
         tool_usage: &serde_json::json!({}),
     })

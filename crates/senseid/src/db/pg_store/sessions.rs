@@ -22,76 +22,47 @@ impl PgStore {
         // `duration` is the gap-aware active-work interval (seconds, so the UI need
         // not parse a Postgres interval); tokens_in/out + provider/model come from the
         // transcript capture (NULL when the source carried none — never a fabricated 0).
-        type SessionRow = (
-            uuid::Uuid,
-            Option<String>,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<bool>,
-            i32,
-            i32,
-            chrono::DateTime<chrono::Utc>,
-            Option<chrono::DateTime<chrono::Utc>>,
-            Option<String>,
-            Option<i64>,
-            Option<i64>,
-            Option<f64>,
-            Option<String>,
-            Option<String>,
-        );
-        let rows: Vec<SessionRow> = sqlx_core::query_as::query_as(
+        // Read by column, not as a tuple: sqlx caps tuple `FromRow` at 16 columns, and the
+        // digest carries 17. `activeByHour` is the R12 split filed by the hour it happened
+        // (`[[epoch hour, claude ms, user ms], …]`), NULL until the session is analysed.
+        use sqlx_core::row::Row;
+        let rows = sqlx_core::query::query(
             "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns, s.corrections,
                     s.started_at, s.completed_at, s.acp_id,
-                    s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
+                    s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model,
+                    s.active_by_hour
              FROM activity.sessions s
              LEFT JOIN sensei.workspaces p ON p.id = s.workspace_id
              WHERE ($2::int IS NULL OR coalesce(s.completed_at, s.started_at) >= now() - make_interval(days => $2::int))
                AND ($3::uuid IS NULL OR s.workspace_id = $3)
              ORDER BY coalesce(s.completed_at, s.started_at) DESC LIMIT $1"
         ).bind(limit).bind(range_days).bind(workspace).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(
-                |(
-                    id,
-                    workspace,
-                    task,
-                    summary,
-                    outcome,
-                    ftr,
-                    turns,
-                    corrections,
-                    started,
-                    completed,
-                    agent,
-                    tokens_in,
-                    tokens_out,
-                    duration_secs,
-                    provider,
-                    model,
-                )| {
-                    serde_json::json!({
-                        "id": id,
-                        "workspace": workspace,
-                        "task": task,
-                        "summary": summary,
-                        "outcome": outcome,
-                        "ftr": ftr,
-                        "turns": turns,
-                        "corrections": corrections,
-                        "startedAt": started.to_rfc3339(),
-                        "completedAt": completed.map(|c| c.to_rfc3339()),
-                        "agent": agent,
-                        "tokensIn": tokens_in,
-                        "tokensOut": tokens_out,
-                        "durationSecs": duration_secs,
-                        "provider": provider,
-                        "model": model,
-                    })
-                },
-            )
-            .collect())
+        rows.iter()
+            .map(|r| -> Result<serde_json::Value, sqlx_core::error::Error> {
+                let started: chrono::DateTime<chrono::Utc> = r.try_get(8)?;
+                let completed: Option<chrono::DateTime<chrono::Utc>> = r.try_get(9)?;
+                Ok(serde_json::json!({
+                    "id": r.try_get::<uuid::Uuid, _>(0)?,
+                    "workspace": r.try_get::<Option<String>, _>(1)?,
+                    "task": r.try_get::<String, _>(2)?,
+                    "summary": r.try_get::<Option<String>, _>(3)?,
+                    "outcome": r.try_get::<Option<String>, _>(4)?,
+                    "ftr": r.try_get::<Option<bool>, _>(5)?,
+                    "turns": r.try_get::<i32, _>(6)?,
+                    "corrections": r.try_get::<i32, _>(7)?,
+                    "startedAt": started.to_rfc3339(),
+                    "completedAt": completed.map(|c| c.to_rfc3339()),
+                    "agent": r.try_get::<Option<String>, _>(10)?,
+                    "tokensIn": r.try_get::<Option<i64>, _>(11)?,
+                    "tokensOut": r.try_get::<Option<i64>, _>(12)?,
+                    "durationSecs": r.try_get::<Option<f64>, _>(13)?,
+                    "provider": r.try_get::<Option<String>, _>(14)?,
+                    "model": r.try_get::<Option<String>, _>(15)?,
+                    "activeByHour": r.try_get::<Option<serde_json::Value>, _>(16)?,
+                }))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     // ── Extensions ────────────────────────────────────────────────────
@@ -923,6 +894,7 @@ impl PgStore {
              WHERE s.workspace_id = $1 AND s.client_session_id IS NOT NULL
                AND (s.analyzed_at IS NULL
                     OR (s.duration IS NOT NULL AND s.claude_time IS NULL)
+                    OR (s.duration IS NOT NULL AND s.active_by_hour IS NULL)
                     OR EXISTS (SELECT 1 FROM activity.assistant_events e
                                WHERE e.session_id = s.client_session_id
                                  AND to_timestamp(e.ts / 1000.0) > s.analyzed_at))"
@@ -1485,6 +1457,7 @@ impl PgStore {
             duration_ms,
             claude_ms,
             user_ms,
+            active_by_hour,
             module,
             tool_usage,
         } = row;
@@ -1495,7 +1468,8 @@ impl PgStore {
                     module = $7, analyzed_at = now(),
                     props = props || jsonb_build_object('tool_usage', $8::jsonb),
                     claude_time = make_interval(secs => $9::float8 / 1000.0),
-                    user_time = make_interval(secs => $10::float8 / 1000.0)
+                    user_time = make_interval(secs => $10::float8 / 1000.0),
+                    active_by_hour = $11::jsonb
               WHERE id = $1",
         )
         .bind(session_id)
@@ -1508,6 +1482,7 @@ impl PgStore {
         .bind(tool_usage)
         .bind(claude_ms)
         .bind(user_ms)
+        .bind(active_by_hour)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
