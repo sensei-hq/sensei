@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { LayersDiagram, ViolationsControl } from '@rokkit/graph';
+    import { LayersDiagram } from '@rokkit/graph';
     import { Toolbar } from '@rokkit/ui';
     import { PageHeader, Screen } from '$lib/components';
     import { senseiApi } from '$lib/api.js';
@@ -46,10 +46,6 @@
                 onclick={(value) => view.toggleKind(value as string)}
             />
 
-            <ViolationsControl
-                showEdges={view.showEdges}
-                onchange={(v) => (view.showEdges = v)}
-            />
         </div>
 
         {#if view.view === 'loading'}
@@ -85,6 +81,7 @@
                     edges={view.edges}
                     fields={LAYERS_FIELDS}
                     bind:showEdges={view.showEdges}
+                    controls
                     legend
                     onselect={(id) => (view.selected = id)}
                 />
