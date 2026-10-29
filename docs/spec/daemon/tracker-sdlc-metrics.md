@@ -225,7 +225,10 @@ failing session is retried next pass.
 The previous version attributed markers by category alone. It gave two `test_fail`s for one
 passing and one failing `cargo test` (row 1735), and missed compile errors inside `cargo
 test` (9 rows), loop bodies (9 rows), `bun run check` (38 rows), `make test-template` as a
-non-test (12 rows) and `pnpm --filter` (33 rows).*
+non-test (12 rows) and `pnpm --filter` (33 rows). Amendment A2 (F1 post-implementation
+swarm): the catalogue is consulted before folder commands, script names are categorised
+whole, prefix commands skip their option arguments, and `&`, `<<<` and `case` arms are
+handled.*
 
 **The catalogue is data**, in two tables seeded from staging jsonl by
 `staging.import_command_patterns` and `staging.import_command_markers` (the same pattern as
@@ -283,22 +286,32 @@ change re-derives every session (S2).
 
    Split on the operators `&&`, `||`, `;`, `&`, newline (list elements, each keeping the
    operator that **enters** it) and `|` (pipeline stages). At each stage's start, strip:
-   - env assignments (`X=1`) and `time`, `timeout <n>`, `nice`, `sudo`, `exec`, `!`
-   - grouping and keyword tokens: `{`, `(`, `do`, `then`, `else`, `elif`
+   - env assignments (`X=1`)
+   - prefix commands with their options, including those that take an argument:
+     `timeout [-k n] [-s sig] <duration>`, `nice [-n n]`, `sudo [-u user]`, `time`, `exec`,
+     `command`
+   - grouping and keyword tokens: `!`, `{`, `(`, `do`, `then`, `else`, `elif`, `if`, `while`,
+     `until`
+
+   `<<<` is a here-string (a redirection), not a heredoc. An unmatched `)` ends a `case`
+   arm's pattern. An element ended by `&` runs in the background, so the shell's exit
+   is never its (step 4).
 
    A stage that is then `cd <dir>`, or that starts with `for`, `while`, `until`, `if`,
    `case`, `done`, `fi`, `esac`, `}` or `)`, is a **no-op stage** (not a command). The words
    of `bash -c`, `sh -c` and `eval` are not analysed (known limit).
 2. **Classify each stage.**
-   - First, `sensei.folder_commands` for the session's repository folder and its
-     descendants: the longest `command_line` that prefixes the stage. A non-NULL `category`
-     decides, and a NULL one falls through.
-   - Then `command_patterns`, by `priority` descending, then pattern length descending.
-     The first match decides.
-   - A NULL row category is derived from the capture group (the script or target name):
-     `categorise(name)`, applied to the name's **first token** (the name split on `:`, `-`,
-     `_`), so `test-template` → `test` is only accepted when no higher-priority `none` row
-     matched, and `check:all` → `check`.
+   - First, `command_patterns`, by `priority` descending, then pattern length descending.
+     The first match decides the toolchain, `wrapper` and `compiles`.
+   - An explicit row category decides the category. For a **wrapper** row or a NULL
+     category, a repository folder command (`sensei.folder_commands` for the session's
+     repository folder and its descendants, the longest `command_line` that prefixes the
+     stage on a word boundary, non-NULL `category` only) decides it. Otherwise the
+     category is `categorise` of the captured script or target name, **whole**
+     (`type-check` → typecheck, `test:e2e` → e2e, `test-fast` → test). A higher-priority
+     `none` row catches non-runs such as `make test-template`.
+   - A stage no pattern matches takes a matching folder command's category, as a wrapper
+     of unknown toolchain.
    - `adapters::manifest::command_category::categorise` gains exact `check` and `check:*`
      → `typecheck`. This is a shared change, and the indexer's `folder_commands` writer
      benefits.
@@ -330,7 +343,7 @@ change re-derives every session (S2).
      element of one stage, and that stage is classified → `_fail`.
    - **Success** (`PostToolUse`): for each classified stage, `_ok` only when it is the last
      stage of its element, its element was not entered by `||`, and every later element is
-     entered by `&&`.
+     entered by `&&`, and its element is not backgrounded (`&`).
    - Anything else → `run_unknown`.
 5. A `PostToolUseFailure` with no classified stage → `unclassified_fail`.
 

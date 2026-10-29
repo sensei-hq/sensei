@@ -733,16 +733,6 @@ Enum "sensei"."tracker_level" {
   "task"
 }
 
-Enum "sensei"."tracker_writeback_status" {
-  "ok"
-  "forbidden"
-  "field_invalid"
-  "comment_removed"
-  "not_found"
-  "rate_limited"
-  "error"
-}
-
 Enum "sensei"."tracker_metric" {
   "sessions"
   "active_hours"
@@ -762,6 +752,16 @@ Enum "sensei"."tracker_metric" {
 Enum "sensei"."tracker_owner_state" {
   "unknown"
   "not_a_person"
+}
+
+Enum "sensei"."tracker_writeback_status" {
+  "ok"
+  "forbidden"
+  "field_invalid"
+  "comment_removed"
+  "not_found"
+  "rate_limited"
+  "error"
 }
 
 Enum "sensei"."watch_status" {
@@ -1218,6 +1218,41 @@ contribute loop: destination (none|global|dojo|both), cadence (manual|daily|week
 per-category share toggles (jsonb), and the default attribution mode. When no row
 exists the API returns conservative defaults (destination none, manual, attribution
 anonymous).'''
+}
+
+Table "sensei"."command_markers" {
+  "toolchain" text [pk, not null, note: 'The toolchain that prints it (matches sensei.command_patterns.toolchain).']
+  "category" text [pk, not null, note: 'What the marker reports on: build, typecheck, test or e2e.']
+  "kind" text [pk, not null, note: 'fail / ok: a literal substring. fail_re / ok_re: a regex, for markers that need a count (svelte-check found N errors).']
+  "marker" text [pk, not null, note: 'The substring or regex searched for in the command\'s output.']
+  "modified_at" timestamptz [not null, default: `now()`, note: 'Import guard: a re-seed only overwrites a row when the datafile is at least as new.']
+
+  checks {
+    `category IN ('build', 'typecheck', 'test', 'e2e')`
+    `kind IN ('fail', 'ok', 'fail_re', 'ok_re')`
+    `marker <> ''`
+  }
+
+  Note: '''Output markers of builds and tests (spec tracker-sdlc-metrics S3). Seeded from
+database/import/staging/command_markers.jsonl by staging.import_command_markers.'''
+}
+
+Table "sensei"."command_patterns" {
+  "toolchain" text [pk, not null, note: 'What runs the command (cargo, vitest, make, ...); the key its output markers are owned by (sensei.command_markers).']
+  "pattern" text [pk, not null, note: 'Regex anchored at the start of a stage, after prefix stripping. Its first capture group, when present, is the script or target name a NULL category is derived from.']
+  "category" text [note: 'build, typecheck, test, e2e, or none (a known command that is not a run). NULL: categorise() of the captured name, whole (or, for a wrapper, the repository\'s folder-command category).']
+  "wrapper" boolean [not null, default: false, note: 'The stage runs a named script or target whose toolchain is unknown (bun run <name>, make <target>), so it may claim the output markers of the toolchains in owns, in its category.']
+  "compiles" boolean [not null, default: false, note: 'The stage compiles before it runs (cargo test, cargo clippy), so it also owns its toolchain\'s build-fail markers.']
+  "owns" text[] [note: 'For a wrapper: the toolchains whose output markers it may claim (an npm script runs vitest, never cargo). NULL: any (make, just).']
+  "priority" int [not null, default: 0, note: 'Higher is tried first, so a specific row (make test-template -> none) beats a general one (make <target>).']
+  "modified_at" timestamptz [not null, default: `now()`, note: 'Import guard: a re-seed only overwrites a row when the datafile is at least as new.']
+
+  checks {
+    `category IN ('build', 'typecheck', 'test', 'e2e', 'none')`
+  }
+
+  Note: '''Build/test command catalogue (spec tracker-sdlc-metrics S3). Seeded from
+database/import/staging/command_patterns.jsonl by staging.import_command_patterns.'''
 }
 
 Table "sensei"."config" {
@@ -1881,6 +1916,25 @@ Table "staging"."benchmark_reports" {
   Note: 'Staging buffer for sensei.benchmark_reports.'
 }
 
+Table "staging"."command_markers" {
+  "toolchain" text
+  "category" text
+  "kind" text
+  "marker" text
+  "modified_at" timestamptz
+}
+
+Table "staging"."command_patterns" {
+  "toolchain" text
+  "pattern" text
+  "category" text
+  "wrapper" boolean
+  "compiles" boolean
+  "owns" text[]
+  "priority" int
+  "modified_at" timestamptz
+}
+
 Table "staging"."fallback_chain_models" {
   "chain_name" text
   "router_name" text
@@ -2176,6 +2230,8 @@ Table "activity"."assistant_events" {
   "tool_kind" text
   "call_info" text
   "enriched_at" timestamptz
+  "tool_use_id" text [generated always as: 'payload ->> \'tool_use_id\'', note: 'The engine\'s tool-call id, stored from payload->>\'tool_use_id\' at write: the key session_tool_calls pairs a request with its response on, so a read never opens the payload (#298).']
+  "duration_ms" bigint [generated always as: 'CASE WHEN jsonb_typeof(payload -> \'duration_ms\') = \'number\' THEN (payload ->> \'duration_ms\')::numeric::bigint END', note: 'The engine\'s measured duration of a tool call, stored from payload->\'duration_ms\' at write; NULL when absent or not a number (#298).']
 
   indexes {
     (session_id, created_at) [name: 'assistant_events_session_id_idx', note: 'order: asc, desc']
@@ -2184,6 +2240,7 @@ Table "activity"."assistant_events" {
     (family, created_at) [name: 'assistant_events_family_idx', note: 'order: asc, desc']
     id [name: 'assistant_events_unenriched_idx', note: 'where: enriched_at IS NULL']
     (repository_id, created_at) [name: 'assistant_events_repository_id_idx', note: 'where: repository_id IS NOT NULL\norder: asc, desc']
+    (session_id, tool_use_id, id) [name: 'assistant_events_tool_use_idx', note: 'where: tool_use_id IS NOT NULL']
   }
 
   Note: '''Raw assistant event log — one row per hook/event invocation, from any
@@ -3666,6 +3723,20 @@ daemon-local (D-STANCE-SCOPE); per-namespace with a NULL-namespace default;
 most-specific rung wins on the sensei.scopes ladder.'''
 }
 
+Table "sensei"."tracker_fields" {
+  "tracker_id" uuid [not null, note: 'The board the field belongs to.']
+  "metric" sensei.tracker_metric [note: 'The metric written into the field; NULL once the field is no longer mapped (retired).']
+  "field_ref" text [not null, note: 'The tracker\'s field id (Jira: customfield_<n>).']
+  "retired_at" timestamptz [note: 'When the field stopped being mapped: a ticket last written before it gets null in the field. NULL while mapped.']
+
+  indexes {
+    (tracker_id, metric) [unique, note: 'unique constraint']
+    (tracker_id, field_ref) [unique, note: 'unique constraint']
+  }
+
+  Note: 'A tracker\'s custom fields for usage write-back. A row with a metric is mapped: that metric is written into the field. A row without one is retired: sensei wrote the field before, so it clears it on each ticket\'s next write. Replaced by PUT …/trackers/{tracker}/fields.'
+}
+
 Table "sensei"."tracker_unknown_keys" {
   "tracker_id" uuid [pk, not null, note: 'The tracker whose board was asked.']
   "key" text [pk, not null, note: 'The key as the adapter shaped it (Jira: upper-cased).']
@@ -4174,7 +4245,7 @@ Table "sensei"."tracker_tasks" {
     (tracker_id, key) [name: 'tracker_tasks_tracker_id_key_idx']
   }
 
-  Note: 'Tickets (issues) of a tracker board, mirrored from the tracker; usage is written back to the token owner's (spec tracker-metrics-writeback). Keyed on the provider\'s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).'
+  Note: 'Tickets (issues) of a tracker board, mirrored from the tracker; usage is written back to the token owner\'s (spec tracker-metrics-writeback). Keyed on the provider\'s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).'
 }
 
 Table "inference"."drift_items" {
@@ -4333,20 +4404,6 @@ Table "sensei"."tracker_task_keys" {
   Note: 'Key aliases of tracker tickets: the current key plus every former one (rename, move). Written by each sync\'s apply (on conflict do nothing), read when matching session text, so history survives a rename.'
 }
 
-Table "sensei"."tracker_fields" {
-  "tracker_id" uuid [not null, note: 'The board the field belongs to.']
-  "metric" sensei.tracker_metric [note: 'The metric written into the field; NULL once the field is no longer mapped (retired).']
-  "field_ref" text [not null, note: 'The tracker\'s field id (Jira: customfield_<n>).']
-  "retired_at" timestamptz [note: 'When the field stopped being mapped: a ticket last written before it gets null in the field. NULL while mapped.']
-
-  indexes {
-    (tracker_id, metric) [unique, note: 'unique constraint']
-    (tracker_id, field_ref) [unique, note: 'unique constraint']
-  }
-
-  Note: 'A tracker\'s custom fields for usage write-back. A row with a metric is mapped: that metric is written into the field. A row without one is retired: sensei wrote the field before, so it clears it on each ticket\'s next write. Replaced by PUT …/trackers/{tracker}/fields.'
-}
-
 Table "sensei"."tracker_task_sprints" {
   "task_id" uuid [pk, not null, note: 'The ticket.']
   "sprint_id" uuid [pk, not null, note: 'A sprint that lists it.']
@@ -4491,6 +4548,7 @@ Ref: "sensei"."rule_check_runs"."folder_id" > "sensei"."folders"."id" [delete: c
 Ref: "sensei"."rule_packs"."owner_namespace_id" > "sensei"."namespaces"."id" [delete: cascade]
 Ref: "sensei"."sprints"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "sensei"."stances"."namespace_id" > "sensei"."namespaces"."id" [delete: cascade]
+Ref: "sensei"."tracker_fields"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "sensei"."tracker_unknown_keys"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "activity"."memory_loads"."session_id" > "activity"."sessions"."id" [delete: set null]
 Ref: "activity"."memory_loads"."workspace_id" > "sensei"."workspaces"."id" [delete: set null]
@@ -4544,7 +4602,6 @@ Ref: "sensei"."session_task_links"."task_id" > "sensei"."tracker_tasks"."id" [de
 Ref: "sensei"."tracker_task_keys"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
 Ref: "sensei"."tracker_task_sprints"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
 Ref: "sensei"."tracker_task_sprints"."sprint_id" > "sensei"."sprints"."id" [delete: cascade]
-Ref: "sensei"."tracker_fields"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "sensei"."schema_columns"."node_id" > "sensei"."schema_entities"."node_id" [delete: cascade]
 Ref: "sensei"."schema_indexes"."node_id" > "sensei"."schema_entities"."node_id" [delete: cascade]
 Ref: "sensei"."schema_refs"."from_node_id" > "sensei"."schema_entities"."node_id" [delete: cascade]

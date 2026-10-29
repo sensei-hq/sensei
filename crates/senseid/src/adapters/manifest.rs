@@ -298,7 +298,12 @@ pub mod command_category {
         if n.contains("e2e") || n.contains("end-to-end") {
             return Some("e2e");
         }
-        if n.contains("typecheck") || n.contains("type-check") || n == "tsc" {
+        if n.contains("typecheck")
+            || n.contains("type-check")
+            || n == "tsc"
+            || n == "check"
+            || n.starts_with("check:")
+        {
             return Some("typecheck");
         }
         if n.contains("bench") {
@@ -342,6 +347,17 @@ pub mod command_category {
             // longer/more-specific match first.
             assert_eq!(categorise("test:e2e"), Some("e2e"));
             assert_eq!(categorise("end-to-end"), Some("e2e"));
+        }
+
+        #[test]
+        fn check_is_typecheck_only_when_exact() {
+            // SvelteKit's `check` script is svelte-check + tsc (app/package.json),
+            // so `check` and `check:*` are typechecks. A name that merely contains
+            // it (`healthcheck`, `check-links`) is not.
+            assert_eq!(categorise("check"), Some("typecheck"));
+            assert_eq!(categorise("check:all"), Some("typecheck"));
+            assert_eq!(categorise("healthcheck"), None);
+            assert_eq!(categorise("check-links"), None);
         }
 
         #[test]

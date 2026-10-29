@@ -528,6 +528,7 @@ pub struct MetricMeaning {
     pub how_to_read: String,
 }
 
+mod command_catalogue;
 mod commands;
 mod config;
 mod dojo;
