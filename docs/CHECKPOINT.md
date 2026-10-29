@@ -2,8 +2,14 @@
 
 **Slice:** tracker SDLC metrics, on branch `feature/sdlc_metrics`. The branch was cut from
 `feature/tracker_metrics_writeback`, which is still unmerged.
-**Stage:** build, unattended (user, 2026-10-29). F1 done (`886b5df1c`); F2 next. Run
-contract: `.sensei/slice-state.json` (amendments A1, A2; F2 carry-forward).
+**Stage:** build, unattended (user, 2026-10-29). F1 done (`886b5df1c`), F2 + F3 done
+(`87c7d8316`); F4 (ticket figures) next. Run contract: `.sensei/slice-state.json`
+(amendments A1–A4; F4 carry-forward).
+
+**For the user:** the indexer's dangling-reference ceiling was raised 1,300 → 1,302 for
+the new settings handler's two `state.pg` reads (AppState type alias); and only 9 of 118
+hook-event sessions have a session row on this machine (backlog P0), so ticket metrics
+will be sparse here until P0 lands.
 - Analysis: `docs/analysis/2026-10-29-sdlc-metrics-extension.md` (decisions D1–D11)
 - Spec (reviewed): `docs/spec/daemon/tracker-sdlc-metrics.md` (S1–S9, gates 1–13, claims
   C1–C39)
