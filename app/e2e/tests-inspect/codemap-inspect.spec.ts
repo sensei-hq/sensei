@@ -51,6 +51,11 @@ test('each lens draws against the real daemon', async ({ tauriPage }) => {
   const ws = rows.find((w: { name: string }) => w.name === 'sensei') ?? rows[0];
   const cochange = await json(`/api/workspaces/${ws.id}/diagrams/codemap/cochange`);
 
+  // Structure first: the map's first read is the slow one.
+  await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/structure`);
+  await expect
+    .poll(() => tauriPage.evaluate(`document.querySelectorAll('g[data-testid^="block-"]').length`), { timeout: 60_000 })
+    .toBeGreaterThan(0);
   const seen: Record<string, number> = {};
   for (const [lens, sel] of [
     ['wheel', '[data-testid^="wheel-node-"]'],
@@ -60,7 +65,7 @@ test('each lens draws against the real daemon', async ({ tauriPage }) => {
   ] as const) {
     await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/${lens}`);
     await expect
-      .poll(() => tauriPage.evaluate(`document.querySelectorAll('${sel}').length`), { timeout: 30_000 })
+      .poll(() => tauriPage.evaluate(`document.querySelectorAll('${sel}').length`), { timeout: 30_000, message: `${lens} draws` })
       .toBeGreaterThan(0);
     seen[lens] = (await tauriPage.evaluate(`document.querySelectorAll('${sel}').length`)) as number;
   }

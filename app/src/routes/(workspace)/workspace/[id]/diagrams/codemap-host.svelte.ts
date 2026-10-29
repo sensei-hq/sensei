@@ -13,10 +13,15 @@ export const CODEMAP_HOST = Symbol('codemap-host');
 export class CodeMapHost {
   readonly port: CodeMapPort;
   #workspaceId: () => string;
-  readonly state: CodeMapState = $derived.by(() => {
-    void this.#workspaceId();
-    return new CodeMapState();
-  });
+  #current: { id: string; state: CodeMapState } | null = null;
+
+  /** The workspace's map. Kept by the id's VALUE: SvelteKit replaces `page.params`
+   *  on every navigation, and an equal id must not stand for a new, unread map. */
+  get state(): CodeMapState {
+    const id = this.#workspaceId();
+    if (this.#current?.id !== id) this.#current = { id, state: new CodeMapState() };
+    return this.#current.state;
+  }
 
   constructor(workspaceId: () => string, port?: CodeMapPort) {
     this.#workspaceId = workspaceId;
