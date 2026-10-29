@@ -6,21 +6,12 @@
 // Persisting the view here — not in the component — keeps the toggle a pure
 // preference: flipping it re-lays the already-loaded data without touching
 // the filter or search, and never refetches.
-import { STORAGE_KEYS } from '$lib/storage-keys.js';
+import { STORAGE_KEYS, browserStorage as storage } from '$lib/storage-keys.js';
 
 export type WorkspaceView = 'grid' | 'list';
 export type WorkspaceFilter = 'all' | 'active' | 'dormant' | 'archived';
 
 const DEFAULT_VIEW: WorkspaceView = 'grid';
-
-/** The active Storage, or null when there isn't a usable one. Feature-detects
- *  the methods rather than just `typeof localStorage` so a build-time / SSR
- *  context — or a test runner whose experimental `localStorage` global is a
- *  non-functional stub — resolves cleanly instead of throwing. */
-function storage(): Storage | null {
-  const ls = (globalThis as { localStorage?: Storage }).localStorage;
-  return ls && typeof ls.getItem === 'function' && typeof ls.setItem === 'function' ? ls : null;
-}
 
 function readView(): WorkspaceView {
   const stored = storage()?.getItem(STORAGE_KEYS.workspacesView);

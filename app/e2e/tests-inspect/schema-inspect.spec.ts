@@ -77,9 +77,9 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   const n = (v: number) => v.toLocaleString('en-US');
   const payload = (await (await fetch(`${DAEMON_URL}/api/workspaces/${id}/diagrams/schema`)).json()) as {
     tables: { schema: string }[];
-    refs: { from: End; to: End }[];
+    refs: { from: End & { t?: string }; to: End & { t?: string } }[];
     entities: { schema: string }[];
-    deps: { from: End; to: End; unresolved?: boolean }[];
+    deps: { from: End & { n?: string }; to: End & { n?: string }; unresolved?: boolean }[];
   };
   // One schema's share, derived here from the payload rather than taken from the screen:
   // links with both ends inside are drawn, links with one end outside are counted as cut.
@@ -121,6 +121,15 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   expect(entity).toContain('from_node_id');
   expect(entity?.indexOf('from_column')).toBeGreaterThan(entity?.indexOf('from_node_id') ?? -1);
   await snap(tauriPage, 'schema-er-selected');
+  // What a change to it reaches, derived here from the payload: the keys it holds,
+  // the keys pointing at it, and the objects reading or writing it.
+  const at = (e: { s: string; t?: string; n?: string }) => e.t ?? e.n;
+  const refsOut = payload.refs.filter((r) => at(r.from) === 'schema_refs').length;
+  const refsIn = payload.refs.filter((r) => at(r.to) === 'schema_refs').length;
+  const readers = payload.deps.filter((d) => !d.unresolved && at(d.to) === 'schema_refs').length;
+  const reach = (await tauriPage.evaluate(`[...document.querySelectorAll('[data-testid="schema-reach"] ul')].map((u) => u.children.length)`)) as number[];
+  console.log(`[inspect] schema_refs reach: ${refsOut} out · ${refsIn} in · ${readers} readers; panel lists ${JSON.stringify(reach)}`);
+  expect(reach.reduce((a, v) => a + v, 0)).toBe(refsOut + refsIn + readers);
 
   // One schema: only its tables, and the keys leading out of it counted.
   await pick(tauriPage, 'Schema', 'dojo');

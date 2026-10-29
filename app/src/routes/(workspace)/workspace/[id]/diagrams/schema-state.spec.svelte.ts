@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SchemaState, type SchemaApi } from './schema-state.svelte.js';
+import { SchemaState, objectId, type SchemaApi } from './schema-state.svelte.js';
 import type { SchemaPayload, SchemaTable } from '$lib/types.js';
 
 function table(schema: string, name: string, columns = ['id']): SchemaTable {
@@ -50,6 +50,21 @@ async function loaded(api: SchemaApi = okApi()) {
 }
 
 describe('SchemaState', () => {
+  // The inspector says what a change to a table reaches (M17 Database · ER).
+  it('a selected table: the tables it references, those referencing it, and what reads it', async () => {
+    const s = await loaded();
+    s.select(objectId('app', 'orders'));
+    expect(s.reach).toEqual({
+      references: ['app.customers (customer_id)', 'crm.accounts (account_id)'],
+      referencedBy: [],
+      dependents: ['report.order_totals reads'],
+    });
+    s.select(objectId('app', 'customers'));
+    expect(s.reach).toEqual({ references: [], referencedBy: ['app.orders (customer_id)'], dependents: [] });
+    s.select(null);
+    expect(s.reach).toBeNull();
+  });
+
   it('starts in loading, before any request has settled', () => {
     expect(new SchemaState(okApi(), () => 'p1').view).toBe('loading');
   });

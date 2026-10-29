@@ -8,8 +8,11 @@ import type { CodeMapPort, Lens, Level0, Level1 } from '@sensei/codemap';
 
 const L0: Level0 = {
   level: 'module', groupBy: 'layers', cycles: [], coverage: { unplaced: 0 },
-  blocks: [{ id: 'p/a', label: 'p/a', group: 'L0', files: 2, symbols: 9, hub: false, weight_in: 0, weight_out: 0, folded: [] }],
-  bands: [], budget: { drawn: 1, modules: 1, bands: 0, edges: 0 },
+  blocks: [{
+    id: 'p/a', label: 'p/a', group: 'L0', package: 'p', files: 2, symbols: 9,
+    roles: { code: 2, test: 0, docs: 0, config: 0, generated: 0 }, hub: false, weight_in: 0, weight_out: 0, folded: [],
+  }],
+  bands: [], budget: { drawn: 1, modules: 1, bands: 0, edges: 0 }, libraries: { count: 0, top: [] },
 };
 const L1: Level1 = { level: 'file', module: 'p/a', dependsOn: [], usedBy: [], columns: [] };
 const ok = <T>(data: T) => Promise.resolve({ ok: true as const, data });

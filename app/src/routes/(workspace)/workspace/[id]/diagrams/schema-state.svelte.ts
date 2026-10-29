@@ -204,6 +204,23 @@ export class SchemaState {
     return id === null ? null : (this.#tables.find((t) => objectId(t.schema, t.name) === id) ?? null);
   }
 
+  /** What a change to the selected table reaches, over the whole model — a key
+   *  or a reader in another schema still counts: the tables it references, those
+   *  referencing it (each with the key column), and the objects that depend on it. */
+  get reach(): { references: string[]; referencedBy: string[]; dependents: string[] } | null {
+    const t = this.selectedTable;
+    if (!t) return null;
+    const is = (s: string, n: string) => s === t.schema && n === t.name;
+    const refs = this.payload?.refs ?? [];
+    return {
+      references: refs.filter((r) => is(r.from.s, r.from.t)).map((r) => `${r.to.s}.${r.to.t} (${r.from.c})`),
+      referencedBy: refs.filter((r) => is(r.to.s, r.to.t)).map((r) => `${r.from.s}.${r.from.t} (${r.from.c})`),
+      dependents: (this.payload?.deps ?? [])
+        .filter((d) => !d.unresolved && is(d.to.s, d.to.n))
+        .map((d) => `${d.from.s}.${d.from.n} ${d.kind}`),
+    };
+  }
+
   select(id: string | null) {
     this.#picked = id;
   }

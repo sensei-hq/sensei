@@ -5,14 +5,19 @@ import CodeMap from './CodeMap.svelte';
 import { CodeMapState } from './state.svelte';
 import type { CodeMapPort, Level0, Level1, Level2 } from './types';
 
+const roles = { code: 2, test: 1, docs: 0, config: 0, generated: 0 };
 const block = (id: string, extra = {}) => ({
-  id, label: id, group: 'L0', files: 3, symbols: 10, hub: false, weight_in: 0, weight_out: 0, folded: [], ...extra,
+  id, label: id, group: 'L0', package: 'p', files: 3, symbols: 10, roles, hub: false, weight_in: 0, weight_out: 0, folded: [], ...extra,
 });
 const L0: Level0 = {
   level: 'module', groupBy: 'layers', cycles: [], coverage: { unplaced: 4 },
   blocks: [block('p/a', { complexity: { functions: 10, complex: 3 } }), block('p/b', { group: 'L1', complexity: null }), block('fold:L1', { group: 'L1', label: '+2 more', folded: ['p/c', 'p/d'] })],
-  bands: [{ source: 'p/a', target: 'p/b', weight: 5, kinds: { calls: 5 }, direction: 'up' }],
-  budget: { drawn: 3, modules: 4, bands: 1, edges: 7 },
+  bands: [
+    { source: 'p/a', target: 'p/b', weight: 5, kinds: { calls: 5 }, direction: 'up' },
+    { source: 'p/b', target: 'fold:L1', weight: 12, kinds: { calls: 12 }, direction: 'down' },
+  ],
+  budget: { drawn: 3, modules: 4, bands: 2, edges: 7 },
+  libraries: { count: 14, top: ['serde', 'tokio'] },
 };
 const L1: Level1 = {
   level: 'file', module: 'p/a', dependsOn: [{ module: 'p/b', weight: 5, direction: 'up' }], usedBy: [],
@@ -22,7 +27,7 @@ const L1: Level1 = {
   ],
 };
 const L2: Level2 = {
-  level: 'symbol', file: 'f1', path: 'a/x.rs', symbols: [{ id: 's1', name: 'scan', kind: 'function', line: 4 }],
+  level: 'symbol', file: 'f1', path: 'a/x.rs', role: 'code', symbols: [{ id: 's1', name: 'scan', kind: 'function', line: 4 }],
   callers: [{ id: 'c1', name: 'main', file: 'm.rs', weight: 2 }], callersTotal: 9, callees: [], calleesTotal: 0,
 };
 const ok = <T>(data: T) => Promise.resolve({ ok: true as const, data });
@@ -61,7 +66,7 @@ describe('CodeMap', () => {
   it('opens on modules with the budget, and an upward band in red', async () => {
     render(port());
     await settle();
-    expect(q('[data-testid="codemap-budget"]')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('drawing 3 blocks for 4 modules · 1 bands for 7 edges · 4 calls unplaced');
+    expect(q('[data-testid="codemap-budget"]')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('drawing 3 blocks for 4 modules · 2 bands for 7 edges · 4 calls unplaced');
     expect(q('[data-testid="band-p/a>p/b"]')?.getAttribute('stroke')).toBe('var(--danger)');
     expect(q('[data-testid="codemap-level"]')?.textContent).toContain('L0 · modules');
   });
@@ -70,11 +75,11 @@ describe('CodeMap', () => {
     const p = port();
     render(p);
     await settle();
+    // One click opens a module (M17).
     (q('[data-testid="block-p/a"]') as SVGElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    flushSync();
-    (q('[data-testid="codemap-open"]') as HTMLButtonElement).click();
     await settle();
     expect(p.module).toHaveBeenCalledWith('p/a');
+    expect(q('[data-testid="inspector-title"]')?.textContent).toBe('p/a');
     expect(q('[data-testid="column-code"]')?.textContent).toContain('+2 more');
     (q('[data-testid="codemap-role-test"]') as HTMLButtonElement).click();
     flushSync();
@@ -123,7 +128,7 @@ describe('CodeMap', () => {
     expect(q('[data-testid="coupling-summary"]')?.textContent).toContain('1 pairs change together with no dependency between them · from 40 commits');
   });
 
-  it('the Wheel puts the modules on a ring and opens one on double-click', async () => {
+  it('the Wheel puts the modules on a ring and opens one on a click', async () => {
     const p = port();
     const map = render(p);
     await settle();
@@ -131,7 +136,7 @@ describe('CodeMap', () => {
     flushSync();
     expect(target.querySelectorAll('[data-testid^="wheel-node-"]').length).toBe(3);
     expect(q('[data-testid="wheel-band-p/a>p/b"]')).not.toBeNull();
-    (q('[data-testid="wheel-node-p/a"]') as SVGElement).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    (q('[data-testid="wheel-node-p/a"]') as SVGElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await settle();
     expect(p.module).toHaveBeenCalledWith('p/a');
   });
@@ -145,6 +150,74 @@ describe('CodeMap', () => {
     expect(q('[data-testid="block-note-p/a"]')?.textContent?.trim()).toBe('30% over cx 10');
     expect(q('[data-testid="block-note-p/b"]')?.textContent?.trim()).toBe('not measured');
     expect(q('[data-testid="complexity-summary"]')?.textContent).toContain('3 of 10 functions over cyclomatic 10 · 1 of 3 blocks measured');
+  });
+
+  it('with nothing selected, the inspector summarises the workspace', async () => {
+    render(port());
+    await settle();
+    expect(q('[data-testid="inspector-eyebrow"]')?.textContent).toBe('Workspace');
+    expect(q('[data-testid="inspector-stat-Upward"]')?.textContent).toContain('1');
+  });
+
+  it('violations & cycles keeps the upward band; a minimum weight drops the light ones', async () => {
+    const p = port();
+    const map = render(p);
+    await settle();
+    map.edgeMode = 'violations';
+    flushSync();
+    expect([q('[data-testid="band-p/a>p/b"]'), q('[data-testid="band-p/b>fold:L1"]')].map(Boolean)).toEqual([true, false]);
+    map.edgeMode = 'all';
+    map.minWeight = 10;
+    flushSync();
+    expect([q('[data-testid="band-p/a>p/b"]'), q('[data-testid="band-p/b>fold:L1"]')].map(Boolean)).toEqual([false, true]);
+  });
+
+  it('colour by direction tints a down band; without it only upward is coloured', async () => {
+    const map = render(port());
+    await settle();
+    expect(q('[data-testid="legend"]')?.textContent).toContain('upward');
+    map.byDirection = true;
+    flushSync();
+    expect(q('[data-testid="legend"]')?.textContent).toContain('skips a layer');
+  });
+
+  it('turning off Tests shrinks every block’s file count (Show, at L0)', async () => {
+    const map = render(port());
+    await settle();
+    expect(q('[data-testid="block-note-p/a"]')?.textContent?.trim()).toBe('3 files');
+    map.toggleRole('test');
+    flushSync();
+    expect(q('[data-testid="block-note-p/a"]')?.textContent?.trim()).toBe('2 files');
+  });
+
+  it('search finds a folded module and opens it', async () => {
+    const p = port();
+    render(p);
+    await settle();
+    const input = q('[data-testid="codemap-search"]') as HTMLInputElement;
+    input.value = 'p/d';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    (q('[data-testid="codemap-match-p/d"]') as HTMLButtonElement).click();
+    await settle();
+    expect(p.module).toHaveBeenCalledWith('p/d');
+  });
+
+  it('the referenced libraries are one block: selecting it lists the most used', async () => {
+    render(port());
+    await settle();
+    (q('[data-testid="codemap-libraries"]') as HTMLButtonElement).click();
+    flushSync();
+    expect(q('[data-testid="inspector-title"]')?.textContent).toBe('14 packages');
+    expect(q('[data-testid="codemap-inspector"]')?.textContent).toContain('serde');
+  });
+
+  it('100% draws at true size; Fit scales the drawing to the column', async () => {
+    const map = render(port());
+    await settle();
+    map.zoom = 'actual';
+    flushSync();
+    expect(q('[data-testid="codemap-modules"] svg')?.getAttribute('width')).toBe('1280');
   });
 
   it('says why the map could not be read', async () => {

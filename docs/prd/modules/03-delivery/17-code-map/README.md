@@ -36,6 +36,8 @@ not the call graph.
 > | Hidden coupling | **built** — `GET …/diagrams/codemap/cochange` mines `commit_files` (5+ together, sweeps of 20+ modules left out), drops pairs with a static edge either way, ranks by how often the rarer changes with the other; drawn as dashed bands. |
 > | Complexity | **built** from local qlty (user, 2026-10-27: rely on qlty, not a re-derivation): `measure_complexity` runs `qlty metrics --functions` at HEAD in a temporary worktree with the pinned ruler, only when HEAD moved; `sensei.file_complexity` per file; blocks tinted by share over cyclomatic 10, unmeasured blocks say so. SQL is not measured by qlty. |
 > | File roles | **built at read time** — `analysis::codemap::file_role` (code · test · docs · config · generated, from the path); not stored. |
+> | Header · inspector · controls | **built** (2026-10-29) — each diagram's header carries *shows · use it to · read it* behind "What it's for" (open/closed remembered); a 300px inspector at every level (workspace summary by direction, module, hub, fold, referenced libraries; the open module at L1, the open file at L2); search over drawn and folded modules; band filters (all / violations & cycles, minimum weight ≥ 1 · 10 · 25); Colour by direction on Structure; Fit / 100% (60% floor); Show (roles) at L0 from per-block role counts the daemon now sends; one click opens a module. Database · ER lists what a selected table references, what references it and what reads or writes it. Under 640px every lens is a list. |
+> | Group by Communities | **not built** — needs a module → community rule (communities are per symbol and per repository); waits on a decision. |
 
 ## In scope / out of scope
 

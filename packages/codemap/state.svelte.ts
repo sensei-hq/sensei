@@ -1,6 +1,7 @@
 // The Code map's state (M17): which level is open and how it was reached, the
 // grouping, the roles shown, the lens and the selection. Host-agnostic — every
 // read goes through the CodeMapPort the host passes in.
+import type { EdgeMode } from './view';
 import type { CoChange, CodeMapPort, Column, GroupBy, Level0, Level1, Level2, Read, Role, Zones } from './types';
 
 export type Level = 'modules' | 'files' | 'symbols';
@@ -23,6 +24,14 @@ export class CodeMapState {
   /** Generated code is off by default, so it cannot dominate sizes (M17). */
   roles = $state<Role[]>(['code', 'test', 'docs', 'config']);
   crumbs = $state<Crumb[]>([{ level: 'modules', id: null, label: 'workspace' }]);
+  /** Bands drawn: all, or violations & cycles only. */
+  edgeMode = $state<EdgeMode>('all');
+  /** Bands lighter than this are not drawn. */
+  minWeight = $state(1);
+  /** Structure: tint every band by direction, not only upward. */
+  byDirection = $state(false);
+  /** Fit the drawing to the column, or draw it at true size and scroll. */
+  zoom = $state<'fit' | 'actual'>('fit');
   l0 = $state<Level0 | null>(null);
   l1 = $state<Level1 | null>(null);
   l2 = $state<Level2 | null>(null);

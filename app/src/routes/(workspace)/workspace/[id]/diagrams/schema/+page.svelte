@@ -2,16 +2,19 @@
     import { DependencyDiagram, ErDiagram } from '@rokkit/graph';
     import { EntityView } from '@rokkit/graph/schema';
     import { Toolbar } from '@rokkit/ui';
-    import { PageHeader, Screen } from '$lib/components';
+    import { Screen } from '$lib/components';
     import { senseiApi } from '$lib/api.js';
     import { appState } from '$lib/appstate.svelte.js';
     import { DIAGRAM_VIEWS } from '../diagrams-nav.js';
+    import { DiagramHeaderState } from '../diagram-header.svelte.js';
+    import DiagramHeader from '../DiagramHeader.svelte';
     import { SchemaState, type SchemaScope } from '../schema-state.svelte.js';
 
     let { data } = $props();
 
     const view = new SchemaState(senseiApi(appState.port), () => data.workspaceId);
-    const question = DIAGRAM_VIEWS.find((v) => v.id === 'schema')!;
+    const diagram = DIAGRAM_VIEWS.find((v) => v.id === 'schema')!;
+    const about = new DiagramHeaderState();
 
     $effect(() => {
         void data.workspaceId;
@@ -39,7 +42,7 @@
 
 <Screen>
     {#snippet header()}
-    <PageHeader kanji={question.kanji} icon={question.icon} title="Schema" description={question.question} />
+    <DiagramHeader view={diagram} {about} />
     {/snippet}
 
     <div class="flex flex-col gap-4 p-4" data-testid="schema-screen">
@@ -114,7 +117,7 @@
                 </div>
 
                 <aside
-                    class="w-full md:w-96 flex flex-col gap-3 p-3 border border-paper-edge rounded overflow-auto max-h-[70vh]"
+                    class="w-full md:w-[300px] flex flex-col gap-3 p-3 border border-paper-edge rounded overflow-auto max-h-[70vh]"
                     data-testid="schema-entity"
                 >
                     {#if view.selectedTable}
@@ -124,6 +127,23 @@
                             fields={input.fields}
                             value={view.selected}
                         />
+                        {#if view.reach}
+                            {@const reach = view.reach}
+                            <div class="flex flex-col gap-2 text-xs" data-testid="schema-reach">
+                                {#each [['References', reach.references], ['Referenced by', reach.referencedBy], ['Read or written by', reach.dependents]] as [label, items] (label)}
+                                    <div class="flex flex-col gap-1">
+                                        <span class="uppercase tracking-wide text-ink-mute">{label}</span>
+                                        {#if items.length}
+                                            <ul class="m-0 p-0 list-none flex flex-col gap-0.5">
+                                                {#each items as item (item)}<li class="font-mono text-ink break-all">{item}</li>{/each}
+                                            </ul>
+                                        {:else}
+                                            <span class="text-ink-faint">None</span>
+                                        {/if}
+                                    </div>
+                                {/each}
+                            </div>
+                        {/if}
                     {:else}
                         <p class="text-sm text-ink-soft m-0">
                             Select a table to see its columns, keys and notes.

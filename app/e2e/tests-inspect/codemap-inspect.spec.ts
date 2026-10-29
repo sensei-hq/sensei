@@ -23,9 +23,17 @@ test('the code map drills from modules to files to symbols', async ({ tauriPage 
     .toBe(l0.blocks.length);
   const budget = (await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-budget"]')?.textContent ?? ''`)) as string;
   expect(budget).toContain(`drawing ${l0.budget.drawn} blocks for ${l0.budget.modules} modules`);
+  // The daemon now counts each block's files by role, and the referenced libraries.
+  const roleSum = (b: { roles: Record<string, number> }) => Object.values(b.roles).reduce((a, v) => a + v, 0);
+  expect(roleSum(biggest)).toBe(biggest.files);
+  const summary = (await tauriPage.evaluate(`document.querySelector('[data-testid="inspector-eyebrow"]')?.textContent ?? ''`)) as string;
+  expect(summary).toBe('Workspace');
+  const about = (await tauriPage.evaluate(`!!document.querySelector('[data-testid="diagram-about-toggle"]')`)) as boolean;
+  const libraries = (await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-libraries"]')?.textContent?.trim() ?? ''`)) as string;
+  expect(libraries).toBe(l0.libraries.count ? `${l0.libraries.count} referenced libraries · not members` : '');
 
+  // One click opens a module (M17); the inspector names it.
   await tauriPage.evaluate(`document.querySelector('[data-testid="block-${biggest.id}"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
-  await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-open"]')?.click()`);
   await expect
     .poll(() => tauriPage.evaluate(`document.querySelectorAll('[data-testid^="column-"]').length`), { timeout: 30_000 })
     .toBeGreaterThan(0);
@@ -39,8 +47,34 @@ test('the code map drills from modules to files to symbols', async ({ tauriPage 
   const back = (await tauriPage.evaluate(`!!document.querySelector('[data-testid="codemap-modules"]')`)) as boolean;
   const errors = (await tauriPage.evaluate(`document.querySelectorAll('[data-testid="codemap-error"]').length`)) as number;
 
-  console.log(`\n[inspect] codemap ${ws.name}: ${l0.blocks.length} blocks, ${l0.bands.length} bands; opened ${biggest.id} → ${file.slice(5)}; crumbs ${crumbs}; back ${back}; errors ${errors}`);
-  expect([back, errors]).toEqual([true, 0]);
+  console.log(`\n[inspect] codemap ${ws.name}: ${l0.blocks.length} blocks, ${l0.bands.length} bands, ${l0.libraries.count} libraries; opened ${biggest.id} → ${file.slice(5)}; crumbs ${crumbs}; back ${back}; about ${about}; errors ${errors}`);
+  expect([back, errors, about]).toEqual([true, 0, true]);
+});
+
+// The band filters against the daemon's own L0: "Violations & cycles" draws exactly
+// the upward, skipping and in-cycle bands, derived here independently of the app.
+test('violations & cycles draws exactly the violating bands', async ({ tauriPage }) => {
+  const workspaces = await json('/api/workspaces');
+  const rows = Array.isArray(workspaces) ? workspaces : workspaces.workspaces;
+  const ws = rows.find((w: { name: string }) => w.name === 'sensei') ?? rows[0];
+  const l0 = await json(`/api/workspaces/${ws.id}/diagrams/codemap?groupBy=layers`);
+  const inCycle = new Map<string, number>();
+  (l0.cycles as { members?: string[] }[]).forEach((c, i) => (c.members ?? []).forEach((m) => inCycle.set(m, i)));
+  const hub = new Set(l0.blocks.filter((b: { hub: boolean }) => b.hub).map((b: { id: string }) => b.id));
+  const expected = l0.bands.filter((b: { source: string; target: string; direction: string | null }) =>
+    !hub.has(b.source) && !hub.has(b.target) &&
+    (b.direction === 'up' || b.direction === 'skip' || (inCycle.has(b.source) && inCycle.get(b.source) === inCycle.get(b.target)))).length;
+
+  await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/structure`);
+  await expect
+    .poll(() => tauriPage.evaluate(`document.querySelectorAll('g[data-testid^="block-"]').length`), { timeout: 60_000 })
+    .toBeGreaterThan(0);
+  const all = (await tauriPage.evaluate(`document.querySelectorAll('path[data-testid^="band-"]').length`)) as number;
+  await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-edges"] [aria-label="Violations & cycles"]')?.click()`);
+  await expect
+    .poll(() => tauriPage.evaluate(`document.querySelectorAll('path[data-testid^="band-"]').length`), { timeout: 10_000 })
+    .toBe(expected);
+  console.log(`\n[inspect] codemap filter ${ws.name}: ${all} bands → ${expected} violations & cycles`);
 });
 
 // Every lens, opened from its own route, draws on the same canvas without an error,

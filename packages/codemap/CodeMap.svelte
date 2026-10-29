@@ -1,11 +1,16 @@
 <script lang="ts">
   // The Code map (M17): one canvas, three levels — modules, files, symbols —
-  // with a breadcrumb, a grouping, the roles shown, and lenses on the same
-  // canvas. The host passes the state and where to read from, and lists the
-  // lenses itself (`state.showLens`); this never fetches on its own.
+  // with a breadcrumb, search, a grouping, the roles shown, band filters and
+  // lenses on the same canvas, and an inspector beside it at every level. The
+  // host passes the state and where to read from, and lists the lenses itself
+  // (`state.showLens`); this never fetches on its own.
   import { onMount } from 'svelte';
+  import { Toggle } from '@rokkit/ui';
   import { ROLES, type CodeMapState } from './state.svelte';
-  import { complexityShare, couplingBands, cycleBands, cycleOf } from './lenses';
+  import { couplingBands, cycleBands, cycleOf } from './lenses';
+  import { inspect, LIBRARIES } from './inspector';
+  import { listView } from './list';
+  import { MIN_WEIGHTS, legendFor, searchModules, visibleBands, type EdgeMode } from './view';
   import type { CodeMapPort, GroupBy } from './types';
   import ModuleMap from './ModuleMap.svelte';
   import MatrixLens from './MatrixLens.svelte';
@@ -14,6 +19,8 @@
   import ModuleList from './ModuleList.svelte';
   import FileColumns from './FileColumns.svelte';
   import SymbolView from './SymbolView.svelte';
+  import Inspector from './Inspector.svelte';
+  import Legend from './Legend.svelte';
 
   let { state: map, port }: { state: CodeMapState; port: CodeMapPort } = $props();
 
@@ -21,29 +28,39 @@
     if (!map.l0) void map.load(port);
   });
 
-  // Complexity (M17): tinted by the share of functions over cyclomatic 10;
-  // a block never measured stays neutral and says so.
-  const complexityFill = (b: import('./types').Block) => {
-    const share = complexityShare(b);
-    return share === null
-      ? { color: 'var(--paper-mute)', opacity: 1, label: 'not measured' }
-      : { color: 'var(--danger)', opacity: 0.08 + 0.72 * Math.min(1, share * 4), label: `${Math.round(share * 100)}% over cx 10` };
-  };
-  const GROUPINGS: { id: GroupBy; label: string }[] = [
-    { id: 'layers', label: 'Layers' },
-    { id: 'folders', label: 'Folders' },
+  const GROUPINGS = [
+    { label: 'Layers', value: 'layers' },
+    { label: 'Folders', value: 'folders' },
+  ];
+  const EDGES = [
+    { label: 'All bands', value: 'all' },
+    { label: 'Violations & cycles', value: 'violations' },
+  ];
+  const WEIGHTS = MIN_WEIGHTS.map((w) => ({ label: `≥ ${w}`, value: w }));
+  const ZOOMS = [
+    { label: 'Fit', value: 'fit' },
+    { label: '100%', value: 'actual' },
   ];
 
   let width = $state(1024);
+  let query = $state('');
   // An unmeasured width (0) is not a narrow screen.
   const narrow = $derived(width > 0 && width < 640);
   const l0 = $derived(map.l0);
-  const bands = $derived(
+  const cycles = $derived(l0 ? cycleOf(l0) : null);
+  const lensBands = $derived(
     !l0 ? [] : map.lens === 'cycles' ? cycleBands(l0) : map.lens === 'coupling' ? couplingBands(l0, map.cochange?.hidden ?? []) : l0.bands,
   );
-  const cycles = $derived(l0 && map.lens === 'cycles' ? cycleOf(l0) : null);
-  const picked = $derived(l0?.blocks.find((b) => b.id === map.selected) ?? null);
-  const open = (id: string) => void map.openModule(port, id);
+  const bands = $derived(
+    map.lens === 'coupling' ? lensBands : visibleBands(lensBands, { edgeMode: map.edgeMode, minWeight: map.minWeight }, cycles),
+  );
+  const canvasLens = $derived(!['zones', 'wheel', 'matrix'].includes(map.lens));
+  const matches = $derived(l0 ? searchModules(l0, query) : []);
+  const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected }));
+  const open = (id: string) => {
+    query = '';
+    void map.openModule(port, id);
+  };
 </script>
 
 <div class="flex flex-col gap-3" bind:clientWidth={width} data-testid="codemap">
@@ -60,16 +77,26 @@
       </span>
     </nav>
     <div class="flex-1"></div>
+    <div class="relative">
+      <input class="w-56 px-2 py-1 text-xs rounded border border-paper-edge bg-paper text-ink"
+        type="search" placeholder="Search modules" aria-label="Search modules"
+        bind:value={query} onkeydown={(e) => e.key === 'Escape' && (query = '')} data-testid="codemap-search" />
+      {#if matches.length}
+        <ul class="absolute z-10 left-0 right-0 mt-1 m-0 p-1 list-none bg-paper border border-paper-edge rounded shadow">
+          {#each matches as id (id)}
+            <li><button class="w-full text-left px-2 py-1 font-mono text-xs text-ink bg-transparent border-none cursor-pointer"
+              onclick={() => open(id)} data-testid={`codemap-match-${id}`}>{id}</button></li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
     {#if map.level === 'modules'}
-      <div class="flex gap-1" role="radiogroup" aria-label="Group by">
-        {#each GROUPINGS as g (g.id)}
-          <button class="px-2 py-1 text-xs rounded border border-paper-edge cursor-pointer"
-            class:bg-ink={map.groupBy === g.id} class:text-paper={map.groupBy === g.id} class:bg-transparent={map.groupBy !== g.id}
-            role="radio" aria-checked={map.groupBy === g.id}
-            onclick={() => void map.setGroupBy(port, g.id)} data-testid={`codemap-group-${g.id}`}>{g.label}</button>
-        {/each}
+      <div data-testid="codemap-group">
+        <Toggle size="sm" label="Group by" options={GROUPINGS} value={map.groupBy}
+          onchange={(v) => void map.setGroupBy(port, v as GroupBy)} />
       </div>
-    {:else if map.level === 'files'}
+    {/if}
+    {#if map.level !== 'symbols'}
       <div class="flex gap-1" aria-label="Show">
         {#each ROLES as r (r)}
           <button class="px-2 py-1 text-xs rounded border border-paper-edge cursor-pointer"
@@ -84,22 +111,48 @@
     <p class="m-0 text-sm text-danger" data-testid="codemap-error">Could not read the code map: {map.error}</p>
   {/if}
 
-  {#if map.level === 'modules'}
-    {#if l0}
-      <p class="m-0 text-xs text-ink-mute" data-testid="codemap-budget">
-        {`drawing ${l0.budget.drawn} blocks for ${l0.budget.modules} modules · ${l0.budget.bands} bands for ${l0.budget.edges} edges`}{l0.coverage.unplaced ? ` · ${l0.coverage.unplaced} calls unplaced` : ''}
-      </p>
-      <div class="grid gap-4" style={narrow ? '' : 'grid-template-columns: 1fr 240px;'}>
-        {#if narrow}
-          <ModuleList data={l0} onopen={open} />
-        {:else if map.lens === 'zones'}
-          {#if map.zones}<ZonesLens data={map.zones} />{:else}<p class="text-sm text-ink-soft">Placing components…</p>{/if}
-        {:else if map.lens === 'wheel'}
-          <WheelLens data={l0} selected={map.selected} onselect={(id) => map.select(id)} onopen={open} />
-        {:else if map.lens === 'matrix'}
-          <MatrixLens data={l0} onopen={open} />
-        {:else}
-          <div class="flex flex-col gap-2">
+  {#if map.level === 'modules' && l0 && canvasLens && !narrow}
+    <div class="flex flex-wrap items-center gap-3">
+      {#if map.lens !== 'coupling'}
+        <div data-testid="codemap-edges">
+          <Toggle size="sm" label="Bands" options={EDGES} value={map.edgeMode} onchange={(v) => (map.edgeMode = v as EdgeMode)} />
+        </div>
+        <div data-testid="codemap-weight">
+          <Toggle size="sm" label="Minimum weight" options={WEIGHTS} value={map.minWeight} onchange={(v) => (map.minWeight = v as number)} />
+        </div>
+      {/if}
+      {#if map.lens === 'structure'}
+        <button class="px-2 py-1 text-xs rounded border border-paper-edge cursor-pointer text-ink"
+          class:bg-paper-mute={map.byDirection} class:bg-transparent={!map.byDirection}
+          aria-pressed={map.byDirection} onclick={() => (map.byDirection = !map.byDirection)} data-testid="codemap-direction">Colour by direction</button>
+      {/if}
+      <div data-testid="codemap-zoom">
+        <Toggle size="sm" label="Zoom" options={ZOOMS} value={map.zoom} onchange={(v) => (map.zoom = v as 'fit' | 'actual')} />
+      </div>
+      <div class="flex-1"></div>
+      <Legend entries={legendFor(map.lens, map.byDirection)} />
+    </div>
+  {/if}
+
+  {#if map.level === 'modules' && l0}
+    <p class="m-0 text-xs text-ink-mute" data-testid="codemap-budget">
+      {`drawing ${l0.budget.drawn} blocks for ${l0.budget.modules} modules · ${bands.length} bands for ${l0.budget.edges} edges`}{l0.coverage.unplaced ? ` · ${l0.coverage.unplaced} calls unplaced` : ''}
+    </p>
+  {/if}
+
+  <div class="grid gap-4" style={narrow ? '' : 'grid-template-columns: minmax(0, 1fr) 300px;'}>
+    <div class="min-w-0 flex flex-col gap-2">
+      {#if map.level === 'modules'}
+        {#if l0}
+          {#if narrow}
+            <ModuleList view={listView(map.lens, l0, map.cochange, map.zones)} onopen={open} />
+          {:else if map.lens === 'zones'}
+            {#if map.zones}<ZonesLens data={map.zones} />{:else}<p class="text-sm text-ink-soft">Placing components…</p>{/if}
+          {:else if map.lens === 'wheel'}
+            <WheelLens data={l0} selected={map.selected} onselect={(id) => map.select(id)} onopen={open} />
+          {:else if map.lens === 'matrix'}
+            <MatrixLens data={l0} onopen={open} />
+          {:else}
             {#if map.lens === 'coupling' && map.cochange}
               <p class="m-0 text-xs text-ink-mute" data-testid="coupling-summary">
                 {map.cochange.commits
@@ -115,38 +168,28 @@
                   : 'Not measured yet: complexity is measured by local qlty after a scan.'}
               </p>
             {/if}
-            <ModuleMap data={l0} {bands} selected={map.selected} cycle={cycles} dashed={map.lens === 'coupling'}
-              fill={map.lens === 'complexity' ? complexityFill : null} onselect={(id) => map.select(id)} onopen={open} />
-          </div>
+            <ModuleMap data={l0} {bands} selected={map.selected} cycle={map.lens === 'cycles' ? cycles : null}
+              dashed={map.lens === 'coupling'} complexity={map.lens === 'complexity'} byDirection={map.byDirection}
+              roles={map.roles} zoom={map.zoom} onselect={(id) => map.select(id)} onopen={open} />
+          {/if}
+          {#if l0.libraries.count}
+            <button class="self-start px-3 py-2 text-xs rounded border border-dashed border-paper-edge bg-transparent text-ink-mute cursor-pointer"
+              class:border-accent={map.selected === LIBRARIES}
+              onclick={() => map.select(map.selected === LIBRARIES ? null : LIBRARIES)} data-testid="codemap-libraries">
+              {l0.libraries.count} referenced libraries · not members
+            </button>
+          {/if}
+        {:else if map.loading}
+          <p class="text-sm text-ink-soft">Loading the code map…</p>
         {/if}
-        {#if !narrow}
-          <aside class="text-xs flex flex-col gap-2" data-testid="codemap-inspector">
-            {#if picked}
-              <h4 class="m-0 font-mono text-sm text-ink break-all">{picked.label}</h4>
-              <p class="m-0 text-ink-mute">{picked.group} · {picked.files} files · {picked.symbols} symbols</p>
-              <p class="m-0 text-ink-mute">weight out {picked.weight_out} · in {picked.weight_in}{picked.hub ? ' · hub' : ''}</p>
-              {#if picked.folded.length}
-                <ul class="m-0 p-0 list-none max-h-80 overflow-auto">
-                  {#each picked.folded as id (id)}
-                    <li><button class="bg-transparent border-none cursor-pointer p-1 font-mono text-xs text-ink" onclick={() => open(id)}>{id}</button></li>
-                  {/each}
-                </ul>
-              {:else}
-                <button class="self-start px-2 py-1 text-xs rounded border border-paper-edge bg-transparent cursor-pointer"
-                  onclick={() => open(picked.id)} data-testid="codemap-open">Open files</button>
-              {/if}
-            {:else}
-              <p class="m-0 text-ink-soft">Select a module to inspect it; double-click to open its files.</p>
-            {/if}
-          </aside>
-        {/if}
-      </div>
-    {:else if map.loading}
-      <p class="text-sm text-ink-soft">Loading the code map…</p>
+      {:else if map.level === 'files' && map.l1}
+        <FileColumns data={map.l1} columns={map.columns} onopen={(id, path) => void map.openFile(port, id, path)} onmodule={open} />
+      {:else if map.level === 'symbols' && map.l2}
+        <SymbolView data={map.l2} />
+      {/if}
+    </div>
+    {#if !narrow}
+      <Inspector data={inspection} onopen={open} />
     {/if}
-  {:else if map.level === 'files' && map.l1}
-    <FileColumns data={map.l1} columns={map.columns} onopen={(id, path) => void map.openFile(port, id, path)} onmodule={open} />
-  {:else if map.level === 'symbols' && map.l2}
-    <SymbolView data={map.l2} />
-  {/if}
+  </div>
 </div>

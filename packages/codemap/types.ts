@@ -6,12 +6,18 @@ export type GroupBy = 'layers' | 'folders';
 export type Direction = 'down' | 'skip' | 'up' | 'level';
 export type Role = 'code' | 'test' | 'docs' | 'config' | 'generated';
 
+/** Files by role — so tests and docs never read as code size. */
+export type RoleCounts = Record<Role, number>;
+
 export interface Block {
   id: string;
   label: string;
   group: string;
+  /** The package its modules share; null for a fold spanning several. */
+  package: string | null;
   files: number;
   symbols: number;
+  roles: RoleCounts;
   /** A hub: its edges are counted here, not drawn. */
   hub: boolean;
   weight_in: number;
@@ -39,6 +45,8 @@ export interface Level0 {
   budget: { drawn: number; modules: number; bands: number; edges: number };
   cycles: unknown[];
   coverage: { unplaced: number };
+  /** The workspace's referenced libraries: referenced, never members. */
+  libraries: { count: number; top: string[] };
 }
 
 export interface ModuleFile {
@@ -79,6 +87,7 @@ export interface Level2 {
   level: 'symbol';
   file: string;
   path: string;
+  role: Role;
   symbols: { id: string; name: string; kind: string; line: number | null }[];
   callers: SymbolRef[];
   callersTotal: number;

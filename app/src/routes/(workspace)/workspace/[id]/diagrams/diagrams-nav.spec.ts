@@ -27,6 +27,11 @@ describe('DIAGRAM_VIEWS', () => {
       expect(v.question.length, v.id).toBeGreaterThan(0);
     }
   });
+  it('says, for each view, what it shows, what to use it for and how to read it', () => {
+    for (const v of DIAGRAM_VIEWS) {
+      for (const line of [v.shows, v.use, v.read]) expect(line, v.id).toMatch(/^[A-Z].*\.$/);
+    }
+  });
   it('opens on Structure', () => {
     expect(DEFAULT_VIEW).toBe('structure');
   });
