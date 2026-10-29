@@ -14,12 +14,19 @@ Diagrams rework (mockup: sidebar subsection, per-diagram routes, levels, inspect
   Layers / Neighbourhood / standalone Structure / Cycles / codemap pages retired; glyph table
   follows the mockup. e2e: diagrams-nav, multi-window, a11y, schema green.
 
+- cb8087e86 — transcript turns landing make a workspace due (analyzer read session start/end only).
+- 7b9a872c2 — a lens switch kept minting a new, unread CodeMapState (page.params is replaced per
+  navigation); map now kept by id value. Live inspect: every lens draws on sensei, 0 errors.
+- Live: 812 automated transcript turns landed; hook turns labelled by prompt id (only id-less
+  prompts stay unlabelled, counted as yours). sensei 10/24 = 72 /loop ticks refused by the weekly
+  limit — 0 of your turns, 0 tokens, both correct. Installed (service + app).
+
 **Remaining (Diagrams):** 2 shared collapsible three-line header + 300px inspector at every level
 + legend/budget; 3 single-click drill, search, Communities grouping, Show at L0, band filters,
 Fit/100%; 4 Database · ER inspector and mobile lists.
 
-**Next command:** verify live after `make install` — `psql -h localhost -p 5432 sensei -c "select
-origin, count(*), sum(tokens_in) from activity.transcript_turns group by 1"`; then slice 2.
+**Next command:** Diagrams slice 2 — start from `app/src/routes/(workspace)/workspace/[id]/diagrams/[lens]/+page.svelte`
+(shared header) and `packages/codemap/CodeMap.svelte` (inspector).
 
 **rokkit:** d9cbf302 (dark paper-edge at 200) on develop, unreleased — user cuts 1.12.2, then
 bump app/dōjō/website.
