@@ -3,16 +3,16 @@
   // minutes the agent worked stacked under the minutes spent on you. Pure
   // presentation over `bandsView` (sessions-digest.ts); the days come from each
   // session's active time filed by the hour it happened (`activityByDay`).
-  import { BAND_FILL, bandsView, compactDuration, unmeasuredLine, type ActivityDay } from '$lib/sessions-digest.js';
+  import { BAND_FILL, bandsView, compactDuration, unmeasuredLine, type ActivityDay, type SessionSpan } from '$lib/sessions-digest.js';
 
   interface Props {
-    activity: { days: ActivityDay[]; unmeasured: number };
+    activity: { days: ActivityDay[]; unmeasured: number; spans?: SessionSpan[] };
     width?: number;
     height?: number;
   }
   let { activity, width = 1100, height = 320 }: Props = $props();
 
-  const view = $derived(bandsView(activity.days, width, height));
+  const view = $derived(bandsView(activity.days, width, height, activity.spans ?? []));
   const unmeasured = $derived(unmeasuredLine(activity.unmeasured));
 </script>
 
@@ -33,6 +33,15 @@
       <title>{b.label} · agent {compactDuration(b.agentMins)} · you {compactDuration(b.userMins)}</title>
       {#each b.segments as s (s.tone)}
         <rect x={b.x} y={s.y} width={b.w} height={s.h} rx="1.5" fill={BAND_FILL[s.tone]} opacity="0.85" data-tone={s.tone} />
+      {/each}
+    </g>
+  {/each}
+  <!-- Multi-day sessions: one piece of work across several bars. -->
+  {#each view.links as l (l.id)}
+    <g data-span={l.id}>
+      <line x1={l.x1} x2={l.x2} y1={l.y} y2={l.y} stroke="var(--ink-mute)" stroke-width="1" opacity="0.7" />
+      {#each l.dots as x, i (i)}
+        <circle cx={x} cy={l.y} r="2" fill="var(--ink-mute)" />
       {/each}
     </g>
   {/each}

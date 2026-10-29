@@ -20,12 +20,14 @@ import {
   enrich,
   nextMiniMode,
   recencyRange,
+  sessionSpans,
   type ActivityDay,
   type ChartVariant,
   type DayBucket,
   type DigestTotals,
   type EnrichedSession,
   type MiniMode,
+  type SessionSpan,
   type SessionRange,
 } from './sessions-digest.js';
 
@@ -103,8 +105,8 @@ export class SessionsDigestState {
 
   /** Agent and your active time per local day (the bands chart), and how many
    *  sessions carry no hours yet. */
-  get activity(): { days: ActivityDay[]; unmeasured: number } {
-    return activityByDay(this.sessions, this.days);
+  get activity(): { days: ActivityDay[]; unmeasured: number; spans: SessionSpan[] } {
+    return { ...activityByDay(this.sessions, this.days), spans: sessionSpans(this.sessions, this.days) };
   }
 
   /** Per-day quality/minute rollup — the charts' single source. */

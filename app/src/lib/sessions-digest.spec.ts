@@ -23,7 +23,7 @@ import {
   activeMinutes,
   CHART_VARIANTS,
   MINI_MODES,
-  SESSION_RANGES, dayTone, rollingFtr, recencyRange, labelStride, bandsView, activityByDay, unmeasuredLine } from './sessions-digest.js';
+  SESSION_RANGES, dayTone, rollingFtr, recencyRange, labelStride, bandsView, activityByDay, unmeasuredLine, sessionSpans } from './sessions-digest.js';
 
 // Fixed reference "now" (local July 8 2026, noon) so relative labels + day
 // buckets are deterministic regardless of the runner's timezone.
@@ -482,5 +482,40 @@ describe('unmeasuredLine', () => {
     expect(unmeasuredLine(0)).toBeNull();
     expect(unmeasuredLine(1)).toBe('1 session not analysed yet — not drawn');
     expect(unmeasuredLine(3)).toBe('3 sessions not analysed yet — not drawn');
+  });
+});
+
+// A session that runs over several days is one piece of work across several bars (user,
+// 2026-10-29: 'draw an overlay connecting multi day sessions'). Its span is the local days
+// it was active on; a one-day session has none. Overlapping spans take separate lanes.
+describe('sessionSpans and the bands links', () => {
+  const days = buildDays('7d', NOW);
+  const rows = [
+    wire({ id: 'long', activeByHour: [[hourOf(4, 10), 60_000, 0], [hourOf(2, 9), 60_000, 0], [hourOf(1, 15), 60_000, 0]] }),
+    wire({ id: 'short', activeByHour: [[hourOf(0, 10), 60_000, 0]] }),
+    wire({ id: 'overlap', activeByHour: [[hourOf(3, 10), 60_000, 0], [hourOf(2, 11), 60_000, 0]] }),
+    wire({ id: 'unknown', activeByHour: null }),
+  ];
+
+  it('lists the active days of each session that spans more than one, in axis order', () => {
+    const spans = sessionSpans(rows, days);
+    expect(spans.map((s) => s.id)).toEqual(['long', 'overlap']);
+    expect(spans[0].days).toEqual([days[2], days[4], days[5]]);
+  });
+
+  it('draws each span from its first day to its last, a dot per active day, overlaps in separate lanes', () => {
+    const activity = activityByDay(rows, days, NOW);
+    const v = bandsView(activity.days, 1100, 320, sessionSpans(rows, days));
+    const centre = (day: string) => {
+      const b = v.bars.find((x) => x.day === day)!;
+      return b.x + b.w / 2;
+    };
+    const long = v.links.find((l) => l.id === 'long')!;
+    expect(long.x1).toBeCloseTo(centre(days[2]));
+    expect(long.x2).toBeCloseTo(centre(days[5]));
+    expect(long.dots.map((x) => Math.round(x))).toEqual([days[2], days[4], days[5]].map((d) => Math.round(centre(d))));
+    const overlap = v.links.find((l) => l.id === 'overlap')!;
+    expect(overlap.y).not.toBe(long.y);
+    for (const l of v.links) expect(l.y).toBeLessThan(v.plot.top);
   });
 });

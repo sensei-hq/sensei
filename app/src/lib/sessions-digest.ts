@@ -485,6 +485,29 @@ export function activityByDay(
   };
 }
 
+/** A session active on more than one local day of the axis, and those days, in order. */
+export interface SessionSpan {
+  id: string;
+  days: string[];
+}
+
+/** The sessions that ran over several days of the axis — one piece of work across
+ *  several bars. From the same hours as the bars; a one-day session has no span. */
+export function sessionSpans(rows: Pick<SessionRow, 'id' | 'activeByHour'>[], days: string[]): SessionSpan[] {
+  const order = new Map(days.map((d, i) => [d, i]));
+  const spans: SessionSpan[] = [];
+  for (const r of rows) {
+    if (!r.activeByHour) continue;
+    const on = new Set<string>();
+    for (const [hour] of r.activeByHour) {
+      const day = dayKey(new Date(hour * 3_600_000).toISOString());
+      if (order.has(day)) on.add(day);
+    }
+    if (on.size > 1) spans.push({ id: r.id, days: [...on].sort((a, b) => order.get(a)! - order.get(b)!) });
+  }
+  return spans.sort((a, b) => order.get(a.days[0])! - order.get(b.days[0])!);
+}
+
 /** Says how many sessions the bands could not place, or null when it placed them all. */
 export function unmeasuredLine(n: number): string | null {
   if (n <= 0) return null;
@@ -506,7 +529,12 @@ export interface BandsView {
   ticks: { x: number; label: string }[];
   yTicks: { y: number; label: string }[];
   maxMins: number;
+  /** Multi-day sessions: a line over their first to last day, a dot on each active day. */
+  links: { id: string; x1: number; x2: number; y: number; dots: number[] }[];
 }
+
+/** Height of one lane of multi-day links above the bars. */
+const LINK_LANE = 8;
 
 /** Fill per segment: the agent's time and yours. */
 export const BAND_FILL: Record<BandSegment['tone'], string> = {
@@ -514,8 +542,19 @@ export const BAND_FILL: Record<BandSegment['tone'], string> = {
   user: 'var(--accent)',
 };
 
-export function bandsView(days: ActivityDay[], width: number, height: number): BandsView {
-  const plot = { left: 44, right: width - 12, top: 12, bottom: height - 26 };
+export function bandsView(days: ActivityDay[], width: number, height: number, spans: SessionSpan[] = []): BandsView {
+  // Spans that overlap take separate lanes: each lane ends before the next span starts.
+  const index = new Map(days.map((d, i) => [d.day, i]));
+  const laneEnds: number[] = [];
+  const laned = spans.map((span) => {
+    const first = index.get(span.days[0])!;
+    const last = index.get(span.days[span.days.length - 1])!;
+    let lane = laneEnds.findIndex((end) => end < first);
+    if (lane === -1) lane = laneEnds.length;
+    laneEnds[lane] = last;
+    return { span, lane };
+  });
+  const plot = { left: 44, right: width - 12, top: 12 + laneEnds.length * LINK_LANE, bottom: height - 26 };
   const n = Math.max(days.length, 1);
   const slot = (plot.right - plot.left) / n;
   const w = Math.max(1, slot * 0.7);
@@ -544,5 +583,16 @@ export function bandsView(days: ActivityDay[], width: number, height: number): B
     .filter((_, i) => (last - i) % stride === 0)
     .map((b) => ({ x: b.x + b.w / 2, label: b.label }));
   const yTicks = [0, maxMins / 2, maxMins].map((m) => ({ y: plot.bottom - m * scale, label: compactDuration(Math.round(m)) }));
-  return { plot, bars, ticks, yTicks, maxMins };
+  const centre = (day: string) => {
+    const b = bars[index.get(day)!];
+    return b.x + b.w / 2;
+  };
+  const links = laned.map(({ span, lane }) => ({
+    id: span.id,
+    x1: centre(span.days[0]),
+    x2: centre(span.days[span.days.length - 1]),
+    y: 8 + lane * LINK_LANE,
+    dots: span.days.map(centre),
+  }));
+  return { plot, bars, ticks, yTicks, maxMins, links };
 }
