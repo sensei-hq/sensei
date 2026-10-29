@@ -3,8 +3,8 @@
 **Slice:** tracker SDLC metrics, on branch `feature/sdlc_metrics`. The branch was cut from
 `feature/tracker_metrics_writeback`, which is still unmerged.
 **Stage:** build, unattended (user, 2026-10-29). F1 done (`886b5df1c`), F2 + F3 done
-(`87c7d8316`); F4 (ticket figures) next. Run contract: `.sensei/slice-state.json`
-(amendments A1–A4; F4 carry-forward).
+(`87c7d8316`), F4 done (`825593888`); F5 (ticket history) next. Run contract:
+`.sensei/slice-state.json` (amendments A1–A5; F5 carry-forward).
 
 **For the user:** the indexer's dangling-reference ceiling was raised 1,300 → 1,302 for
 the new settings handler's two `state.pg` reads (AppState type alias); and only 9 of 118
