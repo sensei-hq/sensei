@@ -519,6 +519,9 @@ pub(crate) struct CodemapQuery {
     group_by: Option<String>,
 }
 
+/// How many of the most used referenced libraries L0 names.
+const LIBRARIES_TOP: usize = 5;
+
 /// GET /api/workspaces/{id}/diagrams/codemap?groupBy=layers|folders
 ///
 /// The Code map's L0 (M17): modules as blocks — at most
@@ -541,14 +544,17 @@ pub(crate) async fn codemap(
     let workspace_id = resolve_workspace_id(&state, &id).await?;
 
     cached(&state, "codemap", &workspace_id, group_by.clone(), async {
-        let (nodes, edges, deps, unplaced, complexity) = tokio::try_join!(
+        let (nodes, edges, deps, unplaced, complexity, paths, libraries) = tokio::try_join!(
             state.pg.structure_nodes(&workspace_id, "module"),
             state.pg.structure_edges(&workspace_id, "module", &kinds),
             state.pg.dependency_graph(&workspace_id, "module", &kinds),
             state.pg.structure_unplaced(&workspace_id, &kinds),
             state.pg.codemap_module_complexity(&workspace_id),
+            state.pg.codemap_module_paths(&workspace_id),
+            state.pg.list_libraries_with_usage(None, Some(&workspace_id), 1),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let roles = crate::analysis::codemap::role_counts(&paths);
 
         let units: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
         let ranked = crate::analysis::layering::analyse(&units, &deps);
@@ -573,8 +579,10 @@ pub(crate) async fn codemap(
                         .get(n.id.as_str())
                         .map_or_else(|| "unplaced".to_string(), |l| format!("L{l}")),
                 },
+                package: n.package.clone(),
                 files: n.files,
                 symbols: n.symbols,
+                roles: roles.get(&n.id).copied().unwrap_or_default(),
                 complexity: complexity.get(&n.id).map(|&(functions, complex)| {
                     crate::analysis::codemap::Complexity { functions, complex }
                 }),
@@ -611,6 +619,7 @@ pub(crate) async fn codemap(
             "budget": l0.budget,
             "cycles": ranked.cycles,
             "coverage": { "unplaced": unplaced },
+            "libraries": crate::analysis::codemap::libraries_summary(&libraries, LIBRARIES_TOP),
         }))
     })
     .await
@@ -726,6 +735,7 @@ pub(crate) async fn codemap_file(
         Ok(serde_json::json!({
             "level": "symbol",
             "file": file_id,
+            "role": crate::analysis::codemap::file_role(&path),
             "path": path,
             "symbols": symbols
                 .into_iter()

@@ -3778,6 +3778,25 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Every file of a workspace as `(module, path)`, the module grouped as
+    /// [`Self::codemap_module_files`] groups it — what L0 counts by role (M17).
+    pub async fn codemap_module_paths(
+        &self,
+        workspace_id: &uuid::Uuid,
+    ) -> Result<Vec<(String, String)>, String> {
+        let group = structure_group_sql("module", "");
+        let sql = format!(
+            "SELECT {group}, file_path
+               FROM sensei.structure_graph
+              WHERE workspace_id = $1"
+        );
+        sqlx_core::query_as::query_as(&sql)
+            .bind(workspace_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_module_paths: {e}"))
+    }
+
     /// One module's files, for the Code map's L1: `(file id, path, symbols)`,
     /// largest first. The module is matched by the same `module_of` identity
     /// the module level groups by, so L0's block and L1's files agree.

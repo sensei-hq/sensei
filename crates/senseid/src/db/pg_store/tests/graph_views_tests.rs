@@ -583,6 +583,50 @@ async fn structure_level_module_groups_by_the_modules_top_segment() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// Every file of the workspace with the module the map files it under — what L0
+/// counts by role (M17). Grouped by the same top segment as `structure_nodes`.
+#[tokio::test]
+async fn codemap_module_paths_names_each_files_module() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, fid) = create_test_workspace_and_folder(&s, &format!("paths_{uniq}")).await;
+    for (fqn, path) in [
+        ("rust·pkg·tasks::alpha·run·item", "src/tasks/alpha.rs"),
+        ("rust·pkg·tasks::alpha_test·run·item", "src/tasks/tests/alpha_test.rs"),
+        ("rust·pkg·api::handler·run·item", "src/api/handler.rs"),
+    ] {
+        s.seed_node_by_fqn(
+            &fid,
+            fqn,
+            "function",
+            "run",
+            Some("rust"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: path,
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    }
+    let mut paths = s.codemap_module_paths(&pid).await.unwrap();
+    paths.sort();
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+    assert_eq!(
+        paths,
+        [
+            ("pkg/api", "src/api/handler.rs"),
+            ("pkg/tasks", "src/tasks/alpha.rs"),
+            ("pkg/tasks", "src/tasks/tests/alpha_test.rs"),
+        ]
+        .map(|(m, p)| (m.to_string(), p.to_string()))
+    );
+}
+
 /// COVERAGE COUNTS WHAT COULD NOT BE PLACED, not every edge there is.
 ///
 /// The first version of this asked `graph_placement` for

@@ -36,11 +36,67 @@ pub struct Module {
     pub label: String,
     /// The band it sits in: a package (Folders), a layer (Layers).
     pub group: String,
+    /// The package (repository member) the module belongs to.
+    pub package: String,
     pub files: i64,
     pub symbols: i64,
+    /// Its files by role, so tests and docs never read as code size.
+    pub roles: RoleCounts,
     /// Functions, and how many exceed cyclomatic 10 — `None` when none of the
     /// module's files was measured.
     pub complexity: Option<Complexity>,
+}
+
+/// Files by role (see [`file_role`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub struct RoleCounts {
+    pub code: i64,
+    pub test: i64,
+    pub docs: i64,
+    pub config: i64,
+    pub generated: i64,
+}
+
+impl RoleCounts {
+    fn count(&mut self, role: Role) {
+        match role {
+            Role::Code => self.code += 1,
+            Role::Test => self.test += 1,
+            Role::Docs => self.docs += 1,
+            Role::Config => self.config += 1,
+            Role::Generated => self.generated += 1,
+        }
+    }
+
+    fn add(&mut self, other: RoleCounts) {
+        self.code += other.code;
+        self.test += other.test;
+        self.docs += other.docs;
+        self.config += other.config;
+        self.generated += other.generated;
+    }
+}
+
+/// Each module's files by role, from `(module, path)` pairs.
+pub fn role_counts(paths: &[(String, String)]) -> HashMap<String, RoleCounts> {
+    let mut out: HashMap<String, RoleCounts> = HashMap::new();
+    for (module, path) in paths {
+        out.entry(module.clone()).or_default().count(file_role(path));
+    }
+    out
+}
+
+/// The workspace's referenced libraries as L0 draws them — one block, never
+/// members (M17): how many, and the `top` most used by repositories. `rows` are
+/// [`crate::db::pg_store::PgStore::list_libraries_with_usage`]'s.
+pub fn libraries_summary(rows: &[serde_json::Value], top: usize) -> serde_json::Value {
+    let mut ranked: Vec<(&str, i64)> = rows
+        .iter()
+        .filter_map(|r| Some((r.get("name")?.as_str()?, r.get("repo_count")?.as_i64()?)))
+        .collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    let names: Vec<&str> = ranked.iter().take(top).map(|(n, _)| *n).collect();
+    serde_json::json!({ "count": rows.len(), "top": names })
 }
 
 /// A module's functions and how many are over cyclomatic 10 (local qlty).
@@ -64,8 +120,11 @@ pub struct Block {
     pub id: String,
     pub label: String,
     pub group: String,
+    /// The package its modules share; `None` for a fold spanning several.
+    pub package: Option<String>,
     pub files: i64,
     pub symbols: i64,
+    pub roles: RoleCounts,
     /// A hub's inbound weight, counted here rather than drawn.
     pub hub: bool,
     pub weight_in: i64,
@@ -159,8 +218,10 @@ pub fn level0(modules: &[Module], edges: &[ModuleEdge], budget: usize) -> Level0
             label: if id == m.id { m.label.clone() } else { String::new() },
             id,
             group: m.group.clone(),
+            package: Some(m.package.clone()),
             files: 0,
             symbols: 0,
+            roles: RoleCounts::default(),
             hub: is_hub(&m.id),
             weight_in: 0,
             weight_out: 0,
@@ -169,6 +230,10 @@ pub fn level0(modules: &[Module], edges: &[ModuleEdge], budget: usize) -> Level0
         });
         block.files += m.files;
         block.symbols += m.symbols;
+        block.roles.add(m.roles);
+        if block.package.as_deref() != Some(m.package.as_str()) {
+            block.package = None;
+        }
         if let Some(c) = m.complexity {
             let sum = block.complexity.get_or_insert_with(Complexity::default);
             sum.functions += c.functions;
@@ -390,10 +455,57 @@ mod tests {
             id: id.into(),
             label: id.into(),
             group: group.into(),
+            package: "pkg".into(),
             files: 1,
             symbols,
+            roles: RoleCounts { code: 1, ..Default::default() },
             complexity: None,
         }
+    }
+
+    /// A module's files by role, so tests and docs never read as code size (M17).
+    #[test]
+    fn files_are_counted_by_role_per_module() {
+        let paths = [
+            ("pkg/a", "src/a/lib.rs"),
+            ("pkg/a", "src/a/tests/lib_test.rs"),
+            ("pkg/a", "src/a/README.md"),
+            ("pkg/b", "src/b/mod.rs"),
+        ]
+        .map(|(m, p)| (m.to_string(), p.to_string()));
+        let counts = role_counts(&paths);
+        assert_eq!(counts["pkg/a"], RoleCounts { code: 1, test: 1, docs: 1, ..Default::default() });
+        assert_eq!(counts["pkg/b"], RoleCounts { code: 1, ..Default::default() });
+    }
+
+    /// A block carries its module's package and roles; a fold sums its members'
+    /// roles, and keeps a package only when they share one.
+    #[test]
+    fn blocks_carry_package_and_roles_and_folds_sum_them() {
+        let mut mods: Vec<Module> = (0..3).map(|i| m(&format!("m{i}"), "g", 100 - i)).collect();
+        mods[1].package = "other".into();
+        mods[2].roles = RoleCounts { code: 2, test: 3, ..Default::default() };
+        let l0 = level0(&mods, &[], 2);
+        let kept = l0.blocks.iter().find(|b| b.id == "m0").unwrap();
+        assert_eq!((kept.package.as_deref(), kept.roles.code), (Some("pkg"), 1));
+        let fold = l0.blocks.iter().find(|b| b.id == fold_id("g")).unwrap();
+        assert_eq!(fold.roles, RoleCounts { code: 3, test: 3, ..Default::default() });
+        assert_eq!(fold.package, None, "members in two packages name none");
+    }
+
+    /// The referenced libraries are one block's worth: how many, and the most used.
+    #[test]
+    fn libraries_summarise_as_a_count_and_the_most_used() {
+        let rows = vec![
+            serde_json::json!({"name": "tokio", "repo_count": 3}),
+            serde_json::json!({"name": "serde", "repo_count": 5}),
+            serde_json::json!({"name": "axum", "repo_count": 1}),
+        ];
+        assert_eq!(
+            libraries_summary(&rows, 2),
+            serde_json::json!({"count": 3, "top": ["serde", "tokio"]})
+        );
+        assert_eq!(libraries_summary(&[], 2), serde_json::json!({"count": 0, "top": []}));
     }
     fn e(source: &str, target: &str, kind: &str, count: i64) -> ModuleEdge {
         ModuleEdge { source: source.into(), target: target.into(), kind: kind.into(), count }
