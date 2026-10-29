@@ -1,92 +1,62 @@
-# Checkpoint — 2026-10-26 (tracker metrics write-back)
+# Checkpoint — 2026-10-29 (tracker SDLC metrics)
 
-**Slice:** tracker metrics write-back, on branch `feature/tracker_metrics_writeback`.
-**Stage:** design done, and the gate passes. Next is build.
-- Analysis: `docs/analysis/2026-10-26-tracker-metrics-writeback.md`
-- Spec (reviewed): `docs/spec/daemon/tracker-metrics-writeback.md`
-- Plan: `docs/plans/2026-10-26-tracker-metrics-writeback.md`. It has F1–F6, and its issues are TBD (no `gh`).
+**Slice:** tracker SDLC metrics, on branch `feature/sdlc_metrics`. The branch was cut from
+`feature/tracker_metrics_writeback`, which is still unmerged.
+**Stage:** design is done and the gate passes. Next is build.
+- Analysis: `docs/analysis/2026-10-29-sdlc-metrics-extension.md` (decisions D1–D11)
+- Spec (reviewed): `docs/spec/daemon/tracker-sdlc-metrics.md` (S1–S9, gates 1–13, claims
+  C1–C39)
+- Plan: `docs/plans/2026-10-29-tracker-sdlc-metrics.md` (F1–F9). Issues are TBD because
+  `gh` isn't installed.
 
-**User decisions (2026-10-26):**
-- Only the assignee's daemon writes.
-- Write to mapped custom fields, or else to one sensei comment edited in place.
-- Write on every sync tick.
-- Write all metrics.
-- Store the mappings in `tracker_fields`, one row per metric.
-- Write-back is on by default, for existing boards too.
-- Reverse the read-only rule in the PRD, decisions.md and design §2.6.
+**User decisions (2026-10-29):**
+- Show the metrics in screens and in write-back.
+- Backfill history from Jira.
+- Use a project-level `hourly_rate`.
+- Keep the D5 names.
+- Story points are the estimate.
+- Review defects are escaped task defects plus review fixes.
+- Support every framework, with the catalogue held as data.
+- Defer the write-back field set.
+- A finding counts as one subsequent fix.
+- Escaped defects count across sessions.
 
 **Claims that verification found false, and what changed:**
-- The keyring status is 500 (not 503), so W7 now reuses connect's statuses.
-- Tracker SQL lives in both `trackers.rs` and `tracker_usage.rs`.
-- `api-trackers.ts` doesn't exist; the app wrappers are `try*` methods on `senseiApi` in `api.ts`.
-- Gate 13's pattern matched the keyring delete.
+- Event time is `ts`, not `created_at` (C20). Every signal is now dated by `ts`.
+- `update_task_status` takes `state`, not `status` (C17).
+- There is no `/tickets` route; ticket reads are `/tasks` and `/tracker-tasks/{key}` (C21).
+  There is no `GET …/trackers/{t}` either; `sdlc_project` goes on the `GET …/trackers` list (C38).
+- A `Write` update carries `originalFile`, so a full rewrite of `tasks.md` now counts as a tick (C22).
+- NotebookEdit's path is `notebook_path` (C23).
+- The usage-only doc surfaces were under-listed (C39). The list is now gate 12's output:
+  53 lines in 24 files.
 
 **Claims that were misleading, and what changed:**
-- A re-connect also re-keys sibling boards, on a new connect as well as a re-connect, so W11 resets their owner and write state.
-- `metered_cost` isn't USD, so no `$` is shown for it.
-- Discovery holds the transport factory, so gate 13 now checks who calls `write_transport(`.
-- An empty-body 2xx is mapped for writes only.
-- A keyring failure in the pass is now recorded in `writeback_error`.
+- A lane is a board, not a sprint (C19). The sprint row now goes in the lane header when the
+  lane's filter selects one sprint.
+- A sync timeout aborts the whole sync (C24), so ticket history moved to its own task. It
+  runs inside the write-back pass's lock, which is a declared override of R5 and W2.
+- `metric_value` takes `&Usage` only (C25), so it now takes `TicketFigures`, a declared
+  override of W3.
 
-**F1 done (2026-10-27):** `4794e815b` (feature) and `079f0cc81` (docs and app types). It passed the approve-depth
-review: 5 reviewers plus 8 mutations, all caught. senseid has 3872 tests, the app 2473, all passing.
-The review found the DBML column on the wrong table, and a new parity test now guards the tracker tables.
+**What the review changed:**
+- **Outcomes come from category-scoped output markers before the exit code.** 318 of 370
+  real build/test runs were piped, and 4 real rows would have logged phantom compile defects.
+- **Lost failures count as "unknown".** A call with no result event becomes
+  `unmatched_call` and is never read as 0.
+- **Write-back now covers SDLC metrics,** but rate- and calibration-derived figures are
+  never written.
+- **The settings routes use `local_caller_guard`.**
+- **Data-correctness fixes:**
+  - `submitted_at` comes after the first code edit
+  - `lead_hours` and holds are never negative
+  - trigger fails are limited to their category
+  - an un-derived session is `not_derived`
+  - shared sessions count once
+  - a points sum over nothing is null
 
-**F2–F5 done (2026-10-27, unattended):**
-- F2 `ac7822d2b`/`0dc79d0cb`: write seam, comment surface.
-- F3 `3148ba1fd`: per-board switch and state line.
-- F4 `521a99f77`: mapped fields. Review fixes: Save takes the board lock (409 `busy`),
-  `clear_pending` (last landed vs tried), unclearable retired fields dropped, the checks
-  each over the whole body.
-- F5: `scripts/check-tracker-readonly-docs.sh` (+ `make check-tracker-docs`, in `test` and `test-fast`);
-  the W-DOCS set narrowed 38 → 0; new decisions.md 2026-10-26 entry.
-- senseid 3965 tests, app 2497, all passing.
+**Open (human):** update the installed sensei plugin (0.11.0 lacks `PostToolUseFailure`),
+and start the daemon for live gate 9.
 
-**Next:** F6 needs the user: a Jira Cloud tenant with a person token, an app token and two
-assignees, to run X1–X8 and the tenant gates. Then `/sensei:complete`.
-
-**Earlier next (done):** `/sensei:build` F2 (the write seam and the comment surface). Re-run the claims ledger first.
-- After any `database/` change, run `make test-template`.
-- Build with `cargo … -j 4`.
-- F2 also adds the `connect_tracker` reset of the `writeback_*` columns (gate 22, write-back half) and the
-  gate-2 `writeback.state` half, and updates the linkage R8 route table and `types.ts`.
-
-**Blocks the F2 merge:** a Jira tenant for gate 27 (X1–X8). It needs a person token, an app token and two assignees.
-
----
-
-# Checkpoint — 2026-10-26
-
-**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md), wave 5.
-**Released v0.20.2** (user go, 2026-10-25): PR #337 merged, tag `v0.20.2`; builds, GitHub release and tap done.
-The dōjō Worker serves 0.20.2 (`5fd2eb8`). **`deploy-dojo` is waiting for the user's approval** (no dōjō DDL
-in this release). Local daemon on 0.20.2.
-
-**Closed:** #178 and #188, both verified on the released daemon. Earlier this run: #106, #335, #201, #204,
-#183, #142, #298, #172, #195.
-
-**Waiting on observation (released in 0.20.2):**
-- #336: a week with no `ingest_capture` abandonment (`GET /api/tasks/abandoned`).
-- #125: on 0.20.2, 72 → 22 orphan turn sets. 5dea36e3 (develop, next release) ignores the 4 fresh orphans
-  that have hook events, leaving 18 with no transcript. Check: count after the next release.
-
-**In progress — #161 (typed rows):** 38 left in `STILL_POSITIONAL` (`typed_rows_tests.rs`), none at 7+ args.
-Latest: `EdgeRow`/`EdgeTarget` (ee8fabd2, 4950eff0), `FolderRow` (0d6d67df), `TaskExecutionStart`.
-**Next:** the 14 at six args, starting with the writers (`upsert_transcript_turns`,
-`upsert_library`, `upsert_pattern`, `create_extension`, …). Each gets a round-trip test and a swapped-bind probe.
-
-**Watch roots:** the live DB watches only sensei on purpose until the indexer covers JS/TS/Java/.NET;
-then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.
-
-**Open (the user's):**
-- Approve `deploy-dojo` for v0.20.2 (no-op) and the v0.20.1 one still pending (also a no-op).
-- dbd 0.27.7 (lockfile advisories; could carry dbd#107). Needs a go.
-- #331: production count (counts only):
-  `psql "$PROD" -Atc "select count(*) from dojo.tenants where origin='personal' and key ~ '-[0-9]+$'"`.
-
-**Develop was red on a4e7171c:** a tracker test raced its own setup; 052d9b4f fixes the test (not reproduced
-locally, 0/120). Confirm the next develop run is green.
-
-**Known:** the dōjō Workers build fails intermittently on PR/develop commits (it passed on main). The
-Cloudflare MCP needs `/mcp` auth to read build logs. qlty is out of minutes. After a DDL change, run
-`make test-template`.
+**Next command:** `/sensei:build` on `docs/plans/2026-10-29-tracker-sdlc-metrics.md`,
+starting with F1 (command catalogue + classifier, gate 1). Re-run the claims ledger first.
