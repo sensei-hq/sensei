@@ -32,6 +32,11 @@ the tracker.
 | D2 | Sprint history: backfill from the tracker, or snapshot from now? | **Backfill** from the tracker (and keep it current) |
 | D3 | `hourly_rate` | **Project-level** blended rate for now; no per-person rate |
 | D4 | Branch | `feature/sdlc_metrics`, cut from `feature/tracker_metrics_writeback` (D1 needs its write path; that PR is not merged yet) |
+| D5 | Colliding names (§6 Q1) | Keep R7's `cycle_time` (first session → last session). The list's edit → PR span is `execution_time`; the list's rework share is `post_review_rework_ratio` |
+| D6 | Estimates (§6 Q2) | `estimated_points` = the tracker's story points (pre-work). No `tasks.md` heuristic; `points_variance` needs only an `actual_points` definition |
+| D7 | Review defects (§6 Q3) | Detect two sources (§4 "Review defects"): **spec-driven tasks that turn out broken at build time** (e.g. OpenSpec tasks ticked done, then the build/test fails), and **cross-model review** (generated code reviewed by another model, and its findings fixed) |
+| D8 | Build/test classifier (§6 Q4) | **Every framework**, not a fixed list (§4 "Classifier") |
+| D9 | Write-back field set (§6 Q5) | Deferred; the user decides later. Design keeps every new figure write-back-capable but maps none by default |
 
 ## 1 · What was read (grounding)
 
@@ -153,26 +158,55 @@ greenhopper API.
 assumption and carries no person data. Write-back writes it nowhere, only the cost
 figure derived from it.
 
+### Review defects (D7)
+
+The list's `review_defects` ("real defects found and fixed from code review") becomes
+two detected kinds, both from data already captured (`assistant_events.payload` keeps
+`tool_input`, and `pg_store/sessions.rs` already reads `tool_input.subagent_type`):
+
+| Kind | Signal | Counted when |
+|---|---|---|
+| **Escaped task defect** | An Edit/Write that ticks a task done in a spec-driven task list (OpenSpec `openspec/changes/*/tasks.md` `- [ ]` → `- [x]`; sensei plan graph `update_task_status` → done) | A build or test failure (D8 classifier) follows the tick, before the next tick or the PR, and a later Edit/Write fixes it. The defect belongs to the ticked task |
+| **Cross-model review finding** | A review by **another model**: a reviewer subagent (`Agent` with a reviewer `subagent_type`), another CLI over Bash (`codex`, `gemini`, …), sensei `consensus` / `/sensei:review` (`review_finding` events) | The finding is followed by an Edit/Write on the file it names. Refuted findings (`refuted_finding_rate`'s population) aren't defects |
+
+Escaped task defects are a **new quality signal** ("claimed done, broke at build"),
+distinct from ordinary `compile_defects`. They should be reported on their own, not just
+folded into `total_defects`.
+
+### Build/test classifier (D8)
+
+Every framework means the classifier must be data, not code branches:
+
+- **Command catalogue:** a table mapping toolchain → build / test command patterns
+  (cargo, go, dotnet, mvn/gradle, make/cmake/ninja, npm/pnpm/bun/yarn, pytest/tox/uv,
+  swift, mix, bundle/rake, …), extended without a code change. It's owned in one place
+  (DRY), and checked first against what the indexer already records per repo
+  (stack detection, `get_project_summary`).
+- **Indirection:** `bun run test`, `make check`, `just ci` only say what they do in the
+  repo's own `package.json` scripts / Makefile / justfile. The classifier resolves the
+  script name through the repo's manifest, falling back to its name (`test*`, `build`,
+  `check`, `ci`).
+- **Unclassified commands are reported, not guessed.** Each session keeps the count of
+  non-zero-exit Bash commands that matched no pattern, so the catalogue's gaps can be
+  seen rather than turning into silent zeros.
+
 ## 5 · Out of scope (proposed)
 
 - Per-person rates, or any per-person figure beyond the existing assigned-to-me write.
-- `estimated_points` / `actual_points` heuristics until the X inputs are designed
-  (§6 Q2); `points_variance` and `time_variance` wait with them.
+- An `actual_points` heuristic until it is designed (D6); `points_variance` waits on it.
+  `time_variance` is in, via story points × `minutes_per_point`.
 - Watermark-engine grains (option B), and Dōjō rollups of ticket/sprint metrics.
 - Project phases (P0–P7) / ticket phases (T0–T4) tagging from `sdlc-phases.json`.
 - GitLab / other adapters (Jira first, the same seam as linkage).
 
 ## 6 · Open questions for design
 
-1. **Names for the colliding metrics:** keep R7's `cycle_time` and add
-   `execution_time` (edit → PR), and name the list's rework `post_review_rework_ratio`?
-   Or rename R7's?
-2. **Estimates:** does sensei source `estimated_points` from the tracker's story points
-   (pre-work) and skip the `tasks.md` heuristic? That makes `points_variance` need only
-   an `actual_points` definition.
-3. **`review_defects`:** count `/sensei:review` findings that were fixed (not refuted)
-   per linked session, or leave the review-based quality ratios out of v1?
-4. **Build/test classifier:** a fixed command-pattern list, or the repo's detected
-   build/test commands (the indexer already knows the stack)?
-5. **Write-back field set:** which of the new figures go to Jira? Every new field means
-   another mapping on the board, or more lines in the comment.
+Q1–Q4 resolved as D5–D8; Q5 deferred (D9). Still open:
+
+1. **A finding's identity in another model's output.** A reviewer subagent or CLI
+   returns prose. Is a finding one item in its output (needs parsing per reviewer), or
+   one subsequent fix (an Edit on a file the review named)? The second is detectable
+   everywhere but undercounts findings fixed together.
+2. **Escaped defects across sessions.** A task ticked in one session and broken in the
+   next (or by another developer) — count it against the ticking task, or only within
+   the same session?
