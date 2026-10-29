@@ -82,6 +82,7 @@ mod tests {
             issue_type: None,
             status: None,
             assignee: None,
+            ..Default::default()
         }
     }
 

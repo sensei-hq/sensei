@@ -720,6 +720,7 @@ mod tests {
                 issue_type: None,
                 status: Some("opened".into()),
                 assignee: None,
+                ..Default::default()
             };
             let iteration = |id: &str, seq: i64, state| SprintRow {
                 external_id: id.into(),
@@ -738,6 +739,7 @@ mod tests {
                     task("gid://issue/2", "#12", &self.scopes[1]),
                 ],
                 members: vec![("gid://iteration/7".into(), Some(vec!["gid://issue/1".into()]))],
+                points_field: None,
             })
         }
         /// `#N` in a prompt, for the task of that key whose scope is the session's repo.

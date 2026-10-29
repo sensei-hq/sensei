@@ -734,6 +734,12 @@ Enum "sensei"."tool_usage" {
   "ignored"
 }
 
+Enum "sensei"."tracked_change_field" {
+  "sprint"
+  "status"
+  "estimate"
+}
+
 Enum "sensei"."tracker_error" {
   "unauthorized"
   "forbidden"
@@ -2893,6 +2899,12 @@ Table "sensei"."trackers" {
   "owner_error" sensei.tracker_error [note: 'Failure code of the last owner lookup (W1 backfill); NULL after a successful one. Kept apart from last_error: the read sync never fails because of the lookup.']
   "writeback_enabled" boolean [not null, default: true, note: 'Whether sensei writes usage metrics back to tickets assigned to the token owner (spec tracker-metrics-writeback W8). On by default, for boards connected before write-back too (user decision 2026-10-26).']
   "writeback_error" sensei.tracker_error [note: 'Why the last write-back pass could not run or ended early (W2): token_missing / credential_store, db, rate_limited, transport. NULL after a pass that ran. Written only by the pass; never last_error.']
+  "estimation_field" text [note: 'The board\'s story-point field id (customfield_N), learned by the history task from the board configuration; NULL when the board estimates by count or not at all (spec tracker-sdlc-metrics S4, A6).']
+  "points_field" text [note: 'The estimation field the last sync read points under (its id, or none when it cleared them). Points are trusted only when it matches estimation_field (spec tracker-sdlc-metrics S4, A6); NULL until a sync asked.']
+  "sprint_field" text [note: 'The id of the site\'s Sprint custom field (schema.custom gh-sprint), learned by the history task; changelog sprint items are matched by it (spec tracker-sdlc-metrics S4, A6). NULL when the site has none.']
+  "history_error" sensei.tracker_error [note: 'Why the last history run stopped early (S4); NULL when it completed or ran out of time cleanly. Never touches last_error.']
+  "history_at" timestamptz [note: 'When the history task last ran.']
+  "terms_at" timestamptz [note: 'When the history task last read the board\'s terms (estimation field, Sprint field, statuses). NULL until a run read them: until then estimation_field means nothing and synced points are kept (spec tracker-sdlc-metrics S4, A6).']
   "created_at" timestamptz [not null, default: `now()`, note: 'When the connection was first made.']
 
   indexes {
@@ -3781,6 +3793,19 @@ Table "sensei"."tracker_fields" {
   Note: 'A tracker\'s custom fields for usage write-back. A row with a metric is mapped: that metric is written into the field. A row without one is retired: sensei wrote the field before, so it clears it on each ticket\'s next write. Replaced by PUT …/trackers/{tracker}/fields.'
 }
 
+Table "sensei"."tracker_statuses" {
+  "tracker_id" uuid [pk, not null, note: 'The tracker.']
+  "status_id" text [pk, not null, note: 'The provider\'s status id, as the changelog records it.']
+  "name" text [not null, note: 'The status name.']
+  "category" text [not null, note: 'statusCategory.key: new, indeterminate, done (or undefined).']
+
+  checks {
+    `category IN ('new', 'indeterminate', 'done', 'undefined')`
+  }
+
+  Note: 'Statuses of a tracker and their category, replaced by each history run (spec tracker-sdlc-metrics S4).'
+}
+
 Table "sensei"."tracker_unknown_keys" {
   "tracker_id" uuid [pk, not null, note: 'The tracker whose board was asked.']
   "key" text [pk, not null, note: 'The key as the adapter shaped it (Jira: upper-cased).']
@@ -4311,10 +4336,19 @@ Table "sensei"."tracker_tasks" {
   "writeback_status" sensei.tracker_writeback_status [note: 'The last write-back outcome (W9); NULL when never attempted.']
   "writeback_at" timestamptz [note: 'When a write-back last landed on this ticket.']
   "writeback_tried_at" timestamptz [note: 'When write-back last tried this ticket, landed or not: the pass order (oldest first, never-tried first), so a ticket that keeps failing never starves the others (W2).']
+  "issue_created_at" timestamptz [note: 'When the issue was created in the tracker (spec tracker-sdlc-metrics S4); the start of lead time.']
+  "issue_updated_at" timestamptz [note: 'When the tracker last changed the issue; history is re-read when this passes history_through.']
+  "points" numeric [note: 'Story points: the board\'s estimation field (trackers.estimation_field), NULL when unset or not a number. Kept as it was while the field is unknown.']
+  "status_category" text [note: 'The status\'s category (new, indeterminate, done), from the tracker\'s status.statusCategory.key.']
+  "history_through" timestamptz [note: 'The issue_updated_at the changelog was last read through (S4); NULL until first read.']
 
   indexes {
     (tracker_id, external_id) [unique, note: 'unique constraint']
     (tracker_id, key) [name: 'tracker_tasks_tracker_id_key_idx']
+  }
+
+  checks {
+    `status_category IN ('new', 'indeterminate', 'done', 'undefined')`
   }
 
   Note: 'Tickets (issues) of a tracker board, mirrored from the tracker; usage is written back to the token owner\'s (spec tracker-metrics-writeback). Keyed on the provider\'s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).'
@@ -4462,6 +4496,17 @@ Table "sensei"."session_task_links" {
   }
 
   Note: 'A session linked to a tracker ticket because its branch or prompts carry one of the ticket\'s keys (current or former). Recomputed on every sync of the ticket\'s tracker (a full relink in the sync\'s apply transaction). Only keys the board actually has can link.'
+}
+
+Table "sensei"."tracker_task_changes" {
+  "task_id" uuid [pk, not null, note: 'The ticket.']
+  "change_id" text [pk, not null, note: 'The tracker\'s changelog history id.']
+  "field" sensei.tracked_change_field [pk, not null, note: 'What changed.']
+  "at" timestamptz [not null, note: 'When it changed (the history\'s created time).']
+  "from_value" text [note: 'The raw value before: sprint ids comma-separated, a status id, or points as text.']
+  "to_value" text [note: 'The raw value after.']
+
+  Note: 'Tracker changelog entries per ticket for sprint, status and estimate (spec tracker-sdlc-metrics S4). Insert-only; read by the sprint replay.'
 }
 
 Table "sensei"."tracker_task_keys" {
@@ -4622,6 +4667,7 @@ Ref: "sensei"."rule_packs"."owner_namespace_id" > "sensei"."namespaces"."id" [de
 Ref: "sensei"."sprints"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "sensei"."stances"."namespace_id" > "sensei"."namespaces"."id" [delete: cascade]
 Ref: "sensei"."tracker_fields"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
+Ref: "sensei"."tracker_statuses"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "sensei"."tracker_unknown_keys"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "activity"."memory_loads"."session_id" > "activity"."sessions"."id" [delete: set null]
 Ref: "activity"."memory_loads"."workspace_id" > "sensei"."workspaces"."id" [delete: set null]
@@ -4674,6 +4720,7 @@ Ref: "sensei"."edges"."target_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "sensei"."schema_entities"."node_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "sensei"."session_task_links"."session_id" > "activity"."sessions"."id" [delete: cascade]
 Ref: "sensei"."session_task_links"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
+Ref: "sensei"."tracker_task_changes"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
 Ref: "sensei"."tracker_task_keys"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
 Ref: "sensei"."tracker_task_sprints"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
 Ref: "sensei"."tracker_task_sprints"."sprint_id" > "sensei"."sprints"."id" [delete: cascade]

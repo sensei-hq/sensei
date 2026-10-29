@@ -19,6 +19,11 @@ create table if not exists tracker_tasks (
 , writeback_status   tracker_writeback_status
 , writeback_at       timestamptz
 , writeback_tried_at timestamptz
+, issue_created_at   timestamptz
+, issue_updated_at   timestamptz
+, points             numeric
+, status_category    text         check (status_category in ('new', 'indeterminate', 'done', 'undefined'))
+, history_through    timestamptz
 , unique (tracker_id, external_id)
 );
 
@@ -60,3 +65,14 @@ comment on column tracker_tasks.writeback_at
      is 'When a write-back last landed on this ticket.';
 comment on column tracker_tasks.writeback_tried_at
      is 'When write-back last tried this ticket, landed or not: the pass order (oldest first, never-tried first), so a ticket that keeps failing never starves the others (W2).';
+
+comment on column tracker_tasks.issue_created_at
+     is 'When the issue was created in the tracker (spec tracker-sdlc-metrics S4); the start of lead time.';
+comment on column tracker_tasks.issue_updated_at
+     is 'When the tracker last changed the issue; history is re-read when this passes history_through.';
+comment on column tracker_tasks.points
+     is 'Story points: the board''s estimation field (trackers.estimation_field), NULL when unset or not a number. Kept as it was while the field is unknown.';
+comment on column tracker_tasks.status_category
+     is 'The status''s category (new, indeterminate, done), from the tracker''s status.statusCategory.key.';
+comment on column tracker_tasks.history_through
+     is 'The issue_updated_at the changelog was last read through (S4); NULL until first read.';

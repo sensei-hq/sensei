@@ -23,6 +23,12 @@ create table if not exists trackers (
 , owner_error      tracker_error
 , writeback_enabled boolean      not null default true
 , writeback_error  tracker_error
+, estimation_field text
+, points_field     text
+, sprint_field     text
+, history_error    tracker_error
+, history_at       timestamptz
+, terms_at         timestamptz
 , created_at       timestamptz   not null default now()
 , unique (kind, base_url, board_ref)
 );
@@ -68,3 +74,16 @@ comment on column trackers.writeback_error
      is 'Why the last write-back pass could not run or ended early (W2): token_missing / credential_store, db, rate_limited, transport. NULL after a pass that ran. Written only by the pass; never last_error.';
 comment on column trackers.created_at
      is 'When the connection was first made.';
+
+comment on column trackers.estimation_field
+     is 'The board''s story-point field id (customfield_N), learned by the history task from the board configuration; NULL when the board estimates by count or not at all (spec tracker-sdlc-metrics S4, A6).';
+comment on column trackers.points_field
+     is 'The estimation field the last sync read points under (its id, or none when it cleared them). Points are trusted only when it matches estimation_field (spec tracker-sdlc-metrics S4, A6); NULL until a sync asked.';
+comment on column trackers.sprint_field
+     is 'The id of the site''s Sprint custom field (schema.custom gh-sprint), learned by the history task; changelog sprint items are matched by it (spec tracker-sdlc-metrics S4, A6). NULL when the site has none.';
+comment on column trackers.history_error
+     is 'Why the last history run stopped early (S4); NULL when it completed or ran out of time cleanly. Never touches last_error.';
+comment on column trackers.terms_at
+     is 'When the history task last read the board''s terms (estimation field, Sprint field, statuses). NULL until a run read them: until then estimation_field means nothing and synced points are kept (spec tracker-sdlc-metrics S4, A6).';
+comment on column trackers.history_at
+     is 'When the history task last ran.';

@@ -255,19 +255,29 @@ async fn upsert_tasks(
     // Compared with the owner here, in the apply's transaction; never stored (W1).
     let t_assignee: Vec<Option<&str>> =
         tasks.iter().map(|t| t.assignee.as_ref().map(|a| a.as_str())).collect();
+    let t_created: Vec<Option<chrono::DateTime<chrono::Utc>>> =
+        tasks.iter().map(|t| t.created_at).collect();
+    let t_updated: Vec<Option<chrono::DateTime<chrono::Utc>>> =
+        tasks.iter().map(|t| t.updated_at).collect();
+    let t_category: Vec<Option<String>> = tasks.iter().map(|t| t.status_category.clone()).collect();
     sqlx_core::query::query(
         "INSERT INTO sensei.tracker_tasks
                 (tracker_id, external_id, key, scope, summary, issue_type, status, removed_at, last_seen_at,
-                 assigned_to_me)
+                 assigned_to_me, issue_created_at, issue_updated_at, status_category)
          SELECT $1, x.e, x.k, x.sc, x.su, x.ty, x.st, NULL, now(),
-                CASE WHEN o.owner_ref IS NULL THEN NULL ELSE coalesce(x.a = o.owner_ref, false) END
-           FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[])
-                AS x(e, k, sc, su, ty, st, a)
+                CASE WHEN o.owner_ref IS NULL THEN NULL ELSE coalesce(x.a = o.owner_ref, false) END,
+                x.cr, x.up, x.ca
+           FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[],
+                       $9::timestamptz[], $10::timestamptz[], $11::text[])
+                AS x(e, k, sc, su, ty, st, a, cr, up, ca)
           CROSS JOIN (SELECT owner_ref FROM sensei.trackers WHERE id = $1) o
          ON CONFLICT (tracker_id, external_id) DO UPDATE
             SET key = excluded.key, scope = excluded.scope, summary = excluded.summary,
                 issue_type = excluded.issue_type, status = excluded.status,
-                removed_at = NULL, last_seen_at = now(), assigned_to_me = excluded.assigned_to_me",
+                removed_at = NULL, last_seen_at = now(), assigned_to_me = excluded.assigned_to_me,
+                issue_created_at = excluded.issue_created_at,
+                issue_updated_at = excluded.issue_updated_at,
+                status_category = excluded.status_category",
     )
     .bind(id)
     .bind(&t_ext)
@@ -277,6 +287,23 @@ async fn upsert_tasks(
     .bind(&t_type)
     .bind(&t_status)
     .bind(&t_assignee)
+    .bind(&t_created)
+    .bind(&t_updated)
+    .bind(&t_category)
+    .execute(&mut *c)
+    .await?;
+    // Points only for the rows that asked (S4): one not asked keeps its value.
+    let (p_ext, p_raw): (Vec<String>, Vec<Option<String>>) =
+        tasks.iter().filter_map(|t| t.points.clone().map(|p| (t.external_id.clone(), p))).unzip();
+    sqlx_core::query::query(
+        "UPDATE sensei.tracker_tasks t
+            SET points = CASE WHEN x.p ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN x.p::numeric END
+           FROM unnest($2::text[], $3::text[]) AS x(e, p)
+          WHERE t.tracker_id = $1 AND t.external_id = x.e",
+    )
+    .bind(id)
+    .bind(&p_ext)
+    .bind(&p_raw)
     .execute(&mut *c)
     .await
     .map(|_| ())
@@ -487,11 +514,25 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
+        let (field, learned): (Option<String>, bool) = sqlx_core::query_as::query_as(
+            "SELECT estimation_field, terms_at IS NOT NULL FROM sensei.trackers WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .unwrap_or((None, false));
+        let estimation = match (learned, field) {
+            (false, _) => crate::tracker::Estimation::NotLearned,
+            (true, None) => crate::tracker::Estimation::NoField,
+            (true, Some(f)) => crate::tracker::Estimation::Field(f),
+        };
         Ok(PrevState {
             members_fetched_state: rows
                 .into_iter()
                 .map(|(ext, state)| (ext, state.as_deref().and_then(SprintState::parse)))
                 .collect(),
+            estimation,
         })
     }
 
@@ -581,6 +622,15 @@ impl PgStore {
 
         // Tickets.
         upsert_tasks(&mut tx, id, &tasks).await.map_err(db)?;
+        // The field these points were read under (S4, A6), in the same apply.
+        if let Some(field) = &snapshot.points_field {
+            sqlx_core::query::query("UPDATE sensei.trackers SET points_field = $2 WHERE id = $1")
+                .bind(id)
+                .bind(field)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
         let t_ext: Vec<String> = tasks.iter().map(|t| t.external_id.clone()).collect();
         let removed_tasks = sqlx_core::query::query(
             "UPDATE sensei.tracker_tasks SET removed_at = now()
@@ -1611,6 +1661,70 @@ mod schema_tests {
         pg.create_workspace(&format!("_test:tracker:{tag}:{}", uuid::Uuid::new_v4()), None, None)
             .await
             .unwrap()
+    }
+
+    /// S4: the apply stores the ticket's times and status category; its points only
+    /// when they were asked for.
+    #[tokio::test]
+    async fn the_apply_stores_times_category_and_points_only_when_asked() {
+        use crate::tracker::{Snapshot, TaskRow};
+        let pg = PgStore::test_store().await;
+        let w = pg
+            .create_workspace(&format!("_test:apply:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let svc = format!("svc-{}", uuid::Uuid::new_v4());
+        let t = insert_tracker(
+            &pg,
+            w,
+            &format!("https://a{}.atlassian.net", uuid::Uuid::new_v4().simple()),
+            "42",
+            &svc,
+        )
+        .await
+        .unwrap();
+        let created =
+            chrono::DateTime::parse_from_rfc3339("2026-09-01T10:00:00Z").unwrap().to_utc();
+        let row = |points: Option<Option<&str>>| TaskRow {
+            external_id: "10001".into(),
+            key: "AUTH-1".into(),
+            created_at: Some(created),
+            updated_at: Some(created),
+            status_category: Some("done".into()),
+            points: points.map(|p| p.map(String::from)),
+            ..Default::default()
+        };
+        let read = || async {
+            sqlx_core::query_as::query_as::<
+                _,
+                (Option<f64>, Option<chrono::DateTime<chrono::Utc>>, Option<String>),
+            >(
+                "SELECT points::float8, issue_created_at, status_category FROM sensei.tracker_tasks
+                  WHERE tracker_id = $1 AND external_id = '10001'",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap()
+        };
+        let apply = |points| {
+            let snapshot = Snapshot { tasks: vec![row(points)], ..Default::default() };
+            let (pg, svc) = (&pg, svc.clone());
+            async move {
+                pg.apply_tracker_snapshot(t, &svc, &snapshot, &serde_json::json!({}), &[])
+                    .await
+                    .unwrap()
+            }
+        };
+        apply(Some(Some("3"))).await;
+        assert_eq!(read().await, (Some(3.0), Some(created), Some("done".to_string())));
+        apply(None).await;
+        assert_eq!(read().await.0, Some(3.0), "not asked: kept");
+        apply(Some(Some("lots"))).await;
+        assert_eq!(read().await.0, None, "not a number: NULL");
+        apply(Some(Some("2.5"))).await;
+        apply(Some(None)).await;
+        assert_eq!(read().await.0, None, "asked, none: cleared");
     }
 
     async fn insert_tracker(

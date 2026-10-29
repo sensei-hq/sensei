@@ -45,7 +45,7 @@ Metrics are **computed at read** from those two stores plus R7 usage, as R7 itse
 
 | Parent says | Now | Why |
 |---|---|---|
-| linkage R5: sprints, tasks, memberships and links commit "together or not at all"; a partial sync changes no data rows (wrong gate :749) | **Unchanged for sync.** Ticket history is **not** part of sync: S5's history task runs *after* a successful sync, commits per issue, and never sets `last_error` or touches `last_success_at` | D2 backfills 733+ issues at one GET each, which cannot fit one all-or-nothing transaction under `SYNC_DEADLINE` (`tracker/sync.rs:20`, where a timeout aborts the sync, `sync.rs:118-130`) |
+| linkage R5: sprints, tasks, memberships and links commit "together or not at all"; a partial sync changes no data rows (wrong gate :749) | **Unchanged for sync.** Ticket history is **not** part of sync: S4's history task runs *after* a successful sync, commits per issue, and never sets `last_error` or touches `last_success_at` | D2 backfills 733+ issues at one GET each, which cannot fit one all-or-nothing transaction under `SYNC_DEADLINE` (`tracker/sync.rs:20`, where a timeout aborts the sync, `sync.rs:118-130`) |
 | "usage metrics only" write-back. Each surface is listed below | The local daemon writes **usage and SDLC metrics** (S9's list), and only into fields the user maps. **Rate- and calibration-derived figures are never written.** The comment is unchanged | D1 (user, 2026-10-29: shown in screens **and** write-back) |
 | writeback W2: after a sync, `spawn_after_sync` takes the tracker guard (`try_lock`; busy → no pass this round) and runs the write-back pass | Under the **same guard and spawned task**, the history task (S4) runs **after** the pass, or alone when write-back is off. One guard and one spawn, so neither starves the other, and both are serialised with sync | S4 |
 | writeback W3: each mapped metric "comes from the R7 `Usage`"; `metric_value(metric, &Usage)`; a kind per metric | `metric_value(metric, &TicketFigures)`, where `TicketFigures { usage: Usage, sdlc: TicketSdlc }`. The 13 existing keys read `usage` exactly as before. The new keys take S9's kinds with W3's rounding and canonical-value rules | S9 |
@@ -399,17 +399,29 @@ change re-derives every session (S2).
 
 ### S4 · Ticket history (D2)
 
+*Amendment A6 (F5 pre-implementation audit):*
+- *sync gains fields only, no new requests;*
+- *board configuration, the sprint field id and the statuses are read by the history task;*
+- *Jira's `+0000` timestamps get their own parser;*
+- *the Sprint field is matched by id;*
+- *`from`/`to` versus `fromString`/`toString` is stated per field;*
+- *"estimation not learned yet" is distinct from "no field";*
+- *`history_error`/`history_at` are surfaced.*
+
 **Columns on `sensei.tracker_tasks`:**
-- `issue_created_at`, `issue_updated_at` timestamptz
+- `issue_created_at`, `issue_updated_at` timestamptz (NULL when the tracker omits them)
 - `points` numeric (the estimation field's current value)
-- `status_category` text (`new`, `indeterminate`, `done`)
+- `status_category` text (`new`, `indeterminate`, `done`, `undefined`)
 - `history_through` timestamptz (the `issue_updated_at` the changelog was last read through)
 
 **Columns on `sensei.trackers`:**
 - `estimation_field` text: the board's field id, or NULL when the board estimates by count
-  or not at all
-- `history_error` text
+  or not at all. It is only meaningful once `terms_at` is set
+- `points_field` text: the estimation field the last sync read points under (its id, or `none` when it cleared them), recorded in the same apply. A ticket's points are trusted (S6) only when `terms_at` is set **and** `points_field` matches `estimation_field` (or `none` for no field). Otherwise the estimate is `not_synced`, which covers the sync between the history task learning a field and the next sync reading it
+- `sprint_field` text: the id of the board site's Sprint custom field, or NULL when none exists
+- `history_error` `tracker_error`
 - `history_at` timestamptz
+- `terms_at` timestamptz: when a history run last read the board's terms successfully. A run that failed to read them leaves it as it was, so a failure is never taken for "no estimation field"
 
 **New table `sensei.tracker_task_changes`:** PK `(task_id, change_id, field)`, insert-only.
 
@@ -419,36 +431,61 @@ change re-derives every session (S2).
 | `change_id` | text, the changelog history id |
 | `field` | `sensei.tracked_change_field`: `sprint`, `status` or `estimate` |
 | `at` | timestamptz not null |
-| `from_value`, `to_value` | text |
+| `from_value`, `to_value` | text. Sprint and status take the item's `from` / `to` (ids: comma-separated sprint ids, a status id). Estimate takes `fromString` / `toString` (points as text) |
 
 **New table `sensei.tracker_statuses`:** `(tracker_id, status_id)` PK, `name`, `category`.
 
-**Sync additions** (inside the existing R5 fetch and apply, all-or-nothing as before):
-1. `GET /rest/agile/1.0/board/{board}/configuration` → `estimation.field.fieldId` when
-   `estimation.type = "field"`. A value failing `field_number` (`jira.rs:678`) is stored as
-   NULL.
-2. `GET /rest/api/3/status` → `tracker_statuses` (`statusCategory.key`).
-3. `ISSUE_FIELDS` and `SEARCH_FIELDS` gain `created`, `updated` and the estimation field.
-   `status_category` is read from `fields.status.statusCategory.key`.
+**Sync additions** (inside the existing R5 fetch and apply, all-or-nothing as before). Sync
+gains **fields only, no new requests**, so the R5 call sequence is unchanged.
+1. The existing issue fetch (`ISSUE_FIELDS`) and discovery search (`SEARCH_FIELDS`) gain
+   `created` and `updated`. The issue fetch also asks for the board's estimation field when
+   one is known (`PrevState`, from `pg_store::tracker_prev_state`).
+2. `status_category` is read from `fields.status.statusCategory.key` (the `status` field
+   already carries it): `new`, `indeterminate`, `done` or `undefined`, and any other value
+   is NULL. The estimate is kept as text: a JSON number becomes its decimal text, a string
+   stays as it is, anything else is NULL. The apply parses it, and a non-numeric value
+   stores `points` NULL.
+3. **Timestamps.** Jira sends `created`, `updated` and a changelog's `created` as
+   `2021-01-17T12:34:00.000+0000` (an offset without a colon), which RFC 3339 parsers
+   reject. They are parsed with `%Y-%m-%dT%H:%M:%S%.f%z`, accepting RFC 3339 too. Both
+   issue fields are optional: a missing one stores NULL.
+4. The apply stores `issue_created_at`, `issue_updated_at`, `status_category` and `points`.
+   For `points`, `PrevState` says what the board's estimation is:
+   - **not learned yet** (`terms_at IS NULL`): `points` stays as it was;
+   - **learned, no field**: `points` is cleared;
+   - **a field**: it is asked for and stored.
+
+   Story points therefore appear from the first sync after the history task has learned
+   the field: a one-sync lag on first install.
 
 **History task** `tracker_history` (`tracker/history.rs`). It is not a separate spawn:
 `writeback::spawn_after_sync` keeps its one `try_lock(tracker_id)`, runs the write-back pass
 when `writeback_enabled`, then `history::run(…, HISTORY_DEADLINE, &guard)`, then drops the
 guard. Because sync holds the same per-tracker lock, history never runs concurrently with a
-sync's apply.
-- Selects non-removed tasks with `history_through IS NULL OR issue_updated_at > history_through`,
-  oldest `issue_updated_at` first.
+sync's apply. It builds only the GET transport (`transports.transport`), never the write
+transport, and writeback gate 13's per-file loop includes `history`.
+- First it reads the board's terms, each failure setting `history_error` and stopping the run:
+  - `GET /rest/agile/1.0/board/{board}/configuration`: `trackers.estimation_field` =
+    `estimation.field.fieldId` when `estimation.type = "field"` and the id passes
+    `field_number` (`jira.rs:678`), otherwise NULL;
+  - `GET /rest/api/3/field`: `trackers.sprint_field` = the id of the field whose
+    `schema.custom` is `com.pyxis.greenhopper.jira:gh-sprint`, otherwise NULL;
+  - `GET /rest/api/3/status`, replacing `tracker_statuses` (`statusCategory.key`).
+- Selects non-removed tasks with `issue_updated_at IS NOT NULL AND (history_through IS NULL OR
+  issue_updated_at > history_through)`, oldest `issue_updated_at` first.
 - Pages `GET /rest/api/3/issue/{id}/changelog?startAt=&maxResults=100` to `isLast`. The
   path is built by `issue_path` (`jira.rs:686`, guarded by `is_jira_id`).
-- Keeps items with `field = "Sprint"`, `fieldId = "status"`, or `fieldId = estimation_field`.
+- Keeps items with `fieldId` = `sprint_field` (by **id**: the field's name can be renamed or
+  localised), `fieldId = "status"`, or `fieldId` = `estimation_field`.
 - Per issue, inserts the rows (skipping existing ones) and sets `history_through =
   issue_updated_at` in one transaction.
 - Its own deadline is `HISTORY_DEADLINE = 5 min`. On the deadline it stops cleanly, sets
   `history_at` and leaves `history_error` NULL. The rest continues next run.
-- A transport or decode error sets `history_error = <TrackerError code>` and stops. It
-  never touches `last_error` or `last_success_at`.
-- Uses the GET-only transport (writeback gate 13). The board issue `expand` is documented as
-  unused, the JQL `expand=changelog` returns only "recent updates", and bulkfetch is a POST.
+- A transport or decode error sets `history_error = <TrackerError code>` and `history_at`,
+  then stops. It never touches `last_error` or `last_success_at`.
+- `history_error` and `history_at` are shown on each `GET …/trackers` item (S7).
+- The board issue `expand` is documented as unused, the JQL `expand=changelog` returns only
+  "recent updates", and bulkfetch is a POST.
 
 ### S5 · Sprint replay (pure, at read)
 
@@ -579,7 +616,7 @@ All on the existing R8 tracker routes (`local_caller_guard`). The only new route
 | `GET /api/workspaces/{id}/trackers/{tracker}/tasks` (`routes.rs:64`) | each row: `sdlc` (S6 ticket) |
 | `GET /api/workspaces/{id}/tracker-tasks/{key}` (`routes.rs:70`) | `sdlc` (S6 ticket) |
 | `GET /api/workspaces/{id}/trackers/{tracker}/sprints` (`routes.rs:63`) | each sprint: `sdlc` (S6 sprint) |
-| `GET /api/workspaces/{id}/trackers` (`routes.rs:50-52`, the list the Tickets screen reads boards from) and the `PATCH …/trackers/{tracker}` response, which has the list item's shape | each tracker: `sdlc_project` (S6 project) |
+| `GET /api/workspaces/{id}/trackers` (`routes.rs:50-52`, the list the Tickets screen reads boards from) and the `PATCH …/trackers/{tracker}` response, which has the list item's shape | each tracker: `sdlc_project` (S6 project), `history_error`, `history_at` (S4) |
 
 ### S8 · Screens
 

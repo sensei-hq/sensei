@@ -7,6 +7,7 @@
 
 pub mod connect;
 pub mod discover;
+pub mod history;
 pub mod http;
 pub mod jira;
 pub mod link;
@@ -293,7 +294,7 @@ pub struct SprintRow {
 }
 
 /// One ticket as the provider reports it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskRow {
     pub external_id: String,
     pub key: String,
@@ -303,6 +304,14 @@ pub struct TaskRow {
     pub status: Option<String>,
     /// Compared with the tracker's owner on apply (W1), never stored.
     pub assignee: Option<AccountRef>,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// `new`, `indeterminate`, `done` or `undefined`; anything else is `None`.
+    pub status_category: Option<String>,
+    /// The story points as text (S4). `None` when the board's estimation field was
+    /// not asked for, so the stored value stays; `Some(None)` when it was asked and
+    /// the ticket has none.
+    pub points: Option<Option<String>>,
 }
 
 /// A complete, all-or-nothing read of a board.
@@ -315,6 +324,9 @@ pub struct Snapshot {
     /// Per sprint `external_id`: its members' `external_id`s, or `None` when the
     /// adapter skipped an immutable (already-fetched closed) sprint.
     pub members: Vec<(String, Option<Vec<String>>)>,
+    /// The estimation field this snapshot read points under (S4, A6): its id, or
+    /// `none` when it cleared them; `None` when it asked for no points.
+    pub points_field: Option<String>,
 }
 
 /// What the previous sync stored, so an adapter can skip immutable data.
@@ -322,6 +334,40 @@ pub struct Snapshot {
 pub struct PrevState {
     /// Sprint `external_id` → the state it had when its members were last fetched.
     pub members_fetched_state: HashMap<String, Option<sprint::SprintState>>,
+    /// The board's story-point field, as the history task last learned it (S4).
+    pub estimation: Estimation,
+}
+
+/// How a board estimates, as far as sensei knows (spec tracker-sdlc-metrics S4).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Estimation {
+    /// The history task has not read the board's configuration yet.
+    #[default]
+    NotLearned,
+    /// By issue count, or not at all.
+    NoField,
+    /// This field holds story points.
+    Field(String),
+}
+
+/// What the history task learns of a board before reading changelogs (S4).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BoardTerms {
+    pub estimation_field: Option<String>,
+    pub sprint_field: Option<String>,
+    /// `(status id, name, category)`.
+    pub statuses: Vec<(String, String, String)>,
+}
+
+/// One changelog entry sensei keeps (S4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeRow {
+    pub change_id: String,
+    /// `sprint`, `status` or `estimate` (`sensei.tracked_change_field`).
+    pub field: &'static str,
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub from_value: Option<String>,
+    pub to_value: Option<String>,
 }
 
 /// Where a session's reference to a ticket was found (`sensei.link_source`).
@@ -468,6 +514,27 @@ pub trait TrackerAdapter: Send + Sync {
         board: &BoardScope,
         keys: &[String],
     ) -> Result<Discovered, TrackerError>;
+
+    /// S4: what the board estimates in, its site's Sprint field, and its statuses.
+    /// Read by the history task, never by sync.
+    async fn board_terms(
+        &self,
+        _t: &dyn GetTransport,
+        _board: &BoardScope,
+    ) -> Result<BoardTerms, TrackerError> {
+        Err(TrackerError::NotFound)
+    }
+
+    /// S4: the changelog entries of one issue for these fields, every page.
+    async fn changelog(
+        &self,
+        _t: &dyn GetTransport,
+        _issue_external_id: &str,
+        _sprint_field: Option<&str>,
+        _estimation_field: Option<&str>,
+    ) -> Result<Vec<ChangeRow>, TrackerError> {
+        Err(TrackerError::NotFound)
+    }
 }
 
 /// The registered adapters — the only place a new tracker is added.
@@ -621,6 +688,7 @@ mod tests {
             issue_type: None,
             status: None,
             assignee: Some(AccountRef::new("SENTINEL-ACCOUNT-ID")),
+            ..Default::default()
         };
         let validated = Validated {
             external_scope: "AUTH".into(),

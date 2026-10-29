@@ -298,12 +298,28 @@ impl TrackerAdapter for JiraAdapter {
                 .map(sprint_row)
                 .collect::<Result<_, _>>()?;
 
+        // S4: created/updated always; the story-point field once the board's is known.
+        let estimation = match &prev.estimation {
+            crate::tracker::Estimation::Field(f) => Some(f.as_str()),
+            _ => None,
+        };
+        let mut fields = format!("{},created,updated", ISSUE_FIELDS[0].1);
+        if let Some(f) = estimation {
+            fields.push(',');
+            fields.push_str(f);
+        }
         let tasks: Vec<TaskRow> =
-            paged(t, &format!("{base}/issue"), "issues", ISSUE_PAGE, &ISSUE_FIELDS)
+            paged(t, &format!("{base}/issue"), "issues", ISSUE_PAGE, &[("fields", &fields)])
                 .await?
                 .iter()
-                .map(task_row)
+                .map(|v| task_row_with(v, estimation))
                 .collect::<Result<_, _>>()?;
+        // A board learned to have no estimation field clears every ticket's points.
+        let tasks = if prev.estimation == crate::tracker::Estimation::NoField {
+            tasks.into_iter().map(|t| TaskRow { points: Some(None), ..t }).collect()
+        } else {
+            tasks
+        };
 
         let mut members = Vec::with_capacity(sprints.len());
         for sprint in &sprints {
@@ -321,7 +337,94 @@ impl TrackerAdapter for JiraAdapter {
                 .collect::<Result<Vec<_>, _>>()?;
             members.push((sprint.external_id.clone(), Some(ids)));
         }
-        Ok(Snapshot { board_name, sprints, tasks, members })
+        let points_field = match &prev.estimation {
+            crate::tracker::Estimation::NotLearned => None,
+            crate::tracker::Estimation::NoField => Some("none".to_string()),
+            crate::tracker::Estimation::Field(f) => Some(f.clone()),
+        };
+        Ok(Snapshot { board_name, sprints, tasks, members, points_field })
+    }
+
+    async fn board_terms(
+        &self,
+        t: &dyn GetTransport,
+        board: &BoardScope,
+    ) -> Result<crate::tracker::BoardTerms, TrackerError> {
+        let config =
+            t.get_json(&format!("{}/configuration", board_path(&board.board_ref)), &[]).await?;
+        let estimation_field = (config.pointer("/estimation/type").and_then(|x| x.as_str())
+            == Some("field"))
+        .then(|| config.pointer("/estimation/field/fieldId").and_then(|x| x.as_str()))
+        .flatten()
+        .filter(|f| field_number(f).is_some())
+        .map(String::from);
+        let fields = t.get_json("/rest/api/3/field", &[]).await?;
+        let sprint_field = fields
+            .as_array()
+            .ok_or(TrackerError::Decode)?
+            .iter()
+            .find(|f| {
+                f.pointer("/schema/custom").and_then(|x| x.as_str())
+                    == Some("com.pyxis.greenhopper.jira:gh-sprint")
+            })
+            .and_then(|f| f.get("id").and_then(|x| x.as_str()))
+            .map(String::from);
+        let statuses = t
+            .get_json("/rest/api/3/status", &[])
+            .await?
+            .as_array()
+            .ok_or(TrackerError::Decode)?
+            .iter()
+            .filter_map(|st| {
+                let text = |p: &str| st.pointer(p).and_then(|x| x.as_str()).map(String::from);
+                Some((text("/id")?, text("/name")?, text("/statusCategory/key")?))
+            })
+            .collect();
+        Ok(crate::tracker::BoardTerms { estimation_field, sprint_field, statuses })
+    }
+
+    async fn changelog(
+        &self,
+        t: &dyn GetTransport,
+        issue_external_id: &str,
+        sprint_field: Option<&str>,
+        estimation_field: Option<&str>,
+    ) -> Result<Vec<crate::tracker::ChangeRow>, TrackerError> {
+        let path = format!("{}/changelog", issue_path(issue_external_id)?);
+        let mut out = Vec::new();
+        for history in paged(t, &path, "values", CHANGELOG_PAGE, &[]).await? {
+            let change_id =
+                history.get("id").and_then(|x| x.as_str()).ok_or(TrackerError::Decode)?.to_string();
+            let at = history
+                .get("created")
+                .and_then(|x| x.as_str())
+                .and_then(jira_instant)
+                .ok_or(TrackerError::Decode)?;
+            for item in history.get("items").and_then(|x| x.as_array()).into_iter().flatten() {
+                let id = item.get("fieldId").and_then(|x| x.as_str());
+                let text = |k: &str| {
+                    item.get(k).and_then(|x| x.as_str()).filter(|v| !v.is_empty()).map(String::from)
+                };
+                // Sprint and status keep ids; the estimate keeps its points as text (A6).
+                let (field, from, to) = if id.is_some() && id == sprint_field {
+                    ("sprint", text("from"), text("to"))
+                } else if id == Some("status") {
+                    ("status", text("from"), text("to"))
+                } else if id.is_some() && id == estimation_field {
+                    ("estimate", text("fromString"), text("toString"))
+                } else {
+                    continue;
+                };
+                out.push(crate::tracker::ChangeRow {
+                    change_id: change_id.clone(),
+                    field,
+                    at,
+                    from_value: from,
+                    to_value: to,
+                });
+            }
+        }
+        Ok(out)
     }
 
     fn match_links(&self, session: &SessionText, known: &[KnownTask]) -> Vec<Link> {
@@ -464,7 +567,7 @@ async fn search_keys(
     let issues = page.get("issues").and_then(|v| v.as_array()).ok_or(TrackerError::Decode)?;
     let mut out = Discovered::default();
     for v in issues {
-        let task = task_row(v)?;
+        let task = task_row_with(v, None)?;
         let sprint_ids = v.pointer("/fields/sprint/id").into_iter().chain(
             v.pointer("/fields/closedSprints")
                 .and_then(|c| c.as_array())
@@ -552,7 +655,10 @@ fn keys_in(text: &[u8], prefixes: &[String]) -> Vec<String> {
 
 const ISSUE_FIELDS: [(&str, &str); 1] = [("fields", "summary,issuetype,status,assignee")];
 /// The fields R11's board search asks for.
-const SEARCH_FIELDS: &str = "summary,issuetype,status,assignee,sprint,closedSprints";
+/// Changelog page size (S4): Jira's maximum for the endpoint.
+const CHANGELOG_PAGE: u32 = 100;
+const SEARCH_FIELDS: &str =
+    "summary,issuetype,status,assignee,sprint,closedSprints,created,updated";
 /// Who the token belongs to (W1).
 const MYSELF: &str = "/rest/api/3/myself";
 /// A listing that never signals its end is a provider fault, not a reason to loop.
@@ -603,6 +709,46 @@ async fn paged(
         }
     }
     Err(TrackerError::Decode)
+}
+
+/// A Jira instant: `2021-01-17T12:34:00.000+0000` (an offset without a colon, which
+/// RFC 3339 parsers reject), or RFC 3339 (S4, A6).
+fn jira_instant(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f%z")
+        .or_else(|_| chrono::DateTime::parse_from_rfc3339(s))
+        .ok()
+        .map(|d| d.with_timezone(&chrono::Utc))
+}
+
+/// A field's value as text (S4): a number's decimal text, a string as it is.
+fn value_text(v: Option<&serde_json::Value>) -> Option<String> {
+    match v? {
+        serde_json::Value::Number(n) => {
+            Some(n.as_f64().map_or_else(|| n.to_string(), |f| format!("{f}")))
+        }
+        serde_json::Value::String(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// A ticket row, asking for `estimation_field` when the board's is known (S4).
+fn task_row_with(
+    v: &serde_json::Value,
+    estimation_field: Option<&str>,
+) -> Result<TaskRow, TrackerError> {
+    const CATEGORIES: [&str; 4] = ["new", "indeterminate", "done", "undefined"];
+    let instant = |path: &str| v.pointer(path).and_then(|x| x.as_str()).and_then(jira_instant);
+    Ok(TaskRow {
+        created_at: instant("/fields/created"),
+        updated_at: instant("/fields/updated"),
+        status_category: v
+            .pointer("/fields/status/statusCategory/key")
+            .and_then(|x| x.as_str())
+            .filter(|k| CATEGORIES.contains(k))
+            .map(String::from),
+        points: estimation_field.map(|f| value_text(v.get("fields").and_then(|fs| fs.get(f)))),
+        ..task_row(v)?
+    })
 }
 
 fn timestamp(
@@ -702,6 +848,7 @@ fn task_row(v: &serde_json::Value) -> Result<TaskRow, TrackerError> {
         assignee: field("/fields/assignee/accountId")
             .filter(|a| !a.is_empty())
             .map(AccountRef::new),
+        ..Default::default()
     })
 }
 
@@ -1573,6 +1720,171 @@ mod discover_tests {
         assert_eq!(
             JiraAdapter.fetch_tasks(&down, &scope(), &keys).await,
             Err(TrackerError::HttpError)
+        );
+    }
+
+    // ---- ticket history (spec tracker-sdlc-metrics S4, A6) ----
+
+    #[test]
+    fn jira_instants_take_offsets_without_a_colon() {
+        let want = chrono::DateTime::parse_from_rfc3339("2021-01-17T12:34:00Z").unwrap();
+        assert_eq!(jira_instant("2021-01-17T12:34:00.000+0000"), Some(want.into()));
+        assert_eq!(jira_instant("2021-01-17T17:34:00.000+0500"), Some(want.into()));
+        assert_eq!(jira_instant("2021-01-17T12:34:00.000Z"), Some(want.into()));
+        assert_eq!(jira_instant("yesterday"), None);
+    }
+
+    #[test]
+    fn task_rows_carry_times_category_and_points() {
+        let v = json!({"id": "1", "key": "A-1", "fields": {
+            "created": "2021-01-17T12:34:00.000+0000", "updated": "2021-01-18T23:45:00.000+0000",
+            "status": {"name": "Done", "statusCategory": {"key": "done"}},
+            "customfield_10016": 3.0}});
+        let t = task_row_with(&v, Some("customfield_10016")).unwrap();
+        assert_eq!(t.created_at, jira_instant("2021-01-17T12:34:00.000+0000"));
+        assert_eq!(t.updated_at, jira_instant("2021-01-18T23:45:00.000+0000"));
+        assert_eq!(t.status_category.as_deref(), Some("done"));
+        assert_eq!(t.points, Some(Some("3".to_string())));
+        let text = json!({"id": "1", "key": "A-1", "fields": {"customfield_10016": "5", "status": {"statusCategory": {"key": "odd"}}}});
+        let t = task_row_with(&text, Some("customfield_10016")).unwrap();
+        assert_eq!((t.points, t.status_category), (Some(Some("5".to_string())), None));
+        let junk = json!({"id": "1", "key": "A-1", "fields": {"customfield_10016": {"value": 1}}});
+        assert_eq!(task_row_with(&junk, Some("customfield_10016")).unwrap().points, Some(None));
+        let bare = json!({"id": "1", "key": "A-1", "fields": {}});
+        let t = task_row_with(&bare, None).unwrap();
+        assert_eq!(
+            (t.points, t.created_at, t.updated_at),
+            (None, None, None),
+            "not asked, so kept"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_issue_fetch_asks_for_the_estimation_field_once_it_is_known() {
+        let board = FakeBoard::standard();
+        JiraAdapter.fetch_snapshot(&board, &scope(), &PrevState::default()).await.unwrap();
+        let fields = |b: &FakeBoard| {
+            b.query_of("/rest/agile/1.0/board/42/issue")
+                .unwrap()
+                .into_iter()
+                .find(|(k, _)| k == "fields")
+                .unwrap()
+                .1
+        };
+        let asked = fields(&board);
+        assert!(asked.contains("created") && asked.contains("updated"), "{asked}");
+        assert!(!asked.contains("customfield"), "{asked}");
+        let board = FakeBoard::standard();
+        let prev = PrevState {
+            estimation: crate::tracker::Estimation::Field("customfield_10016".into()),
+            ..Default::default()
+        };
+        JiraAdapter.fetch_snapshot(&board, &scope(), &prev).await.unwrap();
+        assert!(fields(&board).ends_with(",customfield_10016"), "{}", fields(&board));
+        let board = FakeBoard::standard();
+        let none =
+            PrevState { estimation: crate::tracker::Estimation::NoField, ..Default::default() };
+        let s = JiraAdapter.fetch_snapshot(&board, &scope(), &none).await.unwrap();
+        assert!(
+            s.tasks.iter().all(|t| t.points == Some(None)),
+            "learned no field: clear the points"
+        );
+        let s = JiraAdapter
+            .fetch_snapshot(&FakeBoard::standard(), &scope(), &PrevState::default())
+            .await
+            .unwrap();
+        assert!(s.tasks.iter().all(|t| t.points.is_none()), "not learned: keep them");
+    }
+
+    #[tokio::test]
+    async fn board_terms_come_from_configuration_fields_and_statuses() {
+        let board = FakeBoard::empty()
+            .with("/rest/agile/1.0/board/42/configuration", 0, json!({"estimation": {"type": "field",
+                "field": {"fieldId": "customfield_10016", "displayName": "Story point estimate"}}}))
+            .with("/rest/api/3/field", 0, json!([
+                {"id": "summary", "name": "Summary", "schema": {"type": "string", "system": "summary"}},
+                {"id": "customfield_10020", "name": "Sprints", "schema": {"type": "array",
+                 "custom": "com.pyxis.greenhopper.jira:gh-sprint"}}]))
+            .with("/rest/api/3/status", 0, json!([
+                {"id": "1", "name": "To Do", "statusCategory": {"key": "new"}},
+                {"id": "10001", "name": "Done", "statusCategory": {"key": "done"}}]));
+        let terms = JiraAdapter.board_terms(&board, &scope()).await.unwrap();
+        assert_eq!(terms.estimation_field.as_deref(), Some("customfield_10016"));
+        assert_eq!(terms.sprint_field.as_deref(), Some("customfield_10020"));
+        assert_eq!(
+            terms.statuses,
+            [
+                ("1".to_string(), "To Do".to_string(), "new".to_string()),
+                ("10001".to_string(), "Done".to_string(), "done".to_string())
+            ]
+        );
+        let by_count = FakeBoard::empty()
+            .with(
+                "/rest/agile/1.0/board/42/configuration",
+                0,
+                json!({"estimation": {"type": "none"}}),
+            )
+            .with("/rest/api/3/field", 0, json!([]))
+            .with("/rest/api/3/status", 0, json!([]));
+        let terms = JiraAdapter.board_terms(&by_count, &scope()).await.unwrap();
+        assert_eq!((terms.estimation_field, terms.sprint_field), (None, None));
+        let bad = FakeBoard::empty()
+            .with(
+                "/rest/agile/1.0/board/42/configuration",
+                0,
+                json!({"estimation": {"type": "field", "field": {"fieldId": "customfield_0"}}}),
+            )
+            .with("/rest/api/3/field", 0, json!([]))
+            .with("/rest/api/3/status", 0, json!([]));
+        assert_eq!(
+            JiraAdapter.board_terms(&bad, &scope()).await.unwrap().estimation_field,
+            None,
+            "not a field id"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_changelog_keeps_sprint_status_and_estimate_by_field_id() {
+        let item = |field: &str, id: &str, from: &str, to: &str, from_s: &str, to_s: &str| json!({"field": field, "fieldId": id, "from": from, "to": to, "fromString": from_s, "toString": to_s});
+        let board = FakeBoard::empty()
+            .with("/rest/api/3/issue/10001/changelog", 0, json!({"startAt": 0, "maxResults": 1, "isLast": false,
+                "values": [{"id": "h1", "created": "2026-09-01T10:00:00.000+0000", "items": [
+                    item("Sprints", "customfield_10020", "", "100", "", "Sprint 1"),
+                    item("status", "status", "1", "3", "To Do", "In Progress"),
+                    item("Story point estimate", "customfield_10016", "", "", "", "3"),
+                    item("summary", "summary", "", "", "a", "b")]}]}))
+            .with("/rest/api/3/issue/10001/changelog", 1, json!({"startAt": 1, "maxResults": 1, "isLast": true,
+                "values": [{"id": "h2", "created": "2026-09-05T10:00:00.000+0000", "items": [
+                    item("Sprint", "customfield_99999", "100", "100,101", "Sprint 1", "Sprint 1, Sprint 2")]}]}));
+        let rows = JiraAdapter
+            .changelog(&board, "10001", Some("customfield_10020"), Some("customfield_10016"))
+            .await
+            .unwrap();
+        let got: Vec<_> = rows
+            .iter()
+            .map(|r| {
+                (r.change_id.as_str(), r.field, r.from_value.as_deref(), r.to_value.as_deref())
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("h1", "sprint", None, Some("100")),
+                ("h1", "status", Some("1"), Some("3")),
+                ("h1", "estimate", None, Some("3")),
+            ],
+            "the second page's item is another field, named Sprint but not the site's"
+        );
+        assert_eq!(rows[0].at, jira_instant("2026-09-01T10:00:00.000+0000").unwrap());
+        assert!(
+            JiraAdapter.changelog(&board, "../x", None, None).await.is_err(),
+            "the path is guarded"
+        );
+        let unnamed = FakeBoard::empty().with("/rest/api/3/issue/10002/changelog", 0, json!({"startAt": 0, "isLast": true,
+            "values": [{"id": "h9", "created": "2026-09-01T10:00:00.000+0000", "items": [{"field": "Sprint", "to": "1"}]}]}));
+        assert!(
+            JiraAdapter.changelog(&unnamed, "10002", None, None).await.unwrap().is_empty(),
+            "no Sprint field known: an item without a field id is nobody's sprint"
         );
     }
 }

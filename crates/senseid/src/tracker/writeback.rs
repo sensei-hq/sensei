@@ -343,7 +343,23 @@ pub fn spawn_after_sync(
     let guard = rt.locks.try_lock(tracker_id)?;
     let (pg, io, service) = (pg.clone(), PassIo::of(rt), secret_service.to_string());
     Some(tokio::spawn(async move {
-        run(&pg, &io, tracker_id, &service, adapter, WRITEBACK_DEADLINE, guard).await
+        {
+            let outcome =
+                run(&pg, &io, tracker_id, &service, adapter, WRITEBACK_DEADLINE, &guard).await;
+            // Under the same guard, after the pass (S4, W2 override): the ticket history.
+            let history = crate::tracker::history::run(
+                &pg,
+                &io,
+                tracker_id,
+                &service,
+                adapter,
+                crate::tracker::history::HISTORY_DEADLINE,
+                &guard,
+            )
+            .await;
+            tracing::debug!(tracker_id = %tracker_id, ?history, "tracker history run");
+            outcome
+        }
     }))
 }
 
@@ -381,7 +397,7 @@ pub async fn run(
     secret_service: &str,
     adapter: &'static dyn TrackerAdapter,
     deadline: Duration,
-    _guard: tokio::sync::OwnedMutexGuard<()>,
+    _guard: &tokio::sync::OwnedMutexGuard<()>,
 ) -> PassOutcome {
     // Read at pass start: the sync may have just found the owner (W1). The sync's
     // token binds every record, this failure's included (W2).
@@ -1028,7 +1044,7 @@ mod pass_tests {
         async fn pass_within(&self, deadline: Duration) -> PassOutcome {
             let guard = self.rt.locks.try_lock(self.t).expect("the guard is free");
             let service = self.pg.tracker_by_id(self.t).await.unwrap().unwrap().secret_service;
-            run(&self.pg, &PassIo::of(&self.rt), self.t, &service, &JiraAdapter, deadline, guard)
+            run(&self.pg, &PassIo::of(&self.rt), self.t, &service, &JiraAdapter, deadline, &guard)
                 .await
         }
         async fn pass(&self) -> PassOutcome {
@@ -1972,7 +1988,7 @@ mod pass_tests {
         .await;
         let guard = f.rt.locks.try_lock(f.t).unwrap();
         let outcome =
-            run(&f.pg, &PassIo::of(&f.rt), f.t, &service, &JiraAdapter, WRITEBACK_DEADLINE, guard)
+            run(&f.pg, &PassIo::of(&f.rt), f.t, &service, &JiraAdapter, WRITEBACK_DEADLINE, &guard)
                 .await;
         assert_eq!(outcome, PassOutcome::Stopped("db"));
         assert_eq!(f.writeback_error().await.as_deref(), Some("db"));

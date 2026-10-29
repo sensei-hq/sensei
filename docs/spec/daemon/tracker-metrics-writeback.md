@@ -768,7 +768,7 @@ and the test DB unless marked *(tenant)*.
       → only the `RawWrite` impl in `transport.rs`. `-U` and `\s*` catch a call rustfmt
       splits across lines. The keyring `s.delete(` at connect.rs:177 doesn't match, because
       it isn't a `client.` call.
-    - `for f in sync discover connect; do sed -E '/^(pub(\(crate\))? )?mod tests/q' crates/senseid/src/tracker/$f.rs | rg -n 'WriteMethod|WriteTransport|write_transport'; done; rg -n 'WriteMethod|WriteTransport|write_transport' crates/senseid/src/api`
+    - `for f in sync discover connect history; do sed -E '/^(pub(\(crate\))? )?mod tests/q' crates/senseid/src/tracker/$f.rs | rg -n 'WriteMethod|WriteTransport|write_transport'; done; rg -n 'WriteMethod|WriteTransport|write_transport' crates/senseid/src/api`
       → no output. These names are forbidden in the production code of sync, discover and
       connect and in the API. Their test modules implement the adapter trait, so they
       name `WriteTransport`.

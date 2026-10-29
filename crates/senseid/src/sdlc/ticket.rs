@@ -21,7 +21,6 @@ pub struct SessionSignals {
 }
 
 /// The ticket's story points as the tracker states them (D6).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Estimate {
     /// The ticket's history has not been read yet.
@@ -522,6 +521,7 @@ pub async fn ticket_figures(
     ids.sort();
     ids.dedup();
     let signals = pg.session_signals_for(&ids, &catalogue.hash).await?;
+    let history = pg.ticket_history_facts(task_ids).await?;
     let none = Usage::default();
     Ok(task_ids
         .iter()
@@ -533,12 +533,19 @@ pub async fn ticket_figures(
                 .filter(|(id, _)| linked.contains(id))
                 .map(|(_, s)| s.clone())
                 .collect();
+            let facts = history.get(task);
+            let estimate = match facts {
+                None => Estimate::NotSynced,
+                Some(f) if !f.learned => Estimate::NotSynced,
+                Some(f) if !f.has_field => Estimate::NoField,
+                Some(f) => f.points.map_or(Estimate::NotEstimated, Estimate::Points),
+            };
             let figures = compute(&TicketInput {
                 sessions: &sessions,
                 usage: usage.get(task).unwrap_or(&none),
                 settings: &settings,
-                issue_created_at: None,
-                estimate: Estimate::NotSynced,
+                issue_created_at: facts.and_then(|f| f.created_at).map(|t| t.timestamp_millis()),
+                estimate,
             });
             (*task, figures)
         })

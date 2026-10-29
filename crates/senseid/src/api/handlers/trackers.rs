@@ -75,6 +75,8 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         .interval_secs;
     let st =
         status(row.last_success_at, row.last_error.is_some(), interval as i64, chrono::Utc::now());
+    let (history_error, history_at) =
+        pg.tracker_history_state(row.id).await.map_err(|_| internal())?;
     Ok(serde_json::json!({
         "id": row.id,
         "kind": row.kind,
@@ -98,6 +100,8 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
             "failing": failing,
             "error": wb_error,
         },
+        // S4: the ticket-history task's last run.
+        "history": {"error": history_error, "at": history_at},
     }))
 }
 
@@ -1852,6 +1856,13 @@ mod tests {
             assert_eq!(r["sdlc"]["worked_minutes"], Value::Null);
             assert_eq!(r["sdlc"]["reasons"]["worked_minutes"], json!("no_sessions"), "{r}");
         }
+        // S4: the history run after the first sync is on the tracker's listing. The
+        // standard board has no configuration route, so it shows the failure.
+        let (_, listing) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
+        let history = &json(&listing)[0]["history"];
+        assert!(history["at"].is_string(), "{listing}");
+        assert_eq!(history["error"], json!(TrackerError::NotFound.code()), "{listing}");
         let key = rows[0]["key"].as_str().unwrap();
         let (st, body) =
             call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/{key}"), None, None).await;
