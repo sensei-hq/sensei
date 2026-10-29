@@ -445,55 +445,99 @@ export function labelStride(days: number): number {
   return days > 14 ? Math.ceil(days / 8) : 1;
 }
 
+/** One local day of activity: minutes the agent worked and minutes spent on you. */
+export interface ActivityDay {
+  day: string;
+  label: string;
+  agentMins: number;
+  userMins: number;
+}
+
+/** Each session's active time, filed by the hour it happened, summed per local day of the
+ *  axis — the activity hotspots. A session running past midnight counts on both days;
+ *  hours outside the axis are left out. Sessions not yet analysed (`activeByHour` null)
+ *  are counted in `unmeasured`, never drawn as an empty day. */
+export function activityByDay(
+  rows: Pick<SessionRow, 'activeByHour'>[],
+  days: string[],
+  now: Date = new Date(),
+): { days: ActivityDay[]; unmeasured: number } {
+  const byDay = new Map(days.map((day) => [day, { agentMs: 0, userMs: 0 }]));
+  let unmeasured = 0;
+  for (const r of rows) {
+    if (!r.activeByHour) {
+      unmeasured += 1;
+      continue;
+    }
+    for (const [hour, agentMs, userMs] of r.activeByHour) {
+      const slot = byDay.get(dayKey(new Date(hour * 3_600_000).toISOString()));
+      if (!slot) continue;
+      slot.agentMs += agentMs;
+      slot.userMs += userMs;
+    }
+  }
+  return {
+    days: days.map((day) => {
+      const { agentMs, userMs } = byDay.get(day)!;
+      return { day, label: shortDayLabel(day, now), agentMins: Math.round(agentMs / 60_000), userMins: Math.round(userMs / 60_000) };
+    }),
+    unmeasured,
+  };
+}
+
+/** Says how many sessions the bands could not place, or null when it placed them all. */
+export function unmeasuredLine(n: number): string | null {
+  if (n <= 0) return null;
+  return `${n} ${n === 1 ? 'session' : 'sessions'} not analysed yet — not drawn`;
+}
+
 /** One stacked segment of a bands bar. */
 export interface BandSegment {
-  tone: 'good' | 'bad' | 'ugly';
+  tone: 'agent' | 'user';
   y: number;
   h: number;
 }
 
-/** The bands chart laid out: a vertical bar per day, oldest left, stacked
- *  good · corrected · abandoned by minutes; date labels at `labelStride`, the
- *  newest day always labelled. */
+/** The bands chart laid out: a vertical bar per day, oldest left, the agent's minutes
+ *  stacked under yours; date labels at `labelStride`, the newest day always labelled. */
 export interface BandsView {
   plot: { left: number; right: number; top: number; bottom: number };
-  bars: { day: string; label: string; x: number; w: number; segments: BandSegment[]; total: number; mins: number }[];
+  bars: { day: string; label: string; x: number; w: number; segments: BandSegment[]; agentMins: number; userMins: number; mins: number }[];
   ticks: { x: number; label: string }[];
   yTicks: { y: number; label: string }[];
   maxMins: number;
 }
 
-/** Fill per segment tone — the quality colours the other session charts use. */
+/** Fill per segment: the agent's time and yours. */
 export const BAND_FILL: Record<BandSegment['tone'], string> = {
-  good: 'var(--success)',
-  bad: 'var(--warning)',
-  ugly: 'var(--accent)',
+  agent: 'var(--info)',
+  user: 'var(--accent)',
 };
 
-export function bandsView(buckets: DayBucket[], width: number, height: number): BandsView {
+export function bandsView(days: ActivityDay[], width: number, height: number): BandsView {
   const plot = { left: 44, right: width - 12, top: 12, bottom: height - 26 };
-  const n = Math.max(buckets.length, 1);
+  const n = Math.max(days.length, 1);
   const slot = (plot.right - plot.left) / n;
   const w = Math.max(1, slot * 0.7);
   // An hour at least, rounded up to half hours under four hours, whole hours above.
-  const busiest = Math.max(60, ...buckets.map((b) => b.chartedMins));
+  const busiest = Math.max(60, ...days.map((d) => d.agentMins + d.userMins));
   const step = busiest <= 240 ? 30 : 60;
   const maxMins = Math.ceil(busiest / step) * step;
   const scale = (plot.bottom - plot.top) / maxMins;
-  const bars = buckets.map((b, i) => {
+  const bars = days.map((d, i) => {
     const x = plot.left + i * slot + (slot - w) / 2;
     let base = plot.bottom;
     const segments: BandSegment[] = [];
-    for (const [tone, mins] of [['good', b.goodMins], ['bad', b.badMins], ['ugly', b.uglyMins]] as const) {
+    for (const [tone, mins] of [['agent', d.agentMins], ['user', d.userMins]] as const) {
       if (mins <= 0) continue;
       const h = mins * scale;
       base -= h;
       segments.push({ tone, y: base, h });
     }
-    return { day: b.day, label: b.label, x, w, segments, total: b.total, mins: b.chartedMins };
+    return { day: d.day, label: d.label, x, w, segments, agentMins: d.agentMins, userMins: d.userMins, mins: d.agentMins + d.userMins };
   });
-  const stride = labelStride(buckets.length);
-  const last = buckets.length - 1;
+  const stride = labelStride(days.length);
+  const last = days.length - 1;
   // Counted back from the newest day, so "Today" is always labelled and the
   // labels keep an even spacing behind it.
   const ticks = bars

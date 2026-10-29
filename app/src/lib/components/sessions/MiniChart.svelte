@@ -3,7 +3,7 @@
   // the five chart-ish modes (trend / stream / constellation / bands / pulse);
   // the sixth cycler mode, `numbers`, is the resting stat trio drawn by the
   // hero itself. `pulse` is reachable ONLY through the cycler — never a chip.
-  import type { DayBucket, EnrichedSession, QualityTone } from '$lib/sessions-digest.js';
+  import { BAND_FILL, type ActivityDay, type DayBucket, type EnrichedSession, type QualityTone } from '$lib/sessions-digest.js';
 
   type MiniChartMode = 'trend' | 'stream' | 'constellation' | 'bands' | 'pulse';
 
@@ -12,10 +12,12 @@
     buckets: DayBucket[];
     sessions: EnrichedSession[];
     days: string[];
+    /** Agent and your time per day — the bands mode, as the bands chart draws it. */
+    activity?: ActivityDay[];
     width?: number;
     height?: number;
   }
-  let { mode, buckets, sessions, days, width = 168, height = 56 }: Props = $props();
+  let { mode, buckets, sessions, days, activity = [], width = 168, height = 56 }: Props = $props();
 
   const TONE_COLOR: Record<QualityTone, string> = {
     good: 'var(--success)',
@@ -63,19 +65,18 @@
     return `M ${top.join(' L ')} L ${((n - 1) * xStep).toFixed(1)} ${height} L 0 ${height} Z`;
   }
 
-  // ── bands — stacked bars per day ───────────────────────────────────────
+  // ── bands — agent and your time per day, as the bands chart draws it ──────
   const barW = $derived(n > 0 ? Math.max(1, (width - (n - 1) * 2) / n) : 0);
-  const BAR_TONES: Array<'good' | 'bad' | 'ugly'> = ['good', 'bad', 'ugly'];
-  function barSegments(b: DayBucket, i: number): Array<{ color: string; x: number; y: number; h: number }> {
+  const bandMax = $derived(Math.max(1, ...activity.map((d) => d.agentMins + d.userMins)));
+  function barSegments(d: ActivityDay, i: number): Array<{ color: string; x: number; y: number; h: number }> {
     let yAcc = height;
     const x = i * (barW + 2);
     const out: Array<{ color: string; x: number; y: number; h: number }> = [];
-    for (const tone of BAR_TONES) {
-      const c = tone === 'good' ? b.good : tone === 'bad' ? b.bad : b.ugly;
-      const h = (c / streamMax) * (height - 2);
+    for (const [tone, mins] of [['agent', d.agentMins], ['user', d.userMins]] as const) {
+      const h = (mins / bandMax) * (height - 2);
       if (h > 0) {
         yAcc -= h;
-        out.push({ color: TONE_COLOR[tone], x, y: yAcc, h });
+        out.push({ color: BAND_FILL[tone], x, y: yAcc, h });
       }
     }
     return out;
@@ -108,8 +109,8 @@
       <path d={streamPath(layer.tone, layer.below)} fill={TONE_COLOR[layer.tone]} opacity="0.85" />
     {/each}
   {:else if mode === 'bands'}
-    {#each buckets as b, i (b.day)}
-      {#each barSegments(b, i) as seg, s (s)}
+    {#each activity as d, i (d.day)}
+      {#each barSegments(d, i) as seg, s (s)}
         <rect x={seg.x} y={seg.y} width={barW} height={seg.h} fill={seg.color} opacity="0.85" />
       {/each}
     {/each}

@@ -23,7 +23,7 @@ import {
   activeMinutes,
   CHART_VARIANTS,
   MINI_MODES,
-  SESSION_RANGES, dayTone, rollingFtr, recencyRange, labelStride, bandsView } from './sessions-digest.js';
+  SESSION_RANGES, dayTone, rollingFtr, recencyRange, labelStride, bandsView, activityByDay, unmeasuredLine } from './sessions-digest.js';
 
 // Fixed reference "now" (local July 8 2026, noon) so relative labels + day
 // buckets are deterministic regardless of the runner's timezone.
@@ -407,19 +407,44 @@ describe('labelStride', () => {
   });
 });
 
-// Bands drew one 18 px row per day in 320 px: at 90 days the rows and labels overlapped
-// (user, 2026-10-28). One vertical bar per day, stacked good · corrected · abandoned.
+// Bands is the activity hotspot chart (user, 2026-10-28): per local day, the minutes the
+// agent worked and the minutes spent on you, from each session's active time filed by the
+// hour it happened — not a session's wall-clock span on its start day.
+const hourOf = (daysAgo: number, hour: number) => {
+  const d = new Date(2026, 6, 8, hour, 0, 0);
+  d.setDate(d.getDate() - daysAgo);
+  return Math.floor(d.getTime() / 3_600_000);
+};
+
+describe('activityByDay', () => {
+  const days = buildDays('7d', NOW);
+
+  it('files each hour of agent and user time under the local day it happened', () => {
+    const late = wire({ id: 'late', startedAt: isoDaysAgo(1, 23), activeByHour: [
+      [hourOf(1, 23), 20 * 60_000, 10 * 60_000],
+      [hourOf(0, 0), 30 * 60_000, 5 * 60_000],
+    ] });
+    const a = activityByDay([late], days, NOW);
+    expect(a.days.at(-2)).toMatchObject({ agentMins: 20, userMins: 10 });
+    expect(a.days.at(-1)).toMatchObject({ agentMins: 30, userMins: 5 });
+    expect(a.unmeasured).toBe(0);
+  });
+
+  it('leaves out hours outside the range, and counts sessions with no activity data apart', () => {
+    const old = wire({ id: 'old', activeByHour: [[hourOf(20, 9), 60 * 60_000, 0]] });
+    const unknown = wire({ id: 'unknown', activeByHour: null });
+    const a = activityByDay([old, unknown], days, NOW);
+    expect(a.days.every((d) => d.agentMins === 0 && d.userMins === 0)).toBe(true);
+    expect(a.unmeasured).toBe(1);
+  });
+});
+
 describe('bandsView', () => {
   const days = buildDays('90d', NOW);
-  const buckets = aggregateByDay(
-    enrich([
-      wire({ id: 'a', startedAt: isoDaysAgo(0), completedAt: isoDaysAgo(0, 11, 5), outcome: 'completed', ftr: true }),
-      wire({ id: 'b', startedAt: isoDaysAgo(0, 12, 5), completedAt: isoDaysAgo(0, 12, 35), outcome: 'corrected', ftr: false }),
-    ], NOW),
-    days,
-    NOW,
-  );
-  const v = bandsView(buckets, 1100, 320);
+  const activity = activityByDay([
+    wire({ id: 'a', activeByHour: [[hourOf(0, 10), 60 * 60_000, 30 * 60_000]] }),
+  ], days, NOW);
+  const v = bandsView(activity.days, 1100, 320);
 
   it('draws one bar per day, oldest left, inside the plot', () => {
     expect(v.bars).toHaveLength(90);
@@ -427,20 +452,20 @@ describe('bandsView', () => {
     for (const b of v.bars) {
       expect(b.x).toBeGreaterThanOrEqual(v.plot.left);
       expect(b.x + b.w).toBeLessThanOrEqual(v.plot.right + 0.001);
-      expect(b.w).toBeGreaterThan(0);
     }
   });
 
-  it('stacks a day bottom-up good → corrected → abandoned, heights in proportion to minutes', () => {
+  it('stacks a day bottom-up agent → you, heights in proportion to minutes', () => {
     const today = v.bars[89];
-    expect(today.segments.map((s) => s.tone)).toEqual(['good', 'bad']);
-    const [good, bad] = today.segments;
-    expect(good.y + good.h).toBeCloseTo(v.plot.bottom);
-    expect(bad.y + bad.h).toBeCloseTo(good.y);
-    expect(good.h / bad.h).toBeCloseTo(60 / 30);
+    expect(today.segments.map((s) => s.tone)).toEqual(['agent', 'user']);
+    const [agent, user] = today.segments;
+    expect(agent.y + agent.h).toBeCloseTo(v.plot.bottom);
+    expect(user.y + user.h).toBeCloseTo(agent.y);
+    expect(agent.h / user.h).toBeCloseTo(2);
+    expect(today.mins).toBe(90);
   });
 
-  it('labels a readable subset of days, never two closer than the stride', () => {
+  it('labels a readable subset of days, the newest always', () => {
     expect(v.ticks.length).toBeGreaterThan(1);
     expect(v.ticks.length).toBeLessThanOrEqual(9);
     expect(v.ticks.at(-1)!.label).toBe('Today');
@@ -449,5 +474,13 @@ describe('bandsView', () => {
   it('scales the minutes axis to the busiest day, an hour at least', () => {
     expect(v.maxMins).toBeGreaterThanOrEqual(90);
     expect(v.yTicks.map((t) => t.label)).toContain('0m');
+  });
+});
+
+describe('unmeasuredLine', () => {
+  it('says how many sessions are not drawn, and nothing when all are', () => {
+    expect(unmeasuredLine(0)).toBeNull();
+    expect(unmeasuredLine(1)).toBe('1 session not analysed yet — not drawn');
+    expect(unmeasuredLine(3)).toBe('3 sessions not analysed yet — not drawn');
   });
 });

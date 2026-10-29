@@ -157,3 +157,18 @@ describe('loadSessionsDigest — the range follows recency', () => {
     expect(d.error).toMatch(/Service Unavailable/);
   });
 });
+
+// Bands is agent vs your time per day (user, 2026-10-28): the state derives it from the
+// rows' hours, beside the count of sessions it could not place.
+describe('SessionsDigestState — activity', () => {
+  it('sums the rows\' hours into the day axis and counts the unanalysed apart', () => {
+    const hour = Math.floor(Date.now() / 3_600_000);
+    const s = new SessionsDigestState(none, [
+      wire({ id: 'a', activeByHour: [[hour, 40 * 60_000, 20 * 60_000]] }),
+      wire({ id: 'b', activeByHour: null }),
+    ], '7d');
+    expect(s.activity.days).toHaveLength(7);
+    expect(s.activity.days.at(-1)).toMatchObject({ agentMins: 40, userMins: 20 });
+    expect(s.activity.unmeasured).toBe(1);
+  });
+});

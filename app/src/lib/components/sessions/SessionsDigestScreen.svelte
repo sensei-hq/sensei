@@ -47,7 +47,7 @@
     trend: { kanji: '線', sub: 'first-try-right over time' },
     stream: { kanji: '流', sub: 'time spent, stacked' },
     constellation: { kanji: '星', sub: 'duration vs day' },
-    bands: { kanji: '帯', sub: 'stacked per day' },
+    bands: { kanji: '帯', sub: 'agent and your time, per day' },
     tokens: { kanji: '燃', sub: 'token volume per day' },
   };
   const MINI_GLYPH: Record<MiniMode, string> = {
@@ -127,7 +127,7 @@
           </div>
         {:else}
           <div class="flex items-center gap-3" data-testid="mini-view">
-            <MiniChart mode={miniChartMode} {buckets} sessions={enriched} {days} />
+            <MiniChart mode={miniChartMode} {buckets} sessions={enriched} {days} activity={digest.activity.days} />
             <div class="min-w-[56px]">
               <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{totals.count}</div>
               <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">sessions</div>
@@ -213,7 +213,7 @@
         {:else if digest.chart === 'tokens'}
           <TokensChart {buckets} />
         {:else}
-          <BandsChart {buckets} />
+          <BandsChart activity={digest.activity} />
         {/if}
       </div>
 

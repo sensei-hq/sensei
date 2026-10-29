@@ -529,6 +529,9 @@ export interface SessionRow {
   durationSecs?: number | null;
   provider?: string | null;
   model?: string | null;
+  /** Active time filed by the hour it happened: `[epoch hour, agent ms, user ms]`.
+   *  null until the session is analysed — unknown, never an empty day. */
+  activeByHour?: [number, number, number][] | null;
 }
 
 export interface SessionsDigest {

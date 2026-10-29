@@ -13,12 +13,14 @@
 import type { SessionRow, SessionsDigest } from '$lib/types.js';
 import { failureReason, readOutcome, type ApiResult } from '$lib/api.js';
 import {
+  activityByDay,
   aggregateByDay,
   buildDays,
   computeTotals,
   enrich,
   nextMiniMode,
   recencyRange,
+  type ActivityDay,
   type ChartVariant,
   type DayBucket,
   type DigestTotals,
@@ -97,6 +99,12 @@ export class SessionsDigestState {
   /** Ordered day-axis keys for the active range. */
   get days(): string[] {
     return buildDays(this.range);
+  }
+
+  /** Agent and your active time per local day (the bands chart), and how many
+   *  sessions carry no hours yet. */
+  get activity(): { days: ActivityDay[]; unmeasured: number } {
+    return activityByDay(this.sessions, this.days);
   }
 
   /** Per-day quality/minute rollup — the charts' single source. */

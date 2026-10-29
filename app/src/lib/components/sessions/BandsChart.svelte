@@ -1,20 +1,28 @@
 <script lang="ts">
-  // BANDS — a vertical bar per day, oldest left, stacked by minutes spent in each
-  // quality class (good · corrected · abandoned). Pure presentation over
-  // `bandsView` (sessions-digest.ts), which lays out the bars and thins the date
-  // labels so 90 days stay readable.
-  import { BAND_FILL, bandsView, compactDuration, type DayBucket } from '$lib/sessions-digest.js';
+  // BANDS — the activity hotspots: a vertical bar per local day, oldest left, the
+  // minutes the agent worked stacked under the minutes spent on you. Pure
+  // presentation over `bandsView` (sessions-digest.ts); the days come from each
+  // session's active time filed by the hour it happened (`activityByDay`).
+  import { BAND_FILL, bandsView, compactDuration, unmeasuredLine, type ActivityDay } from '$lib/sessions-digest.js';
 
   interface Props {
-    buckets: DayBucket[];
+    activity: { days: ActivityDay[]; unmeasured: number };
     width?: number;
     height?: number;
   }
-  let { buckets, width = 1100, height = 320 }: Props = $props();
+  let { activity, width = 1100, height = 320 }: Props = $props();
 
-  const view = $derived(bandsView(buckets, width, height));
+  const view = $derived(bandsView(activity.days, width, height));
+  const unmeasured = $derived(unmeasuredLine(activity.unmeasured));
 </script>
 
+<div class="flex items-center gap-4 text-xs text-ink-mute mb-2" data-component="bands-legend">
+  <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm" style:background={BAND_FILL.agent}></span>agent</span>
+  <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm" style:background={BAND_FILL.user}></span>you</span>
+  {#if unmeasured}
+    <span data-unmeasured>{unmeasured}</span>
+  {/if}
+</div>
 <svg viewBox={`0 0 ${width} ${height}`} width="100%" class="block" data-component="bands-chart">
   {#each view.yTicks as t (t.label)}
     <line x1={view.plot.left} x2={view.plot.right} y1={t.y} y2={t.y} stroke="var(--paper-edge)" stroke-dasharray="2 4" />
@@ -22,7 +30,7 @@
   {/each}
   {#each view.bars as b (b.day)}
     <g data-day={b.day}>
-      <title>{b.label} · {b.total} {b.total === 1 ? 'session' : 'sessions'} · {compactDuration(b.mins)}</title>
+      <title>{b.label} · agent {compactDuration(b.agentMins)} · you {compactDuration(b.userMins)}</title>
       {#each b.segments as s (s.tone)}
         <rect x={b.x} y={s.y} width={b.w} height={s.h} rx="1.5" fill={BAND_FILL[s.tone]} opacity="0.85" data-tone={s.tone} />
       {/each}
