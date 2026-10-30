@@ -42,26 +42,32 @@ async function drawn(tauriPage: TauriPageLike): Promise<{ nodes: number; edges: 
   })`)) as { nodes: number; edges: number };
 }
 
-/** Click the toolbar button whose label starts with `label`. The tauri bridge's
- *  locator engine has no `:has-text`, so the button is found in the page. */
-async function pick(tauriPage: TauriPageLike, toolbar: string, label: string): Promise<void> {
-  // The toolbars sit in the header's controls band, which a reader may have closed:
-  // open it, and let it render, before looking for one.
+/** Choose `label` in the controls band: the schema from its picker (rokkit Select),
+ *  the scope from its toggle. The tauri bridge's locator engine has no `:has-text`,
+ *  so the option is found in the page. */
+async function pick(tauriPage: TauriPageLike, control: 'Schema' | 'Show', label: string): Promise<void> {
+  // The controls sit in the header's band, which a reader may have closed: open it,
+  // and let it render, before looking for one.
   await tauriPage.evaluate(`(() => {
     const band = document.querySelector('[data-testid="diagram-controls-toggle"]');
     if (band?.getAttribute('aria-pressed') === 'false') band.click();
   })()`);
   await settle(500);
+  if (control === 'Schema') {
+    await tauriPage.evaluate(`document.querySelector('[data-testid="schema-pick"] [data-select-trigger]')?.click()`);
+    await settle(500);
+  }
   const clicked = await tauriPage.evaluate(`
     (() => {
-      const bar = document.querySelector('[data-toolbar][aria-label="${toolbar}"]');
-      const btn = [...(bar?.querySelectorAll('button') ?? [])]
-        .find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)}));
+      const options = ${JSON.stringify(control)} === 'Schema'
+        ? [...document.querySelectorAll('[data-select-option]')]
+        : [...document.querySelectorAll('[data-testid="schema-controls"] [data-toggle][aria-label="Show"] [data-toggle-option]')];
+      const btn = options.find((b) => (b.getAttribute('aria-label') ?? b.textContent).trim().startsWith(${JSON.stringify(label)}));
       btn?.click();
       return !!btn;
     })()
   `);
-  expect(clicked, `${toolbar} → ${label}`).toBe(true);
+  expect(clicked, `${control} → ${label}`).toBe(true);
 }
 
 test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
@@ -164,7 +170,7 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   expect(deps).toContain(`${n(dimmedIn('dojo'))} dependencies on a built-in or undescribed object, drawn dimmed`);
   await snap(tauriPage, 'schema-deps-dojo');
 
-  await pick(tauriPage, 'Schema', 'All');
+  await pick(tauriPage, 'Schema', 'All schemas');
   await settle();
   const allDeps = await text(tauriPage, '[data-testid="schema-coverage"]');
   console.log(`[inspect] schema coverage (deps, all): ${allDeps}`);
