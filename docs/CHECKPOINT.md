@@ -1,29 +1,27 @@
-# Checkpoint — 2026-10-29 (Diagrams slices 1–4 built; awaiting the user's review)
+# Checkpoint — 2026-10-30 (Diagrams: review fixes; rokkit zoom/icon pending release)
 
-**Slice:** the Diagrams rework (mockup: sidebar subsection, per-diagram routes, levels,
-inspector), Nav first; then #347 attribution, #348 Muse, #349 Freebuff.
+**Slice:** the user's diagram review (2026-10-30), then #347 attribution, #348 Muse, #349 Freebuff.
 
-**Done (develop, pushed, installed service + app):**
-- c9adada48 / cb8087e86 — automated prompts are transcript turns with origin; your turns only
-  in counts and first-try; transcript landing re-queues analysis. Live: 812 automated turns.
-- e6da28452 / 7b9a872c2 — slice 1: sidebar Diagrams subsection (8 entries), `diagrams/[lens]`
-  over one shared CodeMapState (kept by workspace id value); retired pages removed.
-- 8d08aa9fa — daemon: L0 blocks carry files per role + package; L0 carries referenced libraries;
-  L2 carries the file's role.
-- d10652550 / 504aea6a5 — slices 2–4: header (shows/use/read, remembered), 300px inspector at
-  every level, one-click open, hover lights bands, search, band filters, colour by direction,
-  Fit/100%, Show at L0, legend, complexity tiers, Database · ER reach, lists under 640px.
-- 67c625d8b — Tokens chart threw on a range with no tokens (axisTicks); stale e2e chip.
-- e2e: full suite 129/130 on a fresh DB, the one failure fixed and rerun green; live inspect
-  codemap (filter = 108 of 213 bands, derived independently), schema reach, screen shell green.
+**Done (develop, pushed, installed):**
+- e1b1d714a — Zones abstractness counts declared interfaces/traits (pain 26 → 15 on sensei).
+- Header per the updated mockup: level tag, four toggles (info three columns, stats as cards,
+  controls band, side panel), all remembered; side panel and diagram scroll on their own.
+- Takeaways as a rokkit List accordion; zone filter as a rokkit Toggle in the controls row.
+- 0d828c0f7 — Rail header/footer fixed, nav scrolls; one-row controls, shared first, Find a module
+  (filterable rokkit Select by group); matrix sticky headers + gridlines; complexity/cycle tiers as
+  borders; Database · ER: name + type filters, schema Select, rokkit Tree with schema colours,
+  entity Details | Diagram.
+- Live inspect green with the installed app quit (memory: quit-sensei-before-inspect).
 
-**Waiting on the user:** review of the diagrams; decision on Group by Communities (module →
-community rule; recommendation: dominant community, small ones folded).
+**rokkit develop (pushed, NOT released):** d9cbf302 dark divider; 874cd28fe zoom top-left by
+default + `position`/`zoomPosition`, DiagramFrame zoom slot, view glyph split-view.
+**Next after the user's rokkit release:** bump app/dōjō/website; ZoomFrame → `<ZoomControl
+position="top-left">` on its canvas (drop the overlay wrapper).
 
-**Next:** user feedback on diagrams → fixes; then #347.
+**Waiting on the user:** Communities rule (recommend dominant community, small ones folded);
+design MCP connection (`claude mcp add … claude_design`, /design-login) for the two design links.
 
-**Notes:** run e2e via `make test-app-e2e` or `make reset-e2e-db` first — a stale `sensei_e2e`
-stamped "deployed for this version" never gets new columns. rokkit d9cbf302 (dark edge 200)
-still unreleased (user). Open: title-bar scribble (screenshot), #346, #282 part 3.
+**Later:** dbd ObjectView/OverviewView → @rokkit/graph/schema; enums/triggers/sequences/modules in
+the schema payload; Changelog after dbd release 1 (user, 2026-10-30).
 
 **Known broken:** Keychain test on rebuilt binaries (#282).
