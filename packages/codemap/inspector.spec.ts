@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inspect } from './inspector';
+import { inspect, workspaceStats } from './inspector';
 import type { Block, Level0, Level1, Level2 } from './types';
 
 const block = (id: string, extra: Partial<Block> = {}): Block => ({
@@ -28,6 +28,15 @@ const L0: Level0 = {
   libraries: { count: 14, top: ['serde', 'tokio'] },
 };
 const at0 = (selected: string | null) => inspect({ level: 'modules', l0: L0, l1: null, l2: null, selected });
+
+describe('workspaceStats', () => {
+  it('the numbers every diagram shares, and where the cycles are drawn', () => {
+    expect(workspaceStats(L0).map((s) => [s.label, s.value, s.lens ?? null])).toEqual([
+      ['Modules', '6', null], ['Symbols', '200', null], ['Edges', '120', null],
+      ['Upward', '1', 'structure'], ['Skip a layer', '1', 'structure'], ['Cycles', '1', 'cycles'], ['Same layer · down', '1 · 1', null],
+    ]);
+  });
+});
 
 describe('inspect', () => {
   it('with nothing selected, summarises the workspace by direction', () => {

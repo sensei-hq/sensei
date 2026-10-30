@@ -152,11 +152,44 @@ describe('CodeMap', () => {
     expect(q('[data-testid="complexity-summary"]')?.textContent).toContain('3 of 10 functions over cyclomatic 10 · 1 of 3 blocks measured');
   });
 
-  it('with nothing selected, the inspector summarises the workspace', async () => {
-    render(port());
+  it('with nothing selected, the side panel says what to act on', async () => {
+    const p = port();
+    render(p);
     await settle();
-    expect(q('[data-testid="inspector-eyebrow"]')?.textContent).toBe('Workspace');
-    expect(q('[data-testid="inspector-stat-Upward"]')?.textContent).toContain('1');
+    expect(q('[data-testid="takeaway-0"]')?.textContent).toContain('1 upward dependency');
+    (q('[data-testid="takeaway-0"] [data-testid="takeaway-item-p/a"]') as HTMLButtonElement).click();
+    await settle();
+    expect(p.module).toHaveBeenCalledWith('p/a');
+  });
+
+  it('Zones has no grouping or role filter — they would change nothing — but filters by zone', async () => {
+    const p = port();
+    const map = render(p);
+    await settle();
+    void map.showLens(p, 'zones');
+    await settle();
+    expect([q('[data-testid="codemap-group"]'), q('[data-testid="codemap-role-test"]')]).toEqual([null, null]);
+    (q('[data-testid="zones-filter-useless"]') as HTMLButtonElement).click();
+    flushSync();
+    expect(q('[data-testid="zones-furthest"]')?.textContent).not.toContain('p/a');
+    (q('[data-testid="zones-filter-pain"]') as HTMLButtonElement).click();
+    flushSync();
+    expect(q('[data-testid="zones-furthest"]')?.textContent).toContain('p/a');
+    expect(q('[data-testid="zone-p/a"]')?.getAttribute('fill-opacity')).toBe('0.8');
+  });
+
+  it('Zones draws its frame before the data arrives, and the dots into it', async () => {
+    let resolve!: (z: typeof ZONES) => void;
+    const p = { ...port(), zones: vi.fn(() => new Promise<{ ok: true; data: typeof ZONES }>((r) => (resolve = (z) => r({ ok: true, data: z })))) };
+    const map = render(p);
+    await settle();
+    void map.showLens(p, 'zones');
+    await settle();
+    expect(q('[data-testid="codemap-zones"] svg rect')).not.toBeNull();
+    expect(q('[data-testid="zone-p/a"]')).toBeNull();
+    resolve(ZONES);
+    await settle();
+    expect(q('[data-testid="zone-p/a"]')).not.toBeNull();
   });
 
   it('violations & cycles keeps the upward band; a minimum weight drops the light ones', async () => {

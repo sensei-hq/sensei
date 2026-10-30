@@ -1,7 +1,7 @@
 <script lang="ts">
     import { untrack } from 'svelte';
     import { Screen } from '$lib/components';
-    import { CodeMap } from '@sensei/codemap';
+    import { CodeMap, workspaceStats } from '@sensei/codemap';
     import { codeMapHost } from '../codemap-host.svelte.js';
     import { DiagramHeaderState } from '../diagram-header.svelte.js';
     import DiagramHeader from '../DiagramHeader.svelte';
@@ -22,7 +22,8 @@
 {#key data.lens}
 <Screen>
     {#snippet header()}
-    <DiagramHeader view={data.view} {about} />
+    <DiagramHeader view={data.view} {about} stats={host.state.l0 ? workspaceStats(host.state.l0) : null}
+        hrefFor={(lens) => `/workspace/${data.workspaceId}/diagrams/${lens}`} />
     {/snippet}
     <div class="p-4" data-testid="codemap-screen" data-lens={data.lens}>
         {#key data.workspaceId}

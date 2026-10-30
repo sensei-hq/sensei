@@ -20,12 +20,15 @@
   import FileColumns from './FileColumns.svelte';
   import SymbolView from './SymbolView.svelte';
   import Inspector from './Inspector.svelte';
+  import Takeaways from './Takeaways.svelte';
+  import ZonesDetails from './ZonesDetails.svelte';
+  import { takeaways } from './takeaways';
   import Legend from './Legend.svelte';
 
   let { state: map, port }: { state: CodeMapState; port: CodeMapPort } = $props();
 
   onMount(() => {
-    if (!map.l0) void map.load(port);
+    if (!map.l0 && !map.loading) void map.load(port);
   });
 
   const GROUPINGS = [
@@ -55,6 +58,11 @@
     map.lens === 'coupling' ? lensBands : visibleBands(lensBands, { edgeMode: map.edgeMode, minWeight: map.minWeight }, cycles),
   );
   const canvasLens = $derived(!['zones', 'wheel', 'matrix'].includes(map.lens));
+  // A control is drawn only where it changes the view: Zones places components by
+  // their coupling, so neither the grouping nor the roles move a point.
+  const showsGrouping = $derived(map.level === 'modules' && map.lens !== 'zones');
+  const showsRoles = $derived((map.level === 'modules' && canvasLens) || map.level === 'files');
+  const toAct = $derived(l0 ? takeaways(map.lens, l0, map.cochange, map.zones) : []);
   const matches = $derived(l0 ? searchModules(l0, query) : []);
   const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected }));
   const open = (id: string) => {
@@ -90,13 +98,13 @@
         </ul>
       {/if}
     </div>
-    {#if map.level === 'modules'}
+    {#if showsGrouping}
       <div data-testid="codemap-group">
         <Toggle size="sm" label="Group by" options={GROUPINGS} value={map.groupBy}
           onchange={(v) => void map.setGroupBy(port, v as GroupBy)} />
       </div>
     {/if}
-    {#if map.level !== 'symbols'}
+    {#if showsRoles}
       <div class="flex gap-1" aria-label="Show">
         {#each ROLES as r (r)}
           <button class="px-2 py-1 text-xs rounded border border-paper-edge cursor-pointer"
@@ -140,14 +148,14 @@
     </p>
   {/if}
 
-  <div class="grid gap-4" style={narrow ? '' : 'grid-template-columns: minmax(0, 1fr) 300px;'}>
+  <div class="grid gap-6" style={narrow ? '' : 'grid-template-columns: minmax(0, 1fr) 360px;'}>
     <div class="min-w-0 flex flex-col gap-2">
       {#if map.level === 'modules'}
         {#if l0}
           {#if narrow}
             <ModuleList view={listView(map.lens, l0, map.cochange, map.zones)} onopen={open} />
           {:else if map.lens === 'zones'}
-            {#if map.zones}<ZonesLens data={map.zones} />{:else}<p class="text-sm text-ink-soft">Placing components…</p>{/if}
+            <ZonesLens data={map.zones} filter={map.zoneFilter} onopen={open} />
           {:else if map.lens === 'wheel'}
             <WheelLens data={l0} selected={map.selected} onselect={(id) => map.select(id)} onopen={open} />
           {:else if map.lens === 'matrix'}
@@ -189,7 +197,18 @@
       {/if}
     </div>
     {#if !narrow}
-      <Inspector data={inspection} onopen={open} />
+      <div class="flex flex-col gap-6 min-w-0" data-testid="codemap-side">
+        {#if map.level === 'modules' && map.lens === 'zones'}
+          {#if map.zones}
+            <ZonesDetails data={map.zones} filter={map.zoneFilter} onfilter={(f) => (map.zoneFilter = f)} onopen={open} />
+          {/if}
+          <Takeaways items={toAct} onopen={open} />
+        {:else if map.level === 'modules' && !map.selected}
+          <Takeaways items={toAct} onopen={open} />
+        {:else}
+          <Inspector data={inspection} onopen={open} />
+        {/if}
+      </div>
     {/if}
   </div>
 </div>

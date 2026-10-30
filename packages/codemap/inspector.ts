@@ -166,20 +166,35 @@ function libraries(l0: Level0): Inspection {
   };
 }
 
-function workspace(l0: Level0): Inspection {
+export interface Stat {
+  label: string;
+  value: string;
+  tone: Tone;
+  /** The diagram that shows it, when one does. */
+  lens?: 'structure' | 'cycles';
+}
+
+/** The numbers every diagram of a workspace shares — its modules and how their
+ *  dependencies run — for the header's stats band. */
+export function workspaceStats(l0: Level0): Stat[] {
   const count = (d: Direction) => l0.bands.filter((b) => b.direction === d).length;
+  return [
+    { label: 'Modules', value: n(l0.budget.modules), tone: 'ink' },
+    { label: 'Symbols', value: n(l0.blocks.reduce((a, b) => a + b.symbols, 0)), tone: 'ink' },
+    { label: 'Edges', value: n(l0.budget.edges), tone: 'ink' },
+    { label: 'Upward', value: String(count('up')), tone: 'danger', lens: 'structure' },
+    { label: 'Skip a layer', value: String(count('skip')), tone: 'warning', lens: 'structure' },
+    { label: 'Cycles', value: String(l0.cycles.length), tone: 'warning', lens: 'cycles' },
+    { label: 'Same layer · down', value: `${count('level')} · ${count('down')}`, tone: 'ink' },
+  ];
+}
+
+function workspace(l0: Level0): Inspection {
   return {
     eyebrow: 'Workspace',
     title: `${n(l0.budget.modules)} modules`,
     sub: 'Nothing selected. The map draws modules, not symbols; open one to see its files.',
-    stats: [
-      { label: 'Symbols', value: n(l0.blocks.reduce((a, b) => a + b.symbols, 0)), tone: 'ink' },
-      { label: 'Edges', value: n(l0.budget.edges), tone: 'ink' },
-      { label: 'Upward', value: String(count('up')), tone: 'danger' },
-      { label: 'Skip a layer', value: String(count('skip')), tone: 'warning' },
-      { label: 'Cycles', value: String(l0.cycles.length), tone: 'warning' },
-      { label: 'Same layer · down', value: `${count('level')} · ${count('down')}`, tone: 'ink' },
-    ],
+    stats: workspaceStats(l0).slice(1).map(({ label, value, tone }) => ({ label, value, tone })),
     listLabel: '',
     list: [],
     open: null,

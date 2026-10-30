@@ -32,6 +32,8 @@ export class CodeMapState {
   byDirection = $state(false);
   /** Fit the drawing to the column, or draw it at true size and scroll. */
   zoom = $state<'fit' | 'actual'>('fit');
+  /** Zones: the zone explored; the others stay drawn, dimmed. */
+  zoneFilter = $state<'all' | 'pain' | 'useless' | 'risk' | 'main'>('all');
   l0 = $state<Level0 | null>(null);
   l1 = $state<Level1 | null>(null);
   l2 = $state<Level2 | null>(null);

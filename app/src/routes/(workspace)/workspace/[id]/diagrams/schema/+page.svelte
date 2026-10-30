@@ -8,6 +8,8 @@
     import { DIAGRAM_VIEWS } from '../diagrams-nav.js';
     import { DiagramHeaderState } from '../diagram-header.svelte.js';
     import DiagramHeader from '../DiagramHeader.svelte';
+    import { workspaceStats } from '@sensei/codemap';
+    import { codeMapHost } from '../codemap-host.svelte.js';
     import { SchemaState, type SchemaScope } from '../schema-state.svelte.js';
 
     let { data } = $props();
@@ -15,6 +17,7 @@
     const view = new SchemaState(senseiApi(appState.port), () => data.workspaceId);
     const diagram = DIAGRAM_VIEWS.find((v) => v.id === 'schema')!;
     const about = new DiagramHeaderState();
+    const host = codeMapHost();
 
     $effect(() => {
         void data.workspaceId;
@@ -42,7 +45,8 @@
 
 <Screen>
     {#snippet header()}
-    <DiagramHeader view={diagram} {about} />
+    <DiagramHeader view={diagram} {about} stats={host.state.l0 ? workspaceStats(host.state.l0) : null}
+        hrefFor={(lens) => `/workspace/${data.workspaceId}/diagrams/${lens}`} />
     {/snippet}
 
     <div class="flex flex-col gap-4 p-4" data-testid="schema-screen">

@@ -23,4 +23,11 @@ describe('DiagramHeaderState', () => {
     new DiagramHeaderState().toggle();
     expect(new DiagramHeaderState().open).toBe(true);
   });
+
+  it('the stats band is shown by default, and hiding it is remembered apart from the info', () => {
+    const h = new DiagramHeaderState();
+    expect(h.stats).toBe(true);
+    h.toggleStats();
+    expect([new DiagramHeaderState().stats, new DiagramHeaderState().open]).toEqual([false, true]);
+  });
 });
