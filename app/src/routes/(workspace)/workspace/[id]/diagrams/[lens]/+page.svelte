@@ -1,7 +1,7 @@
 <script lang="ts">
     import { untrack } from 'svelte';
     import { Screen } from '$lib/components';
-    import { CodeMap, workspaceStats } from '@sensei/codemap';
+    import { CodeMap, CodeMapControls } from '@sensei/codemap';
     import { codeMapHost } from '../codemap-host.svelte.js';
     import { DiagramHeaderState } from '../diagram-header.svelte.js';
     import DiagramHeader from '../DiagramHeader.svelte';
@@ -22,12 +22,15 @@
 {#key data.lens}
 <Screen>
     {#snippet header()}
-    <DiagramHeader view={data.view} {about} stats={host.state.l0 ? workspaceStats(host.state.l0) : null}
-        hrefFor={(lens) => `/workspace/${data.workspaceId}/diagrams/${lens}`} />
+    <DiagramHeader view={data.view} {about} level={host.level} stats={host.stats} budget={host.budget}
+        workspace={{ name: data.workspace.name, repos: data.workspace.repos_count ?? null }}
+        hrefFor={(lens) => `/workspace/${data.workspaceId}/diagrams/${lens}`}>
+        {#snippet controls()}<CodeMapControls state={host.state} port={host.port} />{/snippet}
+    </DiagramHeader>
     {/snippet}
     <div class="p-4" data-testid="codemap-screen" data-lens={data.lens}>
         {#key data.workspaceId}
-            <CodeMap state={host.state} port={host.port} />
+            <CodeMap state={host.state} port={host.port} controls={false} side={about.side} />
         {/key}
     </div>
 </Screen>

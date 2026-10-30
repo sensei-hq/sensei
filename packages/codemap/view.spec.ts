@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bandTone, complexityTier, legendFor, searchModules, shownFiles, visibleBands } from './view';
+import { bandTone, budgetLine, complexityTier, legendFor, searchModules, shownFiles, visibleBands } from './view';
 import type { Band, Block, Level0 } from './types';
 
 const roles = { code: 4, test: 3, docs: 1, config: 0, generated: 2 };
@@ -70,5 +70,16 @@ describe('searchModules', () => {
     expect(searchModules(l0, 'api')).toEqual(['sensei/api', 'dbd/apiary']);
     expect(searchModules(l0, 'TASKS')).toEqual(['sensei/tasks']);
     expect(searchModules(l0, ' ')).toEqual([]);
+  });
+});
+
+describe('budgetLine', () => {
+  it('says what is drawn of what there is', () => {
+    const l0 = {
+      blocks: [block('a', { symbols: 1200 }), block('b', { symbols: 30 })],
+      budget: { drawn: 2, modules: 5, bands: 9, edges: 18940 }, coverage: { unplaced: 0 },
+    } as unknown as Level0;
+    expect(budgetLine(l0, 4)).toBe('drawing 2 of 5 modules · 4 bands for 18,940 edges · 1,230 symbols');
+    expect(budgetLine({ ...l0, coverage: { unplaced: 12 } }, 4)).toContain('· 12 calls unplaced');
   });
 });

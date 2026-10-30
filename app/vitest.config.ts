@@ -40,14 +40,15 @@ export default defineConfig({
   resolve: {
     // 'browser' condition ensures Svelte resolves to its client build
     conditions: ['browser'],
+    // As vite.config.ts: the shared packages take rokkit from this host.
+    dedupe: ['@rokkit/ui', '@rokkit/graph'],
     alias: {
       '$lib': '/src/lib',
       // Mirrors svelte.config.js: the vocabulary shared with the dōjō (#133).
       '@sensei/glyphs': fileURLToPath(new URL('../packages/glyphs/index.js', import.meta.url)),
       '@sensei/ui': fileURLToPath(new URL('../packages/ui/index.js', import.meta.url)),
       '@sensei/codemap': fileURLToPath(new URL('../packages/codemap/index.ts', import.meta.url)),
-      // As svelte.config.js: the shared packages take rokkit from this host.
-      '@rokkit/ui': fileURLToPath(new URL('./node_modules/@rokkit/ui', import.meta.url)),
+
       // SvelteKit generates `$app/*` modules at build time. Under Vitest
       // there's no SvelteKit runtime, so any component or hook that
       // imports `$app/navigation` fails Vite's resolution. Point it at a

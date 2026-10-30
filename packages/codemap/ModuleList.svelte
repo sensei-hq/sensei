@@ -3,17 +3,11 @@
   // `listView` gives, each at least 44px tall, with its role bar and badges.
   // A module opens on a tap; a fold or a group pair is read, not opened.
   import type { ListView } from './list';
+  import { ROLE_BG } from './view';
   import type { Role } from './types';
 
   let { view, onopen }: { view: ListView; onopen: (id: string) => void } = $props();
 
-  const ROLE_BG: Record<Role, string> = {
-    code: 'bg-ink-soft',
-    test: 'bg-success',
-    docs: 'bg-info',
-    config: 'bg-warning',
-    generated: 'bg-ink-faint',
-  };
   const BADGE = { danger: 'text-danger', warning: 'text-warning', faint: 'text-ink-faint' };
 </script>
 

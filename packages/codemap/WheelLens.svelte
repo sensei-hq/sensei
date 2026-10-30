@@ -6,8 +6,10 @@
   import { bandTone } from './view';
   import type { Level0 } from './types';
 
-  let { data, selected = null, onselect, onopen }: {
+  let { data, selected = null, zoom = 1, onselect, onopen }: {
     data: Level0;
+    /** Over fitting the ring to the column; 1 is fit. */
+    zoom?: number;
     selected?: string | null;
     onselect: (id: string | null) => void;
     onopen: (id: string) => void;
@@ -25,7 +27,7 @@
 <!-- A scrollable region must take focus for keyboard users (axe scrollable-region-focusable). -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div class="w-full overflow-auto" tabindex="0" role="region" aria-label="Modules on a ring, scrollable" bind:clientWidth={width} data-testid="codemap-wheel">
-  <svg width={size} height={size} role="img" aria-label="Modules on a ring, dependencies bundled by group">
+  <svg width={size * zoom} height={size * zoom} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Modules on a ring, dependencies bundled by group">
     {#each wheel.arcs as a (a.group)}
       {@const mid = (a.start + a.end) / 2}
       <text

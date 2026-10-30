@@ -15,7 +15,7 @@
     complexity = false,
     byDirection = false,
     roles,
-    zoom = 'fit',
+    zoom = 1,
     onselect,
     onopen,
   }: {
@@ -33,7 +33,8 @@
     byDirection?: boolean;
     /** The roles shown: a block's file count is theirs. */
     roles: Role[];
-    zoom?: 'fit' | 'actual';
+    /** Over fitting the drawing to the column; 1 is fit. */
+    zoom?: number;
     onselect: (id: string | null) => void;
     onopen: (id: string) => void;
   } = $props();
@@ -47,7 +48,8 @@
   let hovered = $state<string | null>(null);
   const focus = $derived(hovered ?? selected);
   const layout = $derived(layoutLevel0({ ...data, bands }, { width: DRAW_W }));
-  const scale = $derived(zoom === 'actual' || column <= 0 ? 1 : Math.max(FIT_FLOOR, Math.min(1, column / DRAW_W)));
+  const fit = $derived(column <= 0 ? 1 : Math.max(FIT_FLOOR, Math.min(1, column / DRAW_W)));
+  const scale = $derived(fit * zoom);
   const touches = (s: string, t: string) => !focus || s === focus || t === focus;
 
   const TIER_FILL = { danger: 'var(--danger-soft)', warning: 'var(--warning-soft)', neutral: 'var(--paper)', unmeasured: 'var(--paper-mute)' };

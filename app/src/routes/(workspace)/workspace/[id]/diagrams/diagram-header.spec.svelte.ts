@@ -24,6 +24,15 @@ describe('DiagramHeaderState', () => {
     expect(new DiagramHeaderState().open).toBe(true);
   });
 
+  it('the controls band and the side panel are each toggled and remembered on their own', () => {
+    const h = new DiagramHeaderState();
+    expect([h.controls, h.side]).toEqual([true, true]);
+    h.toggleControls();
+    expect([new DiagramHeaderState().controls, new DiagramHeaderState().side]).toEqual([false, true]);
+    new DiagramHeaderState().toggleSide();
+    expect(new DiagramHeaderState().side).toBe(false);
+  });
+
   it('the stats band is shown by default, and hiding it is remembered apart from the info', () => {
     const h = new DiagramHeaderState();
     expect(h.stats).toBe(true);

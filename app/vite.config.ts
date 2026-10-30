@@ -87,6 +87,9 @@ export default defineConfig(({ command }) => ({
   // is only set for mobile dev). A plain-browser `vite dev` (used for fast visual review in
   // Chromium/Firefox) doesn't need the generated-module rewrite, and a non-WebKit
   // parser trips on it, so skip it there; builds and tauri-dev still apply it.
+  // The shared packages (../packages, aliased in by svelte.config.js) import rokkit,
+  // which this host installs: resolve it from here, subpaths and all.
+  resolve: { dedupe: ['@rokkit/ui', '@rokkit/graph'] },
   plugins: [
     ...(command === 'build' || process.env.TAURI_ENV_PLATFORM ? [webkitNodeReexportFix()] : []),
     UnoCSS(),

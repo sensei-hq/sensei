@@ -33,6 +33,10 @@ export const STORAGE_KEYS = {
   diagramsAbout:    `${NS}:diagrams:about`,
   /** Workspace · Diagrams: whether the workspace stats band is shown ("open" | "closed"). */
   diagramsStats:    `${NS}:diagrams:stats`,
+  /** Workspace · Diagrams: whether the controls band is shown ("open" | "closed"). */
+  diagramsControls: `${NS}:diagrams:controls`,
+  /** Workspace · Diagrams: whether the side panel is shown ("open" | "closed"). */
+  diagramsSide:     `${NS}:diagrams:side`,
 } as const;
 
 /** The active Storage, or null when there isn't a usable one. Feature-detects

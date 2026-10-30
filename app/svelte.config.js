@@ -14,9 +14,18 @@ const config = {
       '@sensei/ui': '../packages/ui/index.js',
       // The Code map (M17), shared with the dōjō.
       '@sensei/codemap': '../packages/codemap/index.ts',
-      // The shared packages import rokkit, which each host installs; resolve it
-      // here for them, as their own folder has no node_modules.
-      '@rokkit/ui': './node_modules/@rokkit/ui',
+    },
+    typescript: {
+      // The shared packages import rokkit, which each host installs; their own
+      // folder has no node_modules. vite.config.ts dedupes it for the build; this
+      // tells the type checker where it is — the exact names only, so a subpath
+      // (`@rokkit/graph/schema`) still resolves through the package's exports.
+      // Relative to .svelte-kit/, where the generated tsconfig is written.
+      config: (tsconfig) => {
+        const paths = (tsconfig.compilerOptions.paths ??= {});
+        for (const name of ['@rokkit/ui', '@rokkit/graph']) paths[name] = [`../node_modules/${name}`];
+        return tsconfig;
+      },
     },
   },
   vitePlugin: {

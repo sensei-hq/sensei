@@ -46,10 +46,10 @@ const port = (): CodeMapPort => ({
 let target: HTMLElement;
 let app: Record<string, unknown> | null = null;
 afterEach(() => { if (app) unmount(app); app = null; target?.remove(); });
-const render = (p: CodeMapPort) => {
+const render = (p: CodeMapPort, extra: Record<string, unknown> = {}) => {
   target = document.body.appendChild(document.createElement('div'));
   const state = new CodeMapState();
-  app = mount(CodeMap, { target, props: { state, port: p } });
+  app = mount(CodeMap, { target, props: { state, port: p, ...extra } });
   return state;
 };
 const q = (sel: string) => target.querySelector(sel);
@@ -66,7 +66,7 @@ describe('CodeMap', () => {
   it('opens on modules with the budget, and an upward band in red', async () => {
     render(port());
     await settle();
-    expect(q('[data-testid="codemap-budget"]')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('drawing 3 blocks for 4 modules · 2 bands for 7 edges · 4 calls unplaced');
+    expect(q('[data-testid="codemap-budget"]')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('drawing 3 of 4 modules · 2 bands for 7 edges · 30 symbols · 4 calls unplaced');
     expect(q('[data-testid="band-p/a>p/b"]')?.getAttribute('stroke')).toBe('var(--danger)');
     expect(q('[data-testid="codemap-level"]')?.textContent).toContain('L0 · modules');
   });
@@ -245,12 +245,24 @@ describe('CodeMap', () => {
     expect(q('[data-testid="codemap-inspector"]')?.textContent).toContain('serde');
   });
 
-  it('100% draws at true size; Fit scales the drawing to the column', async () => {
+  it('the zoom overlay on the diagram scales it, and % goes back to fit', async () => {
     const map = render(port());
     await settle();
-    map.zoom = 'actual';
+    const width = () => Number(q('[data-testid="codemap-modules"] svg')?.getAttribute('width'));
+    const fit = width();
+    (q('[data-graph-zoom="in"]') as HTMLButtonElement).click();
     flushSync();
-    expect(q('[data-testid="codemap-modules"] svg')?.getAttribute('width')).toBe('1280');
+    expect([map.zoom, width()]).toEqual([1.25, Math.round(fit * 1.25)]);
+    (q('[data-graph-zoom="reset"]') as HTMLButtonElement).click();
+    flushSync();
+    expect([map.zoom, width()]).toEqual([1, fit]);
+  });
+
+  it('a host with its own header takes the controls and the side panel out', async () => {
+    render(port(), { controls: false, side: false });
+    await settle();
+    expect([q('[data-testid="codemap-search"]'), q('[data-testid="codemap-group"]'), q('[data-testid="codemap-side"]')]).toEqual([null, null, null]);
+    expect(q('[data-testid="legend"]')).not.toBeNull();
   });
 
   it('says why the map could not be read', async () => {

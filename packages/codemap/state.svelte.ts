@@ -30,8 +30,8 @@ export class CodeMapState {
   minWeight = $state(1);
   /** Structure: tint every band by direction, not only upward. */
   byDirection = $state(false);
-  /** Fit the drawing to the column, or draw it at true size and scroll. */
-  zoom = $state<'fit' | 'actual'>('fit');
+  /** The drawing's zoom over fitting it to the column: 1 is fit (rokkit's range). */
+  zoom = $state(1);
   /** Zones: the zone explored; the others stay drawn, dimmed. */
   zoneFilter = $state<'all' | 'pain' | 'useless' | 'risk' | 'main'>('all');
   l0 = $state<Level0 | null>(null);

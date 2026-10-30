@@ -20,16 +20,15 @@ describe('DIAGRAM_VIEWS', () => {
       ['schema', 'Database · ER', '表'],
     ]);
   });
-  it('gives every view a Solar icon, a hint and a question', () => {
+  it('gives every view a Solar icon and a hint', () => {
     for (const v of DIAGRAM_VIEWS) {
       expect(isSolarBoldDuotone(v.icon, solar), `${v.id}: ${v.icon}`).toBe(true);
       expect(v.hint.length, v.id).toBeGreaterThan(0);
-      expect(v.question.length, v.id).toBeGreaterThan(0);
     }
   });
-  it('says, for each view, what it shows, what to use it for and how to read it', () => {
+  it('says, for each view, what it shows, what to use it for, how to read it and what to do', () => {
     for (const v of DIAGRAM_VIEWS) {
-      for (const line of [v.shows, v.use, v.read]) expect(line, v.id).toMatch(/^[A-Z].*\.$/);
+      for (const line of [v.shows, v.use, v.read, v.todo]) expect(line, v.id).toMatch(/^[A-Z].*\.$/);
     }
   });
   it('opens on Structure', () => {

@@ -28,7 +28,10 @@ let target: HTMLElement;
 afterEach(() => { if (app) unmount(app); app = null; target?.remove(); });
 
 function render(lens: Lens) {
-  const data = $state({ workspaceId: 'w', lens, view: DIAGRAM_VIEWS.find((v) => v.id === lens)! });
+  const data = $state({
+    workspaceId: 'w', lens, view: DIAGRAM_VIEWS.find((v) => v.id === lens)!,
+    workspace: { id: 'w', name: 'sensei', repos_count: 3 },
+  });
   const host = new CodeMapHost(() => 'w', port());
   target = document.body.appendChild(document.createElement('div'));
   app = mount(Page, { target, props: { data } as never, context: new Map([[CODEMAP_HOST, host]]) });

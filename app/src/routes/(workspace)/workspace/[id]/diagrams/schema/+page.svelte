@@ -8,7 +8,6 @@
     import { DIAGRAM_VIEWS } from '../diagrams-nav.js';
     import { DiagramHeaderState } from '../diagram-header.svelte.js';
     import DiagramHeader from '../DiagramHeader.svelte';
-    import { workspaceStats } from '@sensei/codemap';
     import { codeMapHost } from '../codemap-host.svelte.js';
     import { SchemaState, type SchemaScope } from '../schema-state.svelte.js';
 
@@ -45,8 +44,32 @@
 
 <Screen>
     {#snippet header()}
-    <DiagramHeader view={diagram} {about} stats={host.state.l0 ? workspaceStats(host.state.l0) : null}
-        hrefFor={(lens) => `/workspace/${data.workspaceId}/diagrams/${lens}`} />
+    <DiagramHeader view={diagram} {about} stats={host.stats}
+        workspace={{ name: data.workspace.name, repos: data.workspace.repos_count ?? null }}
+        hrefFor={(lens) => `/workspace/${data.workspaceId}/diagrams/${lens}`}>
+        {#snippet controls()}
+            {#if view.view === 'graph'}
+            <div class="flex flex-wrap items-center gap-4">
+                <Toolbar
+                    label="Show"
+                    width="fit"
+                    compact
+                    items={scopeItems}
+                    onclick={(value) => view.setScope(value as SchemaScope)}
+                />
+                <Toolbar
+                    label="Schema"
+                    width="fit"
+                    compact
+                    items={schemaItems}
+                    onclick={(value) => view.setSchema(value === '' ? null : String(value))}
+                />
+            </div>
+            {:else}
+                <p class="m-0 text-sm text-ink-faint">The controls apply once the schema is read.</p>
+            {/if}
+        {/snippet}
+    </DiagramHeader>
     {/snippet}
 
     <div class="flex flex-col gap-4 p-4" data-testid="schema-screen">
@@ -70,22 +93,7 @@
                 under its folders.
             </p>
         {:else}
-            <div class="flex flex-wrap items-center gap-4">
-                <Toolbar
-                    label="Show"
-                    width="fit"
-                    compact
-                    items={scopeItems}
-                    onclick={(value) => view.setScope(value as SchemaScope)}
-                />
-                <Toolbar
-                    label="Schema"
-                    width="fit"
-                    compact
-                    items={schemaItems}
-                    onclick={(value) => view.setSchema(value === '' ? null : String(value))}
-                />
-            </div>
+
 
             <ul class="flex flex-col list-none p-0 m-0 text-sm text-ink-soft" data-testid="schema-coverage">
                 {#each view.coverage as line (line)}
@@ -120,8 +128,9 @@
                     {/if}
                 </div>
 
+                {#if about.side}
                 <aside
-                    class="w-full md:w-[300px] flex flex-col gap-3 p-3 border border-paper-edge rounded overflow-auto max-h-[70vh]"
+                    class="w-full md:w-[360px] flex flex-col gap-3 p-3 border border-paper-edge rounded overflow-auto max-h-[70vh]"
                     data-testid="schema-entity"
                 >
                     {#if view.selectedTable}
@@ -154,6 +163,7 @@
                         </p>
                     {/if}
                 </aside>
+                {/if}
             </div>
         {/if}
     </div>

@@ -7,8 +7,10 @@
   import { zonesView } from './lenses';
   import type { ZonePoint, Zones } from './types';
 
-  let { data, filter = 'all', onopen }: {
+  let { data, filter = 'all', zoom = 1, onopen }: {
     data: Zones | null;
+    /** Over fitting the plot to the column; 1 is fit. */
+    zoom?: number;
     filter?: 'all' | ZonePoint['zone'];
     onopen: (id: string) => void;
   } = $props();
@@ -24,8 +26,10 @@
   const shown = (p: ZonePoint) => filter === 'all' || p.zone === filter;
 </script>
 
-<div class="w-full" bind:clientWidth={column} data-testid="codemap-zones">
-  <svg width={S + 2 * PAD} height={S + 2 * PAD} role="img" aria-label="Components by instability and abstractness">
+<!-- A scrollable region must take focus for keyboard users (axe scrollable-region-focusable). -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div class="w-full overflow-auto" tabindex="0" role="region" aria-label="Components by instability and abstractness, scrollable" bind:clientWidth={column} data-testid="codemap-zones">
+  <svg width={(S + 2 * PAD) * zoom} height={(S + 2 * PAD) * zoom} viewBox={`0 0 ${S + 2 * PAD} ${S + 2 * PAD}`} role="img" aria-label="Components by instability and abstractness">
     <rect x={PAD} y={PAD} width={S} height={S} fill="var(--paper-soft)" stroke="var(--paper-edge)" />
     <line x1={PAD} y1={PAD} x2={PAD + S} y2={PAD + S} stroke="var(--ink-faint)" stroke-dasharray="4 4" />
     <text x={PAD + 8} y={PAD + S - 10} class="text-xs" fill="var(--danger)">zone of pain</text>

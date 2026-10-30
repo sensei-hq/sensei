@@ -1,9 +1,9 @@
 // What the map shows of L0 under the reader's choices (M17), pure: which bands
 // survive the filters, how a band and a block are toned, the legend, the file
 // count under the roles shown, and search.
-import { complexityShare } from './lenses';
+import { complexityShare, couplingBands, cycleBands, cycleOf } from './lenses';
 import type { Lens } from './state.svelte';
-import type { Band, Block, Direction, Level0, Role } from './types';
+import type { Band, Block, CoChange, Direction, Level0, Role } from './types';
 
 export type EdgeMode = 'all' | 'violations';
 export interface BandFilter {
@@ -101,3 +101,28 @@ export function searchModules(l0: Level0, q: string, limit = 8): string[] {
   const folded = l0.blocks.flatMap((b) => b.folded);
   return [...drawn, ...folded].filter((id) => id.toLowerCase().includes(needle)).slice(0, limit);
 }
+
+/** The bands a lens draws under the filters: a cycle's own for Cycles, co-change
+ *  for Hidden coupling (never filtered — they are not dependencies), and every
+ *  band for the rest. */
+export function drawnBands(lens: Lens, l0: Level0, cochange: CoChange | null, filter: BandFilter): Band[] {
+  if (lens === 'coupling') return couplingBands(l0, cochange?.hidden ?? []);
+  return visibleBands(lens === 'cycles' ? cycleBands(l0) : l0.bands, filter, cycleOf(l0));
+}
+
+/** What L0 draws of what there is, for the stats under the header. */
+export function budgetLine(l0: Level0, bands: number): string {
+  const n = (v: number) => v.toLocaleString('en-US');
+  const symbols = l0.blocks.reduce((a, b) => a + b.symbols, 0);
+  const unplaced = l0.coverage.unplaced ? ` · ${n(l0.coverage.unplaced)} calls unplaced` : '';
+  return `drawing ${n(l0.budget.drawn)} of ${n(l0.budget.modules)} modules · ${n(bands)} bands for ${n(l0.budget.edges)} edges · ${n(symbols)} symbols${unplaced}`;
+}
+
+/** Each role's colour: the Show chips' swatches and the list rows' role bars. */
+export const ROLE_BG: Record<Role, string> = {
+  code: 'bg-ink-soft',
+  test: 'bg-success',
+  docs: 'bg-info',
+  config: 'bg-warning',
+  generated: 'bg-ink-faint',
+};
