@@ -149,7 +149,7 @@
       <div class="flex flex-col gap-6 min-w-0 min-h-0 overflow-auto pr-1" tabindex="0" role="region" aria-label="Side panel" data-testid="codemap-side">
         {#if map.level === 'modules' && map.lens === 'zones'}
           {#if map.zones}
-            <ZonesDetails data={map.zones} filter={map.zoneFilter} onfilter={(f) => (map.zoneFilter = f)} onopen={open} />
+            <ZonesDetails data={map.zones} filter={map.zoneFilter} onopen={open} />
           {/if}
           <Takeaways items={toAct} onopen={open} />
         {:else if map.level === 'modules' && !map.selected}

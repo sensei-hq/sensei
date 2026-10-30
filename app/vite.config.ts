@@ -89,7 +89,7 @@ export default defineConfig(({ command }) => ({
   // parser trips on it, so skip it there; builds and tauri-dev still apply it.
   // The shared packages (../packages, aliased in by svelte.config.js) import rokkit,
   // which this host installs: resolve it from here, subpaths and all.
-  resolve: { dedupe: ['@rokkit/ui', '@rokkit/graph'] },
+  resolve: { dedupe: ['@rokkit/ui', '@rokkit/graph', '@rokkit/states'] },
   plugins: [
     ...(command === 'build' || process.env.TAURI_ENV_PLATFORM ? [webkitNodeReexportFix()] : []),
     UnoCSS(),

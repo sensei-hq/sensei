@@ -7,6 +7,7 @@
   import { Toggle } from '@rokkit/ui';
   import { ROLES, type CodeMapState } from './state.svelte';
   import { MIN_WEIGHTS, ROLE_BG, searchModules, type EdgeMode } from './view';
+  import { zonesView } from './lenses';
   import type { CodeMapPort, GroupBy } from './types';
 
   let { state: map, port }: { state: CodeMapState; port: CodeMapPort } = $props();
@@ -28,6 +29,15 @@
   const showsRoles = $derived((map.level === 'modules' && canvasLens) || map.level === 'files');
   const showsBands = $derived(map.level === 'modules' && canvasLens && map.lens !== 'coupling');
   const matches = $derived(map.l0 ? searchModules(map.l0, query) : []);
+  const ZONES = [
+    { id: 'all', label: 'All', tone: 'text-ink' },
+    { id: 'pain', label: 'Pain', tone: 'text-danger' },
+    { id: 'useless', label: 'Uselessness', tone: 'text-warning' },
+    { id: 'risk', label: 'Risk', tone: 'text-accent' },
+    { id: 'main', label: 'Main sequence', tone: 'text-success' },
+  ] as const;
+  const zones = $derived(map.lens === 'zones' && map.level === 'modules' && map.zones ? zonesView(map.zones) : null);
+  const zoneCount = (id: (typeof ZONES)[number]['id']) => (!zones ? 0 : id === 'all' ? zones.placed.length : zones.byZone[id]);
   const open = (id: string) => {
     query = '';
     void map.openModule(port, id);
@@ -41,6 +51,17 @@
         <span class="text-xs uppercase tracking-wide text-ink-mute">Group by</span>
         <Toggle size="sm" label="Group by" options={GROUPINGS} value={map.groupBy}
           onchange={(v) => void map.setGroupBy(port, v as GroupBy)} />
+      </div>
+    {/if}
+    {#if zones}
+      <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Zone">
+        <span class="text-xs uppercase tracking-wide text-ink-mute">Zone</span>
+        {#each ZONES as z (z.id)}
+          <button class={`px-2 py-1 text-xs rounded border cursor-pointer ${z.tone}`}
+            class:border-paper-edge={map.zoneFilter === z.id} class:border-transparent={map.zoneFilter !== z.id}
+            class:bg-paper-mute={map.zoneFilter === z.id} class:bg-transparent={map.zoneFilter !== z.id}
+            aria-pressed={map.zoneFilter === z.id} onclick={() => (map.zoneFilter = z.id)} data-testid={`zones-filter-${z.id}`}>{z.label} · {zoneCount(z.id)}</button>
+        {/each}
       </div>
     {/if}
     {#if showsRoles}

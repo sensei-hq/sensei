@@ -41,7 +41,7 @@ export default defineConfig({
     // 'browser' condition ensures Svelte resolves to its client build
     conditions: ['browser'],
     // As vite.config.ts: the shared packages take rokkit from this host.
-    dedupe: ['@rokkit/ui', '@rokkit/graph'],
+    dedupe: ['@rokkit/ui', '@rokkit/graph', '@rokkit/states'],
     alias: {
       '$lib': '/src/lib',
       // Mirrors svelte.config.js: the vocabulary shared with the dōjō (#133).

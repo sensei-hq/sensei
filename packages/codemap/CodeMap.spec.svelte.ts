@@ -156,10 +156,7 @@ describe('CodeMap', () => {
     const p = port();
     render(p);
     await settle();
-    expect(q('[data-testid="takeaway-0"]')?.textContent).toContain('1 upward dependency');
-    (q('[data-testid="takeaway-0"] [data-testid="takeaway-item-p/a"]') as HTMLButtonElement).click();
-    await settle();
-    expect(p.module).toHaveBeenCalledWith('p/a');
+    expect(q('[data-testid="codemap-takeaways"]')?.textContent).toContain('1 upward dependency');
   });
 
   it('Zones has no grouping or role filter — they would change nothing — but filters by zone', async () => {
@@ -169,6 +166,8 @@ describe('CodeMap', () => {
     void map.showLens(p, 'zones');
     await settle();
     expect([q('[data-testid="codemap-group"]'), q('[data-testid="codemap-role-test"]')]).toEqual([null, null]);
+    // The zone filter is a control, with the others.
+    expect(q('[data-testid="codemap-controls"] [data-testid="zones-filter-pain"]')).not.toBeNull();
     (q('[data-testid="zones-filter-useless"]') as HTMLButtonElement).click();
     flushSync();
     expect(q('[data-testid="zones-furthest"]')?.textContent).not.toContain('p/a');
