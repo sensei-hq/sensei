@@ -57,7 +57,7 @@
   const zoomTo = (z: number) => (map.zoom = z);
 </script>
 
-<div class="flex flex-col gap-3" bind:clientWidth={width} data-testid="codemap">
+<div class="h-full min-h-0 flex flex-col gap-3" bind:clientWidth={width} data-testid="codemap">
   {#if controls}
     <CodeMapControls state={map} {port} />
   {/if}
@@ -85,8 +85,11 @@
     <p class="m-0 text-xs text-ink-mute" data-testid="codemap-budget">{budgetLine(l0, bands.length)}</p>
   {/if}
 
-  <div class="grid gap-6" style={narrow || !side ? '' : 'grid-template-columns: minmax(0, 1fr) 360px;'}>
-    <div class="min-w-0 flex flex-col gap-2">
+  <!-- The diagram and the side panel each scroll on their own; each takes focus so
+       the keyboard can scroll it (axe scrollable-region-focusable). -->
+  <div class="flex-1 min-h-0 grid gap-6" style={narrow || !side ? '' : 'grid-template-columns: minmax(0, 1fr) 360px;'}>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="min-w-0 min-h-0 overflow-auto flex flex-col gap-2" tabindex="0" role="region" aria-label="Diagram" data-testid="codemap-canvas">
       {#if map.level === 'modules'}
         {#if l0}
           {#if narrow}
@@ -142,7 +145,8 @@
       {/if}
     </div>
     {#if side && !narrow}
-      <div class="flex flex-col gap-6 min-w-0" data-testid="codemap-side">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="flex flex-col gap-6 min-w-0 min-h-0 overflow-auto pr-1" tabindex="0" role="region" aria-label="Side panel" data-testid="codemap-side">
         {#if map.level === 'modules' && map.lens === 'zones'}
           {#if map.zones}
             <ZonesDetails data={map.zones} filter={map.zoneFilter} onfilter={(f) => (map.zoneFilter = f)} onopen={open} />

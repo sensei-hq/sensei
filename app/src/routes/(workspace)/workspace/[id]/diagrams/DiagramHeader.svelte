@@ -40,9 +40,17 @@
         { label: 'How to read it', text: view.read, accent: false },
         { label: 'What to do', text: view.todo, accent: true },
     ]);
-    const modules = $derived(stats?.find((s) => s.label === 'Modules')?.value ?? null);
-    const rest = $derived(stats?.filter((s) => s.label !== 'Modules') ?? []);
-    const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    // The workspace is the one open, so it is not named here: its repos sit beside
+    // its modules, as numbers like the rest.
+    const cards = $derived(
+        stats
+            ? stats.flatMap((s) =>
+                  s.label === 'Modules' && workspace.repos != null
+                      ? [s, { label: 'Repos', value: workspace.repos.toLocaleString('en-US'), tone: 'ink' as const }]
+                      : [s],
+              )
+            : [],
+    );
     const toggles = $derived([
         { id: 'about', label: "What it's for", icon: 'i-solar-info-circle-bold-duotone', on: about.open, flip: () => about.toggle() },
         { id: 'stats', label: 'Workspace numbers', icon: 'i-solar-chart-2-bold-duotone', on: about.stats, flip: () => about.toggleStats() },
@@ -82,30 +90,24 @@
         <div class="grid gap-8 px-6 py-5 md:grid-cols-3" data-testid="diagram-about">
             {#each ABOUT as a (a.label)}
                 <div class="flex flex-col gap-2">
-                    <span class="text-xs uppercase tracking-widest" class:text-accent={a.accent} class:text-ink-mute={!a.accent}>{a.label}</span>
-                    <p class="m-0 text-base text-ink">{a.text}</p>
+                    <span class="text-xs uppercase tracking-wide" class:text-accent={a.accent} class:text-ink-mute={!a.accent}>{a.label}</span>
+                    <p class="m-0 text-sm text-ink-soft">{a.text}</p>
                 </div>
             {/each}
         </div>
     {/if}
     {#if about.stats}
         <div class="flex flex-col gap-3 px-6 py-5" data-testid="diagram-stats">
-            <dl class="m-0 flex flex-wrap gap-x-10 gap-y-4">
-                <div class="flex flex-col gap-1" data-testid="diagram-stat-workspace">
-                    <dt class="text-xs uppercase tracking-widest text-ink-mute">Workspace · {workspace.name}</dt>
-                    <dd class="m-0 font-mono text-2xl text-ink">
-                        {modules ?? '—'} modules{#if workspace.repos != null} · {plural(workspace.repos, 'repo')}{/if}
-                    </dd>
-                </div>
-                {#each rest as s (s.label)}
-                    <div class="flex flex-col gap-1" data-testid={`diagram-stat-${s.label}`}>
-                        <dt class="text-xs uppercase tracking-widest text-ink-mute">{s.label}</dt>
-                        <dd class={`m-0 font-mono text-2xl ${TONE[s.tone]}`}>
+            <ul class="m-0 p-0 list-none flex flex-wrap gap-2">
+                {#each cards as s (s.label)}
+                    <li class="flex flex-col gap-0.5 min-w-24 px-3 py-2 rounded-lg border border-paper-edge bg-paper-soft" data-testid={`diagram-stat-${s.label}`}>
+                        <span class={`font-mono text-sm ${TONE[s.tone]}`}>
                             {#if s.lens}<a class={`no-underline hover:underline ${TONE[s.tone]}`} href={hrefFor(s.lens)}>{s.value}</a>{:else}{s.value}{/if}
-                        </dd>
-                    </div>
+                        </span>
+                        <span class="text-xs text-ink-mute">{s.label}</span>
+                    </li>
                 {/each}
-            </dl>
+            </ul>
             {#if !stats}<p class="m-0 text-sm text-ink-faint">Reading the workspace…</p>{/if}
             {#if budget}<p class="m-0 font-mono text-xs text-ink-mute" data-testid="diagram-budget">{budget}</p>{/if}
         </div>

@@ -265,6 +265,15 @@ describe('CodeMap', () => {
     expect(q('[data-testid="legend"]')).not.toBeNull();
   });
 
+  it('the diagram and the side panel scroll on their own', async () => {
+    render(port());
+    await settle();
+    for (const id of ['codemap-canvas', 'codemap-side']) {
+      const pane = q(`[data-testid="${id}"]`) as HTMLElement;
+      expect([pane.className.includes('overflow-auto'), pane.getAttribute('tabindex')], id).toEqual([true, '0']);
+    }
+  });
+
   it('says why the map could not be read', async () => {
     render({ ...port(), level0: vi.fn(() => Promise.resolve({ ok: false as const, error: 'Service Unavailable' })) });
     await settle();

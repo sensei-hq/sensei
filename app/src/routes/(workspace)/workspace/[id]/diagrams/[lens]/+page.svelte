@@ -20,7 +20,7 @@
 
 <!-- Each diagram is its own screen; the map they share lives in the layout. -->
 {#key data.lens}
-<Screen>
+<Screen fill>
     {#snippet header()}
     <DiagramHeader view={data.view} {about} level={host.level} stats={host.stats} budget={host.budget}
         workspace={{ name: data.workspace.name, repos: data.workspace.repos_count ?? null }}
@@ -28,7 +28,7 @@
         {#snippet controls()}<CodeMapControls state={host.state} port={host.port} />{/snippet}
     </DiagramHeader>
     {/snippet}
-    <div class="p-4" data-testid="codemap-screen" data-lens={data.lens}>
+    <div class="flex-1 min-h-0 flex flex-col p-4" data-testid="codemap-screen" data-lens={data.lens}>
         {#key data.workspaceId}
             <CodeMap state={host.state} port={host.port} controls={false} side={about.side} />
         {/key}
