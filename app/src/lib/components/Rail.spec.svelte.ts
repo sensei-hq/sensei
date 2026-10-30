@@ -41,6 +41,16 @@ describe("the three sidebars are one Rail", () => {
     expect(new Set(classes).size).toBe(1);
   });
 
+  it("only the nav list scrolls; the header and footer stay where they are", () => {
+    const m = mountComponent(WorkspaceSidebar, workspace);
+    cleanup.push(m.destroy);
+    flushSync();
+    const rail = m.container.querySelector("[data-rail]") as HTMLElement;
+    const nav = rail.querySelector("[data-rail-nav]") as HTMLElement;
+    expect(rail.className).toContain("overflow-hidden");
+    expect([nav.className.includes("overflow-y-auto"), nav.className.includes("min-h-0"), nav.className.includes("flex-1")]).toEqual([true, true, true]);
+  });
+
   it("the workspace sections are List links, marking the current one", () => {
     const m = mountComponent(WorkspaceSidebar, workspace);
     cleanup.push(m.destroy);

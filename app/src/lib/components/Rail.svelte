@@ -29,12 +29,13 @@
     data-component={component}
     data-rail
     aria-label={label}
-    class="w-[220px] shrink-0 flex flex-col gap-4 overflow-auto border-r border-paper-edge bg-paper px-3 py-5"
+    class="w-[220px] shrink-0 flex flex-col gap-4 overflow-hidden border-r border-paper-edge bg-paper px-3 py-5"
 >
-    {@render header?.()}
-    <List {items} {fields} {value} collapsible={false} />
-    {#if footer}
-        <div class="flex-1"></div>
-        {@render footer()}
-    {/if}
+    <!-- The header and footer hold their place; only the nav list scrolls. -->
+    {#if header}<div class="shrink-0">{@render header()}</div>{/if}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="flex-1 min-h-0 overflow-y-auto -mx-1 px-1" tabindex="0" data-rail-nav>
+        <List {items} {fields} {value} collapsible={false} />
+    </div>
+    {#if footer}<div class="shrink-0">{@render footer()}</div>{/if}
 </aside>

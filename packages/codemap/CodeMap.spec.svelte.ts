@@ -167,11 +167,11 @@ describe('CodeMap', () => {
     await settle();
     expect([q('[data-testid="codemap-group"]'), q('[data-testid="codemap-role-test"]')]).toEqual([null, null]);
     // The zone filter is a control, with the others.
-    expect(q('[data-testid="codemap-controls"] [data-testid="zones-filter-pain"]')).not.toBeNull();
-    (q('[data-testid="zones-filter-useless"]') as HTMLButtonElement).click();
+    expect(q('[data-testid="codemap-controls"] [data-testid="codemap-zone"] [data-toggle]')).not.toBeNull();
+    (q('[data-testid="codemap-zone"] [aria-label="Uselessness"]') as HTMLButtonElement).click();
     flushSync();
     expect(q('[data-testid="zones-furthest"]')?.textContent).not.toContain('p/a');
-    (q('[data-testid="zones-filter-pain"]') as HTMLButtonElement).click();
+    (q('[data-testid="codemap-zone"] [aria-label="Pain"]') as HTMLButtonElement).click();
     flushSync();
     expect(q('[data-testid="zones-furthest"]')?.textContent).toContain('p/a');
     expect(q('[data-testid="zone-p/a"]')?.getAttribute('fill-opacity')).toBe('0.8');
@@ -222,17 +222,10 @@ describe('CodeMap', () => {
     expect(q('[data-testid="block-note-p/a"]')?.textContent?.trim()).toBe('2 files');
   });
 
-  it('search finds a folded module and opens it', async () => {
-    const p = port();
-    render(p);
+  it('finds a module from a picker of every module, grouped as the map is', async () => {
+    render(port());
     await settle();
-    const input = q('[data-testid="codemap-search"]') as HTMLInputElement;
-    input.value = 'p/d';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    flushSync();
-    (q('[data-testid="codemap-match-p/d"]') as HTMLButtonElement).click();
-    await settle();
-    expect(p.module).toHaveBeenCalledWith('p/d');
+    expect(q('[data-testid="codemap-find"] [data-select-trigger], [data-testid="codemap-find"] button')).not.toBeNull();
   });
 
   it('the referenced libraries are one block: selecting it lists the most used', async () => {

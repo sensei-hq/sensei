@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bandTone, budgetLine, complexityTier, legendFor, searchModules, shownFiles, visibleBands } from './view';
+import { bandTone, budgetLine, complexityTier, legendFor, moduleChoices, shownFiles, visibleBands } from './view';
 import type { Band, Block, Level0 } from './types';
 
 const roles = { code: 4, test: 3, docs: 1, config: 0, generated: 2 };
@@ -62,17 +62,6 @@ describe('shownFiles', () => {
   });
 });
 
-describe('searchModules', () => {
-  const l0 = {
-    blocks: [block('sensei/api'), block('fold:L1', { label: '+2 more', folded: ['sensei/tasks', 'dbd/apiary'] })],
-  } as unknown as Level0;
-  it('finds drawn and folded modules by name, drawn first', () => {
-    expect(searchModules(l0, 'api')).toEqual(['sensei/api', 'dbd/apiary']);
-    expect(searchModules(l0, 'TASKS')).toEqual(['sensei/tasks']);
-    expect(searchModules(l0, ' ')).toEqual([]);
-  });
-});
-
 describe('budgetLine', () => {
   it('says what is drawn of what there is', () => {
     const l0 = {
@@ -81,5 +70,22 @@ describe('budgetLine', () => {
     } as unknown as Level0;
     expect(budgetLine(l0, 4)).toBe('drawing 2 of 5 modules · 4 bands for 18,940 edges · 1,230 symbols');
     expect(budgetLine({ ...l0, coverage: { unplaced: 12 } }, 4)).toContain('· 12 calls unplaced');
+  });
+});
+
+describe('moduleChoices', () => {
+  it('every module to browse, grouped as the map groups them — folded ones included, hubs too', () => {
+    const l0 = {
+      groupBy: 'layers',
+      blocks: [
+        block('p/b', { group: 'L1' }), block('p/a', { group: 'L0' }),
+        block('fold:L1', { group: 'L1', label: '+2 more', folded: ['p/c', 'p/d'] }),
+        block('p/log', { group: 'L1', hub: true }),
+      ],
+    } as unknown as Level0;
+    expect(moduleChoices(l0).map((g) => [g.label, g.children.map((c) => c.value)])).toEqual([
+      ['L0', ['p/a']],
+      ['L1', ['p/b', 'p/c', 'p/d', 'p/log']],
+    ]);
   });
 });

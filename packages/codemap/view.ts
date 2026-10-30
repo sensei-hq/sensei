@@ -2,6 +2,7 @@
 // survive the filters, how a band and a block are toned, the legend, the file
 // count under the roles shown, and search.
 import { complexityShare, couplingBands, cycleBands, cycleOf } from './lenses';
+import { groupOrder } from './layout';
 import type { Lens } from './state.svelte';
 import type { Band, Block, CoChange, Direction, Level0, Role } from './types';
 
@@ -45,13 +46,13 @@ export interface LegendEntry {
 export function legendFor(lens: Lens, byDirection: boolean): LegendEntry[] {
   switch (lens) {
     case 'cycles':
-      return [{ label: 'in a cycle', fill: 'var(--warning-soft)' }];
+      return [{ label: 'in a cycle', stroke: 'var(--warning)' }];
     case 'coupling':
       return [{ label: 'changes together', stroke: 'var(--ink-faint)', dashed: true }];
     case 'complexity':
       return [
-        { label: 'over 10%', fill: 'var(--warning-soft)' },
-        { label: 'over 20%', fill: 'var(--danger-soft)' },
+        { label: 'over 10%', stroke: 'var(--warning)' },
+        { label: 'over 20%', stroke: 'var(--danger)' },
         { label: 'not measured', fill: 'var(--paper-mute)' },
       ];
     case 'zones':
@@ -92,16 +93,6 @@ export function shownFiles(b: Block, shown: Role[]): number {
   return shown.reduce((n, r) => n + (b.roles?.[r] ?? 0), 0);
 }
 
-/** Modules whose name holds `q` (case-folded): drawn blocks first, then those
- *  folded into a "+N more". Hubs are modules too. At most `limit`. */
-export function searchModules(l0: Level0, q: string, limit = 8): string[] {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return [];
-  const drawn = l0.blocks.filter((b) => !b.folded.length).map((b) => b.id);
-  const folded = l0.blocks.flatMap((b) => b.folded);
-  return [...drawn, ...folded].filter((id) => id.toLowerCase().includes(needle)).slice(0, limit);
-}
-
 /** The bands a lens draws under the filters: a cycle's own for Cycles, co-change
  *  for Hidden coupling (never filtered — they are not dependencies), and every
  *  band for the rest. */
@@ -126,3 +117,13 @@ export const ROLE_BG: Record<Role, string> = {
   config: 'bg-warning',
   generated: 'bg-ink-faint',
 };
+
+/** Every module to browse, grouped as the map groups them: a drawn block, the
+ *  modules folded into a "+N more", and hubs — so a module can be found without
+ *  knowing its name. Items for a rokkit Select. */
+export function moduleChoices(l0: Level0): { label: string; value: string; children: { label: string; value: string }[] }[] {
+  return groupOrder(l0.blocks, l0.groupBy).map((g) => {
+    const ids = l0.blocks.filter((b) => b.group === g).flatMap((b) => (b.folded.length ? b.folded : [b.id]));
+    return { label: g, value: `group:${g}`, children: [...ids].sort().map((id) => ({ label: id, value: id })) };
+  });
+}

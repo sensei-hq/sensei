@@ -21,6 +21,7 @@
 
 import { toGraphInput } from '@rokkit/graph/schema';
 import { DEFAULT_ICONS } from '@rokkit/graph/icons';
+import { resolveGroupStyles } from '@rokkit/graph';
 
 /** The sidebar's reading order: storage, then derived data, then behaviour (as dbd's). */
 const KIND_ORDER = ['table', 'view', 'materialized_view', 'function', 'procedure'];
@@ -221,13 +222,79 @@ export class SchemaState {
     return { reads: of('reads'), writes: of('writes'), calls: of('calls') };
   }
 
-  /** Every shown entity grouped by schema, tables first, then views and routines —
-   *  the sidebar's items for a rokkit List (dbd's /diagram sidebar). */
-  get sidebar(): { label: string; value: string; badge: string; children: { label: string; value: string; kind: string; icon: string }[] }[] {
-    const all = [
+  /** The entity types hidden from the list. */
+  #hiddenKinds = $state<Set<string>>(new Set());
+  /** Narrows the list to names holding it (case-folded). */
+  query = $state('');
+
+  toggleKind(kind: string) {
+    const next = new Set(this.#hiddenKinds);
+    if (next.has(kind)) next.delete(kind);
+    else next.add(kind);
+    this.#hiddenKinds = next;
+  }
+
+  #all(): { schema: string; name: string; kind: string }[] {
+    return [
       ...this.#tables.map((t) => ({ schema: t.schema, name: t.name, kind: 'table' })),
       ...this.#entities.map((e) => ({ schema: e.schema, name: e.name, kind: e.kind as string })),
     ];
+  }
+
+  /** Each schema's colour, as the diagram paints its group (rokkit's assignment). */
+  schemaColours(mode: 'light' | 'dark'): Map<string, string> {
+    const styles = resolveGroupStyles(this.schemaOptions.flatMap((o) => (o.value ? [o.value] : [])), mode);
+    return new Map([...styles].map(([schema, st]) => [schema, (st as Record<string, string>)['--group-fill']]));
+  }
+
+  /** Each entity type present, how many, and whether the list shows it. */
+  get kindCounts(): { kind: string; count: number; shown: boolean }[] {
+    const all = this.#all();
+    return KIND_ORDER.map((kind) => ({ kind, count: all.filter((x) => x.kind === kind).length, shown: !this.#hiddenKinds.has(kind) }))
+      .filter((k) => k.count > 0);
+  }
+
+  /** Every schema to choose from, with its tables — items for a rokkit Select. */
+  get schemaChoices(): { label: string; value: string }[] {
+    return this.schemaOptions.map((o) => ({
+      label: `${o.value === null ? 'All schemas' : o.label} · ${o.tables}`,
+      value: o.value ?? '',
+    }));
+  }
+
+  /** The selected entity and everything it is keyed or linked to, as the diagram's
+   *  input — dbd's entity diagram. Null with nothing selected. */
+  get entityGraph() {
+    const id = this.selected;
+    const p = this.payload;
+    if (id === null || !p) return null;
+    const near = new Set([id]);
+    for (const r of p.refs) {
+      const [a, b] = [objectId(r.from.s, r.from.t), objectId(r.to.s, r.to.t)];
+      if (a === id) near.add(b);
+      if (b === id) near.add(a);
+    }
+    const deps = p.deps.filter((d) => !d.unresolved);
+    for (const d of deps) {
+      const [a, b] = [objectId(d.from.s, d.from.n), objectId(d.to.s, d.to.n)];
+      if (a === id) near.add(b);
+      if (b === id) near.add(a);
+    }
+    const isNear = (s: string, n: string) => near.has(objectId(s, n));
+    const model = {
+      tables: p.tables.filter((t) => isNear(t.schema, t.name)),
+      refs: p.refs.filter((r) => isNear(r.from.s, r.from.t) && isNear(r.to.s, r.to.t)),
+      entities: p.entities.filter((e) => isNear(e.schema, e.name)),
+      deps: deps.filter((d) => isNear(d.from.s, d.from.n) && isNear(d.to.s, d.to.n)),
+    };
+    return toGraphInput(model, this.selectedTable ? 'er' : 'dependencies');
+  }
+
+  /** Every shown entity grouped by schema, tables first, then views and routines —
+   *  the sidebar's items (dbd's /diagram sidebar), narrowed by type and name. */
+  get sidebar(): { label: string; value: string; badge: string; children: { label: string; value: string; kind: string; icon: string }[] }[] {
+    const q = this.query.trim().toLowerCase();
+    const all = this.#all().filter((x) => !this.#hiddenKinds.has(x.kind) && (!q || x.name.toLowerCase().includes(q)));
     const order = (k: string) => KIND_ORDER.indexOf(k);
     const schemas = [...new Set(all.map((x) => x.schema))].sort();
     return schemas.map((schema) => {

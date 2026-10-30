@@ -52,9 +52,12 @@
   const scale = $derived(fit * zoom);
   const touches = (s: string, t: string) => !focus || s === focus || t === focus;
 
-  const TIER_FILL = { danger: 'var(--danger-soft)', warning: 'var(--warning-soft)', neutral: 'var(--paper)', unmeasured: 'var(--paper-mute)' };
-  const fillOf = (b: Block) =>
-    complexity ? TIER_FILL[complexityTier(b).tone] : cycle?.has(b.id) ? 'var(--warning-soft)' : 'var(--paper)';
+  // A lens marks a block by its border, not a pale fill: a tinted card reads as a
+  // light one in dark mode and drowns its label.
+  const TIER_EDGE = { danger: 'var(--danger)', warning: 'var(--warning)', neutral: null, unmeasured: null };
+  const fillOf = (b: Block) => (complexity && complexityTier(b).tone === 'unmeasured' ? 'var(--paper-mute)' : 'var(--paper)');
+  const edgeOf = (b: Block): string | null =>
+    complexity ? TIER_EDGE[complexityTier(b).tone] : cycle?.has(b.id) ? 'var(--warning)' : null;
   const noteOf = (b: Block) =>
     complexity ? complexityTier(b).label : b.hub ? `${b.weight_in} in` : `${shownFiles(b, roles)} files`;
   const pick = (b: Block) =>
@@ -108,8 +111,8 @@
           height={p.h}
           rx="4"
           fill={fillOf(p.block)}
-          stroke={selected === p.id ? 'var(--accent)' : 'var(--paper-edge)'}
-          stroke-width={selected === p.id ? 2 : 1}
+          stroke={selected === p.id ? 'var(--accent)' : (edgeOf(p.block) ?? 'var(--paper-edge)')}
+          stroke-width={selected === p.id || edgeOf(p.block) ? 2 : 1}
           stroke-dasharray={folded ? '4 3' : undefined}
         />
         <text x={p.x + 8} y={p.y + 15} class="text-xs" fill="var(--ink)">

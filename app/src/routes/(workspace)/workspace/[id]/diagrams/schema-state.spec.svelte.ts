@@ -62,6 +62,31 @@ describe('SchemaState', () => {
     expect(s.sidebar[2].children[0]).toMatchObject({ value: objectId('report', 'order_totals'), kind: 'view' });
   });
 
+  it('the list narrows by entity type and by name', async () => {
+    const s = await loaded();
+    s.toggleKind('table');
+    expect(s.sidebar.map((g) => [g.label, g.children.map((c) => c.label)])).toEqual([['report', ['order_totals']]]);
+    s.toggleKind('table');
+    s.query = 'ord';
+    expect(s.sidebar.map((g) => [g.label, g.children.map((c) => c.label)])).toEqual([
+      ['app', ['orders']], ['report', ['order_totals']],
+    ]);
+    expect(s.kindCounts).toEqual([{ kind: 'table', count: 3, shown: true }, { kind: 'view', count: 1, shown: true }]);
+  });
+
+  it('every schema to choose from, with its count — a picker, not a row that runs out of room', async () => {
+    const s = await loaded();
+    expect(s.schemaChoices.map((c) => [c.label, c.value])).toEqual([
+      ['All schemas · 3', ''], ['app · 2', 'app'], ['crm · 1', 'crm'], ['report · 0', 'report'],
+    ]);
+  });
+
+  it("a selected entity's diagram is it and what it is keyed or linked to", async () => {
+    const s = await loaded();
+    s.select(objectId('app', 'customers'));
+    expect((s.entityGraph?.nodes as { id: string }[]).map((n) => n.id).sort()).toEqual([objectId('app', 'customers'), objectId('app', 'orders')].sort());
+  });
+
   it('a view can be selected too: what it is, and what it reads', async () => {
     const s = await loaded();
     s.select(objectId('report', 'order_totals'));

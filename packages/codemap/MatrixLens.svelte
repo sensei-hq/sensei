@@ -21,8 +21,9 @@
 
 <!-- A scrollable region must take focus for keyboard users (axe scrollable-region-focusable). -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div class="overflow-auto max-h-[70vh]" tabindex="0" role="region" aria-label="Dependency matrix, scrollable" data-testid="codemap-matrix">
-  <table class="border-separate border-spacing-px" aria-label="Dependency matrix: rows depend on columns">
+<div class="overflow-auto h-full" tabindex="0" role="region" aria-label="Dependency matrix, scrollable" data-testid="codemap-matrix">
+  <!-- Gridlines: the edge colour showing through the spacing between cells. -->
+  <table class="border-separate border-spacing-px" style:background="var(--paper-edge)" aria-label="Dependency matrix: rows depend on columns">
     <thead>
       <tr>
         <th class="sticky top-0 left-0 z-20 bg-paper"></th>

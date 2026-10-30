@@ -12,7 +12,7 @@ export { takeaways } from './takeaways';
 export type { Takeaway } from './takeaways';
 export { listView } from './list';
 export type { ListView, ListRow, Badge } from './list';
-export { visibleBands, drawnBands, budgetLine, bandTone, legendFor, complexityTier, shownFiles, searchModules, MIN_WEIGHTS, ROLE_BG } from './view';
+export { visibleBands, drawnBands, budgetLine, bandTone, legendFor, complexityTier, shownFiles, moduleChoices, MIN_WEIGHTS, ROLE_BG } from './view';
 export type { EdgeMode, BandFilter, LegendEntry, ComplexityTier } from './view';
 export type {
   GroupBy, Direction, Role, RoleCounts, Block, Band, Level0, ModuleFile, Column, Neighbour, Level1, SymbolRef, Level2, Read,
