@@ -50,6 +50,26 @@ async function loaded(api: SchemaApi = okApi()) {
 }
 
 describe('SchemaState', () => {
+  // The sidebar (dbd's /diagram, flipped right): every entity, grouped by schema,
+  // tables first, each with its kind's glyph — a rokkit List's items.
+  it('lists every entity by schema for the sidebar, tables before views', async () => {
+    const s = await loaded();
+    expect(s.sidebar.map((g) => [g.label, g.badge, g.children.map((c) => c.label)])).toEqual([
+      ['app', '2', ['customers', 'orders']],
+      ['crm', '1', ['accounts']],
+      ['report', '1', ['order_totals']],
+    ]);
+    expect(s.sidebar[2].children[0]).toMatchObject({ value: objectId('report', 'order_totals'), kind: 'view' });
+  });
+
+  it('a view can be selected too: what it is, and what it reads', async () => {
+    const s = await loaded();
+    s.select(objectId('report', 'order_totals'));
+    expect(s.selectedEntity).toMatchObject({ schema: 'report', name: 'order_totals', kind: 'view' });
+    expect(s.selectedTable).toBeNull();
+    expect(s.entityReach).toEqual({ reads: ['app.orders', 'crm.accounts'], writes: [], calls: ['count'] });
+  });
+
   // The inspector says what a change to a table reaches (M17 Database · ER).
   it('a selected table: the tables it references, those referencing it, and what reads it', async () => {
     const s = await loaded();

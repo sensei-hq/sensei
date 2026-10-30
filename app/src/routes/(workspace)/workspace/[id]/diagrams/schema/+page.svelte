@@ -1,7 +1,7 @@
 <script lang="ts">
     import { DependencyDiagram, ErDiagram } from '@rokkit/graph';
     import { EntityView } from '@rokkit/graph/schema';
-    import { Toolbar } from '@rokkit/ui';
+    import { List, Toolbar } from '@rokkit/ui';
     import { Screen } from '$lib/components';
     import { senseiApi } from '$lib/api.js';
     import { appState } from '$lib/appstate.svelte.js';
@@ -42,7 +42,24 @@
     const input = $derived(view.graphInput);
 </script>
 
-<Screen>
+{#snippet reachList(testid: string, sections: [string, string[]][])}
+    <div class="flex flex-col gap-3 text-sm" data-testid={testid}>
+        {#each sections as [label, items] (label)}
+            <div class="flex flex-col gap-1">
+                <span class="text-xs uppercase tracking-wide text-ink-mute">{label}</span>
+                {#if items.length}
+                    <ul class="m-0 p-0 list-none flex flex-col gap-0.5">
+                        {#each items as item (item)}<li class="font-mono text-xs text-ink break-all">{item}</li>{/each}
+                    </ul>
+                {:else}
+                    <span class="text-xs text-ink-faint">None</span>
+                {/if}
+            </div>
+        {/each}
+    </div>
+{/snippet}
+
+<Screen fill>
     {#snippet header()}
     <DiagramHeader view={diagram} {about} stats={host.stats}
         workspace={{ name: data.workspace.name, repos: data.workspace.repos_count ?? null }}
@@ -72,7 +89,7 @@
     </DiagramHeader>
     {/snippet}
 
-    <div class="flex flex-col gap-4 p-4" data-testid="schema-screen">
+    <div class="flex-1 min-h-0 flex flex-col gap-4 p-4" data-testid="schema-screen">
         {#if view.view === 'loading'}
             <p class="text-sm text-ink-soft" data-testid="schema-loading">Reading the schema store.</p>
         {:else if view.view === 'error'}
@@ -93,76 +110,56 @@
                 under its folders.
             </p>
         {:else}
-
-
-            <ul class="flex flex-col list-none p-0 m-0 text-sm text-ink-soft" data-testid="schema-coverage">
-                {#each view.coverage as line (line)}
-                    <li>{line}</li>
-                {/each}
-            </ul>
-
-            <div class="flex flex-col gap-4 md:flex-row">
-                <div class="h-[70vh] flex-1" data-testid="schema-diagram">
-                    {#if view.scope === 'er'}
-                        <ErDiagram
-                            nodes={input.nodes}
-                            edges={input.edges}
-                            fields={input.fields}
-                            value={view.selected}
-                            onselect={(id) => view.select(id)}
-                            controls
-                            legend
-                            label="Tables and their foreign keys"
-                        />
+            <!-- dbd's /diagram, its sidebar on the right: the diagram — or the entity
+                 selected — beside every entity by schema. Each pane scrolls on its own. -->
+            <div class="flex-1 min-h-0 grid gap-6" style={about.side ? 'grid-template-columns: minmax(0, 1fr) 300px;' : ''}>
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                <div class="min-w-0 min-h-0 overflow-auto flex flex-col gap-4" tabindex="0" role="region" aria-label="Diagram">
+                    {#if view.selected}
+                        <div class="flex flex-col gap-4" data-testid="schema-entity">
+                            <nav class="flex items-center gap-2 text-sm">
+                                <button class="p-0 bg-transparent border-none cursor-pointer text-ink-mute hover:underline"
+                                    onclick={() => view.select(null)} data-testid="schema-back">‹ Diagram</button>
+                                <span class="text-ink-faint">/</span>
+                                <span class="font-mono text-ink">{view.selected}</span>
+                            </nav>
+                            {#if view.selectedTable}
+                                <EntityView nodes={input.nodes} edges={input.edges} fields={input.fields} value={view.selected} />
+                                {#if view.reach}
+                                    {@const reach = view.reach}
+                                    {@render reachList('schema-reach', [['References', reach.references], ['Referenced by', reach.referencedBy], ['Read or written by', reach.dependents]])}
+                                {/if}
+                            {:else if view.selectedEntity && view.entityReach}
+                                {@const e = view.selectedEntity}
+                                {@const reach = view.entityReach}
+                                <p class="m-0 text-sm text-ink-mute">{e.kind.replace('_', ' ')}</p>
+                                {#if e.note}<p class="m-0 text-sm text-ink-soft">{e.note}</p>{/if}
+                                {@render reachList('schema-entity-reach', [['Reads', reach.reads], ['Writes', reach.writes], ['Calls', reach.calls]])}
+                            {/if}
+                        </div>
                     {:else}
-                        <DependencyDiagram
-                            nodes={input.nodes}
-                            edges={input.edges}
-                            fields={input.fields}
-                            value={view.selected}
-                            onselect={(id) => view.select(id)}
-                            controls
-                            legend
-                            label="Database objects and what they read, write and call"
-                        />
+                        <ul class="flex flex-col list-none p-0 m-0 text-sm text-ink-soft" data-testid="schema-coverage">
+                            {#each view.coverage as line (line)}
+                                <li>{line}</li>
+                            {/each}
+                        </ul>
+                        <div class="h-[70vh] shrink-0" data-testid="schema-diagram">
+                            {#if view.scope === 'er'}
+                                <ErDiagram nodes={input.nodes} edges={input.edges} fields={input.fields} value={view.selected}
+                                    onselect={(id) => view.select(id)} controls legend label="Tables and their foreign keys" />
+                            {:else}
+                                <DependencyDiagram nodes={input.nodes} edges={input.edges} fields={input.fields} value={view.selected}
+                                    onselect={(id) => view.select(id)} controls legend label="Database objects and what they read, write and call" />
+                            {/if}
+                        </div>
                     {/if}
                 </div>
-
                 {#if about.side}
-                <aside
-                    class="w-full md:w-[360px] flex flex-col gap-3 p-3 border border-paper-edge rounded overflow-auto max-h-[70vh]"
-                    data-testid="schema-entity"
-                >
-                    {#if view.selectedTable}
-                        <EntityView
-                            nodes={input.nodes}
-                            edges={input.edges}
-                            fields={input.fields}
-                            value={view.selected}
-                        />
-                        {#if view.reach}
-                            {@const reach = view.reach}
-                            <div class="flex flex-col gap-2 text-xs" data-testid="schema-reach">
-                                {#each [['References', reach.references], ['Referenced by', reach.referencedBy], ['Read or written by', reach.dependents]] as [label, items] (label)}
-                                    <div class="flex flex-col gap-1">
-                                        <span class="uppercase tracking-wide text-ink-mute">{label}</span>
-                                        {#if items.length}
-                                            <ul class="m-0 p-0 list-none flex flex-col gap-0.5">
-                                                {#each items as item (item)}<li class="font-mono text-ink break-all">{item}</li>{/each}
-                                            </ul>
-                                        {:else}
-                                            <span class="text-ink-faint">None</span>
-                                        {/if}
-                                    </div>
-                                {/each}
-                            </div>
-                        {/if}
-                    {:else}
-                        <p class="text-sm text-ink-soft m-0">
-                            Select a table to see its columns, keys and notes.
-                        </p>
-                    {/if}
-                </aside>
+                    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                    <aside class="min-w-0 min-h-0 overflow-auto" tabindex="0" aria-label="Entities" data-testid="schema-sidebar">
+                        <List items={view.sidebar} collapsible value={view.selected ?? undefined} label="Entities"
+                            onselect={(value) => typeof value === 'string' && !value.startsWith('schema:') && view.select(value)} />
+                    </aside>
                 {/if}
             </div>
         {/if}

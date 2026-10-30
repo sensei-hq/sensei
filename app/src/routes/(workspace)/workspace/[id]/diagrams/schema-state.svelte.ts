@@ -20,6 +20,10 @@
 // shown, drawn dimmed by rokkit as `unplaced`.
 
 import { toGraphInput } from '@rokkit/graph/schema';
+import { DEFAULT_ICONS } from '@rokkit/graph/icons';
+
+/** The sidebar's reading order: storage, then derived data, then behaviour (as dbd's). */
+const KIND_ORDER = ['table', 'view', 'materialized_view', 'function', 'procedure'];
 import type { SchemaDep, SchemaEntity, SchemaPayload, SchemaRef, SchemaTable } from '$lib/types.js';
 
 export type SchemaScope = 'er' | 'dependencies';
@@ -192,11 +196,47 @@ export class SchemaState {
     return lines;
   }
 
-  /** The selected table's id, or null. A selection the filter hides is gone. */
+  /** The selected entity's id — a table, view or routine — or null. A selection
+   *  the filter hides is gone. */
   get selected(): string | null {
     const id = this.#picked;
     if (id === null) return null;
-    return this.#tables.some((t) => objectId(t.schema, t.name) === id) ? id : null;
+    const shown = [...this.#tables, ...this.#entities].some((t) => objectId(t.schema, t.name) === id);
+    return shown ? id : null;
+  }
+
+  /** The selected view or routine, or null (a table is `selectedTable`). */
+  get selectedEntity(): SchemaEntity | null {
+    const id = this.selected;
+    return id === null ? null : (this.#entities.find((e) => objectId(e.schema, e.name) === id) ?? null);
+  }
+
+  /** What the selected view or routine reads, writes and calls — a built-in by name. */
+  get entityReach(): { reads: string[]; writes: string[]; calls: string[] } | null {
+    const e = this.selectedEntity;
+    if (!e) return null;
+    const from = (this.payload?.deps ?? []).filter((d) => d.from.s === e.schema && d.from.n === e.name);
+    const name = (d: SchemaDep) => (d.to.s ? `${d.to.s}.${d.to.n}` : d.to.n);
+    const of = (kind: SchemaDep['kind']) => from.filter((d) => d.kind === kind).map(name);
+    return { reads: of('reads'), writes: of('writes'), calls: of('calls') };
+  }
+
+  /** Every shown entity grouped by schema, tables first, then views and routines —
+   *  the sidebar's items for a rokkit List (dbd's /diagram sidebar). */
+  get sidebar(): { label: string; value: string; badge: string; children: { label: string; value: string; kind: string; icon: string }[] }[] {
+    const all = [
+      ...this.#tables.map((t) => ({ schema: t.schema, name: t.name, kind: 'table' })),
+      ...this.#entities.map((e) => ({ schema: e.schema, name: e.name, kind: e.kind as string })),
+    ];
+    const order = (k: string) => KIND_ORDER.indexOf(k);
+    const schemas = [...new Set(all.map((x) => x.schema))].sort();
+    return schemas.map((schema) => {
+      const children = all
+        .filter((x) => x.schema === schema)
+        .sort((a, b) => order(a.kind) - order(b.kind) || a.name.localeCompare(b.name))
+        .map((x) => ({ label: x.name, value: objectId(x.schema, x.name), kind: x.kind, icon: DEFAULT_ICONS[x.kind] ?? DEFAULT_ICONS.table }));
+      return { label: schema, value: `schema:${schema}`, badge: String(children.length), children };
+    });
   }
 
   get selectedTable(): SchemaTable | null {
