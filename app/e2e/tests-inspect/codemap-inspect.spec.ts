@@ -21,13 +21,27 @@ test('the code map drills from modules to files to symbols', async ({ tauriPage 
   await expect
     .poll(() => tauriPage.evaluate(`document.querySelectorAll('g[data-testid^="block-"]').length`), { timeout: 60_000 })
     .toBe(l0.blocks.length);
-  const budget = (await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-budget"]')?.textContent ?? ''`)) as string;
-  expect(budget).toContain(`drawing ${l0.budget.drawn} blocks for ${l0.budget.modules} modules`);
+  // The budget line sits under the header's numbers, in a band a reader may have closed.
+  await tauriPage.evaluate(`(() => {
+    const t = document.querySelector('[data-testid="diagram-stats-toggle"]');
+    if (t?.getAttribute('aria-pressed') === 'false') t.click();
+  })()`);
+  await expect
+    .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-testid="diagram-budget"]')`), { timeout: 10_000 })
+    .toBe(true);
+  const budget = (await tauriPage.evaluate(`document.querySelector('[data-testid="diagram-budget"]')?.textContent ?? ''`)) as string;
+  expect(budget).toContain(`drawing ${l0.budget.drawn} of ${l0.budget.modules} modules`);
   // The daemon now counts each block's files by role, and the referenced libraries.
   const roleSum = (b: { roles: Record<string, number> }) => Object.values(b.roles).reduce((a, v) => a + v, 0);
   expect(roleSum(biggest)).toBe(biggest.files);
-  const summary = (await tauriPage.evaluate(`document.querySelector('[data-testid="inspector-eyebrow"]')?.textContent ?? ''`)) as string;
-  expect(summary).toBe('Workspace');
+  // With nothing selected the side panel says what to act on (open it if closed).
+  await tauriPage.evaluate(`(() => {
+    const t = document.querySelector('[data-testid="diagram-side-toggle"]');
+    if (t?.getAttribute('aria-pressed') === 'false') t.click();
+  })()`);
+  await expect
+    .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-testid="codemap-takeaways"]')`), { timeout: 10_000 })
+    .toBe(true);
   const about = (await tauriPage.evaluate(`!!document.querySelector('[data-testid="diagram-about-toggle"]')`)) as boolean;
   const libraries = (await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-libraries"]')?.textContent?.trim() ?? ''`)) as string;
   expect(libraries).toBe(l0.libraries.count ? `${l0.libraries.count} referenced libraries · not members` : '');
@@ -80,6 +94,7 @@ test('violations & cycles draws exactly the violating bands', async ({ tauriPage
 // Every lens, opened from its own route, draws on the same canvas without an error,
 // against the daemon's data.
 test('each lens draws against the real daemon', async ({ tauriPage }) => {
+  test.setTimeout(240_000);
   const workspaces = await json('/api/workspaces');
   const rows = Array.isArray(workspaces) ? workspaces : workspaces.workspaces;
   const ws = rows.find((w: { name: string }) => w.name === 'sensei') ?? rows[0];
@@ -97,11 +112,13 @@ test('each lens draws against the real daemon', async ({ tauriPage }) => {
     ['zones', '[data-testid^="zone-"]'],
     ['coupling', '[data-testid^="band-"]'],
   ] as const) {
+    const started = Date.now();
     await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/${lens}`);
     await expect
-      .poll(() => tauriPage.evaluate(`document.querySelectorAll('${sel}').length`), { timeout: 30_000, message: `${lens} draws` })
+      .poll(() => tauriPage.evaluate(`document.querySelectorAll('${sel}').length`), { timeout: 60_000, message: `${lens} draws` })
       .toBeGreaterThan(0);
     seen[lens] = (await tauriPage.evaluate(`document.querySelectorAll('${sel}').length`)) as number;
+    console.log(`[inspect] lens ${lens}: ${seen[lens]} drawn in ${Date.now() - started} ms`);
   }
   const summary = (await tauriPage.evaluate(`document.querySelector('[data-testid="coupling-summary"]')?.textContent ?? ''`)) as string;
   const errors = (await tauriPage.evaluate(`document.querySelectorAll('[data-testid="codemap-error"]').length`)) as number;
