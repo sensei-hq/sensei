@@ -45,6 +45,13 @@ async function drawn(tauriPage: TauriPageLike): Promise<{ nodes: number; edges: 
 /** Click the toolbar button whose label starts with `label`. The tauri bridge's
  *  locator engine has no `:has-text`, so the button is found in the page. */
 async function pick(tauriPage: TauriPageLike, toolbar: string, label: string): Promise<void> {
+  // The toolbars sit in the header's controls band, which a reader may have closed:
+  // open it, and let it render, before looking for one.
+  await tauriPage.evaluate(`(() => {
+    const band = document.querySelector('[data-testid="diagram-controls-toggle"]');
+    if (band?.getAttribute('aria-pressed') === 'false') band.click();
+  })()`);
+  await settle(500);
   const clicked = await tauriPage.evaluate(`
     (() => {
       const bar = document.querySelector('[data-toolbar][aria-label="${toolbar}"]');
@@ -130,6 +137,10 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   const reach = (await tauriPage.evaluate(`[...document.querySelectorAll('[data-testid="schema-reach"] ul')].map((u) => u.children.length)`)) as number[];
   console.log(`[inspect] schema_refs reach: ${refsOut} out · ${refsIn} in · ${readers} readers; panel lists ${JSON.stringify(reach)}`);
   expect(reach.reduce((a, v) => a + v, 0)).toBe(refsOut + refsIn + readers);
+
+  // Back to the diagram, where the coverage is read.
+  await tauriPage.evaluate(`document.querySelector('[data-testid="schema-back"]')?.click()`);
+  await settle();
 
   // One schema: only its tables, and the keys leading out of it counted.
   await pick(tauriPage, 'Schema', 'dojo');
