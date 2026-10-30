@@ -93,7 +93,7 @@ test('each lens draws against the real daemon', async ({ tauriPage }) => {
   const seen: Record<string, number> = {};
   for (const [lens, sel] of [
     ['wheel', '[data-testid^="wheel-node-"]'],
-    ['matrix', '[data-testid="codemap-matrix"] rect'],
+    ['matrix', '[data-testid="codemap-matrix"] td[data-cell]'],
     ['zones', '[data-testid^="zone-"]'],
     ['coupling', '[data-testid^="band-"]'],
   ] as const) {
