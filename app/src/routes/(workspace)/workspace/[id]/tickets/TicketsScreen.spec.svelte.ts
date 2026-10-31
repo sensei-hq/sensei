@@ -10,7 +10,8 @@ import { mountComponent } from '$lib/test-mount.js';
 import { replayHref } from '$lib/sessions-digest.js';
 import TicketsScreen from './TicketsScreen.svelte';
 import { TicketsState, type SprintsApi } from './tickets-state.svelte.js';
-import type { SprintUsageRow, TrackerConnection, TrackerUsage } from '$lib/types.js';
+import { WORDS, projectSdlc, sprintSdlc, ticketSdlc, usage } from '$lib/tracker-fixtures.js';
+import type { SprintUsageRow, TrackerConnection } from '$lib/types.js';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -18,37 +19,6 @@ afterEach(() => {
   cleanup = [];
 });
 
-const usage = (over: Partial<TrackerUsage> = {}): TrackerUsage => ({
-  sessions: 0,
-  by_source: { branch: 0, prompt: 0 },
-  shared: 0,
-  active_secs: null,
-  active_n: 0,
-  tokens_fresh: null,
-  tokens_fresh_n: 0,
-  cache_read: null,
-  cache_read_n: 0,
-  cache_write: null,
-  cache_write_n: 0,
-  tokens_out: null,
-  tokens_out_n: 0,
-  tokens_reasoning: null,
-  tokens_reasoning_n: 0,
-  metered_cost: null,
-  metered_cost_n: 0,
-  api_cost: null,
-  api_cost_n: 0,
-  api_cost_partial: 0,
-  claude_secs: null,
-  claude_n: 0,
-  user_secs: null,
-  user_n: 0,
-  wall_secs: null,
-  wall_n: 0,
-  first_at: null,
-  last_at: null,
-  ...over,
-});
 
 const active: SprintUsageRow = {
   id: 's13',
@@ -63,6 +33,7 @@ const active: SprintUsageRow = {
   linked_other: usage(),
   unlinked: usage(),
   reason: null,
+  sdlc: sprintSdlc(),
 };
 
 const future: SprintUsageRow = {
@@ -96,6 +67,7 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
           last_error: null,
           counts: { tasks: 2, sprints: 2 },
           writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+          sdlc_project: projectSdlc(),
         },
       ],
     }),
@@ -115,6 +87,7 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
           writeback_status: null,
           writeback_at: null,
           usage: usage({ sessions: 1, by_source: { branch: 1, prompt: 0 }, active_secs: 600, active_n: 1 }),
+          sdlc: ticketSdlc(),
         },
       ],
     }),
@@ -123,6 +96,7 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
       data: {
         task: { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null },
         usage: usage({ sessions: 1 }),
+        sdlc: ticketSdlc({ compile_defects: 1, runs_unknown: 2 }),
         by_repo: [{ repository_id: 'r1', name: 'backend', usage: usage({ sessions: 1 }) }],
         sessions: [
           { id: 'sess-1', started_at: '2026-10-02T09:00:00Z', links: [{ source: 'branch', matched_key: 'AUTH-2', mentions: 1 }] },
@@ -130,6 +104,7 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
       },
     }),
     tryListUnlinkedSessions: async () => ({ ok: true, data: [] }),
+    tryGetReasonCodes: async (domain) => ({ ok: true, data: { domain, reasons: WORDS } }),
     tryGetBacklog: async () => ({ ok: true, data: { tickets: 1, usage: usage({ sessions: 1 }) } }),
     tryListBacklogTasks: async () => ({
       ok: true,
@@ -146,6 +121,7 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
           writeback_status: null,
           writeback_at: null,
           usage: usage({ sessions: 1 }),
+          sdlc: ticketSdlc(),
         },
       ],
     }),
@@ -213,8 +189,8 @@ describe('ready', () => {
       tryListTrackerTasks: async () => ({
         ok: true,
         data: [
-          { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', current_sprint: { id: 's13', name: 'Sprint 13' }, sprints: [], removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null, usage: usage({ sessions: 1 }) },
-          { key: 'AUTH-9', summary: 'Idle', issue_type: 'Story', status: 'To Do', current_sprint: null, sprints: [], removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null, usage: usage() },
+          { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', current_sprint: { id: 's13', name: 'Sprint 13' }, sprints: [], removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null, usage: usage({ sessions: 1 }), sdlc: ticketSdlc() },
+          { key: 'AUTH-9', summary: 'Idle', issue_type: 'Story', status: 'To Do', current_sprint: null, sprints: [], removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null, usage: usage(), sdlc: ticketSdlc() },
         ],
       }),
     });
@@ -272,6 +248,7 @@ describe('ready', () => {
             first_at: '2026-10-05T10:00:00Z',
             last_at: '2026-10-07T17:20:00Z',
           }),
+          sdlc: ticketSdlc(),
           by_repo: [],
           sessions: [],
         },
@@ -304,6 +281,69 @@ describe('ready', () => {
     q<HTMLButtonElement>('[data-action="back"]')!.click();
     flushSync();
     expect(q('[data-view="ticket"]')).toBe(null);
+  });
+});
+
+describe('SDLC figures (tracker-sdlc-metrics S8)', () => {
+  it("a ticket's SDLC group shows each null as its reason's words and marks defects while runs are unknown", async () => {
+    const { q } = await open();
+    q<HTMLButtonElement>('[data-ticket="AUTH-2"]')!.click();
+    await settle();
+    const group = q('[data-section="sdlc"]')!;
+    expect([...group.querySelectorAll('[data-sdlc-row]')].map((r) => r.getAttribute('data-sdlc-row'))).toEqual([
+      'cost',
+      'defects',
+      'timing',
+      'rework',
+    ]);
+    expect(q('[data-sdlc="effort_cost"]')!.textContent).toBe('No AI sessions linked');
+    expect(q('[data-sdlc="compile_defects"]')!.textContent).toBe('≥ 1');
+    expect(q('[data-sdlc-row="defects"] [data-sdlc-note]')!.textContent).toBe('2 runs with unknown outcome');
+    expect(group.textContent).not.toMatch(/no_sessions|null|NaN/);
+  });
+
+  it("the lane header shows the board's row on All tickets and the sprint's row on a sprint", async () => {
+    const { q, screen } = await open();
+    expect(q('[data-sdlc-lane="project"] [data-sdlc="predictability"]')!.textContent).toBe('Too few sprints');
+    await screen.lanes[0].setFilter('s13');
+    flushSync();
+    expect(q('[data-sdlc-lane="project"]')).toBe(null);
+    expect(q('[data-sdlc-lane="sprint"] [data-sdlc="commitment_reliability"]')!.textContent).toBe(
+      'Ticket history not read yet',
+    );
+  });
+
+  it('a failed read of the reason words is the daemon error with Retry, which recovers', async () => {
+    let calls = 0;
+    const { q } = await open({
+      tryGetReasonCodes: async (domain) =>
+        ++calls === 1
+          ? { ok: false, error: { status: 0, message: 'Network error' } }
+          : { ok: true, data: { domain, reasons: WORDS } },
+    });
+    expect(q('[data-view="daemon_error"]')).not.toBe(null);
+    q<HTMLButtonElement>('[data-action="retry"]')!.click();
+    await settle();
+    await settle();
+    expect(q('[data-view="daemon_error"]')).toBe(null);
+    expect(q('[data-sdlc-lane="project"]')).not.toBe(null);
+  });
+
+  it('a real 0 renders as 0, never as a reason or —', async () => {
+    const { q } = await open({
+      tryListTrackers: async () => ({
+        ok: true,
+        data: [
+          {
+            ...(await api().tryListTrackers('p-1').then((r) => (r.ok ? r.data[0] : null)))!,
+            sdlc_project: projectSdlc({ predictability: 0, tokens_per_ticket: 0, prompts_per_ticket: 0, reasons: {} }),
+          },
+        ],
+      }),
+    });
+    expect(q('[data-sdlc="predictability"]')!.textContent).toBe('0 pts');
+    expect(q('[data-sdlc="tokens_per_ticket"]')!.textContent).toBe('0');
+    expect(q('[data-sdlc="prompts_per_ticket"]')!.textContent).toBe('0.0');
   });
 });
 

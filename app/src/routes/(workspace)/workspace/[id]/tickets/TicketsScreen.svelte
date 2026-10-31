@@ -5,7 +5,7 @@
   import { Select } from '@rokkit/ui';
   import { PageHeader, Screen } from '$lib/components';
   import { replayHref } from '$lib/sessions-digest.js';
-  import { usageCells, type TicketsState } from './tickets-state.svelte.js';
+  import { usageCells, type SdlcFigure, type TicketsState } from './tickets-state.svelte.js';
 
   let { screen, workspaceId }: { screen: TicketsState; workspaceId: string } = $props();
 
@@ -28,6 +28,14 @@
     <span class="text-ink-mute">out tokens <span class="text-ink">{c.out}</span></span>
     <span class="text-ink-mute">API cost <span class="text-ink">{c.cost}</span></span>
   </div>
+{/snippet}
+
+{#snippet sdlcFigures(figures: SdlcFigure[])}
+  {#each figures as f (f.key)}
+    <span class="text-ink-mute"
+      >{f.label} <span data-sdlc={f.key} class={f.reason ? 'text-ink-soft' : 'text-ink'}>{f.text}</span></span
+    >
+  {/each}
 {/snippet}
 
 <Screen>
@@ -87,6 +95,17 @@
               >
             </div>
 
+            <div data-section="sdlc" class="flex flex-col gap-1">
+              <h3 class="m-0 text-sm text-ink">SDLC</h3>
+              {#each screen.ticketSdlc as row (row.id)}
+                <div data-sdlc-row={row.id} class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                  <span class="text-ink">{row.label}</span>
+                  {@render sdlcFigures(row.figures)}
+                  {#if row.note}<span data-sdlc-note class="text-ink-soft">{row.note}</span>{/if}
+                </div>
+              {/each}
+            </div>
+
             <h3 class="m-0 text-sm text-ink">By repository</h3>
             {#if t.by_repo.length === 0}
               <p class="m-0 text-sm text-ink-soft">No AI sessions linked yet.</p>
@@ -143,6 +162,11 @@
                   <label for="tickets-ai-only-{lane.id}">Only tickets with AI sessions</label>
                 </span>
                 <p data-count class="m-0 text-sm text-ink-mute">{lane.countLine}</p>
+              </div>
+
+              <div data-sdlc-lane={lane.sdlcRow.kind} class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                <span class="text-ink">{lane.sdlcRow.kind === 'sprint' ? 'This sprint' : 'This board'}</span>
+                {@render sdlcFigures(lane.sdlcRow.figures)}
               </div>
 
               {#if lane.strip}

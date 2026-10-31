@@ -74,7 +74,9 @@ comment or in the fields you map."
 - **Fields** (`data-action="fields"`, "Fields (N mapped)") opens the board's mapping in a
   `data-section="fields"` editor:
   - one row per mapped field (`data-field-row=<i>`): a metric select and a "Jira field
-    id" input
+    id" input. The select offers the 13 usage metrics, then the 21 SDLC
+    metrics (`tracker-sdlc-metrics.md` S9), in the daemon's write order (`METRICS`, pinned
+    to the `tracker_metric` enum by the state spec)
   - Remove per row, **Add a field**, and **Save fields**, which sends the whole set with
     `PUT …/fields`
   - under the rows: "Each ticket counts its own sessions in full; don't sum these fields

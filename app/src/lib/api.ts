@@ -28,6 +28,7 @@ import type {
   TranscriptSourceConsent,
   TrackerConnection, TrackerLevel, TrackerSyncCounts,
   SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession, BacklogUsage,
+  MetricSettings, MetricReason,
   TrackerFieldMapping,
 } from './types.js';
 import type {
@@ -814,6 +815,19 @@ export function senseiApi(port: number) {
         'GET',
         `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/sessions/unlinked?sprint=${enc(sprintId)}`,
       ),
+    // A reason domain's words (tracker-sdlc-metrics A10): a figure's code is shown
+    // by its summary, so a failed read is an error, never a bare slug.
+    tryGetReasonCodes: (domain: string) =>
+      tryJson<{ domain: string; reasons: Record<string, MetricReason> }>(
+        'GET', `/api/reason-codes/${enc(domain)}`,
+      ),
+    // The workspace's SDLC metric settings (S1): a PUT names any subset; a 400
+    // `invalid_setting` names the bad key in its body.
+    tryGetMetricSettings: (workspaceId: string) =>
+      tryJson<MetricSettings>('GET', `/api/workspaces/${enc(workspaceId)}/metric-settings`),
+    // A value that does not parse travels as typed, so the daemon's 400 names it.
+    tryPutMetricSettings: (workspaceId: string, patch: Record<string, number | string | null>) =>
+      tryJson<MetricSettings>('PUT', `/api/workspaces/${enc(workspaceId)}/metric-settings`, patch),
 
     /** What stops syncing if this root is removed. */
     tryGetRootRepositories: (id: string) =>

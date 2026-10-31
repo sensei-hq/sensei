@@ -632,6 +632,14 @@ All on the existing R8 tracker routes (`local_caller_guard`). The only new route
 
 ### S8 · Screens
 
+*Amendment A10 (F8 build):* a figure's reason code is shown by its `summary`. The codes sit
+inside list items (`/tasks` rows, `/sprints` items, `GET …/trackers` items), so a
+per-response vocabulary has nowhere to travel. **`GET /api/reason-codes/{domain}`** serves a
+domain whole, keyed by code. It reuses the metric-status endpoint's `reason_vocabulary`,
+now parameterised by domain. A domain with no codes is a 404, never `{}`. The Tickets screen
+reads `sdlc_metrics` with the boards, and a failed read is its daemon-error state. The
+Fields editor's metric list gains the 21 S9 keys (F7 swarm).
+
 The screen spec `docs/spec/screen/workspace-tickets.md` gains these elements, with done and
 wrong gates, in this slice (P-SCREEN):
 - **Ticket detail → "SDLC" group**, in four rows: cost (`ai_token_cost`,

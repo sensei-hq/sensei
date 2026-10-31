@@ -9,6 +9,7 @@ import { flushSync } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
 import IntegrationsScreen from './IntegrationsScreen.svelte';
 import { TrackerIntegration, type TrackerApi } from './integrations-state.svelte.js';
+import { projectSdlc } from '$lib/tracker-fixtures.js';
 import type { TrackerConnection } from '$lib/types.js';
 
 const SENTINEL = 'SENTINEL-TOKEN-XYZ';
@@ -33,6 +34,7 @@ const connected: TrackerConnection = {
   last_error: null,
   counts: { tasks: 142, sprints: 6 },
   writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+  sdlc_project: projectSdlc(),
 };
 
 function api(over: Partial<TrackerApi> = {}): TrackerApi {

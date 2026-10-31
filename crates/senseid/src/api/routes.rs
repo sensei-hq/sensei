@@ -471,6 +471,7 @@ pub fn create_router(state: AppState) -> Router {
         // the whole estate is unbounded; `/summary` is the aggregated shape.
         .route("/api/metrics/status", get(metrics::get_metric_status))
         .route("/api/metrics/status/summary", get(metrics::get_metric_status_summary))
+        .route("/api/reason-codes/{domain}", get(metrics::get_reason_codes))
         .route("/api/metrics/{workspace}", get(observatory::get_metrics))
         // Workflow state
         .route(
@@ -1142,6 +1143,27 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
+    }
+
+    /// `GET /api/reason-codes/{domain}`: a domain's vocabulary, for screens whose
+    /// figures carry codes in lists (tracker-sdlc-metrics A10). Every SDLC reason
+    /// resolves to a summary; a domain with no codes is a 404, never `{}`.
+    #[tokio::test]
+    async fn a_reason_domain_is_served_whole_and_an_unknown_one_is_not_found() {
+        let (app, _state) = test_app().await;
+        let (st, body) = req(app.clone(), "GET", "/api/reason-codes/sdlc_metrics", None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let reasons = body["reasons"].as_object().expect("keyed by code");
+        let codes = crate::sdlc::registered_reasons();
+        assert!(!codes.is_empty(), "the datafile registers sdlc_metrics codes");
+        for code in codes {
+            assert!(
+                reasons[&code]["summary"].as_str().is_some_and(|s| !s.is_empty()),
+                "{code} has a summary"
+            );
+        }
+        let (st, _) = req(app, "GET", "/api/reason-codes/no_such_domain", None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
     }
 
     /// `GET /api/metrics/status?repo=` — one repository's per-metric computation

@@ -46,7 +46,7 @@ pub(crate) async fn get_metrics_registry(
 /// registry this endpoint serves.
 const METRIC_REASON_DOMAIN: &str = "metric_computation";
 
-/// The reason vocabulary for this domain, keyed by code.
+/// A domain's reason vocabulary, keyed by code.
 ///
 /// Served with BOTH status shapes rather than from a third endpoint: it is seven
 /// small rows, and a client that had to fetch it separately could render a row
@@ -55,13 +55,26 @@ const METRIC_REASON_DOMAIN: &str = "metric_computation";
 /// empty vocabulary are worse than no rows.
 async fn reason_vocabulary(
     state: &AppState,
+    domain: &str,
 ) -> Result<std::collections::BTreeMap<String, serde_json::Value>, StatusCode> {
-    let reasons = state
-        .pg
-        .reason_codes(METRIC_REASON_DOMAIN)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let reasons =
+        state.pg.reason_codes(domain).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(reasons.into_iter().map(|r| (r.code.clone(), serde_json::json!(r))).collect())
+}
+
+/// `GET /api/reason-codes/{domain}` — one domain's vocabulary, for a screen whose
+/// figures carry codes inside list items (tracker-sdlc-metrics A10), where a
+/// per-response vocabulary has nowhere to travel. A domain with no codes is a
+/// 404: an empty vocabulary would leave every code a bare slug.
+pub(crate) async fn get_reason_codes(
+    State(state): State<AppState>,
+    Path(domain): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let reasons = reason_vocabulary(&state, &domain).await?;
+    if reasons.is_empty() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(Json(serde_json::json!({ "domain": domain, "reasons": reasons })))
 }
 
 /// `?repo=<repo_key|uuid>` — which repository's metrics to report. REQUIRED.
@@ -116,7 +129,7 @@ pub(crate) async fn get_metric_status(
         .metric_status(&repository_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let reasons = reason_vocabulary(&state).await?;
+    let reasons = reason_vocabulary(&state, METRIC_REASON_DOMAIN).await?;
     // The repository's identity travels once per response, not once per row. Both
     // are honest-null when the registry is empty — the one case with no rows to read
     // them from — never an echo of whatever the caller passed in.
@@ -152,7 +165,7 @@ pub(crate) async fn get_metric_status_summary(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let rows =
         state.pg.metric_status_summary().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let reasons = reason_vocabulary(&state).await?;
+    let reasons = reason_vocabulary(&state, METRIC_REASON_DOMAIN).await?;
 
     /// One repository's accumulating entry.
     struct Entry {

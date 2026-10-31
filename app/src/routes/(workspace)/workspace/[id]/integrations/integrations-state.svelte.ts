@@ -48,7 +48,8 @@ export interface TrackerApi {
   ) => Promise<ApiResult<{ fields: TrackerFieldMapping[] }>>;
 }
 
-/** The metrics a field can carry, in the order the daemon writes them (W3), with labels. */
+/** The metrics a field can carry, in the order the daemon writes them (usage W3, then
+ *  SDLC S9), with labels. */
 export const METRICS: ReadonlyArray<{ metric: TrackerMetric; label: string }> = [
   { metric: 'sessions', label: 'Sessions' },
   { metric: 'active_hours', label: 'Active hours' },
@@ -63,6 +64,28 @@ export const METRICS: ReadonlyArray<{ metric: TrackerMetric; label: string }> = 
   { metric: 'tokens_reasoning', label: 'Reasoning tokens' },
   { metric: 'metered_cost', label: 'Metered cost' },
   { metric: 'api_cost', label: 'API cost (USD)' },
+  // SDLC figures (tracker-sdlc-metrics S9), appended in the daemon's order.
+  { metric: 'compile_defects', label: 'Compile defects' },
+  { metric: 'test_defects', label: 'Test defects' },
+  { metric: 'review_fixes', label: 'Review fixes' },
+  { metric: 'escaped_task_defects', label: 'Escaped task defects' },
+  { metric: 'review_defects', label: 'Review defects' },
+  { metric: 'total_defects', label: 'Total defects' },
+  { metric: 'build_runs', label: 'Build runs' },
+  { metric: 'rework_cycles', label: 'Rework cycles' },
+  { metric: 'prompts', label: 'Prompts' },
+  { metric: 'testing_efficiency', label: 'Testing efficiency (%)' },
+  { metric: 'review_efficiency', label: 'Review efficiency (%)' },
+  { metric: 'build_failure_rate', label: 'Build failure rate (%)' },
+  { metric: 'on_hold_ratio', label: 'On-hold ratio (%)' },
+  { metric: 'post_review_rework_ratio', label: 'Post-review rework (%)' },
+  { metric: 'mean_build_recovery_minutes', label: 'Build recovery (minutes)' },
+  { metric: 'on_hold_minutes', label: 'On hold (minutes)' },
+  { metric: 'rework_minutes', label: 'Rework (minutes)' },
+  { metric: 'worked_minutes', label: 'Worked (minutes)' },
+  { metric: 'execution_hours', label: 'Execution hours' },
+  { metric: 'lead_hours', label: 'Lead hours' },
+  { metric: 'cost_per_prompt_cycle', label: 'Cost per prompt cycle (USD)' },
 ];
 
 /** The row a refused save names (a duplicate names its second row), or `null`. */

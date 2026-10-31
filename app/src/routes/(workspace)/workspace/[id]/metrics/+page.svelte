@@ -16,10 +16,19 @@
     import CorrelationCard from './CorrelationCard.svelte';
     import SignalGridCell from './SignalGridCell.svelte';
     import SignalLegend from './SignalLegend.svelte';
+    import MetricSettingsPanel from './MetricSettingsPanel.svelte';
+    import { MetricSettingsState } from './metric-settings-state.svelte.js';
+    import { senseiApi } from '$lib/api.js';
+    import { appState } from '$lib/appstate.svelte.js';
 
     let { data } = $props();
 
     const workspaceId = $derived(page.params.id ?? '');
+    // The SDLC settings (spec workspace-metrics-settings): read at runtime, one per workspace.
+    const settings = $derived(new MetricSettingsState(senseiApi(appState.port), workspaceId));
+    $effect(() => {
+        void settings.load();
+    });
     const signals = $derived(buildSignals(data.rows, familyLookup(data.registry), data.narrative));
     const hero = $derived(healthHeroReadout(data.health));
     const movers = $derived(pickMovers(signals));
@@ -181,5 +190,6 @@
                 </p>
             </section>
         {/if}
+        <MetricSettingsPanel panel={settings} />
     </div>
 </Screen>

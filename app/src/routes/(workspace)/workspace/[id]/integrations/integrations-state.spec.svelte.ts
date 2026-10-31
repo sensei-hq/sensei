@@ -3,12 +3,15 @@
 // What must never happen here: a failed read shown as "not connected", a token
 // that outlives its request, a code shown raw where the screen promises words.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
+  METRICS,
   TrackerIntegration,
   errorFor,
   elapsedLabel,
   type TrackerApi,
 } from './integrations-state.svelte.js';
+import { projectSdlc } from '$lib/tracker-fixtures.js';
 import type { ApiResult } from '$lib/api.js';
 import type { TrackerConnection } from '$lib/types.js';
 
@@ -29,6 +32,7 @@ const row = (over: Partial<TrackerConnection> = {}): TrackerConnection => ({
   last_error: null,
   counts: { tasks: 142, sprints: 6 },
   writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+  sdlc_project: projectSdlc(),
   ...over,
 });
 
@@ -672,6 +676,18 @@ describe('field mapping (tracker-metrics-writeback W7, W-UI)', () => {
     await s.saveFields();
     expect(s.alert?.text).toBe('The board is syncing or writing back. Save again in a moment.');
     expect(s.editingFields).toBe(s.trackers[0].id);
+  });
+});
+
+describe('METRICS (the Fields editor list)', () => {
+  it('is the daemon enum, in its write order: usage W3, then SDLC S9', () => {
+    // Paths in app tests are relative to app/ (vitest's root).
+    const ddl = readFileSync('../database/ddl/enum/sensei/tracker_metric.ddl', 'utf8');
+    const body = ddl.slice(ddl.indexOf('as enum ('), ddl.indexOf(');'));
+    const labels = [...body.replace(/--.*$/gm, '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    expect(labels.length).toBe(34);
+    expect(METRICS.map((m) => m.metric)).toEqual(labels);
+    expect(new Set(METRICS.map((m) => m.label)).size).toBe(34);
   });
 });
 
