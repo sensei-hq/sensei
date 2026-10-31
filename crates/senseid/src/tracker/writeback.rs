@@ -1,4 +1,4 @@
-//! Usage write-back (spec `docs/spec/daemon/tracker-metrics-writeback.md`): after a
+//! Usage and SDLC write-back (spec `docs/spec/daemon/tracker-metrics-writeback.md`): after a
 //! successful sync, write each ticket's R7 usage to the tracker, for tickets
 //! assigned to the token owner only. Provider-neutral: the adapter turns a
 //! [`Report`] into its own format and sends it; every SQL statement lives in

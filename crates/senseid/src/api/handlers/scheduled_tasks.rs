@@ -64,7 +64,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("reconcile", "Folder/index reconcile — self-healing scan-drift repair"),
     (
         "tracker_sync",
-        "Tracker sync — mirrors each connected Jira board's sprints and tickets, writes usage metrics back to tickets assigned to you, and drains removed credentials",
+        "Tracker sync — mirrors each connected Jira board's sprints and tickets, writes usage and SDLC metrics back to tickets assigned to you, and drains removed credentials",
     ),
     ("watchdog", "Run watchdog — stalled-run detection and recovery"),
 ];

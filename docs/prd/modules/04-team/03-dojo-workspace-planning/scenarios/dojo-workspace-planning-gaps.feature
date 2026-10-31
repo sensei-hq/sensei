@@ -26,7 +26,7 @@ Feature: Dōjō Workspace Planning — the unbuilt tracker adapters and scoped r
 
   # gap: T-1
   NO TEST
-  # Metrics write-back is the one write: spec/daemon/tracker-metrics-writeback.md
+  # Usage and SDLC metrics write-back is the one write: spec/daemon/tracker-metrics-writeback.md
   Scenario: tracker sync never writes the plan
     Given a tracker adapter
     When it syncs

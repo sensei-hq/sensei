@@ -7,8 +7,8 @@ maintainer ([persona 3](../../../03-personas.md#3--maintainer--the-curator))
 ## Purpose
 
 Dōjō Workspace Planning connects a workspace to its **external tracker** — Jira, Azure
-DevOps Boards or GitHub Issues, **reading** its plan (the one write is usage-metrics
-write-back by the local daemon, `spec/daemon/tracker-metrics-writeback.md`) — groups its repos, and enforces
+DevOps Boards or GitHub Issues, **reading** its plan (the one write is usage and SDLC
+metrics write-back by the local daemon, `spec/daemon/tracker-metrics-writeback.md`) — groups its repos, and enforces
 **delta-scoped, ratchet-fair quality gates** before a sprint closes. The planner
 (M20) emits a `PlanGraph`; the run engine (M21) drives execution; T3 syncs the
 tracker so the plan and the task↔session links reflect the tracker's state, and
@@ -36,7 +36,7 @@ knows what the sprint actually changed, and it only ever asks for better.*
 
 > **Resolved 2026-10-21** (narrowed 2026-10-26). Tracker reads are read-only: sync never
 > writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one
-> write path is usage-metrics write-back by the local daemon, to tickets assigned to the
+> write path is usage and SDLC metrics write-back by the local daemon, to tickets assigned to the
 > token owner (`spec/daemon/tracker-metrics-writeback.md`). **The daemon pulls** — each
 > person's daemon at that person's cadence (D22); the dōjō may later take webhooks. This
 > is the sensei-first path #274 built. **A credential stays local unless its owner marks
@@ -59,7 +59,7 @@ knows what the sprint actually changed, and it only ever asks for better.*
   delta-scoped; the **sprint scorecard and close rule** (a sprint that misses a
   blocking target cannot close without a note); **notifications** (Slack hooks);
   the planner/run wiring that makes the readings available.
-- Out: **writing back to the tracker**, except usage metrics — Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`). Also out: the
+- Out: **writing back to the tracker**, except usage and SDLC metrics — Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is metrics write-back (usage and SDLC metrics) by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`, `spec/daemon/tracker-sdlc-metrics.md`). Also out: the
   planner persistence (C-1 → M20), the run engine (M21), the Instruments verdict
   classifier (M18), the architecture-metrics family (#156); **per-author metrics as
   gates** (never).
@@ -106,7 +106,7 @@ knows what the sprint actually changed, and it only ever asks for better.*
   ancestor's.
 - **Lead.** **Modes are `block` / `warn` / `off`.** Only `block` can prevent a
   sprint close; `warn` surfaces and never blocks; `off` disables the check.
-- **Lead.** **Tracker sync reads; it never writes the plan.** Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
+- **Lead.** **Tracker sync reads; it never writes the plan.** Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is metrics write-back (usage and SDLC metrics) by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`, `spec/daemon/tracker-sdlc-metrics.md`).
 - **Lead.** **One tracker owns sprints.** Workspaces, issues and task types may come
   from several trackers; the sprint calendar has exactly one owner.
 - **Lead.** **A session counts toward a task only when its branch, commit or prompt
@@ -159,7 +159,7 @@ or sprint gate. They show beside the scorecard for context.
 - **Providers** — GitHub, GitLab, Azure Repos, Bitbucket, or a local path.
 - **Pulled** — workspaces, issues/work items, sprints/iterations, task types and
   **milestones** (Jira versions / epics, ADO milestones — V11) are pulled into the
-  `PlanGraph`. None of them is written back; the only write is usage metrics on tickets
+  `PlanGraph`. None of them is written back; the only write is usage and SDLC metrics on tickets
   assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
 - **One sprint owner.** Jira or ADO owns the sprint calendar; the other may still
   supply issues and task types.
@@ -198,7 +198,7 @@ Three hooks, each independently toggled, posted to a channel:
 ## Done gate
 
 - A workspace connects to a tracker; the plan imports from it and **none of the plan is
-  written back**. Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
+  written back**. Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is metrics write-back (usage and SDLC metrics) by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`, `spec/daemon/tracker-sdlc-metrics.md`).
 - The **buildable** targets (hard rules today; coverage and complexity once their
   scoped reads land) run on every run outcome and **block close on failure**.
 - The ladder resolves most-specific-wins across Dōjō → Workspace → Sprint → Task
@@ -224,7 +224,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - **A `warn` or `off` target blocks a close** — the mode model regressed.
 - **A narrower scope does not override a broader one** — the ladder regressed.
 - **Two trackers claim sprint ownership**, or a tracker adapter **writes anything other
-  than usage metrics, or to a ticket not assigned to the token owner** — ownership /
+  than usage or SDLC metrics, or a rate- or calibration-derived figure, or to a ticket not assigned to the token owner** — ownership /
   write-back scope regressed (`spec/daemon/tracker-metrics-writeback.md`).
 - **An unlinked session counts toward a task**, or a blocking miss closes without a
   note.

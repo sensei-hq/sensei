@@ -2,7 +2,7 @@ Feature: Dōjō Workspace Planning — gate/improvement split, targets, and the 
 
   # gap: T-1
   NO TEST
-  # Metrics write-back is the one write: spec/daemon/tracker-metrics-writeback.md
+  # Usage and SDLC metrics write-back is the one write: spec/daemon/tracker-metrics-writeback.md
   Scenario: a workspace connects to Jira and imports the plan
     Given a Jira workspace and a sensei workspace
     When the tracker is connected
@@ -12,7 +12,7 @@ Feature: Dōjō Workspace Planning — gate/improvement split, targets, and the 
 
   # gap: T-1
   NO TEST
-  # Metrics write-back is the one write: spec/daemon/tracker-metrics-writeback.md
+  # Usage and SDLC metrics write-back is the one write: spec/daemon/tracker-metrics-writeback.md
   Scenario: a workspace connects to ADO and imports the plan
     Given an ADO workspace and a sensei workspace
     When the tracker is connected

@@ -31,7 +31,7 @@ create index if not exists tracker_tasks_tracker_id_key_idx
     on tracker_tasks(tracker_id, key);
 
 comment on table tracker_tasks is
-'Tickets (issues) of a tracker board, mirrored from the tracker; usage is written back to the token owner''s (spec tracker-metrics-writeback). Keyed on the provider''s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).';
+'Tickets (issues) of a tracker board, mirrored from the tracker; usage and SDLC metrics are written back to the token owner''s (spec tracker-metrics-writeback). Keyed on the provider''s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).';
 
 comment on column tracker_tasks.tracker_id
      is 'The board this ticket belongs to.';

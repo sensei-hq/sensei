@@ -116,10 +116,23 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   spec [`spec/daemon/tracker-metrics-writeback.md`](spec/daemon/tracker-metrics-writeback.md),
   plan [`plans/2026-10-26-tracker-metrics-writeback.md`](plans/2026-10-26-tracker-metrics-writeback.md).
   **It reverses, with the user's approval (2026-10-26),** the read-only rule (PRD T3,
-  `decisions.md` "Read-only means read-only", design §2.6) for usage metrics, and
+  `decisions.md` "Read-only means read-only", design §2.6) for usage metrics (superseded 2026-10-29 (tracker-sdlc-metrics)), and
   deviation (3) above: the assignee is compared, never stored. Write-back is on by default
   for existing boards too, which the user confirmed after being shown the "Read-only" copy
   and that clients may see comments. The docs are narrowed in F5.
+- **Tracker SDLC metrics** (2026-10-29 → 2026-10-31, branch `feature/sdlc_metrics`, F1–F8
+  committed, F9 docs in this commit). Analysis
+  [`analysis/2026-10-29-sdlc-metrics-extension.md`](analysis/2026-10-29-sdlc-metrics-extension.md),
+  spec [`spec/daemon/tracker-sdlc-metrics.md`](spec/daemon/tracker-sdlc-metrics.md) (amendments A1–A10),
+  plan [`plans/2026-10-29-tracker-sdlc-metrics.md`](plans/2026-10-29-tracker-sdlc-metrics.md).
+  - **What it adds:** ticket, sprint and project SDLC figures, derived from AI sessions'
+    hook events plus the tracker's history. They are shown on Tickets and can be mapped into
+    write-back fields.
+  - **Still open:**
+    - the write-back field set to recommend (D9: the user decides);
+    - live done gate 9 against a running daemon;
+    - the figures stay sparse on Linux until **P0** (session synthesis) lands;
+    - the indexer's dangling-reference ratchet is at its 1,302 ceiling with no headroom.
 - **Daemon routes reachable from any web page** (found by the Jira-spec security
   review 2026-10-15) — `api/server.rs` sets `CorsLayer::allow_origin(Any)` with all
   methods and no auth middleware (loopback bind by default), so any page the user

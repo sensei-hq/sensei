@@ -33,7 +33,7 @@ pub struct TrackerRow {
     pub owner_state: Option<String>,
     /// The last owner lookup's failure code (`sensei.tracker_error`).
     pub owner_error: Option<String>,
-    /// Whether usage is written back (W8).
+    /// Whether usage and SDLC metrics are written back (W8).
     pub writeback_enabled: bool,
     /// Why the last write-back pass could not run or ended early (W2).
     pub writeback_error: Option<String>,

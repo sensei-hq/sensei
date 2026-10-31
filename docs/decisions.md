@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-10-26
+updated: 2026-10-31
 ---
 
 # Decisions
@@ -12,17 +12,35 @@ updated: 2026-10-26
 
 ---
 
-## 2026-10-26 — Usage metrics are written back to the tracker
+## 2026-10-29 — SDLC metrics from AI sessions and tracker history, written back like usage
+
+The daemon derives ticket, sprint and project SDLC figures:
+- defects, build runs, timing, rework and holds, from the hook events of a ticket's linked
+  AI sessions;
+- commitment, scope change, carry-over and velocity, replayed from Jira changelogs;
+- predictability, and tokens and prompts per ticket.
+
+The Tickets screen shows them. The 21 S9 keys can be mapped into write-back fields beside
+the 13 usage keys (`spec/daemon/tracker-sdlc-metrics.md`, analysis D1–D11, amendments A1–A10).
+
+| Decision | Why | Alternatives |
+|---|---|---|
+| **A null always carries a reason code** (`reason_codes` domain `sdlc_metrics`, served by `GET /api/reason-codes/{domain}`) | Never fabricate: an unknown figure must not pass for zero, and the screen shows the reason in words | Zeros or "—" for unknowns (indistinguishable from real values) |
+| **Only a derivation lag holds write-back back** (A9) | A failed derivation is permanent until its inputs change, so waiting on it froze a ticket's fields for ever | Skip any ticket with an underived figure |
+| **Rate- and calibration-derived figures are never written** (S9) | `effort_cost`, `rework_cost`, `expected_minutes` and `time_variance_minutes` depend on settings, not measurement; `estimated_points` is Jira's own field | Write them all |
+| **The hourly rate is project-level only** (D3) | No per-person cost | A rate per person |
+
+## 2026-10-26 — Usage metrics are written back to the tracker (superseded 2026-10-29 (tracker-sdlc-metrics): SDLC metrics too)
 
 Each ticket's usage (sessions, active time, tokens, cost) was visible only in sensei. The user
 reversed the read-only rule for that one thing: the local daemon writes it back after every
 successful sync, on by default for every board, existing ones included
-(`spec/daemon/tracker-metrics-writeback.md`). Supersedes, for usage metrics only, the 2026-10-14
+(`spec/daemon/tracker-metrics-writeback.md`). Supersedes, for usage metrics only (superseded 2026-10-29 (tracker-sdlc-metrics)), the 2026-10-14
 "Read-only means read-only" row and roadmap/09 D3.
 
 | Decision | Locked answer | Why |
 |---|---|---|
-| **One write path: metrics** | Sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The local daemon writes usage metrics, nothing else (`spec/daemon/tracker-metrics-writeback.md`). | The rest of the read-only rule still holds; only the figures people asked to see in Jira move. |
+| **One write path: metrics** | Sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The local daemon writes usage metrics, nothing else (`spec/daemon/tracker-metrics-writeback.md`; superseded 2026-10-29 (tracker-sdlc-metrics)). | The rest of the read-only rule still holds; only the figures people asked to see in Jira move. |
 | **Only the assignee's daemon writes** | A ticket is written only by the daemon whose token owner is its assignee. The assignee is compared, never stored. | Two teammates who both mention a ticket would otherwise overwrite each other with partial figures. |
 | **Mapped fields, else one comment** | A board with custom fields mapped (`sensei.tracker_fields`) gets those fields; otherwise one sensei comment per ticket, edited in place. | Users who set up a field want it there; a comment works with no Jira admin. |
 | **Every sync, on by default** | Written after each successful sync; a per-board switch turns it off. | Asked for by the user; a figure that lags the sync is a wrong figure. |

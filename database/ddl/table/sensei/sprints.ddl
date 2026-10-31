@@ -18,7 +18,7 @@ create table if not exists sprints (
 );
 
 comment on table sprints is
-'Sprints of a tracker board, mirrored from the provider and never written back (spec tracker-metrics-writeback writes usage to tickets only). A sprint missing from a full sync gets removed_at (never deleted), so history and links survive.';
+'Sprints of a tracker board, mirrored from the provider and never written back (spec tracker-metrics-writeback writes usage and SDLC metrics to tickets only). A sprint missing from a full sync gets removed_at (never deleted), so history and links survive.';
 
 comment on column sprints.tracker_id
      is 'The board this sprint belongs to.';

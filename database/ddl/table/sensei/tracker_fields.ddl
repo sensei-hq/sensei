@@ -1,6 +1,6 @@
 set search_path to sensei, extensions;
 
--- The tracker fields usage is written into (spec tracker-metrics-writeback W6, W7).
+-- The tracker fields usage and SDLC metrics are written into (spec tracker-metrics-writeback W6, W7).
 create table if not exists tracker_fields (
   tracker_id  uuid            not null references sensei.trackers(id) on delete cascade
 , metric      tracker_metric
@@ -11,7 +11,7 @@ create table if not exists tracker_fields (
 );
 
 comment on table tracker_fields is
-'A tracker''s custom fields for usage write-back. A row with a metric is mapped: that metric is written into the field. A row without one is retired: sensei wrote the field before, so it clears it on each ticket''s next write. Replaced by PUT …/trackers/{tracker}/fields.';
+'A tracker''s custom fields for usage and SDLC write-back. A row with a metric is mapped: that metric is written into the field. A row without one is retired: sensei wrote the field before, so it clears it on each ticket''s next write. Replaced by PUT …/trackers/{tracker}/fields.';
 
 comment on column tracker_fields.tracker_id
      is 'The board the field belongs to.';

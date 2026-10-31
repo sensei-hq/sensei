@@ -11,7 +11,7 @@ and the connected-state line of the Dōjō mockup's Integrations tab
   `project-sidebar-view.ts` `SECTIONS`, after `sprints` and before `about`
   (`isSectionActive` matches it by the `/integrations` route prefix)
 - `app/src/lib/api.ts` wrappers on `senseiApi`: `tryListTrackers`, `tryConnectTracker`,
-  `trySyncTracker`, `tryDisconnectTracker`, and `trySetTrackerWriteback` (usage write-back,
+  `trySyncTracker`, `tryDisconnectTracker`, and `trySetTrackerWriteback` (usage and SDLC write-back,
   [`tracker-metrics-writeback.md`](../daemon/tracker-metrics-writeback.md) W8)
 
 **Daemon contract:** [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md) R3, R4, R8, R9.

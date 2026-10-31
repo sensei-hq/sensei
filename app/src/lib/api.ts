@@ -784,7 +784,7 @@ export function senseiApi(port: number) {
       tryJson<{ fields: TrackerFieldMapping[] }>(
         'PUT', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/fields`, { fields },
       ),
-    // Switch usage write-back on or off (tracker-metrics-writeback W8): the tracker, as listed.
+    // Switch usage and SDLC write-back on or off (tracker-metrics-writeback W8): the tracker, as listed.
     trySetTrackerWriteback: (workspaceId: string, trackerId: string, enabled: boolean) =>
       tryJson<TrackerConnection>(
         'PATCH', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}`, { writeback_enabled: enabled },

@@ -4,8 +4,15 @@
 `feature/tracker_metrics_writeback`, which is still unmerged.
 **Stage:** build, unattended (user, 2026-10-29). F1 done (`886b5df1c`), F2 + F3 done
 (`87c7d8316`), F4 done (`825593888`), F5 done (`4f688735f`), F6 done (`8e353ecb5`), F7 done
-(`1b9d2bb10`), F8 done (screens; this commit); F9 (docs sweep, P-DOCS) next. Run contract:
-`.sensei/slice-state.json` (amendments A1–A10).
+(`1b9d2bb10`), F8 done (`141e36df4`), F9 done (docs sweep, gate 12; this commit). **All nine phases are
+built.** Next: `/sensei:complete` (live done gates against a running daemon), then a PR to
+`main`. Run contract: `.sensei/slice-state.json` (amendments A1–A10).
+
+**F9 in one line:**
+- Every "usage-only write-back" statement now names SDLC metrics too.
+- Copies of the canonical sentence use the spec's wording.
+- Dated history keeps its words and gains "superseded 2026-10-29 (tracker-sdlc-metrics)".
+- New entries in `decisions.md` (2026-10-29) and `backlog.md`.
 
 **F8 in one line:**
 - **Tickets:** an SDLC group in four rows on a ticket's detail, and a sprint or project row in

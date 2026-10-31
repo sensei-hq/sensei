@@ -8,6 +8,11 @@ analysis: docs/analysis/2026-10-26-tracker-metrics-writeback.md
 
 # Tracker metrics write-back
 
+> **Extended 2026-10-31** by [`tracker-sdlc-metrics.md`](tracker-sdlc-metrics.md) S9:
+> write-back now carries usage and SDLC metrics. The 21 SDLC keys follow the 13 usage keys
+> in `sensei.tracker_metric`. A mapped figure still being derived holds that ticket's field
+> writes back for the pass (A9). The comment surface is unchanged.
+
 ## Purpose
 
 After every successful sync, write each ticket's R7 usage back to the tracker, but only
@@ -27,8 +32,9 @@ load-bearing statements, and W-DOCS covers the rest.
 never written, or that sync never writes):
 
 > Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the
-> dōjō never writes to a tracker. The one write path is usage-metrics write-back by the
-> local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
+> dōjō never writes to a tracker. The one write path is metrics write-back (usage and SDLC
+> metrics) by the local daemon, to tickets assigned to the token owner
+> (`spec/daemon/tracker-metrics-writeback.md`, `spec/daemon/tracker-sdlc-metrics.md`).
 
 | Surface | Said | Now |
 |---|---|---|

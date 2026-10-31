@@ -22,7 +22,7 @@ These settle the open questions below and override §5 where they differ.
 
 - **External integrations are read; we pull.** Trackers (Jira, Azure Boards, GitHub
   Issues) and CI (GitHub Actions, Azure Pipelines) are read, and CI is never written.
-  Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`). §2.6 and §6.2 are narrowed to match.
+  Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is metrics write-back (usage and SDLC metrics) by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`, `spec/daemon/tracker-sdlc-metrics.md`). §2.6 and §6.2 are narrowed to match.
 - **The dōjō owns them.** A connection is made once per project **in the dōjō**,
   which holds the credential and mirrors the tickets, sprints and pipeline runs;
   sensei reads the mirror. Connecting from sensei writes the connection to the dōjō.
@@ -47,7 +47,7 @@ header comment states the rules plainly:
 
 > * a project groups many repos (any provider, or a local path via the CLI)
 > * tasks + sprints are synced **read-only** from the tracker that **owns sprints**
->   (since 2026-10-26 the daemon writes usage metrics back:
+>   (since 2026-10-26 the daemon writes usage and SDLC metrics back:
 >   `spec/daemon/tracker-metrics-writeback.md`)
 > * a session counts toward a task when its **branch, commit or prompt carries the
 >   ticket key**
@@ -74,7 +74,7 @@ Those six lines are the load-bearing requirements. Everything below expands them
 
 GitLab and Bitbucket appear as **repo providers** (the Repos tab), not as trackers.
 The mockup's model line is explicit: *"tasks and sprints sync in, read-only."* Sync still
-never writes them; usage metrics are written back after each sync
+never writes them; usage and SDLC metrics are written back after each sync
 (`spec/daemon/tracker-metrics-writeback.md`).
 
 ### 2.2 One sprint owner (lead invariant)
@@ -143,8 +143,8 @@ Story → feature     Bug → bug     Task → chore     label: migration → mi
   **Sync now**.
 - **Sprints/tasks are never written back by sync.** Closing a sprint
   *"Closes in Sensei; Jira's sprint is untouched."*
-- **Usage-metrics write-back is a side effect of every successful sync**, on by default
-  (user, 2026-10-26): the local daemon writes each ticket's own usage to tickets assigned
+- **Usage and SDLC metrics write-back is a side effect of every successful sync**, on by default
+  (user, 2026-10-26): the local daemon writes each ticket's own usage and SDLC metrics to tickets assigned
   to the token owner (`spec/daemon/tracker-metrics-writeback.md`). Exporting status or
   anything else to the tracker stays out of scope.
 - Staleness is a first-class state: `connected` / `stale` / `error`, with the
@@ -329,7 +329,7 @@ gating model — no separate gate semantics.
 |---|---|---|
 | `sensei.trackers` | connection per project: kind, host, project/area, PAT/OAuth ref | secrets in the vault, not the row |
 | `sensei.tracker_links` | repo → ticket-key regex, sync cursor, last-sync status | per-repo key pattern (§2.3) |
-| `sensei.tracker_tasks` | tickets synced in: key, type, title, status, sprint, assignee | **mirror**; only usage metrics are written back (`spec/daemon/tracker-metrics-writeback.md`) |
+| `sensei.tracker_tasks` | tickets synced in: key, type, title, status, sprint, assignee | **mirror**; only usage and SDLC metrics are written back (`spec/daemon/tracker-metrics-writeback.md`) |
 | `sensei.sprints` | name, dates, state, owner-tracker, closing note | one owner (§2.2) |
 | `sensei.plan_targets` | target rows incl. `dojo`, `project`, `mode`, `source` | the ladder base |
 | `sensei.plan_target_overrides` | `{target_id, scope, on, value, note}` | §3.2 |
@@ -406,7 +406,7 @@ T3's gaps feature contains **both**:
 The mockup is unambiguous (*"synced read-only"*, *"Closes in Sensei; Jira's sprint
 is untouched"*). **Decision (2026-10-14): read-only means read-only** — the export
 scenarios were removed and replaced by a single “adapters never write back”
-scenario; there is no export action in scope. **Narrowed 2026-10-26:** Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
+scenario; there is no export action in scope. **Narrowed 2026-10-26:** Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is metrics write-back (usage and SDLC metrics) by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`, `spec/daemon/tracker-sdlc-metrics.md`).
 
 ### 6.3 The inheritance ladder, modes and Slack are missing
 
@@ -441,7 +441,7 @@ spec.
 carries):
 
 1. **T-1a** — Jira adapter, reading projects, issues, sprints, key mapping (its one
-   write, usage metrics, is `spec/daemon/tracker-metrics-writeback.md`).
+   write, usage and SDLC metrics, is `spec/daemon/tracker-metrics-writeback.md`).
 2. **T-1b** — ADO adapter, reading projects, work items, iterations, area path.
 3. **T-1c** — one-sprint-owner + task-type mapping + per-repo key pattern.
 4. **T-1d** — session↔task linkage (branch/commit/prompt) + unlinked review.
@@ -458,7 +458,7 @@ carries):
 
 | Scenario | Pass condition |
 |---|---|
-| Connect Jira | OAuth/PAT completes; status shows `connected · synced …`; 142 issues import; sync changes nothing in Jira but usage metrics (`spec/daemon/tracker-metrics-writeback.md`) |
+| Connect Jira | OAuth/PAT completes; status shows `connected · synced …`; 142 issues import; sync changes nothing in Jira but usage and SDLC metrics (`spec/daemon/tracker-metrics-writeback.md`) |
 | Connect ADO | Org/project/area + `AB#\d+` accepted; iterations import |
 | Sprint owner switch | Switching to ADO iterations re-labels sprints; task links survive |
 | Sync never writes the plan | Sync never writes sprints, statuses or memberships; after a sync the only tracker change is metrics write-back (`spec/daemon/tracker-metrics-writeback.md`); close-sprint leaves Jira's sprint untouched |

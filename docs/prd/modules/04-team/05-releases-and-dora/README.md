@@ -22,7 +22,7 @@ would ship a regression stops and says why.*
 ## Decisions this module rests on (2026-10-21)
 
 - **External systems are read; the dōjō pulls.** CI APIs are read, never written
-  ([roadmap/09 D2–D3](../../../../roadmap/09-dojo-expansion.md#decisions-user-2026-10-21)). Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
+  ([roadmap/09 D2–D3](../../../../roadmap/09-dojo-expansion.md#decisions-user-2026-10-21)). Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is metrics write-back (usage and SDLC metrics) by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`, `spec/daemon/tracker-sdlc-metrics.md`).
 - **Signals:** deployments from **GitHub Actions** and **Azure Pipelines** through the
   workspace's integrations, with **git tags** as the fallback (D4).
 - **Incidents:** a **production incident** is its own entity. (The confidentiality

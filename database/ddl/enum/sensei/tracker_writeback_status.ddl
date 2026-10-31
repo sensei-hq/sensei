@@ -1,6 +1,6 @@
 set search_path to sensei, extensions;
 
--- A ticket's last usage write-back outcome (spec tracker-metrics-writeback W9).
+-- A ticket's last usage and SDLC write-back outcome (spec tracker-metrics-writeback W9).
 -- Order and labels are pinned to `crate::tracker::writeback::WritebackStatus::ALL` by a test.
 create type tracker_writeback_status as enum (
   'ok'               -- the last write landed
