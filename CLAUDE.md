@@ -12,7 +12,6 @@
 | ├ `bootstrap` |                   | Installer / prereq checker                    |
 | └ `logger`    |                   | Structured logging crate                      |
 | `dojo/`       | SvelteKit         | Dōjō web app (developer/maintainer/admin/lead consoles; kavach+Supabase) |
-| `website/`    | SvelteKit         | Marketing website                             |
 | `docs/`       | Markdown          | Design docs, mockups, DDL, backlog            |
 | `homebrew/`   | Ruby              | Homebrew tap (subtree → sensei-hq/homebrew-tap) |
 | `marketplace/`| JSON/Markdown     | Skills & plugins (subtree → sensei-hq/marketplace) |
@@ -20,6 +19,7 @@
 **Sibling repos** (pulled in as dependencies, not in this tree):
 
 - **[sensei-hq/gateway](https://github.com/sensei-hq/gateway)** — LLM routing library. `crates/senseid` consumes it as `gateway-embedded` git dep. Was previously `crates/gateway/`; moved out so it can release to crates.io independently.
+- **[sensei-hq/website](https://github.com/sensei-hq/website)** — sensei-hq.com, checked out beside this repo. Was `website/`; moved out (#346) because it serves the whole studio and changes on its own schedule. Its `/sensei` page reads this repo's `VERSION` on `main` at build time; a release rebuilds it through a deploy hook.
 
 ## Version
 

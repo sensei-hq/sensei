@@ -7,7 +7,7 @@ SvelteKit + Tauri desktop app. Frontend.
 **Canonical rules: `sensei/docs/architecture/frontend-svelte-guidelines.md`** — token
 system, the 8-stop type scale (never literal px), spacing grid, **responsive `md:`
 prefixes (§1.7)**, per-surface config parity (§1.8), state separation, component
-patterns, voice, testing. Shared across app/ · dojo/ · website/. Every new screen and
+patterns, voice, testing. Shared across app/ · dojo/ · the website (its own repo, sensei-hq/website). Every new screen and
 every refactor follows it.
 
 Companion references:

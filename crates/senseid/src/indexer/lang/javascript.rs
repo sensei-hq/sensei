@@ -4875,7 +4875,7 @@ mod tests {
 
     /// The reader, over a codebase NOBODY HERE WROTE.
     ///
-    /// `app/`, `dojo/` and `website/` were written alongside this indexer, so
+    /// `app/` and `dojo/` were written alongside this indexer, so
     /// agreement with them is weaker evidence than it looks: a grammar shape
     /// none of our authors happens to use is a shape the reader has never been
     /// asked about. Every defect A2 found — spread, computed writes, parameter

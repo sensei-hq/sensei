@@ -3,7 +3,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import config from "../../rokkit.config.js";
 import dojoConfig from "../../../dojo/rokkit.config.js";
-import websiteConfig from "../../../website/rokkit.config.js";
 import { zenSumi } from "@rokkit/unocss/palettes";
 
 // The user (2026-10-27): rokkit's zen-sumi styles are the look — no app
@@ -41,7 +40,6 @@ type Cfg = { palettes?: unknown; skin?: unknown; overrides?: Record<string, unkn
 describe.each([
   ["app", config],
   ["dōjō", dojoConfig],
-  ["website", websiteConfig],
 ] as [string, Cfg][])("%s wears rokkit's zen-sumi", (_name, cfg) => {
   it("takes its palettes and skin from @rokkit/unocss/palettes", () => {
     expect(cfg.palettes).toEqual(zenSumi.palettes);
@@ -59,7 +57,8 @@ describe.each([
 // worse by night (axe, 2026-10-28). Text on a tint is `text-on-{role}-soft` (rokkit ≥ 1.12): the
 // role darkened toward black, AA on every tint in both modes.
 const ROLES = ["accent", "success", "warning", "danger", "error", "info"];
-const FRONTENDS = ["app/src", "dojo/src", "website/src"];
+// The website keeps its own copy of these guards, in its own repository (sensei-hq/website).
+const FRONTENDS = ["app/src", "dojo/src"];
 
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {

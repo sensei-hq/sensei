@@ -45,7 +45,6 @@ one is the bug.
 | `app/` | SvelteKit + Tauri | Desktop app (observatory + project window) |
 | `crates/` | Rust | `senseid` · `cli` · `mcp` · `bootstrap` · `dojo-protocol` · `logger` |
 | `dojo/` | SvelteKit | Dōjō web app — developer · maintainer · admin · lead consoles (SSO-gated) |
-| `website/` | SvelteKit | Marketing site — **P2 module**, claims must trace to the roadmap |
 | `database/` | SQL (dbd) | DDL definitions — one DB `sensei`, port 7744 |
 | `homebrew/` | Ruby | Homebrew tap (subtree → `sensei-hq/homebrew-tap`) |
 | `marketplace/` | Markdown | Skills · commands · plugins · agents (subtree → `sensei-hq/marketplace`) |
