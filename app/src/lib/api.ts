@@ -1,4 +1,10 @@
-import type { CoChange, Level0, Level1, Level2, Zones } from '@sensei/codemap';
+import type { CoChange, ComplexityTree, Level0, Level1, Level2, Zones } from '@sensei/codemap';
+
+/** The daemon's Complexity tree: the maintainability reading arrives ungraded
+ *  (the app grades it — codemap-port). */
+export type ComplexityWire = Omit<ComplexityTree, 'maintainability'> & {
+  maintainability: { value: number; date: string } | null;
+};
 import type {
   ServerWorkspace,
   SolutionAnalysis,
@@ -465,6 +471,8 @@ export function senseiApi(port: number) {
       tryGet<Level2>(`/api/workspaces/${enc(id)}/diagrams/codemap/file?id=${enc(file)}`),
     tryGetZones: (id: string) => tryGet<Zones>(`/api/workspaces/${enc(id)}/diagrams/zones`),
     tryGetCochange: (id: string) => tryGet<CoChange>(`/api/workspaces/${enc(id)}/diagrams/codemap/cochange`),
+    tryGetComplexity: (id: string) =>
+      tryGet<ComplexityWire>(`/api/workspaces/${enc(id)}/diagrams/codemap/complexity`),
 
     /** #221 — the workspace's database structure: tables, keys, views and
      *  routines, and what depends on what (dbd `SchemaModel` v2's ER half).

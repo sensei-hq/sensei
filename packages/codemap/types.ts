@@ -139,10 +139,34 @@ export type Read<T> = { ok: true; data: T } | { ok: false; error: string };
 
 /** Where a Code map reads from: the daemon in the app, the dōjō's own API in
  *  the dōjō. Each host implements it; the components never fetch. */
+/** One row of the Complexity tree (user, 2026-11-02): a module, a folder in it,
+ *  or a file — each carrying what is under it. */
+export interface ComplexityNode {
+  id: string;
+  label: string;
+  kind: 'module' | 'folder' | 'file';
+  functions: number;
+  /** Functions over cyclomatic 10. */
+  complex: number;
+  /** The highest cyclomatic complexity of any function under this row. */
+  maxCyclo: number;
+  files: number;
+  children: ComplexityNode[];
+}
+
+export interface ComplexityTree {
+  total: { functions: number; complex: number; maxCyclo: number; files: number };
+  modules: ComplexityNode[];
+  /** The workspace's latest maintainability reading, graded by the host; null
+   *  where none is computed. */
+  maintainability: { value: number; grade: string | null; label: string; date: string } | null;
+}
+
 export interface CodeMapPort {
   level0(groupBy: GroupBy): Promise<Read<Level0>>;
   module(id: string): Promise<Read<Level1>>;
   file(id: string): Promise<Read<Level2>>;
   zones(): Promise<Read<Zones>>;
   cochange(): Promise<Read<CoChange>>;
+  complexity(): Promise<Read<ComplexityTree>>;
 }

@@ -41,6 +41,12 @@ const ZONES = {
 const port = (): CodeMapPort => ({
   level0: vi.fn(() => ok(L0)), module: vi.fn(() => ok(L1)), file: vi.fn(() => ok(L2)), zones: vi.fn(() => ok(ZONES)),
   cochange: vi.fn(() => ok({ hidden: [{ a: 'p/a', b: 'p/c', together: 7, strength: 0.7 }], pairs: 3, commits: 40, minTogether: 5 })),
+  complexity: vi.fn(() => ok({
+    total: { functions: 10, complex: 3, maxCyclo: 24, files: 1 },
+    maintainability: null,
+    modules: [{ id: 'p/a', label: 'p/a', kind: 'module', functions: 10, complex: 3, maxCyclo: 24, files: 1,
+      children: [{ id: 'a/x.rs', label: 'x.rs', kind: 'file', functions: 10, complex: 3, maxCyclo: 24, files: 1, children: [] }] }],
+  })),
 });
 
 let target: HTMLElement;
@@ -141,15 +147,16 @@ describe('CodeMap', () => {
     expect(p.module).toHaveBeenCalledWith('p/a');
   });
 
-  it('Complexity tints each block by its share over cyclomatic 10, and names the unmeasured', async () => {
+  it('Complexity draws the tree, not the block map, and says what to act on from it', async () => {
     const p = port();
     const map = render(p);
     await settle();
     void map.showLens(p, 'complexity');
-    flushSync();
-    expect(q('[data-testid="block-note-p/a"]')?.textContent?.trim()).toBe('30% over cx 10');
-    expect(q('[data-testid="block-note-p/b"]')?.textContent?.trim()).toBe('not measured');
-    expect(q('[data-testid="complexity-summary"]')?.textContent).toContain('3 of 10 functions over cyclomatic 10 · 1 of 3 blocks measured');
+    await settle();
+    expect(q('[data-testid="codemap-complexity"] [data-tree]')).not.toBeNull();
+    expect(q('[data-testid="codemap-modules"]')).toBeNull();
+    expect(q('[data-testid="complexity-overall"]')?.textContent).toContain('3 of 10 functions over cyclomatic 10');
+    expect(q('[data-testid="codemap-takeaways"]')?.textContent).toContain('1 file with functions over cyclomatic 10');
   });
 
   it('with nothing selected, the side panel says what to act on', async () => {

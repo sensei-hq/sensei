@@ -17,6 +17,7 @@
   import WheelLens from './WheelLens.svelte';
   import CyclesLens from './CyclesLens.svelte';
   import CouplingLens from './CouplingLens.svelte';
+  import ComplexityLens from './ComplexityLens.svelte';
   import ModuleList from './ModuleList.svelte';
   import FileColumns from './FileColumns.svelte';
   import SymbolView from './SymbolView.svelte';
@@ -54,7 +55,7 @@
   const narrow = $derived(width > 0 && width < 640);
   const l0 = $derived(map.l0);
   const bands = $derived(l0 ? drawnBands(map.lens, l0, map.cochange, { edgeMode: map.edgeMode, minWeight: map.minWeight }) : []);
-  const toAct = $derived(l0 ? takeaways(map.lens, l0, map.cochange, map.zones) : []);
+  const toAct = $derived(l0 ? takeaways(map.lens, l0, map.cochange, map.zones, map.complexity) : []);
   const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected }));
   const open = (id: string) => void map.openModule(port, id);
   const zoomTo = (z: number) => (map.zoom = z);
@@ -114,6 +115,10 @@
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
               <CouplingLens data={map.cochange} zoom={map.zoom} onopen={open} />
             </ZoomFrame>
+          {:else if map.lens === 'complexity'}
+            <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
+              <ComplexityLens data={map.complexity} zoom={map.zoom} onopen={open} />
+            </ZoomFrame>
           {:else if map.lens === 'cycles'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
               <CyclesLens data={l0} zoom={map.zoom} onopen={open} />
@@ -123,17 +128,9 @@
               <MatrixLens data={l0} zoom={map.zoom} onopen={open} />
             </ZoomFrame>
           {:else}
-            {#if map.lens === 'complexity'}
-              {@const measured = l0.blocks.filter((b) => b.complexity)}
-              <p class="m-0 text-xs text-ink-mute" data-testid="complexity-summary">
-                {measured.length
-                  ? `${measured.reduce((n, b) => n + b.complexity!.complex, 0)} of ${measured.reduce((n, b) => n + b.complexity!.functions, 0)} functions over cyclomatic 10 · ${measured.length} of ${l0.blocks.length} blocks measured (local qlty)`
-                  : 'Not measured yet: complexity is measured by local qlty after a scan.'}
-              </p>
-            {/if}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
               <ModuleMap data={l0} {bands} selected={map.selected}
-                complexity={map.lens === 'complexity'} byDirection={map.byDirection}
+                byDirection={map.byDirection}
                 roles={map.roles} zoom={map.zoom} onselect={(id) => map.select(id)} onopen={open} />
             </ZoomFrame>
           {/if}

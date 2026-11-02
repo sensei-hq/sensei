@@ -44,7 +44,7 @@ describe('legendFor', () => {
     expect(legendFor('structure', true).map((l) => l.label)).toEqual(['down', 'same layer', 'upward', 'skips a layer']);
     expect(legendFor('cycles', false).map((l) => l.label)).toEqual(['in a cycle']);
     expect(legendFor('coupling', false).map((l) => l.label)).toEqual(['changes together']);
-    expect(legendFor('complexity', false).map((l) => l.label)).toEqual(['over 10%', 'over 20%', 'not measured']);
+    expect(legendFor('complexity', false).map((l) => l.label)).toEqual(['over 10%', 'over 20%']);
   });
 });
 

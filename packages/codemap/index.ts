@@ -16,5 +16,5 @@ export { visibleBands, drawnBands, budgetLine, bandTone, legendFor, complexityTi
 export type { EdgeMode, BandFilter, LegendEntry, ComplexityTier } from './view';
 export type {
   GroupBy, Direction, Role, RoleCounts, Block, Band, Level0, ModuleFile, Column, Neighbour, Level1, SymbolRef, Level2, Read,
-  CodeMapPort, ZonePoint, Zones, Coupling, CoChange,
+  CodeMapPort, ZonePoint, Zones, Coupling, CoChange, ComplexityTree, ComplexityNode,
 } from './types';

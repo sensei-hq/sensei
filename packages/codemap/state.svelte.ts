@@ -3,7 +3,7 @@
 // read goes through the CodeMapPort the host passes in.
 import type { EdgeMode } from './view';
 import type { ZoneFilter } from './lenses';
-import type { CoChange, CodeMapPort, Column, GroupBy, Level0, Level1, Level2, Read, Role, Zones } from './types';
+import type { CoChange, CodeMapPort, Column, ComplexityTree, GroupBy, Level0, Level1, Level2, Read, Role, Zones } from './types';
 
 export type Level = 'modules' | 'files' | 'symbols';
 export type Lens = 'structure' | 'wheel' | 'cycles' | 'matrix' | 'zones' | 'coupling' | 'complexity';
@@ -48,6 +48,8 @@ export class CodeMapState {
   l2 = $state<Level2 | null>(null);
   zones = $state<Zones | null>(null);
   cochange = $state<CoChange | null>(null);
+  /** The Complexity tree, read the first time the lens opens. */
+  complexity = $state<ComplexityTree | null>(null);
   loading = $state(false);
   /** Why the last read failed; cleared by the next that succeeds. */
   error = $state<string | null>(null);
@@ -96,6 +98,10 @@ export class CodeMapState {
     if (lens === 'coupling' && !this.cochange) {
       const data = await this.#read(() => port.cochange());
       if (data) this.cochange = data;
+    }
+    if (lens === 'complexity' && !this.complexity) {
+      const data = await this.#read(() => port.complexity());
+      if (data) this.complexity = data;
     }
   }
 

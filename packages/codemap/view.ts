@@ -54,7 +54,6 @@ export function legendFor(lens: Lens, byDirection: boolean): LegendEntry[] {
       return [
         { label: 'over 10%', stroke: 'var(--warning)' },
         { label: 'over 20%', stroke: 'var(--danger)' },
-        { label: 'not measured', fill: 'var(--paper-mute)' },
       ];
     case 'zones':
       return [];

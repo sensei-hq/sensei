@@ -1,0 +1,54 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { flushSync, mount, unmount } from 'svelte';
+import ComplexityLens from './ComplexityLens.svelte';
+import type { ComplexityTree } from './types';
+
+let app: Record<string, unknown> | null = null;
+let target: HTMLElement;
+afterEach(() => { if (app) unmount(app); app = null; target?.remove(); });
+
+const TREE: ComplexityTree = {
+  total: { functions: 40, complex: 6, maxCyclo: 41, files: 5 },
+  maintainability: { value: 0.0048, grade: 'B', label: '4.8 / 1,000 lines', date: '2026-11-01' },
+  modules: [{
+    id: 'p/a', label: 'p/a', kind: 'module', functions: 30, complex: 6, maxCyclo: 41, files: 3,
+    children: [{ id: 'a/src', label: 'src', kind: 'folder', functions: 30, complex: 6, maxCyclo: 41, files: 3,
+      children: [{ id: 'a/src/big.rs', label: 'big.rs', kind: 'file', functions: 12, complex: 5, maxCyclo: 41, files: 1, children: [] }] }],
+  }],
+};
+
+function render(data: ComplexityTree | null = TREE) {
+  const onopen = vi.fn();
+  target = document.body.appendChild(document.createElement('div'));
+  app = mount(ComplexityLens, { target, props: { data, zoom: 1, onopen } });
+  flushSync();
+  return onopen;
+}
+
+// The user (2026-11-02): complexity as a tree, with the numbers at module and
+// folder levels and an overall complexity and maintainability rating.
+describe('ComplexityLens', () => {
+  it('leads with the overall reading: share over cyclomatic 10, highest, files, maintainability grade', () => {
+    render();
+    const head = target.querySelector('[data-testid="complexity-overall"]')!.textContent!;
+    expect(head).toContain('6 of 40 functions over cyclomatic 10');
+    expect(head).toContain('15%');
+    expect(head).toContain('41');
+    expect(target.querySelector('[data-testid="complexity-grade"]')?.textContent?.trim()).toBe('B');
+    expect(head).toContain('4.8 / 1,000 lines');
+  });
+
+  it('is a rokkit Tree whose rows carry their own numbers', () => {
+    render();
+    expect(target.querySelector('[data-testid="codemap-complexity"] [data-tree]')).not.toBeNull();
+    const row = target.querySelector('[data-complexity-row="p/a"]')!;
+    expect(row.textContent).toContain('6 of 30');
+    expect(row.textContent).toContain('max 41');
+  });
+
+  it('says so when nothing was measured, and when maintainability is not computed', () => {
+    render({ ...TREE, total: { functions: 0, complex: 0, maxCyclo: 0, files: 0 }, modules: [], maintainability: null });
+    expect(target.textContent).toContain('Not measured yet');
+  });
+});

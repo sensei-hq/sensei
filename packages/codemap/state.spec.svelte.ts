@@ -22,11 +22,24 @@ function port(over: Partial<CodeMapPort> = {}): CodeMapPort {
   return {
     level0: vi.fn((g) => ok(L0(g))), module: vi.fn(() => ok(L1)), file: vi.fn(() => ok(L2)),
     zones: vi.fn(() => ok({ points: [], meanDistance: 0, coverage: { points: 0, unplaceable: 0 } })),
-    cochange: vi.fn(() => ok({ hidden: [], pairs: 0, commits: 12, minTogether: 5 })), ...over,
+    cochange: vi.fn(() => ok({ hidden: [], pairs: 0, commits: 12, minTogether: 5 })),
+    complexity: vi.fn(() => ok({ total: { functions: 0, complex: 0, maxCyclo: 0, files: 0 }, modules: [], maintainability: null })),
+    ...over,
   };
 }
 
 describe('CodeMapState', () => {
+  it('reads the Complexity tree the first time the lens opens, and only then', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.showLens(p, 'structure');
+    expect(p.complexity).not.toHaveBeenCalled();
+    await s.showLens(p, 'complexity');
+    await s.showLens(p, 'complexity');
+    expect(p.complexity).toHaveBeenCalledOnce();
+    expect(s.complexity?.total.files).toBe(0);
+  });
+
   it('Zones opens on pain and uselessness', () => {
     expect(new CodeMapState().zoneFilter).toBe('issues');
   });

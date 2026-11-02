@@ -3,14 +3,13 @@
   // a side lane (M17). A click opens a module; a fold or a hub is selected for
   // the inspector. Hovering or selecting dims every band that does not touch it.
   import { layoutLevel0 } from './layout';
-  import { bandTone, complexityTier, shownFiles } from './view';
+  import { bandTone, shownFiles } from './view';
   import type { Band, Block, Level0, Role } from './types';
 
   let {
     data,
     bands,
     selected = null,
-    complexity = false,
     byDirection = false,
     roles,
     zoom = 1,
@@ -21,8 +20,6 @@
     /** The bands this lens draws, after the band filters. */
     bands: Band[];
     selected?: string | null;
-    /** Complexity lens: tint blocks by their share over cyclomatic 10. */
-    complexity?: boolean;
     /** Tint every band by direction, not only upward. */
     byDirection?: boolean;
     /** The roles shown: a block's file count is theirs. */
@@ -46,14 +43,7 @@
   const scale = $derived(fit * zoom);
   const touches = (s: string, t: string) => !focus || s === focus || t === focus;
 
-  // A lens marks a block by its border, not a pale fill: a tinted card reads as a
-  // light one in dark mode and drowns its label.
-  const TIER_EDGE = { danger: 'var(--danger)', warning: 'var(--warning)', neutral: null, unmeasured: null };
-  const fillOf = (b: Block) => (complexity && complexityTier(b).tone === 'unmeasured' ? 'var(--paper-mute)' : 'var(--paper)');
-  const edgeOf = (b: Block): string | null =>
-    complexity ? TIER_EDGE[complexityTier(b).tone] : null;
-  const noteOf = (b: Block) =>
-    complexity ? complexityTier(b).label : b.hub ? `${b.weight_in} in` : `${shownFiles(b, roles)} files`;
+  const noteOf = (b: Block) => (b.hub ? `${b.weight_in} in` : `${shownFiles(b, roles)} files`);
   const pick = (b: Block) =>
     b.folded.length || b.hub ? onselect(selected === b.id ? null : b.id) : onopen(b.id);
 </script>
@@ -103,9 +93,9 @@
           width={p.w}
           height={p.h}
           rx="4"
-          fill={fillOf(p.block)}
-          stroke={selected === p.id ? 'var(--accent)' : (edgeOf(p.block) ?? 'var(--paper-edge)')}
-          stroke-width={selected === p.id || edgeOf(p.block) ? 2 : 1}
+          fill="var(--paper)"
+          stroke={selected === p.id ? 'var(--accent)' : 'var(--paper-edge)'}
+          stroke-width={selected === p.id ? 2 : 1}
           stroke-dasharray={folded ? '4 3' : undefined}
         />
         <text x={p.x + 8} y={p.y + 15} class="text-xs" fill="var(--ink)">

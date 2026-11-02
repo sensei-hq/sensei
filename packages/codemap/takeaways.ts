@@ -6,7 +6,7 @@
 import type { Tone } from './inspector';
 import type { Lens } from './state.svelte';
 import { complexityTier } from './view';
-import type { Band, CoChange, Level0, Zones } from './types';
+import type { Band, CoChange, ComplexityNode, ComplexityTree, Level0, Zones } from './types';
 
 export interface Takeaway {
   title: string;
@@ -24,13 +24,19 @@ const bandItems = (bands: Band[]) => heaviest(bands).map((b) => ({ text: `${b.so
 
 const UPWARD_WHY = 'A lower layer calling up is a layering violation. Put an interface below and depend on it, or move the code to the layer that uses it.';
 
-export function takeaways(lens: Lens, l0: Level0, cochange: CoChange | null, zones: Zones | null): Takeaway[] {
+export function takeaways(
+  lens: Lens,
+  l0: Level0,
+  cochange: CoChange | null,
+  zones: Zones | null,
+  tree: ComplexityTree | null = null,
+): Takeaway[] {
   switch (lens) {
     case 'structure': return structure(l0);
     case 'cycles': return cycles(l0);
     case 'matrix': return matrixIssues(l0);
     case 'zones': return zoneIssues(zones);
-    case 'complexity': return complexity(l0);
+    case 'complexity': return tree ? complexFiles(tree) : complexity(l0);
     case 'coupling': return coupling(cochange);
     case 'wheel': return wheel(l0);
   }
@@ -128,6 +134,28 @@ function complexity(l0: Level0): Takeaway[] {
         detail: 'More than one function in five is over cyclomatic complexity 10. Split those functions, and test them first.',
         tone: 'danger',
         items: hot.slice(0, SHOWN).map((b) => ({ text: b.id, value: `${Math.round((complexityTier(b).share ?? 0) * 100)}%`, target: b.id })),
+      }]
+    : [];
+}
+
+/** The Complexity tree's files with functions over cyclomatic 10, most first,
+ *  each opening its module. */
+function complexFiles(tree: ComplexityTree): Takeaway[] {
+  const files: { node: ComplexityNode; module: string }[] = [];
+  const walk = (n: ComplexityNode, module: string) =>
+    n.kind === 'file' ? n.complex > 0 && files.push({ node: n, module }) : n.children.forEach((c) => walk(c, module));
+  tree.modules.forEach((m) => walk(m, m.id));
+  files.sort((a, b) => b.node.complex - a.node.complex || b.node.maxCyclo - a.node.maxCyclo || a.node.id.localeCompare(b.node.id));
+  return files.length
+    ? [{
+        title: plural(files.length, 'file with functions over cyclomatic 10', 'files with functions over cyclomatic 10'),
+        detail: 'Split the long, branchy functions in these first, and test them before you do: complexity is where defects hide and changes go wrong.',
+        tone: 'danger',
+        items: files.slice(0, SHOWN).map(({ node, module }) => ({
+          text: node.id,
+          value: `${node.complex} of ${node.functions} · max ${node.maxCyclo}`,
+          target: module,
+        })),
       }]
     : [];
 }

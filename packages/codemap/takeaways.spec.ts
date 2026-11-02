@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { takeaways, takeawaysMarkdown } from './takeaways';
+import type { ComplexityNode, ComplexityTree } from './types';
 import type { Block, CoChange, Level0, Zones } from './types';
 
 const block = (id: string, extra: Partial<Block> = {}): Block => ({
@@ -95,6 +96,31 @@ describe('takeaways', () => {
     const clean = { ...L0, cycles: [], bands: [] };
     expect(takeaways('structure', clean, null, null)).toEqual([]);
     expect(takeaways('cycles', clean, null, null)).toEqual([]);
+  });
+});
+
+describe('takeaways — the Complexity tree', () => {
+  const file = (id: string, functions: number, complex: number, maxCyclo: number): ComplexityNode =>
+    ({ id, label: id.split('/').pop()!, kind: 'file', functions, complex, maxCyclo, files: 1, children: [] });
+  const tree: ComplexityTree = {
+    total: { functions: 30, complex: 5, maxCyclo: 41, files: 4 },
+    maintainability: null,
+    modules: [
+      { id: 'p/a', label: 'p/a', kind: 'module', functions: 20, complex: 4, maxCyclo: 41, files: 2,
+        children: [file('a/big.rs', 12, 3, 41), file('a/ok.rs', 8, 1, 12)] },
+      { id: 'p/b', label: 'p/b', kind: 'module', functions: 10, complex: 1, maxCyclo: 15, files: 2,
+        children: [file('b/x.rs', 6, 1, 15), file('b/y.rs', 4, 0, 6)] },
+    ],
+  };
+
+  it('names the files with the most functions over cyclomatic 10, and the module to open', () => {
+    const [t] = takeaways('complexity', L0, null, null, tree);
+    expect(t.title).toBe('3 files with functions over cyclomatic 10');
+    expect(t.items.map((i) => [i.text, i.value, i.target])).toEqual([
+      ['a/big.rs', '3 of 12 · max 41', 'p/a'],
+      ['b/x.rs', '1 of 6 · max 15', 'p/b'],
+      ['a/ok.rs', '1 of 8 · max 12', 'p/a'],
+    ]);
   });
 });
 
