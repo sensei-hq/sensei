@@ -50,19 +50,18 @@ describe('metrics landing', () => {
     expect(q('[data-component="metrics-error"]')).toBeNull();
   });
 
-  it('fills the grid when the values and registry land, the sparkline after its own read', async () => {
-    const { held } = render();
-    held.values.resolve(ok({ metrics: [{ metric: 'ftr', metric_type: 'pct', value: 0.8, delta: null, direction: 'higher_better', date: '2026-11-01' }], count: 1, narrative: null }));
+  it('fills the grid, sparklines included, when the values and registry land', async () => {
+    const { held, api } = render();
+    held.values.resolve(ok({
+      metrics: [{ metric: 'ftr', metric_type: 'pct', value: 0.8, delta: null, direction: 'higher_better', date: '2026-11-01' }],
+      count: 1, narrative: null,
+      series: { ftr: [{ period: '2026-10-30', value: 0.7 }, { period: '2026-10-31', value: 0.75 }, { period: '2026-11-01', value: 0.8 }] },
+    }));
     held.registry.resolve(ok({ metrics: [{ key: 'ftr', family: 'outcome', name: 'First-try rate', formula: 'x' }], count: 1 }));
     await tick();
     expect(q('[data-component="metrics-loading"]')).toBeNull();
-    expect(q('[data-component="signal-cell"][data-signal="ftr"]')).not.toBeNull();
-    expect(q('[data-component="signal-cell"][data-signal="ftr"] svg')).toBeNull();
-    held.series.resolve(ok({ metric: 'ftr', grain: 'daily', formula: null, series: [
-      { period: '2026-10-30', value: 0.7 }, { period: '2026-10-31', value: 0.75 }, { period: '2026-11-01', value: 0.8 },
-    ] }));
-    await tick();
     expect(q('[data-component="signal-cell"][data-signal="ftr"] svg')).not.toBeNull();
+    expect(api.getWorkspaceMetricSeries).not.toHaveBeenCalled();
   });
 
   it('a registry that cannot be read is the page’s error, not an ungrouped grid (#288)', async () => {

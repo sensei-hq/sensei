@@ -254,11 +254,15 @@ pub(crate) async fn get_workspace_metrics(
     // from this (the direction the sparkline shows), so a one-week dip can't be
     // reported as the trend. A read error is a 500 (fail-closed), never a
     // fabricated-empty that would silently drop the trend fact.
-    let series_by_metric = state
+    let dated = state
         .pg
         .get_workspace_metric_daily_series_all(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let series_by_metric: std::collections::HashMap<String, Vec<f64>> = dated
+        .iter()
+        .map(|(metric, points)| (metric.clone(), points.iter().map(|(_, v)| *v).collect()))
+        .collect();
 
     // Interpreted layer: the local-model headline + per-signal "what sensei
     // noticed" prose, read from cache (a cold miss is warmed in the background
@@ -272,10 +276,24 @@ pub(crate) async fn get_workspace_metrics(
     )
     .await;
 
+    // The same daily series, dated, for the sparklines — so the app does not read
+    // one series per metric (27 requests) after this one returns.
+    let series: serde_json::Map<String, serde_json::Value> = dated
+        .into_iter()
+        .map(|(metric, points)| {
+            let points: Vec<serde_json::Value> = points
+                .into_iter()
+                .map(|(date, value)| serde_json::json!({ "period": date.to_string(), "value": value }))
+                .collect();
+            (metric, serde_json::Value::Array(points))
+        })
+        .collect();
+
     Ok(Json(serde_json::json!({
         "metrics": metrics,
         "count": metrics.len(),
         "narrative": narrative,
+        "series": series,
     })))
 }
 

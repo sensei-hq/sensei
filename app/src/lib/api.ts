@@ -309,7 +309,13 @@ export function senseiApi(port: number) {
     // workspace with no computed metrics yet, so the screen shows an error state
     // rather than an empty grid that hides a broken daemon (no-fabrication).
     getWorkspaceMetrics: (id: string) =>
-      tryGet<{ metrics: WorkspaceMetricRow[]; count: number; narrative?: MetricsNarrative | null }>(
+      tryGet<{
+        metrics: WorkspaceMetricRow[];
+        count: number;
+        narrative?: MetricsNarrative | null;
+        /** Each metric's daily series, dated, for the sparklines. */
+        series?: Record<string, MetricSeriesPoint[]>;
+      }>(
         `/api/workspaces/${enc(id)}/metrics`,
       ),
 

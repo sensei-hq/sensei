@@ -2790,6 +2790,13 @@ mod tests {
             .find(|m| m["metric"].as_str() == Some(key_b.as_str()))
             .expect("metric B present");
         assert_eq!(b["value"], 0.25);
+        // The sparklines' daily series ride along, dated (the app read one series
+        // per metric, 27 requests, after this one returned).
+        assert_eq!(
+            body["series"][key_b.as_str()],
+            serde_json::json!([{ "period": w1.to_string(), "value": 0.25 }]),
+            "{body}"
+        );
         // Honest-null trend: B has a single week → prior/delta null, never a fake 0.
         assert!(b["prior"].is_null(), "B has no prior week — null, not a fabricated 0");
         assert!(b["delta"].is_null());

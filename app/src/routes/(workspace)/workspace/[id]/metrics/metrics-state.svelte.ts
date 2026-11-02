@@ -3,7 +3,8 @@
 // landing and every metric's detail read from one of these, so:
 // - the page draws at once; each section fills as its own read lands, and a slow
 //   read holds back nothing else;
-// - the sparklines fill one by one once the values are in, a few reads at a time;
+// - the sparklines come with the values (the daemon sends each metric's daily
+//   series with them), so there is no read per metric;
 // - what was read is reused across the landing and the details, and a stale
 //   reopen refreshes in the background, keeping what is shown meanwhile;
 // - a failed read is that section's error, never an empty or zero stand-in.
@@ -39,8 +40,6 @@ const LOADING: Section<never> = Object.freeze({ status: 'loading', data: null, e
 const settled = <T, U = T>(r: ApiResult<T>, pick: (d: T) => U = (d) => d as unknown as U): Section<U> =>
   r.ok ? { status: 'ready', data: pick(r.data), error: null } : { status: 'error', data: null, error: r.error.message };
 
-/** Sparkline reads in flight at once. */
-const SPARK_READS = 4;
 /** A reopen within this long reuses what was read; past it, a background refresh. */
 const FRESH_MS = 60_000;
 
@@ -60,8 +59,6 @@ export class WorkspaceMetrics {
   #recommendations = $state<Section<Recommendation[]>>(LOADING);
   #recommendationsAsked = false;
   #openedAt: number | null = null;
-  #sparkQueue: string[] = [];
-  #sparksInFlight = 0;
 
   constructor(
     private readonly api: MetricsApi,
@@ -94,7 +91,11 @@ export class WorkspaceMetrics {
     const id = this.workspaceId;
     void this.api.getWorkspaceMetrics(id).then((r) => {
       this.values = settled(r, (d) => ({ rows: d.metrics ?? [], narrative: d.narrative ?? null }));
-      if (r.ok) this.#queueSparks((r.data.metrics ?? []).map((m) => m.metric));
+      if (r.ok) {
+        this.sparks = Object.fromEntries(
+          Object.entries(r.data.series ?? {}).map(([key, points]) => [key, densifySeries(points, 'daily').map((p) => p.value)]),
+        );
+      }
     });
     void this.api.getMetricsRegistry().then((r) => (this.registry = settled(r, (d) => d.metrics ?? [])));
     void this.api.getWorkspaceHealth(id).then((r) => (this.health = settled(r)));
@@ -109,8 +110,7 @@ export class WorkspaceMetrics {
     return this.#series.get(`${key}|${grain}`) ?? LOADING;
   }
 
-  /** One read per metric and grain, however many ask: a sparkline and the
-   *  detail's daily series share it. */
+  /** One read per metric and grain, however many ask. */
   #read(key: string, grain: Grain): Promise<Section<MetricSeriesPoint[]>> {
     const k = `${key}|${grain}`;
     let pending = this.#reads.get(k);
@@ -134,22 +134,5 @@ export class WorkspaceMetrics {
         .then((r) => (this.#recommendations = settled(r)));
     }
     return this.#recommendations;
-  }
-
-  #queueSparks(keys: string[]): void {
-    this.#sparkQueue.push(...keys);
-    this.#nextSparks();
-  }
-
-  #nextSparks(): void {
-    while (this.#sparksInFlight < SPARK_READS && this.#sparkQueue.length) {
-      const key = this.#sparkQueue.shift()!;
-      this.#sparksInFlight += 1;
-      void this.#read(key, 'daily').then((section) => {
-        this.#sparksInFlight -= 1;
-        if (section.data) this.sparks[key] = densifySeries(section.data, 'daily').map((p) => p.value);
-        this.#nextSparks();
-      });
-    }
   }
 }

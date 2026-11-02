@@ -79,19 +79,18 @@ describe('WorkspaceMetrics', () => {
     expect(m.values.data?.rows.map((r) => r.metric)).toEqual(['ftr']);
   });
 
-  it('fills the sparklines one by one once the values are in, a few reads at a time', async () => {
-    const { api, held, seriesOf } = daemon();
+  it('the sparklines come with the values: no read per metric', async () => {
+    const { api, held } = daemon();
     const m = new WorkspaceMetrics(api, 'w1');
     m.open();
-    held.values.resolve(ok({ metrics: ['a', 'b', 'c', 'd', 'e', 'f'].map(row), count: 6, narrative: null }));
+    held.values.resolve(ok({
+      metrics: [row('a'), row('b')], count: 2, narrative: null,
+      series: { a: [point('2026-10-31', 2), point('2026-11-01', 3)], b: [point('2026-11-01', 7)] },
+    }));
     await tick();
-    expect(api.getWorkspaceMetricSeries).toHaveBeenCalledTimes(4);
-    seriesOf('b', 'daily').resolve(ok({ metric: 'b', grain: 'daily', formula: null, series: [point('2026-11-01', 3)] }));
-    await tick();
-    expect(m.sparks.b).toContain(3);
-    expect(m.sparks.a).toBeUndefined();
-    // The freed slot starts the next one.
-    expect(api.getWorkspaceMetricSeries).toHaveBeenCalledTimes(5);
+    expect(m.sparks.a).toEqual([2, 3]);
+    expect(m.sparks.b).toEqual([7]);
+    expect(api.getWorkspaceMetricSeries).not.toHaveBeenCalled();
   });
 
   it('a failed read is its own section’s error; the others still fill', async () => {
@@ -166,20 +165,19 @@ describe('WorkspaceMetrics', () => {
     expect([m.values.status, m.values.data?.rows.length]).toEqual(['ready', 1]);
   });
 
-  it('a stale reopen re-reads the series too, showing the old ones until the new land', async () => {
+  it('a stale reopen re-reads a series the detail already read, showing the old one until the new lands', async () => {
     const { api, held, seriesOf } = daemon();
     let now = 0;
     const m = new WorkspaceMetrics(api, 'w1', () => now);
     m.open();
-    held.values.resolve(ok({ metrics: [row('ftr')], count: 1, narrative: null }));
-    await tick();
-    seriesOf('ftr', 'daily').resolve(ok({ metric: 'ftr', grain: 'daily', formula: null, series: [point('2026-11-01', 1)] }));
+    m.series('ftr', 'weekly');
+    seriesOf('ftr', 'weekly').resolve(ok({ metric: 'ftr', grain: 'weekly', formula: null, series: [point('2026-10-26', 1)] }));
     await tick();
     now = 120_000;
     m.open();
-    await tick();
+    m.series('ftr', 'weekly');
     expect(api.getWorkspaceMetricSeries).toHaveBeenCalledTimes(2);
-    expect(m.series('ftr', 'daily').data?.length).toBe(1);
+    expect(m.series('ftr', 'weekly').data?.length).toBe(1);
   });
 
   it('a metric’s series at a grain is read once and reused; a failure is that series’ error', async () => {

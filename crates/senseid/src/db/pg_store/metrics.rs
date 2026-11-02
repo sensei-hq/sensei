@@ -1161,9 +1161,9 @@ impl PgStore {
     pub async fn get_workspace_metric_daily_series_all(
         &self,
         workspace_id: &uuid::Uuid,
-    ) -> Result<std::collections::HashMap<String, Vec<f64>>, String> {
-        let rows: Vec<(String, f64)> = sqlx_core::query_as::query_as(
-            "SELECT metric, value::float8
+    ) -> Result<std::collections::HashMap<String, Vec<(chrono::NaiveDate, f64)>>, String> {
+        let rows: Vec<(String, chrono::NaiveDate, f64)> = sqlx_core::query_as::query_as(
+            "SELECT metric, date, value::float8
                FROM sensei.workspace_metric_daily
               WHERE workspace_id = $1
               ORDER BY metric, date",
@@ -1172,10 +1172,10 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        let mut by_metric: std::collections::HashMap<String, Vec<f64>> =
+        let mut by_metric: std::collections::HashMap<String, Vec<(chrono::NaiveDate, f64)>> =
             std::collections::HashMap::new();
-        for (metric, value) in rows {
-            by_metric.entry(metric).or_default().push(value);
+        for (metric, date, value) in rows {
+            by_metric.entry(metric).or_default().push((date, value));
         }
         Ok(by_metric)
     }
