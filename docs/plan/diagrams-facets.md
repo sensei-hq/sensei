@@ -64,8 +64,8 @@ so buffers, not wall time, are the steady measure). Fixes red-first; before → 
 | 1 | `/hotspots` (workspace window waits on it): `to_timestamp(ts)` filter, seq scan of 543k events + payload detoast | partial index `assistant_events_file_edits_idx`, filter on `ts` itself | 77.6 s · 290k buffers → 54 ms · 5.3k; endpoint 0.15 s ✅ |
 | 2 | every per-workspace metrics read aggregates all workspaces (correlated `workspace_id` subquery in `workspace_metrics`, 7k loops) | `workspace_metric_daily` joins `repository_workspace`, the one owner of the pick | 42,304 → 1,166 buffers, 1.2 s → 20 ms; same 6,391 rows, same pick for all 21,861 ✅ |
 | 3 | `/metrics` narrative: 28 sequential `UPDATE narration_cache … RETURNING` per GET | one batched statement | median 1.37 s each in the slow log |
-| 4 | Metrics page: 27-request second wave, one series per metric | return the dated daily series in `/metrics` | removes 27 requests and a sequential round |
-| 5 | drill-down awaits `/metrics` before the series | load both at once; rows once per workspace in a layout | one round fewer |
+| 4 | Metrics page: 27-request second wave, one series per metric | page state (17771862a): draws at once, sections fill as they land, sparklines 4 at a time, reads cached across landing/details ✅; next: the dated daily series inside `/metrics` to drop the 27 reads | — |
+| 5 | drill-down awaits `/metrics` before the series, and re-reads everything per metric/grain | the same page state: values once, a series once per metric+grain ✅ | — |
 | 2b | the daily roll-up's representative row (props, point-in-time values) was plan-dependent where a repository has a row per commit on a day (70 groups) | latest-written row wins | test-pinned ✅ |
 | 2c | OPEN: ratio/pct pooling sums numerator/denominator over every per-commit row of one repository on a day (`duplication_ratio`: 5 rows on 2026-11-02) — likely double counting | decide: one row per repo/day (latest commit) before pooling | not changed |
 | 6 | workspace window loads all 133 workspaces + 133 folder queries to show one | `GET /api/workspaces/{id}` | 4–11 s → one row |

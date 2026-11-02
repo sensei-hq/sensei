@@ -10,13 +10,15 @@
   408b58f53 Hidden coupling (ranked pairs).
 - S4 9582b5578 hotspots 77 s → 54 ms (partial index); 29240b694 metrics daily 42k → 1.2k
   buffers (`repository_workspace` view); live DB converged with dbd reconcile (twice).
+- Metrics page state 17771862a (rule a3b74a4bd: load() default, page state when slow): draws at
+  once, fills by section, sparklines 4 at a time, reads cached across landing and details.
 - S5 b6deb16d0 `docs/plan/dojo-sync-handoff.md` (7 packages, 6 open questions).
 
 **Remaining, in order:**
 1. S2 Complexity as a tree: daemon read aggregating `sensei.file_complexity` module → folder →
    file + maintainability grade; `ComplexityLens` tree.
-2. S4 #3 narration_cache batched update, #4 dated series in `/metrics` (drop 27-request fan-out),
-   #5 drill-down parallel load, #6 `GET /api/workspaces/{id}`; overview not blocking on hotspots.
+2. S4 #3 narration_cache batched update, #4b dated series inside `/metrics` (drop the 27 reads),
+   #6 `GET /api/workspaces/{id}`; overview not blocking on hotspots.
 3. S3 Database · ER = dbd viewer: port Overview/Object/Enum views + sidebar into
    `@rokkit/graph/schema`, rokkit release, compose the sensei page.
 4. Live check of all diagram lenses in the installed app (quit Sensei.app before inspect).
