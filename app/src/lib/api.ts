@@ -278,6 +278,8 @@ export function senseiApi(port: number) {
     // One read of the list, typed as the wire carries it: the settings and
     // setup view (`DaemonWorkspace`) and the workspaces-index view (`WorkspaceListItem`).
     tryListWorkspaces: () => tryGet<Array<DaemonWorkspace & WorkspaceListItem>>('/api/workspaces'),
+    /** One workspace exactly as the list gives it (folders and icon included). */
+    tryGetWorkspace: (id: string) => tryGet<DaemonWorkspace & WorkspaceListItem>(`/api/workspaces/${enc(id)}`),
     /** The workspaces under a watched root — the ones whose code is current, so
      *  the ones a tool can run in. Repo roots only. */
     tryListWatchedWorkspaces: () =>

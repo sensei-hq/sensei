@@ -57,47 +57,10 @@ pub(crate) async fn list_solutions(
         });
     }
 
-    // Enrich each workspace with its folder membership so the Workspaces setup
-    // page (and any future workspace detail view) can render folder names,
-    // paths, and roles without an extra round trip per workspace.
-    //
-    // Folder-scope matters here: the `?under=` call is the MCP `find_workspaces`
-    // discovery path, which only needs the repo-root folders — attaching the
-    // hundreds of nested `kind:'folder'` descendants blew the response past the
-    // MCP client's token cap (~72K chars for sensei). So when `under` is set, or
-    // `folders=roots` asks for the MCP's name/cwd lookup, we send only the
-    // compact repo roots (still enough for cwd→workspace resolution). The app
-    // path (`GET /api/workspaces`, neither) keeps the full folder tree.
     let compact = under.is_some() || q.folders.as_deref() == Some("roots");
     let mut enriched = Vec::with_capacity(workspaces.len());
-    for mut workspace in workspaces {
-        // A uuid read back out of a DB row, NOT the `{id}` of a route — this
-        // handler lists workspaces and takes no path parameter. Named `row_*` to
-        // say so: a route `{id}` is name-or-uuid and must go through
-        // `resolve_workspace_uuid`, and the #100 guard keys on that distinction.
-        let row_workspace_id = workspace["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
-        if let Some(pid) = row_workspace_id {
-            // Fail closed: a folder-enrichment read error is a 500, not a
-            // silently folder-less workspace (which reads as "this workspace has no
-            // repos"). A genuinely empty result stays an empty array.
-            let folders = if compact {
-                state
-                    .pg
-                    .list_root_folders_by_workspace(&pid)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            } else {
-                state
-                    .pg
-                    .list_folders_by_workspace(&pid)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            };
-            workspace["folders"] = serde_json::Value::Array(folders);
-        } else {
-            workspace["folders"] = serde_json::Value::Array(vec![]);
-        }
-        enriched.push(workspace);
+    for workspace in workspaces {
+        enriched.push(with_folders(&state, workspace, compact).await?);
     }
     // An image icon is offered only when it can be served (the app would
     // otherwise ask for it and get a 404): its repository root may be gone from
@@ -108,6 +71,54 @@ pub(crate) async fn list_solutions(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!(enriched)))
+}
+
+/// GET /api/workspaces/{id} — one workspace exactly as the list gives it (folders
+/// and icon included), by uuid or name; 404 when there is no such workspace. The
+/// workspace window reads this rather than the whole list (every workspace and a
+/// folder tree each, 4–11 s, to show one).
+pub(crate) async fn get_solution(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
+        .pg
+        .workspace_listing(&workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = with_folders(&state, workspace, false).await?;
+    let workspace = tokio::task::spawn_blocking(move || mark_icon_available(workspace))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(workspace))
+}
+
+/// A listed workspace with its folder membership, so the app can render folder
+/// names, paths and roles without a round trip per workspace — the compact repo
+/// roots only when `compact` (the MCP's `?under=` / `folders=roots` lookups: the
+/// full tree blew past the MCP client's token cap, ~72K chars for sensei).
+async fn with_folders(
+    state: &AppState,
+    mut workspace: serde_json::Value,
+    compact: bool,
+) -> Result<serde_json::Value, StatusCode> {
+    // A uuid read back out of a DB row, NOT the `{id}` of a route. Named `row_*`
+    // to say so: a route `{id}` is name-or-uuid and must go through
+    // `resolve_workspace_uuid`, and the #100 guard keys on that distinction.
+    let row_workspace_id = workspace["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let folders = match row_workspace_id {
+        // Fail closed: a folder-enrichment read error is a 500, not a silently
+        // folder-less workspace (which reads as "this workspace has no repos"). A
+        // genuinely empty result stays an empty array.
+        Some(pid) if compact => state.pg.list_root_folders_by_workspace(&pid).await,
+        Some(pid) => state.pg.list_folders_by_workspace(&pid).await,
+        None => Ok(vec![]),
+    }
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    workspace["folders"] = serde_json::Value::Array(folders);
+    Ok(workspace)
 }
 
 /// Mark a listed workspace's image icon `available` (or not), from its folders'

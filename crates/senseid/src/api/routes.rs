@@ -126,7 +126,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/workspaces/merge", post(observatory::merge_workspaces))
         .route(
             "/api/workspaces/{id}",
-            put(observatory::update_solution).delete(observatory::delete_solution),
+            get(observatory::get_solution)
+                .put(observatory::update_solution)
+                .delete(observatory::delete_solution),
         )
         .route(
             "/api/workspaces/{id}/repos",
@@ -1603,6 +1605,45 @@ mod tests {
         };
         assert_eq!(icon(here)["available"], true);
         assert_eq!(icon(gone)["available"], false, "its folder is not on disk");
+    }
+
+    /// The workspace window reads its one workspace, not all of them (it loaded
+    /// every workspace and a folder tree each — 4–11 s — to show one): the
+    /// single read is the list's own entry for it, folders and icon included,
+    /// by uuid or by name; one that does not exist is a 404.
+    #[tokio::test]
+    async fn one_workspace_reads_as_its_entry_in_the_list() {
+        let (app, state) = test_app().await;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("logo.svg"), "<svg/>").unwrap();
+        let (pid, _) = crate::tasks::test_support::seed_workspace_folder_at(
+            &state.pg,
+            &uuid::Uuid::new_v4(),
+            &dir.path().to_string_lossy(),
+        )
+        .await;
+        state
+            .pg
+            .set_workspace_icon(
+                &pid,
+                &serde_json::json!({"kind": "image", "value": "logo.svg", "source": "logo_file"}),
+            )
+            .await
+            .unwrap();
+
+        let (st, list) = req(app.clone(), "GET", "/api/workspaces", None).await;
+        assert_eq!(st, StatusCode::OK);
+        let entry =
+            list.as_array().unwrap().iter().find(|w| w["id"] == pid.to_string()).unwrap().clone();
+        let (st, one) = req(app.clone(), "GET", &format!("/api/workspaces/{pid}"), None).await;
+        assert_eq!(st, StatusCode::OK, "{one}");
+        assert_eq!(one, entry);
+        let name = entry["name"].as_str().unwrap().to_string();
+        let (st, by_name) = req(app.clone(), "GET", &format!("/api/workspaces/{name}"), None).await;
+        assert_eq!((st, by_name["id"].clone()), (StatusCode::OK, entry["id"].clone()));
+        let (st, _) =
+            req(app, "GET", &format!("/api/workspaces/{}", uuid::Uuid::new_v4()), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
     }
 
     /// A request as the CLI or the app sends it: addressed to loopback, which

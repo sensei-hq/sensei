@@ -377,6 +377,24 @@ impl PgStore {
         &self,
         under: Option<&str>,
     ) -> Result<Vec<serde_json::Value>, String> {
+        self.list_workspaces_where(under, None).await
+    }
+
+    /// One workspace exactly as `list_workspaces_under` lists it — the window
+    /// reading its own workspace, not all of them. `None` when there is no such
+    /// workspace.
+    pub async fn workspace_listing(
+        &self,
+        id: &uuid::Uuid,
+    ) -> Result<Option<serde_json::Value>, String> {
+        Ok(self.list_workspaces_where(None, Some(id)).await?.into_iter().next())
+    }
+
+    async fn list_workspaces_where(
+        &self,
+        under: Option<&str>,
+        only: Option<&uuid::Uuid>,
+    ) -> Result<Vec<serde_json::Value>, String> {
         // Additive: also returns icon/stack/vision(goal) plus repos_count /
         // libs_count / last_session_at / sessions7d so the Workspaces index can
         // render its card + list layouts without a per-workspace fanout. Existing
@@ -417,13 +435,14 @@ impl PgStore {
                    LEFT JOIN repos r ON r.workspace_id = p.id
                    LEFT JOIN libs l ON l.workspace_id = p.id
                    LEFT JOIN sess s ON s.workspace_id = p.id
-                  WHERE $1::text IS NULL OR EXISTS (
+                  WHERE ($1::text IS NULL OR EXISTS (
                           SELECT 1 FROM sensei.folder_workspaces fp
                            WHERE fp.workspace_id = p.id
                              AND (fp.folder_abs_path = $1::text
-                               OR left(fp.folder_abs_path, length($1::text) + 1) = $1::text || '/'))
+                               OR left(fp.folder_abs_path, length($1::text) + 1) = $1::text || '/')))
+                    AND ($2::uuid IS NULL OR p.id = $2)
                   ORDER BY p.name"
-            ).bind(under).fetch_all(&self.pool).await
+            ).bind(under).bind(only).fetch_all(&self.pool).await
             .map_err(|e| { tracing::error!(error = %e, "list_workspaces failed"); e.to_string() })?;
 
         Ok(rows
