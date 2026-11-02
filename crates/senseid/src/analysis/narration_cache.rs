@@ -621,6 +621,24 @@ pub async fn read_cached_copy(
         .map(|(title, detail)| InsightCopy { title, detail })
 }
 
+/// [`read_cached_copy`] for many facts in one statement: the copy for each, in
+/// the order asked, `None` where the cache has none.
+pub async fn read_cached_copies(
+    store: &PgStore,
+    asks: &[(InsightKind, &serde_json::Value)],
+) -> Vec<Option<InsightCopy>> {
+    let hashes: Vec<String> = asks.iter().map(|(k, f)| facts_hash(*k, f)).collect();
+    let keys: Vec<(&str, &str)> =
+        asks.iter().zip(&hashes).map(|((k, _), h)| (k.as_str(), h.as_str())).collect();
+    let hits = store.get_narration_cache_many(&keys).await;
+    keys.iter()
+        .map(|(k, h)| {
+            hits.get(&(k.to_string(), h.to_string()))
+                .map(|(title, detail)| InsightCopy { title: title.clone(), detail: detail.clone() })
+        })
+        .collect()
+}
+
 /// In-flight dedup set: a burst of identical cache-misses fires only ONE
 /// background generation. Keyed on `facts_hash`.
 fn inflight() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {

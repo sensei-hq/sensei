@@ -29,6 +29,38 @@ impl PgStore {
         }
     }
 
+    /// [`Self::get_narration_cache`] for many keys in ONE statement: each hit's
+    /// `(title, detail)` keyed by `(kind, facts_hash)`, `last_used_at` bumped;
+    /// a miss is absent. A DB error reads as every key missing, logged — the
+    /// same contract as the single read (the caller warms copy on a miss).
+    pub async fn get_narration_cache_many(
+        &self,
+        keys: &[(&str, &str)],
+    ) -> std::collections::HashMap<(String, String), (String, String)> {
+        if keys.is_empty() {
+            return Default::default();
+        }
+        let kinds: Vec<&str> = keys.iter().map(|(k, _)| *k).collect();
+        let hashes: Vec<&str> = keys.iter().map(|(_, h)| *h).collect();
+        let rows: Result<Vec<(String, String, String, String)>, _> = sqlx_core::query_as::query_as(
+            "UPDATE sensei.narration_cache nc SET last_used_at = now() \
+               FROM unnest($1::text[], $2::text[]) AS k(kind, facts_hash) \
+              WHERE nc.kind = k.kind AND nc.facts_hash = k.facts_hash \
+             RETURNING nc.kind, nc.facts_hash, nc.title, nc.detail",
+        )
+        .bind(kinds)
+        .bind(hashes)
+        .fetch_all(&self.pool)
+        .await;
+        match rows {
+            Ok(rows) => rows.into_iter().map(|(k, h, t, d)| ((k, h), (t, d))).collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "get_narration_cache_many: DB error — treating as cache misses");
+                Default::default()
+            }
+        }
+    }
+
     /// Cache write for the narration-cache pipeline. Upserts the generated copy
     /// for `(kind, facts_hash)`; a newer generation wins on conflict and both
     /// timestamps reset. DB errors are logged and swallowed (the caller has
