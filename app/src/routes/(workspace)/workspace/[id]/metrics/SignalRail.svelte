@@ -1,12 +1,19 @@
 <script lang="ts">
+    import { List, ItemContent } from '@rokkit/ui';
     import { Kanji, Eyebrow } from '$lib/components';
-    import { TREND_TEXT, type SignalGroup, type SeriesDistribution } from '$lib/metrics/metric-view.js';
-    import { metricKanji } from '$lib/metrics/metric-kanji.js';
+    import {
+        signalRailItems,
+        type SignalGroup,
+        type SignalRailItem,
+        type SeriesDistribution,
+    } from '$lib/metrics/metric-view.js';
 
     // The drill-down left rail: every signal, grouped and led by the key signals
     // (the same order the grid uses), the selected one highlighted, plus the
     // selected metric's High/Mean/Low over the period. A flat 27-item list was
     // unnavigable — there was no way to tell which of them mattered.
+    // A rokkit List (user, 2026-11-02), so the current row's shade is the List's
+    // in both themes; the snippet adds only the trend, which carries its tone.
     let {
         groups,
         selectedKey,
@@ -20,6 +27,10 @@
         distribution: SeriesDistribution | null;
         format: (v: number) => string;
     } = $props();
+
+    const items = $derived(signalRailItems(groups, workspaceId));
+    const value = $derived(`/workspace/${workspaceId}/metrics/${selectedKey}`);
+    const fields = { icon: 'kanji', label: 'text' };
 </script>
 
 <div data-component="signal-rail" class="border-r border-paper-edge p-6 flex flex-col gap-4">
@@ -28,38 +39,15 @@
         <Eyebrow>Signals</Eyebrow>
     </div>
 
-    <nav class="flex flex-col gap-4">
-        {#each groups as g (g.id)}
-        <div class="flex flex-col gap-1">
-            <div class="px-3 pb-0.5"><Eyebrow>{g.label}</Eyebrow></div>
-            {#each g.signals as s (s.key)}
-            <a
-                href={`/workspace/${workspaceId}/metrics/${s.key}`}
-                data-signal={s.key}
-                data-active={s.key === selectedKey}
-                class="flex items-center justify-between gap-3 border-l-2 p-3 pl-2.5 rounded-md no-underline text-sm transition-colors duration-fast {s.key ===
-                selectedKey
-                    ? 'border-accent bg-accent-soft text-ink'
-                    : 'border-transparent text-ink-mute hover:bg-paper-mute'}"
-            >
-                <!-- Glyph column is reserved whether or not this metric has one,
-                     so an unassigned signal doesn't shunt its name out of line. -->
-                <span class="flex items-baseline gap-3 min-w-0">
-                    <span class="w-4 shrink-0 text-center" aria-hidden="true">
-                        {#if metricKanji(s.key)}
-                            <Kanji char={metricKanji(s.key)!} size="sm" tone="muted" />
-                        {/if}
-                    </span>
-                    <span class="text-ink truncate">{s.name}</span>
-                </span>
-                {#if s.trend}
-                    <span class="mono text-xs shrink-0 {TREND_TEXT[s.color]}">{s.trend.label}</span>
-                {/if}
-            </a>
-            {/each}
-        </div>
-        {/each}
-    </nav>
+    <List {items} {fields} {value} collapsible={false}>
+        {#snippet itemContent(proxy)}
+            {@const row = proxy.original as SignalRailItem}
+            <ItemContent {proxy} />
+            {#if row.trend}
+                <span data-signal-trend class="mono text-xs shrink-0 ml-auto {row.trendClass}">{row.trend}</span>
+            {/if}
+        {/snippet}
+    </List>
 
     {#if distribution}
         <div class="flex flex-col gap-2 border-t border-paper-edge pt-4">

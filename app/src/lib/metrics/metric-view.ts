@@ -1,5 +1,6 @@
 import { correctionsView, sessionFtrView } from '$lib/ftr';
 import { isoDay } from '../dates.js';
+import { metricKanji } from './metric-kanji.js';
 // Pure view logic for workspace metrics: wire rows -> presentational card models.
 //
 // The daemon serves two shapes (see crates/senseid): the per-workspace *values*
@@ -1054,6 +1055,41 @@ export function groupSignals(signals: SignalVM[]): SignalGroup[] {
     if (leftover.length) groups.push({ id: 'other', label: 'Other', signals: leftover });
 
     return groups;
+}
+
+/** One row of the drill-down rail: a rokkit List link, plus its trend. */
+export interface SignalRailItem {
+    key: string;
+    text: string;
+    href: string;
+    /** The List's value — the href, so the current row is the selected metric's. */
+    value: string;
+    /** The metric's glyph, or null when it has none (see metric-kanji). */
+    kanji: string | null;
+    trend: string | null;
+    trendClass: string | null;
+}
+
+/** The drill-down rail as rokkit List data: a group per signal group, a link per signal. */
+export function signalRailItems(
+    groups: SignalGroup[],
+    workspaceId: string,
+): { text: string; children: SignalRailItem[] }[] {
+    return groups.map((g) => ({
+        text: g.label,
+        children: g.signals.map((s) => {
+            const href = `/workspace/${workspaceId}/metrics/${s.key}`;
+            return {
+                key: s.key,
+                text: s.name,
+                href,
+                value: href,
+                kanji: metricKanji(s.key),
+                trend: s.trend?.label ?? null,
+                trendClass: s.trend ? TREND_TEXT[s.color] : null,
+            };
+        }),
+    }));
 }
 
 /** A one-line deterministic summary headline — the honest fallback when no
