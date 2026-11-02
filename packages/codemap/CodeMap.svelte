@@ -16,6 +16,7 @@
   import ZonesLens from './ZonesLens.svelte';
   import WheelLens from './WheelLens.svelte';
   import CyclesLens from './CyclesLens.svelte';
+  import CouplingLens from './CouplingLens.svelte';
   import ModuleList from './ModuleList.svelte';
   import FileColumns from './FileColumns.svelte';
   import SymbolView from './SymbolView.svelte';
@@ -104,6 +105,15 @@
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
               <WheelLens data={l0} selected={map.selected} zoom={map.zoom} onselect={(id) => map.select(id)} onopen={open} />
             </ZoomFrame>
+          {:else if map.lens === 'coupling'}
+            {#if map.cochange?.commits}
+              <p class="m-0 text-xs text-ink-mute" data-testid="coupling-summary">
+                {`${map.cochange.hidden.length} pairs change together with no dependency between them · from ${map.cochange.commits} commits, ${map.cochange.minTogether}+ changes together`}
+              </p>
+            {/if}
+            <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
+              <CouplingLens data={map.cochange} zoom={map.zoom} onopen={open} />
+            </ZoomFrame>
           {:else if map.lens === 'cycles'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
               <CyclesLens data={l0} zoom={map.zoom} onopen={open} />
@@ -113,13 +123,6 @@
               <MatrixLens data={l0} zoom={map.zoom} onopen={open} />
             </ZoomFrame>
           {:else}
-            {#if map.lens === 'coupling' && map.cochange}
-              <p class="m-0 text-xs text-ink-mute" data-testid="coupling-summary">
-                {map.cochange.commits
-                  ? `${map.cochange.hidden.length} pairs change together with no dependency between them · from ${map.cochange.commits} commits, ${map.cochange.minTogether}+ changes together`
-                  : 'No commit history read for this workspace yet.'}
-              </p>
-            {/if}
             {#if map.lens === 'complexity'}
               {@const measured = l0.blocks.filter((b) => b.complexity)}
               <p class="m-0 text-xs text-ink-mute" data-testid="complexity-summary">
@@ -130,7 +133,7 @@
             {/if}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
               <ModuleMap data={l0} {bands} selected={map.selected}
-                dashed={map.lens === 'coupling'} complexity={map.lens === 'complexity'} byDirection={map.byDirection}
+                complexity={map.lens === 'complexity'} byDirection={map.byDirection}
                 roles={map.roles} zoom={map.zoom} onselect={(id) => map.select(id)} onopen={open} />
             </ZoomFrame>
           {/if}

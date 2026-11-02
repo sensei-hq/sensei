@@ -10,7 +10,6 @@
     data,
     bands,
     selected = null,
-    dashed = false,
     complexity = false,
     byDirection = false,
     roles,
@@ -22,8 +21,6 @@
     /** The bands this lens draws, after the band filters. */
     bands: Band[];
     selected?: string | null;
-    /** Hidden coupling: the bands are co-change, not dependencies. */
-    dashed?: boolean;
     /** Complexity lens: tint blocks by their share over cyclomatic 10. */
     complexity?: boolean;
     /** Tint every band by direction, not only upward. */
@@ -85,7 +82,6 @@
         stroke={bandTone(b.direction, byDirection)}
         stroke-width={b.width}
         stroke-opacity={touches(b.source, b.target) ? 0.85 : 0.08}
-        stroke-dasharray={dashed ? '6 4' : undefined}
         data-testid={`band-${b.source}>${b.target}`}
       ><title>{b.source} → {b.target}: {b.weight}</title></path>
     {/each}

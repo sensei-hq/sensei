@@ -116,15 +116,15 @@ describe('CodeMap', () => {
     expect(q('[data-testid="zones-summary"]')?.textContent).toContain('1 without enough to place');
   });
 
-  it('Hidden coupling draws co-change as dashed bands, a folded module to its block', async () => {
+  it('Hidden coupling draws the coupled pairs, not the block map, under a summary', async () => {
     const p = port();
     const map = render(p);
     await settle();
     void map.showLens(p, 'coupling');
     await settle();
-    const band = q('[data-testid="band-p/a>fold:L1"]');
-    expect(band?.getAttribute('stroke-dasharray')).toBe('6 4');
-    expect(q('[data-testid="band-p/a>p/b"]')).toBeNull();
+    expect(q('[data-testid="codemap-coupling"]')).not.toBeNull();
+    expect(q('[data-testid="codemap-modules"]')).toBeNull();
+    expect(target.querySelectorAll('[data-testid="codemap-coupling"] [data-pair]').length).toBe(1);
     expect(q('[data-testid="coupling-summary"]')?.textContent).toContain('1 pairs change together with no dependency between them · from 40 commits');
   });
 
