@@ -1,4 +1,4 @@
-# Checkpoint — 2026-10-30 (Diagrams: review fixes; rokkit zoom/icon pending release)
+# Checkpoint — 2026-11-02 (website split done; diagrams review fixes; rokkit zoom/icon pending release)
 
 **Slice:** the user's diagram review (2026-10-30), then #347 attribution, #348 Muse, #349 Freebuff.
 
@@ -13,9 +13,13 @@
   entity Details | Diagram.
 - Live inspect green with the installed app quit (memory: quit-sensei-before-inspect).
 
+**Website (#346, closed):** website/ now lives in sensei-hq/website (sibling folder); Cloudflare Pages
+"website" builds from it; live sensei-hq.com shows Katachi (Burn-E gone), /katachi, no footer version.
+sensei develop (e5fb93f7a) is ready to merge to main.
+
 **rokkit develop (pushed, NOT released):** d9cbf302 dark divider; 874cd28fe zoom top-left by
 default + `position`/`zoomPosition`, DiagramFrame zoom slot, view glyph split-view.
-**Next after the user's rokkit release:** bump app/dōjō/website; ZoomFrame → `<ZoomControl
+**Next after the user's rokkit release:** bump app/dōjō and the website repo; ZoomFrame → `<ZoomControl
 position="top-left">` on its canvas (drop the overlay wrapper).
 
 **Waiting on the user:** Communities rule (recommend dominant community, small ones folded);
