@@ -87,10 +87,10 @@ unmapped=101 graph_batches=0`. Denials are `not_subscribed`; unmapped are `no_co
 - **Q3. D18 environments.** Use `repository_graph_branches.label ∈ {production, testing,
   development}`, or a separate table? **Recommend the label**, with a CHECK (dōjō scope). This
   affects WP3.
-- **Q4. Gate 1 (G6).** Retire the local `visibility` column, or make
-  `PATCH /api/repositories/{key}` write the dōjō election (`/v1/you/repositories/election`)?
-  **Recommend writing the election**, so there is one authority. This is not in a package until you
-  answer.
+- **Q4. Gate 1 (G6).** ANSWERED by D46 (user, 2026-11-02): an organisation's repositories sync
+  automatically and no member controls them; a personal dōjō's repositories are the person's to
+  choose, all by default. The local `visibility` gate is retired; the dōjō election is the one
+  authority. Built in WP8.
 - **Q5. Wave B (G7).** Is it part of "repository sync"? **Recommend no**: it is a separate epic
   (roadmap Wave B).
 - **Q6. The 101 unmapped repos.** They are configuration, not code: connect the forge orgs
@@ -189,6 +189,28 @@ WP7 follows WP6.
 - WP1 and WP6 both edit `tasks/dojo_sync.rs`, so run them one after the other.
 - WP3, WP5 and WP7 may all touch `dojo/src/lib/nav.ts` and the `[section]` loaders.
 - WP4 and WP6 both reconcile the same local Supabase, so do not run reconcile in parallel.
+
+**WP8 · Sharing follows D46 (dōjō DB + daemon + app).** Independent of WP1–WP7; touches
+`all_my_repositories.ddl`, which WP4 reads — sequence WP8 before WP4 if both are in flight.
+- `database/ddl/view/dojo/all_my_repositories.ddl`: for `origin = 'organization'` (private AND
+  public) the authority is the organisation and an absent decision is ELECTED
+  (`coalesce(org_elected, private_repos_shared, true)`), `configurable_by_me` is admin-only; for
+  `origin = 'personal'` keep today's rule (user authority, absent is elected, the user may change
+  it). Entitlement (`not_subscribed`, …) still refuses first — D46 changes the election, not who is
+  entitled. Converge the dōjō schema per its flow (`dbd reconcile --scope dojo`), twice.
+- Daemon/app: retire `sensei.repositories.visibility` as a gate. `PATCH /api/repositories/{key}`
+  writes the dōjō election (`/v1/you/repositories/election`) for a personal repository and answers
+  409 for an organisation's; the app shows the sync toggle only where `configurable_by_me`.
+- Tests first: dōjō view specs `an_org_private_repo_with_no_decision_syncs`,
+  `an_org_public_repo_is_not_a_members_choice`, `a_member_cannot_elect_an_org_repo` (403 from
+  `set_repository_election`), `a_personal_repo_syncs_by_default_and_its_opt_out_holds`,
+  `an_unentitled_org_repo_is_still_refused`; daemon `patch_visibility_writes_the_personal_election`,
+  `patch_visibility_on_an_org_repo_is_refused`.
+- Accept: on the live dōjō, `select origin, elected, configurable_by_me, count(*) from
+  dojo.all_my_repositories group by 1,2,3` shows every entitled org row `elected = true,
+  configurable_by_me = false` for a non-admin; the next sync pass's `allowed` grows by the org
+  repositories that were waiting on an election.
+- Do not: grant a member any per-repository switch on an org repository; touch entitlement.
 
 ## 5. Context you need
 
