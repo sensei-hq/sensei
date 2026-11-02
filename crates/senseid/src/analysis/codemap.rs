@@ -446,6 +446,171 @@ pub fn hidden_coupling(pairs: &[CoChange], edges: &[ModuleEdge], limit: usize) -
     out
 }
 
+/// One measured file, with the module it belongs to (local qlty).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasuredFile {
+    pub module: String,
+    /// Repository-relative path, as qlty reports it.
+    pub path: String,
+    pub functions: i64,
+    pub complex: i64,
+    pub max_cyclo: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeKind {
+    Module,
+    Folder,
+    File,
+}
+
+/// One row of the Complexity tree: a module, a folder in it, or a file.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComplexityNode {
+    pub id: String,
+    pub label: String,
+    pub kind: NodeKind,
+    pub functions: i64,
+    /// Functions over cyclomatic 10.
+    pub complex: i64,
+    /// The highest cyclomatic complexity of any function under this row.
+    pub max_cyclo: i64,
+    /// Files measured under this row.
+    pub files: i64,
+    pub children: Vec<ComplexityNode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComplexityTotal {
+    pub functions: i64,
+    pub complex: i64,
+    pub max_cyclo: i64,
+    pub files: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ComplexityTree {
+    pub total: ComplexityTotal,
+    pub modules: Vec<ComplexityNode>,
+}
+
+/// The Complexity lens (user, 2026-11-02): every measured file under its module
+/// and folders, each level carrying what is under it, most complex first. A
+/// module's own directory is its root; a folder holding only one folder reads as
+/// one row (`src/lib`).
+pub fn complexity_tree(files: &[MeasuredFile]) -> ComplexityTree {
+    let mut by_module: std::collections::BTreeMap<&str, Vec<&MeasuredFile>> = Default::default();
+    for f in files {
+        by_module.entry(f.module.as_str()).or_default().push(f);
+    }
+    let mut modules: Vec<ComplexityNode> = by_module
+        .into_iter()
+        .map(|(module, files)| {
+            let root = common_dir(files.iter().map(|f| f.path.as_str()));
+            let mut dir = Dir::default();
+            for f in &files {
+                let rel = f.path.strip_prefix(&root).unwrap_or(&f.path).trim_start_matches('/');
+                dir.insert(rel, f);
+            }
+            let mut node =
+                dir.into_node(module.to_string(), module.to_string(), NodeKind::Module, &root);
+            node.label = module.to_string();
+            node
+        })
+        .collect();
+    sort_nodes(&mut modules);
+    let total = modules.iter().fold(ComplexityTotal::default(), |t, m| ComplexityTotal {
+        functions: t.functions + m.functions,
+        complex: t.complex + m.complex,
+        max_cyclo: t.max_cyclo.max(m.max_cyclo),
+        files: t.files + m.files,
+    });
+    ComplexityTree { total, modules }
+}
+
+/// The longest directory every path shares (`alpha` for `alpha/a.rs` and
+/// `alpha/tests/b.rs`); empty when they share none.
+fn common_dir<'a>(paths: impl Iterator<Item = &'a str>) -> String {
+    let mut common: Option<Vec<&str>> = None;
+    for p in paths {
+        let dirs: Vec<&str> = p.split('/').collect();
+        let dirs = &dirs[..dirs.len().saturating_sub(1)];
+        common = Some(match common {
+            None => dirs.to_vec(),
+            Some(c) => c.iter().zip(dirs).take_while(|(a, b)| a == b).map(|(a, _)| *a).collect(),
+        });
+    }
+    common.unwrap_or_default().join("/")
+}
+
+#[derive(Default)]
+struct Dir<'a> {
+    dirs: std::collections::BTreeMap<&'a str, Dir<'a>>,
+    files: Vec<&'a MeasuredFile>,
+}
+
+impl<'a> Dir<'a> {
+    fn insert(&mut self, rel: &'a str, f: &'a MeasuredFile) {
+        match rel.split_once('/') {
+            Some((head, rest)) => self.dirs.entry(head).or_default().insert(rest, f),
+            None => self.files.push(f),
+        }
+    }
+
+    /// This directory as a node: its folders (single-folder chains joined) and
+    /// files, summed, most complex first.
+    fn into_node(self, id: String, label: String, kind: NodeKind, path: &str) -> ComplexityNode {
+        let mut children: Vec<ComplexityNode> = self
+            .dirs
+            .into_iter()
+            .map(|(name, mut sub)| {
+                let mut label = name.to_string();
+                let mut path =
+                    if path.is_empty() { name.to_string() } else { format!("{path}/{name}") };
+                while sub.files.is_empty() && sub.dirs.len() == 1 {
+                    let (next, inner) = sub.dirs.pop_first().expect("one folder");
+                    label = format!("{label}/{next}");
+                    path = format!("{path}/{next}");
+                    sub = inner;
+                }
+                sub.into_node(path.clone(), label, NodeKind::Folder, &path)
+            })
+            .collect();
+        children.extend(self.files.into_iter().map(|f| ComplexityNode {
+            id: f.path.clone(),
+            label: f.path.rsplit('/').next().unwrap_or(&f.path).to_string(),
+            kind: NodeKind::File,
+            functions: f.functions,
+            complex: f.complex,
+            max_cyclo: f.max_cyclo,
+            files: 1,
+            children: vec![],
+        }));
+        sort_nodes(&mut children);
+        let sum = |g: fn(&ComplexityNode) -> i64| children.iter().map(g).sum::<i64>();
+        ComplexityNode {
+            id,
+            label,
+            kind,
+            functions: sum(|c| c.functions),
+            complex: sum(|c| c.complex),
+            max_cyclo: children.iter().map(|c| c.max_cyclo).max().unwrap_or(0),
+            files: sum(|c| c.files),
+            children,
+        }
+    }
+}
+
+/// Most complex functions first, then the larger, then by name — stable.
+fn sort_nodes(nodes: &mut [ComplexityNode]) {
+    nodes.sort_by(|a, b| {
+        b.complex.cmp(&a.complex).then(b.functions.cmp(&a.functions)).then(a.label.cmp(&b.label))
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,6 +626,76 @@ mod tests {
             roles: RoleCounts { code: 1, ..Default::default() },
             complexity: None,
         }
+    }
+
+    fn measured(
+        module: &str,
+        path: &str,
+        functions: i64,
+        complex: i64,
+        max_cyclo: i64,
+    ) -> MeasuredFile {
+        MeasuredFile { module: module.into(), path: path.into(), functions, complex, max_cyclo }
+    }
+
+    /// The Complexity lens is a tree (user, 2026-11-02): module → folder → file,
+    /// each level carrying its functions, how many are over cyclomatic 10, the
+    /// highest cyclomatic under it and how many files were measured.
+    #[test]
+    fn complexity_rolls_up_module_folder_file() {
+        let t = complexity_tree(&[
+            measured("pkg/alpha", "alpha/a.rs", 4, 1, 14),
+            measured("pkg/alpha", "alpha/tests/a_test.rs", 2, 0, 3),
+            measured("pkg/alpha", "alpha/tests/b_test.rs", 3, 2, 22),
+            measured("pkg/beta", "beta/b.rs", 1, 0, 2),
+        ]);
+        assert_eq!(
+            (t.total.functions, t.total.complex, t.total.max_cyclo, t.total.files),
+            (10, 3, 22, 4)
+        );
+        let alpha = &t.modules[0];
+        assert_eq!((alpha.id.as_str(), alpha.kind), ("pkg/alpha", NodeKind::Module));
+        assert_eq!((alpha.functions, alpha.complex, alpha.max_cyclo, alpha.files), (9, 3, 22, 3));
+        // The module's own directory is its root; under it, the tests folder and a.rs.
+        let labels: Vec<&str> = alpha.children.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, vec!["tests", "a.rs"], "most complex first");
+        let tests = &alpha.children[0];
+        assert_eq!((tests.kind, tests.complex, tests.files), (NodeKind::Folder, 2, 2));
+        assert_eq!(tests.children[0].id, "alpha/tests/b_test.rs");
+        assert_eq!(tests.children[0].kind, NodeKind::File);
+    }
+
+    #[test]
+    fn complexity_orders_modules_by_complex_functions_then_size() {
+        let t = complexity_tree(&[
+            measured("pkg/quiet", "quiet/q.rs", 50, 0, 4),
+            measured("pkg/busy", "busy/b.rs", 5, 3, 30),
+            measured("pkg/also", "also/a.rs", 9, 3, 12),
+        ]);
+        let ids: Vec<&str> = t.modules.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["pkg/also", "pkg/busy", "pkg/quiet"]);
+    }
+
+    /// A folder with one folder in it and no files of its own reads as one row
+    /// (`src/lib`), so a deep tree does not open on a staircase of single folders.
+    #[test]
+    fn complexity_collapses_single_folder_chains() {
+        let t = complexity_tree(&[
+            measured("pkg/m", "m/src/lib/deep/x.rs", 2, 1, 11),
+            measured("pkg/m", "m/src/lib/deep/y.rs", 2, 0, 5),
+            measured("pkg/m", "m/main.rs", 1, 0, 1),
+        ]);
+        let m = &t.modules[0];
+        let folder = m.children.iter().find(|c| c.kind == NodeKind::Folder).unwrap();
+        assert_eq!(folder.label, "src/lib/deep");
+        assert_eq!(folder.children.len(), 2);
+    }
+
+    #[test]
+    fn complexity_of_nothing_measured_is_an_empty_tree() {
+        let t = complexity_tree(&[]);
+        assert!(t.modules.is_empty());
+        assert_eq!((t.total.functions, t.total.files), (0, 0));
     }
 
     /// A module's files by role, so tests and docs never read as code size (M17).

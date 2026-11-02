@@ -138,6 +138,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/diagrams/codemap/module", get(diagrams::codemap_module))
         .route("/api/workspaces/{id}/diagrams/codemap/file", get(diagrams::codemap_file))
         .route("/api/workspaces/{id}/diagrams/codemap/cochange", get(diagrams::codemap_cochange))
+        .route(
+            "/api/workspaces/{id}/diagrams/codemap/complexity",
+            get(diagrams::codemap_complexity),
+        )
         .route("/api/workspaces/{id}/diagrams/layering", get(diagrams::layering))
         .route("/api/workspaces/{id}/diagrams/zones", get(diagrams::zones))
         .route("/api/workspaces/{id}/diagrams/neighbourhood", get(diagrams::neighbourhood))
@@ -1421,6 +1425,62 @@ mod tests {
         assert_eq!(block("alpha")["complexity"], serde_json::json!({"functions": 6, "complex": 1}));
         assert_eq!(block("beta")["complexity"], serde_json::json!({"functions": 1, "complex": 0}));
         assert!(block("gamma")["complexity"].is_null(), "gamma was never measured");
+    }
+
+    /// The Complexity lens as a tree (user, 2026-11-02): each measured file under
+    /// its module and folders, every level summed, most complex first, with the
+    /// workspace's totals — and no maintainability figure where none is computed.
+    #[tokio::test]
+    async fn the_complexity_tree_rolls_measured_files_up_module_and_folder() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, fid) = seed_two_modules(&state).await;
+        let repo = state
+            .pg
+            .repository_id_for_folder(&fid)
+            .await
+            .unwrap()
+            .expect("the fixture's repository");
+        let measured: std::collections::HashMap<String, crate::qlty::FileComplexity> = [
+            (
+                "alpha/a.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 4, complex: 1, max_cyclo: 14 },
+            ),
+            (
+                "alpha/tests/a_test.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 2, complex: 0, max_cyclo: 3 },
+            ),
+            (
+                "beta/b.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 1, complex: 0, max_cyclo: 2 },
+            ),
+        ]
+        .into_iter()
+        .collect();
+        state.pg.replace_file_complexity(&repo, "abc123", &measured).await.unwrap();
+
+        let (st, body) =
+            req(app, "GET", &format!("/api/workspaces/{pid}/diagrams/codemap/complexity"), None)
+                .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["total"],
+            serde_json::json!({"functions": 7, "complex": 1, "maxCyclo": 14, "files": 3})
+        );
+        let alpha = &body["modules"][0];
+        assert_eq!(alpha["id"], format!("{pkg}/alpha"), "{body}");
+        assert_eq!(alpha["kind"], "module");
+        assert_eq!((alpha["functions"].as_i64(), alpha["complex"].as_i64()), (Some(6), Some(1)));
+        let labels: Vec<&str> = alpha["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(labels, vec!["a.rs", "tests"], "{body}");
+        assert!(
+            body["maintainability"].is_null(),
+            "no module_quality computed: no figure, not zero"
+        );
     }
 
     /// The Code map's L0 (M17): modules as blocks grouped by layer or folder,

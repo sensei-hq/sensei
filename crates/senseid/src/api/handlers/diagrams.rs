@@ -806,6 +806,50 @@ pub(crate) async fn codemap_cochange(
     .await
 }
 
+/// GET /api/workspaces/{id}/diagrams/codemap/complexity
+///
+/// The Complexity lens as a tree (user, 2026-11-02): every file local qlty
+/// measured, under its module and folders, each level summed (functions, how
+/// many over cyclomatic 10, the highest cyclomatic, files), most complex first,
+/// with the workspace's totals and its latest maintainability reading
+/// (`module_quality`) — null where none is computed, never a stand-in.
+pub(crate) async fn codemap_complexity(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::codemap::{MeasuredFile, complexity_tree};
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
+
+    cached(&state, "codemap-complexity", &workspace_id, String::new(), async {
+        let (rows, metrics) = tokio::try_join!(
+            state.pg.codemap_file_complexity(&workspace_id),
+            state.pg.get_workspace_metrics(&workspace_id),
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let files: Vec<MeasuredFile> = rows
+            .into_iter()
+            .map(|(module, path, functions, complex, max_cyclo)| MeasuredFile {
+                module,
+                path,
+                functions,
+                complex,
+                max_cyclo,
+            })
+            .collect();
+        let tree = complexity_tree(&files);
+        let maintainability = metrics
+            .iter()
+            .find(|m| m.metric == "module_quality")
+            .map(|m| serde_json::json!({ "value": m.value, "date": m.date.to_string() }));
+        Ok(serde_json::json!({
+            "total": tree.total,
+            "modules": tree.modules,
+            "maintainability": maintainability,
+        }))
+    })
+    .await
+}
+
 pub(crate) async fn zones(
     State(state): State<AppState>,
     Path(id): Path<String>,

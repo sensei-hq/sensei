@@ -3843,6 +3843,28 @@ impl PgStore {
         Ok(rows.into_iter().map(|(m, f, c)| (m, (f, c))).collect())
     }
 
+    /// Every measured file in the workspace with its module: `(module, path,
+    /// functions, complex, max_cyclo)`, from local qlty's last measurement — the
+    /// Complexity tree's leaves. A file never measured is absent, not zero.
+    pub async fn codemap_file_complexity(
+        &self,
+        workspace_id: &uuid::Uuid,
+    ) -> Result<Vec<(String, String, i64, i64, i64)>, String> {
+        let ws_files = workspace_file_paths_cte();
+        let sql = format!(
+            "WITH {ws_files}
+             SELECT w.m, w.path, c.functions::bigint, c.complex::bigint, c.max_cyclo::bigint
+               FROM ws_files w
+               JOIN sensei.file_complexity c ON c.repository_id = w.repository_id AND c.path = w.path
+              ORDER BY w.m, w.path"
+        );
+        sqlx_core::query_as::query_as(&sql)
+            .bind(workspace_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_file_complexity: {e}"))
+    }
+
     /// Replace a repository's measured complexity with one HEAD's measurement.
     pub async fn replace_file_complexity(
         &self,
