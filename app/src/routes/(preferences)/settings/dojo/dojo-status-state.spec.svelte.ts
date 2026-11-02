@@ -212,7 +212,7 @@ describe('groupSync', () => {
     const rows = [
       row({ entity: 'repository_metric', entity_key: 'github.com/sensei-hq/torii', synced_at: '2026-10-27T10:00:00Z' }),
       row({ entity: 'repository_graph', entity_key: 'github.com/sensei-hq/torii@develop', state: 'skipped', synced_at: null, attempted_at: '2026-10-27T11:00:00Z' }),
-      row({ entity: 'repository_metric', entity_key: 'github.com/jerrythomas/rokkit', synced_at: '2026-10-20T10:00:00Z' }),
+      row({ entity: 'repository_metric', entity_key: 'github.com/sensei-hq/rokkit', synced_at: '2026-10-20T10:00:00Z' }),
       row({ entity: 'forge_mirror', entity_key: 'default', direction: 'pull', state: 'error', synced_at: null, attempted_at: '2026-10-27T09:00:00Z', persona: 'default' }),
     ];
     const g = groupSync(rows, who);

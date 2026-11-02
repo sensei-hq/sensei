@@ -207,12 +207,12 @@ mod tests {
         let gh = |o: &str, r: &str| Some((o.to_string(), r.to_string()));
         for (value, want) in [
             (
-                serde_json::json!("git+https://github.com/jerrythomas/rokkit.git"),
-                gh("jerrythomas", "rokkit"),
+                serde_json::json!("git+https://github.com/sensei-hq/rokkit.git"),
+                gh("sensei-hq", "rokkit"),
             ),
             (
-                serde_json::json!({"type": "git", "url": "git+https://github.com/jerrythomas/rokkit.git"}),
-                gh("jerrythomas", "rokkit"),
+                serde_json::json!({"type": "git", "url": "git+https://github.com/sensei-hq/rokkit.git"}),
+                gh("sensei-hq", "rokkit"),
             ),
             (serde_json::json!("github:sensei-hq/kavach"), gh("sensei-hq", "kavach")),
             (serde_json::json!("sensei-hq/kavach"), gh("sensei-hq", "kavach")),
@@ -266,9 +266,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         for (pkg, repo) in [
             (
                 "@rokkit/ui",
-                r#"{"repository": {"url": "git+https://github.com/jerrythomas/rokkit.git"}}"#,
+                r#"{"repository": {"url": "git+https://github.com/sensei-hq/rokkit.git"}}"#,
             ),
-            ("@rokkit/core", r#"{"repository": "github:jerrythomas/rokkit"}"#),
+            ("@rokkit/core", r#"{"repository": "github:sensei-hq/rokkit"}"#),
             ("left-pad", r#"{"name": "left-pad"}"#),
         ] {
             let dir = root.join("node_modules").join(pkg);
@@ -286,7 +286,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             got,
             vec![
                 DependencyRepo {
-                    owner: "jerrythomas".into(),
+                    owner: "sensei-hq".into(),
                     repo: "rokkit".into(),
                     git_ref: None,
                     ecosystem: "npm".into(),
