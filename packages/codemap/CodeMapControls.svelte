@@ -26,7 +26,7 @@
     issues: 'bg-danger', all: 'bg-ink-mute', pain: 'bg-danger', useless: 'bg-warning', risk: 'bg-accent', main: 'bg-success',
   };
 
-  const canvasLens = $derived(!['zones', 'wheel', 'matrix'].includes(map.lens));
+  const canvasLens = $derived(!['zones', 'wheel', 'matrix', 'cycles'].includes(map.lens));
   // Zones places components by their coupling: neither the grouping nor the roles move a point.
   const showsGrouping = $derived(map.level === 'modules' && map.lens !== 'zones');
   const showsRoles = $derived((map.level === 'modules' && canvasLens) || map.level === 'files');

@@ -7,7 +7,6 @@
   // and the side panel out.
   import { onMount } from 'svelte';
   import type { CodeMapState } from './state.svelte';
-  import { cycleOf } from './lenses';
   import { inspect, LIBRARIES } from './inspector';
   import { listView } from './list';
   import { budgetLine, drawnBands, legendFor } from './view';
@@ -16,6 +15,7 @@
   import MatrixLens from './MatrixLens.svelte';
   import ZonesLens from './ZonesLens.svelte';
   import WheelLens from './WheelLens.svelte';
+  import CyclesLens from './CyclesLens.svelte';
   import ModuleList from './ModuleList.svelte';
   import FileColumns from './FileColumns.svelte';
   import SymbolView from './SymbolView.svelte';
@@ -52,7 +52,6 @@
   // An unmeasured width (0) is not a narrow screen.
   const narrow = $derived(width > 0 && width < 640);
   const l0 = $derived(map.l0);
-  const cycles = $derived(l0 ? cycleOf(l0) : null);
   const bands = $derived(l0 ? drawnBands(map.lens, l0, map.cochange, { edgeMode: map.edgeMode, minWeight: map.minWeight }) : []);
   const toAct = $derived(l0 ? takeaways(map.lens, l0, map.cochange, map.zones) : []);
   const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected }));
@@ -105,6 +104,10 @@
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
               <WheelLens data={l0} selected={map.selected} zoom={map.zoom} onselect={(id) => map.select(id)} onopen={open} />
             </ZoomFrame>
+          {:else if map.lens === 'cycles'}
+            <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
+              <CyclesLens data={l0} zoom={map.zoom} onopen={open} />
+            </ZoomFrame>
           {:else if map.lens === 'matrix'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
               <MatrixLens data={l0} zoom={map.zoom} onopen={open} />
@@ -126,7 +129,7 @@
               </p>
             {/if}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ModuleMap data={l0} {bands} selected={map.selected} cycle={map.lens === 'cycles' ? cycles : null}
+              <ModuleMap data={l0} {bands} selected={map.selected}
                 dashed={map.lens === 'coupling'} complexity={map.lens === 'complexity'} byDirection={map.byDirection}
                 roles={map.roles} zoom={map.zoom} onselect={(id) => map.select(id)} onopen={open} />
             </ZoomFrame>

@@ -10,7 +10,6 @@
     data,
     bands,
     selected = null,
-    cycle = null,
     dashed = false,
     complexity = false,
     byDirection = false,
@@ -23,8 +22,6 @@
     /** The bands this lens draws, after the band filters. */
     bands: Band[];
     selected?: string | null;
-    /** Cycles lens: module → its cycle, to tint the members. */
-    cycle?: Map<string, number> | null;
     /** Hidden coupling: the bands are co-change, not dependencies. */
     dashed?: boolean;
     /** Complexity lens: tint blocks by their share over cyclomatic 10. */
@@ -57,7 +54,7 @@
   const TIER_EDGE = { danger: 'var(--danger)', warning: 'var(--warning)', neutral: null, unmeasured: null };
   const fillOf = (b: Block) => (complexity && complexityTier(b).tone === 'unmeasured' ? 'var(--paper-mute)' : 'var(--paper)');
   const edgeOf = (b: Block): string | null =>
-    complexity ? TIER_EDGE[complexityTier(b).tone] : cycle?.has(b.id) ? 'var(--warning)' : null;
+    complexity ? TIER_EDGE[complexityTier(b).tone] : null;
   const noteOf = (b: Block) =>
     complexity ? complexityTier(b).label : b.hub ? `${b.weight_in} in` : `${shownFiles(b, roles)} files`;
   const pick = (b: Block) =>
