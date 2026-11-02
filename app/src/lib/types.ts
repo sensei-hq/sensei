@@ -1750,6 +1750,16 @@ export interface SchemaPayload {
   refs: SchemaRef[];
   entities: SchemaEntity[];
   deps: SchemaDep[];
+  /** dbd's v3 `enums`: each enum and its values, in order. */
+  enums: SchemaEnum[];
+}
+
+export interface SchemaEnum {
+  schema: string;
+  name: string;
+  values: string[];
+  note?: string;
+  noteMd?: string;
 }
 
 // ── Pruner (#247) ───────────────────────────────────────────────────────────

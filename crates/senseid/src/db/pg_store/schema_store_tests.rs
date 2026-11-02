@@ -201,7 +201,7 @@ async fn the_vocabularies_are_the_specs() {
     };
     assert_eq!(
         labels("schema_object_kind").await,
-        ["table", "view", "materialized_view", "function", "procedure"]
+        ["table", "view", "materialized_view", "function", "procedure", "enum"]
     );
     assert_eq!(labels("schema_naming").await, ["stated", "convention"]);
     assert_eq!(

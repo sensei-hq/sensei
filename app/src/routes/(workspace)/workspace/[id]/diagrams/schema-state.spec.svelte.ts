@@ -15,7 +15,8 @@ function table(schema: string, name: string, columns = ['id']): SchemaTable {
  *  built-in — the shapes the live payload has. */
 function payload(over: Partial<SchemaPayload> = {}): SchemaPayload {
   return {
-    version: 2,
+    version: 3,
+    enums: [],
     tables: [
       table('app', 'customers'),
       table('app', 'orders', ['id', 'customer_id', 'account_id']),

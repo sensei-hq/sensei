@@ -8,6 +8,7 @@ create table if not exists schema_entities (
 , naming      schema_naming      not null
 , note        text
 , note_md     text
+, enum_values text[]             not null default '{}'
 , modified_at timestamptz        not null default now()
 );
 
@@ -27,3 +28,6 @@ schema_indexes / schema_refs) its columns, indexes and column-level foreign keys
   transaction as the node. A re-index REPLACES an object''s detail.
 - **Lifetime.** Cascades from the node: an object removed by a re-index takes
   its columns, indexes and refs with it.';
+
+comment on column schema_entities.enum_values
+     is 'An enum''s values, in declaration order; empty for every other kind.';
