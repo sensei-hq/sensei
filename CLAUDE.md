@@ -19,7 +19,7 @@
 **Sibling repos** (pulled in as dependencies, not in this tree):
 
 - **[sensei-hq/gateway](https://github.com/sensei-hq/gateway)** — LLM routing library. `crates/senseid` consumes it as `gateway-embedded` git dep. Was previously `crates/gateway/`; moved out so it can release to crates.io independently.
-- **[sensei-hq/website](https://github.com/sensei-hq/website)** — sensei-hq.com, checked out beside this repo. Was `website/`; moved out (#346) because it serves the whole studio and changes on its own schedule. Its `/sensei` page reads this repo's `VERSION` on `main` at build time; a release rebuilds it through a deploy hook.
+- **[sensei-hq/website](https://github.com/sensei-hq/website)** — sensei-hq.com, checked out beside this repo. Was `website/`; moved out (#346) because it serves the whole studio and changes on its own schedule. It shows no Sensei version, so a release does not touch it.
 
 ## Version
 
