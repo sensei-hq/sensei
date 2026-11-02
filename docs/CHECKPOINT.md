@@ -12,18 +12,21 @@
   buffers (`repository_workspace` view); live DB converged with dbd reconcile (twice).
 - Metrics page state 17771862a (rule a3b74a4bd: load() default, page state when slow): draws at
   once, fills by section, sparklines 4 at a time, reads cached across landing and details.
+- Complexity tree 63bf5a291 (daemon) + bb1848f40 (lens: rokkit Tree, overall reading, grade).
+- Load time: 2cd0fcbb2 one-workspace read; 41b22eb3d narration cache in one statement;
+  19ced3153 dated series in /metrics (no sparkline reads). App + daemon ship together.
+- D46 (personal dōjō free incl. private; org private paid, hidden until subscribed) 1d51b78a5;
+  WP8 in the handoff plan. WP1 (Muse) gate: one defect left (duplicate key within unmapped).
 - S5 b6deb16d0 `docs/plan/dojo-sync-handoff.md` (7 packages, 6 open questions).
 
 **Remaining, in order:**
-1. S2 Complexity as a tree: daemon read aggregating `sensei.file_complexity` module → folder →
-   file + maintainability grade; `ComplexityLens` tree.
-2. S4 #3 narration_cache batched update, #4b dated series inside `/metrics` (drop the 27 reads),
-   #6 `GET /api/workspaces/{id}`; overview not blocking on hotspots.
-3. S3 Database · ER = dbd viewer: port Overview/Object/Enum views + sidebar into
+1. S3 Database · ER = dbd viewer: port Overview/Object/Enum views + sidebar into
    `@rokkit/graph/schema`, rokkit release, compose the sensei page.
-4. Live check of all diagram lenses in the installed app (quit Sensei.app before inspect).
+2. Live check: `make install` (daemon + app together; Keychain re-approval), then every lens,
+   Metrics, workspace window timings.
+3. S6 (proposal): diagram snapshots per commit, animate over commits/days/sprints.
 
-**Next command:** `cargo test -p senseid --bin senseid complexity` after writing the tree read's test.
+**Next command:** read dbd `site/src/lib/design/{OverviewView,ObjectView,EnumView,Sidebar}.svelte` for the port.
 
 **Open:** S4 2c — ratio pooling sums per-commit rows of one repo/day (possible double count).
 Muse (pid 24357) is editing dōjō sync in THIS checkout (dojo_sync.rs, sync.rs, user_plane.rs):
