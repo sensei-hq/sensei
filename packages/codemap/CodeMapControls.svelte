@@ -23,7 +23,7 @@
   ];
   const WEIGHTS = MIN_WEIGHTS.map((w) => ({ label: `≥ ${w}`, value: w }));
   const ZONE_TONE: Record<string, string> = {
-    all: 'bg-ink-mute', pain: 'bg-danger', useless: 'bg-warning', risk: 'bg-accent', main: 'bg-success',
+    issues: 'bg-danger', all: 'bg-ink-mute', pain: 'bg-danger', useless: 'bg-warning', risk: 'bg-accent', main: 'bg-success',
   };
 
   const canvasLens = $derived(!['zones', 'wheel', 'matrix'].includes(map.lens));
@@ -36,11 +36,12 @@
   const zoneOptions = $derived(
     zones
       ? [
-          { label: 'All', value: 'all', count: zones.placed.length },
+          { label: 'Pain & uselessness', value: 'issues', count: zones.byZone.pain + zones.byZone.useless },
           { label: 'Pain', value: 'pain', count: zones.byZone.pain },
           { label: 'Uselessness', value: 'useless', count: zones.byZone.useless },
           { label: 'Risk', value: 'risk', count: zones.byZone.risk },
           { label: 'Main sequence', value: 'main', count: zones.byZone.main },
+          { label: 'All', value: 'all', count: zones.placed.length },
         ]
       : [],
   );

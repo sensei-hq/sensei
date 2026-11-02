@@ -1,14 +1,13 @@
 <script lang="ts">
   // Zones beside its plot (M17): how many sit in each zone, and the components
   // furthest from the main sequence in the zone explored (filtered from the controls).
-  import { zonesView } from './lenses';
-  import type { ZonePoint, Zones } from './types';
+  import { inZoneFilter, zonesView, type ZoneFilter } from './lenses';
+  import type { Zones } from './types';
 
-  type Filter = 'all' | NonNullable<ZonePoint['zone']>;
-  let { data, filter, onopen }: { data: Zones; filter: Filter; onopen: (id: string) => void } = $props();
+  let { data, filter, onopen }: { data: Zones; filter: ZoneFilter; onopen: (id: string) => void } = $props();
 
   const view = $derived(zonesView(data, data.points.length));
-  const furthest = $derived(view.furthest.filter((p) => filter === 'all' || p.zone === filter).slice(0, 10));
+  const furthest = $derived(view.furthest.filter((p) => inZoneFilter(p.zone, filter)).slice(0, 10));
 </script>
 
 <section class="flex flex-col gap-3">

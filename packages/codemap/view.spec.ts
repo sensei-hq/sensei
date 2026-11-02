@@ -26,9 +26,11 @@ describe('visibleBands', () => {
 });
 
 describe('bandTone', () => {
-  it('draws upward red always, and the rest neutral until colour by direction is on', () => {
+  // Structure is the layering facet (user, 2026-11-02): both layering problems show
+  // without a toggle — upward red, a layer skip amber — and the rest stays faint.
+  it('draws upward red and a layer skip amber always, the rest neutral until colour by direction is on', () => {
     expect([bandTone('up', false), bandTone('skip', false), bandTone('down', false)]).toEqual([
-      'var(--danger)', 'var(--ink-faint)', 'var(--ink-faint)',
+      'var(--danger)', 'var(--warning)', 'var(--ink-faint)',
     ]);
     expect([bandTone('skip', true), bandTone('level', true), bandTone('down', true), bandTone(null, true)]).toEqual([
       'var(--warning)', 'var(--ink-mute)', 'var(--ink-faint)', 'var(--ink-faint)',
@@ -38,7 +40,7 @@ describe('bandTone', () => {
 
 describe('legendFor', () => {
   it('names what each lens draws', () => {
-    expect(legendFor('structure', false).map((l) => l.label)).toEqual(['dependency', 'upward']);
+    expect(legendFor('structure', false).map((l) => l.label)).toEqual(['dependency', 'upward', 'skips a layer']);
     expect(legendFor('structure', true).map((l) => l.label)).toEqual(['down', 'same layer', 'upward', 'skips a layer']);
     expect(legendFor('cycles', false).map((l) => l.label)).toEqual(['in a cycle']);
     expect(legendFor('coupling', false).map((l) => l.label)).toEqual(['changes together']);

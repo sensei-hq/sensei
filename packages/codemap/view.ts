@@ -30,8 +30,9 @@ export function visibleBands(bands: Band[], filter: BandFilter, cycleOf: Map<str
  *  amber and same-layer and down are told apart. Never by position. */
 export function bandTone(direction: Direction | null, byDirection: boolean): string {
   if (direction === 'up') return 'var(--danger)';
+  if (direction === 'skip') return 'var(--warning)';
   if (!byDirection) return 'var(--ink-faint)';
-  return direction === 'skip' ? 'var(--warning)' : direction === 'level' ? 'var(--ink-mute)' : 'var(--ink-faint)';
+  return direction === 'level' ? 'var(--ink-mute)' : 'var(--ink-faint)';
 }
 
 export interface LegendEntry {
@@ -68,6 +69,7 @@ export function legendFor(lens: Lens, byDirection: boolean): LegendEntry[] {
         : [
             { label: 'dependency', stroke: bandTone('down', false) },
             { label: 'upward', stroke: bandTone('up', false) },
+            { label: 'skips a layer', stroke: bandTone('skip', false) },
           ];
   }
 }

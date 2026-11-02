@@ -174,7 +174,7 @@ describe('CodeMap', () => {
     (q('[data-testid="codemap-zone"] [aria-label="Pain"]') as HTMLButtonElement).click();
     flushSync();
     expect(q('[data-testid="zones-furthest"]')?.textContent).toContain('p/a');
-    expect(q('[data-testid="zone-p/a"]')?.getAttribute('fill-opacity')).toBe('0.8');
+    expect(q('[data-testid="zone-p/a"]')?.getAttribute('fill-opacity')).toBe('0.9');
   });
 
   it('Zones draws its frame before the data arrives, and the dots into it', async () => {

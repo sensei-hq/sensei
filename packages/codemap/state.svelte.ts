@@ -2,6 +2,7 @@
 // grouping, the roles shown, the lens and the selection. Host-agnostic — every
 // read goes through the CodeMapPort the host passes in.
 import type { EdgeMode } from './view';
+import type { ZoneFilter } from './lenses';
 import type { CoChange, CodeMapPort, Column, GroupBy, Level0, Level1, Level2, Read, Role, Zones } from './types';
 
 export type Level = 'modules' | 'files' | 'symbols';
@@ -39,8 +40,9 @@ export class CodeMapState {
   set zoom(z: number) {
     this.#zooms[this.lens] = z;
   }
-  /** Zones: the zone explored; the others stay drawn, dimmed. */
-  zoneFilter = $state<'all' | 'pain' | 'useless' | 'risk' | 'main'>('all');
+  /** Zones: the zone explored; the others stay drawn, dimmed. Pain and
+   *  uselessness by default — the zones that need work. */
+  zoneFilter = $state<ZoneFilter>('issues');
   l0 = $state<Level0 | null>(null);
   l1 = $state<Level1 | null>(null);
   l2 = $state<Level2 | null>(null);

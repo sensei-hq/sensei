@@ -15,11 +15,18 @@ export function cycleBands(l0: Level0): Band[] {
   return l0.bands.filter((b) => of.has(b.source) && of.get(b.source) === of.get(b.target));
 }
 
+export type MatrixIssue = 'mutual' | 'up' | 'skip';
+
 export interface Matrix {
   ids: string[];
   /** weight[i][j]: row i depends on column j. */
   weight: number[][];
   upward: boolean[][];
+  /** What is wrong with a cell: the pair depends both ways, it points up a layer,
+   *  or it skips one; null for a healthy (or empty) cell. */
+  issue: (MatrixIssue | null)[][];
+  /** Mutual pairs, upward cells and skip cells — the legend's counts. */
+  issues: Record<MatrixIssue, number>;
   max: number;
 }
 
@@ -34,15 +41,42 @@ export function matrix(l0: Level0): Matrix {
   const index = new Map(ids.map((id, i) => [id, i]));
   const weight = ids.map(() => ids.map(() => 0));
   const upward = ids.map(() => ids.map(() => false));
+  const skip = ids.map(() => ids.map(() => false));
   let max = 0;
   for (const b of l0.bands) {
     const [i, j] = [index.get(b.source), index.get(b.target)];
     if (i === undefined || j === undefined) continue;
     weight[i][j] += b.weight;
     upward[i][j] ||= b.direction === 'up';
+    skip[i][j] ||= b.direction === 'skip';
     max = Math.max(max, weight[i][j]);
   }
-  return { ids, weight, upward, max };
+  const issues: Record<MatrixIssue, number> = { mutual: 0, up: 0, skip: 0 };
+  const issue = ids.map((_, i) =>
+    ids.map((_, j): MatrixIssue | null => {
+      if (!weight[i][j] || i === j) return null;
+      if (weight[j][i]) {
+        if (i < j) issues.mutual += 1;
+        return 'mutual';
+      }
+      if (upward[i][j]) return (issues.up += 1), 'up';
+      if (skip[i][j]) return (issues.skip += 1), 'skip';
+      return null;
+    }),
+  );
+  return { ids, weight, upward, issue, issues, max };
+}
+
+/** What the Zones filter explores: pain and uselessness together (the default),
+ *  one zone, or every placed component. */
+export type ZoneFilter = 'issues' | 'all' | NonNullable<ZonePoint['zone']>;
+
+/** Whether a component in `zone` is in the filter's focus. */
+export function inZoneFilter(zone: ZonePoint['zone'], filter: ZoneFilter): boolean {
+  if (zone === null) return false;
+  if (filter === 'all') return true;
+  if (filter === 'issues') return zone === 'pain' || zone === 'useless';
+  return zone === filter;
 }
 
 export interface ZonesView {

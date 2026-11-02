@@ -4,14 +4,14 @@
   // concrete, bottom left) and of uselessness (abstract and unused, top right).
   // The frame draws at once and the dots arrive into it; a zone filter dims the
   // rest rather than dropping them. A dot opens its module.
-  import { zonesView } from './lenses';
+  import { inZoneFilter, zonesView, type ZoneFilter } from './lenses';
   import type { ZonePoint, Zones } from './types';
 
-  let { data, filter = 'all', zoom = 1, onopen }: {
+  let { data, filter = 'issues', zoom = 1, onopen }: {
     data: Zones | null;
     /** Over fitting the plot to the column; 1 is fit. */
     zoom?: number;
-    filter?: 'all' | ZonePoint['zone'];
+    filter?: ZoneFilter;
     onopen: (id: string) => void;
   } = $props();
 
@@ -23,7 +23,10 @@
   const y = (p: ZonePoint) => PAD + (1 - p.abstractness) * S;
   const tone = (z: ZonePoint['zone']) =>
     z === 'pain' ? 'var(--danger)' : z === 'useless' ? 'var(--warning)' : z === 'risk' ? 'var(--accent)' : 'var(--success)';
-  const shown = (p: ZonePoint) => filter === 'all' || p.zone === filter;
+  const shown = (p: ZonePoint) => inZoneFilter(p.zone, filter);
+  // Names only where the filter focuses: a label on every point of a full plot is noise.
+  const named = (p: ZonePoint) => filter !== 'all' && shown(p);
+  const short = (id: string) => id.split('/').slice(-1)[0];
 </script>
 
 <!-- A scrollable region must take focus for keyboard users (axe scrollable-region-focusable). -->
@@ -40,12 +43,16 @@
       <text x={PAD + S / 2} y={PAD + S / 2} text-anchor="middle" class="text-xs" fill="var(--ink-faint)">Placing components…</text>
     {/if}
     {#each placed as p (p.component)}
-      <circle cx={x(p)} cy={y(p)} r="5" fill={tone(p.zone)} fill-opacity={shown(p) ? 0.8 : 0.12}
+      <circle cx={x(p)} cy={y(p)} r={shown(p) ? 6 : 4} fill={tone(p.zone)} fill-opacity={shown(p) ? 0.9 : 0.12}
         role="button" tabindex="0" class="cursor-pointer"
         onclick={() => onopen(p.component)} onkeydown={(e) => e.key === 'Enter' && onopen(p.component)}
         data-testid={`zone-${p.component}`}>
         <title>{p.component} — I {p.instability.toFixed(2)}, A {p.abstractness.toFixed(2)}, distance {p.distance.toFixed(2)}, {p.ca} dependents</title>
       </circle>
+      {#if named(p)}
+        <text x={x(p) + (p.instability > 0.7 ? -9 : 9)} y={y(p) + 4} text-anchor={p.instability > 0.7 ? 'end' : 'start'}
+          class="text-xs pointer-events-none" fill="var(--ink)" data-zone-label>{short(p.component)}</text>
+      {/if}
     {/each}
   </svg>
 </div>

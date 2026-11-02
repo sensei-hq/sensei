@@ -32,6 +32,10 @@ describe('MatrixLens', () => {
     expect([cols[0].className.includes('sticky'), rows[0].className.includes('sticky')]).toEqual([true, true]);
     const cell = target.querySelector('[data-cell="p/b>p/a"]') as HTMLElement;
     expect(cell.dataset.upward).toBe('true');
+    expect(cell.dataset.issue).toBe('up');
+    expect(target.querySelector('[data-cell="p/a>p/a"]')?.getAttribute('data-issue')).toBeNull();
+    // The legend leads with what is wrong, counted.
+    expect(target.querySelector('[data-testid="matrix-legend"]')?.textContent).toContain('1 upward');
     (rows[1].querySelector('button') as HTMLButtonElement).click();
     expect(onopen).toHaveBeenCalledWith('p/b');
   });

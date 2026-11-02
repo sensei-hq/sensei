@@ -27,6 +27,10 @@ function port(over: Partial<CodeMapPort> = {}): CodeMapPort {
 }
 
 describe('CodeMapState', () => {
+  it('Zones opens on pain and uselessness', () => {
+    expect(new CodeMapState().zoneFilter).toBe('issues');
+  });
+
   it('keeps a zoom per diagram: zooming one does not zoom the next (user, 2026-11-02)', async () => {
     const s = new CodeMapState();
     const p = port();
