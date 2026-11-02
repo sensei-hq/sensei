@@ -87,10 +87,11 @@ unmapped=101 graph_batches=0`. Denials are `not_subscribed`; unmapped are `no_co
 - **Q3. D18 environments.** Use `repository_graph_branches.label ∈ {production, testing,
   development}`, or a separate table? **Recommend the label**, with a CHECK (dōjō scope). This
   affects WP3.
-- **Q4. Gate 1 (G6).** ANSWERED by D46 (user, 2026-11-02), for PUBLIC repositories: an
-  organisation's sync automatically and no member controls them; a personal dōjō's are the
-  person's to choose, all by default. Private repositories stay gated on billing, unchanged. The
-  local `visibility` gate is retired; the dōjō election is the one authority. Built in WP8.
+- **Q4. Gate 1 (G6).** ANSWERED by D46 (user, 2026-11-02): public repositories are free — an
+  organisation's sync automatically (admin may turn one off), a personal dōjō's by default with the
+  person's opt-out; private repositories (org or personal) need the admin/owner's subscription and
+  are hidden until there is one. The tier is dōjō-only; local sensei works in full. The local
+  `visibility` gate is retired. Built in WP8.
 - **Q5. Wave B (G7).** Is it part of "repository sync"? **Recommend no**: it is a separate epic
   (roadmap Wave B).
 - **Q6. The 101 unmapped repos.** They are configuration, not code: connect the forge orgs
@@ -190,28 +191,41 @@ WP7 follows WP6.
 - WP3, WP5 and WP7 may all touch `dojo/src/lib/nav.ts` and the `[section]` loaders.
 - WP4 and WP6 both reconcile the same local Supabase, so do not run reconcile in parallel.
 
-**WP8 · Public-repository sharing follows D46 (dōjō DB + daemon + app).** Independent of WP1–WP7;
-touches `all_my_repositories.ddl`, which WP4 reads — sequence WP8 before WP4 if both are in flight.
+**WP8 · Sharing and plans follow D46 (dōjō DB + dōjō UI + daemon + app).** Independent of
+WP1–WP7; touches `all_my_repositories.ddl`, which WP4 reads — sequence WP8 before WP4 if both are in
+flight. Entitlement already matches D46 (public free; private, org or personal, `not_subscribed`
+without an active or trialing subscription) — do not change it.
 - `database/ddl/view/dojo/all_my_repositories.ddl`: an organisation's PUBLIC repository is the
-  organisation's, not the member's — authority `organization`, an absent decision ELECTED
-  (`coalesce(org_elected, true)`), `configurable_by_me` admin-only (today it is the member's,
-  `coalesce(user_elected, true)`, any member may switch it off). A personal public repository
-  keeps today's rule. PRIVATE repositories are untouched: billing (entitlement) and the
-  organisation's policy (#301) decide them. Converge the dōjō schema per its flow
-  (`dbd reconcile --scope dojo`), twice.
+  organisation's — authority `organization`, an absent decision ELECTED (`coalesce(org_elected,
+  true)`), `configurable_by_me` admin-only. Today it is the member's (`coalesce(user_elected, true)`,
+  any member may switch it off). Personal public: unchanged. Converge with `dbd reconcile --scope
+  dojo`, twice.
+- dōjō Sharing (`ScrSharing`, `/you/sharing`) and every repository list: a private repository is
+  hidden while its tenant has no subscription (`reason_code = 'not_subscribed'` or `'unclaimed'`);
+  in its place one line — private repositories are supported on paid plans — linking to that
+  dōjō's Plan & billing. Hidden, not deleted: subscribing shows them with no re-registration.
+- Plan & billing for EVERY dōjō: the org section exists (`ScrBilling`); a personal dōjō gets the
+  same section. The current plan reads **Free** when there is no billing account (today "No
+  billing account yet"). The copy says free where public, paid where private (today "free where
+  public or personal", which D46 overrules).
 - Daemon/app: retire `sensei.repositories.visibility` as a gate. `PATCH /api/repositories/{key}`
   writes the dōjō election (`/v1/you/repositories/election`) where the person may change it and
   answers 409 where they may not; the app shows the sync toggle only where `configurable_by_me`.
-- Tests first: dōjō view specs `an_org_public_repo_syncs_with_no_decision`,
-  `an_org_public_repo_is_not_a_members_choice` (403 from `set_repository_election` for a member),
+  Nothing local is gated on the plan.
+- Tests first: dōjō view `an_org_public_repo_syncs_with_no_decision`,
+  `an_org_public_repo_is_not_a_members_choice` (403 for a member, 200 for an admin),
   `a_personal_public_repo_syncs_by_default_and_its_opt_out_holds`,
-  `an_org_private_repo_is_still_decided_by_billing_and_policy` (unchanged verdicts);
+  `a_private_repo_without_a_subscription_is_refused_not_subscribed` (org and personal);
+  dōjō UI `sharing_hides_private_repos_until_subscribed_and_links_to_billing`,
+  `billing_reads_free_with_no_account`, `a_personal_dojo_has_plan_and_billing`;
   daemon `patch_visibility_writes_the_election_where_the_person_may`,
   `patch_visibility_on_an_org_public_repo_is_refused`.
-- Accept: on the live dōjō, `select origin, forge_visibility, elected, configurable_by_me, count(*)
-  from dojo.all_my_repositories group by 1,2,3,4`: every org public row `elected = true` and, for a
-  non-admin, `configurable_by_me = false`; private rows' verdicts unchanged from before.
-- Do not: give a member a switch on an org repository; touch entitlement or the private rules.
+- Accept: on the live dōjō, `select origin, forge_visibility, elected, configurable_by_me,
+  reason_code, count(*) from dojo.all_my_repositories group by 1,2,3,4,5` — every org public row
+  `elected = true`, non-admin `configurable_by_me = false`; private rows on no subscription
+  `not_subscribed`; the Sharing screen shows no private repository for an unsubscribed tenant.
+- Do not: give a member a switch on an org repository; gate anything local on the plan; delete a
+  hidden private repository's data.
 
 ## 5. Context you need
 
