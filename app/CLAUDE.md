@@ -30,8 +30,9 @@ Companion references:
 2. **State** — `*.svelte.ts` files own derivations, status mapping, copy,
    and actions. Components are pure templates: props in, markup out.
 
-3. **Data** — `+page.ts` / `+page.server.ts` `load()` for pre-fetched data.
-   Client-side state only when data must come from runtime.
+3. **Data** — `+page.ts` / `+page.server.ts` `load()` for pre-fetched data by
+   default. Where `load()` is not performant, a page state manages the fetch
+   (renders at once, fills by section, caches) — guidelines §2.3.
 
 4. **API contracts win** — type primitive props against the wire enum from
    `*-types.ts`, not against the mockup's prototype values.

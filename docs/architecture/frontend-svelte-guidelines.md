@@ -213,6 +213,17 @@ Use client-side `*.svelte.ts` state only when data must come from runtime —
 e.g., the bootstrap health page (the daemon may not be running yet, which is
 the screen's whole purpose), or live SSE streams.
 
+**When `load()` is not performant, a page state manages the fetch** (user,
+2026-11-02). `load()` blocks the render until its slowest read returns and
+re-runs on every navigation. Where that is slow — many reads, one slow read
+holding the rest, the same reads repeated across sibling pages — a page state
+(`*-state.svelte.ts`, provided by the nearest shared layout) owns the reads: the
+page renders its layout at once as placeholders, each section fills as its read
+lands, reads are cached per key and reused across the pages that share them, and
+a failed read is that section's error state, never an empty or zero stand-in.
+Precedents: the diagrams (`codemap-host.svelte.ts`, `schema-state.svelte.ts`) and
+the workspace metrics (`metrics-state.svelte.ts`).
+
 ### 2.4 API contracts win over mockup prototypes
 
 The wire types (`health-types.ts`, future `wizard-types.ts`, etc.) are the
