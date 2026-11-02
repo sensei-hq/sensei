@@ -32,6 +32,7 @@
     port,
     controls = true,
     side = true,
+    label = 'Code map',
   }: {
     state: CodeMapState;
     port: CodeMapPort;
@@ -39,6 +40,8 @@
     controls?: boolean;
     /** Draw the side panel — takeaways, inspector, Zones' details. */
     side?: boolean;
+    /** The diagram's name, heading what to act on when it is copied. */
+    label?: string;
   } = $props();
 
   onMount(() => {
@@ -151,9 +154,9 @@
           {#if map.zones}
             <ZonesDetails data={map.zones} filter={map.zoneFilter} onopen={open} />
           {/if}
-          <Takeaways items={toAct} onopen={open} />
+          <Takeaways items={toAct} onopen={open} {label} />
         {:else if map.level === 'modules' && !map.selected}
-          <Takeaways items={toAct} onopen={open} />
+          <Takeaways items={toAct} onopen={open} {label} />
         {:else}
           <Inspector data={inspection} onopen={open} />
         {/if}

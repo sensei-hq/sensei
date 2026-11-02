@@ -27,6 +27,20 @@ function port(over: Partial<CodeMapPort> = {}): CodeMapPort {
 }
 
 describe('CodeMapState', () => {
+  it('keeps a zoom per diagram: zooming one does not zoom the next (user, 2026-11-02)', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.showLens(p, 'zones');
+    s.zoom = 1.5;
+    await s.showLens(p, 'matrix');
+    expect(s.zoom).toBe(1);
+    s.zoom = 0.75;
+    await s.showLens(p, 'zones');
+    expect(s.zoom).toBe(1.5);
+    await s.showLens(p, 'matrix');
+    expect(s.zoom).toBe(0.75);
+  });
+
   it('opens on modules, and drills module → file with a breadcrumb', async () => {
     const s = new CodeMapState();
     const p = port();

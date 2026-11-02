@@ -30,7 +30,7 @@
     {/snippet}
     <div class="flex-1 min-h-0 flex flex-col p-4" data-testid="codemap-screen" data-lens={data.lens}>
         {#key data.workspaceId}
-            <CodeMap state={host.state} port={host.port} controls={false} side={about.side} />
+            <CodeMap state={host.state} port={host.port} controls={false} side={about.side} label={data.view.label} />
         {/key}
     </div>
 </Screen>

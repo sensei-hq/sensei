@@ -30,8 +30,15 @@ export class CodeMapState {
   minWeight = $state(1);
   /** Structure: tint every band by direction, not only upward. */
   byDirection = $state(false);
-  /** The drawing's zoom over fitting it to the column: 1 is fit (rokkit's range). */
-  zoom = $state(1);
+  /** Each lens's zoom over fitting it to the column: 1 is fit (rokkit's range).
+   *  A zoom is the diagram's own — zooming one never carries to the next. */
+  #zooms = $state<Partial<Record<Lens, number>>>({});
+  get zoom(): number {
+    return this.#zooms[this.lens] ?? 1;
+  }
+  set zoom(z: number) {
+    this.#zooms[this.lens] = z;
+  }
   /** Zones: the zone explored; the others stay drawn, dimmed. */
   zoneFilter = $state<'all' | 'pain' | 'useless' | 'risk' | 'main'>('all');
   l0 = $state<Level0 | null>(null);
