@@ -6,8 +6,12 @@
     import { apiBase } from '$lib/api.js';
     import { glyphMode } from '$lib/glyphs';
     import { appState } from '$lib/appstate.svelte.js';
+    import { MetricsHost, provideMetricsHost } from './metrics/metrics-host.svelte.js';
 
     let { data, children } = $props();
+
+    // The metrics the Metrics landing and its details share — read once, kept.
+    provideMetricsHost(new MetricsHost(() => data.workspaceId));
 
     // The active section id from /workspace/{id}/{section} — exposed as a stable
     // data-section hook on <main> so e2e + the inspect harness can target any

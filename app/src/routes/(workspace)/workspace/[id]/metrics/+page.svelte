@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { page } from '$app/state';
     import { Kanji, Eyebrow, PageHeader, Screen } from '$lib/components';
     import { emptyMetricsNotice } from '$lib/metrics/empty-notice';
     import {
@@ -16,19 +15,31 @@
     import CorrelationCard from './CorrelationCard.svelte';
     import SignalGridCell from './SignalGridCell.svelte';
     import SignalLegend from './SignalLegend.svelte';
+    import { metricsHost } from './metrics-host.svelte.js';
 
     let { data } = $props();
 
-    const workspaceId = $derived(page.params.id ?? '');
-    const signals = $derived(buildSignals(data.rows, familyLookup(data.registry), data.narrative));
-    const hero = $derived(healthHeroReadout(data.health));
+    // A page state manages the reads (load() waited on ~32 before drawing): the
+    // layout draws at once, each section fills as its read lands, and what was
+    // read is kept for the details and the next visit.
+    const host = metricsHost();
+    const metrics = $derived(host.metrics);
+    $effect(() => metrics.open());
+
+    const workspaceId = $derived(data.workspaceId);
+    const grid = $derived(metrics.grid);
+    const narrative = $derived(grid.data?.narrative ?? null);
+    const signals = $derived(grid.data ? buildSignals(grid.data.rows, familyLookup(grid.data.registry), narrative) : []);
+    const health = $derived(metrics.health.data);
+    const hero = $derived(healthHeroReadout(health));
     const movers = $derived(pickMovers(signals));
     const groups = $derived(groupSignals(signals));
-    const headline = $derived(data.narrative?.headline ?? deterministicHeadline(signals));
+    const headline = $derived(narrative?.headline ?? deterministicHeadline(signals));
     // Display name by key, so a card never shows a raw registry key.
     const nameOf = $derived((key: string) => signals.find((s) => s.key === key)?.name ?? key);
     // Cap the list: past a handful this stops being a reading and becomes a table.
-    const correlations = $derived(data.correlations.slice(0, 6));
+    const correlations = $derived(metrics.correlations.slice(0, 6));
+    const sparks = $derived(metrics.sparks);
 </script>
 
 <Screen>
@@ -43,7 +54,7 @@
                 kanji="測"
                 icon="i-solar-chart-2-bold-duotone"
                 eyebrow="Workspace · metrics · this week"
-                title={!data.error && signals.length > 0
+                title={grid.status === 'ready' && signals.length > 0
                     ? `${signals.length} ${signals.length === 1 ? 'signal' : 'signals'}`
                     : 'Metrics'}
                 size="lg"
@@ -51,20 +62,32 @@
         </div>
     {/snippet}
     <div class="pt-6 px-6 md:px-10 pb-12 max-w-[1040px]">
-        {#if data.history}
+        {#if metrics.history}
             <div
                 data-component="metrics-history-off"
                 class="mb-6 bg-warning-soft border border-paper-edge rounded-lg px-4 py-3 text-sm text-ink"
             >
-                {data.history.text}
+                {metrics.history.text}
             </div>
         {/if}
-        {#if data.error}
+        {#if grid.status === 'error'}
             <div
                 data-component="metrics-error"
                 class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-soft"
             >
-                Couldn’t load metrics — {data.error}
+                Couldn’t load metrics — {grid.error}
+            </div>
+        {:else if grid.status === 'loading'}
+            <!-- The layout at once: the reading card and the grid's shape, filled as
+                 the values and registry land. -->
+            <div data-component="metrics-loading" aria-busy="true" class="flex flex-col gap-10">
+                <div class="h-28 rounded-lg border border-paper-edge bg-paper-soft animate-pulse"></div>
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-px bg-paper-edge border border-paper-edge rounded-md overflow-hidden">
+                    {#each Array(8) as _, i (i)}
+                        <div class="h-24 bg-paper animate-pulse"></div>
+                    {/each}
+                </div>
+                <span class="sr-only">Reading this workspace’s metrics</span>
             </div>
         {:else if signals.length === 0}
             <!-- Why there are none: not computed yet, or no repository to compute from (#144). -->
@@ -89,9 +112,9 @@
                     >
                         {headline}
                     </p>
-                    {#if data.narrative?.subhead}
+                    {#if narrative?.subhead}
                         <p class="text-sm text-ink-mute leading-relaxed text-pretty m-0">
-                            {data.narrative.subhead}
+                            {narrative.subhead}
                         </p>
                     {/if}
                 </div>
@@ -108,7 +131,7 @@
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {#each movers as m (m.key)}
-                            <MoverCard signal={m} series={data.series[m.key] ?? []} />
+                            <MoverCard signal={m} series={sparks[m.key] ?? []} />
                         {/each}
                     </div>
                 </section>
@@ -118,9 +141,9 @@
                  Sits above the per-metric grid: shape first, then the detail. -->
             <section data-component="metrics-radar" class="mb-10">
                 <HealthRadar
-                    components={data.health?.components ?? {}}
-                    score={data.health?.health_score ?? null}
-                    ratedMetrics={data.health?.rated_metrics ?? 0}
+                    components={health?.components ?? {}}
+                    score={health?.health_score ?? null}
+                    ratedMetrics={health?.rated_metrics ?? 0}
                 />
             </section>
 
@@ -137,8 +160,8 @@
                         {#each correlations as c (c.a + '|' + c.b)}
                             <CorrelationCard
                                 correlation={c}
-                                seriesA={data.series[c.a] ?? []}
-                                seriesB={data.series[c.b] ?? []}
+                                seriesA={sparks[c.a] ?? []}
+                                seriesB={sparks[c.b] ?? []}
                                 {nameOf}
                             />
                         {/each}
@@ -167,7 +190,7 @@
                             {#each g.signals as s (s.key)}
                                 <SignalGridCell
                                     signal={s}
-                                    series={data.series[s.key] ?? []}
+                                    series={sparks[s.key] ?? []}
                                     href={`/workspace/${workspaceId}/metrics/${s.key}`}
                                 />
                             {/each}

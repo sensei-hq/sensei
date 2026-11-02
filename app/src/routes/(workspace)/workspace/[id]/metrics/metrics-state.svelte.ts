@@ -1,0 +1,155 @@
+// A workspace's metrics, read and kept (user, 2026-11-02: load() is the default,
+// but where it is not performant a page state manages the fetch). The Metrics
+// landing and every metric's detail read from one of these, so:
+// - the page draws at once; each section fills as its own read lands, and a slow
+//   read holds back nothing else;
+// - the sparklines fill one by one once the values are in, a few reads at a time;
+// - what was read is reused across the landing and the details, and a stale
+//   reopen refreshes in the background, keeping what is shown meanwhile;
+// - a failed read is that section's error, never an empty or zero stand-in.
+import { SvelteMap } from 'svelte/reactivity';
+import type { senseiApi, ApiResult } from '$lib/api.js';
+import { densifySeries, type MetricSeriesPoint, type MetricsNarrative, type RegistryMetric, type WorkspaceMetricRow } from '$lib/metrics/metric-view.js';
+import type { WorkspaceHealth } from '$lib/metrics/health-radar.js';
+import type { MetricCorrelation } from '$lib/metrics/correlation-view.js';
+import { historyOffNotice, type HistoryOffNotice } from '$lib/metrics/history-notice.js';
+import type { Recommendation } from '$lib/types.js';
+
+export type MetricsApi = Pick<
+  ReturnType<typeof senseiApi>,
+  | 'getWorkspaceMetrics'
+  | 'getMetricsRegistry'
+  | 'getWorkspaceHealth'
+  | 'getMetricCorrelations'
+  | 'tryGetTranscriptConsent'
+  | 'getWorkspaceMetricSeries'
+  | 'tryGetWorkspaceRecommendations'
+>;
+
+export type Grain = 'daily' | 'weekly' | 'monthly';
+
+/** One read's place on the screen: loading, its data, or why it failed. */
+export interface Section<T> {
+  status: 'loading' | 'ready' | 'error';
+  data: T | null;
+  error: string | null;
+}
+
+const LOADING: Section<never> = Object.freeze({ status: 'loading', data: null, error: null });
+const settled = <T, U = T>(r: ApiResult<T>, pick: (d: T) => U = (d) => d as unknown as U): Section<U> =>
+  r.ok ? { status: 'ready', data: pick(r.data), error: null } : { status: 'error', data: null, error: r.error.message };
+
+/** Sparkline reads in flight at once. */
+const SPARK_READS = 4;
+/** A reopen within this long reuses what was read; past it, a background refresh. */
+const FRESH_MS = 60_000;
+
+export class WorkspaceMetrics {
+  values = $state<Section<{ rows: WorkspaceMetricRow[]; narrative: MetricsNarrative | null }>>(LOADING);
+  registry = $state<Section<RegistryMetric[]>>(LOADING);
+  health = $state<Section<WorkspaceHealth>>(LOADING);
+  /** Portfolio-wide correlations, unfiltered; `correlations` keeps this workspace's. */
+  allCorrelations = $state<Section<MetricCorrelation[]>>(LOADING);
+  /** Which assistants' history is not read (#280); null when all are, or unread. */
+  history = $state<HistoryOffNotice | null>(null);
+  /** Each metric's daily values for its sparkline, as each lands. */
+  sparks = $state<Record<string, (number | null)[]>>({});
+
+  #series = new SvelteMap<string, Section<MetricSeriesPoint[]>>();
+  #reads = new Map<string, Promise<Section<MetricSeriesPoint[]>>>();
+  #recommendations = $state<Section<Recommendation[]>>(LOADING);
+  #recommendationsAsked = false;
+  #openedAt: number | null = null;
+  #sparkQueue: string[] = [];
+  #sparksInFlight = 0;
+
+  constructor(
+    private readonly api: MetricsApi,
+    readonly workspaceId: string,
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+
+  /** What the signal grid needs: the values and the registry (which alone carries
+   *  each metric's family and formula). Either failing is the grid's error — an
+   *  unread registry is not an ungrouped grid (#288). */
+  get grid(): Section<{ rows: WorkspaceMetricRow[]; narrative: MetricsNarrative | null; registry: RegistryMetric[] }> {
+    const [v, r] = [this.values, this.registry];
+    if (v.status === 'error' || r.status === 'error') return { status: 'error', data: null, error: v.error ?? r.error };
+    if (v.status === 'loading' || r.status === 'loading') return LOADING;
+    return { status: 'ready', data: { ...v.data!, registry: r.data! }, error: null };
+  }
+
+  /** Only pairs whose both metrics this workspace has. */
+  get correlations(): MetricCorrelation[] {
+    const present = new Set((this.values.data?.rows ?? []).map((r) => r.metric));
+    return (this.allCorrelations.data ?? []).filter((c) => present.has(c.a) && present.has(c.b));
+  }
+
+  /** Start the landing's reads; a fresh reopen reuses them, a stale one refreshes. */
+  open(): void {
+    if (this.#openedAt !== null && this.now() - this.#openedAt < FRESH_MS) return;
+    // A refresh reads the series again too; what was read stays shown meanwhile.
+    if (this.#openedAt !== null) this.#reads.clear();
+    this.#openedAt = this.now();
+    const id = this.workspaceId;
+    void this.api.getWorkspaceMetrics(id).then((r) => {
+      this.values = settled(r, (d) => ({ rows: d.metrics ?? [], narrative: d.narrative ?? null }));
+      if (r.ok) this.#queueSparks((r.data.metrics ?? []).map((m) => m.metric));
+    });
+    void this.api.getMetricsRegistry().then((r) => (this.registry = settled(r, (d) => d.metrics ?? [])));
+    void this.api.getWorkspaceHealth(id).then((r) => (this.health = settled(r)));
+    void this.api.getMetricCorrelations().then((r) => (this.allCorrelations = settled(r, (d) => d.correlations)));
+    void this.api.tryGetTranscriptConsent().then((r) => (this.history = historyOffNotice(r.ok ? r.data : null)));
+  }
+
+  /** A metric's series at a grain: read the first time it is asked for, then kept.
+   *  Safe to call while rendering — state is written only when the read lands. */
+  series(key: string, grain: Grain): Section<MetricSeriesPoint[]> {
+    void this.#read(key, grain);
+    return this.#series.get(`${key}|${grain}`) ?? LOADING;
+  }
+
+  /** One read per metric and grain, however many ask: a sparkline and the
+   *  detail's daily series share it. */
+  #read(key: string, grain: Grain): Promise<Section<MetricSeriesPoint[]>> {
+    const k = `${key}|${grain}`;
+    let pending = this.#reads.get(k);
+    if (!pending) {
+      pending = this.api.getWorkspaceMetricSeries(this.workspaceId, key, grain).then((r) => {
+        const section = settled(r, (d) => d.series);
+        this.#series.set(k, section);
+        return section;
+      });
+      this.#reads.set(k, pending);
+    }
+    return pending;
+  }
+
+  /** The pending recommendations: read the first time the detail asks, then kept. */
+  get recommendations(): Section<Recommendation[]> {
+    if (!this.#recommendationsAsked) {
+      this.#recommendationsAsked = true;
+      void this.api
+        .tryGetWorkspaceRecommendations(this.workspaceId, 'pending')
+        .then((r) => (this.#recommendations = settled(r)));
+    }
+    return this.#recommendations;
+  }
+
+  #queueSparks(keys: string[]): void {
+    this.#sparkQueue.push(...keys);
+    this.#nextSparks();
+  }
+
+  #nextSparks(): void {
+    while (this.#sparksInFlight < SPARK_READS && this.#sparkQueue.length) {
+      const key = this.#sparkQueue.shift()!;
+      this.#sparksInFlight += 1;
+      void this.#read(key, 'daily').then((section) => {
+        this.#sparksInFlight -= 1;
+        if (section.data) this.sparks[key] = densifySeries(section.data, 'daily').map((p) => p.value);
+        this.#nextSparks();
+      });
+    }
+  }
+}

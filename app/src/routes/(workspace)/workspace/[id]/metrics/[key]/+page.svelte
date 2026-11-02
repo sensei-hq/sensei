@@ -1,6 +1,5 @@
 <script lang="ts">
     import { grainUnit } from '$lib/metrics/metric-view';
-    import { page } from '$app/state';
     import { Kanji, Eyebrow, Screen } from '$lib/components';
     import {
         chartKindForType,
@@ -14,13 +13,34 @@
     import DatapointDrilldown from '../DatapointDrilldown.svelte';
     import ActionItems from '../ActionItems.svelte';
     import { MetricDetailState } from './metric-detail-state.svelte.js';
+    import { metricsHost } from '../metrics-host.svelte.js';
 
     let { data } = $props();
 
-    // Presentation only: MetricDetailState derives everything from the load and
-    // holds the chart window and the selected point.
-    const md = new MetricDetailState(() => data);
-    const workspaceId = $derived(page.params.id ?? '');
+    // The reads live in the workspace's metrics state (shared with the landing,
+    // kept across metrics and grains); MetricDetailState derives the screen from
+    // them and holds the chart window and the selected point.
+    const host = metricsHost();
+    const metrics = $derived(host.metrics);
+    $effect(() => metrics.open());
+    const grid = $derived(metrics.grid);
+    const series = $derived(metrics.series(data.selectedKey, data.grain));
+    // The datapoint drill-down is day-scoped: the daily series, the same read on daily.
+    const daily = $derived(data.grain === 'daily' ? series : metrics.series(data.selectedKey, 'daily'));
+    const recommendations = $derived(metrics.recommendations);
+    const view = $derived({
+        rows: grid.data?.rows ?? [],
+        registry: grid.data?.registry ?? [],
+        narrative: grid.data?.narrative ?? null,
+        selectedKey: data.selectedKey,
+        grain: data.grain,
+        series: series.data ?? [],
+        // The formula is definition-level: the registry always carries it.
+        formula: grid.data?.registry.find((r) => r.key === data.selectedKey)?.formula ?? null,
+        recommendations: recommendations.data ?? [],
+    });
+    const md = new MetricDetailState(() => view);
+    const workspaceId = $derived(data.workspaceId);
     const selected = $derived(md.selected);
 
     const GRAINS = [
@@ -51,9 +71,21 @@
         </div>
     {/snippet}
     <div class="flex-1 min-h-0 flex flex-col px-6 md:px-10 pb-6 max-w-[1040px]">
-        {#if data.error}
+        {#if grid.status === 'error'}
             <div data-component="metrics-error" class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-soft">
-                Couldn’t load metrics — {data.error}
+                Couldn’t load metrics — {grid.error}
+            </div>
+        {:else if grid.status === 'loading'}
+            <div data-component="metrics-loading" aria-busy="true"
+                class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[260px_1fr] bg-paper-soft border border-paper-edge rounded-lg overflow-hidden">
+                <div class="border-r border-paper-edge p-6 flex flex-col gap-3">
+                    {#each Array(8) as _, i (i)}<div class="h-8 rounded-md bg-paper animate-pulse"></div>{/each}
+                </div>
+                <div class="p-8 flex flex-col gap-6">
+                    <div class="h-16 w-2/3 rounded-md bg-paper animate-pulse"></div>
+                    <div class="h-64 rounded-md bg-paper animate-pulse"></div>
+                </div>
+                <span class="sr-only">Reading this workspace’s metrics</span>
             </div>
         {:else}
             <div
@@ -107,10 +139,12 @@
                             <AboutMetric about={md.about} howToReadSegments={md.howToReadSegments} {workspaceId} />
                         {/if}
 
-                        {#if data.seriesError}
+                        {#if series.status === 'error'}
                             <p data-component="chart-error" class="bg-paper border border-paper-edge rounded-md px-4 py-6 text-sm text-ink-soft">
-                                Couldn’t load this signal’s history — {data.seriesError}
+                                Couldn’t load this signal’s history — {series.error}
                             </p>
+                        {:else if series.status === 'loading'}
+                            <div data-component="chart-loading" aria-busy="true" class="h-64 rounded-md bg-paper animate-pulse"></div>
                         {:else}
                             <DetailChart
                                 series={md.chartSeries}
@@ -149,8 +183,8 @@
                                  observation, and transcript evidence (Phase C/F). -->
                             {#key data.selectedKey}
                                 <DatapointDrilldown
-                                    series={data.dailySeries}
-                                    seriesError={data.dailySeriesError}
+                                    series={daily.data ?? []}
+                                    seriesError={daily.error}
                                     workspaceId={workspaceId}
                                     metricKey={data.selectedKey}
                                     selectedDay={md.selectedDay}
@@ -168,7 +202,7 @@
                             </p>
                         </div>
 
-                        <ActionItems items={md.actionItems} error={data.recommendationsError} />
+                        <ActionItems items={md.actionItems} error={recommendations.error} />
                     {:else}
                         <div class="text-sm text-ink-soft py-8">
                             That signal isn’t computed for this workspace — pick one from the list.
