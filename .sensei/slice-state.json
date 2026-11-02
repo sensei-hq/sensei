@@ -26,7 +26,7 @@
     "F8 (screens: tickets SDLC group + lane row, metrics settings panel, fields editor keys, reason-codes route; A10); this commit",
     "F9 (docs sweep: gate 12 clean, decisions + backlog entries); this commit"
   ],
-  "gate_status": "F9 pass: gate 12 prints 0 lines lacking SDLC/superseded; daemon suite 4099/0; app check 0 errors, unit 2518/0",
+  "gate_status": "complete partial 2026-11-02: done gate run live, no failures; live 6-10,12,13; tests-only 1-5, 8 last bullet, 10 PUT, 11 (sparse data P0, no Jira writes); wrong gate clean",
   "decomposition": {
     "F1": "DDL sensei.command_patterns + sensei.command_markers (+staging tables, 2 import procs, 2 jsonl seeds); categorise(check)->typecheck; sdlc/classify.rs: tokenize (quote/heredoc aware) -> elements/stages, strip, stage_category, ownership attribution, exit attribution; pg_store command_catalogue() with md5 hash; tests: sdlc::classify cases + pg_store command_catalogue_import",
     "F3": "DDL sensei.workspace_metric_settings; sdlc/settings.rs pure parse_patch/apply; pg_store metric_settings get/put; api/handlers/metric_settings.rs GET/PUT under local_caller_guard (reuse trackers::known_workspace)",
@@ -104,9 +104,10 @@
     "indexer ratchet ceiling raised 1,300 -> 1,302 for the two state.pg reads in metric_settings.rs (AppState type alias); flagged to the user",
     "only 9 of 118 hook-event sessions have an activity.sessions row on this machine (backlog P0, Linux session synthesis): F2+ ticket metrics will be sparse here until P0 lands",
     "F4: lead_hours and estimated_points read not_synced until F5 supplies issue_created_at and points (orchestrator passes None/NotSynced)",
-    "F4: project figures (tokens_per_ticket, prompts_per_ticket) moved to F6 with sdlc_project"
+    "F4: project figures (tokens_per_ticket, prompts_per_ticket) moved to F6 with sdlc_project",
+    "2026-11-02: live sensei schema needed `dbd reconcile --scope default` + `dbd deploy` (boot deploy skips when VERSION unchanged, C40)"
   ],
-  "next_command": "/sensei:complete docs/spec/daemon/tracker-sdlc-metrics.md (live done gates need the daemon running)",
+  "next_command": "push + PR feature/sdlc_metrics; re-run gates 1-5 and 11 live after P0 and a mapped field",
   "order_note": "F3 before F2 (F2 no longer needs the threshold after A3, but F3 is small and started first)",
   "carry_forward": {
     "F6": [

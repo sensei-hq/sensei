@@ -1,3 +1,24 @@
+# Checkpoint — 2026-11-02 (tracker SDLC metrics: complete, partial)
+
+**Complete (2026-11-02):**
+- **Done gate:** run live, nothing fails.
+  - Shown live: 6–10, 12 and 13.
+  - Tests only: 1–5, 8's last bullet, 10's PUT refusals and 11. They are blocked by sparse data
+    on this machine (P0, plugin 0.11.0) and by the rule never to write to Jira.
+- **Wrong gate:** clean.
+- **Found and fixed:**
+  - The live schema was stale. A dev build doesn't redeploy unless `VERSION` changes (C40,
+    backlog). Fixed with `dbd reconcile` then `dbd deploy`.
+  - A stray edit that skipped the history read with write-back off appeared while agents ran. The
+    user didn't write it; it was removed, and the new gate 8 test catches it.
+- **Next:**
+  - push, and open a PR from `feature/sdlc_metrics` (cut from the unmerged
+    `feature/tracker_metrics_writeback`);
+  - re-run gates 1–5 and 11 live once P0 lands and a field is mapped;
+  - choose the default write-back fields (D9).
+
+---
+
 # Checkpoint — 2026-10-29 (tracker SDLC metrics)
 
 **Slice:** tracker SDLC metrics, on branch `feature/sdlc_metrics`. The branch was cut from

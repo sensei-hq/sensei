@@ -1,6 +1,6 @@
 ---
 name: Tracker SDLC metrics
-status: reviewed
+status: built (complete partial, 2026-11-02; see "Complete" under the done gate)
 date: 2026-10-29
 analysis: docs/analysis/2026-10-29-sdlc-metrics-extension.md
 parent:
@@ -683,6 +683,17 @@ comment `render` is unchanged.
 
 ## Done gate
 
+*Complete (2026-11-02), run independently against the live daemon (built from `ac13bd5a4`), with the
+live `sensei` database and one synced Jira board (733 tickets, 13 sprints, history fully read). No
+item fails.*
+
+| Evidence | Items |
+|---|---|
+| **Shown live** | 6 (sprint replay figures); 7 (predictability 15.23); 8 (`history_at` set, `last_error` untouched); 9 (0 pending, 615 sprint changes); 10 (GET defaults, foreign Origin 403); 12 (31 lines, all `SDLC` or `superseded`); 13 (every task, sprint and tracker carries its figures, every null has a registered reason, `GET …/trackers/{t}` 405) |
+| **Tests only** | 1–5 (classifier, fixtures A–E): one ticket has linked sessions on this machine (backlog P0), and no Bash failure is captured (plugin 0.11.0); 8's last bullet (test `one_sync_runs_write_back_then_history_and_history_without_write_back`, added at complete); 10's PUT refusals (a live PUT was off limits); 11 (no field is mapped, and nothing may write to Jira) |
+
+*Re-run 1–5 and 11 live once sessions link to tickets (P0) and a field is mapped (D9).*
+
 1. **Classifier.**
    - **Pure:** `cargo test -p senseid sdlc::classify` passes, with one case per seed
      toolchain and these outcomes:
@@ -838,6 +849,9 @@ comment `render` is unchanged.
     Run before P-DOCS, it prints exactly the 53 lines listed under Overrides, and none
     contains `SDLC`. A rewritten statement keeps `SDLC` on the line the pattern matches. In
     `tracker-metrics-writeback.md`, `rg -c 'usage and SDLC'` ≥ 1.
+    *(Run at complete 2026-11-02: it prints 31 lines, all with `SDLC` or `superseded`. Fewer than 53
+    is expected, because a line rewritten as "usage and SDLC metrics write-back" no longer matches
+    the pattern.)*
 13. **API.**
     - `/trackers/{t}/tasks` rows, `/tracker-tasks/{key}` and each `/sprints` item carry `sdlc`.
     - Each `GET /trackers` item carries `sdlc_project`.
@@ -862,7 +876,13 @@ comment `render` is unchanged.
 - The write-back comment gains lines.
 - Toolchain support needs a code change.
 
-## Claims (verified 2026-10-29; independent verifier run, then re-checked after rewrite)
+## Claims (verified 2026-10-29; independent verifier run, then re-checked after rewrite; re-checked at complete 2026-11-02)
+
+*Re-check at complete (2026-11-02), against the live install:*
+- *C1 still holds: 0 `PostToolUseFailure` rows, and the installed plugin is still 0.11.0.*
+- *C18 still holds: 733 live tickets and 13 sprints.*
+- *C15 and C25 were changed by this slice, as designed. The enum now has 34 keys (F7), and `metric_value` takes `&TicketFigures` (W3 override).*
+- *C40 is new, found at complete.*
 
 | # | claim | check | expect | actual | verdict |
 |---|---|---|---|---|---|
@@ -905,3 +925,4 @@ comment `render` is unchanged.
 | C38 | `GET …/trackers/{tracker}` doesn't exist (DELETE, PATCH only); the list is `GET …/trackers` | `routes.rs:50-56` | — | as stated | **was FALSE** (rewrite put `sdlc_project` there), fixed (S7) |
 | C39 | Usage-only write-back statements live exactly on the surfaces listed under Overrides | independent broad `rg` (verifier), then gate 12's widened pattern, tested to catch each verifier-found line and to exclude "the only writer" / "usage is written down" | all listed | 53 lines, 24 files, all listed | **was FALSE** (a narrow pattern saw 19 of ~34), fixed: list = gate output |
 | C34 | `PostToolUseFailure` carries `is_interrupt` | no captured failure locally | — | — | UNCHECKABLE here: not load-bearing (absent → the rule falls through to the next reason); re-check in build once the plugin is updated |
+| C40 | Pointing `SENSEI_DDL_DIR` at a branch's `database/` deploys that branch's schema when the daemon starts | `tasks/schema_deploy.rs` `deploy_if_version_changed`; live `sensei.config.schema_deployed_version` | deploys | skipped: the version was unchanged (0.20.2 = `VERSION`), so the branch binary ran on the old schema (`column "estimation_field" does not exist`) | **FALSE** (found at complete). Fixed by hand: `dbd reconcile --scope default` then `dbd deploy`. `task db:setup` alone (`dbd deploy`) fails the same way. Backlog entry. |

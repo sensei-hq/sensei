@@ -133,6 +133,18 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
     - live done gate 9 against a running daemon;
     - the figures stay sparse on Linux until **P0** (session synthesis) lands;
     - the indexer's dangling-reference ratchet is at its 1,302 ceiling with no headroom.
+- **Dev builds never deploy their branch's schema** (found 2026-11-02, SDLC metrics complete, C40).
+  - **What happens:** the boot deploy (`tasks/schema_deploy.rs`, #260) runs only when
+    `schema_deployed_version` differs from the binary's `CARGO_PKG_VERSION`. A branch that
+    changes DDL without bumping `VERSION` therefore runs its new code on the old schema, even
+    with `SENSEI_DDL_DIR` set. Tracker sync failed with `column "estimation_field" does not
+    exist`.
+  - **Second gap:** `task db:setup` runs plain `dbd deploy`, which never alters an existing
+    table, so it fails the same way. The fix that worked was `dbd reconcile --scope default`,
+    then `dbd deploy`, the daemon's own order.
+  - **Candidates:**
+    - key the boot check on a hash of the DDL source when `SENSEI_DDL_DIR` is set;
+    - add the reconcile step to `task db:setup`.
 - **Daemon routes reachable from any web page** (found by the Jira-spec security
   review 2026-10-15) — `api/server.rs` sets `CorsLayer::allow_origin(Any)` with all
   methods and no auth middleware (loopback bind by default), so any page the user

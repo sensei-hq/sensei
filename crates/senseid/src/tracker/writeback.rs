@@ -1778,6 +1778,60 @@ mod pass_tests {
         assert_eq!(w.count(WriteMethod::Post), 1);
     }
 
+    /// SDLC gate 8: one sync runs the write-back pass and then the history task, under
+    /// the same guard; with write-back off, history still runs.
+    #[tokio::test]
+    async fn one_sync_runs_write_back_then_history_and_history_without_write_back() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.factory.serve(&f.site, standard([Some("A1"), None, None]));
+        let w = f.writes(RecordingWrites::default());
+        let history_at = || async {
+            let (at,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+                "SELECT history_at FROM sensei.trackers WHERE id = $1",
+            )
+            .bind(f.t)
+            .fetch_one(f.pg.pool())
+            .await
+            .unwrap();
+            at
+        };
+        assert_eq!(history_at().await, None);
+        let row = f.pg.tracker_by_id(f.t).await.unwrap().unwrap();
+        crate::tracker::runtime::sync_stored(&f.pg, &f.rt, &row).await.unwrap();
+        let mut first = None;
+        for _ in 0..100 {
+            first = history_at().await;
+            if first.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(first.is_some(), "history ran after the sync");
+        assert_eq!(w.count(WriteMethod::Post), 1, "and the pass wrote the assigned ticket once");
+        let (written,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+            "SELECT writeback_at FROM sensei.tracker_tasks WHERE tracker_id = $1 AND external_id = '10001'",
+        )
+        .bind(f.t)
+        .fetch_one(f.pg.pool())
+        .await
+        .unwrap();
+        assert!(written.is_some());
+
+        f.pg.set_writeback_enabled(f.t, false).await.unwrap();
+        let row = f.pg.tracker_by_id(f.t).await.unwrap().unwrap();
+        crate::tracker::runtime::sync_stored(&f.pg, &f.rt, &row).await.unwrap();
+        let mut again = first;
+        for _ in 0..100 {
+            again = history_at().await;
+            if again > first {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(again > first, "history ran again with write-back off");
+        assert_eq!(w.count(WriteMethod::Post), 1, "and nothing more was written");
+    }
+
     #[tokio::test]
     async fn an_owner_found_by_a_sync_is_written_by_that_syncs_pass() {
         let f = fixture([Some("A1"), None, None]).await;
