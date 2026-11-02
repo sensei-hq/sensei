@@ -10,7 +10,7 @@ these are authored fresh under `prd/assets/diagrams/` as `dNN-<slug>.svg`.
 | D1 | The loop (capture → graph → analyze → learn → deliver → FTR) | `01-vision.md` loop | 🚧 Phase 4 |
 | D2 | Journey — four segments + Dōjō | Journey Map | 🚧 Phase 4 |
 | D3 | Dōjō journey — roles and stages | Dōjō Journey Map | 🚧 Phase 4 |
-| D4 | Business model — free where public or personal | `01-vision.md` | 🚧 Phase 4 |
+| D4 | Business model — public free, private on a subscription (D46) | `01-vision.md` | 🚧 Phase 4 |
 | D5 | Data model (schemas + key tables) | `../database/` / `design.dbml` | 🚧 Phase 4 |
 | D6 | Metrics master-detail | reorg §9.6 | 🚧 Phase 4 |
 | D7 | Metric gating funnel (all metrics → gate-eligible → sprint gates) | reorg §9.6 | 🚧 Phase 4 |

@@ -847,7 +847,8 @@ Scenario: Private org from creation to synced private repos
    And members join and repositories are connected
   When there is no active subscription
   Then public repositories sync — metrics and governance included
-   And private repositories are shown DISABLED and excluded from sync
+   And private repositories are HIDDEN from the dōjō's repository lists and excluded from sync
+   And the lists say private repositories are supported on paid plans, linking to Plan & billing (D46)
    And projects may still be created and repositories connected to them
    And the console surfaces: "X users are working in your private repositories;
        you have Y members. Syncing them needs at least X seats."
@@ -1203,6 +1204,8 @@ The full chain, in order:
 
 > **NARROWED — see `docs/spec/dojo/daemon-sync.md` §8a.** Gate 1 is sovereign for
 > repositories where the USER holds authority, and NOT for org-mandated ones.
+> **RETIRED 2026-11-02 (D46, `roadmap/09-dojo-expansion.md`).** Gate 1 is no longer a gate:
+> the dōjō's per-repository election is the one authority for what syncs.
 > `seat_allocations` in the table above is also unbuilt (phase 3).
 
 Gate 1 is local and comes first: the daemon never even asks about a repo the

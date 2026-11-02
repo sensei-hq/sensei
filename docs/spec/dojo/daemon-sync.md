@@ -96,6 +96,15 @@ mechanism as everything else).
 Private-repo sharing is where billing enters (phase 2 of the parent spec: claim, seat, billing).
 Until then a private repository stays local-only regardless of configuration.
 
+**Superseded 2026-11-02 ([D46](../../roadmap/09-dojo-expansion.md), user decision).** An
+organisation's public repositories sync automatically — members have no toggle; an admin may turn
+one off as org policy. A personal dōjō's public repositories are the person's to choose, all by
+default, and an opt-out holds. Private repositories, an organisation's **or a person's**, need a
+subscription taken by the dōjō's admin or owner; until there is one they are hidden from the
+dōjō's repository lists, which say private repositories are supported on paid plans and link to
+Settings › Plan & billing. The dōjō's per-repository election is the one authority: gate 1 below
+(`sensei.repositories.visibility`) is retired. Local sensei works in full on any plan.
+
 **Verification order, which is also the done gate.** Start from the real initial state and change
 one thing at a time, so each step's effect is observable:
 
