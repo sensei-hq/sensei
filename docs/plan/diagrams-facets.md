@@ -73,3 +73,23 @@ so buffers, not wall time, are the steady measure). Fixes red-first; before → 
 ## S5 — dōjō sync handoff to Muse
 `docs/plan/dojo-sync-handoff.md`: repository, metrics and diagram sync divided into
 independent packages for another agent.
+
+## S6 — diagrams over time (proposal, user 2026-11-02)
+
+**Today nothing is kept.** The diagrams are derived live from the current graph
+(`structure_graph`, `structure_edges`, `component_zones`), which the indexer overwrites;
+`file_complexity` keeps one HEAD per repository (`replace_file_complexity` deletes the last).
+Only the metrics keep history (`repository_metrics`, per day and commit).
+
+**Proposal.** On each new HEAD the daemon already notices, snapshot the small derived payloads —
+Zones points, the L0 module/band summary (cycles, upward, skips), the Complexity totals and per
+module — into `sensei.diagram_snapshots (repository_id, commit_sha, committed_at, kind, payload
+jsonb)`, keyed by commit. Days and sprints are views over commits: the last commit of each day, or
+of each sprint (from the tracker, D23/D40). The app then plays a lens across the last n commits /
+days / sprints: Zones points move from snapshot to snapshot (a point is a module, so it is matched
+by id; one that appears or leaves fades), Cycles and Structure show counts appearing and going,
+Complexity its totals as a line.
+
+**Costs to decide.** Forward-only costs one small row per kind per commit. Backfilling history
+means re-indexing past trees (a worktree per commit) — hours on a large repository, so opt-in and
+bounded (last n commits). Workspace = union of its repositories' snapshots at each point in time.
