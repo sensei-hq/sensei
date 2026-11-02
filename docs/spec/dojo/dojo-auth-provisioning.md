@@ -900,6 +900,11 @@ namespace governs billability.**
 **Two questions, both required.** A repository syncs only when entitlement AND
 election both say yes.
 
+> **Reversed 2026-11-02 (D46, revised; `roadmap/09-dojo-expansion.md`).** A personal
+> dōjō is free, private repositories included: a personal tenant's private repository
+> is entitled. Only an organisation's private repositories are subscription-gated.
+> The "no personal ALLOW" comment below records the earlier rule.
+
 ```
                  ENTITLEMENT — may it?  (the dōjō decides)
 can_sync(repo, user, tenant) =

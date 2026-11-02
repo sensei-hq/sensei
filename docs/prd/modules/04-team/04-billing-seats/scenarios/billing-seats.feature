@@ -18,12 +18,19 @@ Feature: Billing & Seats — tier model, metering, and billing portal (all unbui
     Then no invoice is generated and no payment is required
 
   NO TEST
-  Scenario: private repositories stay hidden until the admin or owner subscribes (D46)
-    Given a Free-tier Dōjō, organisation or personal, whose member has private repos
+  Scenario: an organisation's private repositories stay hidden until its admin or owner subscribes (D46)
+    Given an organisation's Free-tier Dōjō whose member has private repos
     When the member opens the dōjō's repository list
     Then no private repository is listed or synced
     And the list says private repositories are supported on paid plans, linking to Settings › Plan & billing
     And local sensei still works in full for those repositories
+
+  NO TEST
+  Scenario: a personal dōjō syncs its private repositories free (D46)
+    Given a personal Dōjō whose owner has private repos, none opted out
+    When the owner opens the dōjō's repository list
+    Then the private repositories are listed and synced
+    And no subscription is asked for
 
   NO TEST
   Scenario: the Paid tier bills per active contributor

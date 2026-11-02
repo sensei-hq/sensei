@@ -43,9 +43,9 @@ this as *what the site promises is what the product does.*
 - **Lead.** **No roadmap language in marketing.** The site says "sensei does X"
   — not "sensei will do X" or "sensei aims to do X".
 - **Lead.** **Pricing page reflects the final model.** Free = public repositories
-  in every dōjō, forever; Paid = private repositories, organisation or personal, on
-  the dōjō admin's or owner's subscription (per active contributor for an
-  organisation); local sensei is never limited by plan (D46); no Enterprise tier;
+  and every personal dōjō (private repositories included), forever; Paid = an
+  organisation's private repositories, on its admin's or owner's subscription, per
+  active contributor; local sensei is never limited by plan (D46); no Enterprise tier;
   GitHub Sponsors optional.
 - **Lead.** **Install command is the unified one-liner** (P1) — not
   platform-specific instructions.

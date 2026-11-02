@@ -133,8 +133,9 @@ keeps the pair (and the fleet) legible and steerable at a distance. Detail:
 **The code is open source** and stays that way: anyone can run sensei and a Dōjō
 themselves (D24). The **hosted** Dōjō is free for every Dōjō (D20) — sensei serves the
 individual, and every Dōjō gets its shared basics. **Public repositories are free in every
-Dōjō; private repositories — an organisation's or a person's — need a subscription** taken by
-the Dōjō's admin or owner, and stay hidden from it until then (D46). **The benefits of the paid tier**
+Dōjō, and a personal Dōjō is free with its private repositories; an organisation's private
+repositories need a subscription** taken by its admin or owner, and stay hidden from its Dōjō
+until then (D46). **The benefits of the paid tier**
 are the features a team pays for on the hosted Dōjō: **gating**, **integrations**
 (trackers, CI) and **consolidated metrics**, plus the control a business needs (SSO,
 audit) — never to use sensei, never for tokens (inference is BYO-key and local). The plan lives

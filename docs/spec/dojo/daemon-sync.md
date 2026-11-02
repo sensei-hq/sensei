@@ -98,10 +98,10 @@ Until then a private repository stays local-only regardless of configuration.
 
 **Superseded 2026-11-02 ([D46](../../roadmap/09-dojo-expansion.md), user decision).** An
 organisation's public repositories sync automatically — members have no toggle; an admin may turn
-one off as org policy. A personal dōjō's public repositories are the person's to choose, all by
-default, and an opt-out holds. Private repositories, an organisation's **or a person's**, need a
-subscription taken by the dōjō's admin or owner; until there is one they are hidden from the
-dōjō's repository lists, which say private repositories are supported on paid plans and link to
+one off as org policy. A personal dōjō is free, private repositories included: its repositories, public and private,
+are the person's to choose, all by default, and an opt-out holds. Only an organisation's private
+repositories need a subscription, taken by its admin or owner; until there is one they are hidden
+from the organisation's repository lists, which say private repositories are supported on paid plans and link to
 Settings › Plan & billing. The dōjō's per-repository election is the one authority: gate 1 below
 (`sensei.repositories.visibility`) is retired. Local sensei works in full on any plan.
 
@@ -770,6 +770,9 @@ cannot tell a user which one they are in.
   and would have hosted every personal private repo free — the common case, since
   no personal tenant carries a billing row. **Entitlement keys on visibility, not
   on owner.**
+  **Reversed 2026-11-02 (D46, revised):** a personal dōjō is free, private
+  repositories included. A2 is entitled (✅); only an organisation's private
+  repositories need a subscription.
 - **B/C — election still governs.** C matters: a *public* personal repo is
   entitled for free and still does not sync unelected. Public means *free to
   host*, never *automatically shared*.
