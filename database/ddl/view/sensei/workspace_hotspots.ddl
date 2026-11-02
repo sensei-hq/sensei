@@ -19,7 +19,8 @@ SELECT s.workspace_id
  WHERE ae.event_type = 'PostToolUse'
    AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
    AND ae.payload->'tool_input' ? 'file_path'
-   AND to_timestamp(ae.ts / 1000.0) > now() - interval '30 days'
+   -- ts is epoch ms: compared as itself, so assistant_events_file_edits_idx serves it.
+   AND ae.ts > (extract(epoch from now() - interval '30 days') * 1000)::bigint
  GROUP BY s.workspace_id, f.name, ae.payload->'tool_input'->>'file_path';
 
 comment on view workspace_hotspots is

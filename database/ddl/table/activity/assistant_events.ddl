@@ -51,6 +51,13 @@ create index if not exists assistant_events_repository_id_idx
 create index if not exists assistant_events_tool_use_idx
     on assistant_events(session_id, tool_use_id, id) where tool_use_id is not null;
 
+-- The workspace Hotspots read (sensei.workspace_hotspots): file edits per session in
+-- a time window. Without it every request scanned all events and detoasted every
+-- Edit payload since the beginning (77 s, ~290k buffers on 543k events, 2026-11-02).
+create index if not exists assistant_events_file_edits_idx
+    on assistant_events(session_id, ts desc)
+ where event_type = 'PostToolUse' and tool_name in ('Edit', 'Write', 'MultiEdit');
+
 comment on table assistant_events is
 'Raw assistant event log — one row per hook/event invocation, from any
 assistant family. Captures events emitted by Claude Code, Cursor, Zed, etc.

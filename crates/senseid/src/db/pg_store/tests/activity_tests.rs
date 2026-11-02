@@ -1221,3 +1221,77 @@ async fn calls_under_a_servers_own_key_count_on_its_health_row() {
         .collect();
     assert_eq!(mine, vec![(key.clone(), 2)], "one row for the server, with both calls");
 }
+
+// ── Workspace hotspots ─────────────────────────────────────────────
+
+/// The workspace window's Hotspots read: recent Edit/Write/MultiEdit calls per
+/// file, re-edits within a session counted as corrections; an edit older than the
+/// 30-day window, another tool and another event type are not counted. Pins the
+/// behaviour while the view's time filter is rewritten to use an index (a
+/// `to_timestamp(ts)` filter scanned all 543k events on every request).
+#[tokio::test]
+async fn workspace_hotspots_count_recent_file_edits_and_reedits() {
+    let s = pg_store().await;
+    let suffix = format!("hotspots_{}", uuid::Uuid::new_v4());
+    let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let day_ms = 86_400_000_i64;
+    let mut sessions = Vec::new();
+    for n in 0..2 {
+        let csid = format!("{suffix}-s{n}");
+        s.record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
+        sessions.push(csid);
+    }
+    let edit = |file: &str| serde_json::json!({ "tool_input": { "file_path": file } });
+    let events: Vec<(&str, &str, &str, i64, serde_json::Value)> = vec![
+        (&sessions[0], "PostToolUse", "Edit", now_ms - day_ms, edit("src/a.rs")),
+        (&sessions[0], "PostToolUse", "Edit", now_ms - 2 * day_ms, edit("src/a.rs")),
+        (&sessions[1], "PostToolUse", "Write", now_ms - 3 * day_ms, edit("src/a.rs")),
+        (&sessions[1], "PostToolUse", "Edit", now_ms - 40 * day_ms, edit("src/old.rs")),
+        (&sessions[1], "PostToolUse", "Read", now_ms - day_ms, edit("src/read.rs")),
+        (&sessions[1], "PreToolUse", "Edit", now_ms - day_ms, edit("src/pre.rs")),
+    ];
+    for (sid, event_type, tool, ts, payload) in &events {
+        sqlx_core::query::query(
+            "INSERT INTO activity.assistant_events (session_id, event_type, tool_name, ts, payload)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(sid)
+        .bind(event_type)
+        .bind(tool)
+        .bind(ts)
+        .bind(payload)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+
+    let got = s.get_hotspots(&pid, 30).await;
+
+    sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = ANY($1)")
+        .bind(&sessions)
+        .execute(s.pool())
+        .await
+        .ok();
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE workspace_id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .ok();
+    s.delete_workspace(&pid).await.ok();
+
+    let rows = got.unwrap();
+    let files: Vec<(&str, i64, i64)> = rows
+        .iter()
+        .map(|r| (r["file_path"].as_str().unwrap(), r["edit_count"].as_i64().unwrap(), r["correction_count"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(files, vec![("src/a.rs", 3, 1)], "{rows:?}");
+}

@@ -56,9 +56,17 @@ compose the sensei page from them. The schema payload gains what Overview counts
 (enums, procedures, views) where it lacks them.
 
 ## S4 — load time
-Workspace window and Metrics page: measured endpoint timings, EXPLAIN evidence, then
-indexes (via dbd reconcile) / query rewrites / parallel loads. Findings first, fixes
-red-first, before/after timings recorded here.
+Measured 2026-11-02 on the `sensei` workspace (host load average ~100: a VM at ~1300% CPU,
+so buffers, not wall time, are the steady measure). Fixes red-first; before → after.
+
+| # | Finding | Fix | Before → after |
+|---|---|---|---|
+| 1 | `/hotspots` (workspace window waits on it): `to_timestamp(ts)` filter, seq scan of 543k events + payload detoast | partial index `assistant_events_file_edits_idx`, filter on `ts` itself | 77.6 s · 290k buffers → 54 ms · 5.3k; endpoint 0.15 s ✅ |
+| 2 | every per-workspace metrics read aggregates all workspaces (correlated `workspace_id` subquery in `workspace_metrics`, 7k loops) | `workspace_metric_daily` joins a shared repository→workspace pick | 42k → 1.2k buffers (36×), 0-row diff (measured on temp views) |
+| 3 | `/metrics` narrative: 28 sequential `UPDATE narration_cache … RETURNING` per GET | one batched statement | median 1.37 s each in the slow log |
+| 4 | Metrics page: 27-request second wave, one series per metric | return the dated daily series in `/metrics` | removes 27 requests and a sequential round |
+| 5 | drill-down awaits `/metrics` before the series | load both at once; rows once per workspace in a layout | one round fewer |
+| 6 | workspace window loads all 133 workspaces + 133 folder queries to show one | `GET /api/workspaces/{id}` | 4–11 s → one row |
 
 ## S5 — dōjō sync handoff to Muse
 `docs/plan/dojo-sync-handoff.md`: repository, metrics and diagram sync divided into
