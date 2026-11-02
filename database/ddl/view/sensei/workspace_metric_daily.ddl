@@ -2,7 +2,7 @@ set search_path to sensei, extensions;
 
 create or replace view workspace_metric_daily
     as
-select pm.workspace_id
+select rw.workspace_id
      , m.key          as metric
      , pm.computed_on as date
      , case
@@ -24,7 +24,7 @@ select pm.workspace_id
            then sum(pm.value)
          when m.type = 'duration'
            then avg(pm.value)
-         else (array_agg(pm.value order by pm.repository_id nulls last))[1]
+         else (array_agg(pm.value order by pm.repository_id nulls last, pm.modified_at desc, pm.id))[1]
        end            as value
      , case
          -- Same guard. Writing `numerator: 0, denominator: 0` for a metric that
@@ -32,22 +32,27 @@ select pm.workspace_id
          -- roll-ups would then re-derive from.
          when m.type in ('ratio', 'pct')
               and bool_or(pm.props ? 'denominator')
-           then (array_agg(pm.props order by pm.repository_id nulls last))[1]
+           then (array_agg(pm.props order by pm.repository_id nulls last, pm.modified_at desc, pm.id))[1]
                 || jsonb_build_object(
                      'numerator'
                    , coalesce(sum((pm.props->>'numerator')::numeric), 0)
                    , 'denominator'
                    , coalesce(sum((pm.props->>'denominator')::numeric), 0))
-         else (array_agg(pm.props order by pm.repository_id nulls last))[1]
+         else (array_agg(pm.props order by pm.repository_id nulls last, pm.modified_at desc, pm.id))[1]
        end            as props
      , m.type
      , m.direction
-  from sensei.workspace_metrics pm
+  -- The store and the one-owner pick, joined — not read through workspace_metrics,
+  -- whose per-row subquery kept a workspace filter from reaching the store (every
+  -- workspace's metrics were pooled, then filtered: 42k buffers per read).
+  from sensei.repository_metrics  pm
+  left join sensei.repository_workspace rw
+    on rw.repository_id = pm.repository_id
   join sensei.metrics         m
     on m.id           = pm.metric_id
  where pm.grain      = 'daily'
    and pm.scope      = 'user'
- group by pm.workspace_id, m.key, pm.computed_on, m.type, m.direction;
+ group by rw.workspace_id, m.key, pm.computed_on, m.type, m.direction;
 
 comment on view workspace_metric_daily is
 'Base roll-up view: workspace x metric x date, POOLING the repo-grain value store up
@@ -77,7 +82,8 @@ UNCHANGED.
 
 - metric: the stable slug from metrics.key
 - date: workspace_metrics.computed_on (the date the value is FOR)
-- props: the representative repo row (array_agg order by repository_id nulls last)[1],
+- props: the representative repo row (array_agg order by repository_id nulls last,
+  then its latest-written row — one repository may hold a row per commit on a day)[1],
   with numerator/denominator OVERWRITTEN by the pooled sums for ratio/pct so downstream
   roll-ups re-derive from sums instead of averaging; props.explainer and other keys are
   preserved from the representative row
