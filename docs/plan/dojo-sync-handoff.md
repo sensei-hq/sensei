@@ -208,6 +208,11 @@ without an active or trialing subscription) — do not change it.
   same section. The current plan reads **Free** when there is no billing account (today "No
   billing account yet"). The copy says free where public, paid where private (today "free where
   public or personal", which D46 overrules).
+- Copy that contradicts D46 today: `dojo/src/lib/components/screens/ScrBilling.svelte` (lines 8,
+  34) and `dojo/src/lib/components/kit/types.ts:584` say "free where public or personal"; the
+  seeded `not_subscribed` reason reads "No active subscription for this organization", wrong for a
+  personal dōjō (asserted by `dojo/src/lib/components/screens/sharing.spec.ts:51`; the seed is the
+  reason-code import — change it there and converge with `dbd import`, never by hand).
 - Daemon/app: retire `sensei.repositories.visibility` as a gate. `PATCH /api/repositories/{key}`
   writes the dōjō election (`/v1/you/repositories/election`) where the person may change it and
   answers 409 where they may not; the app shows the sync toggle only where `configurable_by_me`.
