@@ -199,6 +199,19 @@ describe('WorkspacesSectionState', () => {
     expect(s.roleError).toContain('Bad Request');
   });
 
+  it('says a refused save through the shared Notice: what failed, then why', async () => {
+    const api = {
+      ...okApi([workspace({ ...sensei, folders: [folder({ id: 'root', kind: 'git', role: 'library' })] })]),
+      tryUpdateFolder: async () => ({ ok: false as const, error: { status: 400, message: 'Bad Request' } }),
+    };
+    const s = new WorkspacesSectionState();
+    await s.load(api);
+    expect(s.saveNotice).toBeNull();
+    await s.setRole(api, 'root', 'quality');
+    expect(s.saveNotice).toMatchObject({ tone: 'fault', title: expect.stringMatching(/^Couldn't save the role for /) });
+    expect(s.saveNotice!.detail).toContain('Bad Request');
+  });
+
   it('filters the placed and unplaced lists by the search query', async () => {
     const stale = workspace({ id: 'stale', name: 'old-thing', folders: [] });
     const s = new WorkspacesSectionState();

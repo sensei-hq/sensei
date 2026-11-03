@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, SubTabs, InboxRow, EmptyState, Banner } from '$lib/components/kit';
+	import { Screen, Notice } from '@sensei/ui';
+	import { SectionHead, SubTabs, InboxRow, EmptyState } from '$lib/components/kit';
+	import { inboxUnreachableNotice } from '$lib/dojo-notices';
 	import type { KitInbox, KitRun, KitNavItem } from '$lib/components/kit/types';
 	import { filterInbox } from '$lib/relay-map';
 
@@ -30,6 +31,7 @@
 
 	let filter = $state('needs');
 	const shown = $derived(filterInbox(inbox, filter));
+	const errorNotice = $derived(inboxUnreachableNotice(error));
 	const needTotal = $derived(inbox.reduce((n, r) => n + r.needs, 0));
 </script>
 
@@ -45,8 +47,8 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:px-5 md:py-6">
-		{#if error}
-			<Banner tone="warning" title="Couldn't reach the dōjō">{error}</Banner>
+		{#if errorNotice}
+			<Notice size="panel" {...errorNotice} />
 		{/if}
 
 		{#if !inbox.length}

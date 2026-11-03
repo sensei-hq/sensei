@@ -7,6 +7,7 @@
 // into this dōjō, or as its own. A dōjō's connections (when the api lists them)
 // show each organization's state; sync re-reads with the stored grant. No token
 // ever passes through here. A failure says why and leaves no invented list.
+import { failureNotice } from '@sensei/ui';
 import { DojoApiError } from './dojo-api';
 import {
 	connectNotice,
@@ -48,6 +49,11 @@ export class AzureConnectState {
 	/** `'connect'`, `'list'`, an organization's name or id while acting on it. */
 	busy = $state<string | null>(null);
 	error = $state<string | null>(null);
+
+	/** The failure as a Notice — what the connect panel shows. */
+	get errorNotice() {
+		return failureNotice("Couldn't finish with Azure DevOps", this.error);
+	}
 	/** What the last act came to. */
 	message = $state<string | null>(null);
 	/** The last import's answer — where the organization went. */

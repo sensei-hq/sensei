@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
   import { Button } from '@rokkit/ui';
   import { invalidateAll } from '$app/navigation';
   import { PageHeader, Screen, ScreenState } from '$lib/components';
@@ -65,8 +66,8 @@
       </section>
     {/if}
 
-    {#if intake.phase === 'error'}
-      <p class="text-sm bg-danger-soft text-on-danger-soft border border-danger rounded py-2 px-3 m-0" data-testid="intake-error">{intake.error}</p>
+    {#if intake.notice}
+      <Notice size="panel" {...intake.notice} data-testid="intake-error" />
     {/if}
 
     {#if intake.rec && (intake.phase === 'recommended' || intake.phase === 'recorded')}

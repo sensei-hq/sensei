@@ -9,6 +9,7 @@
 // the `kernel::ProvisionPhase` serde shape, so an unrecognised phase degrades to
 // a neutral label rather than crashing.
 
+import { failureNotice } from '@sensei/ui';
 import { failureReason, type SenseiApi } from '$lib/api.js';
 import type { ProvisionModel, ProvisionPhase } from '$lib/types.js';
 
@@ -91,6 +92,11 @@ export class LocalModels {
   models = $state<ProvisionModel[]>([]);
   loading = $state(true);
   error = $state<string | null>(null);
+
+  /** Notice props for a failed read or change (packages/ui/notice.js). */
+  get errorNotice() {
+    return failureNotice("Couldn't update the local models", this.error);
+  }
   /** Set when a pull returns 501 — provisioning isn't available in this build. */
   notice = $state<string | null>(null);
 

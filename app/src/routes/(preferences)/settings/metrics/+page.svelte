@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
     import { railIcon } from "../settings-nav";
   import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
@@ -110,10 +111,10 @@
             {:else if !state.selected}
               <p class="text-sm text-ink-soft m-0">Choose a repository to see its metrics.</p>
             {:else}
-              {#if state.error}
+              {#if state.notice}
                 <!-- A write error, with the rows still shown: the reason the switch
                      did not move is more useful beside the switch than in place of it. -->
-                <p class="text-xs text-danger mb-3 mt-0" data-write-error>{state.error}</p>
+                <div class="mb-3"><Notice size="inline" expanded {...state.notice} data-write-error /></div>
               {/if}
               {#if state.blockedReason}
                 <!-- The controller distinguishes the two causes — no remote vs nobody

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ScanWorkspaceState, ScanActivityState, commonParent, pollStep, triggerScans } from './scan-state.svelte.js';
+import { ScanWorkspaceState, ScanActivityState, ScanState, commonParent, pollStep, triggerScans } from './scan-state.svelte.js';
 import type { ScanWorkspace, ScanWorkspaceFolder, ActivityEvent } from './types.js';
 
 // ── Factories ────────────────────────────────────────────────────────────────
@@ -404,5 +404,14 @@ describe('triggerScans', () => {
     await expect(triggerScans({ tryScanFolder }, [root('/a', false), root('/c', false)]))
       .rejects.toThrow(/\/c.*Service Unavailable/);
     expect(tryScanFolder).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('ScanState.notice', () => {
+  it('a failed scan: a fault Notice with the reason', () => {
+    const st = new ScanState();
+    expect(st.notice).toBeNull();
+    st.error = 'daemon unreachable';
+    expect(st.notice).toEqual({ tone: 'fault', title: 'The scan failed', detail: 'daemon unreachable' });
   });
 });

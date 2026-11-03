@@ -189,3 +189,12 @@ describe('UpgradeActions', () => {
     expect(actions.isBusy('u1')).toBe(false);
   });
 });
+
+describe('UpgradeActions.notice', () => {
+  it('an action that did not land: a fault Notice', () => {
+    const a = new UpgradeActions(mockApi({}), async () => {});
+    expect(a.notice).toBeNull();
+    a.error = 'forbidden';
+    expect(a.notice).toEqual({ tone: 'fault', title: "Couldn't apply that upgrade", detail: 'forbidden' });
+  });
+});

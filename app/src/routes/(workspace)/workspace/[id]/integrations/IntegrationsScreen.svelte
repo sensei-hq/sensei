@@ -3,6 +3,8 @@
   // PRESENTATIONAL: every decision, word and request is integrations-state's;
   // this renders it and reports clicks.
   import { PageHeader, Screen } from '$lib/components';
+  import { Button } from '@rokkit/ui';
+  import { Notice } from '@sensei/ui';
   import ModalShell from '$lib/components/ModalShell.svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { CREATE_TOKEN_URL, LEVELS, METRICS, type TrackerIntegration } from './integrations-state.svelte.js';
@@ -10,11 +12,9 @@
   let { screen }: { screen: TrackerIntegration } = $props();
 
   const ALERT_ID = 'tracker-alert';
-  let alertEl = $state<HTMLElement | null>(null);
-
   // A failure takes focus, so it is read out and acted on at once.
   $effect(() => {
-    if (screen.alertSeq > 0 && alertEl) alertEl.focus();
+    if (screen.alertSeq > 0) document.getElementById(ALERT_ID)?.focus();
   });
 
   /** The alert describes the field it concerns; otherwise the field's own help. */
@@ -26,9 +26,10 @@
     e.preventDefault();
     void openUrl(href).catch(() => window.open(href, '_blank', 'noopener'));
   }
+  function openLink(href: string) {
+    void openUrl(href).catch(() => window.open(href, '_blank', 'noopener'));
+  }
 
-  const button =
-    'rounded-md border border-paper-edge px-3 py-1.5 text-sm text-ink hover:bg-paper-mute disabled:opacity-50';
   const input =
     'w-full px-3 py-2 border border-paper-edge rounded-md bg-paper-mute text-ink text-sm outline-none focus:border-focus-ring';
 </script>
@@ -76,37 +77,27 @@
   <div class="flex max-w-[640px] flex-col gap-5 px-6 py-6">
     <p role="status" aria-live="polite" class="m-0 min-h-[1lh] text-sm text-ink-mute">{screen.statusText}</p>
 
-    {#if screen.alert}
-      <div
+    {#if screen.alertNotice}
+      <Notice
+        size="panel"
+        {...screen.alertNotice}
         id={ALERT_ID}
-        bind:this={alertEl}
-        role="alert"
-        tabindex="-1"
-        class="rounded-md border border-danger bg-danger-soft px-3 py-2 text-sm text-ink outline-none"
-      >
-        {screen.alert.text}
-        {#if screen.alert.link}
-          {#if screen.alert.link.href.startsWith('https://')}
-            <a
-              href={screen.alert.link.href}
-              class="text-primary underline"
-              onclick={(e) => external(e, screen.alert!.link!.href)}>{screen.alert.link.label}</a
-            >
-          {:else}
-            <a href={screen.alert.link.href} class="text-primary underline">{screen.alert.link.label}</a>
-          {/if}
-        {/if}
-      </div>
+        tabindex={-1}
+        secondary={screen.alert?.link
+          ? screen.alert.link.href.startsWith('https://')
+            ? { label: screen.alert.link.label, onclick: () => openLink(screen.alert!.link!.href) }
+            : { label: screen.alert.link.label, href: screen.alert.link.href }
+          : undefined}
+      />
     {/if}
 
     {#if screen.view === 'loading'}
       <p class="m-0 text-sm text-ink-mute">Reading the connection…</p>
     {:else if screen.view === 'daemon_error'}
-      <div data-view="daemon_error" class="flex flex-col gap-3 rounded-md border border-paper-edge bg-paper-soft p-4">
-        <p class="m-0 text-sm text-danger">{screen.loadError}</p>
-        <div>
-          <button type="button" class={button} data-action="retry" onclick={() => screen.load()}>Retry</button>
-        </div>
+      <div data-view="daemon_error">
+        {#if screen.loadNotice}
+          <Notice size="panel" {...screen.loadNotice} primary={{ label: 'Retry', onclick: () => screen.load(), name: 'retry' }} />
+        {/if}
       </div>
     {:else}
       {#each screen.groups as group (group.level)}
@@ -206,33 +197,36 @@
                 {/if}
               </div>
               <div class="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  class={button}
+                <Button
+                  style="outline"
+                  size="sm"
                   data-action="sync"
                   disabled={screen.busy !== null}
                   onclick={() => screen.sync(tracker.id)}
-                  >{screen.busy === 'sync' && screen.busyTracker === tracker.id ? 'Syncing…' : 'Sync now'}</button
-                >
-                <button
-                  type="button"
-                  class={button}
+                  label={screen.busy === 'sync' && screen.busyTracker === tracker.id ? 'Syncing…' : 'Sync now'}
+                />
+                <Button
+                  style="outline"
+                  size="sm"
                   data-action="replace"
                   disabled={screen.busy !== null}
-                  onclick={() => screen.startReplace(tracker)}>Replace token</button
-                >
-                <button
-                  type="button"
-                  class="{button} text-danger"
+                  onclick={() => screen.startReplace(tracker)}
+                  label="Replace token"
+                />
+                <Button
+                  variant="danger"
+                  style="outline"
+                  size="sm"
                   data-action="disconnect"
                   disabled={screen.busy !== null}
-                  onclick={(e) => {
+                  onclick={(e: MouseEvent) => {
                     // Focus it first so closing the dialog returns here, also where a
                     // click does not focus buttons (WebKit).
                     (e.currentTarget as HTMLElement).focus();
                     screen.askDisconnect(tracker);
-                  }}>Disconnect</button
-                >
+                  }}
+                  label="Disconnect"
+                />
               </div>
             </div>
           {/each}
@@ -241,7 +235,7 @@
 
       {#if screen.view === 'connected' && !screen.showForm}
         <div>
-          <button type="button" class={button} data-action="add" onclick={() => screen.startAdd()}>Add a board</button>
+          <Button style="outline" size="sm" data-action="add" onclick={() => screen.startAdd()} label="Add a board" />
         </div>
       {/if}
 
@@ -296,14 +290,16 @@
           {/if}
 
           <div class="flex flex-col gap-3">
-            <button
-              type="button"
-              class="self-start bg-transparent p-0 text-xs text-ink-mute underline"
-              aria-expanded={screen.advanced}
-              aria-controls="tracker-advanced"
-              onclick={() => (screen.advanced = !screen.advanced)}
-              >{screen.advanced ? 'Use a board URL instead' : 'Advanced ▸'}</button
-            >
+            <div>
+              <Button
+                style="link"
+                size="sm"
+                aria-expanded={screen.advanced}
+                aria-controls="tracker-advanced"
+                onclick={() => (screen.advanced = !screen.advanced)}
+                label={screen.advanced ? 'Use a board URL instead' : 'Advanced ▸'}
+              />
+            </div>
             {#if screen.advanced}
               <div id="tracker-advanced" class="flex flex-col gap-3">
                 {@render field(
@@ -350,26 +346,22 @@
           </p>
 
           <div class="flex gap-2">
-            <button
+            <Button
               type="submit"
-              class="rounded-md bg-primary px-3 py-1.5 text-sm text-on-primary disabled:opacity-50"
+              variant="primary"
+              size="sm"
               data-action="connect"
               disabled={!screen.canConnect || screen.busy !== null}
-            >
-              {screen.busy === 'connect'
+              label={screen.busy === 'connect'
                 ? 'Checking credentials and board…'
                 : screen.replacing !== null
                   ? 'Replace token'
                   : 'Connect'}
-            </button>
+            />
             {#if screen.replacing !== null}
-              <button type="button" class={button} data-action="cancel-replace" onclick={() => screen.cancelReplace()}
-                >Cancel</button
-              >
+              <Button style="outline" size="sm" data-action="cancel-replace" onclick={() => screen.cancelReplace()} label="Cancel" />
             {:else if screen.adding}
-              <button type="button" class={button} data-action="cancel-add" onclick={() => screen.cancelAdd()}
-                >Cancel</button
-              >
+              <Button style="outline" size="sm" data-action="cancel-add" onclick={() => screen.cancelAdd()} label="Cancel" />
             {/if}
           </div>
         </form>
@@ -392,14 +384,7 @@
     This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and Jira itself is not changed.
   </p>
   <div class="flex justify-end gap-2">
-    <button type="button" class={button} data-action="cancel-disconnect" onclick={() => screen.cancelDisconnect()}
-      >Cancel</button
-    >
-    <button
-      type="button"
-      class="rounded-md bg-danger px-3 py-1.5 text-sm text-on-primary"
-      data-action="confirm-disconnect"
-      onclick={() => screen.confirmDisconnect()}>Disconnect</button
-    >
+    <Button style="outline" size="sm" data-action="cancel-disconnect" onclick={() => screen.cancelDisconnect()} label="Cancel" />
+    <Button variant="danger" size="sm" data-action="confirm-disconnect" onclick={() => screen.confirmDisconnect()} label="Disconnect" />
   </div>
 </ModalShell>

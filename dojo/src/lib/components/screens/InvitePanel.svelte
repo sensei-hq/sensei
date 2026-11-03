@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button, Toggle } from '@rokkit/ui';
+	import { Notice } from '@sensei/ui';
 	import { MEMBER_ROLES, MEMBERSHIP_KINDS } from '$lib/admin-view';
 	import type { InviteState, InviteAccess, InviteKind } from '$lib/invite-state.svelte';
 
@@ -70,8 +71,8 @@
 				label="Relationship"
 			/>
 		</div>
-		{#if invite.error}
-			<div class="text-danger text-sm" role="alert">{invite.error}</div>
+		{#if invite.errorNotice}
+			<Notice size="inline" expanded {...invite.errorNotice} />
 		{/if}
 		<div class="flex gap-2">
 			<Button variant="primary" size="sm" disabled={invite.sending} onclick={() => invite.submit()}>Send invite</Button>

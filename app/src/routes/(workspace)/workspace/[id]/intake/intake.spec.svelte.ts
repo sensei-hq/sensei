@@ -87,6 +87,8 @@ describe('IntakeState', () => {
     await s.recommend(api);
     expect(s.phase).toBe('error');
     expect(s.error).toBe('boom');
+    // …through the shared Notice: which step failed, then why.
+    expect(s.notice).toEqual({ tone: 'fault', title: "Couldn't classify the chunk", detail: 'boom' });
   });
 
   it('reset returns to the describe phase', async () => {

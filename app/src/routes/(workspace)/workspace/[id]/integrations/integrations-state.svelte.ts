@@ -7,6 +7,7 @@
 // "not connected" — that would invite connecting a board the daemon already
 // has. And the token lives only in `token`, only until its request returns: it
 // is never stored, logged, or read back.
+import { failureNotice } from '@sensei/ui';
 import type { ApiResult } from '$lib/api.js';
 import type {
   TrackerConnection,
@@ -164,6 +165,11 @@ export class TrackerIntegration {
   /** Why the read failed, in the daemon-error view. */
   loadError = $state<string | null>(null);
 
+  /** Notice props for the daemon-error view (packages/ui/notice.js). */
+  get loadNotice() {
+    return failureNotice("Couldn't load this workspace's trackers", this.loadError);
+  }
+
   /** The level the new board serves: the user's choice, never defaulted. */
   level = $state<TrackerLevel | null>(null);
   boardUrl = $state('');
@@ -185,6 +191,12 @@ export class TrackerIntegration {
   /** The live `role="status"` line. */
   statusText = $state('');
   alert = $state<TrackerAlert | null>(null);
+  /** Notice props for the alert (packages/ui/notice.js). The alert's text is
+   *  already a sentence written for the reader (lib/tracker-errors.ts), so it is
+   *  the title; its code is for support. */
+  get alertNotice() {
+    return this.alert ? { tone: 'fault' as const, title: this.alert.text, code: this.alert.code } : null;
+  }
   /** Bumped on every new alert so the view can move focus to it. */
   alertSeq = $state(0);
   /** The form is open beside existing boards, for another one. */

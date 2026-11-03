@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
+	import LoadError from '../kit/LoadError.svelte';
+	import { Screen, Notice } from '@sensei/ui';
+	import { actionFailedNotice } from '$lib/dojo-notices';
 	import { SectionHead, Btn, Icon, Chip, ListSection, RuleRow } from '$lib/components/kit';
 	import type { KitRulePack } from '$lib/components/kit/types';
 	import { createRulePacks } from '$lib/rulepacks-state.svelte';
@@ -31,6 +33,7 @@
 		 *  row flips back. */
 		onToggle?: (pack: KitRulePack, adopt: boolean) => void | Promise<boolean | void>;
 	} = $props();
+	const errorNotice = $derived(actionFailedNotice(error));
 
 	// Seed the adopt-toggle state ONCE from the page-load props (a navigation
 	// re-mounts the screen), so the adopted/available split persists as the
@@ -67,11 +70,11 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-		{#if error}
-			<p role="alert" class="text-sm text-danger m-0">{error}</p>
+		{#if errorNotice}
+			<Notice size="inline" expanded {...errorNotice} />
 		{/if}
 		{#if loadError}
-			<p role="alert" class="text-sm text-danger m-0">Could not load the rule packs — {loadError}</p>
+			<LoadError what="the rule packs" error={loadError} />
 		{:else}
 		<ListSection
 			icon="check-circle"

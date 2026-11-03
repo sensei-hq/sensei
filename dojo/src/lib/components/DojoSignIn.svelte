@@ -4,11 +4,14 @@
 	import { providers } from '$kavach/providers';
 	import { onMount } from 'svelte';
 	import { signinErrorFrom } from '$lib/signin-error';
+	import { Notice } from '@sensei/ui';
+	import { signInNotice } from '$lib/dojo-notices';
 
 	let selfHost = $state(false);
 	let selfHostUrl = $state('dojo.acme.internal');
 	let authMsg = $state<string | null>(null);
 	let authError = $state(false);
+	const authNotice = $derived(signInNotice(authMsg, authError));
 
 	// kavach's AuthProvider owns the whole sign-in per provider — an OAuth redirect
 	// (applying the provider's configured `scopes`, e.g. github → read:org for the
@@ -129,13 +132,8 @@
 					/>
 				{/each}
 			</div>
-			{#if authMsg}
-				<div
-					class="mt-3 text-center text-xs {authError ? 'text-danger' : 'text-success'}"
-					role="status"
-				>
-					{authMsg}
-				</div>
+			{#if authNotice}
+				<div class="mt-3"><Notice size="inline" expanded {...authNotice} /></div>
 			{:else}
 				<div class="text-ink-faint mt-3 text-center text-xs">
 					GitHub or Microsoft brings your orgs; magic link is for everyone else.

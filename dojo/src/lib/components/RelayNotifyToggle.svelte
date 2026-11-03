@@ -1,6 +1,7 @@
 <script lang="ts">
 	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { Button } from '@rokkit/ui';
+	import { Notice, failureNotice } from '@sensei/ui';
 	import type { RelayNotify } from '$lib/relay/relay-notify.svelte';
 
 	// "Notify me" in the relay inbox header. Renders RelayNotify's view and
@@ -9,6 +10,7 @@
 	let { notify, tenantKeys }: { notify: RelayNotify; tenantKeys: string[] } = $props();
 
 	const view = $derived(notify.view);
+	const errorNotice = $derived(view.kind === 'button' ? failureNotice("Couldn't turn on notifications", view.error) : null);
 </script>
 
 {#if view.kind === 'on'}
@@ -24,8 +26,8 @@
 			<KanjiToken char="鈴" size="inherit" toneClass="" class="text-xs" />
 			{view.buttonLabel}
 		</Button>
-		{#if view.error}
-			<span class="text-danger text-xs" style="white-space: nowrap">{view.error}</span>
+		{#if errorNotice}
+			<Notice size="inline" expanded bare {...errorNotice} />
 		{/if}
 	</div>
 {/if}

@@ -184,3 +184,16 @@ describe('InstrumentsState — health', () => {
     expect(s.holisticFtr?.data).toEqual({ rate: 0.5 });
   });
 });
+
+describe('notices — through the shared Notice', () => {
+  it('each failure names what failed; the reason it holds is the detail', () => {
+    const s = new InstrumentsState('playground');
+    expect([s.toolNotice, s.workspacesNotice, s.serversNotice, s.serverFormNotice, s.replayDetailNotice]).toEqual([null, null, null, null, null]);
+    s.toolError = 'timeout';
+    s.serverFormError = 'name taken';
+    s.replayDetailError = 'gone';
+    expect(s.toolNotice).toEqual({ tone: 'fault', title: "The call didn't go through", detail: 'timeout' });
+    expect(s.serverFormNotice).toEqual({ tone: 'fault', title: "Couldn't add that server", detail: 'name taken' });
+    expect(s.replayDetailNotice).toEqual({ tone: 'fault', title: "Couldn't read this session's tool calls", detail: 'gone' });
+  });
+});

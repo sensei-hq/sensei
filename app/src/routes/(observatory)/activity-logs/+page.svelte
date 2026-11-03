@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
   import { clock } from '$lib/clock.svelte.js';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -78,8 +79,8 @@
          how long a pass takes. Schedule comes from `sensei.schedules` and is
          editable via PATCH /api/tasks/scheduled/{name}; a failing worker shows
          its last error under its name. -->
-    {#if data.tasksError}
-      <p class="text-sm text-danger px-6 py-3 m-0 border-b border-paper-edge" data-tasks-error>{data.tasksError}</p>
+    {#if data.tasksNotice}
+      <div class="px-6 py-3 border-b border-paper-edge"><Notice size="panel" {...data.tasksNotice} data-tasks-error /></div>
     {:else if data.tasks.length > 0}
       <section class="border-b border-paper-edge" data-testid="scheduled-tasks">
         <div class="flex items-baseline gap-2 px-6 pt-4 pb-2">
@@ -222,8 +223,8 @@
     </div>
   {/snippet}
   <!-- Rows -->
-  {#if data.rowsError}
-    <p class="text-sm text-danger px-6 py-6 m-0" data-logs-error>{data.rowsError}</p>
+  {#if data.rowsNotice}
+    <div class="px-6 py-6"><Notice size="panel" {...data.rowsNotice} data-logs-error /></div>
   {:else if data.rows.length === 0}
     <div class="p-6">
       <EmptyState

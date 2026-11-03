@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
   /**
    * AssistantCard — fully controlled card for the setup wizard's
    * Assistants step. Ports docs/mockups/lib/assistant-card.jsx to
@@ -36,7 +37,6 @@
   const parts = $derived(view.parts);
   const error = $derived(view.error);
   const busy = $derived(view.busy);
-  const showError = $derived(view.showError);
   const status = $derived(view.header);
 
   /** Direct click on the switch. A no-op while busy or with nothing installed —
@@ -132,18 +132,8 @@
     {/each}
   </div>
 
-  {#if showError}
-    <div class="error-block" role="alert">
-      <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true" class="error-icon">
-        <path d="M4.5 4.5 L11.5 11.5 M11.5 4.5 L4.5 11.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
-      </svg>
-      <div class="error-text">
-        Couldn’t configure {name} — <span class="font-mono error-message">{error}</span>
-      </div>
-      {#if onRetry}
-        <button type="button" class="retry" onclick={() => onRetry?.()}>Retry →</button>
-      {/if}
-    </div>
+  {#if view.errorNotice}
+    <Notice size="panel" {...view.errorNotice} primary={onRetry ? { label: 'Retry', onclick: () => onRetry?.(), name: 'retry' } : undefined} />
   {/if}
 </div>
 
@@ -274,41 +264,6 @@
     display: inline-block;
   }
 
-  .error-block {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 12px 12px;
-    border-radius: 7px;
-    background: var(--danger-soft);
-    border: 1px solid color-mix(in oklch, var(--danger) 32%, transparent);
-  }
-  .error-icon {
-    color: var(--danger);
-    margin-top: 1px;
-    flex-shrink: 0;
-  }
-  .error-text {
-    min-width: 0;
-    flex: 1;
-    font-size: 12.5px;
-    color: var(--ink-soft);
-    line-height: 1.45;
-  }
-  .error-message {
-    color: var(--danger);
-  }
-  .retry {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--primary);
-    background: transparent;
-    border: 0;
-    cursor: pointer;
-    flex-shrink: 0;
-    margin-top: 1px;
-    padding: 0;
-  }
 
   .spin {
     animation: zs-spin 0.9s linear infinite;

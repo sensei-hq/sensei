@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { decideRecommendation, type DecideApi } from './overview-view.svelte.js';
+import { decideRecommendation, RecommendationDecision, type DecideApi } from './overview-view.svelte.js';
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const down = { ok: false as const, error: { status: 503, message: 'Service Unavailable' } };
@@ -56,5 +56,40 @@ describe('decideRecommendation', () => {
     expect((await decideRecommendation(api({ tryMaterializeRecommendation: async () => down }).a, 'p', 'r', 'accept', () => true)).error).toBe('Service Unavailable');
     expect((await decideRecommendation(api({ tryPreviewRecommendation: async () => ok({ materializable: false }), tryAcceptWorkspaceRecommendation: async () => down }).a, 'p', 'r', 'accept', () => true)).error).toBe('Service Unavailable');
     expect(await decideRecommendation(api({ tryRejectWorkspaceRecommendation: async () => down }).a, 'p', 'r', 'reject', () => true)).toEqual({ done: false, error: 'Service Unavailable' });
+  });
+});
+
+// The decision's state — moved out of +page.svelte so the page only renders
+// (frontend guidelines §2): in flight, why it did not land, and what to say.
+describe('RecommendationDecision', () => {
+  it('records a decision, reloading only when it landed', async () => {
+    const { a } = api();
+    const reload = vi.fn(async () => {});
+    const d = new RecommendationDecision(a, reload, () => true);
+    await d.decide('p', 'r', 'reject');
+    expect(reload).toHaveBeenCalledOnce();
+    expect([d.deciding, d.error, d.notice]).toEqual([false, null, null]);
+  });
+
+  it('a decision that did not land is said, as a fault Notice — and nothing reloads', async () => {
+    const { a } = api({ tryRejectWorkspaceRecommendation: async () => down });
+    const reload = vi.fn(async () => {});
+    const d = new RecommendationDecision(a, reload, () => true);
+    await d.decide('p', 'r', 'reject');
+    expect(reload).not.toHaveBeenCalled();
+    expect(d.notice).toEqual({ tone: 'fault', title: "Couldn't record that decision", detail: 'Service Unavailable' });
+  });
+
+  it('a second press while one is in flight is ignored', async () => {
+    let release!: () => void;
+    const { a, calls } = api({ tryRejectWorkspaceRecommendation: () => new Promise((r) => (release = () => r(ok({ ok: true })))) });
+    const d = new RecommendationDecision(a, async () => {}, () => true);
+    const first = d.decide('p', 'r', 'reject');
+    await d.decide('p', 'r', 'reject');
+    expect(d.deciding).toBe(true);
+    release();
+    await first;
+    expect(calls.filter((c) => c === 'reject')).toHaveLength(0); // the stub resolves without recording
+    expect(d.deciding).toBe(false);
   });
 });

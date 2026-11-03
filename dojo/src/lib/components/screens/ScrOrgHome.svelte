@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
+	import { Screen, Notice } from '@sensei/ui';
+	import { needsUnreadNotice } from '$lib/dojo-notices';
 	import {
 		SectionHead,
 		StatBadge,
@@ -41,6 +42,7 @@
 		onOpenWorkspace?: (p: KitWorkspace) => void;
 		onAct?: (item: KitNeed, action: NeedsAction) => void;
 	} = $props();
+	const needsNotice = $derived(needsUnreadNotice(needsError));
 </script>
 
 <Screen>
@@ -75,8 +77,8 @@
 			</div>
 		{/if}
 
-		{#if needsError}
-			<p class="text-danger m-0 text-xs" data-needs-error>Needs a maintainer — {needsError}</p>
+		{#if needsNotice}
+			<div data-needs-error><Notice size="inline" expanded {...needsNotice} /></div>
 		{:else}
 			<NeedsYouBand items={needs} {resolved} title="Needs a maintainer" {onAct} />
 		{/if}

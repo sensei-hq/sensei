@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
@@ -202,8 +203,8 @@
           local rules and memory.
         </p>
 
-        {#if actions.error}
-          <p class="text-xs text-danger mb-3" data-dojo-error>{actions.error}</p>
+        {#if actions.notice}
+          <div class="mb-3"><Notice size="inline" expanded {...actions.notice} data-dojo-error /></div>
         {/if}
 
         {#if data.dojoError}

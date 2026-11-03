@@ -29,6 +29,9 @@ describe('workspace services — the per-workspace toggle', () => {
     await s.toggle(api({ trySetWorkspaceServiceScope: vi.fn().mockResolvedValue(fail(503, 'Service Unavailable')) }), 'p1', service('svc', false), reload);
     expect(s.toggleError('svc')).toMatch(/Service Unavailable/);
     expect(s.toggleError('other')).toBeNull();
+    // …through the shared Notice: which service, then why.
+    expect(s.toggleNotice('svc', 'GitHub MCP')).toMatchObject({ tone: 'fault', title: "Couldn't switch GitHub MCP" });
+    expect(s.toggleNotice('other', 'x')).toBeNull();
     expect(s.isToggling('svc')).toBe(false);
     expect(reload).not.toHaveBeenCalled();
   });

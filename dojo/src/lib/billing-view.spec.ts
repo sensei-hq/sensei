@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { monthlyTotal, relayTone, tierCtaLabel } from './billing-view';
+import { monthlyTotal, attachNotice, tierAction } from './billing-view';
 
-// The admin billing helpers — the live monthly-total math + the free-vs-paid
-// relay tone + the tier CTA label. Pure functions, so they assert without a DOM.
+// The admin billing helpers — the estimate math, the tier actions and what the
+// screen says about attaching a plan. Pure functions, so they assert without a DOM.
 
 describe('monthlyTotal — active contributors × per-seat', () => {
 	it('multiplies billable seats by the per-seat price', () => {
-		expect(monthlyTotal({ seatsActive: 34, perSeat: 12 })).toBe(408);
+		expect(monthlyTotal({ seatsActive: 18, perSeat: 12 })).toBe(216);
 	});
 
 	it('is zero when there are no billable seats', () => {
@@ -17,28 +17,25 @@ describe('monthlyTotal — active contributors × per-seat', () => {
 	});
 });
 
-describe('relayTone — free vs paid', () => {
-	it('reads a free row as success with the individuals label', () => {
-		const t = relayTone(true);
-		expect(t.text).toBe('text-success');
-		expect(t.soft).toBe('bg-success-soft');
-		expect(t.label).toBe('free · individuals');
+describe('tierAction — each plan card\'s button', () => {
+	it('the current plan has none', () => {
+		expect(tierAction('free', 'free')).toBeNull();
+		expect(tierAction('org', 'org')).toBeNull();
 	});
 
-	it('reads a paid row as accent with the team label', () => {
-		const t = relayTone(false);
-		expect(t.text).toBe('text-accent');
-		expect(t.label).toBe('paid · team');
+	it('on Free, Org offers to attach; on Org, Free offers to move back', () => {
+		expect(tierAction('org', 'free')).toEqual({ label: 'Attach Org plan', primary: true });
+		expect(tierAction('free', 'org')).toEqual({ label: 'Move to Free', primary: false });
 	});
 });
 
-describe('tierCtaLabel', () => {
-	it('offers a downgrade to the free tier', () => {
-		expect(tierCtaLabel('free')).toBe('Downgrade');
-	});
-
-	it('routes paid tiers to sales', () => {
-		expect(tierCtaLabel('ent')).toBe('Contact sales');
-		expect(tierCtaLabel('team')).toBe('Contact sales');
+describe('attachNotice — what the screen says about changing plan', () => {
+	it('says plan changes open once payments are connected — nothing is charged or attached yet', () => {
+		expect(attachNotice()).toEqual({
+			tone: 'normal',
+			title: 'Plan changes open once payments are connected',
+			detail: 'Until then every organization is on Free: its public repositories sync, and its private ones stay hidden.',
+			code: 'billing_not_connected',
+		});
 	});
 });

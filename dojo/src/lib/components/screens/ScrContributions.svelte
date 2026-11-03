@@ -31,7 +31,9 @@
 </script>
 
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
+	import LoadError from '../kit/LoadError.svelte';
+	import { Screen, Notice } from '@sensei/ui';
+	import { actionFailedNotice } from '$lib/dojo-notices';
 	import { SectionHead, StatBadge, ListSection, KanjiToken, Chip, Btn } from '$lib/components/kit';
 	import type { KitContribution, KitDownstream, KitContribStat } from '$lib/components/kit/types';
 	import { tallyContributions } from '$lib/personal-view';
@@ -63,6 +65,7 @@
 		loadError?: string | null;
 		onPin?: (item: KitDownstream) => void;
 	} = $props();
+	const errorNotice = $derived(actionFailedNotice(error));
 
 	// Tally the stat row off the shared rows so it stays honest against the list
 	// it summarizes; the lifetime `helped` count carries from the fixture stat.
@@ -86,11 +89,11 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-		{#if error}
-			<p role="alert" class="text-sm text-danger m-0">{error}</p>
+		{#if errorNotice}
+			<Notice size="inline" expanded {...errorNotice} />
 		{/if}
 		{#if loadError}
-			<p role="alert" class="text-sm text-danger m-0">Could not load your contributions — {loadError}</p>
+			<LoadError what="your contributions" error={loadError} />
 		{:else}
 		<ListSection icon="upload-square" title="What you've shared" count={mine.length}>
 			{#each mine as c, i (i)}

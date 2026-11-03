@@ -33,7 +33,7 @@ import type {
 	KitIdentity,
 	KitHealth
 } from './types';
-import { BILLING_TIERS, RELAY_ROWS } from '$lib/billing-catalog';
+import { BILLING_TIERS } from '$lib/billing-catalog';
 
 export const me: KitMe = { name: 'Rin Saito', handle: 'rin', avatar: 'R' };
 
@@ -1159,13 +1159,12 @@ export function scopeOwnersFor(slug: string): KitScopeOwner[] {
 
 // Plan & billing — the business model (dojo2-data `billing`).
 export const billing: KitBilling = {
-	plan: 'Team · private',
+	plan: 'Org',
 	perSeat: 12,
 	seatsActive: 34,
 	seatsReadonly: 14,
 	renews: 'Aug 1',
-	tiers: BILLING_TIERS.map((t) => (t.id === 'team' ? { ...t, current: true } : t)),
-	relayRows: RELAY_ROWS,
+	tiers: BILLING_TIERS.map((t) => (t.id === 'org' ? { ...t, current: true } : t)),
 	invoices: [
 		{ d: 'Jul 1, 2026', amt: '$408.00', s: 'paid' },
 		{ d: 'Jun 1, 2026', amt: '$396.00', s: 'paid' },

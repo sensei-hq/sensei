@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
   import { onMount, onDestroy } from 'svelte';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
@@ -42,8 +43,8 @@
   {:else if controller.models.length === 0}
     <p class="text-sm text-ink-mute" data-testid="local-models-empty">No local models configured.</p>
   {:else}
-    {#if controller.error}
-      <p class="text-xs text-danger mb-3" data-testid="local-models-error">{controller.error}</p>
+    {#if controller.errorNotice}
+      <div class="mb-3"><Notice size="inline" expanded {...controller.errorNotice} data-testid="local-models-error" /></div>
     {/if}
     <div class="flex flex-col divide-y divide-paper-edge">
       {#each controller.models as m (m.id)}

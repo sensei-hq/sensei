@@ -1,13 +1,13 @@
 // Map the live `/v1/…/billing` response onto the Plan & billing screen's
 // KitBilling shape. Only what the billing plane knows is shown: the billable seat
 // count (dojo.tenant_seat_usage) and, when a billing account exists, its plan and
-// renewal date. No price, read-only count or invoice exists until a payment
-// provider is wired (D-BILLING), so those are absent — never a mockup's (#106).
-// The tier and relay copy is the product catalog. Pure, so it unit-tests without
-// a DOM.
+// renewal date. With no account the org is on Free (D46). The Org price is the
+// catalog's; no read-only count or invoice exists until a payment provider is
+// wired (D-BILLING), so those are absent — never a mockup's (#106). Pure, so it
+// unit-tests without a DOM.
 import type { KitBilling } from './components/kit/types';
 import type { BillingResponse } from './admin-data';
-import { BILLING_TIERS, RELAY_ROWS } from './billing-catalog';
+import { BILLING_TIERS, ORG_PRICE_PER_CONTRIBUTOR } from './billing-catalog';
 
 /** ISO date → a short "Aug 1" renewal label; passthrough if unparseable.
  *  Formatted in UTC so the label matches the stored calendar day regardless of
@@ -18,23 +18,23 @@ function shortDate(iso: string): string {
 	return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
-/** Capitalize a raw plan key for display ("team" → "Team"). */
-function planLabel(plan: string): string {
-	return plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : plan;
+/** The catalog plan an account's raw plan key is on. "team" was the Org plan's
+ *  old name; anything not Org reads as Free. */
+function planId(plan: string | null): 'free' | 'org' {
+	return plan === 'org' || plan === 'team' ? 'org' : 'free';
 }
 
 /** The screen built from the live response: the seat count always, the plan,
- *  its renewal and the current tier from the account when there is one. Pure. */
+ *  its renewal and the current plan from the account — Free without one. Pure. */
 export function toKitBilling(res: BillingResponse): KitBilling {
-	const plan = res.account?.plan ?? null;
+	const id = planId(res.account?.plan ?? null);
 	return {
-		plan: plan === null ? null : planLabel(plan),
-		perSeat: null,
+		plan: BILLING_TIERS.find((t) => t.id === id)?.name ?? null,
+		perSeat: ORG_PRICE_PER_CONTRIBUTOR,
 		seatsActive: res.usage.seats_used,
 		seatsReadonly: null,
 		renews: res.account?.period_end ? shortDate(res.account.period_end) : null,
-		tiers: BILLING_TIERS.map((t) => ({ ...t, current: t.id === plan })),
-		relayRows: RELAY_ROWS,
+		tiers: BILLING_TIERS.map((t) => ({ ...t, current: t.id === id })),
 		invoices: []
 	};
 }
@@ -49,7 +49,6 @@ export function noBilling(): KitBilling {
 		seatsReadonly: null,
 		renews: null,
 		tiers: BILLING_TIERS,
-		relayRows: RELAY_ROWS,
 		invoices: []
 	};
 }

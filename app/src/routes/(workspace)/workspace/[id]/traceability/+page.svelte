@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { Notice } from '@sensei/ui';
     import { PageHeader, Screen, ScreenState, StatusDot } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
@@ -42,8 +43,8 @@
     </PageHeader>
     {/snippet}
     <div class="px-6 py-6">
-        {#if drift.errorText}
-            <div class="mb-4 text-xs text-danger" data-testid="drift-scan-error">{drift.errorText}</div>
+        {#if drift.notice}
+            <div class="mb-4"><Notice size="inline" expanded {...drift.notice} data-testid="drift-scan-error" /></div>
         {/if}
         {#if data.error}
             <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />

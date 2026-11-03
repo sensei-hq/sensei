@@ -1,9 +1,7 @@
-// Pure presentation helpers for the admin Plan & billing console (ScrBilling,
-// mockup). Side-effect-free (billing state / free flag in → number or token
-// classes out) so the monthly-total math and the free-vs-paid tone unit-test
-// without a DOM and the screen stays declarative. The mockup stored raw
-// `var(--*)` strings; here each tone is a named-token utility CLASS, never a raw
-// oklch.
+// Pure presentation helpers for the admin Plan & billing console (ScrBilling).
+// Side-effect-free (billing state in → numbers, actions and copy out) so the
+// estimate math, the plan actions and the attach notice unit-test without a DOM
+// and the screen stays declarative.
 
 import type { KitBilling } from './components/kit/types';
 
@@ -43,36 +41,26 @@ export function monthlyTotal(b: Pick<KitBilling, 'seatsActive' | 'perSeat'>): nu
 	return b.seatsActive === null || b.perSeat === null ? null : b.seatsActive * b.perSeat;
 }
 
-/** The token tone for a relay free-vs-paid chip. */
-export interface RelayTone {
-	text: string;
-	soft: string;
-	edge: string;
+/** A plan card's button: none on the current plan; on Free, Org offers to
+ *  attach (the primary step); on Org, Free offers to move back. */
+export interface TierAction {
 	label: string;
+	primary: boolean;
 }
 
-const RELAY_FREE: RelayTone = {
-	text: 'text-success',
-	soft: 'bg-success-soft',
-	edge: 'border-success-soft',
-	label: 'free · individuals'
-};
-
-const RELAY_PAID: RelayTone = {
-	text: 'text-accent',
-	soft: 'bg-accent-soft',
-	edge: 'border-accent-soft',
-	label: 'paid · team'
-};
-
-/** The chip tone + label for a relay row (mockup ternary): free rows read as
- *  success ("free · individuals"), paid rows as accent ("paid · team"). */
-export function relayTone(free: boolean): RelayTone {
-	return free ? RELAY_FREE : RELAY_PAID;
+export function tierAction(id: string, current: string): TierAction | null {
+	if (id === current) return null;
+	return id === 'org' ? { label: 'Attach Org plan', primary: true } : { label: 'Move to Free', primary: false };
 }
 
-/** The label for a non-current tier's CTA (mockup: free ⇒ "Downgrade", else
- *  "Contact sales"). The current tier shows no CTA (a "current" chip instead). */
-export function tierCtaLabel(id: string): string {
-	return id === 'free' ? 'Downgrade' : 'Contact sales';
+/** What the screen says about changing plan before a payment provider is
+ *  connected (D-BILLING): the actions are shown, but nothing can be attached or
+ *  charged yet. A Notice (normal tone) — waiting, not failing. */
+export function attachNotice() {
+	return {
+		tone: 'normal' as const,
+		title: 'Plan changes open once payments are connected',
+		detail: 'Until then every organization is on Free: its public repositories sync, and its private ones stay hidden.',
+		code: 'billing_not_connected'
+	};
 }

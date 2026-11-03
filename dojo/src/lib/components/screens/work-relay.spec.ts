@@ -50,7 +50,7 @@ describe('ScrWorkspacePreview — the resolved-constitution drill-in', () => {
 		const { getByRole, queryByText } = render(ScrWorkspacePreview, {
 			props: { workspace: workspaces[0], ladder: [], conflicts: [], error: 'forbidden' }
 		});
-		expect(getByRole('alert').textContent).toContain("Could not load this workspace's constitution — forbidden");
+		expect(getByRole('alert').textContent).toMatch(/Couldn't load this workspace's constitution[\s\S]*forbidden/);
 		expect(queryByText("This workspace's constitution resolves in your editor.")).toBeNull();
 	});
 

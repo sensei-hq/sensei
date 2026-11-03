@@ -6,6 +6,7 @@
   import { page } from '$app/state';
   import { Kanji, Eyebrow, Screen, ScreenState } from '$lib/components';
   import { Button } from '@rokkit/ui';
+  import { Notice } from '@sensei/ui';
   import WorkspacePill from '../../../../(observatory)/workspaces/WorkspacePill.svelte';
   import {
     ftrDisplay,
@@ -16,7 +17,7 @@
     sessionRows,
     hotspotRows,
     patternSnapshot,
-    decideRecommendation,
+    RecommendationDecision,
     type StatBlock,
   } from './overview-view.svelte.js';
 
@@ -43,17 +44,9 @@
   // `deciding`, then re-loads so the next scheduler tick sees the update.
   // Retained through the Slot-4 redesign; the mockup's send-to-acp action sits
   // alongside it and appears only when the rec carries a defaultAcp.
-  let deciding = $state(false);
-  // Why the last decision did not land (#288) — it used to reload as if it had.
-  let decideError = $state<string | null>(null);
-  async function decide(action: 'accept' | 'reject') {
-    if (!rec || !workspaceId || deciding) return;
-    deciding = true;
-    decideError = null;
-    const result = await decideRecommendation(senseiApi(appState.port), workspaceId, rec.id, action, (m) => confirm(m));
-    deciding = false;
-    if (result.error) decideError = result.error;
-    else if (result.done) await invalidateAll();
+  const decision = new RecommendationDecision(senseiApi(appState.port), () => invalidateAll(), (m) => confirm(m));
+  function decide(action: 'accept' | 'reject') {
+    if (rec && workspaceId) void decision.decide(workspaceId, rec.id, action);
   }
 </script>
 
@@ -125,15 +118,15 @@
                 variant="primary"
                 size="sm"
                 data-testid="rec-accept"
-                disabled={deciding}
+                disabled={decision.deciding}
                 onclick={() => decide('accept')}
-              >{deciding ? 'Working…' : 'Accept'}</Button>
+              >{decision.deciding ? 'Working…' : 'Accept'}</Button>
               <Button
                 variant="secondary"
                 style="outline"
                 size="sm"
                 data-testid="rec-reject"
-                disabled={deciding}
+                disabled={decision.deciding}
                 onclick={() => decide('reject')}
               >Reject</Button>
             {/if}
@@ -141,8 +134,8 @@
               <span class="font-mono text-xs text-ink-soft">{hero.meta}</span>
             {/if}
           </div>
-          {#if decideError}
-            <p class="text-xs text-danger mt-2 mb-0" data-testid="rec-decide-error">Could not record that: {decideError}</p>
+          {#if decision.notice}
+            <div class="mt-2"><Notice size="inline" {...decision.notice} expanded data-testid="rec-decide-error" /></div>
           {/if}
         {/if}
       </div>
@@ -199,8 +192,8 @@
             Hotspots · 7 days
           </h2>
         </div>
-        {#if data.hotspotsError}
-          <p class="text-sm text-danger m-0" data-overview-error>Could not read hotspots: {data.hotspotsError}</p>
+        {#if data.hotspotsNotice}
+          <Notice size="inline" {...data.hotspotsNotice} expanded data-overview-error />
         {:else if hotspots.length === 0}
           <p class="text-sm text-ink-mute m-0">No file edited more than once this week.</p>
         {:else}
@@ -222,8 +215,8 @@
             Patterns in use
           </h2>
         </div>
-        {#if data.patternsError}
-          <p class="text-sm text-danger m-0" data-overview-error>Could not read patterns: {data.patternsError}</p>
+        {#if data.patternsNotice}
+          <Notice size="inline" {...data.patternsNotice} expanded data-overview-error />
         {:else if patterns && patterns.followed + patterns.anti > 0}
           <a href={`/workspace/${workspaceId}/patterns`} class="block hover:bg-paper-soft rounded-md -mx-1 px-1 py-1">
             <div class="text-sm text-ink" data-pattern-counts>

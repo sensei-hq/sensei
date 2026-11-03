@@ -1,4 +1,5 @@
 <script lang="ts">
+	import LoadError from '../kit/LoadError.svelte';
 	import { Screen } from '@sensei/ui';
 	import { SectionHead } from '$lib/components/kit';
 	// Sharing — the DECISION surface for `dojo.all_my_repositories`.
@@ -60,7 +61,7 @@
 
 	{#if error}
 		<!-- An error state, never an empty list. -->
-		<p role="alert" class="text-sm text-danger">Could not load your repositories — {error}</p>
+		<LoadError what="your repositories" {error} />
 	{:else if repos.length === 0}
 		<p class="text-sm text-ink-mute">
 			No repositories yet. They appear once sensei has scanned a clone and the daemon

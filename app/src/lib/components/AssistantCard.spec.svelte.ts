@@ -134,7 +134,11 @@ describe('AssistantCard', () => {
     const root = card(m, 'claude');
     expect(root.querySelector('[role="alert"]')).toBeTruthy();
     expect(root.textContent).toContain('permission denied');
-    expect(root.querySelector('button.retry')?.textContent).toMatch(/Retry/);
+    // Through the shared Notice: what failed, the reason, and Retry as its action.
+    const n = root.querySelector('[data-component="notice"]') as HTMLElement;
+    expect(n.dataset.tone).toBe('fault');
+    expect(n.textContent).toContain("Couldn't configure Claude");
+    expect(root.querySelector('[data-action="retry"]')?.textContent).toMatch(/Retry/);
   });
 
   it('omits retry button when onRetry is not provided', () => {
@@ -144,7 +148,7 @@ describe('AssistantCard', () => {
       error: 'no callback supplied',
     });
     cleanup.push(m.destroy);
-    expect(card(m, 'claude').querySelector('button.retry')).toBeFalsy();
+    expect(card(m, 'claude').querySelector('[data-action="retry"]')).toBeFalsy();
   });
 
   it('hides error block while configuring (busy state suppresses it)', () => {

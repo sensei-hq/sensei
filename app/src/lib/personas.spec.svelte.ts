@@ -397,6 +397,50 @@ describe('PersonaList.makeDefault', () => {
   });
 });
 
+describe('PersonaList.signOut — Settings · Dōjō, beside Make default (2026-11-03)', () => {
+  function list(signOut: (slot: string) => Promise<string | null>) {
+    const fetchPersonas = vi.fn(async () => LIST as never);
+    const l = new PersonaList({
+      fetchPersonas,
+      startSignIn: vi.fn(async () => null),
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async () => {}),
+      makeDefault: vi.fn(async () => null),
+      signOut,
+      now: () => NOW
+    });
+    return { l, fetchPersonas };
+  }
+
+  it('signs out by Keychain slot, re-reads and announces the change', async () => {
+    const out: string[] = [];
+    const { l, fetchPersonas } = list(async (slot) => { out.push(slot); return null; });
+    const announce = vi.fn();
+    l.onChanged = announce;
+    await l.load();
+    await l.signOut(l.identities[0]);
+    expect(out).toEqual(['default']);
+    expect(fetchPersonas).toHaveBeenCalledTimes(2);
+    expect(announce).toHaveBeenCalled();
+    expect(l.error).toBeNull();
+  });
+
+  it('a sign-out that did not complete is said, not swallowed', async () => {
+    const { l } = list(async () => 'credentials may remain in the Keychain');
+    await l.load();
+    await l.signOut(l.identities[0]);
+    expect(l.error).toBe('credentials may remain in the Keychain');
+  });
+
+  it('an identity that never signed in has nothing to sign out', async () => {
+    const signOut = vi.fn(async () => null);
+    const { l } = list(signOut);
+    await l.load();
+    await l.signOut(l.identities[1]);
+    expect(signOut).not.toHaveBeenCalled();
+  });
+});
+
 // The audit (2026-10-28, docs/review/2026-10-28-state-view-audit.md items 2, 4):
 // what the views still decided for themselves.
 describe('what every identity view renders, decided here', () => {

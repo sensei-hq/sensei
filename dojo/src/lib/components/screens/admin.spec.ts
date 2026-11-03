@@ -218,57 +218,45 @@ describe('ScrHealth — signal cards, bar chart and alerts', () => {
 	});
 });
 
-describe('ScrBilling — plan, tiers, relay rows and invoices', () => {
+describe('ScrBilling — two plans, the estimate, and an honest attach', () => {
 	afterEach(cleanup);
+	const free = () => toKitBilling({ account: null, usage: { seats_used: 18, total_active_seats: 25, billable_users: [] } });
 
-	it('with no billing account, shows no plan, price, total or invoice it does not have (#106)', () => {
-		const { getByText, queryByText } = render(ScrBilling, {
-			props: { orgName: 'Acme Corp', billing: toKitBilling({ account: null, usage: { seats_used: 3, total_active_seats: 3, billable_users: [] } }) }
-		});
-		expect(getByText('No billing account yet')).toBeTruthy();
+	it('with no billing account, reads Free and shows no renewal or invoice it does not have (#106)', () => {
+		const { getAllByText, getByText, queryByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(getAllByText('Free').length).toBeGreaterThanOrEqual(1);
 		expect(getByText('No invoices — no payment provider is connected.')).toBeTruthy();
 		expect(queryByText(/Renews/)).toBeNull();
-		expect(queryByText(/\$/)).toBeNull();
-		expect(queryByText('current')).toBeNull();
 	});
 
-	it('shows the plan summary with the live monthly total (seats × per-seat)', () => {
-		const { getByText, getAllByText } = render(ScrBilling, {
-			props: { orgName: 'Acme Corp', billing }
-		});
-		expect(getByText('Plan & billing')).toBeTruthy();
-		// the plan appears in the header chip and the current-plan card.
-		expect(getAllByText('Team · private').length).toBeGreaterThanOrEqual(1);
-		// 34 active × $12 = $408.
-		expect(getByText('$408')).toBeTruthy();
-		expect(getByText('34 × $12')).toBeTruthy();
-	});
-
-	it('renders the three tiers, marking the current one and offering CTAs for the rest', () => {
-		const { getByText, getAllByText } = render(ScrBilling, {
-			props: { orgName: 'Acme Corp', billing }
-		});
-		// "Free" is both the tier name and the free tier's price → two matches.
-		expect(getAllByText('Free').length).toBe(2);
-		expect(getByText('Enterprise')).toBeTruthy();
-		// the current (Team) tier shows a "current" chip; the others show a CTA
-		// each (Free → Downgrade, Enterprise → Contact sales).
+	it('shows both plans, the Org price per active contributor, and the current one', () => {
+		const { getByText, getAllByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(getByText('Org')).toBeTruthy();
+		expect(getAllByText('$12').length).toBeGreaterThanOrEqual(1);
+		expect(getByText('per active contributor / month')).toBeTruthy();
 		expect(getByText('current')).toBeTruthy();
-		expect(getByText('Downgrade')).toBeTruthy();
-		expect(getByText('Contact sales')).toBeTruthy();
 	});
 
-	it('shows the relay free-vs-paid rows and the invoice history', () => {
-		const { getByText, getAllByText } = render(ScrBilling, {
-			props: { orgName: 'Acme Corp', billing }
-		});
-		expect(getByText("Relay — free for individuals, paid where it's shared")).toBeTruthy();
-		// two free rows + two paid rows in the fixture.
-		expect(getAllByText('free · individuals').length).toBe(2);
-		expect(getAllByText('paid · team').length).toBe(2);
-		expect(getByText('Invoices')).toBeTruthy();
-		expect(getByText('Jul 1, 2026')).toBeTruthy();
-		expect(getByText('$408.00')).toBeTruthy();
+	it('estimates what Org would cost from the live seat count: 18 × $12 = $216', () => {
+		const { getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(getByText('$216')).toBeTruthy();
+		expect(getByText('18 × $12')).toBeTruthy();
+	});
+
+	it('Attach Org plan is offered but cannot run until payments are connected — and says so', () => {
+		const { container, getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		const attach = container.querySelector('[data-action="attach-org"]') as HTMLButtonElement;
+		expect(attach.textContent).toContain('Attach Org plan');
+		expect(attach.disabled).toBe(true);
+		const n = container.querySelector('[data-attach-notice] [data-component="notice"]') as HTMLElement;
+		expect(n.dataset.tone).toBe('normal');
+		expect(getByText('Plan changes open once payments are connected')).toBeTruthy();
+	});
+
+	it('an org on the Org plan shows its renewal and no attach', () => {
+		const { container, getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing } });
+		expect(getByText(/Renews Aug 1/)).toBeTruthy();
+		expect(container.querySelector('[data-action="attach-org"]')).toBeNull();
 	});
 });
 

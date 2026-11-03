@@ -1,25 +1,19 @@
 <script lang="ts">
     import Kanji from '$lib/components/Kanji.svelte';
   import { onMount } from 'svelte';
-  import { wizardState, routerKeyStatus, saveRouterKey, type RouterEntry } from '$lib/wizard-state.svelte.js';
+  import { wizardState, routerKeyStatus, routerSaveNotice, saveRouterKey, type RouterEntry } from '$lib/wizard-state.svelte.js';
+  import { Notice } from '@sensei/ui';
+  import { Button } from '@rokkit/ui';
+  import { SectionRead } from '$lib/section-read.svelte.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
 
-  let loading = $state(true);
-  let error = $state<string | null>(null);
+  const read = new SectionRead("Couldn't load routers");
 
   const routers = $derived(wizardState.inference.routers);
   const configuredCount = $derived(routers.filter(r => r.configured).length);
 
-  onMount(async () => {
-    try {
-      await wizardState.refreshInferenceRouters();
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      loading = false;
-    }
-  });
+  onMount(() => read.run(() => wizardState.refreshInferenceRouters()));
 
   /** Per-row inline save — the wizard's own key save (saveRouterKey); Settings
    *  has no Continue step, so each row saves on demand. */
@@ -33,16 +27,13 @@
     Keychain — never on disk in plaintext, never in the database.
   </p>
 
-  {#if loading}
+  {#if read.loading}
     <div data-testid="inference-loading" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
       <Kanji char="想" size="inherit" tone="inherit" class="text-4xl text-accent opacity-20 block mb-4" />
       <p class="text-sm text-ink-mute">Loading routers…</p>
     </div>
-  {:else if error}
-    <div data-testid="inference-error" class="mb-6 p-4 rounded-md border border-danger bg-paper-mute">
-      <div class="text-sm font-semibold text-danger">Could not load routers</div>
-      <div class="text-xs text-ink-soft mt-1 font-mono">{error}</div>
-    </div>
+  {:else if read.notice}
+    <div class="mb-6"><Notice size="panel" {...read.notice} data-testid="inference-error" /></div>
   {:else}
     <div class="flex items-center gap-2 mb-6">
       <span class="font-mono py-1 px-2 text-xs text-on-success-soft bg-success-soft border border-success rounded-sm">
@@ -68,7 +59,7 @@
             {:else if router.saveState === 'done'}
               <span class="text-xs text-success font-mono">saved ✓</span>
             {:else if router.saveState === 'failed'}
-              <span class="text-xs text-danger font-mono">failed</span>
+              <span class="text-xs text-ink-mute font-mono">not saved</span>
             {:else}
               {@const status = routerKeyStatus(router)}
               <span
@@ -98,24 +89,27 @@
                 onkeydown={(e) => { if (e.key === 'Enter') void saveKey(router); }}
                 class="key-input flex-1 px-3 py-1.5 text-sm font-mono bg-paper-soft border border-paper-edge rounded-md text-ink focus:outline-none focus:border-accent"
               />
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                size="sm"
                 data-testid={`router-save-${router.id}`}
-                class="btn-solid text-xs"
                 disabled={router.draftKey.trim().length === 0 || router.saveState === 'saving'}
                 onclick={() => saveKey(router)}
-              >Save</button>
+                label="Save"
+              />
               {#if router.configured}
-                <button
-                  type="button"
+                <Button
+                  variant="danger"
+                  style="ghost"
+                  size="sm"
                   data-testid={`router-clear-${router.id}`}
-                  class="text-xs text-ink-mute hover:text-danger cursor-pointer bg-none border-none"
                   onclick={() => wizardState.clearInferenceRouterKey(router.id)}
-                >Clear</button>
+                  label="Clear"
+                />
               {/if}
             </div>
-            {#if router.saveError}
-              <p class="text-xs text-danger font-mono m-0">{router.saveError}</p>
+            {#if routerSaveNotice(router)}
+              <Notice size="inline" bare expanded {...routerSaveNotice(router)!} />
             {/if}
           {/if}
         </div>

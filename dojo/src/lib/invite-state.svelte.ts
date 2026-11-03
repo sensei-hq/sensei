@@ -2,6 +2,7 @@
 // a viewer invite makes a dōjō viewer — no role, no repositories — whom the admin
 // then grants selected workspaces. The dōjō issues a single-use token; the admin
 // shares the accept link (there is no email delivery yet).
+import { failureNotice } from '@sensei/ui';
 import { DojoApiError } from '$lib/client-data';
 import { looksLikeEmail, type MEMBERSHIP_KINDS } from '$lib/admin-view';
 
@@ -64,6 +65,11 @@ export class InviteState {
 	sending = $state(false);
 	/** Why the last send did not issue an invite — shown, never swallowed. */
 	error = $state<string | null>(null);
+
+	/** The failure as a Notice — what the panel shows. */
+	get errorNotice() {
+		return failureNotice("Couldn't send the invite", this.error);
+	}
 	issued = $state<IssuedInvite | null>(null);
 
 	constructor(

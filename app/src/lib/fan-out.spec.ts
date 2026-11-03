@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fanOutWorkspaces } from './fan-out.js';
+import { fanOutWorkspaces, unreadNotice } from './fan-out.js';
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const down = (message: string) => ({ ok: false as const, error: { status: 502, message } });
@@ -18,5 +18,21 @@ describe('fanOutWorkspaces', () => {
 
   it('reads nothing for no workspaces', async () => {
     expect(await fanOutWorkspaces([], async () => ok(1))).toEqual({ read: [], unread: [] });
+  });
+});
+
+describe('unreadNotice — a partial read, through the shared Notice', () => {
+  it('says how many could not be read, each with why, and that the screen is partial', () => {
+    expect(unreadNotice([{ name: 'alpha', reason: 'Bad Gateway' }, { name: 'beta', reason: 'HTTP 500' }])).toEqual({
+      tone: 'fault',
+      title: "Couldn't read 2 workspaces",
+      detail: 'alpha (Bad Gateway), beta (HTTP 500)',
+      remedy: 'What this screen shows leaves them out.',
+    });
+  });
+
+  it('one in the singular; none, no notice', () => {
+    expect(unreadNotice([{ name: 'a', reason: 'x' }])!.title).toBe("Couldn't read 1 workspace");
+    expect(unreadNotice([])).toBeNull();
   });
 });

@@ -1,86 +1,118 @@
 // @vitest-environment jsdom
-// Settings · Dōjō (user, 2026-10-27): the sync list grouped identity → day →
-// repository, each identity by its NAME, tagged default or offered Make default.
+// Settings · Dōjō connection (user, 2026-11-03): identities first; a connected
+// identity lists its dōjōs and the repositories each has filed; every action for
+// the selected identity sits in its header; failures are Notices.
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { flushSync } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
 import { personaList } from '$lib/personas.svelte.js';
 import Page from './+page.svelte';
-import type { SyncStateRow } from '$lib/types.js';
+import { membership, repo } from './dojo-connection.fixtures.js';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; vi.unstubAllGlobals(); });
 
 const json = (body: unknown) => ({ ok: true, status: 200, statusText: 'OK', json: async () => body });
-const row = (over: Partial<SyncStateRow>): SyncStateRow => ({
-  entity: 'repository_metric', entity_key: 'github.com/sensei-hq/torii', direction: 'push', state: 'synced',
-  last_error: null, attempted_at: '2026-10-27T10:00:00Z', synced_at: '2026-10-27T10:00:00Z',
-  updated_at: '2026-10-27T10:00:00Z', persona: 'jerrythomas', remedy: null, ...over,
-});
 const personas = {
   default: 'jerrythomas',
   personas: [
-    { label: 'jerrythomas', githubLogin: 'jerrythomas', sessionSlot: 'jerrythomas', connected: true, action: 'none', isDefault: true, forgeToken: { state: 'active', expiresAt: 4_000_000_000 } },
-    { label: 'sensei-hq-org', githubLogin: 'sensei-hq-org', sessionSlot: 'default', connected: true, action: 'signIn', isDefault: false, forgeToken: { state: 'dead', expiresAt: 1_700_000_000 } },
+    { label: 'jerrythomas', githubLogin: 'jerrythomas', sessionSlot: 'jerrythomas', connected: true, isDefault: true, forgeToken: { state: 'active', expiresAt: 4_000_000_000 }, renewalDue: false, keychain: 'readable' },
+    { label: 'jt-oss', githubLogin: null, sessionSlot: null, connected: false, isDefault: false, forgeToken: { state: 'unknown', expiresAt: null }, renewalDue: false, keychain: null },
   ],
 };
-const entities = [
-  row({}),
-  row({ entity: 'repository_graph', entity_key: 'github.com/sensei-hq/torii@develop', state: 'skipped', synced_at: null, last_error: 'not_a_tracked_branch' }),
-  row({ entity: 'forge_mirror', entity_key: 'default', direction: 'pull', state: 'error', synced_at: null, last_error: 'could not reach', persona: 'default' }),
+const memberships = [
+  membership({ id: 'p', kind: 'personal', tenant_key: 'github/jerrythomas', org_slugs: ['jerrythomas'] }),
+  membership({ id: 'o', tenant_key: 'github/sensei-hq', org_slugs: ['sensei-hq'] }),
 ];
-const sync = { count: entities.length, counts: { synced: 1, skipped: 1, error: 1 }, entities };
+const entities = [
+  repo({ entity_key: 'github.com/sensei-hq/sensei' }),
+  repo({ entity_key: 'github.com/sensei-hq/web', state: 'skipped', last_error: 'not_subscribed', remedy: 'Private repositories sync on the Org plan.' }),
+  repo({ entity_key: 'github.com/jerrythomas/burn-e' }),
+  repo({ entity: 'forge_mirror', entity_key: 'jerrythomas', direction: 'pull', state: 'error', last_error: 'could not reach', synced_at: null }),
+];
+const data = (over: Record<string, unknown> = {}) => ({
+  sync: { count: entities.length, counts: {}, entities }, error: null, memberships, membershipsError: null, ...over,
+});
 
-describe('Settings · Dōjō', () => {
-  it('groups each identity’s sync under its name, folds branches into the repository, and offers Make default', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => json(url.includes('/api/auth/personas') ? personas : {})));
-    await personaList.load();
-    const m = mountComponent(Page, { data: { sync, error: null } });
-    cleanup.push(m.destroy);
-    await vi.waitFor(() => expect(m.container.querySelectorAll('[data-identity]').length).toBe(2));
-    const cards = [...m.container.querySelectorAll('[data-identity]')] as HTMLElement[];
-    expect(cards.map((c) => c.dataset.identity)).toEqual(['jerrythomas', 'sensei-hq-org']);
-    // The slot name `default` is no identity's heading.
-    expect(cards.some((c) => c.querySelector('[data-identity-name]')?.textContent?.trim() === 'default')).toBe(false);
-    expect(cards[0].querySelector('[data-default-persona]')).not.toBeNull();
-    expect(cards[1].querySelector('[data-make-default]')).not.toBeNull();
-    // torii and torii@develop are one repository, the branch on its line.
-    const repos = [...cards[0].querySelectorAll('[data-repository]')].map((r) => (r as HTMLElement).dataset.repository);
-    expect(repos).toEqual(['github.com/sensei-hq/torii']);
-    expect(cards[0].querySelector('[data-branch="develop"]')).not.toBeNull();
-    // The forge mirror is sensei-hq-org's own, under its card.
-    expect(cards[1].querySelector('[data-entity="forge_mirror"]')).not.toBeNull();
-    // One sign-in notice for the screen, not one per identity.
-    expect(m.container.querySelectorAll('[data-sign-in-pending]').length).toBeLessThanOrEqual(1);
+async function mount(d = data()) {
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => json(url.includes('/api/auth/personas') ? personas : {})));
+  await personaList.load();
+  const m = mountComponent(Page, { data: d });
+  cleanup.push(m.destroy);
+  await vi.waitFor(() => expect(m.container.querySelectorAll('[data-identity]').length).toBe(2));
+  return m;
+}
+const q = (m: { container: HTMLElement }, sel: string) => m.container.querySelector(sel) as HTMLElement | null;
+const all = (m: { container: HTMLElement }, sel: string) => [...m.container.querySelectorAll(sel)] as HTMLElement[];
+
+describe('Settings · Dōjō connection', () => {
+  it('lists identities by name, the default marked, the default selected', async () => {
+    const m = await mount();
+    expect(all(m, '[data-identity]').map((c) => c.dataset.identity)).toEqual(['jerrythomas', 'jt-oss']);
+    expect(q(m, '[data-identity="jerrythomas"] [data-default-persona]')).not.toBeNull();
+    expect(q(m, '[data-identity="jerrythomas"]')!.getAttribute('aria-pressed')).toBe('true');
   });
 
-  // An identity paired with two dōjōs has two sync plans: the same entity and direction,
-  // a different entity_key. Keyed by entity + direction alone, Svelte threw on the
-  // duplicate key and the window froze on the page it came from (live data, 2026-10-28).
-  it('shows each of an identity’s own entities once per key, two dōjōs’ sync plans included', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => json(url.includes('/api/auth/personas') ? personas : {})));
-    await personaList.load();
-    const plans = [
-      row({ entity: 'dojo_sync_plan', entity_key: 'dojo-a', direction: 'pull', persona: 'jerrythomas' }),
-      row({ entity: 'dojo_sync_plan', entity_key: 'dojo-b', direction: 'pull', persona: 'jerrythomas' }),
-    ];
-    const m = mountComponent(Page, { data: { sync: { count: 2, counts: { synced: 2 }, entities: plans }, error: null } });
-    cleanup.push(m.destroy);
-    await vi.waitFor(() => expect(m.container.querySelectorAll('[data-identity="jerrythomas"] [data-entity="dojo_sync_plan"]').length).toBe(2));
+  it('identity cards carry no actions — those are in the header', async () => {
+    const m = await mount();
+    expect(all(m, '[data-identity] [data-action]')).toHaveLength(0);
+    expect(q(m, '[data-identity-header] [data-action="sign-out"]')).not.toBeNull();
   });
 
-  it('shows repository verdicts grouped under one Repositories heading, with the remedy, and not in the identity cards', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => json(url.includes('/api/auth/personas') ? personas : {})));
-    await personaList.load();
-    const verdicts = [
-      row({ entity: 'repository', entity_key: 'github.com/sensei-hq/dbd', state: 'skipped', synced_at: null, last_error: 'denied:not_subscribed', remedy: 'Ask an admin to subscribe' }),
-      row({ entity: 'repository', entity_key: 'github.com/sensei-hq/torii', state: 'synced' }),
-    ];
-    const m = mountComponent(Page, { data: { sync: { count: 2, counts: { skipped: 1, synced: 1 }, entities: verdicts }, error: null } });
-    cleanup.push(m.destroy);
-    await vi.waitFor(() => expect(m.container.querySelectorAll('[data-repositories] [data-repository]').length).toBe(2));
-    expect(m.container.querySelector('[data-repositories-summary]')?.textContent).toContain('2 tracked · 1 skipped');
-    expect(m.container.querySelector('[data-repositories] [data-detail]')?.textContent).toContain('Ask an admin to subscribe');
-    // Owned by the section: the identity cards must not repeat them.
-    expect(m.container.querySelectorAll('[data-identity] [data-entity="repository"]').length).toBe(0);
+  it('a connected identity shows its dōjōs, each with its repositories', async () => {
+    const m = await mount();
+    expect(all(m, '[data-dojo]').map((d) => d.dataset.dojo)).toEqual(['p', 'o']);
+    expect(all(m, '[data-dojo="o"] [data-repository]').map((r) => r.dataset.repository)).toEqual([
+      'github.com/sensei-hq/web', 'github.com/sensei-hq/sensei',
+    ]);
+  });
+
+  it("a skipped repository's reason is a refusal Notice in the remedy's words", async () => {
+    const m = await mount();
+    const n = q(m, '[data-repository="github.com/sensei-hq/web"] [data-component="notice"]')!;
+    expect(n.dataset.tone).toBe('refusal');
+    expect(n.textContent).toContain('Private repositories sync on the Org plan.');
+  });
+
+  it('what travels both ways is shown once, above the identities', async () => {
+    const m = await mount();
+    expect(all(m, '[data-travels] [data-direction]').map((d) => d.dataset.direction)).toEqual(['out', 'both', 'in']);
+  });
+
+  it('the filter narrows the repositories', async () => {
+    const m = await mount();
+    (q(m, '[data-filter="off"]') as HTMLButtonElement).click();
+    flushSync();
+    expect(all(m, '[data-repository]').map((r) => r.dataset.repository)).toEqual(['github.com/sensei-hq/web']);
+  });
+
+  it('selecting an identity that never connected shows how to connect, and Connect in the header', async () => {
+    const m = await mount();
+    (q(m, '[data-identity="jt-oss"]') as HTMLButtonElement).click();
+    flushSync();
+    expect(q(m, '[data-connect-steps]')).not.toBeNull();
+    expect(q(m, '[data-identity-header] [data-action="primary"]')!.textContent).toContain('Connect with GitHub');
+    expect(all(m, '[data-dojo]')).toHaveLength(0);
+  });
+
+  it("an identity's own sync failure (its forge mirror) is a fault Notice, not lost", async () => {
+    const m = await mount();
+    const n = q(m, '[data-identity-issues] [data-component="notice"]')!;
+    expect(n.dataset.tone).toBe('fault');
+    expect(n.textContent).toContain('could not reach');
+  });
+
+  it('a failed membership read is a fault Notice, never "no dōjō"', async () => {
+    const m = await mount(data({ memberships: null, membershipsError: 'Failed to fetch' }));
+    const n = q(m, '[data-load-notices] [data-component="notice"]')!;
+    expect(n.dataset.tone).toBe('fault');
+    expect(n.textContent).toContain("Couldn't load your dōjōs");
+    expect(q(m, '[data-no-dojos]')).toBeNull();
+  });
+
+  it('two rows with the same key do not freeze the screen (2026-10-28)', async () => {
+    const dup = [...entities, repo({ entity_key: 'github.com/sensei-hq/sensei' })];
+    const m = await mount(data({ sync: { count: dup.length, counts: {}, entities: dup } }));
+    expect(all(m, '[data-dojo="o"] [data-repository]')).toHaveLength(2);
   });
 });

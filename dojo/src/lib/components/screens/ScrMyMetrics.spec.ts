@@ -49,7 +49,7 @@ describe('ScrMyMetrics', () => {
 		const { getByRole, queryByText } = render(ScrMyMetrics, {
 			props: { view: null, error: 'the request failed' }
 		});
-		expect(getByRole('alert').textContent).toMatch(/Could not load your metrics — the request failed/);
+		expect(getByRole('alert').textContent).toMatch(/Couldn't load your metrics[\s\S]*the request failed/);
 		expect(queryByText('Sessions')).toBeNull();
 	});
 });

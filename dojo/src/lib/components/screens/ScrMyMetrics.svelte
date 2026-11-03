@@ -1,4 +1,5 @@
 <script lang="ts">
+	import LoadError from '../kit/LoadError.svelte';
 	import { Screen } from '@sensei/ui';
 	import { SectionHead } from '$lib/components/kit';
 	import Spark from '$lib/components/kit/Spark.svelte';
@@ -30,7 +31,7 @@
 	{/snippet}
 	<section class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error || !view}
-			<p role="alert" class="text-sm text-danger">Could not load your metrics — {error ?? 'no answer'}</p>
+			<LoadError what="your metrics" {error} />
 		{:else}
 			<p class="text-xs text-ink-mute">The last {view.days} days, across the repositories you share.</p>
 			<ul class="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">

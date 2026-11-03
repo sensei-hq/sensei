@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { Notice } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
@@ -208,8 +209,8 @@
           disabled={!st.logForm.title.trim() || st.logging}
           data-testid="impact-log-button"
         >{st.logging ? 'Logging…' : 'Log impact'}</Button>
-        {#if st.logError}
-          <p class="text-xs text-danger m-0" data-testid="impact-log-error">{st.logError}</p>
+        {#if st.logNotice}
+          <Notice size="inline" bare expanded {...st.logNotice} data-testid="impact-log-error" />
         {/if}
       </form>
 
@@ -234,8 +235,8 @@
               <button type="button" disabled={st.isDeciding(entry.id)} onclick={() => decide(entry.id, 'failure')}
                       data-testid={`impact-failure-${entry.id}`}
                       class="px-2 py-1 text-xs rounded-md bg-danger-soft text-on-danger-soft border-none cursor-pointer">Failure</button>
-              {#if st.decideError(entry.id)}
-                <span class="text-xs text-danger" data-testid={`impact-decide-error-${entry.id}`}>{st.decideError(entry.id)}</span>
+              {#if st.decideNotice(entry.id)}
+                <Notice size="inline" bare expanded {...st.decideNotice(entry.id)!} data-testid={`impact-decide-error-${entry.id}`} />
               {/if}
             </li>
           {/each}

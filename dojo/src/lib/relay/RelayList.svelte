@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, EmptyState, Banner, Btn } from '$lib/components/kit';
+	import { SectionHead, EmptyState } from '$lib/components/kit';
+	import { Screen, Notice } from '@sensei/ui';
 	import { invalidateAll } from '$app/navigation';
 	import { Toggle } from '@rokkit/ui';
 	import RelayCard from './RelayCard.svelte';
@@ -61,24 +61,18 @@
 					<div class="bg-paper-mute h-16 animate-pulse rounded-lg"></div>
 				{/each}
 			</div>
-		{:else if st.status === 'error'}
+		{:else if st.errorNotice}
 			<div data-inbox-error>
-				<EmptyState kanji="断" title={m.inbox_error_title()}>
-					{st.error}
-					<div class="mt-3"><Btn onclick={() => invalidateAll()}>{m.inbox_retry()}</Btn></div>
-				</EmptyState>
+				<Notice
+					size="panel"
+					{...st.errorNotice}
+					primary={{ label: m.inbox_retry(), name: 'retry', onclick: () => invalidateAll() }}
+				/>
 			</div>
 		{:else}
-			{#if st.unreachable.length || st.plansMissing}
+			{#if st.partialNotice}
 				<div class="mb-3" data-inbox-partial>
-					<Banner tone="warning" kanji="欠" title={m.inbox_partial_title()}>
-						{#if st.unreachable.length}
-							<p>{m.inbox_partial_unreachable({ names: st.unreachable.join(', ') })}</p>
-						{/if}
-						{#if st.plansMissing}
-							<p>{m.inbox_partial_plans({ count: st.plansMissing })}</p>
-						{/if}
-					</Banner>
+					<Notice size="inline" expanded {...st.partialNotice} />
 				</div>
 			{/if}
 			{#if !st.sessions.length}

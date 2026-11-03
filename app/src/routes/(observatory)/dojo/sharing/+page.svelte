@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
     import { railIcon } from "../../observatory-nav";
   import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
@@ -79,8 +80,8 @@
         {#if state.saving}
           <span class="text-ink-mute" data-saving>saving…</span>
         {/if}
-        {#if state.error}
-          <span class="text-danger" data-error>{state.error}</span>
+        {#if state.notice}
+          <Notice size="inline" bare expanded {...state.notice} data-error />
         {/if}
       </div>
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
+  import { Button } from '@rokkit/ui';
   // The Tickets screen (docs/spec/screen/workspace-tickets.md).
   // PRESENTATIONAL: the numbers, words and requests are tickets-state's; this
   // renders them and reports clicks.
@@ -10,7 +12,6 @@
   let { screen, workspaceId }: { screen: TicketsState; workspaceId: string } = $props();
 
   const COLS = 'grid grid-cols-[minmax(12rem,1fr)_7rem_5rem_6rem_6rem_5rem_5rem_5rem_4rem] items-center gap-3';
-  const button = 'rounded-md border border-paper-edge px-3 py-1.5 text-sm text-ink hover:bg-paper-mute';
 
   const when = (iso: string | null) =>
     iso
@@ -59,11 +60,10 @@
         <a href="/workspace/{workspaceId}/integrations" class="self-start text-primary underline">Connect one in Integrations</a>
       </div>
     {:else if screen.view === 'daemon_error'}
-      <div data-view="daemon_error" class="flex flex-col gap-3 rounded-md border border-paper-edge bg-paper-soft p-4">
-        <p role="alert" class="m-0 text-sm text-danger">{screen.loadError}</p>
-        <div>
-          <button type="button" class={button} data-action="retry" onclick={() => screen.load()}>Retry</button>
-        </div>
+      <div data-view="daemon_error">
+        {#if screen.loadNotice}
+          <Notice size="panel" {...screen.loadNotice} primary={{ label: 'Retry', onclick: () => screen.load(), name: 'retry' }} />
+        {/if}
       </div>
     {:else}
       <div class="flex min-w-0 flex-col gap-4">
@@ -72,9 +72,7 @@
           {@const time = usageCells(t.usage)}
           <div data-view="ticket" class="flex flex-col gap-4">
             <div>
-              <button type="button" class={button} data-action="back" onclick={() => screen.closeTicket()}
-                >{screen.backLabel}</button
-              >
+              <Button style="outline" size="sm" data-action="back" onclick={() => screen.closeTicket()} label={screen.backLabel} />
             </div>
             <div class="flex flex-col gap-1">
               <h2 class="m-0 font-heading text-lg text-ink">{t.task.key} · {t.task.summary ?? ''}</h2>
@@ -132,8 +130,8 @@
             {/if}
           </div>
         {:else}
-          {#if screen.ticketError}
-            <p role="alert" class="m-0 text-sm text-danger">{screen.ticketError}</p>
+          {#if screen.ticketNotice}
+            <Notice size="inline" {...screen.ticketNotice} expanded />
           {/if}
           <div class="flex min-w-0 flex-col gap-6 xl:flex-row">
             {#each screen.lanes as lane (lane.id)}
@@ -198,8 +196,8 @@
                 </div>
               {/if}
 
-              {#if lane.unlinkedError}
-                <p role="alert" class="m-0 text-sm text-danger">{lane.unlinkedError}</p>
+              {#if lane.unlinkedNotice}
+                <Notice size="inline" {...lane.unlinkedNotice} expanded />
               {/if}
               {#if lane.unlinked}
                 <ul class="m-0 flex list-none flex-col gap-1 p-0" aria-label="Sessions not linked to a ticket">
@@ -213,8 +211,8 @@
               {/if}
 
 
-              {#if lane.tasksError}
-                <p role="alert" class="m-0 text-sm text-danger">{lane.tasksError}</p>
+              {#if lane.tasksNotice}
+                <Notice size="inline" {...lane.tasksNotice} expanded />
               {:else if lane.tasks === null}
                 <p class="m-0 text-sm text-ink-mute">Reading tickets…</p>
               {:else if lane.visibleTasks.length === 0}

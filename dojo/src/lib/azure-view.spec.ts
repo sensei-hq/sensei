@@ -129,8 +129,10 @@ describe('microsoftNotice', () => {
 	});
 
 	it('says the account could not be linked, and why', () => {
-		expect(microsoftNotice({ state: 'not_linked', reason: 'more than one Microsoft account is linked to this login' })).toBe(
-			'Couldn’t link your Microsoft account: more than one Microsoft account is linked to this login. Your Azure DevOps organizations’ dōjōs were not joined.'
-		);
+		expect(microsoftNotice({ state: 'not_linked', reason: 'more than one Microsoft account is linked to this login' })).toEqual({
+			tone: 'refusal',
+			title: 'Couldn’t link your Microsoft account',
+			detail: 'More than one Microsoft account is linked to this login. Your Azure DevOps organizations’ dōjōs were not joined.'
+		});
 	});
 });

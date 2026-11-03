@@ -1,6 +1,7 @@
 <script lang="ts">
-    import Kanji from '$lib/components/Kanji.svelte';
   import type { Snippet } from 'svelte';
+  import { Notice } from '@sensei/ui';
+  import { screenErrorNotice, type ScreenNotice } from './screen-state-notice.js';
   import EmptyState from './EmptyState.svelte';
 
   /**
@@ -22,9 +23,13 @@
     kanji = '',
     title = '',
     description = '',
+    notice,
     children,
   }: {
     status: 'loading' | 'error' | 'empty' | 'ready';
+    /** What failed and what to do, from the screen's state module
+     *  (`noticeFromApiError`). Without it the error branch says it generically. */
+    notice?: ScreenNotice;
     error?: string | null;
     onretry?: () => void;
     kanji?: string;
@@ -32,6 +37,8 @@
     description?: string;
     children?: Snippet;
   } = $props();
+
+  const view = $derived(screenErrorNotice(error, notice));
 </script>
 
 {#if status === 'loading'}
@@ -47,25 +54,20 @@
     <span class="sr-only">Loading…</span>
   </div>
 {:else if status === 'error'}
-  <div
-    class="flex flex-col items-center text-center py-20 gap-4"
+  <!-- The shared Notice (docs/architecture/notice.md): a screen that failed reads
+       the same in sensei and the dōjō. The copy is the caller's `notice` when its
+       state module has one, else built from `error` here. -->
+  <Notice
+    size="screen"
+    tone={view.tone}
+    eyebrow={view.eyebrow}
+    title={view.title}
+    detail={view.detail}
+    remedy={view.remedy}
+    code={view.code}
+    primary={onretry ? { label: 'Retry', onclick: onretry, name: 'retry' } : undefined}
     data-screen-state="error"
-    role="alert"
-  >
-    <Kanji char="難" size="inherit" tone="inherit" class="text-4xl text-danger opacity-40" />
-    <p class="display text-xl font-normal m-0 text-ink">Couldn't load this</p>
-    <p class="text-sm text-ink-mute max-w-[420px] leading-normal m-0">
-      {error ?? 'sensei couldn’t be reached. Check that the daemon is running, then retry.'}
-    </p>
-    {#if onretry}
-      <button
-        type="button"
-        class="zs-btn zs-btn-secondary"
-        data-action="retry"
-        onclick={onretry}
-      >Retry</button>
-    {/if}
-  </div>
+  />
 {:else if status === 'empty'}
   <EmptyState {kanji} {title} {description} />
 {:else}

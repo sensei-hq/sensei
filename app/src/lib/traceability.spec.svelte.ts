@@ -43,6 +43,7 @@ describe('DriftScan', () => {
     expect(scan.summary).toBeNull();
     expect(scan.error).toMatch(/daemon down/);
     expect(scan.errorText).toBe('The scan failed: daemon down');
+    expect(scan.notice).toEqual({ tone: 'fault', title: 'The drift scan failed', detail: expect.stringMatching(/daemon down/) });
     expect(scan.summaryText).toBeNull();
   });
 });

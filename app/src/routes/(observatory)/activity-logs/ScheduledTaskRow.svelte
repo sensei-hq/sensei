@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { ScheduledTask } from '$lib/types.js';
   import type { TaskLog } from './scheduled-tasks.svelte.js';
+  import { Notice } from '@sensei/ui';
   import {
+    taskFailureNotice,
     taskLastRun,
     taskInterval,
     taskSchedule,
@@ -19,6 +21,7 @@
     log?: TaskLog;
   }
   let { task, now, log }: Props = $props();
+  const failure = $derived(taskFailureNotice(task));
 
   const lastRun = $derived(taskLastRun(now, task));
   const interval = $derived(taskInterval(task));
@@ -52,11 +55,9 @@
       <!-- A pass in progress, so a stall is not read as an old result (#283). -->
       <div class="text-xs text-ink-soft mt-[2px]" data-task-running>{running}</div>
     {/if}
-    {#if task.last_ok === false && task.last_error}
+    {#if failure}
       <!-- Why it is failing, where it is listed (#96). -->
-      <div class="text-xs text-danger mt-[2px] line-clamp-2" data-task-error title={task.last_error}>
-        {task.last_error}
-      </div>
+      <div class="mt-[2px]"><Notice size="inline" bare expanded {...failure} data-task-error /></div>
     {/if}
   </div>
 
@@ -89,8 +90,8 @@
   <div class="px-6 pb-3 border-b border-paper-edge" data-task-log>
     {#if log.loading}
       <p class="text-xs text-ink-faint m-0">Reading the log…</p>
-    {:else if log.error}
-      <p class="text-xs text-danger m-0" data-task-log-error>{log.error}</p>
+    {:else if log.notice}
+      <Notice size="inline" bare expanded {...log.notice} data-task-log-error />
     {:else if log.lines.length === 0}
       <p class="text-xs text-ink-faint m-0">Nothing logged by {task.name} today.</p>
     {:else}

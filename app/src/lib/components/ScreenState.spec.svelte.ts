@@ -65,4 +65,48 @@ describe('ScreenState', () => {
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[data-action="retry"]')).toBeFalsy();
   });
+
+  // The error branch is the shared Notice (docs/architecture/notice.md): the same
+  // screen-size failure as the bootstrap, in sensei and the dōjō.
+  describe('error renders through Notice', () => {
+    const notice = (m: { container: HTMLElement }) =>
+      m.container.querySelector('[data-component="notice"]') as HTMLElement;
+
+    it('is a screen-size fault Notice', () => {
+      const m = mountComponent(Harness, { status: 'error', error: 'daemon unreachable' });
+      cleanup.push(m.destroy);
+      const n = notice(m);
+      expect(n.dataset.size).toBe('screen');
+      expect(n.dataset.tone).toBe('fault');
+      expect(n.dataset.screenState).toBe('error');
+      expect(n.querySelector('[data-part="title"]')!.textContent).toContain("Couldn't load this");
+      expect(n.querySelector('[data-part="detail"]')!.textContent).toBe('daemon unreachable');
+    });
+
+    it('Retry is the primary action', () => {
+      const onretry = vi.fn();
+      const m = mountComponent(Harness, { status: 'error', error: 'x', onretry });
+      cleanup.push(m.destroy);
+      const btn = notice(m).querySelector('[data-action="retry"]') as HTMLButtonElement;
+      expect(btn.dataset.variant).toBe('primary');
+    });
+
+    it('a screen can say what failed and what to do, from its state module', () => {
+      const m = mountComponent(Harness, {
+        status: 'error',
+        notice: { title: "Couldn't load tickets", detail: 'Failed to fetch', remedy: 'Check the daemon.', code: 'unreachable' },
+      });
+      cleanup.push(m.destroy);
+      const n = notice(m);
+      expect(n.querySelector('[data-part="title"]')!.textContent).toContain("Couldn't load tickets");
+      expect(n.querySelector('[data-part="remedy"]')!.textContent).toContain('Check the daemon.');
+      expect(n.querySelector('[data-part="code"]')!.textContent).toBe('unreachable');
+    });
+
+    it('with no message, says what to check rather than showing nothing', () => {
+      const m = mountComponent(Harness, { status: 'error' });
+      cleanup.push(m.destroy);
+      expect(notice(m).querySelector('[data-part="remedy"]')!.textContent).toMatch(/daemon/);
+    });
+  });
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
     import { railIcon } from "../settings-nav";
     import { untrack } from "svelte";
     import { invalidateAll } from "$app/navigation";
@@ -50,7 +51,7 @@
                     <div class="flex flex-col gap-0.5">
                         {#each ex.extensions as ext (ext.kind + "::" + ext.name)}
                             {@const busy = ex.isBusy(ext)}
-                            {@const toggleError = ex.toggleError(ext)}
+                            {@const toggleNotice = ex.toggleNotice(ext)}
                             <div
                                 class="extension-row flex items-center gap-3 py-2.5 border-b border-paper-edge"
                                 data-testid={`ext-row-${ext.kind}-${ext.name}`}
@@ -64,8 +65,8 @@
                                     <span class="text-xs text-ink-mute w-14 text-right"
                                         >saving…</span
                                     >
-                                {:else if toggleError}
-                                    <span class="text-xs text-danger" data-testid={`ext-error-${ext.kind}-${ext.name}`}>{toggleError}</span>
+                                {:else if toggleNotice}
+                                    <Notice size="inline" bare expanded {...toggleNotice} data-testid={`ext-error-${ext.kind}-${ext.name}`} />
                                 {/if}
                                 <label
                                     class="inline-flex items-center gap-2 cursor-pointer"

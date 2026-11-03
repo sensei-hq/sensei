@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
   import type { Snippet } from 'svelte';
@@ -175,13 +176,11 @@
     </div>
 
     {#if board.actionError}
-      <div
-        role="alert"
-        class="flex items-center gap-2 py-2 px-6 bg-danger-soft border-b border-paper-edge shrink-0"
-      >
-        <Kanji char="警" size="inherit" tone="inherit" class="text-xs text-danger" />
-        <span class="text-xs text-danger">{board.actionError}</span>
-      </div>
+      {#if board.actionNotice}
+        <div class="py-2 px-6 border-b border-paper-edge shrink-0">
+          <Notice size="inline" expanded {...board.actionNotice} data-insights-action-error />
+        </div>
+      {/if}
     {/if}
   {/snippet}
   {#if board.loadError}

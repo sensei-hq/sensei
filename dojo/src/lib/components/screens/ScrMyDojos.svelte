@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
+	import { Screen, Notice } from '@sensei/ui';
+	import type { MicrosoftNotice } from '$lib/azure-view';
 	import { Button } from '@rokkit/ui';
 	import { SectionHead, ListSection, MyDojoRow, EmptyState, AzureConnect } from '$lib/components/kit';
 	import type { AzureConnectState } from '$lib/azure-connect-state.svelte';
@@ -36,7 +37,7 @@
 		azure?: AzureConnectState;
 		/** Why the Microsoft account could not be linked (#308 R5c) — said only
 		 *  when it could not; nothing was recorded and no dōjō joined from it. */
-		microsoftNotice?: string | null;
+		microsoftNotice?: MicrosoftNotice | null;
 	} = $props();
 
 	const groups = $derived(groupDojos(dojos));
@@ -75,9 +76,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if microsoftNotice}
-			<div role="alert" class="border-paper-edge bg-paper-soft text-danger rounded-lg border p-4 text-sm">
-				{microsoftNotice}
-			</div>
+			<Notice size="panel" {...microsoftNotice} />
 		{/if}
 		{#if groups.length}
 			{#each groups as group (group.kind)}

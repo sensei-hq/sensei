@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { Notice, failureNotice } from '@sensei/ui';
     import { page } from "$app/state";
     import { goto } from "$app/navigation";
     import { onMount } from "svelte";
@@ -25,6 +26,7 @@
     let committing = $state(false);
     let loaded = $state(false);
     let commitError = $state<string | null>(null);
+    const commitNotice = $derived(failureNotice("Couldn't finish this step", commitError, { remedy: 'Fix it, then press Continue again.' }));
 
     // Drive the transient `active` flag from the current route so both the
     // rail and the header read the same shape per stage.
@@ -118,10 +120,8 @@
             </div>
             {/key}
 
-            {#if commitError}
-                <div class="mx-16 mb-2 p-3 rounded-md border border-danger bg-danger-soft text-xs text-on-danger-soft select-text">
-                    Could not finish: {commitError} — fix and try Continue again.
-                </div>
+            {#if commitNotice}
+                <div class="mx-16 mb-2"><Notice size="panel" {...commitNotice} data-commit-error /></div>
             {/if}
 
             <StageNav

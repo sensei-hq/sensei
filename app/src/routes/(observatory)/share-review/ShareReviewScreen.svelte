@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
   import { PageHeader, Screen, EmptyState, ScreenState } from '$lib/components';
@@ -18,8 +19,7 @@
     publishButtonLabel,
     requiresConfirm,
     publishResultChip,
-    outcomeSummary,
-  } from './share-review-state.svelte.js';
+    outcomeSummary, itemNotice } from './share-review-state.svelte.js';
 
   interface Props {
     /** The next approved-but-unsent batch, or null when nothing is pending. */
@@ -131,8 +131,8 @@
         >
           {@render chip(publishResultChip(it.result))}
           <span class="font-mono text-ink-soft">{it.remote_id ?? it.memory_id}</span>
-          {#if it.message}
-            <span class="text-danger">{it.message}</span>
+          {#if itemNotice(it)}
+            <Notice size="inline" bare {...itemNotice(it)!} />
           {/if}
         </div>
       {/each}
@@ -154,8 +154,8 @@
       {#if loadError}
         <ScreenState status="error" error={loadError} {onretry} />
       {:else}
-      {#if actions.error}
-        <p class="text-xs text-danger mb-3" data-share-error>{actions.error}</p>
+      {#if actions.notice}
+        <div class="mb-3"><Notice size="inline" expanded {...actions.notice} data-share-error /></div>
       {/if}
 
       {#if actions.outcome}

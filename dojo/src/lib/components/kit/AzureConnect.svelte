@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '@rokkit/ui';
+	import { Notice } from '@sensei/ui';
 	import Icon from './Icon.svelte';
 	import ListSection from './ListSection.svelte';
 	import { AZURE_REQUIRED_SCOPES, memberSetLine, tokenLine, writeScopesLine } from '$lib/azure-view';
@@ -50,8 +51,8 @@
 		</div>
 	{/if}
 
-	{#if state.error}
-		<div class="bg-danger-soft border-danger-soft text-ink rounded-lg border p-3 text-sm" role="alert">{state.error}</div>
+	{#if state.errorNotice}
+		<Notice size="inline" expanded {...state.errorNotice} />
 	{/if}
 	{#if state.message}
 		<div class="text-ink text-sm" role="status">{state.message}</div>

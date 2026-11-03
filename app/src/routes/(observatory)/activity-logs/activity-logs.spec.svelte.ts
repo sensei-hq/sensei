@@ -227,6 +227,13 @@ describe('logsPageData', () => {
     expect(d.tasksError).toBeNull();
   });
 
+  it('says each failed read through the shared Notice: what failed, then why', () => {
+    const d = logsPageData(fail, fail, filters);
+    expect(d.rowsNotice).toEqual({ tone: 'fault', title: "Couldn't read the log", detail: 'boom' });
+    expect(d.tasksNotice).toEqual({ tone: 'fault', title: "Couldn't read the background tasks", detail: 'boom' });
+    expect(logsPageData(ok([]), ok({ tasks: [] }), filters)).toMatchObject({ rowsNotice: null, tasksNotice: null });
+  });
+
   it('says the background tasks could not be read, rather than that there are none', () => {
     const d = logsPageData(ok([]), fail, filters);
     expect(d.tasksError).toContain('boom');

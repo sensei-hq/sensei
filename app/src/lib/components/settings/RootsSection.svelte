@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { Notice, failureNotice } from '@sensei/ui';
+    import { Button } from '@rokkit/ui';
     import { wizardState } from "$lib/wizard-state.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import { appState } from "$lib/appstate.svelte.js";
@@ -9,6 +11,7 @@
     let adding = $state(false);
     /** Why the last add failed; the typed path stays in the box (#304). */
     let addError = $state<string | null>(null);
+    const addNotice = $derived(failureNotice("Couldn't add that root", addError));
 
     async function addRoot() {
         if (adding) return;
@@ -93,14 +96,10 @@
             placeholder="~/Developer"
             disabled={adding}
         />
-        <button class="btn-solid" onclick={addRoot} disabled={adding} data-testid="root-add">
-            {adding ? "Adding…" : "Add"}
-        </button>
+        <Button variant="primary" size="sm" onclick={addRoot} disabled={adding} data-testid="root-add" label={adding ? "Adding…" : "Add"} />
     </div>
-    {#if addError}
-        <p class="text-xs text-warning m-0 -mt-4 mb-6" data-testid="root-add-error">
-            The root was not added: {addError}
-        </p>
+    {#if addNotice}
+        <div class="-mt-4 mb-6"><Notice size="inline" expanded {...addNotice} data-testid="root-add-error" /></div>
     {/if}
 
     <div class="flex flex-col gap-3 mb-8">
@@ -139,25 +138,27 @@
                         >recursive</span
                     >
                 {/if}
-                <button
+                <!-- The count is the controller's, not the loaded root's: it is seeded
+                     from `r.excluded` and is authoritative afterwards, so it follows an
+                     add or a remove instead of going stale. -->
+                <Button
+                    style="outline"
+                    size="sm"
                     data-testid="root-skips"
-                    class="text-xs text-ink-mute border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap cursor-pointer hover:text-ink"
                     onclick={() => {
                         openFor = openFor === r.id ? null : r.id;
                         draft = "";
                     }}
-                >
-                    <!-- From the controller, not the loaded root: it is seeded from
-                         `r.excluded` and is authoritative afterwards, so the count
-                         follows an add or a remove instead of going stale. -->
-                    {exclusionsFor(r).excluded.length} skipped
-                </button>
-                <button
+                    label="{exclusionsFor(r).excluded.length} skipped"
+                />
+                <Button
+                    style="ghost"
+                    size="sm"
+                    icon="i-solar-close-circle-bold-duotone"
                     data-testid="root-remove"
-                    class="text-base text-ink-mute bg-none border-none cursor-pointer px-1 leading-none hover:text-accent"
                     aria-label="Remove {r.path}"
-                    onclick={() => startRemoval(r.id)}>×</button
-                >
+                    onclick={() => startRemoval(r.id)}
+                />
             </div>
 
             {#if removingFor === r.id && removal}
@@ -186,38 +187,44 @@
                                 {#each removal.repositories as repo (repo.path)}
                                     <li class="flex items-baseline gap-3">
                                         <span class="text-xs font-mono text-ink truncate flex-1 min-w-0">{repo.path}</span>
-                                        <button
-                                            class="text-xs text-ink-mute bg-none border-none cursor-pointer hover:text-accent"
+                                        <Button
+                                            style="link"
+                                            size="sm"
                                             disabled={removal.busy}
                                             onclick={() => removal?.pruneRepository(repo.path)}
-                                            >remove this one</button
-                                        >
+                                            label="remove this one"
+                                        />
                                     </li>
                                 {/each}
                             </ul>
                         {/if}
                         <div class="flex flex-wrap gap-2">
-                            <button
-                                class="btn-solid text-xs"
+                            <Button
+                                variant="primary"
+                                size="sm"
                                 data-testid="root-removal-keep"
                                 disabled={!removal.canDecide}
                                 onclick={() => decide(r.id, "keep")}
-                                >Stop syncing, keep the data</button
-                            >
-                            <button
-                                class="text-xs px-3 py-1 rounded-md border border-danger text-danger bg-transparent cursor-pointer"
+                                label="Stop syncing, keep the data"
+                            />
+                            <Button
+                                variant="danger"
+                                style="outline"
+                                size="sm"
                                 data-testid="root-removal-remove"
                                 disabled={!removal.canDecide}
                                 onclick={() => decide(r.id, "remove")}
-                                >Remove everything indexed here</button
-                            >
-                            <button
-                                class="text-xs px-3 py-1 rounded-md border border-paper-edge bg-transparent cursor-pointer"
+                                label="Remove everything indexed here"
+                            />
+                            <Button
+                                style="outline"
+                                size="sm"
                                 onclick={() => {
                                     removingFor = null;
                                     removal = null;
-                                }}>Cancel</button
-                            >
+                                }}
+                                label="Cancel"
+                            />
                         </div>
                     {/if}
                 </div>
@@ -252,11 +259,13 @@
                                     <span class="text-xs text-ink-faint flex-1 min-w-0 truncate">
                                         {ex.describe(value)}
                                     </span>
-                                    <button
-                                        class="text-xs text-ink-mute bg-none border-none cursor-pointer hover:text-accent"
+                                    <Button
+                                        style="link"
+                                        size="sm"
                                         disabled={ex.saving}
-                                        onclick={() => ex.remove(value)}>remove</button
-                                    >
+                                        onclick={() => ex.remove(value)}
+                                        label="remove"
+                                    />
                                 </div>
                             {/each}
                         </div>
@@ -274,11 +283,13 @@
                             placeholder="node_modules  ·  {r.path}/some/subtree"
                             disabled={ex.saving}
                         />
-                        <button
-                            class="btn-solid"
+                        <Button
+                            variant="primary"
+                            size="sm"
                             disabled={ex.saving || !draft.trim()}
-                            onclick={() => addExclusion(r)}>Skip</button
-                        >
+                            onclick={() => addExclusion(r)}
+                            label="Skip"
+                        />
                     </div>
 
                     {#if draft.trim() && !ex.error}
@@ -288,8 +299,8 @@
                             {ex.describe(draft.trim())}
                         </p>
                     {/if}
-                    {#if ex.error}
-                        <p class="text-xs text-danger mt-2 mb-0" data-error>{ex.error}</p>
+                    {#if ex.notice}
+                        <div class="mt-2"><Notice size="inline" bare expanded {...ex.notice} data-error /></div>
                     {/if}
                 </div>
             {/if}

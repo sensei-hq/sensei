@@ -294,3 +294,12 @@ describe('CollectiveSharing — one write at a time', () => {
     expect(state.saving).toBe(false);
   });
 });
+
+describe('CollectiveSharing.notice', () => {
+  it('a save that did not land: a fault Notice', () => {
+    const state = new CollectiveSharing(prefs(), mockApi());
+    expect(state.notice).toBeNull();
+    state.error = 'Service Unavailable';
+    expect(state.notice).toEqual({ tone: 'fault', title: "Couldn't save your sharing preferences", detail: 'Service Unavailable' });
+  });
+});
