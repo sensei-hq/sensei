@@ -45,13 +45,40 @@ select rw.workspace_id
   -- The store and the one-owner pick, joined — not read through workspace_metrics,
   -- whose per-row subquery kept a workspace filter from reaching the store (every
   -- workspace's metrics were pooled, then filtered: 42k buffers per read).
-  from sensei.repository_metrics  pm
+  -- One reading per (repository, identity, day) (S4 2c, 2026-11-03). A row with a
+  -- commit is a SNAPSHOT at that commit — `duplication_ratio` and `module_quality`
+  -- write one per commit measured, up to 31 a day — so summing them counted the
+  -- tree once per commit. Keep the latest: the commit's authored time (a commit
+  -- git does not know sorts after every known one), then the write time, then the
+  -- sha. Rows without a commit are separate people's work and all count.
+  from (
+        select pm.*
+          from (
+                select pm.*
+                     , row_number() over (
+                         partition by pm.metric_id, pm.repository_id, pm.identity, pm.computed_on
+                         order by c.authored_at desc nulls last, pm.modified_at desc, pm.commit_sha desc
+                       ) as reading
+                  from sensei.repository_metrics pm
+                  left join sensei.commits c
+                    on c.repository_id = pm.repository_id
+                   and c.sha           = pm.commit_sha
+                 where pm.grain       = 'daily'
+                   and pm.scope       = 'user'
+                   and pm.commit_sha is not null
+               ) pm
+         where pm.reading = 1
+        union all
+        select pm.*, 1 as reading
+          from sensei.repository_metrics pm
+         where pm.grain       = 'daily'
+           and pm.scope       = 'user'
+           and pm.commit_sha is null
+       ) pm
   left join sensei.repository_workspace rw
     on rw.repository_id = pm.repository_id
   join sensei.metrics         m
     on m.id           = pm.metric_id
- where pm.grain      = 'daily'
-   and pm.scope      = 'user'
  group by rw.workspace_id, m.key, pm.computed_on, m.type, m.direction;
 
 comment on view workspace_metric_daily is
@@ -61,6 +88,12 @@ workspace that includes N repositories has up to N daily rows per metric/date; t
 view collapses them to one workspace-level row per (workspace, metric, date). Only the
 local-user pole (scope=user) feeds the default workspace read; the scope=repo
 whole-tree twins (churn/quality) are NOT pooled here.
+
+One reading per (repository, identity, day) is pooled: a row with a commit is a
+snapshot at that commit, so of a day''s commit rows only the latest counts (the
+commit''s authored time, a commit git does not know sorting after every known one,
+then the write time, then the sha). Rows without a commit are separate people''s
+work and all count.
 
 Pooling is type-aware, so a multi-repo workspace never averages-of-averages:
 - ratio/pct: sum(numerator)/nullif(sum(denominator),0) across the workspaces repos —
