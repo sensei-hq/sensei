@@ -2,11 +2,27 @@
 -- catalogue metrics may be a target, read from `sensei.metric_gating`, seeded from
 -- `import/staging/metric_gating.jsonl` through `staging.import_metric_gating()`.
 --
--- Goes red if: the seed loses `ftr` (an insight) or marks it eligible; the import
--- silently skips a row naming a metric that does not exist; a `neutral` metric can
--- be made eligible (it has no direction, so no comparator); or a re-import of the
--- same rows rewrites them / an older row overwrites a newer one.
+-- Goes red if: the seed loses `ftr` (an insight) or marks it eligible, or marks any
+-- session-behaviour metric eligible; the import silently skips a row naming a
+-- metric that does not exist; a `neutral` metric can be made eligible (it has no
+-- direction, so no comparator); or a re-import of the same rows rewrites them / an
+-- older row overwrites a newer one.
+--
+-- RUN IT THROUGH `database/tests/run.sh`, not `psql -f` from elsewhere: it loads
+-- the REAL seed file by a path relative to `database/tests/` (run.sh cds there).
+-- Lanes never converge a shared database (ruling R1), so the test loads the seed
+-- itself, inside its own transaction, and calls the import procedure; on a
+-- deployed dōjō the reload is a no-op (equal `modified_at`).
 begin;
+
+\set seed `cat ../import/staging/metric_gating.jsonl`
+truncate staging.metric_gating;
+insert into staging.metric_gating
+select r.*
+  from regexp_split_to_table(:'seed', E'\n') l,
+       jsonb_populate_record(null::staging.metric_gating, l::jsonb) r
+ where l <> '';
+call staging.import_metric_gating();
 
 -- an_insight_is_present_and_ineligible (and coverage, target 2, is eligible)
 do $$
@@ -29,6 +45,20 @@ begin
    where m.key = 'coverage';
   if cov is null or not cov.eligible or cov.delta_scoped or cov.min_coverage <> 0.5 then
     raise exception 'coverage gating row is not (eligible, absolute, 0.5): %', cov;
+  end if;
+end $$;
+
+-- No session-behaviour metric is eligible: FTR, rework, throughput, AI share and
+-- the rest read how people work — insights, never targets (spec TG1 "Do not").
+do $$
+declare
+  offenders text;
+begin
+  select string_agg(m.key, ', ' order by m.key) into offenders
+    from sensei.metric_gating g join sensei.metrics m on m.id = g.metric_id
+   where g.eligible and m.capture_source = 'session';
+  if offenders is not null then
+    raise exception 'a session-behaviour metric is eligible as a target: %', offenders;
   end if;
 end $$;
 
@@ -60,10 +90,6 @@ begin
   exception when others then
     if sqlerrm not like '%session_duration%' then
       raise exception 'a_neutral_metric_cannot_be_eligible: the error does not name the key: %', sqlerrm;
-    end if;
-    if exists (select 1 from sensei.metric_gating g join sensei.metrics m on m.id = g.metric_id
-                where m.key = 'session_duration' and g.eligible) then
-      raise exception 'a_neutral_metric_cannot_be_eligible: the row landed despite the error';
     end if;
     return;
   end;

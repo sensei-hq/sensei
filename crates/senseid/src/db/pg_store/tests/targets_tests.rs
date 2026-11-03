@@ -71,3 +71,18 @@ async fn an_absent_gating_row_is_not_eligible() {
         "{ungated} has no gating row, so none is invented for it"
     );
 }
+
+/// D83 (review r1 M1): a gating read that fails is the caller's error, never an
+/// empty list — TG4 reads this list as "which targets exist", so an empty one on
+/// a failure would read as "no target can miss". The read is first shown to work,
+/// so this cannot pass on a read that always fails.
+#[tokio::test]
+#[ignore = "pending: tg1"]
+async fn a_failed_gating_read_is_an_error_not_an_empty_list() {
+    let s = pg_store().await;
+    assert!(!s.metric_gating().await.unwrap().is_empty(), "the seeded read works first");
+    // This test's own clone: the table is gone, so the read cannot be made.
+    s.execute_raw("DROP TABLE sensei.metric_gating CASCADE").await.unwrap();
+    let read = s.metric_gating().await;
+    assert!(read.is_err(), "a failed read is an error, got {read:?}");
+}
