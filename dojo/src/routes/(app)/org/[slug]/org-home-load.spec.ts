@@ -51,4 +51,18 @@ describe('org home loader — the needs band', () => {
 		expect(data.needs).toEqual([]);
 		expect(data.needsError).toBeTruthy();
 	});
+
+	// The membership's role is the server LABEL ('Maintainer', from ROLE_LABEL in
+	// dojo-orgs.ts), not the rank key. The band must load for every label at or
+	// above maintainer — the D69 "needs you" queue depends on it.
+	it.skip.each(['Maintainer', 'Lead', 'Admin'])('pending: rankof-label — a real %s label loads the band', async (label) => {
+		const data = await run(label);
+		expect(listTriage).toHaveBeenCalledOnce();
+		expect(data.needs).toEqual([expect.objectContaining({ id: 's1' })]);
+	});
+
+	it.each(['Contributor', 'Member'])('a real %s label asks nothing', async (label) => {
+		await run(label);
+		expect(listTriage).not.toHaveBeenCalled();
+	});
 });
