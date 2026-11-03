@@ -106,7 +106,7 @@ Agreed (user, 2026-11-03 — 1: module + direct neighbours, 2: focus carries acr
 1. **Focus, not open.** Picking a module (or a Group-by segment) sets `focus`; every lens filters
    its own data to the focus and its one-hop neighbours — Structure/Wheel the neighbourhood,
    Matrix the focus's rows and columns, Cycles only the cycles it is in, Coupling only its pairs,
-   Complexity its branch, Zones highlights it.
+   Complexity its branch, Zones filters to the focus and its neighbours (decided at review, 2026-11-03: a filter reads better than a highlight on a crowded plane).
 2. **The header shows it**: a `Focus: <name> ✕` chip; ✕ clears. The focus is shared state, the same
    on every lens.
 3. **The side panel is the focus's**: its numbers (StatCards), its own "What to act on", and

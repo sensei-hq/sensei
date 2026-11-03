@@ -903,7 +903,9 @@ viewer.
 - Any hard stop: nothing locks a merge, a sprint or the tracker (D61).
 - Writing to a tracker, the dōjō-owned tracker path (D49, #310), the writeback flag itself (L7).
 - Storing ticket description, assignee or acceptance criteria (D71).
-- Layer-violation and anti-pattern metrics (targets 3 and 7): no producer exists or is planned.
+- An anti-pattern metric (target 7): no code anti-pattern producer exists (`detected_patterns` holds session
+  patterns with null severity). Target 3 (layer violations) is **not** in this list: L2's #156 produces
+  it as the Up-edge count under derived layering (§1, TG1).
 - A per-function complexity store (target 6 stays ineligible).
 - D18's environment labels already exist in the dōjō (§1). This spec does not add `label` to the
   plan wire; that is L1's change (TG4 base branch).

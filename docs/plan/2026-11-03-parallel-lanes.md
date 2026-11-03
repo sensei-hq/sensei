@@ -131,6 +131,8 @@ Owns: `packages/codemap/**`, `app/src/routes/(workspace)/workspace/[id]/diagrams
 `crates/senseid/src/api/diagram_cache.rs`, new `crates/senseid/src/tasks/handlers/metrics/architecture*.rs`,
 **new rows only** at the end of `database/import/staging/metrics.jsonl`;
 `crates/senseid/src/db/pg_store/tests/metric_rows_tests.rs`, `database/ddl/view/sensei/workspace_metric_daily.ddl` (S4 2c).
+For #156: `crates/senseid/src/tasks/handlers/metrics/mod.rs`, a new `pg_store` read for module → repository, and one
+entry per new metric in `docs/features/metrics/catalog.md` (the `the_catalog_documents_exactly_the_registered_metrics` guard).
 1. Commit the uncommitted `packages/codemap/*` work (the S7 tail), then move to the lane worktree.
 2. **S4 2c:** check the ratio pooling double count and fix it. Conservation test: pooled numerator equals
    the sum of the per-commit numerators, counted once per commit.
