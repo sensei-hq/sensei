@@ -32,6 +32,15 @@ The goal and the reasons for the order are in `docs/review/2026-11-03-orientatio
 | D68 | **A minimal viewer shell this week** (F8): the granted workspaces, **metrics first**, to judge whether the overall workflow is healthy; target results in aggregate; nothing else. |
 | D69 | **The dōjō Home is a "needs you" queue** (F9): missed targets awaiting acceptance, a sync that has stopped, approvals. No email or Slack this week. |
 | D70 | **Menus** (a, b, c): "Needs you" becomes **Act**; Constitution moves into the dōjō's **Govern** group; setup's "Join your dōjō" step is **skippable**. |
+| D71 | **Ticket data is read live** (Q1): `get_ticket` and "assigned to me" are live tracker reads made with the person's own access. No person data is stored; the `tracker_tasks` mirror is unchanged. For GitHub Issues the daemon uses the person's own forge sign-in, read-only, until dōjō-owned connections (D49) exist. |
+| D72 | **warn vs block** (Q2): a `warn` miss is shown and needs no acceptance. A `block` miss is handed to the assistant, enters the "needs you" queue (D69), and needs a lead's or admin's acceptance (D61). |
+| D73 | **"The ticket's rules"** (Q3) = the repository's resolved rules (D57) plus the ticket's own acceptance criteria. There is no ticket level in governance. |
+| D74 | **Neutral Impact verdict** (Q4): the memory is kept by default, and Retire is offered. |
+| D75 | **The paid plan is called "Pro"** (Q5, user). Messages name it: "Targets on private repositories need Pro." **The price is "to be announced"** until a payment provider exists; the `$12` code constant is not a decision. |
+| D76 | **"What applies here"** (Q6) lives on the desktop Dōjō screen, scoped to the current workspace; Workspace › About links to it. |
+| D77 | **SCIM is free**, along with SSO (Q7, D59). |
+| D78 | **The dead client routing** (`crates/senseid/src/dojo/routing.rs` and its two `.feature` scenarios) is removed (Q8, D53). |
+| D79 | **Govern shows to everyone, with a minimum role per item** (the D70 Constitution move): Constitution for every member; Triage, Approvals and Knowledge for maintainer and up. |
 
 The coordinator writes these into `docs/decisions.md` after Muse's WP4 commit lands. That file is in
 Muse's index right now.
