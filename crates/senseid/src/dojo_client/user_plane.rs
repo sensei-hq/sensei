@@ -164,9 +164,10 @@ pub struct RegisterResult {
 pub struct SyncPlan {
     #[serde(default)]
     pub allowed: Vec<MappedRepo>,
-    /// Always empty in phase 1 — `all_my_repositories` hardcodes
-    /// `sync_enabled = true`. Decoded anyway (D6): the shape must not start
-    /// crashing the daemon on the day the gate arrives.
+    /// Live entitlement refusals (`not_subscribed`, `forge_visibility_unknown`,
+    /// …) from `dojo.all_my_repositories` — the repositories the daemon must
+    /// not sync, each with the reason it may show. `#[serde(default)]` so a
+    /// dōjō that predates the field still decodes.
     #[serde(default)]
     pub denied: Vec<DeniedRepo>,
 }

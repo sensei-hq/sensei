@@ -59,7 +59,7 @@ use std::sync::Arc;
 
 use crate::api::handlers::auth::{AuthError, live_access_token};
 use crate::db::pg_store::PgStore;
-use crate::db::pg_store::sync::SyncMark;
+use crate::db::pg_store::sync::{RepositoryVerdict, RepositoryVerdictState, SyncMark};
 use crate::dojo::memberships::NewConnection;
 use crate::dojo_client::dojo_auth;
 use crate::dojo_client::settings::dojo_url;
@@ -536,6 +536,84 @@ async fn plan_persona(
     } else {
         plan
     };
+
+    // THE VERDICT (G1): every repository the dōjō answered about gets one row
+    // under `repository` — synced, skipped with why, or partial where the
+    // workspace filing failed. Read AFTER the recapture rebind above, because
+    // a denial's reason changes across it; written as one batched upsert, so
+    // the whole offer set costs one statement, not one round trip per row.
+    //
+    // Three things are deliberately NOT written. A deliberate refusal is
+    // `skipped`, never `error`: only one of those is a problem, and the other
+    // would cry wolf about every private repository. A mapped repository the
+    // plan mentions in neither `allowed` nor `denied` gets no row from the
+    // mapped branch — a silent plan is not a verdict, and writing one would
+    // fabricate a refusal. And an unmapped answer for a repository the mapped
+    // branch already decided is dropped: one batch holding two entries for one
+    // row makes Postgres reject the whole pass, and every pass after while
+    // the dōjō answers like that — stopping metrics and graphs too. The
+    // mapped branch decides first, so a denial or a sync from the fresher
+    // plan wins over the registration's stale half.
+    let denied_by_key: std::collections::HashMap<&str, &str> =
+        plan.denied.iter().map(|d| (d.repo_key.as_str(), d.reason.as_str())).collect();
+    let allowed: std::collections::HashSet<&str> =
+        plan.allowed.iter().map(|a| a.repo_key.as_str()).collect();
+    let mut verdicts: Vec<RepositoryVerdict> =
+        Vec::with_capacity(registered.mapped.len() + registered.unmapped.len());
+    let mut decided: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for m in &registered.mapped {
+        let key = m.repo_key.as_str();
+        if decided.contains(key) {
+            continue;
+        }
+        let verdict = if let Some(reason) = denied_by_key.get(key) {
+            Some(RepositoryVerdict {
+                repo_key: &m.repo_key,
+                state: RepositoryVerdictState::Skipped,
+                detail: Some(format!("denied:{reason}")),
+            })
+        } else if let Some(error) = &m.workspace_error {
+            Some(RepositoryVerdict {
+                repo_key: &m.repo_key,
+                state: RepositoryVerdictState::Partial,
+                detail: Some(error.clone()),
+            })
+        } else if allowed.contains(key) {
+            Some(RepositoryVerdict {
+                repo_key: &m.repo_key,
+                state: RepositoryVerdictState::Synced,
+                detail: None,
+            })
+        } else {
+            None
+        };
+        if let Some(v) = verdict {
+            decided.insert(key);
+            verdicts.push(v);
+        }
+    }
+    for u in &registered.unmapped {
+        let key = u.repo_key.as_str();
+        if decided.contains(key) {
+            continue;
+        }
+        // The plan is fresher than the registration: a repository denied but
+        // never mapped keeps the denial, not the registration's reason.
+        match denied_by_key.get(key) {
+            Some(reason) => verdicts.push(RepositoryVerdict {
+                repo_key: &u.repo_key,
+                state: RepositoryVerdictState::Skipped,
+                detail: Some(format!("denied:{reason}")),
+            }),
+            None => verdicts.push(RepositoryVerdict {
+                repo_key: &u.repo_key,
+                state: RepositoryVerdictState::Skipped,
+                detail: Some(format!("unmapped:{}", u.reason)),
+            }),
+        }
+        decided.insert(key);
+    }
+    pg.mark_repository_verdicts(persona, &verdicts).await?;
 
     pg.mark_synced(&mark, None).await?;
 
@@ -1662,6 +1740,17 @@ mod tests {
         .unwrap()
     }
 
+    async fn repository_state(pg: &PgStore, repo_key: &str) -> Option<(String, Option<String>)> {
+        sqlx_core::query_as::query_as(
+            "SELECT state, last_error FROM sensei.sync_state \
+              WHERE entity = 'repository' AND entity_key = $1 AND direction = 'push'",
+        )
+        .bind(repo_key)
+        .fetch_optional(pg.pool())
+        .await
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn a_failed_registration_is_recorded_rather_than_leaving_the_plan_reading_synced() {
         // Registration is the cycle's FIRST network call, and its failure used to
@@ -2142,6 +2231,248 @@ mod tests {
 
         assert!(out.is_ok(), "an unmapped repository is a reportable outcome, not a failure");
         assert!(sent.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unmapped_repository_is_recorded_skipped_with_its_reason() {
+        // G1: an unmapped repository used to be only logged, so neither the
+        // database nor the status screen held a row for it. The verdict is now
+        // recorded: skipped, with the dōjō's reason namespaced under `unmapped:`.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let plane = StubPlane {
+            register: Some(RegisterResult {
+                mapped: vec![],
+                unmapped: vec![UnmappedRepo {
+                    repo_key: key.clone(),
+                    reason: "no_connection".into(),
+                }],
+            }),
+            plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let verdict = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        let (state, why) = verdict.expect("the unmapped repository has a verdict row");
+        assert_eq!(state, "skipped");
+        assert_eq!(why.as_deref(), Some("unmapped:no_connection"));
+    }
+
+    #[tokio::test]
+    async fn a_denied_repository_is_recorded_skipped_with_the_dojo_reason() {
+        // A refusal is not a failure: it is recorded `skipped`, never `error`,
+        // carrying the dōjō's reason verbatim under `denied:`.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let plane = StubPlane {
+            register: Some(RegisterResult {
+                mapped: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                unmapped: vec![],
+            }),
+            plan: Some(SyncPlan {
+                allowed: vec![],
+                denied: vec![DeniedRepo {
+                    repo_key: key.clone(),
+                    tenant: "organization/ztest".into(),
+                    reason: "not_subscribed".into(),
+                }],
+            }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let verdict = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        let (state, why) = verdict.expect("the denied repository has a verdict row");
+        assert_eq!(state, "skipped");
+        assert_eq!(why.as_deref(), Some("denied:not_subscribed"));
+    }
+
+    #[tokio::test]
+    async fn an_allowed_repository_is_recorded_synced() {
+        // The positive verdict: a repository the plan allows reads `synced`
+        // with no annotation.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let tid = uuid::Uuid::new_v4().to_string();
+        let plane = StubPlane {
+            register: Some(RegisterResult { mapped: vec![mapped(&key, &tid)], unmapped: vec![] }),
+            plan: Some(SyncPlan { allowed: vec![mapped(&key, &tid)], denied: vec![] }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let verdict = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        let (state, why) = verdict.expect("the allowed repository has a verdict row");
+        assert_eq!(state, "synced");
+        assert_eq!(why, None);
+    }
+
+    #[tokio::test]
+    async fn a_failed_workspace_filing_is_partial_and_names_the_error() {
+        // Filing under the workspace failed though the registration stood
+        // (#299): the verdict is `partial`, naming the dōjō's error — not
+        // `synced`, which would claim the workspace filing happened.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let tid = uuid::Uuid::new_v4().to_string();
+        let mut registered = mapped(&key, &tid);
+        registered.workspace_error = Some("workspace 'ztest' not found".into());
+        let plane = StubPlane {
+            register: Some(RegisterResult { mapped: vec![registered], unmapped: vec![] }),
+            plan: Some(SyncPlan { allowed: vec![mapped(&key, &tid)], denied: vec![] }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let verdict = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        let (state, why) = verdict.expect("the misfiled repository has a verdict row");
+        assert_eq!(state, "partial");
+        assert!(
+            why.unwrap_or_default().contains("workspace 'ztest' not found"),
+            "the verdict names the filing error"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repository_that_later_maps_flips_from_skipped_to_synced() {
+        // The verdict row is overwritten, never appended: connecting the forge
+        // org turns yesterday's `skipped` into today's `synced`, clearing the
+        // stale reason with it.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let tid = uuid::Uuid::new_v4().to_string();
+        let before = StubPlane {
+            register: Some(RegisterResult {
+                mapped: vec![],
+                unmapped: vec![UnmappedRepo {
+                    repo_key: key.clone(),
+                    reason: "no_connection".into(),
+                }],
+            }),
+            plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
+            ..Default::default()
+        };
+        let after = StubPlane {
+            register: Some(RegisterResult { mapped: vec![mapped(&key, &tid)], unmapped: vec![] }),
+            plan: Some(SyncPlan { allowed: vec![mapped(&key, &tid)], denied: vec![] }),
+            ..Default::default()
+        };
+
+        let first = sync_persona(&pg, "ztest-slot", "tok", &before).await;
+        let was = repository_state(&pg, &key).await;
+        let second = sync_persona(&pg, "ztest-slot", "tok", &after).await;
+        let now = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(first.is_ok(), "{first:?}");
+        assert_eq!(
+            was.as_ref().map(|(s, _)| s.as_str()),
+            Some("skipped"),
+            "the unmapped pass records skipped"
+        );
+        assert!(second.is_ok(), "{second:?}");
+        let (state, why) = now.expect("the mapped pass overwrites the row");
+        assert_eq!(state, "synced");
+        assert_eq!(why, None, "and the stale reason is cleared with it");
+    }
+
+    #[tokio::test]
+    async fn a_repository_in_both_registration_answers_gets_one_verdict() {
+        // The planner's own comment allows a repository to appear in
+        // both registration answers; one statement must then still write ONE row.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let tid = uuid::Uuid::new_v4().to_string();
+        let plane = StubPlane {
+            register: Some(RegisterResult {
+                mapped: vec![mapped(&key, &tid)],
+                unmapped: vec![UnmappedRepo {
+                    repo_key: key.clone(),
+                    reason: "no_connection".into(),
+                }],
+            }),
+            plan: Some(SyncPlan {
+                allowed: vec![],
+                denied: vec![DeniedRepo {
+                    repo_key: key.clone(),
+                    tenant: "organization/ztest".into(),
+                    reason: "not_subscribed".into(),
+                }],
+            }),
+            ..Default::default()
+        };
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let verdict = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert!(out.is_ok(), "{out:?}");
+        assert_eq!(
+            verdict,
+            Some(("skipped".to_string(), Some("denied:not_subscribed".to_string())))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repository_twice_in_the_unmapped_answer_gets_one_verdict() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let twice = UnmappedRepo { repo_key: key.clone(), reason: "no_connection".into() };
+        let plane = StubPlane {
+            register: Some(RegisterResult {
+                mapped: vec![],
+                unmapped: vec![
+                    twice.clone(),
+                    UnmappedRepo { repo_key: key.clone(), reason: "unknown_host".into() },
+                ],
+            }),
+            plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
+            ..Default::default()
+        };
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert!(out.is_ok(), "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_plan_fetch_leaves_repository_rows_untouched() {
+        // A plan that could not be fetched is no verdict on any repository: the
+        // rows from the last good pass stand rather than being overwritten with
+        // a failure that says nothing about them.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let tid = uuid::Uuid::new_v4().to_string();
+        let good = StubPlane {
+            register: Some(RegisterResult { mapped: vec![mapped(&key, &tid)], unmapped: vec![] }),
+            plan: Some(SyncPlan { allowed: vec![mapped(&key, &tid)], denied: vec![] }),
+            ..Default::default()
+        };
+        let bad = StubPlane {
+            plan_err: Some("HTTP 500: the dōjō is down".into()),
+            ..Default::default()
+        };
+
+        let first = sync_persona(&pg, "ztest-slot", "tok", &good).await;
+        assert!(first.is_ok(), "{first:?}");
+        let before = repository_state(&pg, &key).await;
+        let second = sync_persona(&pg, "ztest-slot", "tok", &bad).await;
+        let after = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(second.is_err(), "a failed plan fetch fails the pass");
+        assert_eq!(before, Some(("synced".to_string(), None)));
+        assert_eq!(after, before, "and the repository row is untouched by it");
     }
 
     #[tokio::test]

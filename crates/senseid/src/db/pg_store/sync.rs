@@ -49,6 +49,38 @@ pub struct SyncStateRow {
     pub persona: Option<String>,
 }
 
+/// One repository's verdict from a single plan pass: what the dōjō answered
+/// about it, as one `sync_state` row under `repository`.
+pub struct RepositoryVerdict<'a> {
+    /// The durable cross-install key — never a local uuid.
+    pub repo_key: &'a str,
+    pub state: RepositoryVerdictState,
+    /// The row's `last_error`: the namespaced reason on `skipped`
+    /// (`unmapped:no_connection`), the filing error on `partial`, `None` on
+    /// `synced` so no stale message sits beside a success.
+    pub detail: Option<String>,
+}
+
+/// The only states a repository verdict takes. Never `error`: a refusal is a
+/// deliberate outcome, and recording one as an error would cry wolf about
+/// every private repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepositoryVerdictState {
+    Synced,
+    Skipped,
+    Partial,
+}
+
+impl RepositoryVerdictState {
+    fn as_str(self) -> &'static str {
+        match self {
+            RepositoryVerdictState::Synced => "synced",
+            RepositoryVerdictState::Skipped => "skipped",
+            RepositoryVerdictState::Partial => "partial",
+        }
+    }
+}
+
 /// The push query's column tuple. Named for the same reason `ScheduleRow` and
 /// `TaskExecutionRow` are: ten positional columns inline is a type nobody can
 /// read, and clippy is right to say so.
@@ -246,6 +278,49 @@ impl PgStore {
         .execute(&self.pool)
         .await
         .map_err(|e| format!("mark_sync_skipped: {e}"))?;
+        Ok(())
+    }
+
+    /// Record every repository's verdict from one plan pass in a single
+    /// statement — one round trip for the whole offer set, not one per
+    /// repository.
+    ///
+    /// Per-row semantics match the single-row writers: `synced` clears
+    /// `last_error` and sets `synced_at`, `partial` sets both the detail and
+    /// `synced_at`, `skipped` sets the detail and leaves `synced_at` standing.
+    ///
+    /// One entry per repository — the caller dedupes. Postgres rejects a batch
+    /// that touches one row twice, failing the whole statement.
+    pub async fn mark_repository_verdicts(
+        &self,
+        persona: &str,
+        verdicts: &[RepositoryVerdict<'_>],
+    ) -> Result<(), String> {
+        if verdicts.is_empty() {
+            return Ok(());
+        }
+        let keys: Vec<&str> = verdicts.iter().map(|v| v.repo_key).collect();
+        let states: Vec<&str> = verdicts.iter().map(|v| v.state.as_str()).collect();
+        let details: Vec<Option<String>> = verdicts.iter().map(|v| v.detail.clone()).collect();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.sync_state \
+                 (entity, entity_key, direction, persona, state, last_error, attempted_at, synced_at, updated_at) \
+             SELECT 'repository'::sensei.sync_entity, k, 'push'::sensei.sync_direction, $1, s, e, \
+                 now(), CASE WHEN s IN ('synced', 'partial') THEN now() ELSE NULL END, now() \
+             FROM unnest($2::text[], $3::text[], $4::text[]) AS v(k, s, e) \
+             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET persona = EXCLUDED.persona, \
+                 state = EXCLUDED.state, last_error = EXCLUDED.last_error, attempted_at = now(), \
+                 synced_at = CASE WHEN EXCLUDED.state IN ('synced', 'partial') THEN now() \
+                                 ELSE sensei.sync_state.synced_at END, \
+                 updated_at = now()",
+        )
+        .bind(persona)
+        .bind(keys)
+        .bind(states)
+        .bind(details)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("mark_repository_verdicts: {e}"))?;
         Ok(())
     }
 
