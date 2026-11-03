@@ -655,6 +655,28 @@ mod tests {
         assert_eq!(t.cost, Some(7.0), "premium requests, from requests.cost");
     }
 
+    /// D83 batch C (audit row: copilot_cli.rs:294-299): a token count the source
+    /// never reported is not measured — `None`, never `Some(0)`. A count is known
+    /// once any model reports it; a reported 0 stays 0.
+    #[test]
+    #[ignore = "pending: D83 batch C"]
+    fn a_token_count_no_model_reported_is_none_not_zero() {
+        let silent = r#"{"type":"session.shutdown","data":{"modelMetrics":{"gpt-5.4":{"requests":{"count":2,"cost":0},"usage":{"inputTokens":20,"outputTokens":10}}}}}"#;
+        let t = extract_jsonl_tokens(silent).unwrap();
+        assert_eq!((t.input, t.output), (20, 10));
+        assert_eq!(
+            (t.cache_read, t.cache_write, t.reasoning),
+            (None, None, None),
+            "never reported: not measured"
+        );
+
+        let partly = r#"{"type":"session.shutdown","data":{"modelMetrics":{"a":{"requests":{"cost":1},"usage":{"inputTokens":1,"outputTokens":1,"cacheReadTokens":5,"reasoningTokens":0}},"b":{"requests":{"cost":0},"usage":{"inputTokens":1,"outputTokens":1}}}}}"#;
+        let t = extract_jsonl_tokens(partly).unwrap();
+        assert_eq!(t.cache_read, Some(5), "known once any model reports it");
+        assert_eq!(t.cache_write, None, "no model reported it");
+        assert_eq!(t.reasoning, Some(0), "a reported 0 is a reading");
+    }
+
     #[test]
     fn shutdown_totals_are_cumulative_so_the_last_one_wins() {
         // session.shutdown fires on every CLI exit carrying life-to-date totals.
