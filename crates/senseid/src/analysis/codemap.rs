@@ -709,6 +709,27 @@ mod tests {
     /// The complexity rule lives here, once (#156): the app reads the tier the
     /// daemon sends instead of re-deriving the thresholds, and the metrics count
     /// the same outliers the lens shows.
+    /// Review G6: the Complexity lens's rows carry the same tier, so the lens's red
+    /// rows are the metric's outliers — one rule, read in two places.
+    #[test]
+    #[ignore = "pending: #156"]
+    fn the_complexity_tree_carries_each_rows_tier() {
+        let t = complexity_tree(&[
+            measured("pkg/alpha", "alpha/a.rs", 4, 1, 14),
+            measured("pkg/beta", "beta/b.rs", 10, 1, 12),
+        ]);
+        let tier = |id: &str| {
+            let m = t.modules.iter().find(|m| m.id == id).expect("module row");
+            serde_json::to_value(m).unwrap()["tier"].clone()
+        };
+        assert_eq!(
+            (tier("pkg/alpha"), tier("pkg/beta")),
+            (serde_json::json!("danger"), serde_json::json!("neutral"))
+        );
+        let file = serde_json::to_value(&t.modules[0].children[0]).unwrap();
+        assert!(file["tier"].is_string(), "every row carries one: {file}");
+    }
+
     #[test]
     #[ignore = "pending: #156"]
     fn a_module_complexity_carries_its_tier() {

@@ -70,4 +70,17 @@ describe('ComplexityLens', () => {
     expect(target.textContent).toContain('Bad Gateway');
     expect([...target.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Retry')).toBe(true);
   });
+
+  // Review G6: the lens colours a row by the tier the daemon sent, not by its own
+  // thresholds — so its red rows are the metric's outliers.
+  it.skip('pending: #156 — colours a module by the tier it was sent, not its share', () => {
+    const tree: ComplexityTree = {
+      total: { functions: 10, complex: 3, maxCyclo: 20, files: 1 }, maintainability: null,
+      modules: [{ id: 'p/z', label: 'p/z', kind: 'module', functions: 10, complex: 3, maxCyclo: 20, files: 1, tier: 'warning', children: [] }],
+    };
+    render(tree);
+    const row = target.querySelector('[data-complexity-row="p/z"]') as HTMLElement;
+    expect(row.querySelector('.text-warning')).not.toBeNull();
+    expect(row.querySelector('.text-danger')).toBeNull();
+  });
 });

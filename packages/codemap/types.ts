@@ -161,6 +161,8 @@ export interface ComplexityNode {
   complex: number;
   /** The highest cyclomatic complexity of any function under this row. */
   maxCyclo: number;
+  /** The daemon's reading of the row (#156): the one rule the lens and the metrics share. */
+  tier?: 'danger' | 'warning' | 'neutral' | null;
   files: number;
   children: ComplexityNode[];
 }
