@@ -1,0 +1,23 @@
+# Dead doc links pending a fix by their owner (L6 docs: prd, roadmap, journeys). Remove a row when its link is fixed;
+# check-doc-links fails on a row that no longer matches.
+docs/journeys/README.md	../mockups/
+docs/journeys/README.md	../mockups/Sensei/Sensei%20End-to-End%20Journey.html
+docs/journeys/README.md	../mockups/Sensei/Sensei%20Journey%20Map.html
+docs/journeys/README.md	../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html
+docs/journeys/README.md	../mockups/Sensei/Sensei%20Flow%20Walkthrough.html
+docs/journeys/README.md	../mockups/Sensei/Sensei%20End-to-End%20Journey.html
+docs/journeys/dojo.md	../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html
+docs/journeys/dojo.md	../mockups/Sensei/Sensei%20End-to-End%20Journey.html
+docs/journeys/sensei.md	../mockups/Sensei/Sensei%20Journey%20Map.html
+docs/journeys/sensei.md	../mockups/Sensei/Sensei%20End-to-End%20Journey.html
+docs/prd/01-vision.md	../mockups/Sensei/Sensei%20Journey%20Map.html
+docs/prd/01-vision.md	../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html
+docs/prd/01-vision.md	../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html
+docs/prd/01-vision.md	../mockups/Sensei/Sensei%20End-to-End%20Journey.html
+docs/prd/README.md	../mockups/
+docs/prd/README.md	../mockups/
+docs/prd/modules/02-insight/08-metrics-and-health/README.md	../../../../../database/ddl/view/sensei/project_health_score.ddl
+docs/prd/modules/04-team/02-dojo-consoles/README.md	../../../../mockups/Sensei/lib/dojo/dojo-governance.jsx
+docs/prd/modules/04-team/02-dojo-consoles/README.md	../../../../mockups/Sensei/lib/dojo/
+docs/prd/modules/04-team/04-billing-seats/README.md	../../../../mockups/Sensei/lib/dojo/dojo-billing.jsx
+docs/prd/modules/04-team/04-billing-seats/README.md	../../../../mockups/Sensei/lib/dojo/dojo-saas.jsx

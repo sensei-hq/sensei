@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (mobile companion)
 **Route:** Relay iOS app · respond / decide gate (no web route — phone app)
-**Source mockup:** [`lib/relay/relay.jsx`](../../mockups/Sensei/lib/relay/relay.jsx) → `RelayRespond`
+**Source mockup:** `lib/relay/relay.jsx` → `RelayRespond`
 **Data:** greenfield — a **decide gate** raised by the coordinator, delivered over the relay as a small chat. Proposed: `GET /api/relay/agents/{id}/thread` → `{ title, machine, assistant, turns: [{role:'agent'|'you', text}], pending?: { question, options: [{label, hint}] } }`; reply `POST /api/relay/gates/{id}` `{ choice?: <option index>, reply?: <free text> }`. Only the agent's *question*, the *option labels*, and the user's *reply* cross the relay — never code or transcripts.
 **App file:** _greenfield — mobile app not built_
 **Daemon files:** _greenfield — coordinator + relay transport not built_

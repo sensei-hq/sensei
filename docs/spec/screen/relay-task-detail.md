@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (mobile companion)
 **Route:** Relay iOS app · task detail (no web route — phone app)
-**Source mockup:** [`lib/relay/relay.jsx`](../../mockups/Sensei/lib/relay/relay.jsx) → `RelayTaskDetail`
+**Source mockup:** `lib/relay/relay.jsx` → `RelayTaskDetail`
 **Data:** greenfield — the coordinator publishes a filtered per-task view. Proposed: `GET /api/relay/agents/{id}` → `{ title, machine, assistant, ago, state, plan: { of, x, steps: [{label, status}] }, activity: [{time, kind, summary, live?, block?}], gate?: {kind:'approve', label, command, machine} }`. Status + plan structure only — never code or transcripts.
 **App file:** _greenfield — mobile app not built_
 **Daemon files:** _greenfield — coordinator + relay transport not built_

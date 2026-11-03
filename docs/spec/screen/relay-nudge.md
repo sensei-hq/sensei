@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (mobile companion · planner)
 **Route:** Relay iOS app · Nudge (no web route)
-**Source mockup:** [`lib/relay/relay-planner.jsx`](../../mockups/Sensei/lib/relay/relay-planner.jsx) → `RelayNudge`
+**Source mockup:** `lib/relay/relay-planner.jsx` → `RelayNudge`
 **Data:** _greenfield_ — `GET /api/relay/projects/{name}/stall` (coordinator-published): the stalled track — `quiet_for` duration, `reason` (filtered, e.g. `waiting on API rate limit`), `auto_retry_in`, the phase (`n of x` + `pct`), and a mini `done · doing · next` of where it stands. `POST /api/relay/projects/{name}/nudge` continues the track.
 **App file:** _greenfield — mobile app not built_
 **Daemon files:** _greenfield — coordinator + planner model not built_

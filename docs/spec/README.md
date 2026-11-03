@@ -62,7 +62,7 @@ improvement, not one-sided teaching.
 
 ## The journey — the four segments we build against
 
-Source of truth: [`docs/mockups/Sensei/Sensei Journey Map.html`](../mockups/Sensei/Sensei%20Journey%20Map.html).
+Source of truth: `docs/mockups/Sensei/Sensei Journey Map.html`.
 
 | # | Segment | Kanji | Purpose | Screens |
 |---|---|---|---|---|
@@ -71,7 +71,7 @@ Source of truth: [`docs/mockups/Sensei/Sensei Journey Map.html`](../mockups/Sens
 | 03 | Observatory — daily use | 家 | Walk in, learn the one thing that needs me today, act on it, stay in control of what leaves my machine. | today, projects, project, sessions, insights, memory, libraries, instruments, upgrades, impact, collective |
 | 04 | The project window | 雲 | Work inside one project end-to-end and trust what Sensei learned here before any of it travels. | overview, sessions, memories, traceability, libraries, instruments, patterns, impact, about |
 
-Dōjō (SaaS) is a companion track — [`Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html):
+Dōjō (SaaS) is a companion track — `Sensei Dōjō Journey Map.html`:
 
 | Role | Surface | Stages |
 |---|---|---|

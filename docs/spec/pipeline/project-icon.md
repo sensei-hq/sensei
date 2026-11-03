@@ -44,7 +44,7 @@ Ordered — first hit wins. Each step is a small, testable check.
 
 | # | Source | Detection | Icon shape |
 |---|---|---|---|
-| 1 | README image | Parse README (root, then `docs/README.md`). First `![…](URL)` or `<img src=…>` whose alt/title contains `logo` OR whose src filename matches `logo|brand|banner|mark`. | image, source: `readme` |
+| 1 | README image | Parse README (root, then `docs/README.md`). First `…` or `<img src=…>` whose alt/title contains `logo` OR whose src filename matches `logo|brand|banner|mark`. | image, source: `readme` |
 | 2 | Repo logo files | Glob for `logo.{png,svg,jpg,webp}`, `icon.{…}`, `assets/logo.{…}`, `.github/logo.{…}`. Prefer svg. | image, source: `logo_file` |
 | 3 | favicon | `favicon.ico` in root or `static/`, `public/`, `web/`. If PNG variant exists (`favicon.png`), prefer PNG. | image, source: `favicon` |
 | 4 | Package branding | `package.json` `sensei.icon` or `brand.icon` (custom extension) OR `homepage` favicon if fetched offline is not desirable — skip network. | image, source: `package_branding` |

@@ -52,7 +52,7 @@ Who each feature serves is in [`../prd/03-personas.md`](../prd/03-personas.md).
 - Front door / intake — read the chunk, recommend a way of working [x]
 - Playbook catalog (vibe · mockup-first · spec-driven · gsd · change-flow · debug-flow) [x]
 - In-the-moment guidance — push context / rules / patterns / mindsets into the assistant's path [x]
-- Playbook → outcome learning [x](dev)
+- Playbook → outcome learning x
 
 ## 6 · Planning & delivery
 - Planner — idea/specs → features → phases → value releases (confirm once, then run) ❌

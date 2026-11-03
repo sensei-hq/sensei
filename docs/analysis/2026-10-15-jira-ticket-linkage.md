@@ -31,7 +31,7 @@ this slice.
 | Source | What it says |
 |---|---|
 | [`design/integrations-and-gating-requirements.md`](../design/integrations-and-gating-requirements.md) §2.1–2.6, §6.2, §7 | Jira is the sprint owner; sync is **read-only** (decision 2026-10-14, no export); a session links when **branch, commit or prompt** carries the key; multi-key session counts toward each; unlinked count toward nothing; roadmap items T-1a / T-1d |
-| [`prd/modules/04-team/03-dojo-project-planning`](../prd/modules/04-team/03-dojo-project-planning/README.md) | Same invariants as "Lead"; **"tracker adapters: not present"**; **"no tracker tables yet"**; hours/tokens are *insights* — never gates, and never per-author gates |
+| [`prd/modules/04-team/03-dojo-project-planning`](../prd/modules/04-team/03-dojo-workspace-planning/README.md) | Same invariants as "Lead"; **"tracker adapters: not present"**; **"no tracker tables yet"**; hours/tokens are *insights* — never gates, and never per-author gates |
 | `roadmap/06-gaps.md` | T-1 (adapters mockup-only, P1); **F-3 Dōjō sync never worked (P1)** |
 | `database/ddl/table/activity/sessions.ddl` | `duration` = gap-aware **active** time; tokens split `tokens_in` (folded total) / `tokens_fresh` / `cache_read` / `cache_write` / `tokens_out` / `tokens_reasoning`; `metered_cost`; `task` text; **no branch column**; `repo_key`, `project_id` |
 | `activity/transcript_turns.ddl` | Per-turn `git_branch`, `user_text`, per-turn tokens; `session_id` is the assistant's text id (joins `sessions.client_session_id`) |

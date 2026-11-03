@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (mobile companion · planner)
 **Route:** Relay iOS app · Plan (no web route)
-**Source mockup:** [`lib/relay/relay-planner.jsx`](../../mockups/Sensei/lib/relay/relay-planner.jsx) → `RelayPlan`
+**Source mockup:** `lib/relay/relay-planner.jsx` → `RelayPlan`
 **Data:** _greenfield_ — `GET /api/relay/projects/{name}/plan` (coordinator-published, filtered status only): the one active plan → ordered phases, each with a `state` (`done`/`doing`/`next`), a `count` of done-of-total items, and its items — features · checkpoints · gates — each an item with a `kind` (`done`/`doing`/`gate`/`next`) and an optional filtered `note`.
 **App file:** _greenfield — mobile app not built_
 **Daemon files:** _greenfield — coordinator + planner model not built_

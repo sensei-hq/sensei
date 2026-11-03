@@ -135,5 +135,5 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 
 ## Related
 
-- Connection: [`project-integrations.md`](project-integrations.md)
+- Connection: [`project-integrations.md`](workspace-integrations.md)
 - Daemon: [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md)

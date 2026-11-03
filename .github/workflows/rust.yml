@@ -84,6 +84,9 @@ jobs:
       - name: No fabrication ratchet
         run: make check-no-fabrication
 
+      - name: Doc links point at tracked files
+        run: make check-doc-links
+
       - name: Homebrew tokens in the docs
         run: make check-brew-tokens
 

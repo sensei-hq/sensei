@@ -475,4 +475,4 @@ carries):
 - [`../prd/modules/03-delivery/20-planner-and-baseline/README.md`](../prd/modules/03-delivery/20-planner-and-baseline/README.md) — `PlanGraph`, baseline, ratchet (C-1).
 - [`../prd/modules/03-delivery/16-workspace-window/README.md`](../prd/modules/03-delivery/16-workspace-window/README.md) — the Tasks tab (unbuilt).
 - [`../reorg.md`](../reorg.md) §9 — the canonical gate/improvement + ratchet design.
-- [`../mockups/Sensei/lib/dojo2/dojo2-project.jsx`](../mockups/Sensei/lib/dojo2/dojo2-project.jsx) · [`relay-planner.jsx`](../mockups/Sensei/lib/relay/relay-planner.jsx) — visual source (never edited).
+- `../mockups/Sensei/lib/dojo2/dojo2-project.jsx` · `relay-planner.jsx` — visual source (never edited).
