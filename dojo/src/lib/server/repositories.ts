@@ -235,6 +235,11 @@ const PAGE = 1000;
  * from "there is more", so it costs one extra empty request rather than risking
  * a lost tail — the off-by-one that would otherwise drop exactly the rows of a
  * user whose count is a multiple of the page size.
+ *
+ * Every caller MUST order deterministically (a total order, unique per row):
+ * each page re-runs the read with a fresh OFFSET, and without an ORDER BY
+ * Postgres keeps no row order between runs — past 1,000 rows a row can land on
+ * two pages or on none, with no error (WP4 F1).
  */
 export async function readAllPages<T>(
 	page: (
@@ -317,7 +322,8 @@ const MY_REPO_COLUMNS =
  */
 async function graphBranchesByRepo(db: DojoClient): Promise<Map<string, GraphBranch[]>> {
 	const branchRows = await readAllPages<{ repository_id: string; branch: string; is_default: boolean }>(
-		(from, to) => db.rpc('my_graph_branches').select('repository_id, branch, is_default').range(from, to)
+		(from, to) =>
+			db.rpc('my_graph_branches').select('repository_id, branch, is_default').order('repository_id').order('branch').range(from, to)
 	);
 	const branchesOf = new Map<string, GraphBranch[]>();
 	for (const b of branchRows ?? []) {
@@ -337,7 +343,7 @@ export async function listMyRepositories(db: DojoClient): Promise<MyRepository[]
 	// no consumer-side filter to forget.
 	const [repos, branchesOf] = await Promise.all([
 		readAllPages<MyRepository>((from, to) =>
-			db.rpc('my_repositories').select(MY_REPO_COLUMNS).range(from, to)
+			db.rpc('my_repositories').select(MY_REPO_COLUMNS).order('repository_id').range(from, to)
 		),
 		graphBranchesByRepo(db)
 	]);
@@ -475,6 +481,7 @@ export async function syncPlan(db: DojoClient): Promise<SyncPlan> {
 		db
 			.rpc('my_repositories')
 			.select('repository_id, repo_key, tenant, tenant_id, sync_enabled, denied_reason')
+			.order('repository_id')
 			.range(from, to)
 	);
 

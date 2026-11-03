@@ -531,8 +531,10 @@ describe('listMyRepositories — what a human is shown', () => {
 // hypothetical.
 describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	function manyRows(n: number) {
+		// Zero-padded: the read orders by repository_id, and the fake sorts
+		// textually — unpadded, r999 would sort last instead of r2349.
 		return Array.from({ length: n }, (_, i) => ({
-			repository_id: `r${i}`,
+			repository_id: `r${String(i).padStart(4, '0')}`,
 			repo_key: `github.com/acme/repo-${i}`,
 			name: `repo-${i}`,
 			tenant: 'organization/acme',
@@ -582,5 +584,46 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 		const db = fakeDojoDb({ ...tables(), 'rpc:my_repositories': { rows: manyRows(1200) } });
 		const plan = await syncPlan(db as never);
 		expect(plan.allowed).toHaveLength(1200);
+	});
+});
+
+// ── Paged reads need a deterministic order, not just pages ────────────────────
+//
+// Each page re-runs the read with a fresh OFFSET; without an ORDER BY Postgres
+// keeps no row order between runs, so past 1,000 rows a row can land on two
+// pages or on none, with no error (WP4 F1). One row per (repository, caller)
+// makes repository_id the total order for my_repositories; branches add their
+// name.
+describe('paged reads page in a deterministic order', () => {
+	function orderedDb() {
+		const orders: Record<string, string[]> = {};
+		const db = {
+			rpc: (fn: string, _args?: Record<string, unknown>) => {
+				orders[fn] = [];
+				const chain: Record<string, unknown> = {};
+				chain.select = () => chain;
+				chain.order = (column: string) => {
+					orders[fn].push(column);
+					return chain;
+				};
+				chain.range = () => Promise.resolve({ data: [], error: null });
+				return chain;
+			}
+		};
+		return { db: db as never, orders };
+	}
+
+	it('listMyRepositories orders both reads', async () => {
+		const { db, orders } = orderedDb();
+		expect(await listMyRepositories(db)).toEqual([]);
+		expect(orders['my_repositories']).toEqual(['repository_id']);
+		expect(orders['my_graph_branches']).toEqual(['repository_id', 'branch']);
+	});
+
+	it('syncPlan orders both reads', async () => {
+		const { db, orders } = orderedDb();
+		expect(await syncPlan(db)).toEqual({ allowed: [], denied: [] });
+		expect(orders['my_repositories']).toEqual(['repository_id']);
+		expect(orders['my_graph_branches']).toEqual(['repository_id', 'branch']);
 	});
 });
