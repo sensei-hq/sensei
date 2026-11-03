@@ -5,7 +5,13 @@
   // modules appear; either side opens its module. The text follows the zoom.
   import type { CoChange } from './types';
 
-  let { data, zoom = 1, onfocus }: { data: CoChange | null; zoom?: number; onfocus: (id: string) => void } = $props();
+  let { data, zoom = 1, onfocus, focus = null }: {
+    data: CoChange | null;
+    zoom?: number;
+    onfocus: (id: string) => void;
+    /** What the map is focused on, so an empty list says whose it is. */
+    focus?: string | null;
+  } = $props();
   const pairs = $derived([...(data?.hidden ?? [])].sort((a, b) => b.together - a.together || b.strength - a.strength));
   const most = $derived(Math.max(1, ...pairs.map((p) => p.together)));
 </script>
@@ -27,7 +33,11 @@
   {:else if !data.commits}
     <p class="m-0 text-ink-mute">No commit history read for this workspace yet.</p>
   {:else if !pairs.length}
-    <p class="m-0 text-success">No hidden coupling: no two modules change together {data.minTogether}+ times without a dependency between them.</p>
+    {#if focus}
+      <p class="m-0 text-success">No hidden coupling involving {focus}: no module changes together with it {data.minTogether}+ times without a dependency between them.</p>
+    {:else}
+      <p class="m-0 text-success">No hidden coupling: no two modules change together {data.minTogether}+ times without a dependency between them.</p>
+    {/if}
   {:else}
     <ol class="m-0 p-0 list-none grid gap-y-2 items-center" style="grid-template-columns: minmax(0, 1fr) minmax(6em, 14em) minmax(0, 1fr) auto;">
       {#each pairs as p (`${p.a}|${p.b}`)}

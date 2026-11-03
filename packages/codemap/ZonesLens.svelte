@@ -4,7 +4,7 @@
   // concrete, bottom left) and of uselessness (abstract and unused, top right).
   // The frame draws at once and the dots arrive into it; a zone filter dims the
   // rest rather than dropping them. A dot opens its module.
-  import { inZoneFilter, zonesView, type ZoneFilter } from './lenses';
+  import { distanceText, inZoneFilter, zonesView, type ZoneFilter } from './lenses';
   import type { ZonePoint, Zones } from './types';
 
   let { data, filter = 'issues', zoom = 1, onfocus }: {
@@ -47,7 +47,7 @@
         role="button" tabindex="0" class="cursor-pointer"
         onclick={() => onfocus(p.component)} onkeydown={(e) => e.key === 'Enter' && onfocus(p.component)}
         data-testid={`zone-${p.component}`}>
-        <title>{p.component} — I {p.instability.toFixed(2)}, A {p.abstractness.toFixed(2)}, distance {p.distance.toFixed(2)}, {p.ca} dependents</title>
+        <title>{p.component} — I {p.instability.toFixed(2)}, A {p.abstractness.toFixed(2)}, distance {distanceText(p)}, {p.ca} dependents</title>
       </circle>
       {#if named(p)}
         <text x={x(p) + (p.instability > 0.7 ? -9 : 9)} y={y(p) + 4} text-anchor={p.instability > 0.7 ? 'end' : 'start'}

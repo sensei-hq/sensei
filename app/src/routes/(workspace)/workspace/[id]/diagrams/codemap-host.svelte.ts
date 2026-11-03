@@ -2,7 +2,7 @@
 // workspace, so switching lens in the sidebar keeps the level, the selection and
 // what was already read.
 import { getContext, setContext } from 'svelte';
-import { CodeMapState, budgetLine, drawnBands, workspaceStats, type CodeMapPort, type Stat } from '@sensei/codemap';
+import { CodeMapState, budgetLine, drawnBands, segmentLabel, workspaceStats, type CodeMapPort, type Stat } from '@sensei/codemap';
 import { senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
 import { codemapPort } from './codemap-port.js';
@@ -41,7 +41,7 @@ export class CodeMapHost {
     const f = this.state.focus;
     if (!f) return null;
     if (f.kind === 'module') return f.id;
-    return `${this.state.groupBy === 'layers' ? 'Layer' : 'Folder'} ${f.id}`;
+    return segmentLabel(this.state.groupBy, f.id);
   }
 
   clearFocus(): void {

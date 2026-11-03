@@ -6,6 +6,7 @@
 import type { Tone } from './inspector';
 import type { Lens } from './state.svelte';
 import { complexityTier } from './view';
+import { byDistance, distanceText } from './lenses';
 import type { Band, CoChange, ComplexityNode, ComplexityTree, Level0, Zones } from './types';
 
 export interface Takeaway {
@@ -114,7 +115,7 @@ function matrixIssues(l0: Level0): Takeaway[] {
 function zoneIssues(zones: Zones | null): Takeaway[] {
   const placed = zones?.points.filter((p) => p.zone !== null) ?? [];
   const pain = placed.filter((p) => p.zone === 'pain').sort((a, b) => b.ca - a.ca);
-  const useless = placed.filter((p) => p.zone === 'useless').sort((a, b) => b.distance - a.distance);
+  const useless = placed.filter((p) => p.zone === 'useless').sort(byDistance);
   return [
     ...(pain.length
       ? [{
@@ -129,7 +130,7 @@ function zoneIssues(zones: Zones | null): Takeaway[] {
           title: plural(useless.length, 'abstraction nothing uses', 'abstractions nothing uses'),
           detail: 'Interfaces or traits with little depending on them. Remove them, or use them where the concrete type is used now.',
           tone: 'warning' as Tone,
-          items: useless.slice(0, SHOWN).map((p) => ({ text: p.component, value: `distance ${p.distance.toFixed(2)}`, target: p.component })),
+          items: useless.slice(0, SHOWN).map((p) => ({ text: p.component, value: `distance ${distanceText(p)}`, target: p.component })),
         }]
       : []),
   ];

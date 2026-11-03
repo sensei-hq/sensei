@@ -48,4 +48,12 @@ describe('CouplingLens', () => {
     render({ ...CC, hidden: [] });
     expect(target.textContent).toContain('No hidden coupling');
   });
+
+  // Review r1 F5: under a focus, "no hidden coupling" is true of the focus only.
+  it('under a focus, an empty list names the focus', () => {
+    target = document.body.appendChild(document.createElement('div'));
+    app = mount(CouplingLens, { target, props: { data: { ...CC, hidden: [] }, zoom: 1, onfocus: vi.fn(), focus: 'senseid/db' } });
+    flushSync();
+    expect(target.textContent).toContain('No hidden coupling involving senseid/db');
+  });
 });

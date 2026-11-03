@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bandTone, budgetLine, complexityTier, legendFor, moduleChoices, shownFiles, visibleBands } from './view';
+import { bandTone, budgetLine, complexityTier, legendFor, moduleChoices, segmentLabel, shownFiles, visibleBands } from './view';
 import type { Band, Block, Level0 } from './types';
 
 const roles = { code: 4, test: 3, docs: 1, config: 0, generated: 2 };
@@ -96,5 +96,12 @@ describe('moduleChoices', () => {
   it('each group opens with a row that focuses all of it', () => {
     const l0 = { groupBy: 'folders', blocks: [block('p/a', { group: 'sensei' }), block('p/b', { group: 'sensei' })] } as unknown as Level0;
     expect(moduleChoices(l0)[0].children[0]).toEqual({ label: 'Folder sensei · all 2 modules', value: 'group:sensei' });
+  });
+});
+
+// Review r1 F8: one segment label, not three copies.
+describe('segmentLabel', () => {
+  it('names a group by what Group by made it', () => {
+    expect([segmentLabel('layers', 'L1'), segmentLabel('folders', 'senseid')]).toEqual(['Layer L1', 'Folder senseid']);
   });
 });

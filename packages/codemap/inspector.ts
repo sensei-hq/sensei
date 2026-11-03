@@ -3,7 +3,7 @@
 // or with nothing selected the workspace by direction. L1 describes the open
 // module, L2 the open file. Copy follows the mockup.
 import type { Level } from './state.svelte';
-import { complexityTier } from './view';
+import { complexityTier, segmentLabel } from './view';
 import type { Block, Direction, Level0, Level1, Level2 } from './types';
 
 export type Tone = 'ink' | 'danger' | 'warning' | 'success' | 'faint';
@@ -93,7 +93,7 @@ function segment(l0: Level0, focus: NonNullable<Level0['focus']>): Inspection {
   });
   return {
     eyebrow: `Segment · ${l0.groupBy}`,
-    title: `${l0.groupBy === 'layers' ? 'Layer' : 'Folder'} ${focus.id}`,
+    title: segmentLabel(l0.groupBy, focus.id),
     sub: 'The modules in this group, drawn with the modules they depend on or are used by.',
     stats: [
       { label: 'Modules', value: n(focus.members.length), tone: 'ink' },

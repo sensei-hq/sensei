@@ -81,4 +81,13 @@ describe('Takeaways', () => {
     expect(focus.textContent?.trim()).toBe('Focus');
     expect(target.querySelector('[data-takeaway-text].break-all, .break-all')).toBeNull();
   });
+
+  // Review r1 F4: the name is what a reader scans for, so a long path gives up
+  // its folder, never its name.
+  it('a long path truncates its folder and keeps its name whole', () => {
+    render();
+    const path = target.querySelector('[data-path]') as HTMLElement;
+    expect(path.querySelector('[data-path-name]')?.classList.contains('shrink-0')).toBe(true);
+    expect(path.querySelector('[data-path-folder]')?.classList.contains('truncate')).toBe(true);
+  });
 });

@@ -115,13 +115,15 @@ export interface ZonePoint {
   ce: number;
   abstractness: number;
   instability: number;
-  distance: number;
+  /** None when the component cannot be placed. */
+  distance: number | null;
   zone: 'main' | 'pain' | 'useless' | 'risk' | null;
 }
 
 export interface Zones {
   points: ZonePoint[];
-  meanDistance: number;
+  /** None when nothing is placed: a mean over no point is no reading. */
+  meanDistance: number | null;
   coverage: { points: number; unplaceable: number };
 }
 
