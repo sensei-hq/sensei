@@ -9,7 +9,9 @@
 		LadderRung,
 		RuleRow,
 		ConflictCard, LoadError } from '$lib/components/kit';
+	import Spark from '$lib/components/kit/Spark.svelte';
 	import type { KitConflict, KitLadderRung, KitWorkspace } from '$lib/components/kit/types';
+	import type { WorkspaceMetricsView } from '$lib/workspace-metrics-view';
 	import { createWorkspacePreview, type PreviewView } from '$lib/preview/state.svelte';
 	import { untrack } from 'svelte';
 
@@ -26,6 +28,8 @@
 		ladder,
 		conflicts,
 		error = null,
+		metrics = null,
+		metricsError = null,
 		onBack
 	}: {
 		workspace: KitWorkspace;
@@ -33,6 +37,11 @@
 		conflicts: KitConflict[];
 		/** A failed constitution read — shown instead of the empty state (#106). */
 		error?: string | null;
+		/** The workspace's per-repository metrics (WP5); null when the page did
+		 *  not read them (the personal drill-in) or the read failed. */
+		metrics?: WorkspaceMetricsView | null;
+		/** A failed metrics read — shown instead of empty charts (#109). */
+		metricsError?: string | null;
 		onBack?: () => void;
 	} = $props();
 
@@ -155,6 +164,50 @@
 					</div>
 				</div>
 			{/if}
+		{/if}
+
+		{#if metrics || metricsError}
+			<div>
+				<div class="flex items-center gap-2 mb-3">
+					<Icon name="chart" size={17} toneClass="text-accent" />
+					<span class="text-ink text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
+						Metrics — per repository
+					</span>
+					{#if metrics}
+						<span class="mono text-ink-soft text-xs">the last {metrics.days} days</span>
+					{/if}
+				</div>
+				{#if metricsError || !metrics}
+					<LoadError what="this workspace's metrics" error={metricsError} />
+				{:else if metrics.repos.length === 0}
+					<p class="text-sm text-ink-faint">Nothing sent in this window.</p>
+				{:else}
+					<div class="flex flex-col gap-5">
+						{#each metrics.repos as repo (repo.repository_id)}
+							<div>
+								<div class="mono text-ink-soft text-xs mb-2">{repo.name}</div>
+								<ul class="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
+									{#each repo.cards as c (c.key)}
+										<li class="flex flex-col gap-2 rounded border border-paper-edge p-4">
+											<span class="text-xs text-ink-mute">{c.label}</span>
+											{#if c.empty}
+												<span class="text-sm text-ink-faint">Nothing sent in this window</span>
+											{:else}
+												<div class="flex items-end justify-between gap-3">
+													<span class="text-2xl text-ink">{c.value}</span>
+													{#if c.points.length > 1}
+														<Spark data={c.points} />
+													{/if}
+												</div>
+											{/if}
+										</li>
+									{/each}
+								</ul>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
 		{/if}
 	</div>
 </Screen>

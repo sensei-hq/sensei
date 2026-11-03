@@ -24,5 +24,7 @@
 	ladder={data.ladder}
 	conflicts={data.conflicts}
 	error={data.constitutionError}
+	metrics={data.metricsView}
+	metricsError={data.metricsError}
 	onBack={back}
 />
