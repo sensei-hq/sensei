@@ -1156,3 +1156,96 @@ async fn the_daily_rollup_represents_a_repository_by_its_latest_row() {
 
     assert_eq!(got, (70.0, "from c-later".to_string()));
 }
+
+/// S4 2c (measured 2026-11-03): a repository writes a ratio/pct metric once per
+/// commit measured, and each such row is the WHOLE TREE at that commit —
+/// `duplication_ratio` had 10 rows for one repository on one day, each with a
+/// denominator of ~344k lines. Pooling summed all ten, so the day reported a 3.4M-
+/// line denominator and a ratio averaged over the day's commits instead of the
+/// tree's. Conservation: the pooled numerator and denominator equal the sum, over
+/// each repository and person, of ONE reading — its latest commit's. Rows with no
+/// commit differ by person, are separate work, and still add.
+#[tokio::test]
+#[ignore = "pending: S4 2c"]
+async fn ratio_pooling_counts_each_repository_and_person_once_its_latest_commit() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let pid = s.create_workspace(&format!("_test:pool2c:{uniq}"), None, None).await.unwrap();
+    let r1 =
+        crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
+    let r2 =
+        crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
+    let key = format!("_test:pool2c:{uniq}:ratio");
+    let mid = seed_metric(&s, &key, "RatioLike", 0, None).await;
+    let day = chrono::NaiveDate::from_ymd_opt(2020, 6, 7).unwrap();
+    // (repository, identity, commit, numerator, denominator, minutes before now)
+    let rows: [(&uuid::Uuid, &str, Option<&str>, i64, i64, i64); 6] = [
+        (&r1, "me@x", Some("r1-c1"), 10, 100, 30),
+        (&r1, "me@x", Some("r1-c2"), 12, 100, 20),
+        (&r1, "me@x", Some("r1-c3"), 15, 100, 10), // r1's latest commit
+        (&r2, "me@x", Some("r2-c1"), 5, 50, 20),
+        (&r2, "me@x", Some("r2-c2"), 7, 50, 10), // r2's latest commit
+        (&r1, "other@x", None, 3, 30, 5),        // another person's own reading
+    ];
+    for (rid, who, commit, num, den, _) in rows {
+        s.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: rid,
+            scope: "user",
+            identity: Some(who),
+            commit_sha: commit,
+            computed_on: day,
+            grain: "daily",
+            value: num as f64 / den as f64,
+            props: &serde_json::json!({ "numerator": num, "denominator": den }),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+    for (rid, who, commit, _, _, ago) in rows {
+        sqlx_core::query::query(
+            "UPDATE sensei.repository_metrics SET modified_at = now() - make_interval(mins => $5)
+              WHERE metric_id = $1 AND repository_id = $2 AND identity = $3
+                AND commit_sha IS NOT DISTINCT FROM $4",
+        )
+        .bind(mid)
+        .bind(rid)
+        .bind(who)
+        .bind(commit)
+        .bind(ago as i32)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+
+    let got: (f64, f64, f64) = query_as(
+        "SELECT value::float8, (props->>'numerator')::float8, (props->>'denominator')::float8
+           FROM sensei.workspace_metric_daily
+          WHERE workspace_id = $1 AND metric = $2 AND date = $3",
+    )
+    .bind(pid)
+    .bind(&key)
+    .bind(day)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+        .bind(mid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    // 15/100 (r1 latest) + 7/50 (r2 latest) + 3/30 (other@x) — not every commit summed (52/430).
+    assert_eq!((got.1, got.2), (25.0, 180.0), "one reading per repository and person: {got:?}");
+    assert!(
+        (got.0 - 25.0 / 180.0).abs() < 1e-9,
+        "the pooled ratio is Σnum/Σden of those readings: {got:?}"
+    );
+}
