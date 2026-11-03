@@ -17,6 +17,8 @@ create table if not exists repository_graph_branches (
 , added_by      uuid        references dojo.principals(id) on delete set null
 , added_at      timestamptz not null default now()
 , primary key (repository_id, branch)
+, constraint repository_graph_branches_label_known
+    check (label is null or label in ('production', 'testing', 'development'))
 );
 
 comment on table repository_graph_branches is

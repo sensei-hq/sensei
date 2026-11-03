@@ -10,6 +10,8 @@ set search_path to dojo, extensions;
 --   no authority yet (no capture)  → object_not_in_prerequisite_state (409)
 --   not configurable_by_me         → insufficient_privilege           (403)
 --   an empty branch name           → invalid_parameter_value          (400)
+-- The label is one of production, testing, development — or none: an empty label
+-- is stored as NULL, and anything else is refused by the table's CHECK (23514).
 -- Tracking is idempotent: a re-track updates only the label. Untracking deletes
 -- the branch's row, and the foreign keys take that branch's graph with it —
 -- which is why it is an explicit act, never a side effect.
@@ -30,6 +32,7 @@ as $$
 declare
     v_principal uuid := dojo.current_principal_id();
     v_branch    text := nullif(btrim(p_branch), '');
+    v_label     text := nullif(btrim(p_label), '');
     mine        dojo.all_my_repositories;
 begin
     if v_branch is null then
@@ -56,7 +59,7 @@ begin
 
     if p_tracked then
         insert into dojo.repository_graph_branches as b (repository_id, tenant_id, branch, label, added_by)
-        values (mine.repository_id, mine.tenant_id, v_branch, p_label, v_principal)
+        values (mine.repository_id, mine.tenant_id, v_branch, v_label, v_principal)
         on conflict (repository_id, branch) do update set label = excluded.label;
     else
         delete from dojo.repository_graph_branches b

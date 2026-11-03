@@ -426,7 +426,9 @@ import { listMyRepositories } from './repositories';
 
 describe('listMyRepositories — what a human is shown', () => {
 	function view(rows: Record<string, unknown>[]): Record<string, FakeTable> {
-		return { 'rpc:my_repositories': { rows } };
+		// The branches read is the shared set's default-empty, as
+		// metric_activations is in tables(): no rows means nothing tracked.
+		return { 'rpc:my_repositories': { rows }, 'rpc:my_graph_branches': { rows: [] } };
 	}
 	const ROW = {
 		repository_id: 'r1',
@@ -470,6 +472,30 @@ describe('listMyRepositories — what a human is shown', () => {
 			reason_actor: 'user',
 			configurable_by_me: true
 		});
+	});
+
+	it('carries each repository’s tracked graph branches, so the screen shows what the daemon will push', async () => {
+		// The same `my_graph_branches` read the plan uses — what the screen shows
+		// and what the daemon pushes cannot disagree. Default first, then by
+		// name; a repository tracking none carries [] (its graph does not sync),
+		// never a guessed main.
+		const db = fakeDojoDb({
+			'rpc:my_repositories': {
+				rows: [ROW, { ...ROW, repository_id: 'r2', repo_key: 'github.com/acme/web', name: 'web' }]
+			},
+			'rpc:my_graph_branches': {
+				rows: [
+					{ repository_id: 'r1', branch: 'develop', is_default: false },
+					{ repository_id: 'r1', branch: 'main', is_default: true }
+				]
+			}
+		});
+		const [api, web] = await listMyRepositories(db as never);
+		expect(api.graph_branches).toEqual([
+			{ branch: 'main', is_default: true },
+			{ branch: 'develop', is_default: false }
+		]);
+		expect(web.graph_branches).toEqual([]);
 	});
 
 	it('THROWS on a read error rather than reporting an empty list', async () => {
@@ -528,7 +554,10 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	}
 
 	it('returns EVERY repository past the first page, not the first 1000', async () => {
-		const db = fakeDojoDb({ 'rpc:my_repositories': { rows: manyRows(2350) } });
+		const db = fakeDojoDb({
+			'rpc:my_repositories': { rows: manyRows(2350) },
+			'rpc:my_graph_branches': { rows: [] }
+		});
 		const out = await listMyRepositories(db as never);
 		expect(out).toHaveLength(2350);
 		// The last row is the one a single unpaged read loses.
@@ -538,7 +567,10 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	it('stops at exactly one page when the total IS the page size', async () => {
 		// The off-by-one that turns a page loop into an infinite one: a full final
 		// page looks identical to "there is more".
-		const db = fakeDojoDb({ 'rpc:my_repositories': { rows: manyRows(1000) } });
+		const db = fakeDojoDb({
+			'rpc:my_repositories': { rows: manyRows(1000) },
+			'rpc:my_graph_branches': { rows: [] }
+		});
 		const out = await listMyRepositories(db as never);
 		expect(out).toHaveLength(1000);
 	});

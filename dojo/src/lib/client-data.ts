@@ -41,10 +41,10 @@ async function getJson<T>(url: string, opts: DojoCallOpts): Promise<T> {
 	return parseJson<T>(res);
 }
 
-/** A body-carrying request (POST/PATCH/DELETE) with the bearer + JSON headers. */
+/** A body-carrying request (POST/PUT/PATCH/DELETE) with the bearer + JSON headers. */
 async function sendJson<T>(
 	url: string,
-	method: 'POST' | 'PATCH' | 'DELETE',
+	method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
 	body: unknown,
 	opts: DojoCallOpts
 ): Promise<T> {
@@ -140,6 +140,14 @@ export async function adoptContribution(artifactId: string, opts: DojoCallOpts =
 }
 
 
+/** One tracked branch as it crosses the /v1/you wire. Mirrors the server
+ *  `GraphBranch`; declared here so the loader and the screen never import a
+ *  `$lib/server/*` module. */
+export interface GraphBranchWire {
+	branch: string;
+	is_default: boolean;
+}
+
 /** One repository as it crosses the /v1/you wire, with the sharing verdict.
  *  Mirrors `MyRepository` in `$lib/server/repositories`; declared here so the
  *  loader and the screen never import a `$lib/server/*` module. */
@@ -161,6 +169,18 @@ export interface MyRepoWire {
 	reason_actor: string | null;
 	last_synced_at: string | null;
 	metric_rows: number | null;
+	/** The branches whose code graph this repository shares. Empty → the graph
+	 *  does not sync, never a guessed `main`. */
+	graph_branches: GraphBranchWire[];
+}
+
+/** What the graph-branches route reports — the branch's tracking after the
+ *  write. Mirrors the server `GraphBranchOutcome`. */
+export interface GraphBranchOutcomeWire {
+	repo_key: string;
+	branch: string;
+	tracked: boolean;
+	is_default: boolean;
 }
 
 /** `GET /v1/you/metrics` — the caller's own series, day by day, over the last
@@ -211,6 +231,24 @@ export interface LibraryPackWire {
 	by: string;
 	note: string;
 	rules: string[];
+}
+
+/** `PUT/DELETE /v1/you/repositories/graph-branches` — track or untrack ONE
+ *  branch of a repository's shared code graph. The label is one of production,
+ *  testing, development, or none; anything else is a 400 before any write. */
+export async function setGraphBranch(
+	repoKey: string,
+	branch: string,
+	tracked: boolean,
+	label: string | null = null,
+	opts: DojoCallOpts = {}
+): Promise<GraphBranchOutcomeWire> {
+	return sendJson(
+		youUrl('/repositories/graph-branches'),
+		tracked ? 'PUT' : 'DELETE',
+		tracked && label ? { repo_key: repoKey, branch, label } : { repo_key: repoKey, branch },
+		opts
+	);
 }
 
 /** `GET /v1/you/rule-packs` — the global rule-pack library (curated, adoptable) +
