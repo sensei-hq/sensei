@@ -41,6 +41,8 @@ The goal and the reasons for the order are in `docs/review/2026-11-03-orientatio
 | D77 | **SCIM is free**, along with SSO (Q7, D59). |
 | D78 | **The dead client routing** (`crates/senseid/src/dojo/routing.rs` and its two `.feature` scenarios) is removed (Q8, D53). |
 | D79 | **Govern shows to everyone, with a minimum role per item** (the D70 Constitution move): Constitution for every member; Triage, Approvals and Knowledge for maintainer and up. |
+| D80 | **Narrower target levels may only tighten** (user): a level below can raise the bar or turn `warn` into `block`, never lower either. Loosening needs the role that set the wider level (D54). Resolution takes the strictest applicable level, which keeps targets consistent with D57's "stronger enforcement wins". |
+| D81 | **Target measurement** (user, accepting the spec's Q1–Q5): the rule-check target is absolute (zero failing hard rules on the change's tree); a hard rule is a checker rule whose resolved enforcement is mandatory or required, resolved as `get_rules` resolves it (adoption overrides included); baselines are per repository, metric and path filter; sprints and task types use the tracker's own keys (no invented issue-type mapping); a coverage reading counts once 50% of guarded files appear, and a graph reading once the index is complete (`folder_completeness.subtree_complete`). |
 
 The coordinator writes these into `docs/decisions.md` after Muse's WP4 commit lands. That file is in
 Muse's index right now.
