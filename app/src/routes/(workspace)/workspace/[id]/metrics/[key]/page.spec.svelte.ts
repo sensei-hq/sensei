@@ -64,4 +64,36 @@ describe('metric detail', () => {
     await tick();
     expect(reads('daily')).toHaveLength(1);
   });
+
+  // L3 · ActionItems act: the detail's action items act, end to end through the
+  // shared metrics state — a snoozed item leaves the list and the panel says so.
+  it.skip('pending: actionitems — snoozing an action item asks the daemon, removes it and says until when', async () => {
+    const { api, host } = setup();
+    (api.tryGetWorkspaceRecommendations as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      ok([{ id: 'r1', title: 'ftr fell across the torii repositories', status: 'pending', actionType: 'cross_workspace' }]));
+    (api as Record<string, unknown>).trySnoozeWorkspaceRecommendation = vi.fn(() =>
+      ok({ ok: true, snoozed_until: '2026-11-10T09:00:00+00:00' }));
+    render(host);
+    await tick();
+    const button = target.querySelector('[data-action-item="r1"] button[data-action-do="snooze"]') as HTMLButtonElement | null;
+    expect(button?.textContent?.trim()).toBe('Snooze 7 days');
+    button!.click();
+    await tick();
+    expect(api.trySnoozeWorkspaceRecommendation).toHaveBeenCalledWith('w1', 'r1', 7);
+    expect(target.querySelector('[data-action-item="r1"]')).toBeNull();
+    expect(target.querySelector('[data-action-done]')?.textContent).toContain('Snoozed until 2026-11-10');
+  });
+
+  it.skip('pending: actionitems — a rework hotspot’s action shows its file in Finder through the host’s opener', async () => {
+    const { api } = setup();
+    (api.tryGetWorkspaceRecommendations as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      ok([{ id: 'r2', title: 'High rework: src/ftr.rs', status: 'pending', actionType: 'audit_stale', file: '/repo/src/ftr.rs' }]));
+    const reveal = vi.fn(() => Promise.resolve());
+    const host = new MetricsHost(() => 'w1', () => api, reveal);
+    render(host);
+    await tick();
+    (target.querySelector('[data-action-item="r2"] button[data-action-do="open-file"]') as HTMLButtonElement).click();
+    await tick();
+    expect(reveal).toHaveBeenCalledWith('/repo/src/ftr.rs');
+  });
 });

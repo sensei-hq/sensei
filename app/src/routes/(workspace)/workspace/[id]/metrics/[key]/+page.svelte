@@ -29,6 +29,7 @@
     const daily = $derived(data.grain === 'daily' ? series : metrics.series(data.selectedKey, 'daily'));
     const recommendations = $derived(metrics.recommendations);
     const view = $derived({
+        workspaceId: data.workspaceId,
         rows: grid.data?.rows ?? [],
         registry: grid.data?.registry ?? [],
         narrative: grid.data?.narrative ?? null,

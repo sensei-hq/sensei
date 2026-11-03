@@ -6790,4 +6790,106 @@ mod tests {
         purge_corrections(pg, &[&sig_a, &sig_b]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
+
+    // ── L3 · ActionItems act: snooze a pending recommendation ──────────────
+
+    async fn snooze_fixture(state: &AppState) -> (uuid::Uuid, uuid::Uuid) {
+        let ws = state
+            .pg
+            .create_workspace(
+                &format!("_test:snooze_api_{}", uuid::Uuid::new_v4().simple()),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let rec = state
+            .pg
+            .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+                workspace_id: &ws,
+                title: "_test:snooze_api",
+                why: "why",
+                impact: None,
+                action_type: "cross_workspace",
+                urgency: "medium",
+                based_on: &serde_json::json!({}),
+                reasoning_trace_id: None,
+                prompt: None,
+            })
+            .await
+            .unwrap();
+        (ws, rec)
+    }
+
+    /// A snooze hides the recommendation from the pending read and says when it
+    /// wakes; a second snooze of the same rec still answers (it is still pending).
+    #[tokio::test]
+    #[ignore = "pending: actionitems"]
+    async fn snoozing_a_recommendation_hides_it_from_the_pending_read() {
+        let (app, state) = test_app().await;
+        let (ws, rec) = snooze_fixture(&state).await;
+        let uri = format!("/api/workspaces/{ws}/recommendations/{rec}/snooze");
+        let (st, body) =
+            req(app.clone(), "POST", &uri, Some(serde_json::json!({ "days": 7 }))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["ok"], true, "{body}");
+        let until = chrono::DateTime::parse_from_rfc3339(
+            body["snoozed_until"].as_str().expect("snoozed_until"),
+        )
+        .expect("rfc3339");
+        assert!(until > chrono::Utc::now() + chrono::Duration::days(6), "{body}");
+
+        let (st, list) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{ws}/recommendations?status=pending"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{list}");
+        assert_eq!(list, serde_json::json!([]), "the snoozed rec is not pending-shown");
+        state.pg.delete_workspace(&ws).await.unwrap();
+    }
+
+    /// Refusals say what was wrong, never a 200 that did nothing: a snooze length
+    /// outside 1–90 days, a malformed id, a rec that is not pending in this
+    /// workspace, and a workspace the daemon does not know.
+    #[tokio::test]
+    #[ignore = "pending: actionitems"]
+    async fn a_snooze_it_cannot_make_is_refused() {
+        let (app, state) = test_app().await;
+        let (ws, rec) = snooze_fixture(&state).await;
+        let snooze = |ws: String, rec: String, body: serde_json::Value| {
+            let app = app.clone();
+            async move {
+                let uri = format!("/api/workspaces/{ws}/recommendations/{rec}/snooze");
+                req(app, "POST", &uri, Some(body)).await
+            }
+        };
+        let (w, r) = (ws.to_string(), rec.to_string());
+        for days in [serde_json::json!(0), serde_json::json!(91), serde_json::json!(-1)] {
+            let (st, body) =
+                snooze(w.clone(), r.clone(), serde_json::json!({ "days": days })).await;
+            assert_eq!(st, StatusCode::BAD_REQUEST, "days={days}: {body}");
+        }
+        let (st, body) =
+            snooze(w.clone(), "not-a-uuid".into(), serde_json::json!({ "days": 7 })).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+        let (st, body) =
+            snooze(w.clone(), uuid::Uuid::new_v4().to_string(), serde_json::json!({ "days": 7 }))
+                .await;
+        assert_eq!(st, StatusCode::CONFLICT, "unknown rec: {body}");
+        let (st, body) = snooze(
+            format!("no-such-{}", uuid::Uuid::new_v4().simple()),
+            r.clone(),
+            serde_json::json!({ "days": 7 }),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "unknown workspace: {body}");
+
+        state.pg.reject_recommendation(&rec).await.unwrap();
+        let (st, body) = snooze(w.clone(), r.clone(), serde_json::json!({ "days": 7 })).await;
+        assert_eq!(st, StatusCode::CONFLICT, "a decided rec: {body}");
+        state.pg.delete_workspace(&ws).await.unwrap();
+    }
 }

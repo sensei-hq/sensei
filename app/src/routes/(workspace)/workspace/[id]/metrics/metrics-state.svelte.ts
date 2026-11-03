@@ -25,6 +25,9 @@ export type MetricsApi = Pick<
   | 'tryGetTranscriptConsent'
   | 'getWorkspaceMetricSeries'
   | 'tryGetWorkspaceRecommendations'
+  | 'tryPreviewRecommendation'
+  | 'tryMaterializeRecommendation'
+  | 'trySnoozeWorkspaceRecommendation'
 >;
 
 export type Grain = 'daily' | 'weekly' | 'monthly';
@@ -135,4 +138,7 @@ export class WorkspaceMetrics {
     }
     return this.#recommendations;
   }
+
+  /** pending: actionitems — drop a decided recommendation from what was read. */
+  settleRecommendation(_id: string): void {}
 }

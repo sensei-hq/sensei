@@ -352,6 +352,18 @@ impl PgStore {
         Ok(())
     }
 
+    /// Hide one of `workspace_id`'s PENDING recommendations from the pending read
+    /// for `days`, returning when it wakes. `None` when that workspace has no
+    /// pending recommendation with this id. pending: actionitems.
+    pub async fn snooze_recommendation(
+        &self,
+        _workspace_id: &uuid::Uuid,
+        _id: &uuid::Uuid,
+        _days: i32,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+        Err("pending: actionitems".into())
+    }
+
     pub async fn measure_recommendation(
         &self,
         id: &uuid::Uuid,

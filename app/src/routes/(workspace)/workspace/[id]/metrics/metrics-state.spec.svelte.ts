@@ -207,4 +207,28 @@ describe('WorkspaceMetrics', () => {
     await tick();
     expect(m.recommendations.status).toBe('ready');
   });
+
+  // L3 · ActionItems act: a settled recommendation leaves the list it was read
+  // into, so the landing and every detail stop offering it.
+  it.skip('pending: actionitems — settling a recommendation drops it from the read, and only it', async () => {
+    const { api, held } = daemon();
+    const m = new WorkspaceMetrics(api, 'w1');
+    m.recommendations;
+    held.recommendations.resolve(ok([{ id: 'a', title: 'one', status: 'pending' }, { id: 'b', title: 'two', status: 'pending' }]));
+    await tick();
+    m.settleRecommendation('a');
+    flushSync();
+    expect(m.recommendations.data?.map((r) => r.id)).toEqual(['b']);
+    expect(api.tryGetWorkspaceRecommendations).toHaveBeenCalledOnce();
+  });
+
+  it.skip('pending: actionitems — settling while the read failed keeps the failure (never an empty list)', async () => {
+    const { api, held } = daemon();
+    const m = new WorkspaceMetrics(api, 'w1');
+    m.recommendations;
+    held.recommendations.resolve(fail('boom'));
+    await tick();
+    m.settleRecommendation('a');
+    expect([m.recommendations.status, m.recommendations.error]).toEqual(['error', 'boom']);
+  });
 });

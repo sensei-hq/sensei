@@ -1256,6 +1256,13 @@ export function senseiApi(port: number) {
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     tryStop: () => tryPost<Record<string, unknown>>('/stop', {}),
+
+    // ── Metrics · action items (L3) ──────────────────────────────────────
+    /** Hide a pending recommendation for `days`; 409 when it is no longer pending. */
+    trySnoozeWorkspaceRecommendation: (id: string, recId: string, days: number) =>
+      tryPost<{ ok: boolean; snoozed_until: string }>(
+        `/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/snooze`, { days },
+      ),
   };
 }
 

@@ -1,13 +1,19 @@
 <script lang="ts">
     import { Kanji, Eyebrow } from '$lib/components';
     import type { ActionItem, ActionUrgency } from './action-items.js';
+    import type { ItemActions } from './action-items-state.svelte.js';
 
     // The workspace-scoped "action items" panel: the pending recommendations,
     // already score-ranked, each paired with the observation the screen makes
     // above. Read-only display — accept/reject lives on the Impact screen. Pure
     // template: the wire→view-model mapping is `buildActionItems` (a pure helper
     // the page calls); this component only iterates the result.
-    let { items, error = null }: { items: ActionItem[]; error?: string | null } = $props();
+    // pending: actionitems — `actions` becomes required when the panel renders it.
+    let {
+        items,
+        error = null,
+        actions: _actions,
+    }: { items: ActionItem[]; error?: string | null; actions?: ItemActions } = $props();
 
     // Urgency → chip utility classes. This lookup IS the rendering rule (the one
     // kind of map the guidelines allow inside a component): high → danger,
