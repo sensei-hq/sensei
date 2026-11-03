@@ -19,7 +19,7 @@
   WP8 in the handoff plan. WP1 (Muse) gate: one defect left (duplicate key within unmapped).
 - S3 Database · ER = dbd's viewer: rokkit 1.13.0 (port a76190b7b…, released), enums in the payload
   bd9e71d27, page 4e26da8c2 (sidebar right; Overview/Diagram/Entities; table/object/enum pages).
-- WP1 86b84ea46 + WP2 4370f28fb (Muse, reviewed); ratchet 1,060 → 1,075 faa167d8e.
+- Muse: WP1 86b84ea46 + WP2 4370f28fb (reviewed, pushed); ratchet 1,060 → 1,075 faa167d8e.
 - S5 b6deb16d0 `docs/plan/dojo-sync-handoff.md` (7 packages, 6 open questions).
 
 **Remaining, in order:**
@@ -38,7 +38,3 @@ would isolate both. dōjō pulls a second rokkit (1.4.0) via `@kavach/ui` 1.3.0'
 `@rokkit/forms@1.3.7` pin — fix in kavach.
 
 **Known broken:** Keychain test on rebuilt binaries (#282). Host load ~100 (a VM at ~1300% CPU).
----
-**Also in flight (Muse · dōjō sync WP1–WP2, unpushed 86b84ea46 + 4370f28fb):**
-WP1 verdict rows + WP2 Repositories section/remedies, both review-approved;
-live checks with the user. Next: WP3 tracked graph branches on review go-ahead.
