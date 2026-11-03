@@ -93,3 +93,29 @@ Complexity its totals as a line.
 **Costs to decide.** Forward-only costs one small row per kind per commit. Backfilling history
 means re-indexing past trees (a worktree per commit) — hours on a large repository, so opt-in and
 bounded (last n commits). Workspace = union of its repositories' snapshots at each point in time.
+
+## S7 — focus filters every lens (user, 2026-11-03)
+
+Found in review: picking a module opened its files on every lens (`openModule` → `level='files'`),
+so Cycles, Coupling and Complexity showed the same files view; only Structure, Matrix and Zones
+(`L0_LENSES`) climbed back out; Group by changed nothing on Cycles, Coupling and Complexity; the
+header did not say a module was open; "What to act on" was 12px mono with mid-word breaks.
+
+Agreed (user, 2026-11-03 — 1: module + direct neighbours, 2: focus carries across lenses, visibly,
+3: Group by defines segments you can focus on):
+1. **Focus, not open.** Picking a module (or a Group-by segment) sets `focus`; every lens filters
+   its own data to the focus and its one-hop neighbours — Structure/Wheel the neighbourhood,
+   Matrix the focus's rows and columns, Cycles only the cycles it is in, Coupling only its pairs,
+   Complexity its branch, Zones highlights it.
+2. **The header shows it**: a `Focus: <name> ✕` chip; ✕ clears. The focus is shared state, the same
+   on every lens.
+3. **The side panel is the focus's**: its numbers (StatCards), its own "What to act on", and
+   labelled actions — Open files, Show in <lens>, Clear focus.
+4. **Open files is explicit**, the old drill; switching lens leaves the files view, keeps the focus.
+5. **Group by means something everywhere**: it defines the segments a focus can name.
+6. **Readable takeaways**: 14px, name bold with its folder dimmed and cut from the left, cycle
+   members as a list, numbers on their own line, real buttons.
+7. **Fix**: `#read` discards a read overtaken by a later one, which can leave a lens on "Reading…".
+
+Tests first, in `packages/codemap` (state, each lens's filter as a pure function, takeaways shape)
+and the app's inspect spec (focus on Cycles, switch to Coupling, the chip and the content follow).
