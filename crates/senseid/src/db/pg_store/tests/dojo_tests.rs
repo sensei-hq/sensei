@@ -837,10 +837,8 @@ async fn a_pushed_commit_row_carries_its_authored_time_and_an_unknown_sha_does_n
         .unwrap();
     }
 
-    let rows = s
-        .unpushed_metric_rows(&["user"], &[&format!("test/bare-{uniq}")], 100)
-        .await
-        .unwrap();
+    let rows =
+        s.unpushed_metric_rows(&["user"], &[&format!("test/bare-{uniq}")], 100).await.unwrap();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
 
@@ -853,6 +851,161 @@ async fn a_pushed_commit_row_carries_its_authored_time_and_an_unknown_sha_does_n
     assert!(
         by_sha(&unknown).props.get("authored_at").is_none(),
         "an unknown sha is sent without the key, never with an invented time"
+    );
+}
+
+#[tokio::test]
+async fn user_rows_ship_authored_at_through_the_persona_push_query() {
+    // F4/M3: user rows ship through unpushed_user_metric_rows (the persona
+    // path, dojo_sync.rs), not the repo query above — the authored_at join
+    // must hold there too. Same both-ways assertion: known sha carries it,
+    // unknown sha does not.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let key = format!("test/bare-{uniq}");
+    let persona = s.upsert_persona(&format!("_test:pushable:{uniq}"), true).await.unwrap();
+    let claimed = format!("me-{uniq}@x.test");
+    s.link_persona_email(&persona, &claimed, "claimed").await.unwrap();
+    let mid =
+        seed_metric(&s, &format!("_test:sync:{uniq}:authored-user"), "ComputeFtr", 0, None).await;
+    let known = format!("known-user-{uniq}");
+    let unknown = format!("unknown-user-{uniq}");
+    sqlx_core::query::query(
+        "INSERT INTO sensei.commits(repository_id, sha, authored_at) VALUES ($1, $2, '2026-10-06T14:00:00Z')",
+    )
+    .bind(rid)
+    .bind(&known)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    for sha in [&known, &unknown] {
+        s.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: Some(claimed.as_str()),
+            commit_sha: Some(sha.as_str()),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(),
+            grain: "daily",
+            value: 0.5,
+            props: &serde_json::json!({"denominator": 2}),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+
+    let rows = s.unpushed_user_metric_rows(&persona, &[&key], &[], 100).await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(persona)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    // The fixture's no-identity row is held (exclusive list empty); only the
+    // two claimed-identity rows ship.
+    assert_eq!(rows.len(), 2, "both claimed rows ship, the no-identity row is held");
+    let by_sha = |sha: &str| rows.iter().find(|r| r.commit_sha.as_deref() == Some(sha)).unwrap();
+    assert_eq!(
+        by_sha(&known).props.get("authored_at"),
+        Some(&serde_json::json!("2026-10-06T14:00:00+00:00")),
+        "a known sha carries its commit's authored time on the persona path"
+    );
+    assert!(
+        by_sha(&unknown).props.get("authored_at").is_none(),
+        "an unknown sha is sent without the key on the persona path"
+    );
+}
+
+#[tokio::test]
+async fn backfill_push_authored_at_runs_once_and_requeues_keyless_commit_rows() {
+    // F4/L1: per-commit user rows pushed before authored_at existed gain the
+    // key from sensei.commits and are re-queued (shared_at cleared) so the
+    // next tick re-pushes them through the existing upsert. Unknown shas and
+    // commit-less rows are untouched. A second run changes nothing.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let key = format!("test/bare-{uniq}");
+    let mid = seed_metric(&s, &format!("_test:sync:{uniq}:backfill"), "ComputeFtr", 0, None).await;
+    let known = format!("known-bf-{uniq}");
+    let unknown = format!("unknown-bf-{uniq}");
+    sqlx_core::query::query(
+        "INSERT INTO sensei.commits(repository_id, sha, authored_at) VALUES ($1, $2, '2026-10-06T14:00:00Z')",
+    )
+    .bind(rid)
+    .bind(&known)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    for sha in [&known, &unknown] {
+        s.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: Some(sha.as_str()),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(),
+            grain: "daily",
+            value: 0.5,
+            props: &serde_json::json!({"denominator": 2}),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+    // As pushed before the key existed: shared, keyless.
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics SET shared_at = now() WHERE repository_id = $1",
+    )
+    .bind(rid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let first = s.backfill_push_authored_at_once().await.unwrap();
+
+    let state = || async {
+        let rows: Vec<(Option<String>, bool, bool)> = sqlx_core::query_as::query_as(
+            "SELECT commit_sha, props ? 'authored_at', shared_at IS NULL \
+               FROM sensei.repository_metrics WHERE repository_id = $1",
+        )
+        .bind(rid)
+        .fetch_all(s.pool())
+        .await
+        .unwrap();
+        rows
+    };
+    let after_first = state().await;
+    let second = s.backfill_push_authored_at_once().await.unwrap();
+    let after_second = state().await;
+    let requeued = s.unpushed_metric_rows(&["user"], &[&key], 100).await.unwrap();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    assert_eq!(first, 1, "one known-sha row backfilled and re-queued");
+    let known_row =
+        after_first.iter().find(|(sha, _, _)| sha.as_deref() == Some(known.as_str())).unwrap();
+    assert_eq!(
+        *known_row,
+        (Some(known.clone()), true, true),
+        "known sha gains the key and is re-queued"
+    );
+    assert!(
+        after_first.iter().all(|(sha, keyed, queued)| {
+            sha.as_deref() == Some(known.as_str()) || (!keyed && !queued)
+        }),
+        "unknown-sha and commit-less rows untouched: {after_first:?}"
+    );
+    assert_eq!(second, 0, "a second run changes nothing");
+    assert_eq!(after_first, after_second, "a second run changes nothing");
+    // Re-queued means pushable again through the real read.
+    assert!(
+        requeued.iter().any(|r| r.commit_sha.as_deref() == Some(known.as_str())),
+        "the backfilled row is queued for push with its key"
     );
 }
 

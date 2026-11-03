@@ -48,11 +48,25 @@ export type RejectReason =
 	| 'not_permitted'
 	| 'unknown_metric' //     no sensei.metrics row has that key
 	| 'ambiguous' //          that repo_key is registered under two of the caller's tenants
-	| 'unsupported_scope'; // a scope other than repo or user
+	| 'unsupported_scope' //  a scope other than repo or user
+	// props.authored_at is present but not an ISO-8601 instant with an
+	// offset. Refused here, by name, because one malformed value would fail
+	// the whole workspace read for every viewer without naming its row.
+	| 'invalid_authored_at';
 
 export interface IngestResult {
 	accepted: number;
 	rejected: { repo_key: string; metric: string; reason: RejectReason }[];
+}
+
+/** props.authored_at carries a commit's own time (F4) — ISO-8601 WITH an
+ *  offset, the same rule as the CHECK on dojo.repository_metrics (which the
+ *  read's cast relies on). The offset is required so the cast never depends
+ *  on the session TimeZone. */
+const AUTHORED_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
+function isAuthoredAt(v: unknown): boolean {
+	return typeof v === 'string' && AUTHORED_AT_RE.test(v) && !Number.isNaN(Date.parse(v));
 }
 
 /**
@@ -118,6 +132,11 @@ export async function ingestMetrics(db: DojoClient, rows: MetricInput[]): Promis
 
 		if (row.scope !== 'repo' && row.scope !== 'user') {
 			reject('unsupported_scope');
+			continue;
+		}
+		const authoredAt = row.props?.authored_at;
+		if (authoredAt !== undefined && authoredAt !== null && !isAuthoredAt(authoredAt)) {
+			reject('invalid_authored_at');
 			continue;
 		}
 		// Not among the caller's repositories: never registered, or another

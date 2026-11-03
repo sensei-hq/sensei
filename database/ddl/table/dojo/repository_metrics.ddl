@@ -27,6 +27,17 @@ create table if not exists repository_metrics (
 create index if not exists repository_metrics_lookup
     on repository_metrics(repository_id, metric_id, computed_on);
 
+-- props.authored_at carries a commit's own time (F4), which the workspace
+-- rollup casts: ISO-8601 WITH an offset, so the cast never depends on the
+-- session TimeZone. The write boundary refuses malformed values by name
+-- (metrics-ingest.ts, same rule); this CHECK stops every other writer. An
+-- ADD CONSTRAINT, not inline: the table already exists, and dbd honours only
+-- ADD CONSTRAINT here.
+alter table dojo.repository_metrics
+    add constraint repository_metrics_authored_at_iso
+    check (props->>'authored_at' is null
+           or props->>'authored_at' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$');
+
 comment on table repository_metrics is
 'Shared metric values, pushed by the daemon. Aggregates only — no session, turn
 or event ever crosses, so per-user metrics are visible here without the raw

@@ -343,13 +343,17 @@ end $$;
 -- authenticated again for the reads (the definer test's idiom).
 reset role;
 
--- Five days — today two contributors
+-- Eight days — today two contributors
 -- (shown), yesterday one commit-less row (withheld), day -2 one contributor
 -- with two commit rows (withheld — F4 counts people), day -3 one contributor
 -- with three commit rows plus a second contributor (shown, first person once),
 -- day -4 one keyed and one keyless commit row plus a second contributor (the
--- keyed row wins). Per-commit rows carry props.authored_at (L0 ruling; the
--- daemon sends it from sensei.commits, unknown shas without the key).
+-- keyed row wins). Day -5 is one person with a commit-less and a commit row
+-- (withheld — two readings, one contributor); day -6 the same plus a second
+-- contributor (shown: 3 readings, 2 contributors); day -7 two keyless commits
+-- where the later-pushed row has the lower sha (pushed_at breaks the tie).
+-- Per-commit rows carry props.authored_at (L0 ruling; the daemon sends it from
+-- sensei.commits, unknown shas without the key).
 insert into dojo.principals (id, auth_user_id, display_name) values
   ('a0000000-0000-4000-8000-000000000051', 'a1000000-0000-4000-8000-000000000051', 'amelia'),
   ('a0000000-0000-4000-8000-000000000052', 'a1000000-0000-4000-8000-000000000052', 'boris'),
@@ -395,7 +399,15 @@ select v.id::uuid, 'b0000000-0000-4000-8000-00000000005a', '90000000-0000-4000-8
     ('82000000-0000-4000-8000-000000000009', 'a0000000-0000-4000-8000-000000000052', null,                                       current_date - 3, 0.50, '{"denominator": 6}', null, ((current_date - 3) + time '08:03')::timestamptz),
     ('82000000-0000-4000-8000-000000000010', 'a0000000-0000-4000-8000-000000000051', 'cc0000000000000000000000000000000000000006', current_date - 4, 7, '{"denominator": 2}', format('%sT10:00:00Z', (current_date - 4)::text), ((current_date - 4) + time '08:00')::timestamptz),
     ('82000000-0000-4000-8000-000000000011', 'a0000000-0000-4000-8000-000000000051', 'dd0000000000000000000000000000000000000007', current_date - 4, 100, '{"denominator": 100}', null, ((current_date - 4) + time '09:00')::timestamptz),
-    ('82000000-0000-4000-8000-000000000012', 'a0000000-0000-4000-8000-000000000052', null,                                       current_date - 4, 1, '{"denominator": 1}', null, ((current_date - 4) + time '08:30')::timestamptz)
+    ('82000000-0000-4000-8000-000000000012', 'a0000000-0000-4000-8000-000000000052', null,                                       current_date - 4, 1, '{"denominator": 1}', null, ((current_date - 4) + time '08:30')::timestamptz),
+    ('82000000-0000-4000-8000-000000000013', 'a0000000-0000-4000-8000-000000000051', null,                                       current_date - 5, 1, '{"denominator": 1}', null, null),
+    ('82000000-0000-4000-8000-000000000014', 'a0000000-0000-4000-8000-000000000051', 'ee0000000000000000000000000000000000000008', current_date - 5, 2, '{"denominator": 2}', format('%sT10:00:00Z', (current_date - 5)::text), null),
+    ('82000000-0000-4000-8000-000000000015', 'a0000000-0000-4000-8000-000000000051', null,                                       current_date - 6, 1, '{"denominator": 1}', null, null),
+    ('82000000-0000-4000-8000-000000000016', 'a0000000-0000-4000-8000-000000000051', 'ee2000000000000000000000000000000000000009', current_date - 6, 2, '{"denominator": 2}', format('%sT10:00:00Z', (current_date - 6)::text), null),
+    ('82000000-0000-4000-8000-000000000017', 'a0000000-0000-4000-8000-000000000052', null,                                       current_date - 6, 4, '{"denominator": 4}', null, null),
+    ('82000000-0000-4000-8000-000000000018', 'a0000000-0000-4000-8000-000000000051', 'f7000000000000000000000000000000000000000a', current_date - 7, 50, '{"denominator": 5}', null, ((current_date - 7) + time '08:00')::timestamptz),
+    ('82000000-0000-4000-8000-000000000019', 'a0000000-0000-4000-8000-000000000051', '0b000000000000000000000000000000000000000b', current_date - 7, 6, '{"denominator": 3}', null, ((current_date - 7) + time '09:00')::timestamptz),
+    ('82000000-0000-4000-8000-000000000020', 'a0000000-0000-4000-8000-000000000052', null,                                       current_date - 7, 1, '{"denominator": 1}', null, ((current_date - 7) + time '08:30')::timestamptz)
   ) as v(id, who, sha, day, value, props, comm, pushed)
  cross join (select id from sensei.metrics order by key limit 1) m;
 
@@ -465,6 +477,41 @@ begin
     end if;
     if contrib <> 2 then
         raise exception 'f4_keyless_rows_order_after_keyed: day -4''s pool should cover 2 contributors, got %', contrib;
+    end if;
+
+    -- H1: contributors counts people, pooled_rows counts readings — they
+    -- differ whenever one person has two readings on a shown day. Runs before
+    -- the day -5 block so each count mutant fails on its own assertion.
+    select value, (props->>'pooled_rows')::int, (props->>'numerator')::numeric,
+           (props->>'denominator')::numeric, (props->>'contributors')::int
+      into v, pn, pnum, pden, contrib
+      from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date - 6;
+    if v <> 7 or pn <> 3 or pnum <> 21 or pden <> 7 or contrib <> 2 then
+        raise exception 'f4_contributors_counts_people_not_readings: day -6''s pool should be 7 (21/7) over 3 readings from 2 contributors, got % (%/%) over % rows from %', v, pnum, pden, pn, contrib;
+    end if;
+
+    -- H1: one person with a commit-less row AND a commit row is still one
+    -- person — two readings, one contributor, withheld.
+    select count(*) into n from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date - 5;
+    if n <> 0 then
+        raise exception 'f4_one_person_commit_and_commitless_withheld: day -5''s two readings are one person and must be withheld, got % pooled rows', n;
+    end if;
+
+    -- M1: keyless ties break on pushed_at. Amelia's two keyless commits: the
+    -- later-pushed row (0b, lower sha) is her reading; a sha-first order
+    -- would take f7's 50 instead.
+    select value, (props->>'numerator')::numeric, (props->>'denominator')::numeric,
+           (props->>'contributors')::int
+      into v, pnum, pden, contrib
+      from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date - 7;
+    if v <> 7 or pnum <> 19 or pden <> 4 then
+        raise exception 'f4_keyless_ties_break_on_pushed_at: day -7''s pool should be 7 (19/4) from the later-pushed row, got % (%/%)', v, pnum, pden;
+    end if;
+    if contrib <> 2 then
+        raise exception 'f4_keyless_ties_break_on_pushed_at: day -7''s pool should cover 2 contributors, got %', contrib;
     end if;
 end $$;
 

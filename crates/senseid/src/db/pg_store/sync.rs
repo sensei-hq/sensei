@@ -115,13 +115,36 @@ const PROVABLY_THEIRS: &str = "(rm.identity IS NULL AND r.repo_key = ANY($3)) \
                                WHERE e.persona_id = $1 AND e.source = 'claimed' \
                                  AND e.removed_at IS NULL)";
 
+/// The push read's columns and joins, shared by the repo and user queries so
+/// the carried shape — including the commits join behind `props.authored_at`
+/// — cannot drift between the two paths. The join is the commits primary key,
+/// so a row is never duplicated; a sha with no row yields NULL, never an
+/// invented time.
+const PUSHABLE_ROWS_FROM: &str = "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
+      , rm.value::float8, rm.commit_sha, rm.props, rm.source::text, c.authored_at \
+   FROM sensei.repository_metrics rm \
+   JOIN sensei.repositories r ON r.id = rm.repository_id \
+   JOIN sensei.metrics m      ON m.id = rm.metric_id \
+   LEFT JOIN sensei.commits c ON c.repository_id = rm.repository_id AND c.sha = rm.commit_sha";
+
 /// A selected row as the push carries it. A per-commit row carries its commit's
 /// own time as `props.authored_at` (F4: the instant the dōjō's
 /// latest-per-person order reads); an unknown sha is sent without the key,
 /// never with an invented time.
 fn pushable(row: PushableRow) -> PushableMetric {
-    let (id, repo_key, metric, scope, grain, computed_on, value, commit_sha, mut props, source, authored_at) =
-        row;
+    let (
+        id,
+        repo_key,
+        metric,
+        scope,
+        grain,
+        computed_on,
+        value,
+        commit_sha,
+        mut props,
+        source,
+        authored_at,
+    ) = row;
     // The join yields a time only for a row whose sha resolves in
     // sensei.commits, so `authored_at` present already implies per-commit.
     if let Some(at) = authored_at {
@@ -505,20 +528,15 @@ impl PgStore {
         allowed_keys: &[&str],
         limit: i64,
     ) -> Result<Vec<PushableMetric>, String> {
-        let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(
-            "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
-                  , rm.value::float8, rm.commit_sha, rm.props, rm.source::text, c.authored_at \
-               FROM sensei.repository_metrics rm \
-               JOIN sensei.repositories r ON r.id = rm.repository_id \
-               JOIN sensei.metrics m      ON m.id = rm.metric_id \
-               LEFT JOIN sensei.commits c ON c.repository_id = rm.repository_id AND c.sha = rm.commit_sha \
+        let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(&format!(
+            "{PUSHABLE_ROWS_FROM} \
               WHERE rm.computed_by = 'local' \
                 AND rm.scope::text = ANY($1) \
                 AND r.repo_key = ANY($2) \
                 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at) \
               ORDER BY rm.computed_on DESC, rm.id \
-              LIMIT $3",
-        )
+              LIMIT $3"
+        ))
         .bind(scopes.iter().map(|s| s.to_string()).collect::<Vec<_>>())
         .bind(allowed_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>())
         .bind(limit)
@@ -548,13 +566,7 @@ impl PgStore {
         limit: i64,
     ) -> Result<Vec<PushableMetric>, String> {
         let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(&format!(
-            "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
-                  , rm.value::float8, rm.commit_sha, rm.props, rm.source::text, c.authored_at \
-               FROM sensei.repository_metrics rm \
-               JOIN sensei.repositories r ON r.id = rm.repository_id \
-               JOIN sensei.metrics m      ON m.id = rm.metric_id \
-               LEFT JOIN sensei.commits c ON c.repository_id = rm.repository_id AND c.sha = rm.commit_sha \
-              WHERE {USER_ROWS_IN_PLAY} AND ({PROVABLY_THEIRS}) \
+            "{PUSHABLE_ROWS_FROM} WHERE {USER_ROWS_IN_PLAY} AND ({PROVABLY_THEIRS}) \
               ORDER BY rm.computed_on DESC, rm.id \
               LIMIT $4"
         ))
@@ -590,6 +602,38 @@ impl PgStore {
         .await
         .map_err(|e| format!("unprovable_user_metric_count: {e}"))?;
         Ok(row.0)
+    }
+
+    /// One-time backfill (F4/L1): per-commit user rows pushed before
+    /// `props.authored_at` existed carry no key, so keyed and keyless rows
+    /// would mix until each day is recomputed. Backfills the key from
+    /// `sensei.commits` and clears `shared_at` so the next tick re-pushes the
+    /// rows through the existing upsert, now with the key. Unknown shas have
+    /// no time and are left alone (they push keyless, by rule). Guarded by a
+    /// config key like `reset_watermarks_once`; returns rows touched, 0 once
+    /// done. A second run changes nothing.
+    pub async fn backfill_push_authored_at_once(&self) -> Result<u64, String> {
+        const DONE: &str = "dojo_sync.push_authored_at_v1";
+        if self.get_config(DONE).await?.is_some() {
+            return Ok(0);
+        }
+        let n = sqlx_core::query::query(
+            "UPDATE sensei.repository_metrics rm \
+                SET props = rm.props || jsonb_build_object('authored_at', c.authored_at), \
+                    shared_at = NULL \
+               FROM sensei.commits c \
+              WHERE c.repository_id = rm.repository_id \
+                AND c.sha = rm.commit_sha \
+                AND rm.scope = 'user' \
+                AND rm.commit_sha IS NOT NULL \
+                AND rm.props->>'authored_at' IS NULL",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("backfill_push_authored_at_once: {e}"))?
+        .rows_affected();
+        self.set_config(DONE, &chrono::Utc::now().to_rfc3339()).await?;
+        Ok(n)
     }
 
     pub async fn mark_metric_rows_shared(&self, ids: &[uuid::Uuid]) -> Result<u64, String> {
