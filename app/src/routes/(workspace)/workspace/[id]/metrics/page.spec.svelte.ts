@@ -79,18 +79,28 @@ describe('metrics landing', () => {
    *  section is drawn (with none, the page shows its empty state instead). */
   const gridLanded = (held: ReturnType<typeof render>['held']) => {
     held.values.resolve(ok({
-      metrics: [{ metric: 'ftr', metric_type: 'pct', value: 0.8, delta: null, direction: 'higher_better', date: '2026-11-01' }],
-      count: 1, narrative: null,
+      metrics: [
+        { metric: 'ftr', metric_type: 'pct', value: 0.8, delta: null, direction: 'higher_better', date: '2026-11-01' },
+        { metric: 'churn_rate', metric_type: 'pct', value: 0.2, delta: null, direction: 'lower_better', date: '2026-11-01' },
+      ],
+      count: 2, narrative: null,
     }));
-    held.registry.resolve(ok({ metrics: [{ key: 'ftr', family: 'outcome', name: 'First-try rate', formula: 'x' }], count: 1 }));
+    held.registry.resolve(ok({ metrics: [
+      { key: 'ftr', family: 'outcome', name: 'First-try rate', formula: 'x' },
+      { key: 'churn_rate', family: 'quality', name: 'Churn rate', formula: 'y' },
+    ], count: 2 }));
   };
+  const noPairs = ok({ cells: 0, min_pairs: 20, min_rho: 0.5, correlations: [] });
 
   it.skip('pending: d83-metrics — a health read in flight claims no "no rated metrics"', async () => {
     const { held } = render();
     gridLanded(held);
     await tick();
     expect(q('[data-component="metrics-radar"]')).not.toBeNull();
+    // What the person sees while it reads: the radar's own loading state.
+    expect(q('[data-component="metrics-radar"] [aria-busy="true"]')).not.toBeNull();
     expect(q('[data-component="metrics-radar"]')?.textContent).not.toContain('No rated metrics yet');
+    expect(q('[data-component="metrics-radar-error"]')).toBeNull();
   });
 
   it.skip('pending: d83-metrics — a failed health read is the radar’s error, never "no rated metrics"', async () => {
@@ -102,7 +112,9 @@ describe('metrics landing', () => {
     expect(q('[data-component="metrics-radar"]')?.textContent).not.toContain('No rated metrics yet');
   });
 
-  it.skip('pending: d83-metrics — a read health score still draws the radar', async () => {
+  // Guards, green now and kept green through the fix: a read that succeeded is
+  // drawn as read — honestly empty, or with its score and rated count.
+  it('a read health score with nothing rated draws the honest empty radar', async () => {
     const { held } = render();
     gridLanded(held);
     held.health.resolve(ok({ health_score: null, rated_metrics: 0, components: {} }));
@@ -110,6 +122,40 @@ describe('metrics landing', () => {
     // Honest-empty: the daemon read fine and has rated nothing yet.
     expect(q('[data-component="metrics-radar"]')?.textContent).toContain('No rated metrics yet');
     expect(q('[data-component="metrics-radar-error"]')).toBeNull();
+  });
+
+  it('a read health score draws its score and rated count', async () => {
+    const { held } = render();
+    gridLanded(held);
+    held.health.resolve(ok({
+      health_score: 72, rated_metrics: 1,
+      components: { ftr: { name: 'First-try rate', rating: 3.4, weight: 1 } },
+    }));
+    await tick();
+    expect(q('[data-testid="health-score"]')?.textContent?.trim()).toBe('72');
+    expect(q('[data-component="metrics-radar"]')?.textContent).toContain('1 rated');
+    expect(q('[data-testid="health-radar-empty"]')).toBeNull();
+    expect(q('[data-component="metrics-radar-error"]')).toBeNull();
+  });
+
+  it('a correlations read with no pairs shows no error', async () => {
+    const { held } = render();
+    gridLanded(held);
+    held.correlations.resolve(noPairs);
+    await tick();
+    expect(q('[data-component="metrics-grid"]')).not.toBeNull();
+    expect(q('[data-component="metrics-correlations-error"]')).toBeNull();
+  });
+
+  it('a correlations read with a pair draws the section and no error', async () => {
+    const { held } = render();
+    gridLanded(held);
+    held.correlations.resolve(ok({ cells: 1, min_pairs: 20, min_rho: 0.5, correlations: [
+      { a: 'ftr', b: 'churn_rate', rho: -0.7, n: 30 },
+    ] }));
+    await tick();
+    expect(q('[data-component="metrics-correlations"]')).not.toBeNull();
+    expect(q('[data-component="metrics-correlations-error"]')).toBeNull();
   });
 
   // D83 audit row 74: a failed correlations read hid the section.
