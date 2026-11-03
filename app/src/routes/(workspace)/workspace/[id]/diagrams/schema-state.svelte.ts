@@ -10,8 +10,10 @@
 // looks correct while silently never firing. This state owns only what the page
 // does: the read, the open tab, the selection, and the diagram's settings.
 
-import { pageFor, type DesignModel } from '@rokkit/graph/schema';
+import { databaseLabel, overviewCounts, pageFor, type DesignModel } from '@rokkit/graph/schema';
 import type { Density, EdgeStyle } from '@rokkit/graph';
+import { messages } from '@rokkit/states';
+import type { Stat } from '@sensei/codemap';
 import type { SchemaPayload } from '$lib/types.js';
 
 export interface SchemaApi {
@@ -58,6 +60,25 @@ export class SchemaState {
   /** The payload as rokkit's views read it. */
   get model(): DesignModel | null {
     return this.payload as DesignModel | null;
+  }
+
+  /** The design's counts as the header's stat cards (user, 2026-11-03) — a
+   *  card per kind it has, iconed as the diagram draws it; null until read. */
+  get stats(): Stat[] | null {
+    const m = this.view === 'design' ? this.model : null;
+    return m
+      ? overviewCounts(m).map((c) => ({ label: c.label, value: c.count.toLocaleString('en-US'), tone: 'ink' as const, icon: c.icon }))
+      : null;
+  }
+
+  /** The line under the cards: the database and the model's version, each when known. */
+  get note(): string | null {
+    const m = this.model;
+    const parts = [
+      databaseLabel(m?.project?.db),
+      m?.version ? messages.graph.modelVersion.replace('{n}', String(m.version)) : undefined,
+    ].filter(Boolean);
+    return parts.length ? parts.join(' · ') : null;
   }
 
   get selected(): string | null {

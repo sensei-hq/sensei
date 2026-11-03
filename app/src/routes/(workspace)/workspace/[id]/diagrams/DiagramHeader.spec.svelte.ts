@@ -18,20 +18,25 @@ beforeEach(() => store.clear());
 afterEach(() => { m?.destroy(); m = null; });
 
 const STATS = [
-  { label: 'Modules', value: '189', tone: 'ink' as const },
+  { label: 'Modules', value: '189', tone: 'ink' as const, icon: 'i-solar-box-minimalistic-bold-duotone' },
   { label: 'Symbols', value: '36,823', tone: 'ink' as const },
   { label: 'Cycles', value: '4', tone: 'warning' as const, lens: 'cycles' as const },
 ];
 
 describe('DiagramHeader', () => {
-  it('each stat is a card, its number over its name — modules and repos among them, no workspace tile', () => {
+  it('each stat is a stat card — its icon and name on top, its number below — modules and repos among them, no workspace tile', () => {
     m = mountComponent(DiagramHeader, {
       view: DIAGRAM_VIEWS[0], about: new DiagramHeaderState(), stats: STATS,
       workspace: { name: 'sensei', repos: 3 }, hrefFor: (l: string) => `/d/${l}`,
     });
     const cards = [...m.container.querySelectorAll('[data-testid^="diagram-stat-"]')] as HTMLElement[];
-    expect(cards.map((c) => c.textContent?.replace(/\s+/g, ' ').trim())).toEqual(['189 Modules', '3 Repos', '36,823 Symbols', '4 Cycles']);
+    expect(cards.every((c) => c.matches('[data-stat-card]'))).toBe(true);
+    const read = (c: HTMLElement) =>
+      `${c.querySelector('[data-stat-card-label]')?.textContent} ${c.querySelector('[data-stat-card-value]')?.textContent}`;
+    expect(cards.map(read)).toEqual(['Modules 189', 'Repos 3', 'Symbols 36,823', 'Cycles 4']);
+    expect(m.container.querySelector('[data-testid="diagram-stat-Modules"] [data-stat-card-icon]')?.className).toBe('i-solar-box-minimalistic-bold-duotone');
+    expect(m.container.querySelector('[data-testid="diagram-stat-Cycles"]')?.getAttribute('data-tone')).toBe('warning');
     expect(m.container.textContent).not.toContain('Workspace · sensei');
-    expect(m.container.querySelector('[data-testid="diagram-stat-Cycles"] a')?.getAttribute('href')).toBe('/d/cycles');
+    expect(m.container.querySelector('[data-testid="diagram-stat-Cycles"] a[data-stat-card-value]')?.getAttribute('href')).toBe('/d/cycles');
   });
 });

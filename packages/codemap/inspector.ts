@@ -170,6 +170,8 @@ export interface Stat {
   label: string;
   value: string;
   tone: Tone;
+  /** The icon beside its label on the header's stat card. */
+  icon?: string;
   /** The diagram that shows it, when one does. */
   lens?: 'structure' | 'cycles';
 }
@@ -179,13 +181,13 @@ export interface Stat {
 export function workspaceStats(l0: Level0): Stat[] {
   const count = (d: Direction) => l0.bands.filter((b) => b.direction === d).length;
   return [
-    { label: 'Modules', value: n(l0.budget.modules), tone: 'ink' },
-    { label: 'Symbols', value: n(l0.blocks.reduce((a, b) => a + b.symbols, 0)), tone: 'ink' },
-    { label: 'Edges', value: n(l0.budget.edges), tone: 'ink' },
-    { label: 'Upward', value: String(count('up')), tone: 'danger', lens: 'structure' },
-    { label: 'Skip a layer', value: String(count('skip')), tone: 'warning', lens: 'structure' },
-    { label: 'Cycles', value: String(l0.cycles.length), tone: 'warning', lens: 'cycles' },
-    { label: 'Same layer · down', value: `${count('level')} · ${count('down')}`, tone: 'ink' },
+    { label: 'Modules', value: n(l0.budget.modules), tone: 'ink', icon: 'i-solar-box-minimalistic-bold-duotone' },
+    { label: 'Symbols', value: n(l0.blocks.reduce((a, b) => a + b.symbols, 0)), tone: 'ink', icon: 'i-solar-code-bold-duotone' },
+    { label: 'Edges', value: n(l0.budget.edges), tone: 'ink', icon: 'i-solar-routing-2-bold-duotone' },
+    { label: 'Upward', value: String(count('up')), tone: 'danger', lens: 'structure', icon: 'i-solar-arrow-up-bold-duotone' },
+    { label: 'Skip a layer', value: String(count('skip')), tone: 'warning', lens: 'structure', icon: 'i-solar-double-alt-arrow-down-bold-duotone' },
+    { label: 'Cycles', value: String(l0.cycles.length), tone: 'warning', lens: 'cycles', icon: 'i-solar-refresh-circle-bold-duotone' },
+    { label: 'Same layer · down', value: `${count('level')} · ${count('down')}`, tone: 'ink', icon: 'i-solar-arrow-down-bold-duotone' },
   ];
 }
 

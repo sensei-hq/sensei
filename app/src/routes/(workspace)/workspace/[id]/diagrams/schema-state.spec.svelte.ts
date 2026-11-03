@@ -62,6 +62,21 @@ describe('SchemaState', () => {
     expect(s.model?.tables.length).toBe(3);
   });
 
+  it('counts the design for the header — a stat per kind it has, with its icon — and notes its version', async () => {
+    const s = await loaded();
+    expect(s.stats?.map((t) => `${t.label} ${t.value}`)).toEqual(['Schemas 2', 'Tables 3', 'View 1', 'Enum 1', 'Reference 1']);
+    expect(s.stats?.every((t) => t.icon?.startsWith('i-glyph:') && t.tone === 'ink')).toBe(true);
+    expect(s.note).toBe('schema model v3');
+    expect((await loaded(payload({ version: undefined as never }))).note).toBeNull();
+  });
+
+  it('has no stats before the design is read, or when the read failed', async () => {
+    expect(new SchemaState(api({ ok: true, data: payload() }), () => 'w1').stats).toBeNull();
+    const failed = new SchemaState(api({ ok: false, error: { status: 500, message: 'x' } }), () => 'w1');
+    await failed.load();
+    expect(failed.stats).toBeNull();
+  });
+
   it('a selection opens its page — a table, an object or an enum — and none goes back to the design', async () => {
     const s = await loaded();
     expect(s.page).toBeNull();

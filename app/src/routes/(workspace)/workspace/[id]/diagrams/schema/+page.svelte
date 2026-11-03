@@ -20,7 +20,6 @@
     import { DIAGRAM_VIEWS } from '../diagrams-nav.js';
     import { DiagramHeaderState } from '../diagram-header.svelte.js';
     import DiagramHeader from '../DiagramHeader.svelte';
-    import { codeMapHost } from '../codemap-host.svelte.js';
     import { SchemaState, type DesignTabId } from '../schema-state.svelte.js';
 
     let { data } = $props();
@@ -28,7 +27,6 @@
     const view = new SchemaState(senseiApi(appState.port), () => data.workspaceId);
     const diagram = DIAGRAM_VIEWS.find((v) => v.id === 'schema')!;
     const about = new DiagramHeaderState();
-    const host = codeMapHost();
     const name = $derived(data.workspace?.name ?? 'Database');
     const entities = $derived(view.model ? toGraphInput(view.model, 'er') : null);
 
@@ -40,7 +38,7 @@
 
 <Screen fill>
     {#snippet header()}
-    <DiagramHeader view={diagram} {about} stats={host.stats}
+    <DiagramHeader view={diagram} {about} stats={view.stats} budget={view.note}
         workspace={{ name: data.workspace.name, repos: data.workspace.repos_count ?? null }}
         hrefFor={(lens) => `/workspace/${data.workspaceId}/diagrams/${lens}`} />
     {/snippet}
@@ -84,7 +82,7 @@
                         <ContentHeader {model} {name} value={view.tab}
                             onchange={(v) => (view.tab = v as DesignTabId)} />
                         {#if view.tab === 'overview'}
-                            <OverviewView {model} />
+                            <OverviewView {model} counts={false} />
                         {:else if view.tab === 'diagram'}
                             <div class="h-[70vh] shrink-0" data-testid="schema-diagram">
                                 <DiagramView {model} value={view.selected} bind:density={view.density}
@@ -99,7 +97,7 @@
                 {#if about.side}
                     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                     <aside class="min-w-0 min-h-0 overflow-auto" tabindex="0" aria-label="Entities" data-testid="schema-sidebar">
-                        <SchemaSidebar {model} {name} value={view.selected} side="right" onselect={(k) => view.select(k)} />
+                        <SchemaSidebar {model} home={false} value={view.selected} side="right" onselect={(k) => view.select(k)} />
                     </aside>
                 {/if}
             </div>

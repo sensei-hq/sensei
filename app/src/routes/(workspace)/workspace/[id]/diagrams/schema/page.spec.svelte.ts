@@ -53,6 +53,18 @@ describe('Database · ER', () => {
     expect(side.querySelector('[data-graph-design-sidebar]')).not.toBeNull();
   });
 
+  it('its counts are the header’s stat cards, not the Overview’s, and the sidebar has no design row', async () => {
+    render();
+    await settle();
+    const cards = [...target.querySelectorAll('[data-testid="diagram-stats"] [data-stat-card]')].map(
+      (c) => `${c.querySelector('[data-stat-card-label]')?.textContent} ${c.querySelector('[data-stat-card-value]')?.textContent}`,
+    );
+    expect(cards).toEqual(['Schema 1', 'Tables 2', 'View 1', 'Enum 1', 'Reference 1']);
+    expect(q('[data-testid="diagram-budget"]')?.textContent).toBe('schema model v3');
+    expect(q('[data-graph-section="counts"]')).toBeNull();
+    expect(q('[data-testid="schema-sidebar"] [data-graph-design-home]')).toBeNull();
+  });
+
   it('a table, an object and an enum each open their own page; back returns to the design', async () => {
     render();
     await settle();
