@@ -90,6 +90,10 @@ jobs:
       - name: Homebrew tokens in the docs
         run: make check-brew-tokens
 
+      # app and dojo are two installs; a spec they share must be the same in both.
+      - name: Shared JS dependency specs
+        run: make check-shared-js-specs
+
   test:
     runs-on: ubuntu-latest
     services:
