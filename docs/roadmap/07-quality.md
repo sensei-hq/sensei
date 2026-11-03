@@ -19,6 +19,13 @@ it, so a later reader can re-run it rather than trust it.
 
 Ordered by what would hurt most if a second person installed this today.
 
+> **Checked against the code and GitHub on 2026-11-03.** This is a log of measurements taken on
+> 2026-09-25, so each section keeps its number, its query and its measurement; what has closed
+> since is struck in its heading and named with the commit or `file:line` that closed it. Still
+> open: **A4** (#146), **C3** (deliberate), **E1** (#184), **H** (partial), and F's residual — the
+> dōjō still bundles `@rokkit` 1.4.0 through kavach's pin (D-12). The rest is closed; where an
+> issue is still open, the heading says which half of the item it is (#187's specs passing).
+
 ---
 
 ## A. Things that are silently wrong
@@ -106,7 +113,13 @@ resolved-rate, and those become ratchets the way A7 and A8 already are.
 
 ## B. Things that fail loudly but should not fail at all
 
-### B1 — the parse stack is unbounded: one file aborts the daemon
+### B1 — ~~the parse stack is unbounded: one file aborts the daemon~~ — closed (#178)
+
+The bound shipped in 2e5c6c1f and is live on v0.20.2. `MAX_PARSE_BYTES` is 2 MiB and
+`MAX_LINE_BYTES` 10,000 (`tasks/handlers/helpers.rs:285,288`); a file past either is refused by
+`exceeds_parse_bounds` (`:303`) as `ScanSkipReason::Oversized` (`classifiers.rs:302`), which the
+scan and `process_file` both use. Live: it refuses exactly the 137 of 61,349 files the measurement
+found.
 
 A Rust stack overflow is not a panic — no unwind, no backtrace, no file name.
 `process_file` runs the parse on `spawn_blocking` so the watchdog can preempt a
@@ -121,13 +134,17 @@ NAMES, so an input nobody has seen yet still takes the whole daemon down.
 record an explicit skip reason. See the entry in `backlog.md` for why that is
 the only option that states a rule.
 
-### B2 — watchdog abandonment is routine, not exceptional
+### B2 — ~~watchdog abandonment is routine, not exceptional~~ — closed (#188)
+
+It is reported as a class now: `GET /api/tasks/abandoned` gives the count per day and kind with the
+ten worst offenders (`api/handlers/tasks.rs:54`), and `sensei doctor` prints it as a Watchdog
+section (d5bfdc7d). Live on v0.20.2: 204 in 14 days.
 
     process_git_folder … exceeded 600s and was abandoned   (4 in 7d)
     process_file        … exceeded 180s and was abandoned   (~8 in 7d)
 
 Small numbers, but each one is a folder or file that silently did not finish.
-Nothing reports them as a class.
+Nothing reported them as a class at the time — the reporting is what closed it.
 
 **Done looks like:** a health surface that counts watchdog abandonment per day
 and names the worst offenders, so "slow" is visible before it becomes "missing".
@@ -181,7 +198,7 @@ Worth knowing before sequencing a session around it.
 | `cleanup-workflow-runs.yml` | cron | housekeeping |
 | `qlty-plugin-bump.yml` | cron | housekeeping |
 
-**The 3,317-test senseid suite runs in no workflow.** The pre-commit hook runs
+**At the time, the 3,317-test senseid suite ran in no workflow.** The pre-commit hook ran
 `sensei-bootstrap` (174) and the app unit tests (1,698) — not senseid. So the
 suite that covers the indexer, the daemon, the task engine and the store is
 run only when someone remembers to run it by hand.
@@ -190,7 +207,11 @@ run only when someone remembers to run it by hand.
 `cargo clippy -- -D warnings` and `cargo fmt --check` on push and PR, with a
 Postgres service so the DB-coupled half is covered (see D2).
 
-### D2 — DB-coupled tests are not isolated and fail under parallel load
+### D2 — ~~DB-coupled tests are not isolated and fail under parallel load~~ — closed (#183, #204)
+
+Closed 2026-10-25 (5656955c, then a database per test by user decision): 198 tests that had passed
+on a failed connect now fail, test threads are capped at 16 against the pool, and no test relies on
+a sibling's rows. Suite 3,838 green.
 
 Known and recorded: `publish_run::full_bridge_*` assert absolute row counts
 polluted by concurrent writers; `metrics::session_outcomes::ftr_parity_*`,
@@ -301,7 +322,10 @@ separately from `isDegraded` so a surface can say "setting up" instead of
 raising a breakage banner. `dbd reset` is gone from the advice entirely,
 guarded by a test that fails if any destructive command reappears in it.
 
-### D3b — six e2e failures assert a contract the plugin migration retired
+### D3b — ~~six e2e failures assert a contract the plugin migration retired~~ — closed (#134)
+
+The six now assert the current contract; no `sensei-hook-dev` reference is left anywhere under
+`app/e2e` (checked 2026-11-03).
 
 `configure` no longer writes a hook dispatcher. It registers the marketplace and
 runs `claude plugin install sensei`, and the plugin supplies "skills, commands,
@@ -310,7 +334,7 @@ agents, marketplace hooks, MCP". `~/.claude/hooks/sensei-hook-dev.ts` is now
 `LEGACY_SENSEI_HOOK_BASENAMES` exists for exactly that, with the comment
 *"installed by previous versions of the daemon … before the plugin migration"*.
 
-Six tests still assert that configure WRITES it, so they cannot pass:
+Six tests then still asserted that configure WRITES it, so they could not pass:
 
 | spec | failures |
 |---|---:|
@@ -323,15 +347,22 @@ marketplace is registered and the `sensei` plugin is installed (observable via
 `claude plugin list` / `installed_plugins.json`) — and the removal half asserts
 the plugin is uninstalled rather than a file deleted.
 
-### D4 — `app/e2e/**` is outside every static gate
+### D4 — ~~`app/e2e/**` is outside every static gate~~ — closed in the gate (18eb0cde); #187 waits on the specs
 
-`tsconfig.json` extends `.svelte-kit/tsconfig.json`, whose `include` covers
-`src/` only, so `bun run check` and `tsc --noEmit` never look at the Playwright
-suite. A probe config surfaces **9 pre-existing type errors** in it.
+The gate landed: `app`'s `check` runs `tsc --noEmit -p tsconfig.e2e.json` (`app/package.json:11`).
+#187 stays open only for its other half — the changed specs passing against the app.
+
+`tsconfig.json` extends `.svelte-kit/tsconfig.json`, whose `include` covered
+`src/` only, so `bun run check` and `tsc --noEmit` never looked at the Playwright
+suite. A probe config surfaced **9 pre-existing type errors** in it.
 
 **Done looks like:** an `e2e` workspace in the check script, and those 9 fixed.
 
-### D5 — 37 commits have never been pushed
+### D5 — ~~37 commits have never been pushed~~ — resolved
+
+Everything this log dates is on `origin/develop` now — the tip of that branch on 2026-11-03 is
+`5f8b3b886`, a merge of this lane's own docs work, and the release train has run since (v0.21.0,
+v0.21.1).
 
     git status -sb  →  ## develop...origin/develop [ahead 37]
 
@@ -340,7 +371,7 @@ returns nothing. Every green gate in this session was local.
 
 ---
 
-## E. Dōjō — the sync (works against the local dōjō since 2026-10-20; production unverified)
+## E. Dōjō — the sync (the repository and metrics path works against the local dōjō since 2026-10-20; membership and the outbox never did — E1 — and production is unverified)
 
 ### E1 — enrollment was never completed
 
@@ -378,14 +409,18 @@ exists; nothing says what to do after it.
 
 ## F. Dependencies
 
-| package | manifest | installed | latest | behind |
-|---|---|---|---|---|
-| app `@rokkit/*` | `^1.4.0` | 1.4.0 | 1.6.0 | 2 minors |
-| dojo `@rokkit/*` | `^1.2.0` | **1.3.4** | 1.6.0 | 3 minors |
-| dojo `@kavach/*` | `1.1.3` exact | 1.1.3 | 1.2.0 | 1 minor |
+Re-measured 2026-11-03 (`npm view` for each, plus the lockfiles):
 
-The carets already permit the newer rokkit; the lockfiles are holding it back.
-Kavach is pinned exact and needs a manifest edit.
+| package | manifest | resolved | latest | behind |
+|---|---|---|---|---|
+| app `@rokkit/*` | `^1.14.0` | 1.14.0 | 1.14.0 | — |
+| dojo `@rokkit/*` | `^1.14.0` | 1.14.0 | 1.14.0 | — |
+| dojo `@kavach/*` | `^1.3.0` | 1.3.0 | 1.3.0 | — |
+
+The direct dependencies are current — up from the 2026-09-25 measurement (app 1.4.0, dojo 1.3.4,
+kavach 1.1.3). What is left of F is one nested copy: `@kavach/ui@1.3.0` pins `@rokkit/forms` **1.3.7** (`dojo/bun.lock:254`),
+which nests `@rokkit/ui`/`states`/`data`/`core` **1.4.0** (`:1036-1044`) beside the 1.14.0 entries. The
+fix is upstream in kavach (bump `@rokkit/forms` and release), so #191 stays open — D-12 records it.
 
 **28 osv advisories** remain tracked in [#120], all `medium`, all transitive,
 none code-fixable — the Tauri Linux GTK stack (not compiled into the shipped
@@ -395,7 +430,11 @@ macOS `.app`), `quick-xml`, `unic-*`, `rsa 0.9.10`.
 
 ## G. Documentation drift
 
-### G1 — the backlog said 12 open issues; there are 67
+### G1 — ~~the backlog said 12 open issues; there are 67~~ — resolved 2026-11-03
+
+The hand-maintained count is gone: [`backlog.md`](../backlog.md) now indexes open work by area,
+names the issues the week's plan depends on, and freezes no total. 90 issues were open on
+2026-11-03 (`gh issue list --state open`), which is GitHub's number to keep.
 
     gh issue list --state open --limit 100  →  67
 
@@ -425,6 +464,10 @@ table. Closed as #189 on 2026-10-18.
 ---
 
 ## Suggested order
+
+This order was written 2026-09-25 and is kept as it was given. Checked 2026-11-03, its first, second,
+third and fifth items are closed and item 4's E2/E3 are too, so what it still points at is **E1**
+(#184), **A4** (#146) and **H**.
 
 1. **A1** — it is failing files today and the fix shape is already written one
    arm above it.
