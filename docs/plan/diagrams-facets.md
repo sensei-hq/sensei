@@ -39,7 +39,7 @@ Complexity needs one daemon read: `GET …/diagrams/codemap/complexity` aggregat
 `sensei.file_complexity` up the module/folder hierarchy (pure aggregation in Rust,
 SQL in pg_store), plus the workspace maintainability grade from the quality metric.
 
-## S3 — Database · ER is dbd's viewer
+## S3 — Database · ER is dbd's viewer ✅ (rokkit 1.13.0; 4e26da8c2)
 dbd's `/diagram` (dbd.sensei-hq.com) with its sidebar on the right:
 - Content header: name, dialect badge, counts (tables · enums · refs).
 - Design tabs: **Overview** (at-a-glance cards: schemas, tables, views, procedures,
