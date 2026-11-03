@@ -99,6 +99,7 @@ type PushableRow = (
     Option<String>,
     serde_json::Value,
     String,
+    Option<chrono::DateTime<chrono::Utc>>,
 );
 
 /// The user-scoped rows a push could consider: this machine's, unsent or changed
@@ -114,9 +115,20 @@ const PROVABLY_THEIRS: &str = "(rm.identity IS NULL AND r.repo_key = ANY($3)) \
                                WHERE e.persona_id = $1 AND e.source = 'claimed' \
                                  AND e.removed_at IS NULL)";
 
-/// A selected row as the push carries it.
+/// A selected row as the push carries it. A per-commit row carries its commit's
+/// own time as `props.authored_at` (F4: the instant the dōjō's
+/// latest-per-person order reads); an unknown sha is sent without the key,
+/// never with an invented time.
 fn pushable(row: PushableRow) -> PushableMetric {
-    let (id, repo_key, metric, scope, grain, computed_on, value, commit_sha, props, source) = row;
+    let (id, repo_key, metric, scope, grain, computed_on, value, commit_sha, mut props, source, authored_at) =
+        row;
+    // The join yields a time only for a row whose sha resolves in
+    // sensei.commits, so `authored_at` present already implies per-commit.
+    if let Some(at) = authored_at {
+        if let Some(obj) = props.as_object_mut() {
+            obj.insert("authored_at".to_string(), serde_json::Value::String(at.to_rfc3339()));
+        }
+    }
     PushableMetric {
         id,
         repo_key,
@@ -495,10 +507,11 @@ impl PgStore {
     ) -> Result<Vec<PushableMetric>, String> {
         let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(
             "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
-                  , rm.value::float8, rm.commit_sha, rm.props, rm.source::text \
+                  , rm.value::float8, rm.commit_sha, rm.props, rm.source::text, c.authored_at \
                FROM sensei.repository_metrics rm \
                JOIN sensei.repositories r ON r.id = rm.repository_id \
                JOIN sensei.metrics m      ON m.id = rm.metric_id \
+               LEFT JOIN sensei.commits c ON c.repository_id = rm.repository_id AND c.sha = rm.commit_sha \
               WHERE rm.computed_by = 'local' \
                 AND rm.scope::text = ANY($1) \
                 AND r.repo_key = ANY($2) \
@@ -536,10 +549,11 @@ impl PgStore {
     ) -> Result<Vec<PushableMetric>, String> {
         let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(&format!(
             "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
-                  , rm.value::float8, rm.commit_sha, rm.props, rm.source::text \
+                  , rm.value::float8, rm.commit_sha, rm.props, rm.source::text, c.authored_at \
                FROM sensei.repository_metrics rm \
                JOIN sensei.repositories r ON r.id = rm.repository_id \
                JOIN sensei.metrics m      ON m.id = rm.metric_id \
+               LEFT JOIN sensei.commits c ON c.repository_id = rm.repository_id AND c.sha = rm.commit_sha \
               WHERE {USER_ROWS_IN_PLAY} AND ({PROVABLY_THEIRS}) \
               ORDER BY rm.computed_on DESC, rm.id \
               LIMIT $4"

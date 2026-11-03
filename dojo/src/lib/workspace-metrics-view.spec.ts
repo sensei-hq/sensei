@@ -100,7 +100,7 @@ describe('toWorkspaceMetricsView', () => {
 		expect(total.points).toEqual([3]);
 	});
 
-	it('pools a rate from the pool’s numerator/denominator, including a pool of one (D10)', () => {
+	it('pools a rate from the pools’ numerators/denominators across days', () => {
 		const view = toWorkspaceMetricsView(
 			wire([
 				row({
@@ -108,19 +108,19 @@ describe('toWorkspaceMetricsView', () => {
 					scope: 'pooled',
 					day: '2026-10-21',
 					value: 7,
-					props: { pooled_rows: 3, numerator: 15, denominator: 20 }
+					props: { pooled_rows: 3, contributors: 3, numerator: 15, denominator: 20 }
 				}),
 				row({
 					metric_key: 'ftr',
 					scope: 'pooled',
 					day: '2026-10-20',
 					value: 9,
-					props: { pooled_rows: 1, numerator: 9, denominator: 12 }
+					props: { pooled_rows: 2, contributors: 2, numerator: 9, denominator: 12 }
 				})
 			])
 		);
 		const rate = view.repos[0].cards.find((c) => c.key === 'ftr')!;
-		// (15 + 9) / (20 + 12), the lone day counted, its `value` sum ignored.
+		// (15 + 9) / (20 + 12); each day's `value` sum ignored.
 		expect(rate.value).toBe('75%');
 		expect(rate.points).toEqual([0.75, 0.75]);
 	});

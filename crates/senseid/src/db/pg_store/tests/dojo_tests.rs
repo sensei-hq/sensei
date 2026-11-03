@@ -802,6 +802,61 @@ async fn a_pulled_row_is_never_pushed_back() {
 }
 
 #[tokio::test]
+async fn a_pushed_commit_row_carries_its_authored_time_and_an_unknown_sha_does_not() {
+    // F4 phase B: per-commit rows carry props.authored_at from sensei.commits
+    // (the instant the dōjō's latest-per-person order reads); an unknown sha
+    // is sent without the key, never with an invented time.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let mid = seed_metric(&s, &format!("_test:sync:{uniq}:authored"), "ComputeFtr", 0, None).await;
+    let known = format!("known-{uniq}");
+    let unknown = format!("unknown-{uniq}");
+    sqlx_core::query::query(
+        "INSERT INTO sensei.commits(repository_id, sha, authored_at) VALUES ($1, $2, '2026-10-06T14:00:00Z')",
+    )
+    .bind(rid)
+    .bind(&known)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    for (sha, day) in [(known.as_str(), 6), (unknown.as_str(), 7)] {
+        s.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: Some(sha),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 10, day).unwrap(),
+            grain: "daily",
+            value: 0.5,
+            props: &serde_json::json!({"denominator": 2}),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+
+    let rows = s
+        .unpushed_metric_rows(&["user"], &[&format!("test/bare-{uniq}")], 100)
+        .await
+        .unwrap();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    let by_sha = |sha: &str| rows.iter().find(|r| r.commit_sha.as_deref() == Some(sha)).unwrap();
+    assert_eq!(
+        by_sha(&known).props.get("authored_at"),
+        Some(&serde_json::json!("2026-10-06T14:00:00+00:00")),
+        "a known sha carries its commit's authored time"
+    );
+    assert!(
+        by_sha(&unknown).props.get("authored_at").is_none(),
+        "an unknown sha is sent without the key, never with an invented time"
+    );
+}
+
+#[tokio::test]
 async fn a_locally_private_repository_is_queued_only_when_the_plan_names_it() {
     // Was `a_private_repository_is_skipped_not_queued`, which asserted that the
     // LOCAL flag did the excluding. §8a's B2 moved that, and the assertion is
