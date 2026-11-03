@@ -110,7 +110,8 @@ Owns: `crates/senseid/src/tasks/{dojo_sync,graph_push}.rs`, `crates/senseid/src/
 `crates/senseid/src/dojo_client/**`, `dojo/src/routes/v1/you/**`,
 `dojo/src/routes/v1/t/[origin]/[org]/workspaces/**`, `dojo/src/lib/server/{workspaces-data,repositories,graph-ingest,metrics-ingest}.ts`,
 `dojo/src/lib/workspace-metrics-*`, `dojo/src/routes/(app)/org/[slug]/workspaces/[id]/**`, DDL
-`database/ddl/**/dojo/{all_my_repositories,register_repositor*,*_metric_series,repository_*}`.
+`database/ddl/**/dojo/{all_my_repositories,register_repositor*,*_metric_series,repository_*}` and their
+tests under `database/tests/dojo/**`; `docs/lanes/L1.md`.
 1. **WP4:** apply review round 2 (F4 `having count(*) >= 2`, a shared `isUuid`, F8), unstage
    `packages/codemap/focus.*`, commit in the main checkout, then move to the lane worktree.
 2. **WP8** (D46, `all_my_repositories`), then re-run the WP4 suite.
