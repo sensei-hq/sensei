@@ -177,11 +177,11 @@
 						<span class="mono text-ink-soft text-xs">the last {metrics.days} days</span>
 					{/if}
 				</div>
-				{#if metricsError || !metrics}
+				{#if metricsError}
 					<LoadError what="this workspace's metrics" error={metricsError} />
-				{:else if metrics.repos.length === 0}
+				{:else if metrics && metrics.repos.length === 0}
 					<p class="text-sm text-ink-faint">Nothing sent in this window.</p>
-				{:else}
+				{:else if metrics}
 					<div class="flex flex-col gap-5">
 						{#each metrics.repos as repo (repo.repository_id)}
 							<div>
