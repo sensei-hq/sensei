@@ -1158,13 +1158,18 @@ async fn the_daily_rollup_represents_a_repository_by_its_latest_row() {
 }
 
 /// S4 2c (measured 2026-11-03): a repository writes a ratio/pct metric once per
-/// commit measured, and each such row is the WHOLE TREE at that commit —
-/// `duplication_ratio` had 10 rows for one repository on one day, each with a
-/// denominator of ~344k lines. Pooling summed all ten, so the day reported a 3.4M-
-/// line denominator and a ratio averaged over the day's commits instead of the
-/// tree's. Conservation: the pooled numerator and denominator equal the sum, over
-/// each repository and person, of ONE reading — its latest commit's. Rows with no
-/// commit differ by person, are separate work, and still add.
+/// commit measured, and each such row is a SNAPSHOT at that commit, not that
+/// commit's own work — `duplication_ratio` had up to 31 rows for one repository on
+/// one day. Pooling summed them all. Conservation: one reading per (repository,
+/// identity) per day — its LATEST-AUTHORED commit's (`sensei.commits.authored_at`,
+/// not the write time: live, the last-written row is the latest commit in 7 of 18
+/// groups) — plus every commit-less row (separate people's work). A commit with no
+/// `sensei.commits` row orders after every known one, then by write time; it is
+/// never dropped and never given an invented time.
+///
+/// The fixture makes every wrong picker give a different number: write order
+/// disagrees with commit order, the latest reading is not the largest numerator,
+/// value or sha, and each commit has its own denominator.
 #[tokio::test]
 #[ignore = "pending: S4 2c"]
 async fn ratio_pooling_counts_each_repository_and_person_once_its_latest_commit() {
@@ -1175,46 +1180,74 @@ async fn ratio_pooling_counts_each_repository_and_person_once_its_latest_commit(
         crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
     let r2 =
         crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
+    let r3 =
+        crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
     let key = format!("_test:pool2c:{uniq}:ratio");
     let mid = seed_metric(&s, &key, "RatioLike", 0, None).await;
     let day = chrono::NaiveDate::from_ymd_opt(2020, 6, 7).unwrap();
-    // (repository, identity, commit, numerator, denominator, minutes before now)
+
+    // The commits git knows, with their authored times on the day.
+    for (rid, sha, hour) in [
+        (&r1, "f3c9e2", 8),
+        (&r1, "7b2d41", 9),
+        (&r1, "0a1e77", 10), // r1's latest: 0a1e77
+        (&r2, "e4d1a0", 11),
+        (&r2, "1b7f3c", 12), // r2's latest: 1b7f3c
+    ] {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.commits (repository_id, sha, authored_at, author_email)
+             VALUES ($1, $2, $3::date + make_interval(hours => $4), 'me@x')",
+        )
+        .bind(rid)
+        .bind(sha)
+        .bind(day)
+        .bind(hour)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+
+    // (repository, identity, commit, numerator, denominator, minutes before now — the write time)
     type Reading<'a> = (&'a uuid::Uuid, &'a str, Option<&'a str>, i64, i64, i64);
-    let rows: [Reading; 6] = [
-        (&r1, "me@x", Some("r1-c1"), 10, 100, 30),
-        (&r1, "me@x", Some("r1-c2"), 12, 100, 20),
-        (&r1, "me@x", Some("r1-c3"), 15, 100, 10), // r1's latest commit
-        (&r2, "me@x", Some("r2-c1"), 5, 50, 20),
-        (&r2, "me@x", Some("r2-c2"), 7, 50, 10), // r2's latest commit
-        (&r1, "other@x", None, 3, 30, 5),        // another person's own reading
+    let rows: [Reading; 9] = [
+        (&r1, "me@x", Some("0a1e77"), 12, 100, 50), // latest-authored, written FIRST: the one
+        (&r1, "me@x", Some("7b2d41"), 18, 104, 40), // the largest numerator and value
+        (&r1, "me@x", Some("f3c9e2"), 10, 97, 10),  // the earliest, written LAST, sha sorts last
+        (&r2, "me@x", Some("1b7f3c"), 5, 49, 40),   // latest-authored, written first: the one
+        (&r2, "me@x", Some("e4d1a0"), 6, 52, 30),
+        (&r2, "me@x", Some("9c0ffe"), 9, 55, 5), // unknown to git, newest write: after the known
+        (&r3, "me@x", Some("aa11c0"), 3, 30, 20), // r3: no commit known — newest write wins
+        (&r3, "me@x", Some("bb22d0"), 4, 40, 10), // r3's one
+        (&r1, "other@x", None, 3, 30, 5),        // two people's commit-less readings both add
     ];
-    for (rid, who, commit, num, den, _) in rows {
+    let third: Reading = (&r1, "third@x", None, 2, 20, 5);
+    for (rid, who, commit, num, den, _) in rows.iter().chain(std::iter::once(&third)) {
         s.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mid,
             repository_id: rid,
             scope: "user",
             identity: Some(who),
-            commit_sha: commit,
+            commit_sha: *commit,
             computed_on: day,
             grain: "daily",
-            value: num as f64 / den as f64,
+            value: *num as f64 / *den as f64,
             props: &serde_json::json!({ "numerator": num, "denominator": den }),
             source: "measured",
         })
         .await
         .unwrap();
     }
-    for (rid, who, commit, _, _, ago) in rows {
+    for (rid, who, commit, _, _, ago) in rows.iter().chain(std::iter::once(&third)) {
         sqlx_core::query::query(
             "UPDATE sensei.repository_metrics SET modified_at = now() - make_interval(mins => $5)
               WHERE metric_id = $1 AND repository_id = $2 AND identity = $3
                 AND commit_sha IS NOT DISTINCT FROM $4",
         )
         .bind(mid)
-        .bind(rid)
-        .bind(who)
-        .bind(commit)
-        .bind(ago as i32)
+        .bind(*rid)
+        .bind(*who)
+        .bind(*commit)
+        .bind(*ago as i32)
         .execute(s.pool())
         .await
         .unwrap();
@@ -1237,16 +1270,20 @@ async fn ratio_pooling_counts_each_repository_and_person_once_its_latest_commit(
         .execute(s.pool())
         .await
         .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+        .bind(vec![r1, r2, r3])
+        .execute(s.pool())
+        .await
+        .unwrap();
     sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
         .unwrap();
 
-    // 15/100 (r1 latest) + 7/50 (r2 latest) + 3/30 (other@x) — not every commit summed (52/430).
-    assert_eq!((got.1, got.2), (25.0, 180.0), "one reading per repository and person: {got:?}");
-    assert!(
-        (got.0 - 25.0 / 180.0).abs() < 1e-9,
-        "the pooled ratio is Σnum/Σden of those readings: {got:?}"
-    );
+    // r1 0a1e77 12/100 + r2 1b7f3c 5/49 + r3 bb22d0 4/40 + other@x 3/30 + third@x 2/20.
+    // Wrong pickers (computed): every row 72/577; latest write 28/242; largest
+    // numerator 36/249; largest value 35/239; sha descending 25/239; earliest 24/229.
+    assert_eq!((got.1, got.2), (26.0, 239.0), "one reading per repository and person: {got:?}");
+    assert!((got.0 - 26.0 / 239.0).abs() < 1e-9, "Σnum/Σden of those readings: {got:?}");
 }
