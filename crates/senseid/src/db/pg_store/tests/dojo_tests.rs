@@ -1030,6 +1030,48 @@ async fn sync_state_rows_rank_partial_between_pending_and_skipped() {
     assert_eq!(order, vec!["pending", "partial", "skipped"]);
 }
 
+/// A skipped repository row carries its remedy, resolved from
+/// `sensei.reason_codes` (domain `repository_sharing`) — the screen renders
+/// it rather than keeping its own copy of the text. A reason that names no
+/// code resolves to nothing and shows verbatim.
+#[tokio::test]
+async fn sync_state_rows_resolve_a_skipped_repository_remedy() {
+    let s = pg_store().await;
+    let tag = uuid::Uuid::new_v4();
+    let denied = format!("github.com/test/remedy-denied-{tag}");
+    let unmapped = format!("github.com/test/remedy-unmapped-{tag}");
+    let uncoded = format!("github.com/test/remedy-uncoded-{tag}");
+    fn mark(k: &str) -> crate::db::pg_store::sync::SyncMark<'_> {
+        crate::db::pg_store::sync::SyncMark {
+            entity: "repository",
+            key: k,
+            direction: "push",
+            persona: "p",
+        }
+    }
+    s.mark_sync_skipped(&mark(&denied), "denied:not_subscribed").await.unwrap();
+    s.mark_sync_skipped(&mark(&unmapped), "unmapped:no_connection").await.unwrap();
+    s.mark_sync_skipped(&mark(&uncoded), "unmapped:made_up_for_this_test").await.unwrap();
+
+    let rows = s.sync_state_rows().await.unwrap();
+    let find = |key: &str| rows.iter().find(|r| r.entity_key == key).and_then(|r| r.remedy.clone());
+    let denied_remedy = find(&denied);
+    let unmapped_remedy = find(&unmapped);
+    let uncoded_remedy = find(&uncoded);
+    sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = ANY($1)")
+        .bind(&[denied, unmapped, uncoded])
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(denied_remedy.as_deref(), Some("Ask an admin to subscribe"));
+    assert_eq!(
+        unmapped_remedy.as_deref(),
+        Some("Connect this organisation in Dōjō › Integrations")
+    );
+    assert_eq!(uncoded_remedy, None, "an uncoded reason shows verbatim, not blanked");
+}
+
 #[tokio::test]
 async fn a_verified_login_replaces_a_guessed_label_but_not_a_chosen_one() {
     // The `sensei-hq` vs `sensei-hq-org` case. Before OAuth a label can only

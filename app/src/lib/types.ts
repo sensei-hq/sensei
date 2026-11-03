@@ -1643,6 +1643,10 @@ export interface SyncStateRow {
   /** The identity (its Keychain session slot) whose sync last wrote this row;
    *  null on a row no sync has written since identities were recorded. */
   persona: string | null;
+  /** What the reader can do about a `skipped` row, joined server-side from
+   *  `sensei.reason_codes` (domain `repository_sharing`) — null when the
+   *  reason names no code. The screen never keeps its own copy of this text. */
+  remedy: string | null;
 }
 
 /** `GET /api/dojo/sync-state`. Rows arrive worst-first (error, pending, partial, skipped,

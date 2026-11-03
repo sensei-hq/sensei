@@ -7,6 +7,7 @@
     agreementLine,
     detailLine,
     entityLabel,
+    groupByEntity,
     groupSync,
     summarise,
     syncToneClass,
@@ -36,6 +37,11 @@
   );
   const syncOf = (label: string | null) => grouped.find((g) => g.label === label);
   const unattributed = $derived(syncOf(null));
+  // One row per repository — the verdict key carries no identity, so whoever's
+  // pass wrote last is what reads. A section of its own, under one heading.
+  const repoGroup = $derived(
+    data.sync ? groupByEntity(data.sync.entities).find((g) => g.entity === 'repository') : undefined,
+  );
 
 </script>
 
@@ -149,6 +155,35 @@
           Connections themselves — which dōjōs, their kind and tenant — are managed
           under <a class="underline" href="/dojo/connections">Dōjō · Connections</a>.
         </p>
+      </section>
+
+      <section>
+        <h2 class="display text-base font-medium m-0 mb-1 mt-8 text-ink">Repositories</h2>
+        <p class="text-xs text-ink-mute mt-0 mb-3 max-w-[620px] leading-normal">
+          What the last sync decided about each cloned repository — synced, skipped with
+          why, or partly filed. A skipped repository is a decision, not a fault.
+        </p>
+
+        {#if repoGroup}
+          <p class="text-xs text-ink-soft mt-0 mb-3" data-repositories-summary>
+            {summarise(repoGroup.counts)}
+          </p>
+          <div class="flex flex-col gap-4" data-repositories>
+            {#each repoGroup.rows as r (r.entity_key)}
+              <div
+                class="border border-paper-edge rounded-lg overflow-hidden"
+                data-repository={r.entity_key}
+              >
+                <div class="px-4 py-2 text-sm text-ink truncate">{r.entity_key}</div>
+                <div class="px-4 pb-2">{@render syncLine({ row: r, branch: null })}</div>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="text-xs text-ink-soft m-0" data-repositories-empty>
+            No repository verdicts yet. They appear after a sync pass reaches the dōjō.
+          </p>
+        {/if}
       </section>
     </div>
 

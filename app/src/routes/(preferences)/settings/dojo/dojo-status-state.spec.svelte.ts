@@ -17,6 +17,7 @@ import {
   summarise,
   detailLine,
   groupSync,
+  groupByEntity,
 } from './dojo-status-state.svelte.js';
 import type { SyncStateRow } from '$lib/types.js';
 
@@ -31,6 +32,7 @@ function row(over: Partial<SyncStateRow> = {}): SyncStateRow {
     synced_at: '2026-08-31T19:57:55Z',
     updated_at: '2026-08-31T19:57:55Z',
     persona: 'jerrythomas',
+    remedy: null,
     ...over,
   };
 }
@@ -249,5 +251,56 @@ describe('syncToneClass', () => {
     expect(syncToneClass('pending')).toBe('text-info');
     expect(syncToneClass('skipped')).toBe('text-ink-soft');
     expect(syncToneClass('something_new')).toBe('text-ink-soft');
+  });
+});
+
+describe('groupByEntity', () => {
+  it('groups_rows_by_entity_with_state_counts', () => {
+    // WP2: the repository verdicts read as one group under one heading, with
+    // a by-state tally — not 157 separate lines scattered across the screen.
+    const rows = [
+      row({ entity: 'repository', entity_key: 'github.com/sensei-hq/a', state: 'synced' }),
+      row({
+        entity: 'repository',
+        entity_key: 'github.com/sensei-hq/b',
+        state: 'skipped',
+        last_error: 'denied:not_subscribed',
+      }),
+      row({ entity: 'repository_metric', entity_key: 'github.com/sensei-hq/a', state: 'synced' }),
+    ];
+    const groups = groupByEntity(rows);
+    expect(groups.map((g) => g.entity).sort()).toEqual(['repository', 'repository_metric']);
+    const repos = groups.find((g) => g.entity === 'repository');
+    expect(repos?.counts).toEqual({ synced: 1, skipped: 1 });
+    expect(repos?.rows.map((r) => r.entity_key).sort()).toEqual([
+      'github.com/sensei-hq/a',
+      'github.com/sensei-hq/b',
+    ]);
+  });
+});
+
+describe('repository verdicts', () => {
+  const skippedRepo = (over: Partial<SyncStateRow>) =>
+    row({
+      entity: 'repository',
+      entity_key: 'github.com/sensei-hq/dbd',
+      state: 'skipped',
+      synced_at: null,
+      ...over,
+    });
+
+  it('a_skipped_repository_reads_muted_with_its_remedy', () => {
+    // The remedy arrives server-joined from `sensei.reason_codes`; the screen
+    // renders it, never a TS copy of the text.
+    const r = skippedRepo({ last_error: 'denied:not_subscribed', remedy: 'Ask an admin to subscribe' });
+    expect(syncTone(r.state)).toBe('muted');
+    expect(detailLine(r)).toBe('Ask an admin to subscribe');
+  });
+
+  it('an_unknown_reason_passes_through_verbatim', () => {
+    // No `repository_sharing` code names `no_connection`: without a joined
+    // remedy the recorded reason shows as-is rather than blanking.
+    const r = skippedRepo({ last_error: 'unmapped:no_connection', remedy: null });
+    expect(detailLine(r)).toBe('unmapped:no_connection');
   });
 });

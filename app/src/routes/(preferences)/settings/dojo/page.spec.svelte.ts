@@ -14,7 +14,7 @@ const json = (body: unknown) => ({ ok: true, status: 200, statusText: 'OK', json
 const row = (over: Partial<SyncStateRow>): SyncStateRow => ({
   entity: 'repository_metric', entity_key: 'github.com/sensei-hq/torii', direction: 'push', state: 'synced',
   last_error: null, attempted_at: '2026-10-27T10:00:00Z', synced_at: '2026-10-27T10:00:00Z',
-  updated_at: '2026-10-27T10:00:00Z', persona: 'jerrythomas', ...over,
+  updated_at: '2026-10-27T10:00:00Z', persona: 'jerrythomas', remedy: null, ...over,
 });
 const personas = {
   default: 'jerrythomas',
@@ -66,5 +66,21 @@ describe('Settings · Dōjō', () => {
     const m = mountComponent(Page, { data: { sync: { count: 2, counts: { synced: 2 }, entities: plans }, error: null } });
     cleanup.push(m.destroy);
     await vi.waitFor(() => expect(m.container.querySelectorAll('[data-identity="jerrythomas"] [data-entity="dojo_sync_plan"]').length).toBe(2));
+  });
+
+  it('shows repository verdicts grouped under one Repositories heading, with the remedy, and not in the identity cards', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => json(url.includes('/api/auth/personas') ? personas : {})));
+    await personaList.load();
+    const verdicts = [
+      row({ entity: 'repository', entity_key: 'github.com/sensei-hq/dbd', state: 'skipped', synced_at: null, last_error: 'denied:not_subscribed', remedy: 'Ask an admin to subscribe' }),
+      row({ entity: 'repository', entity_key: 'github.com/sensei-hq/torii', state: 'synced' }),
+    ];
+    const m = mountComponent(Page, { data: { sync: { count: 2, counts: { skipped: 1, synced: 1 }, entities: verdicts }, error: null } });
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.querySelectorAll('[data-repositories] [data-repository]').length).toBe(2));
+    expect(m.container.querySelector('[data-repositories-summary]')?.textContent).toContain('2 tracked · 1 skipped');
+    expect(m.container.querySelector('[data-repositories] [data-detail]')?.textContent).toContain('Ask an admin to subscribe');
+    // Owned by the section: the identity cards must not repeat them.
+    expect(m.container.querySelectorAll('[data-identity] [data-entity="repository"]').length).toBe(0);
   });
 });

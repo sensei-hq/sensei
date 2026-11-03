@@ -47,6 +47,10 @@ pub struct SyncStateRow {
     /// The identity (session slot) whose sync last wrote it; `None` on a row
     /// written before identities were recorded.
     pub persona: Option<String>,
+    /// What the reader can do about a `skipped` row, resolved from
+    /// `sensei.reason_codes` (domain `repository_sharing`); `None` when the
+    /// reason names no code. The screen renders this, never its own copy.
+    pub remedy: Option<String>,
 }
 
 /// One repository's verdict from a single plan pass: what the dōjō answered
@@ -381,18 +385,36 @@ impl PgStore {
         .await
         .map_err(|e| format!("sync_state_rows: {e}"))?;
 
+        // The sharing surface resolves here (reasons.rs): one registry read,
+        // then per-row resolution in Rust — not a second SQL reader. Only
+        // `skipped` rows translate: a failure message is the fault's own text
+        // even when it happens to spell a code.
+        let codes = self.reason_codes("repository_sharing").await?;
+        let remedy_of = |state: &str, last_error: Option<&str>| -> Option<String> {
+            if state != "skipped" {
+                return None;
+            }
+            let detail = last_error?;
+            let code = detail.split_once(':').map(|(_, c)| c).unwrap_or(detail);
+            codes.iter().find(|c| c.code == code).and_then(|c| c.remedy.clone())
+        };
+
         Ok(rows
             .into_iter()
-            .map(|r| SyncStateRow {
-                entity: r.0,
-                entity_key: r.1,
-                direction: r.2,
-                state: r.3,
-                last_error: r.4,
-                attempted_at: r.5,
-                synced_at: r.6,
-                updated_at: r.7,
-                persona: r.8,
+            .map(|r| {
+                let remedy = remedy_of(&r.3, r.4.as_deref());
+                SyncStateRow {
+                    entity: r.0,
+                    entity_key: r.1,
+                    direction: r.2,
+                    state: r.3,
+                    last_error: r.4,
+                    attempted_at: r.5,
+                    synced_at: r.6,
+                    updated_at: r.7,
+                    persona: r.8,
+                    remedy,
+                }
             })
             .collect())
     }

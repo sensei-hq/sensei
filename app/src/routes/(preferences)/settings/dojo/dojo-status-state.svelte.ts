@@ -106,12 +106,13 @@ const SKIP_REASONS: Record<string, string> = {
 /**
  * Pure: the line under a row — a skipped row's reason in words, a failed row's
  * message as recorded. Only a SKIP is translated: a failure message is the
- * fault's own text, even if it happens to spell a code. An unknown reason passes
- * through unchanged rather than being hidden. `null` when there is nothing to say.
+ * fault's own text, even if it happens to spell a code. A server-joined remedy
+ * wins over the local reason map, and an unknown reason passes through
+ * unchanged rather than being hidden. `null` when there is nothing to say.
  */
 export function detailLine(row: SyncStateRow): string | null {
   if (row.last_error === null) return null;
-  if (row.state === 'skipped') return SKIP_REASONS[row.last_error] ?? row.last_error;
+  if (row.state === 'skipped') return row.remedy ?? SKIP_REASONS[row.last_error] ?? row.last_error;
   return row.last_error;
 }
 
@@ -199,6 +200,9 @@ export function groupSync(rows: SyncStateRow[], identities: { slot: string | nul
     slot === null ? null : identities.find((i) => i.slot === slot)?.label ?? slot;
   const groups = new Map<string, SyncIdentity>();
   for (const row of rows) {
+    // Repository verdicts render in their own section, one group under one
+    // heading — not scattered one line per identity and day.
+    if (row.entity === 'repository') continue;
     const label = labelOf(row.persona);
     const key = label ?? '\u0000';
     const identity = groups.get(key) ?? { label, slot: row.persona, days: [] };
@@ -222,4 +226,29 @@ export function groupSync(rows: SyncStateRow[], identities: { slot: string | nul
     for (const d of g.days) d.repositories.sort((a, b) => a.name.localeCompare(b.name));
   }
   return out.sort((a, b) => (a.label === null ? 1 : b.label === null ? -1 : a.label.localeCompare(b.label)));
+}
+
+/**
+ * One entity's rows with its by-state tally. The repository verdicts read as
+ * one group under one heading — not one line per row scattered across days.
+ */
+export type EntityGroup = {
+  entity: string;
+  rows: SyncStateRow[];
+  counts: Record<string, number>;
+};
+
+/**
+ * Pure: rows → one group per entity, in first-seen order, each with a
+ * by-state tally for its heading.
+ */
+export function groupByEntity(rows: SyncStateRow[]): EntityGroup[] {
+  const groups = new Map<string, EntityGroup>();
+  for (const row of rows) {
+    const g = groups.get(row.entity) ?? { entity: row.entity, rows: [], counts: {} };
+    groups.set(row.entity, g);
+    g.rows.push(row);
+    g.counts[row.state] = (g.counts[row.state] ?? 0) + 1;
+  }
+  return [...groups.values()];
 }
