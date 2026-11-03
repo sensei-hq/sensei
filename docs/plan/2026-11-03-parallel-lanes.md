@@ -231,6 +231,30 @@ and, for Wave C, new `dojo` tracker DDL/routes under `tracker*`.
 3. L3 reads `sensei.sprints`, `tracker_tasks` and `tracker_task_sprints` read-only. Announce any change to
    their columns in the handoff.
 
+### L8 · D83 cleanup: the unowned failure-masks (agent: to be assigned)
+Source: `~/Developer/sensei-hq/coord/audits/fabrication-2026-11-03.md` (Appendix A, all 69 HIGH with read,
+misinformation, fix). Owns the files of each HIGH row marked UNOWNED, one batch at a time, taking a file
+only while no other lane holds it (L0 confirms each batch's file list before it starts).
+0. **The guard first** (audit §6): `scripts/check-no-fabrication.py` + `scripts/fabrication-baseline.json`
+   (per rule per file; only goes down) + `scripts/fabrication-allow.tsv` (reviewed exceptions, matched by
+   line text; a stale row fails), with a `--test` self-check, wired into `make test-fast`, `make test` and
+   CI. It lands before any fix, so the baseline captures today and nothing new gets in.
+1. **Batch A, data loss:** `bootstrap/config.rs:329`, `cli/main.rs:677`, `api/handlers/workspace.rs:334`,
+   `metadata/frontmatter.rs:144`, `assistants/helpers.rs:141`, `cli/managed.rs:73`. A failed or unparseable
+   read **refuses to write**; it never overwrites with defaults.
+2. **Batch B, governance and identity:** `knowledge.rs:1292` (shared with L1's pack-rule item: L1 owns
+   it, L8 skips it), `stance.rs:72`, `advance_run.rs:531`, `auth.rs` (1014, 1026–27, 1151, 1260, 1277,
+   1412–42), `repo_scan.rs:734–45`, `pg_store/sessions.rs:1204/1293`, `pg_store/mod.rs:1091`,
+   `import_assistant_events.ddl:31,35`, the seat writes (`publish_run.rs:115`; the dōjō relay route is
+   L1's). Fail closed on safety and identity.
+3. **Batch C, misleading numbers:** `pg_store/metrics.rs:223,1341` + `workspace_quality_signals.ddl:40`
+   (no data is "not measured", never 0%), `tool_insights.rs:30` (no `filter_map(ok)` + zip), the CLI
+   verdicts (reuse MCP's `daemon_result` split; no second copy), `watchdog.rs:88`, `tool_discovery.rs`,
+   `indexer/community.rs:381`.
+MEDIUM/LOW (409 rows) are left to the ratchet: each lane that touches such a file lowers its count
+(the boy-scout rule). They are not a separate project this week.
+Lanes fix their own rows as a "D83" item: L1 ×7, L3 ×4, L4 ×5, L7 ×1 (Appendix A lists them).
+
 ## 3. Shared hotspots (append-only, small, rebase before you hand off)
 
 | File | Rule |
