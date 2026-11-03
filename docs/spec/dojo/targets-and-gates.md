@@ -672,6 +672,14 @@ warmed off the wire).
 
 ---
 
+**TG4 addendum (L0, 2026-11-03, from L2's #156 review): how architecture findings are diffed.**
+- **Target 3, layer violations:** judged by the **change in the Up-edge count** between base and change. Up-edge
+  identity is not stable: adding `c→b` to `a→b, b→c, c→a` changes which edge is "Up". So a delta by
+  identity would blame an edge that was already in the base.
+- **Target 4, cycles:** judged by **cycle identity = the sorted set of its member modules**, which is stable
+  under unrelated edits. "Largest cycle" is a property of `dependency_cycles`, never a summed count.
+- Both identities are still stored, because the screen shows them. Only the verdict uses the rule above.
+
 ### TG5 · MCP: `get_ticket`, `get_targets`, `get_missed_targets`
 
 **Tracker-agnostic read (L7 implements; L3 consumes).** In `tracker/mod.rs` (L7):
