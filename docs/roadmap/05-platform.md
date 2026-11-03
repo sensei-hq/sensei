@@ -19,7 +19,7 @@ Distribution (P1), website (P2), harness/CI (P3). Status legend:
 | Gap | What | Priority |
 |---|---|---|
 | D-11 | website presents unbuilt as shipped (one claim already dropped) | P2 |
-| D-12 | dependency drift: the direct dependencies are current (`@rokkit/*` 1.14.0, `@kavach/*` 1.3.0), but the dōjō still bundles `@rokkit` 1.4.0 beside them — `@kavach/ui@1.3.0` pins `@rokkit/forms` 1.3.7 (`dojo/bun.lock:254`), nested at `:1036-1044`. Fix is upstream in kavach; #191 stays open | P3 |
+| ~~D-12~~ | ~~dependency drift~~ — resolved by `eefc6c119`: `@kavach/*` 1.3.2 depends on `@rokkit/forms` 1.14.0, so `dojo/bun.lock` resolves one `@rokkit` family at 1.14.0; #191 closed | — |
 | D-13 | 28 medium osv advisories (transitive; none code-fixable) | P3 |
 | P-5 | Makefile/Homebrew are macOS-only; Linux service/data-dir/shell assumptions unresolved — design first, then distribute (decision 7) | P1 |
 
