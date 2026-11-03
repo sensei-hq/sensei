@@ -1,7 +1,7 @@
 ---
 name: Implementation Backlog
 description: OPEN work — tracked as GitHub issues (sensei-hq/sensei); the issue list is the source of truth
-date: 2026-10-13
+date: 2026-11-03
 ---
 
 # Implementation Backlog
@@ -9,49 +9,67 @@ date: 2026-10-13
 Work is tracked as **GitHub issues** in
 [`sensei-hq/sensei`](https://github.com/sensei-hq/sensei/issues) — the live
 issue list is the source of truth. **This file is an index of references, not a
-database** (decision 9, docs reorg 2026-10-13): open → referenced here, filed →
-an issue, shipped → the issue closes and the row goes away.
+database** (decision 9, docs reorg 2026-10-13): open → referenced here, filed → an
+issue, shipped → the issue closes and the row goes away. It names *what* is open
+per area and *which lane* holds it this week; it does not carry a count. The last
+count kept here (2026-10-13, "about 14 issues") was 87 issues wrong by 2026-10-27
+(`review/2026-10-27-roadmap-vs-state.md` §0.2). Ask GitHub, not this file:
+`gh issue list --state open`.
 
 The full write-ups of past findings (indexer defects, dbd defects, with their
 evidence) are preserved in [`history/backlog/writeups.md`](history/backlog/writeups.md).
 
-## Open issues (as of 2026-10-13)
+## Open work by area (2026-11-03)
 
-> Counts and statuses come from the issue list — re-open this table when it
-> drifts from GitHub, or drop it and link the filtered query instead.
+Read from the readiness table in
+[`review/2026-11-03-orientation.md`](review/2026-11-03-orientation.md) §2. The last column is the lane
+in [`plan/2026-11-03-parallel-lanes.md`](plan/2026-11-03-parallel-lanes.md) §2 that owns the work this
+week; `—` means no lane holds it yet. Per-module status and its evidence:
+[`roadmap/`](roadmap/README.md).
 
-### Epics
-| Issue | Summary |
-|-------|---------|
-| [#91](https://github.com/sensei-hq/sensei/issues/91) | Dōjō governance track — admin site + policies + preferences + skills/agents |
-| [#85](https://github.com/sensei-hq/sensei/issues/85) | Track 3 — Project window (per-screen, separate Tauri window) |
+| Area | Ready | What is built | Biggest gaps | Lane this week |
+|---|---:|---|---|---|
+| Onboarding / health | ~75% | bootstrap, the 5-step setup, Health + Remedy, Developer ID | first run never mentions the dōjō; #282 Keychain re-asked on rebuilt binaries; #300 / #301 sign-in | L4 (setup step, menus) |
+| Diagrams (local) | ~85% | S0–S4, S3 ER, S7 focus (committed) | S4 2c pooling double count; S6 history (proposal); the dōjō side (WP6/7) 0% | L2; dōjō side not this week |
+| Metrics engine | ~75% | daily→quarterly views, the perf work, My metrics, team views | ActionItems has no action (0 buttons/links); #156 architecture metrics missing | L3 (ActionItems), L2 (#156) |
+| Metrics as **targets** | ~0% | nothing (verified) | the M-7 gating field, a target store, evaluation, a failure flow (D47/D48) | L0 (spec), then L3 |
+| Sync (WP1–9) | ~40% | WP1–3, WP4 staged | WP4 F4, WP5, WP8 (D46), WP9A set-based registration, #314 production verify; #184 never sent a row | L1 |
+| Governance | ~50% | scope resolution, rule packs + adoption, resolved rules pulled | no violation/override store (G-GOV-AUDIT); no "what adopting changed here"; team scope #318 | — |
+| Learnings | ~60% | memories, Learnings screen, share-review, k ≥ 3 promotion, playbook rules | no `report_learning` / `report_memory_use`; no failure → lesson loop; too many competing verbs (D65) | L1 (after #314), L0 (spec) |
+| Trackers / sprints | ~35% | Jira (daemon), boards per level (D40), sprints, Tickets screen | GitHub Issues / ADO adapters (D49, behind #310); tracker-ownership conflict; epics unread | L7 |
+| Teams / viewers | ~70% | roles, teams, invites, viewers, lead view | no viewer shell (D68); leads have no menu of their own; A4 writable workspaces | L4 |
+| Billing / plans | ~15% | `billing_accounts`, `seats`, `ScrBilling` | no provider, no subscription table; D46 entitlement is WP8; price to be announced (D75) | L4 (screen), L1 (WP8) |
 
-### Observatory · Instruments
-| Issue | Summary |
-|-------|---------|
-| [#96](https://github.com/sensei-hq/sensei/issues/96) | Instruments: background-task visibility — shipped; e2e verify remaining |
-| [#90](https://github.com/sensei-hq/sensei/issues/90) | Instruments Replay: usage-verdict classifier — shipped; blocked on Replay screen |
-| [#43](https://github.com/sensei-hq/sensei/issues/43) | Observatory Configure section (design + build) |
-| [#44](https://github.com/sensei-hq/sensei/issues/44) | J7 Extend & Customize screens (design + build) |
-| [#45](https://github.com/sensei-hq/sensei/issues/45) | J5 Pattern knowledge catalog |
-| [#46](https://github.com/sensei-hq/sensei/issues/46) | J9 Context-pack tool |
+## Issues this week's plan depends on
 
-### UI / quality / site
-| Issue | Summary |
-|-------|---------|
-| [#47](https://github.com/sensei-hq/sensei/issues/47) | Mockup component migration to Rokkit (steps 4–14) |
-| [#81](https://github.com/sensei-hq/sensei/issues/81) | Update website `/sensei` route to the new mockup |
+Titles as they read on GitHub on 2026-11-03, all open. Nothing here states a
+status — open or closed is GitHub's answer.
 
-### Foundation / deferred
-| Issue | Summary |
-|-------|---------|
-| [#39](https://github.com/sensei-hq/sensei/issues/39) | Bootstrap diagnostic logging + debug mode |
-| [#50](https://github.com/sensei-hq/sensei/issues/50) | Extract `bootstrap` into a reusable library (deferred) |
-| [#258](https://github.com/sensei-hq/sensei/issues/258) | SQL indexer: adopt dbd 0.26's v3 schema model — type uses, identity/generated, partial indexes, checks |
+| Issue | Title | Why it is in this list |
+|---|---|---|
+| [#282](https://github.com/sensei-hq/sensei/issues/282) | Releases are ad-hoc signed: keychain and folder permissions are asked again after every upgrade | every upgrade breaks sign-in and sync; the orientation's day-1 item |
+| [#301](https://github.com/sensei-hq/sensei/issues/301) | Sign in → sync must just work: auto-elect a connected identity's repositories, and survive upgrades | the sync lane's entry point |
+| [#300](https://github.com/sensei-hq/sensei/issues/300) | Sign-in from the app fails for passkey users | the readiness table's onboarding gap |
+| [#314](https://github.com/sensei-hq/sensei/issues/314) | Production: nothing in the dōjō plane has been verified in production — sync, Relay, push | the sync lane's last item (WP9A first) |
+| [#184](https://github.com/sensei-hq/sensei/issues/184) | Dōjō sync has never sent a row: membership stuck at 'authenticating', outbox held since 2026-08-29 | the upward path; decide write `sync_status` or retire the outbox |
+| [#240](https://github.com/sensei-hq/sensei/issues/240) | Dōjō · the 25 user-scoped metrics have no path to the dōjō plane | metrics reach the dōjō only through repositories |
+| [#310](https://github.com/sensei-hq/sensei/issues/310) | Security: the dōjō needs a secret store before it holds shared integration credentials | blocks D49's tracker adapters |
+| [#318](https://github.com/sensei-hq/sensei/issues/318) | Code lags the decisions: developer role, Create or join, self_hosted, one tracker per project | the governance area's team scope |
+| [#156](https://github.com/sensei-hq/sensei/issues/156) | No metric reads the code graph: propose an architecture family | unblocks 4 of T3's 7 target families |
+| [#158](https://github.com/sensei-hq/sensei/issues/158) | Per-metric confidence: every reading should carry how much it can be trusted | with #159 and #160, the confidence chain |
+| [#159](https://github.com/sensei-hq/sensei/issues/159) | Registry: add a method tier (deterministic \| heuristic \| llm \| derived) | the base #160 builds on |
+| [#160](https://github.com/sensei-hq/sensei/issues/160) | Add a `metric_confidence` view and weight composite health by it | closes the coverage inversion |
+| [#292](https://github.com/sensei-hq/sensei/issues/292) | Indexer v2 has no markdown adapter, so doc drift never scans a document | M11 is inert without it |
+| [#279](https://github.com/sensei-hq/sensei/issues/279) | EPIC (deferred) · Benchmark: re-design proving sensei's value on transcript history | M18's deferred half — deferred, not dropped |
+| [#316](https://github.com/sensei-hq/sensei/issues/316) | CI and DORA data need a puller that does not depend on a daemon being online | T5's prerequisite |
+| [#234](https://github.com/sensei-hq/sensei/issues/234) | A seeded rule pack cannot be adopted — opt-in means unreachable | still open; check the adoption path before closing |
+| [#191](https://github.com/sensei-hq/sensei/issues/191) | rokkit and kavach are behind: app 1.4.0 / dojo 1.3.4 vs 1.6.0, kavach 1.1.3 vs 1.2.0 | its numbers are stale but D-12 is not closed: `@kavach/ui@1.3.0` still nests `@rokkit` 1.4.0 under the 1.14.0 direct deps — keep open for the kavach bump |
 
-## Open — not yet filed (file as GitHub issues)
+## Open — not yet filed
 
-Full one-liners and prior context: [`history/backlog/writeups.md`](history/backlog/writeups.md).
+One-liners with prior context: [`history/backlog/writeups.md`](history/backlog/writeups.md). This list is
+a **2026-10-13 snapshot and has not been re-checked**; check the code before filing anything from it,
+and file what is still true as an issue.
 
 - **The Rust indexer does not follow `pub use` re-exports.** A use through a re-exported path
   (`pg_store::X` for an item declared in `pg_store::x`) names an identity no declaration mints, so it
@@ -85,6 +103,8 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   override.
 - **Metrics engine rebuild + Dōjō sync (v1 = local; sync rides Phase 2)** —
   repo-grain watermark engine; current spec draft at `spec/2026-08-18-…`.
+  **In progress:** the sync work packages WP1–9 are this week's L1 lane
+  (`plan/2026-11-03-parallel-lanes.md` §L1).
 - **Operating-model Phase 2 (front-door intake conversation + playbook catalog).**
 - **Codebase-wide silent-error audit** (directed after the `node_kind` drop) → roadmap gaps `F-*`.
 - **Stale / orphaned project cleanup** — list endpoints + gated purge + housekeeping UI.
@@ -104,17 +124,18 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
 - **Jira ticket linkage — local slice (T-1a + T-1d, local-first)** — analysis
   [`analysis/2026-10-15-jira-ticket-linkage.md`](analysis/2026-10-15-jira-ticket-linkage.md),
   spec [`spec/daemon/tracker-jira-linkage.md`](spec/daemon/tracker-jira-linkage.md).
-  **Deliberate deviations from T3, decided 2026-10-15:** (1) local daemon first,
+  **Built:** the daemon-side Jira adapter is in (PR #274;
+  `review/2026-10-27-roadmap-vs-state.md` §1.4 T-1); the deviations below still
+  describe it. **Deliberate deviations from T3, decided 2026-10-15:** (1) local daemon first,
   Dōjō rollup behind F-3; (2) link sources `branch` + `prompt` only — `commit`
   deferred (needs new capture, contradicting T3 §2.5's "no new capture"), enum
   value reserved; (3) no assignee synced/stored (no per-person figure);
   (4) T3 §5.1 `sensei.tracker_links` dropped — repo binding is the existing
-  `sensei.repositories_in_projects` junction, sync status lives on
+  `sensei.repositories_in_workspaces` junction, sync status lives on
   `sensei.trackers`; (5) per-repo key pattern and per-source toggles deferred to
   T-1c — keys match against synced issue keys instead; (6) API-token auth only —
-  OAuth (integrations §2.3) deferred; (7) one tracker per project in v1 — T3
-  §2.2's secondary issue-only trackers deferred. Blocked on **P0**: session
-  synthesis + transcript ingest on Linux (0 sessions today).
+  OAuth (integrations §2.3) deferred; (7) one tracker per workspace in v1 — T3
+  §2.2's secondary issue-only trackers deferred (#318 tracks the decision drift).
 - **Daemon routes reachable from any web page** (found by the Jira-spec security
   review 2026-10-15) — `api/server.rs` sets `CorsLayer::allow_origin(Any)` with all
   methods and no auth middleware (loopback bind by default), so any page the user
@@ -131,7 +152,8 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   [`spec/daemon/tracker-jira-linkage.md`](spec/daemon/tracker-jira-linkage.md) "Future
   adapters") — decide: iterations (Premium) vs milestones as sprints; `#12` key
   resolution scoped by the session's repo; self-managed host allow-rule (SSRF
-  review); PAT vs OAuth.
+  review); PAT vs OAuth. D49 puts the new org adapters (GitHub Issues, ADO) on the
+  dōjō-owned path first.
 
 - **Rust indexer miscounts `impl Trait for &Type`** (found 2026-10-16 by the
   tracker slice) — `indexer::lang::rust::tests::the_symbol_count_equals_an_independent_count_of_declaration_nodes`
@@ -159,6 +181,7 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
 | Concern | Source |
 |---|---|
 | Issue-level work | this file (above) → GitHub |
+| What is open this week, by area, and who holds it | [`review/2026-11-03-orientation.md`](review/2026-11-03-orientation.md) §2, [`plan/2026-11-03-parallel-lanes.md`](plan/2026-11-03-parallel-lanes.md) §2 |
 | Per-module status and the next step | [`roadmap/`](roadmap/README.md) |
 | Every known gap, IDed, with evidence | [`roadmap/06-gaps.md`](roadmap/06-gaps.md) |
 | Detailed past findings | [`history/backlog/writeups.md`](history/backlog/writeups.md) |
