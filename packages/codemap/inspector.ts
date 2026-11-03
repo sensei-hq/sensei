@@ -40,6 +40,7 @@ export function inspect({ level, l0, l1, l2, selected }: InspectInput): Inspecti
   if (!l0) return empty();
   if (selected === LIBRARIES) return libraries(l0);
   const b = selected ? l0.blocks.find((x) => x.id === selected) : undefined;
+  if (!b && l0.focus?.kind === 'segment') return segment(l0, l0.focus);
   if (!b) return workspace(l0);
   if (b.folded.length) return fold(b);
   if (b.hub) return hub(b);
@@ -74,6 +75,38 @@ function module(b: Block, l0: Level0): Inspection {
     listLabel: 'What to look at',
     list: viol.length + partners.length || !b.roles.docs ? list : [{ text: 'No violations or cycles', value: '', tone: 'success' }],
     open: b.id,
+  };
+}
+
+/** A focused segment (user, 2026-11-03): its modules as one. */
+function segment(l0: Level0, focus: NonNullable<Level0['focus']>): Inspection {
+  const members = new Set(focus.members);
+  const blocks = l0.blocks.filter((b) => members.has(b.id));
+  const out = l0.bands.filter((x) => members.has(x.source));
+  const up = out.filter((x) => x.direction === 'up');
+  const skip = out.filter((x) => x.direction === 'skip');
+  const cycles = cycleMembers(l0).filter((m) => m.some((id) => members.has(id)));
+  const files = blocks.reduce((a, b) => a + Object.values(b.roles).reduce((x, v) => x + v, 0), 0);
+  const list = [...up, ...skip].map((x) => {
+    const v = violation(x.direction, x.target, x.weight);
+    return { ...v, text: `${x.source}: ${v.text.charAt(0).toLowerCase()}${v.text.slice(1)}` };
+  });
+  return {
+    eyebrow: `Segment · ${l0.groupBy}`,
+    title: `${l0.groupBy === 'layers' ? 'Layer' : 'Folder'} ${focus.id}`,
+    sub: 'The modules in this group, drawn with the modules they depend on or are used by.',
+    stats: [
+      { label: 'Modules', value: n(focus.members.length), tone: 'ink' },
+      { label: 'Neighbours', value: n(focus.neighbours.length), tone: 'ink' },
+      { label: 'Symbols', value: n(blocks.reduce((a, b) => a + b.symbols, 0)), tone: 'ink' },
+      { label: 'Files', value: n(files), tone: 'ink' },
+      { label: 'Upward', value: String(up.length), tone: up.length ? 'danger' : 'ink' },
+      { label: 'Skip a layer', value: String(skip.length), tone: skip.length ? 'warning' : 'ink' },
+      { label: 'Cycles', value: String(cycles.length), tone: cycles.length ? 'warning' : 'ink' },
+    ],
+    listLabel: 'What to look at',
+    list: list.length ? list : [{ text: 'No upward or skipping dependencies', value: '', tone: 'success' }],
+    open: null,
   };
 }
 

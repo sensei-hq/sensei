@@ -9,8 +9,8 @@ let target: HTMLElement;
 afterEach(() => { if (app) unmount(app); app = null; target?.remove(); });
 
 const ITEMS: Takeaway[] = [
-  { title: 'Break 2 cycles', detail: 'Break these first.', tone: 'warning', items: [{ text: 'p/a ⇄ p/b', value: 'cut p/a → p/b (3)', target: 'p/a' }] },
-  { title: '1 upward dependency', detail: 'Invert it.', tone: 'danger', items: [{ text: 'p/c → p/a', value: '9', target: 'p/c' }] },
+  { title: 'Break 2 cycles', detail: 'Break these first.', tone: 'warning', items: [{ text: 'senseid/api ⇄ senseid/db ⇄ senseid/tasks', value: 'cut senseid/api → senseid/db (3)', target: 'senseid/api', paths: ['senseid/api', 'senseid/db', 'senseid/tasks'], join: '⇄' }] },
+  { title: '1 upward dependency', detail: 'Invert it.', tone: 'danger', items: [{ text: 'p/c → p/a', value: '9', target: 'p/c', paths: ['p/c', 'p/a'], join: '→' }] },
 ];
 
 function render(props: Record<string, unknown> = {}) {
@@ -32,7 +32,7 @@ describe('Takeaways', () => {
     expect(sections.every((s) => s.open)).toBe(true);
     expect(target.textContent).toContain('Invert it.');
     // The text is not inside a button, so a selection copies it.
-    const item = [...target.querySelectorAll('[data-takeaway-item]')].find((li) => li.textContent?.includes('p/c → p/a'))!;
+    const item = [...target.querySelectorAll('[data-takeaway-item]')].find((li) => li.textContent?.includes('p/c'))!;
     expect(item.querySelector('[data-takeaway-text]')?.closest('button')).toBeNull();
     expect(item.textContent).toContain('9');
   });
@@ -63,5 +63,22 @@ describe('Takeaways', () => {
     render({ items: [] });
     expect(target.textContent).toContain('Nothing flagged on this view.');
     expect(target.querySelector('[data-testid="codemap-takeaways-copy"]')).toBeNull();
+  });
+
+  // The user (2026-11-03): the panel was unreadable — 12px mono, paths broken
+  // mid-word, a cycle as one long line. Each module reads as its name with its
+  // folder dimmed, a cycle lists its members, the number sits on its own line,
+  // and the action is a labelled button.
+  it('each module reads as its name with its folder dimmed; a cycle lists its members; the number has its own line', () => {
+    render();
+    const cycle = target.querySelector('[data-takeaway-item]') as HTMLElement;
+    const names = [...cycle.querySelectorAll('[data-path-name]')].map((n) => n.textContent);
+    expect(names).toEqual(['api', 'db', 'tasks']);
+    expect(cycle.querySelector('[data-path-folder]')?.textContent).toBe('senseid/');
+    expect(cycle.querySelectorAll('[data-path]').length).toBe(3);
+    expect(cycle.querySelector('[data-takeaway-value]')?.textContent).toBe('cut senseid/api → senseid/db (3)');
+    const focus = cycle.querySelector('button[aria-label="Focus senseid/api"]') as HTMLButtonElement;
+    expect(focus.textContent?.trim()).toBe('Focus');
+    expect(target.querySelector('[data-takeaway-text].break-all, .break-all')).toBeNull();
   });
 });

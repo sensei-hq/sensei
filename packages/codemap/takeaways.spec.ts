@@ -48,6 +48,15 @@ describe('takeaways', () => {
     ]);
   });
 
+  // Readable takeaways (user, 2026-11-03): an item names its modules one by one,
+  // and how they relate, so the panel can lay each out rather than one long string.
+  it('an item carries its modules and how they relate — a dependency, a cycle, a pair', () => {
+    const [up] = takeaways('structure', L0, null, null);
+    expect([up.items[0].paths, up.items[0].join]).toEqual([['p/c', 'p/a'], '→']);
+    const [cyc] = takeaways('cycles', L0, null, null);
+    expect([cyc.items[1].paths, cyc.items[1].join]).toEqual([['p/c', 'p/d', 'p/e'], '⇄']);
+  });
+
   it('Matrix: the cells to clear — mutual dependencies, then upward ones', () => {
     const t = takeaways('matrix', L0, null, null);
     // p/a and p/c depend on each other (4 one way, 9 the other) as well as p/a and p/b;

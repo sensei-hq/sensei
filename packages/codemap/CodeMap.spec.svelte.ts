@@ -297,4 +297,54 @@ describe('CodeMap', () => {
     await settle();
     expect(q('[data-testid="codemap-error"]')?.textContent).toContain('Service Unavailable');
   });
+
+  it('under a focus, Hidden coupling and Complexity draw only what the focus is in', async () => {
+    const p = port();
+    const focusedL0 = { ...L0, focus: { kind: 'module' as const, id: 'p/a', members: ['p/a'], neighbours: ['p/b'] } };
+    p.level0 = vi.fn((_g, f) => ok(f ? focusedL0 : L0));
+    p.cochange = vi.fn(() => ok({ hidden: [{ a: 'p/a', b: 'p/c', together: 7, strength: 0.7 }, { a: 'p/b', b: 'p/c', together: 6, strength: 0.6 }], pairs: 3, commits: 40, minTogether: 5 }));
+    p.complexity = vi.fn(() => ok({
+      total: { functions: 15, complex: 4, maxCyclo: 24, files: 2 }, maintainability: null,
+      modules: [
+        { id: 'p/a', label: 'p/a', kind: 'module' as const, functions: 10, complex: 3, maxCyclo: 24, files: 1, children: [] },
+        { id: 'p/c', label: 'p/c', kind: 'module' as const, functions: 5, complex: 1, maxCyclo: 12, files: 1, children: [] },
+      ],
+    }));
+    const map = render(p);
+    await settle();
+    await map.setFocus(p, { kind: 'module', id: 'p/a' });
+    void map.showLens(p, 'coupling');
+    await settle();
+    expect([...target.querySelectorAll('[data-pair]')].map((e) => e.getAttribute('data-pair'))).toEqual(['p/a|p/c']);
+    void map.showLens(p, 'complexity');
+    await settle();
+    expect(q('[data-testid="complexity-overall"]')?.textContent).toContain('3 of 10 functions');
+  });
+
+  it('a focused module’s panel: its numbers as stat cards, Open files, and Clear focus', async () => {
+    const p = port();
+    const map = render(p);
+    await settle();
+    await map.setFocus(p, { kind: 'module', id: 'p/a' });
+    await settle();
+    const symbols = q('[data-testid="inspector-stat-Symbols"]') as HTMLElement;
+    expect(symbols.matches('[data-stat-card]')).toBe(true);
+    expect(q('[data-testid="codemap-open"]')?.textContent?.trim()).toBe('Open files');
+    (q('[data-testid="codemap-clear-focus"]') as HTMLButtonElement).click();
+    await settle();
+    expect([map.focus, (p.level0 as ReturnType<typeof vi.fn>).mock.lastCall]).toEqual([null, ['layers', null]]);
+    expect(q('[data-testid="codemap-clear-focus"]')).toBeNull();
+  });
+
+  it('a focused segment’s panel describes the group, with Clear focus and no Open files', async () => {
+    const p = port();
+    p.level0 = vi.fn((_g, f) => ok(f ? { ...L0, focus: { kind: 'segment' as const, id: 'L0', members: ['p/a'], neighbours: ['p/b'] } } : L0));
+    const map = render(p);
+    await settle();
+    await map.setFocus(p, { kind: 'segment', id: 'L0' });
+    await settle();
+    expect(q('[data-testid="inspector-title"]')?.textContent).toBe('Layer L0');
+    expect([q('[data-testid="codemap-clear-focus"]') !== null, q('[data-testid="codemap-open"]')]).toEqual([true, null]);
+    expect(q('[data-testid="codemap-takeaways"]')).not.toBeNull();
+  });
 });

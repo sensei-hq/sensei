@@ -46,8 +46,12 @@ test('the code map drills from modules to files to symbols', async ({ tauriPage 
   const libraries = (await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-libraries"]')?.textContent?.trim() ?? ''`)) as string;
   expect(libraries).toBe(l0.libraries.count ? `${l0.libraries.count} referenced libraries · not members` : '');
 
-  // One click opens a module (M17); the inspector names it.
+  // One click focuses a module (user, 2026-11-03); the side panel opens its files.
   await tauriPage.evaluate(`document.querySelector('[data-testid="block-${biggest.id}"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+  await expect
+    .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-testid="codemap-open"]')`), { timeout: 30_000 })
+    .toBe(true);
+  await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-open"]')?.click()`);
   await expect
     .poll(() => tauriPage.evaluate(`document.querySelectorAll('[data-testid^="column-"]').length`), { timeout: 30_000 })
     .toBeGreaterThan(0);
@@ -141,4 +145,61 @@ test('each lens draws against the real daemon', async ({ tauriPage }) => {
   console.log(`\n[inspect] codemap lenses ${JSON.stringify(seen)}; coupling: ${summary.trim()}; errors ${errors}`);
   expect(summary).toContain(`from ${cochange.commits} commits`);
   expect(errors).toBe(0);
+});
+
+// The user (2026-11-03): picking a module on Cycles then switching lens showed the
+// same files view on every lens, with nothing saying so. Now a pick FOCUSES: every
+// lens draws only what the module is in, the header shows the focus on each, and
+// clearing it brings the whole map back.
+test('a focus carries across lenses, each drawing only what the module is in', async ({ tauriPage }) => {
+  test.setTimeout(240_000);
+  const workspaces = await json('/api/workspaces');
+  const rows = Array.isArray(workspaces) ? workspaces : workspaces.workspaces;
+  const ws = rows.find((w: { name: string }) => w.name === 'sensei') ?? rows[0];
+  // A module with hidden coupling, so the coupling check has pairs to hold to.
+  const cochange = await json(`/api/workspaces/${ws.id}/diagrams/codemap/cochange`);
+  const member: string = cochange.hidden[0].a;
+  const pairs = (cochange.hidden as { a: string; b: string }[]).filter((c) => c.a === member || c.b === member).length;
+  const focused = await json(`/api/workspaces/${ws.id}/diagrams/codemap?groupBy=layers&focus=${encodeURIComponent(member)}`);
+  expect(focused.focus.members).toEqual([member]);
+  const near = new Set([member, ...focused.focus.neighbours]);
+  expect(focused.blocks.every((b: { id: string; folded: string[] }) => near.has(b.id) || b.folded.every((m) => near.has(m)))).toBe(true);
+  expect((focused.cycles as { members: string[] }[]).every((c) => c.members.includes(member))).toBe(true);
+
+  // Focus it from Hidden coupling's own Focus action.
+  await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/coupling`);
+  await expect
+    .poll(() => tauriPage.evaluate(`document.querySelectorAll('[data-testid="codemap-coupling"] [data-pair]').length`), { timeout: 60_000 })
+    .toBeGreaterThan(0);
+  await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-coupling"] button[aria-label="Focus ${member}"]')?.click()`);
+  await expect
+    .poll(() => tauriPage.evaluate(`document.querySelector('[data-testid="diagram-focus"]')?.textContent ?? ''`), { timeout: 30_000 })
+    .toContain(member);
+  // The chip shows at once; the pairs narrow when the focused map arrives.
+  await expect
+    .poll(() => tauriPage.evaluate(`document.querySelectorAll('[data-testid="codemap-coupling"] [data-pair]').length`), { timeout: 30_000 })
+    .toBe(pairs);
+  const shown = (await tauriPage.evaluate(`[...document.querySelectorAll('[data-testid="codemap-coupling"] [data-pair]')].map((e) => e.getAttribute('data-pair'))`)) as string[];
+  console.log(`[inspect] focus ${member} on coupling: ${shown.length} of ${cochange.hidden.length} pairs (${pairs} involve it)`);
+  expect(shown.length).toBe(pairs);
+  expect(shown.every((k) => k.split('|').includes(member))).toBe(true);
+
+  for (const [lens, sel] of [
+    ['complexity', '[data-testid="codemap-complexity"] [data-complexity-row]'],
+    ['cycles', '[data-testid="codemap-cycles"] [data-cycle]'],
+  ] as const) {
+    await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/${lens}`);
+    await expect
+      .poll(() => tauriPage.evaluate(`document.querySelector('[data-testid="diagram-focus"]')?.textContent ?? ''`), { timeout: 30_000, message: `${lens} shows the focus` })
+      .toContain(member);
+    expect((await tauriPage.evaluate(`document.querySelectorAll('[data-testid^="column-"]').length`)) as number, `${lens} draws its lens, not the files view`).toBe(0);
+    const drawn = (await tauriPage.evaluate(`document.querySelectorAll('${sel}').length`)) as number;
+    console.log(`[inspect] focus ${member} on ${lens}: ${drawn} drawn`);
+    if (lens === 'cycles') expect(drawn).toBe(focused.cycles.length);
+  }
+
+  await tauriPage.evaluate(`document.querySelector('[data-testid="diagram-focus"] button[aria-label="Clear focus"]')?.click()`);
+  await expect
+    .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-testid="diagram-focus"]')`), { timeout: 30_000 })
+    .toBe(false);
 });

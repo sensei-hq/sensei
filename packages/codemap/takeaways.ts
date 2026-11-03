@@ -13,14 +13,25 @@ export interface Takeaway {
   /** Why it matters and what fixing it looks like. */
   detail: string;
   tone: Tone;
-  items: { text: string; value: string; /** The module to open; null for none. */ target: string | null }[];
+  items: {
+    /** The item as one line — what Copy puts in the markdown. */
+    text: string;
+    value: string;
+    /** The module to focus; null for none. */
+    target: string | null;
+    /** The modules it names, one by one, when it names more than one (user, 2026-11-03). */
+    paths?: string[];
+    /** How those modules relate: depends on, depend on each other, change together. */
+    join?: '→' | '⇄' | '⇢';
+  }[];
 }
 
 /** Items listed under one takeaway. */
 const SHOWN = 4;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const heaviest = (bands: Band[]) => [...bands].sort((a, b) => b.weight - a.weight).slice(0, SHOWN);
-const bandItems = (bands: Band[]) => heaviest(bands).map((b) => ({ text: `${b.source} → ${b.target}`, value: String(b.weight), target: b.source }));
+const bandItems = (bands: Band[]) =>
+  heaviest(bands).map((b) => ({ text: `${b.source} → ${b.target}`, value: String(b.weight), target: b.source, paths: [b.source, b.target], join: '→' as const }));
 
 const UPWARD_WHY = 'A lower layer calling up is a layering violation. Put an interface below and depend on it, or move the code to the layer that uses it.';
 
@@ -76,7 +87,7 @@ function cycles(l0: Level0): Takeaway[] {
       const cut = l0.bands
         .filter((b) => inside.has(b.source) && inside.has(b.target))
         .sort((a, b) => a.weight - b.weight)[0];
-      return { text: members.join(' ⇄ '), value: cut ? `cut ${cut.source} → ${cut.target} (${cut.weight})` : '', target: members[0] };
+      return { text: members.join(' ⇄ '), value: cut ? `cut ${cut.source} → ${cut.target} (${cut.weight})` : '', target: members[0], paths: members, join: '⇄' as const };
     }),
   }];
 }
@@ -93,7 +104,7 @@ function matrixIssues(l0: Level0): Takeaway[] {
           title: plural(mutual.length, 'mutual dependency', 'mutual dependencies'),
           detail: 'Two modules that depend on each other: a cell on each side of the diagonal. One of the two directions has to go.',
           tone: 'danger' as Tone,
-          items: mutual.slice(0, SHOWN).map(({ b, back }) => ({ text: `${b.source} ⇄ ${b.target}`, value: `${b.weight} · ${back}`, target: b.source })),
+          items: mutual.slice(0, SHOWN).map(({ b, back }) => ({ text: `${b.source} ⇄ ${b.target}`, value: `${b.weight} · ${back}`, target: b.source, paths: [b.source, b.target], join: '⇄' as const })),
         }]
       : []),
     ...upward(l0),
@@ -167,7 +178,7 @@ function coupling(cochange: CoChange | null): Takeaway[] {
         title: plural(pairs.length, 'hidden coupling', 'hidden couplings'),
         detail: 'Changed together with no dependency between them: a shared assumption or a copy. Make the dependency explicit, or extract what they share.',
         tone: 'warning',
-        items: pairs.slice(0, SHOWN).map((c) => ({ text: `${c.a} ⇢ ${c.b}`, value: `${c.together} commits`, target: c.a })),
+        items: pairs.slice(0, SHOWN).map((c) => ({ text: `${c.a} ⇢ ${c.b}`, value: `${c.together} commits`, target: c.a, paths: [c.a, c.b], join: '⇢' as const })),
       }]
     : [];
 }

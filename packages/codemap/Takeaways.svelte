@@ -2,7 +2,9 @@
   // What to act on (M17), for the lens in view. Text, not List buttons (user,
   // 2026-11-02): a section per takeaway, open by default and collapsible, its
   // modules as selectable text with an open action beside each, and a Copy
-  // action that puts the lens's takeaways on the clipboard as markdown.
+  // action that puts the lens's takeaways on the clipboard as markdown. Readable
+  // (user, 2026-11-03): each module is its name with its folder dimmed, a cycle
+  // lists its members, the number sits on its own line, the action is a button.
   import { takeawaysMarkdown, type Takeaway } from './takeaways';
 
   let { items, onfocus, label = 'Code map' }: {
@@ -18,6 +20,12 @@
     copied = true;
     setTimeout(() => (copied = false), 2000);
   }
+
+  /** A module id as its folder and its name — the name is what a reader scans for. */
+  const split = (id: string) => {
+    const at = id.lastIndexOf('/');
+    return at < 0 ? { folder: '', name: id } : { folder: id.slice(0, at + 1), name: id.slice(at + 1) };
+  };
 
   const TONE_TEXT = { danger: 'text-danger', warning: 'text-warning', success: 'text-success', ink: 'text-ink', faint: 'text-ink-faint' } as const;
 </script>
@@ -35,14 +43,23 @@
       <details open class="flex flex-col gap-2 border-t border-paper-edge pt-3" data-takeaway>
         <summary class="cursor-pointer text-sm font-medium {TONE_TEXT[t.tone]}">{t.title}</summary>
         <p class="mt-2 mb-2 text-sm text-ink-soft">{t.detail}</p>
-        <ul class="m-0 p-0 list-none flex flex-col gap-1">
+        <ul class="m-0 p-0 list-none flex flex-col gap-3">
           {#each t.items as item (item.text)}
-            <li class="flex items-baseline gap-2 text-xs" data-takeaway-item>
-              <span class="font-mono text-ink break-all" data-takeaway-text>{item.text}</span>
-              {#if item.value}<span class="text-ink-mute whitespace-nowrap">{item.value}</span>{/if}
+            <li class="flex items-start gap-3 text-sm" data-takeaway-item>
+              <div class="flex-1 min-w-0 flex flex-col gap-0.5" data-takeaway-text>
+                {#each item.paths ?? [item.text] as path, i (i)}
+                  {@const p = split(path)}
+                  <span class="flex items-baseline gap-1.5 min-w-0" data-path title={path}>
+                    {#if i > 0 && item.join}<span class="shrink-0 text-ink-mute" aria-hidden="true">{item.join}</span>{/if}
+                    <span class="min-w-0 truncate"><span class="text-ink-mute" data-path-folder>{p.folder}</span><span class="font-medium text-ink" data-path-name>{p.name}</span></span>
+                  </span>
+                {/each}
+                {#if item.value}<span class="text-xs text-ink-mute tabular-nums" data-takeaway-value>{item.value}</span>{/if}
+              </div>
               {#if item.target}
-                <button class="ml-auto shrink-0 p-0 bg-transparent border-none cursor-pointer text-ink-mute hover:text-ink"
-                  aria-label={`Focus ${item.target}`} title={`Focus ${item.target}`} onclick={() => onfocus(item.target!)}>↗</button>
+                <button class="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-paper-edge bg-transparent text-ink-mute cursor-pointer hover:text-ink"
+                  aria-label={`Focus ${item.target}`} title={`Focus ${item.target}`} onclick={() => onfocus(item.target!)}>
+                  <span class="i-solar-target-bold-duotone" aria-hidden="true"></span>Focus</button>
               {/if}
             </li>
           {/each}

@@ -27,6 +27,7 @@
   import ZoomFrame from './ZoomFrame.svelte';
   import CodeMapControls from './CodeMapControls.svelte';
   import { takeaways } from './takeaways';
+  import { focusComplexity, focusCoupling, focusSets, focusZones } from './focus';
   import Legend from './Legend.svelte';
 
   let {
@@ -54,8 +55,13 @@
   // An unmeasured width (0) is not a narrow screen.
   const narrow = $derived(width > 0 && width < 640);
   const l0 = $derived(map.l0);
-  const bands = $derived(l0 ? drawnBands(map.lens, l0, map.cochange, { edgeMode: map.edgeMode, minWeight: map.minWeight }) : []);
-  const toAct = $derived(l0 ? takeaways(map.lens, l0, map.cochange, map.zones, map.complexity) : []);
+  // The daemon narrowed the module map to the focus; the other lenses' data is narrowed here.
+  const sets = $derived(focusSets(l0));
+  const cochange = $derived(focusCoupling(map.cochange, sets));
+  const complexity = $derived(focusComplexity(map.complexity, sets));
+  const zones = $derived(focusZones(map.zones, sets));
+  const bands = $derived(l0 ? drawnBands(map.lens, l0, cochange, { edgeMode: map.edgeMode, minWeight: map.minWeight }) : []);
+  const toAct = $derived(l0 ? takeaways(map.lens, l0, cochange, zones, complexity) : []);
   // A focused module is what the side panel inspects when nothing else is selected.
   const focused = $derived(map.focus?.kind === 'module' ? map.focus.id : null);
   const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected ?? focused }));
@@ -102,27 +108,27 @@
       {#if map.level === 'modules'}
         {#if l0}
           {#if narrow}
-            <ModuleList view={listView(map.lens, l0, map.cochange, map.zones)} onfocus={focusOn} />
+            <ModuleList view={listView(map.lens, l0, cochange, zones)} onfocus={focusOn} />
           {:else if map.lens === 'zones'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ZonesLens data={map.zones} filter={map.zoneFilter} zoom={map.zoom} onfocus={focusOn} />
+              <ZonesLens data={zones} filter={map.zoneFilter} zoom={map.zoom} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'wheel'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
               <WheelLens data={l0} selected={map.selected ?? focused} zoom={map.zoom} onselect={(id) => map.select(id)} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'coupling'}
-            {#if map.cochange?.commits}
+            {#if cochange?.commits}
               <p class="m-0 text-xs text-ink-mute" data-testid="coupling-summary">
-                {`${map.cochange.hidden.length} pairs change together with no dependency between them · from ${map.cochange.commits} commits, ${map.cochange.minTogether}+ changes together`}
+                {`${cochange.hidden.length} pairs change together with no dependency between them · from ${cochange.commits} commits, ${cochange.minTogether}+ changes together`}
               </p>
             {/if}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <CouplingLens data={map.cochange} zoom={map.zoom} onfocus={focusOn} />
+              <CouplingLens data={cochange} zoom={map.zoom} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'complexity'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ComplexityLens data={map.complexity} zoom={map.zoom} onfocus={focusOn} />
+              <ComplexityLens data={complexity} zoom={map.zoom} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'cycles'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
@@ -159,15 +165,16 @@
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="flex flex-col gap-6 min-w-0 min-h-0 overflow-auto pl-6 border-l border-paper-edge" tabindex="0" role="region" aria-label="Side panel" data-testid="codemap-side">
         {#if map.level === 'modules' && map.lens === 'zones'}
-          {#if map.zones}
-            <ZonesDetails data={map.zones} filter={map.zoneFilter} onfocus={focusOn} />
+          {#if zones}
+            <ZonesDetails data={zones} filter={map.zoneFilter} onfocus={focusOn} />
           {/if}
           <Takeaways items={toAct} onfocus={focusOn} {label} />
-        {:else if map.level === 'modules' && !map.selected && !focused}
+        {:else if map.level === 'modules' && !map.selected && !map.focus}
           <Takeaways items={toAct} onfocus={focusOn} {label} />
         {:else}
-          <Inspector data={inspection} onopen={open} />
-          {#if map.level === 'modules' && focused && !map.selected}
+          <Inspector data={inspection} onopen={open}
+            onclear={map.focus && map.level === 'modules' ? () => void map.clearFocus(port) : undefined} />
+          {#if map.level === 'modules' && map.focus && !map.selected}
             <Takeaways items={toAct} onfocus={focusOn} {label} />
           {/if}
         {/if}
