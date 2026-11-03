@@ -13,10 +13,12 @@ Each plane file is a table: one row per module — status · what's done · the 
 step. The consolidated gap register is [`06-gaps.md`](06-gaps.md); issue-level open
 work is [`../backlog.md`](../backlog.md) (GitHub issues).
 
-> **Status of this file:** the per-module status tables are populated in **Phase 3**
-> of the reorg ([`../reorg.md`](../reorg.md) §13), folding the old feature
-> coverage map and the plan gap analysis (both deleted on 2026-10-21; they live
-> in git history). The models below are final now.
+> **Status of this file:** the per-module status tables were populated on **2026-11-03** from the
+> readiness table in [`../review/2026-11-03-orientation.md`](../review/2026-11-03-orientation.md) §2
+> and the capability audit
+> [`../review/2026-10-27-roadmap-vs-state.md`](../review/2026-10-27-roadmap-vs-state.md) §1, and every
+> row names what proves its cell. A status is a snapshot: when the module moves, move the cell and
+> re-check the evidence.
 
 ## Status model
 
@@ -51,7 +53,7 @@ a spec.
 
 ## The board — all 30 modules at a glance
 
-| Plane | Modules | Status (Phase 3 populates the cells) |
+| Plane | Modules | Status cells (per module, with evidence) |
 |---|---|---:|
 | Foundation | M1 Bootstrap · M2 Setup/Preferences · M3 Capture · M4 Code Graph · M5 Inference Gateway · M6 Storage/Data Model | [01-foundation.md](01-foundation.md) |
 | Insight | M7 Analyzer · M8 Metrics/Health · M9 Memory · M10 Patterns · M11 Traceability · M12 Libraries · M13 Governance | [02-insight.md](02-insight.md) |

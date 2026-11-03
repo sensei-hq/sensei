@@ -3,15 +3,16 @@
 Distribution (P1), website (P2), harness/CI (P3). Status legend:
 [`README.md`](README.md).
 
-> Per-module statuses are filled in Phase 3 from the legacy coverage map and the
-> plan gap analysis (both deleted on 2026-10-21; they live in git history).
-> Structure is final.
+> **Status populated 2026-11-03.** The cells follow the readiness table in
+> [`../review/2026-11-03-orientation.md`](../review/2026-11-03-orientation.md) §2 and the capability
+> audit in [`../review/2026-10-27-roadmap-vs-state.md`](../review/2026-10-27-roadmap-vs-state.md) §1.5.
+> The last column names what proves each cell; a status is a snapshot, so move it when the module moves.
 
-| ID | Module | One-line "done" | Status |
-|---|---|---|---|
-| P1 | Distribution | One command installs sensei on macOS, Linux and Windows | 🚧 Phase 3 |
-| P2 | Website | The site says only what is true, and sells the built product | 🚧 Phase 3 |
-| P3 | Harness & CI | No change reaches main without tests, lint, fmt and e2e | 🚧 Phase 3 |
+| ID | Module | One-line "done" | Status | Evidenced by |
+|---|---|---|---|---|
+| P1 | Distribution | One command installs sensei on macOS, Linux and Windows | 🟡 **Partial** | The Homebrew formula and cask, the `.dmg` and the Linux x86_64/aarch64 tarballs ship from `release.yml`; there is no systemd unit, Windows target or `install.sh` (P-5), and releases are ad-hoc signed, so Keychain is revoked on every upgrade (#282) |
+| P2 | Website | The site says only what is true, and sells the built product | 🟡 **Partial** | The site is built (`website/src/routes/{+page,sensei,torii-seiki,privacy,terms}`); D-11 stands — the `/sensei` page offers a Windows `.exe` and an AppImage that no release builds, and lists Codex and Aider, which have no capture adapter |
+| P3 | Harness & CI | No change reaches main without tests, lint, fmt and e2e | 🟡 **Partial** | `rust.yml` runs fmt, clippy, audit and tests and is required on main, and `release.yml` cuts from `v*` tags behind `scripts/release-guard.sh`; the app and dōjō unit tests run only in `coverage.yml`, which is disabled, and no workflow runs Playwright — e2e is local (`test:inspect`) |
 
 ## Known gaps affecting this plane
 
