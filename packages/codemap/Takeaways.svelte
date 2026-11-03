@@ -5,6 +5,7 @@
   // action that puts the lens's takeaways on the clipboard as markdown. Readable
   // (user, 2026-11-03): each module is its name with its folder dimmed, a cycle
   // lists its members, the number sits on its own line, the action is a button.
+  import { Button } from '@rokkit/ui';
   import { takeawaysMarkdown, type Takeaway } from './takeaways';
 
   let { items, onfocus, label = 'Code map' }: {
@@ -51,15 +52,14 @@
                   {@const p = split(path)}
                   <span class="flex items-baseline gap-1.5 min-w-0" data-path title={path}>
                     {#if i > 0 && item.join}<span class="shrink-0 text-ink-mute" aria-hidden="true">{item.join}</span>{/if}
-                    <span class="min-w-0 truncate"><span class="text-ink-mute" data-path-folder>{p.folder}</span><span class="font-medium text-ink" data-path-name>{p.name}</span></span>
+                    <span class="min-w-0 flex"><span class="min-w-0 truncate text-ink-mute" data-path-folder>{p.folder}</span><span class="shrink-0 font-medium text-ink" data-path-name>{p.name}</span></span>
                   </span>
                 {/each}
                 {#if item.value}<span class="text-xs text-ink-mute tabular-nums" data-takeaway-value>{item.value}</span>{/if}
               </div>
               {#if item.target}
-                <button class="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-paper-edge bg-transparent text-ink-mute cursor-pointer hover:text-ink"
-                  aria-label={`Focus ${item.target}`} title={`Focus ${item.target}`} onclick={() => onfocus(item.target!)}>
-                  <span class="i-solar-target-bold-duotone" aria-hidden="true"></span>Focus</button>
+                <Button class="shrink-0" size="sm" style="outline" icon="i-solar-target-bold-duotone" label="Focus"
+                  aria-label={`Focus ${item.target}`} title={`Focus ${item.target}`} onclick={() => onfocus(item.target!)} />
               {/if}
             </li>
           {/each}

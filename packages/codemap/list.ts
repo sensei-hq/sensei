@@ -2,7 +2,7 @@
 // grouped as the canvas groups them, with a role bar and badges; Zones ranked by
 // distance from the main sequence; the Matrix as group → group dependencies.
 import { groupOrder } from './layout';
-import { cycleOf } from './lenses';
+import { byDistance, cycleOf, distanceText } from './lenses';
 import type { Lens } from './state.svelte';
 import { complexityTier } from './view';
 import type { Block, CoChange, Level0, RoleCounts, Zones } from './types';
@@ -69,7 +69,7 @@ export function listView(lens: Lens, l0: Level0, cochange: CoChange | null, zone
 }
 
 function zonesList(zones: Zones | null): ListView {
-  const placed = (zones?.points ?? []).filter((p) => p.zone !== null).sort((a, b) => b.distance - a.distance);
+  const placed = (zones?.points ?? []).filter((p) => p.zone !== null).sort(byDistance);
   const ZONE: Record<string, Badge | undefined> = {
     pain: { text: 'zone of pain', tone: 'danger' },
     useless: { text: 'zone of uselessness', tone: 'warning' },
@@ -80,7 +80,7 @@ function zonesList(zones: Zones | null): ListView {
       rows: placed.map((p) => ({
         id: p.component,
         label: p.component,
-        sub: `I ${p.instability.toFixed(2)} · A ${p.abstractness.toFixed(2)} · distance ${p.distance.toFixed(2)}`,
+        sub: `I ${p.instability.toFixed(2)} · A ${p.abstractness.toFixed(2)} · distance ${distanceText(p)}`,
         roles: null,
         badges: ZONE[p.zone!] ? [ZONE[p.zone!]!] : [],
         open: true,

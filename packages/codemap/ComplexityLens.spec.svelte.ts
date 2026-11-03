@@ -51,4 +51,23 @@ describe('ComplexityLens', () => {
     render({ ...TREE, total: { functions: 0, complex: 0, maxCyclo: 0, files: 0 }, modules: [], maintainability: null });
     expect(target.textContent).toContain('Not measured yet');
   });
+
+  // Review r1 F5: under a focus, "not measured yet" is true of the focus only.
+  it('under a focus with nothing measured, it names the focus', () => {
+    target = document.body.appendChild(document.createElement('div'));
+    const empty = { total: { functions: 0, complex: 0, maxCyclo: 0, files: 0 }, modules: [], maintainability: null };
+    app = mount(ComplexityLens, { target, props: { data: empty, zoom: 1, onfocus: vi.fn(), focus: 'senseid/db' } });
+    flushSync();
+    expect(target.textContent).toContain('senseid/db has no measured files');
+  });
+
+  it('a failed read says why and offers Retry, never Reading…', () => {
+    const onretry = vi.fn();
+    target = document.body.appendChild(document.createElement('div'));
+    app = mount(ComplexityLens, { target, props: { data: null, zoom: 1, onfocus: vi.fn(), failed: 'Bad Gateway', onretry } });
+    flushSync();
+    expect(target.textContent).not.toContain('Reading');
+    expect(target.textContent).toContain('Bad Gateway');
+    expect([...target.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Retry')).toBe(true);
+  });
 });

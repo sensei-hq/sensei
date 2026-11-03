@@ -60,4 +60,15 @@ describe('focus', () => {
     const sets = focusSets(l0(FOCUS));
     expect([focusCoupling(null, sets), focusComplexity(null, sets), focusZones(null, sets)]).toEqual([null, null, null]);
   });
+
+  // Review r1 F3: a mean over no placed point is no reading, not 0.00 ("on the
+  // main sequence"); coverage means what the daemon means — points = all, and
+  // unplaceable = those with no distance.
+  it('a focused Zones with nothing placed has no mean, and counts coverage as the daemon does', () => {
+    const unplaced = (component: string) => ({ component, types: 0, abstractTypes: 0, ca: 0, ce: 0, abstractness: 0, instability: 0, distance: null, zone: null });
+    const zones: Zones = { points: [unplaced('p/a'), unplaced('p/b')], meanDistance: null, coverage: { points: 2, unplaceable: 2 } };
+    const got = focusZones(zones, focusSets(l0(FOCUS)));
+    expect(got?.meanDistance).toBeNull();
+    expect(got?.coverage).toEqual({ points: 2, unplaceable: 2 });
+  });
 });

@@ -3,6 +3,7 @@
 // read goes through the CodeMapPort the host passes in.
 import type { EdgeMode } from './view';
 import type { ZoneFilter } from './lenses';
+import { focusComplexity, focusCoupling, focusSets, focusZones } from './focus';
 import type { CoChange, CodeMapPort, Column, ComplexityTree, Focus, GroupBy, Level0, Level1, Level2, Read, Role, Zones } from './types';
 
 export type Level = 'modules' | 'files' | 'symbols';
@@ -57,8 +58,10 @@ export class CodeMapState {
   get loading(): boolean {
     return this.#pending > 0;
   }
-  /** Why the last read failed; cleared by the next that succeeds. */
-  error = $state<string | null>(null);
+  /** Each kind of read's last failure; a success clears only its own kind's
+   *  (review r1 F2: one shared error let a later read of another kind clear a
+   *  lens's failure, leaving it on "Reading…" for good). */
+  #errors = $state<Record<string, string | null>>({});
   /** Each kind of read's latest request: only a later read of the SAME kind
    *  overtakes one — a module opening must not drop the coupling being read. */
   #seq: Record<string, number> = {};
@@ -70,15 +73,61 @@ export class CodeMapState {
 
   async #read<T>(kind: string, read: () => Promise<Read<T>>): Promise<T | null> {
     const mine = (this.#seq[kind] = (this.#seq[kind] ?? 0) + 1);
+    // A read under way is not its last failure (review r3 L2): the lens reads again.
+    this.#errors[kind] = null;
     this.#pending++;
     try {
       const r = await read();
       if (mine !== this.#seq[kind]) return null; // overtaken by a later read of the same kind
-      this.error = r.ok ? null : r.error;
+      this.#errors[kind] = r.ok ? null : r.error;
       return r.ok ? r.data : null;
     } finally {
       this.#pending--;
     }
+  }
+
+  #first(kinds: (string | undefined)[]): string | null {
+    return kinds.map((k) => (k ? (this.#errors[k] ?? null) : null)).find((e) => e !== null) ?? null;
+  }
+
+  /** Why the map could not be read: its own read, or an open module or file. */
+  get mapError(): string | null {
+    return this.#first(['level0', 'whole', 'module', 'file']);
+  }
+
+  /** Why the lens in view could not read its own data (Zones, Hidden coupling,
+   *  Complexity) — shown in the lens with a Retry, not as the map's failure. */
+  get dataError(): string | null {
+    const own = { zones: 'zones', coupling: 'cochange', complexity: 'complexity' } as Partial<Record<Lens, string>>;
+    return this.#first([own[this.lens]]);
+  }
+
+  /** Either: what the lens in view cannot show. Another lens's failure is not this one's. */
+  get lensError(): string | null {
+    return this.mapError ?? this.dataError;
+  }
+
+  /** The map's failure, as the page heads it. */
+  get error(): string | null {
+    return this.mapError;
+  }
+
+  /** An open module's or file's failure belongs to that attempt; leaving it clears it. */
+  #forgetOpenFailures(): void {
+    this.#errors.module = null;
+    this.#errors.file = null;
+  }
+
+  /** Hidden coupling, Complexity and Zones narrowed to the focus the map was
+   *  read with (review r1 F7: the state owns it, so every host gets it). */
+  get focusedCochange(): CoChange | null {
+    return focusCoupling(this.cochange, focusSets(this.l0));
+  }
+  get focusedComplexity(): ComplexityTree | null {
+    return focusComplexity(this.complexity, focusSets(this.l0));
+  }
+  get focusedZones(): Zones | null {
+    return focusZones(this.zones, focusSets(this.l0));
   }
 
   async load(port: CodeMapPort): Promise<void> {
@@ -89,17 +138,29 @@ export class CodeMapState {
     if (!focus) this.whole = data;
   }
 
+  /** The whole map in the current grouping, for the finder, while a focus is drawn. */
+  async #loadWhole(port: CodeMapPort): Promise<void> {
+    const data = await this.#read('whole', () => port.level0(this.groupBy, null));
+    if (data) this.whole = data;
+  }
+
   /** Re-band under another grouping; the level, selection, lens and a module
-   *  focus stay. A segment is a group of the old grouping, so its focus goes. */
+   *  focus stay. A segment is a group of the old grouping, so its focus goes.
+   *  Under a focus the whole map is re-read too, so the finder offers the new
+   *  grouping's groups (review r1 F1). */
   async setGroupBy(port: CodeMapPort, groupBy: GroupBy): Promise<void> {
+    this.#forgetOpenFailures();
     this.groupBy = groupBy;
     if (this.focus?.kind === 'segment') this.focus = null;
-    await this.load(port);
+    // The old grouping's whole map must not outlive a failed re-read (review r2 N3).
+    if (this.focus) this.whole = null;
+    await Promise.all([this.load(port), this.focus ? this.#loadWhole(port) : Promise.resolve()]);
   }
 
   /** Focus every lens on a module or a segment (user, 2026-11-03): the map is
    *  re-read narrowed to it and its neighbours, from the modules level. */
   async setFocus(port: CodeMapPort, focus: Focus): Promise<void> {
+    this.#forgetOpenFailures();
     this.focus = focus;
     if (this.level !== 'modules') this.crumbTo(0);
     await this.load(port);
@@ -113,6 +174,7 @@ export class CodeMapState {
   }
 
   async clearFocus(port: CodeMapPort): Promise<void> {
+    this.#forgetOpenFailures();
     this.focus = null;
     await this.load(port);
   }
@@ -122,6 +184,7 @@ export class CodeMapState {
    *  module's files are left; the focus stays — it is the same on every lens. */
   async showLens(port: CodeMapPort, lens: Lens): Promise<void> {
     this.lens = lens;
+    this.#forgetOpenFailures();
     if (this.level !== 'modules') this.crumbTo(0);
     if (lens === 'zones' && !this.zones) {
       const data = await this.#read('zones', () => port.zones());
@@ -166,6 +229,7 @@ export class CodeMapState {
 
   /** Back up the breadcrumb to `index`. */
   crumbTo(index: number): void {
+    this.#forgetOpenFailures();
     const crumb = this.crumbs[index];
     if (!crumb) return;
     this.crumbs = this.crumbs.slice(0, index + 1);

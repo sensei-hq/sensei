@@ -4,7 +4,7 @@
 import { complexityShare, couplingBands, cycleBands, cycleOf } from './lenses';
 import { groupOrder } from './layout';
 import type { Lens } from './state.svelte';
-import type { Band, Block, CoChange, Direction, Level0, Role } from './types';
+import type { Band, Block, CoChange, Direction, GroupBy, Level0, Role } from './types';
 
 export type EdgeMode = 'all' | 'violations';
 export interface BandFilter {
@@ -122,11 +122,16 @@ export const ROLE_BG: Record<Role, string> = {
 /** Every module to browse, grouped as the map groups them: a drawn block, the
  *  modules folded into a "+N more", and hubs — so a module can be found without
  *  knowing its name. Items for a rokkit Select. */
+/** A Group-by group as the reader sees it: `Layer L1`, `Folder senseid`. */
+export function segmentLabel(groupBy: GroupBy, id: string): string {
+  return `${groupBy === 'layers' ? 'Layer' : 'Folder'} ${id}`;
+}
+
 export function moduleChoices(l0: Level0): { label: string; value: string; children: { label: string; value: string }[] }[] {
   return groupOrder(l0.blocks, l0.groupBy).map((g) => {
     const ids = l0.blocks.filter((b) => b.group === g).flatMap((b) => (b.folded.length ? b.folded : [b.id]));
     // A group heading is not pickable in a Select, so the group's first row focuses all of it.
-    const all = { label: `${l0.groupBy === 'layers' ? 'Layer' : 'Folder'} ${g} · all ${ids.length} modules`, value: `group:${g}` };
+    const all = { label: `${segmentLabel(l0.groupBy, g)} · all ${ids.length} modules`, value: `group:${g}` };
     return { label: g, value: `group:${g}`, children: [all, ...[...ids].sort().map((id) => ({ label: id, value: id }))] };
   });
 }

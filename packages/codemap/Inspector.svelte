@@ -2,7 +2,7 @@
   // The Code map's side panel (M17): what `inspect` says about the selection —
   // eyebrow, title, a line on what it is, its numbers as stat cards, its
   // actions, and what to look at. Under a focus it is the focus's own panel.
-  import { StatCard, type StatCardTone } from '@rokkit/ui';
+  import { Button, StatCard, type StatCardTone } from '@rokkit/ui';
   import type { Inspection, Tone } from './inspector';
 
   let {
@@ -45,14 +45,12 @@
   {#if data.open || onclear}
     <div class="flex flex-wrap gap-2">
       {#if data.open}
-        <button class="px-3 py-1.5 text-sm rounded border border-paper-edge bg-transparent text-ink cursor-pointer inline-flex items-center gap-1.5"
-          onclick={() => onopen(data.open!)} data-testid="codemap-open">
-          <span class="i-solar-folder-open-bold-duotone" aria-hidden="true"></span>Open files</button>
+        <Button size="sm" style="outline" icon="i-solar-folder-open-bold-duotone" label="Open files"
+          onclick={() => onopen(data.open!)} data-testid="codemap-open" />
       {/if}
       {#if onclear}
-        <button class="px-3 py-1.5 text-sm rounded border border-paper-edge bg-transparent text-ink-mute cursor-pointer inline-flex items-center gap-1.5"
-          onclick={onclear} data-testid="codemap-clear-focus">
-          <span class="i-solar-close-circle-bold-duotone" aria-hidden="true"></span>Clear focus</button>
+        <Button size="sm" style="ghost" icon="i-solar-close-circle-bold-duotone" label="Clear focus"
+          onclick={onclear} data-testid="codemap-clear-focus" />
       {/if}
     </div>
   {/if}

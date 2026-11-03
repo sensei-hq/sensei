@@ -9,7 +9,7 @@
   import type { CodeMapState } from './state.svelte';
   import { inspect, LIBRARIES } from './inspector';
   import { listView } from './list';
-  import { budgetLine, drawnBands, legendFor } from './view';
+  import { budgetLine, drawnBands, legendFor, segmentLabel } from './view';
   import type { CodeMapPort } from './types';
   import ModuleMap from './ModuleMap.svelte';
   import MatrixLens from './MatrixLens.svelte';
@@ -27,7 +27,6 @@
   import ZoomFrame from './ZoomFrame.svelte';
   import CodeMapControls from './CodeMapControls.svelte';
   import { takeaways } from './takeaways';
-  import { focusComplexity, focusCoupling, focusSets, focusZones } from './focus';
   import Legend from './Legend.svelte';
 
   let {
@@ -55,11 +54,12 @@
   // An unmeasured width (0) is not a narrow screen.
   const narrow = $derived(width > 0 && width < 640);
   const l0 = $derived(map.l0);
-  // The daemon narrowed the module map to the focus; the other lenses' data is narrowed here.
-  const sets = $derived(focusSets(l0));
-  const cochange = $derived(focusCoupling(map.cochange, sets));
-  const complexity = $derived(focusComplexity(map.complexity, sets));
-  const zones = $derived(focusZones(map.zones, sets));
+  // The daemon narrowed the module map to the focus; the state narrows the rest.
+  const cochange = $derived(map.focusedCochange);
+  const complexity = $derived(map.focusedComplexity);
+  const zones = $derived(map.focusedZones);
+  /** The focus as the empty states name it. */
+  const focusLabel = $derived(map.focus ? (map.focus.kind === 'module' ? map.focus.id : segmentLabel(map.groupBy, map.focus.id)) : null);
   const bands = $derived(l0 ? drawnBands(map.lens, l0, cochange, { edgeMode: map.edgeMode, minWeight: map.minWeight }) : []);
   const toAct = $derived(l0 ? takeaways(map.lens, l0, cochange, zones, complexity) : []);
   // A focused module is what the side panel inspects when nothing else is selected.
@@ -67,6 +67,11 @@
   const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected ?? focused }));
   /** Open a module's files — the side panel's explicit action, not a click on a lens. */
   const open = (id: string) => void map.openModule(port, id);
+  /** The narrow list stands in for Zones and Hidden coupling from their own data;
+   *  until it is read (or when it failed) the list says so, never an empty list. */
+  const listNeeds = $derived((map.lens === 'zones' && !zones) || (map.lens === 'coupling' && !cochange));
+  /** Read the lens's own data again after it failed: showing it re-reads what is missing. */
+  const retry = () => void map.showLens(port, map.lens);
   /** A click on a module in any lens focuses it (user, 2026-11-03). */
   const focusOn = (id: string) => void map.setFocus(port, { kind: 'module', id });
   const zoomTo = (z: number) => (map.zoom = z);
@@ -108,10 +113,11 @@
       {#if map.level === 'modules'}
         {#if l0}
           {#if narrow}
-            <ModuleList view={listView(map.lens, l0, cochange, zones)} onfocus={focusOn} />
+            <ModuleList view={listView(map.lens, l0, cochange, zones)} onfocus={focusOn}
+              failed={listNeeds ? map.dataError : null} pending={listNeeds && !map.dataError} onretry={retry} />
           {:else if map.lens === 'zones'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ZonesLens data={zones} filter={map.zoneFilter} zoom={map.zoom} onfocus={focusOn} />
+              <ZonesLens data={zones} filter={map.zoneFilter} zoom={map.zoom} onfocus={focusOn} failed={map.dataError} onretry={retry} />
             </ZoomFrame>
           {:else if map.lens === 'wheel'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
@@ -124,11 +130,11 @@
               </p>
             {/if}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <CouplingLens data={cochange} zoom={map.zoom} onfocus={focusOn} />
+              <CouplingLens data={cochange} zoom={map.zoom} onfocus={focusOn} focus={focusLabel} failed={map.dataError} onretry={retry} />
             </ZoomFrame>
           {:else if map.lens === 'complexity'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ComplexityLens data={complexity} zoom={map.zoom} onfocus={focusOn} />
+              <ComplexityLens data={complexity} zoom={map.zoom} onfocus={focusOn} focus={focusLabel} failed={map.dataError} onretry={retry} />
             </ZoomFrame>
           {:else if map.lens === 'cycles'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>

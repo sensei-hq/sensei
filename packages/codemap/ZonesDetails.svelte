@@ -1,7 +1,7 @@
 <script lang="ts">
   // Zones beside its plot (M17): how many sit in each zone, and the components
   // furthest from the main sequence in the zone explored (filtered from the controls).
-  import { inZoneFilter, zonesView, type ZoneFilter } from './lenses';
+  import { distanceText, inZoneFilter, zonesView, type ZoneFilter } from './lenses';
   import type { Zones } from './types';
 
   let { data, filter, onfocus }: { data: Zones; filter: ZoneFilter; onfocus: (id: string) => void } = $props();
@@ -12,7 +12,7 @@
 
 <section class="flex flex-col gap-3">
   <p class="m-0 text-sm text-ink-soft" data-testid="zones-summary">
-    {`${view.placed.length} components placed · mean distance ${data.meanDistance.toFixed(2)} · pain ${view.byZone.pain} · useless ${view.byZone.useless} · risk ${view.byZone.risk} · main ${view.byZone.main}`}{view.unplaceable ? ` · ${view.unplaceable} without enough to place` : ''}
+    {`${view.placed.length} components placed · ${data.meanDistance === null ? 'no placed components' : `mean distance ${data.meanDistance.toFixed(2)}`} · pain ${view.byZone.pain} · useless ${view.byZone.useless} · risk ${view.byZone.risk} · main ${view.byZone.main}`}{view.unplaceable ? ` · ${view.unplaceable} without enough to place` : ''}
   </p>
   <div class="flex flex-col gap-1">
     <h4 class="m-0 text-xs uppercase tracking-wide text-ink-mute">Furthest from the main sequence</h4>
@@ -20,7 +20,7 @@
       {#each furthest as p (p.component)}
         <li class="text-sm">
           <button class="p-0 bg-transparent border-none cursor-pointer text-left font-mono text-xs text-ink hover:underline break-all" onclick={() => onfocus(p.component)}>{p.component}</button>
-          <span class="text-xs text-ink-faint"> {p.distance.toFixed(2)} · {p.zone} · {p.ca} dependents</span>
+          <span class="text-xs text-ink-faint"> {distanceText(p)} · {p.zone} · {p.ca} dependents</span>
         </li>
       {:else}
         <li class="text-sm text-ink-faint list-none -ml-5">None in this zone.</li>
