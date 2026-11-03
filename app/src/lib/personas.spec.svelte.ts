@@ -258,6 +258,26 @@ describe('PersonaList.act', () => {
     expect(list.pending).toBeNull();
   });
 
+  // The desktop shell rejects with a plain string, not an Error — and that string
+  // (a refused permission, a missing plugin) is the reason. It used to be replaced
+  // by a generic line, which hid that Settings had no opener capability.
+  it("a browser that cannot open says why, in the shell's own words", async () => {
+    const refusing = new PersonaList({
+      fetchPersonas: vi.fn(async () => LIST as never),
+      startSignIn: vi.fn(async () => 'https://github.test/authorize'),
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async () => {
+        throw 'opener.open_url not allowed on window "settings"';
+      }),
+      makeDefault: vi.fn(async () => null),
+      now: () => NOW
+    });
+    await refusing.load();
+    await refusing.signIn(refusing.identities[0]);
+    expect(refusing.error).toContain('could not open your browser for sensei-hq-org');
+    expect(refusing.error).toContain('opener.open_url not allowed on window "settings"');
+  });
+
   it('marks only its own row busy, and the button says so', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => {

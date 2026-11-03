@@ -439,7 +439,9 @@ export class PersonaList {
         this.#followSignIn();
         await this.#deps.openAuth(url);
       } catch (e) {
-        this.error = e instanceof Error ? e.message : `could not open your browser for ${id.label}`;
+        // The shell rejects with a plain string; that string is the reason.
+        const why = e instanceof Error ? e.message : String(e ?? '');
+        this.error = `could not open your browser for ${id.label}${why ? ` — ${why}` : ''}`;
       }
     });
   }
