@@ -22,6 +22,7 @@ export class MetricsHost {
   #current: WorkspaceMetrics | null = null;
 
   #reveal: (path: string) => Promise<void>;
+  #actions: { for: WorkspaceMetrics; state: ActionItemsState } | null = null;
 
   constructor(
     workspaceId: () => string,
@@ -33,9 +34,23 @@ export class MetricsHost {
     this.#reveal = reveal;
   }
 
-  /** pending: actionitems — the action items' state for the current workspace's metrics. */
+  /** The action items' state for the workspace shown now: one per workspace
+   *  metrics (so per workspace, by the id's value), acting through that
+   *  workspace's URL and settling that workspace's list. */
   get actions(): ActionItemsState {
-    throw new Error('pending: actionitems');
+    const metrics = this.metrics;
+    if (this.#actions?.for !== metrics) {
+      this.#actions = {
+        for: metrics,
+        state: new ActionItemsState({
+          api: this.#api(),
+          workspaceId: () => metrics.workspaceId,
+          reveal: this.#reveal,
+          settle: (id) => metrics.settleRecommendation(id),
+        }),
+      };
+    }
+    return this.#actions.state;
   }
 
   /** The workspace's metrics. Kept by the id's VALUE: SvelteKit replaces

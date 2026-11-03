@@ -210,6 +210,10 @@ pub fn create_router(state: AppState) -> Router {
             "/api/workspaces/{id}/recommendations/{rec_id}/materialize",
             post(workspace_detail::materialize_recommendation),
         )
+        .route(
+            "/api/workspaces/{id}/recommendations/{rec_id}/snooze",
+            post(workspace_detail::snooze_workspace_recommendation),
+        )
         .route("/api/workspaces/{id}/impact", get(workspace_detail::get_workspace_impact))
         .route(
             "/api/workspaces/{id}/impact-verdicts",
@@ -6830,7 +6834,6 @@ mod tests {
     /// A snooze hides the recommendation from the pending read and says when it
     /// wakes. A re-snooze replaces the wake time (coordinator ruling, r1 L1).
     #[tokio::test]
-    #[ignore = "pending: actionitems"]
     async fn snoozing_a_recommendation_hides_it_from_the_pending_read() {
         let (app, state) = test_app().await;
         let ws = test_workspace(&state).await;
@@ -6866,7 +6869,6 @@ mod tests {
     /// (404, coordinator ruling r1 M2), a rec already decided (409), and a
     /// workspace the daemon does not know (404).
     #[tokio::test]
-    #[ignore = "pending: actionitems"]
     async fn a_snooze_it_cannot_make_is_refused() {
         let (app, state) = test_app().await;
         let ws = test_workspace(&state).await;
@@ -6901,43 +6903,90 @@ mod tests {
 
     /// Every recommendation action acts only through the rec's own workspace
     /// (coordinator ruling r1 M2): through another workspace's URL it is a 404 and
-    /// nothing changes; through its own it works. Accept, reject, preview,
-    /// materialize and snooze each ignored the path's workspace before.
-    #[tokio::test]
-    #[ignore = "pending: actionitems"]
-    async fn a_recommendation_is_acted_on_only_through_its_own_workspace() {
+    /// nothing changes (the rec stays pending, no memory is written); through its
+    /// own it works. Accept, reject, preview, materialize and snooze each ignored
+    /// the path's workspace before. One test per handler, over this helper.
+    async fn acts_only_through_its_own_workspace(
+        verb: &str,
+        method: &str,
+        action_type: &str,
+        body: Option<serde_json::Value>,
+    ) {
         let (app, state) = test_app().await;
         let a = test_workspace(&state).await;
         let b = test_workspace(&state).await;
-        let rec_uri = |ws: &uuid::Uuid, rec: &uuid::Uuid, verb: &str| {
-            format!("/api/workspaces/{ws}/recommendations/{rec}/{verb}")
+        let rec = rec_in(&state, &a, action_type).await;
+        let uri = |ws: &uuid::Uuid| format!("/api/workspaces/{ws}/recommendations/{rec}/{verb}");
+        let memories = || async {
+            let (n,): (i64,) =
+                sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.memories")
+                    .fetch_one(state.pg.pool())
+                    .await
+                    .unwrap();
+            n
         };
-        let cases: [(&str, &str, &str, Option<serde_json::Value>); 5] = [
-            ("accept", "POST", "cross_workspace", Some(serde_json::json!({}))),
-            ("reject", "POST", "cross_workspace", Some(serde_json::json!({}))),
-            ("preview", "GET", "revise_rule", None),
-            (
-                "materialize",
-                "POST",
-                "revise_rule",
-                Some(serde_json::json!({ "gov_scope": "general" })),
-            ),
-            ("snooze", "POST", "cross_workspace", Some(serde_json::json!({ "days": 7 }))),
-        ];
-        for (verb, method, action_type, body) in cases {
-            let rec = rec_in(&state, &a, action_type).await;
 
-            let (st, out) = req(app.clone(), method, &rec_uri(&b, &rec, verb), body.clone()).await;
-            assert_eq!(st, StatusCode::NOT_FOUND, "{verb} through another workspace: {out}");
-            assert!(
-                pending_ids(&app, &a).await.contains(&rec.to_string()),
-                "{verb} through another workspace changed nothing"
-            );
+        let before = memories().await;
+        let (st, out) = req(app.clone(), method, &uri(&b), body.clone()).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{verb} through another workspace: {out}");
+        assert!(
+            pending_ids(&app, &a).await.contains(&rec.to_string()),
+            "{verb} through another workspace left the rec pending"
+        );
+        assert_eq!(memories().await, before, "{verb} through another workspace wrote no memory");
 
-            let (st, out) = req(app.clone(), method, &rec_uri(&a, &rec, verb), body).await;
-            assert_eq!(st, StatusCode::OK, "{verb} through its own workspace: {out}");
-        }
+        let (st, out) = req(app.clone(), method, &uri(&a), body).await;
+        assert_eq!(st, StatusCode::OK, "{verb} through its own workspace: {out}");
         state.pg.delete_workspace(&a).await.unwrap();
         state.pg.delete_workspace(&b).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn accept_acts_only_through_the_recs_own_workspace() {
+        acts_only_through_its_own_workspace(
+            "accept",
+            "POST",
+            "cross_workspace",
+            Some(serde_json::json!({})),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn reject_acts_only_through_the_recs_own_workspace() {
+        acts_only_through_its_own_workspace(
+            "reject",
+            "POST",
+            "cross_workspace",
+            Some(serde_json::json!({})),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn preview_reads_only_through_the_recs_own_workspace() {
+        acts_only_through_its_own_workspace("preview", "GET", "revise_rule", None).await;
+    }
+
+    #[tokio::test]
+    async fn materialize_acts_only_through_the_recs_own_workspace() {
+        acts_only_through_its_own_workspace(
+            "materialize",
+            "POST",
+            "revise_rule",
+            Some(serde_json::json!({ "gov_scope": "general" })),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn snooze_acts_only_through_the_recs_own_workspace() {
+        acts_only_through_its_own_workspace(
+            "snooze",
+            "POST",
+            "cross_workspace",
+            Some(serde_json::json!({ "days": 7 })),
+        )
+        .await;
     }
 }

@@ -55,7 +55,6 @@ async fn pattern(
 }
 
 #[tokio::test]
-#[ignore = "pending: actionitems"]
 async fn a_snoozed_recommendation_leaves_the_pending_read_until_it_wakes() {
     let s = pg_store().await;
     let ws = s.create_workspace("_test:snooze_wakes", None, None).await.unwrap();
@@ -93,7 +92,6 @@ async fn a_snoozed_recommendation_leaves_the_pending_read_until_it_wakes() {
 }
 
 #[tokio::test]
-#[ignore = "pending: actionitems"]
 async fn a_snooze_reaches_only_its_own_workspaces_pending_recommendation() {
     let s = pg_store().await;
     let ws = s.create_workspace("_test:snooze_scope_a", None, None).await.unwrap();
@@ -124,17 +122,35 @@ async fn a_snooze_reaches_only_its_own_workspaces_pending_recommendation() {
 
 /// The rework detector names its pattern `rework: <file>` with the file as the
 /// session saw it: repository-relative or absolute. The read resolves it to an
-/// absolute path through the pattern's folder, so the action opens a real file.
+/// absolute path through the pattern's folder, so the action opens a real file —
+/// and only a file that is still there (live, 2026-11-03: 118 of 297 hotspot
+/// files had since been moved or deleted).
 #[tokio::test]
-#[ignore = "pending: actionitems"]
 async fn a_rework_recommendation_carries_its_file_resolved_through_its_pattern() {
     let s = pg_store().await;
     let ws = s.create_workspace("_test:rework_file", None, None).await.unwrap();
     let suffix = format!("rework_file_{}", uuid::Uuid::new_v4().simple());
     let folder = create_test_folder(&s, &suffix).await;
+    // The folder is a real directory holding the hotspot's file.
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(repo.path().join("src/api")).unwrap();
+    std::fs::write(repo.path().join("src/api/server.rs"), "fn main() {}").unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let abs_file = elsewhere.path().join("lib.rs");
+    std::fs::write(&abs_file, "").unwrap();
+    let root = repo.path().to_string_lossy().to_string();
+    query_as::<_, (uuid::Uuid,)>(
+        "UPDATE sensei.folders SET abs_path = $2 WHERE id = $1 RETURNING id",
+    )
+    .bind(folder)
+    .bind(&root)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
 
     let rel = pattern(&s, &ws, Some(&folder), "rework: src/api/server.rs").await;
-    let abs = pattern(&s, &ws, Some(&folder), "rework: /elsewhere/lib.rs").await;
+    let abs = pattern(&s, &ws, Some(&folder), &format!("rework: {}", abs_file.display())).await;
+    let deleted = pattern(&s, &ws, Some(&folder), "rework: src/api/removed.rs").await;
     let other = pattern(&s, &ws, Some(&folder), "correction-prone").await;
     let no_folder = pattern(&s, &ws, None, "rework: src/orphan.rs").await;
     let escapes = pattern(&s, &ws, Some(&folder), "rework: ../../etc/passwd").await;
@@ -166,17 +182,21 @@ async fn a_rework_recommendation_carries_its_file_resolved_through_its_pattern()
     let r_escapes =
         rec(&s, &ws, "_test:escapes", "audit_stale", serde_json::json!({ "patterns": [escapes] }))
             .await;
+    let r_deleted =
+        rec(&s, &ws, "_test:deleted", "audit_stale", serde_json::json!({ "patterns": [deleted] }))
+            .await;
 
     let recs = s.get_workspace_recommendations(&ws, Some("pending")).await.unwrap();
     let file = |id: &uuid::Uuid| {
         recs.iter().find(|r| r["id"] == id.to_string()).unwrap_or_else(|| panic!("{id} read"))["file"].clone()
     };
-    assert_eq!(file(&r_rel), serde_json::json!(format!("/_test/{suffix}/src/api/server.rs")));
-    assert_eq!(file(&r_abs), serde_json::json!("/elsewhere/lib.rs"));
+    assert_eq!(file(&r_rel), serde_json::json!(format!("{root}/src/api/server.rs")));
+    assert_eq!(file(&r_abs), serde_json::json!(abs_file.to_string_lossy()));
     // Not about one file, no pattern, a pattern since replaced, a relative file
-    // with no folder to resolve it against, or one that climbs out of the
-    // repository with `..`: no file, never a guessed path.
-    for id in [&r_other, &r_none, &r_gone, &r_nofolder, &r_escapes] {
+    // with no folder to resolve it against, one that climbs out of the
+    // repository with `..`, or one no longer on disk: no file, never a guessed
+    // path (the item is snoozed instead of offering a button that fails).
+    for id in [&r_other, &r_none, &r_gone, &r_nofolder, &r_escapes, &r_deleted] {
         assert_eq!(file(id), serde_json::Value::Null, "{id}");
     }
     s.delete_workspace(&ws).await.unwrap();
@@ -184,7 +204,6 @@ async fn a_rework_recommendation_carries_its_file_resolved_through_its_pattern()
 
 /// A re-snooze replaces the wake time; it never keeps the later of the two.
 #[tokio::test]
-#[ignore = "pending: actionitems"]
 async fn a_re_snooze_replaces_the_wake_time() {
     let s = pg_store().await;
     let ws = s.create_workspace("_test:resnooze", None, None).await.unwrap();
@@ -202,7 +221,6 @@ async fn a_re_snooze_replaces_the_wake_time() {
 /// pending read hides: a snooze clears the rec's focal flag at once, and the
 /// ranking pass reads only recs that are awake.
 #[tokio::test]
-#[ignore = "pending: actionitems"]
 async fn a_snoozed_rec_is_never_the_focal_pick() {
     let s = pg_store().await;
     let ws = s.create_workspace("_test:snooze_focal", None, None).await.unwrap();

@@ -210,7 +210,7 @@ describe('WorkspaceMetrics', () => {
 
   // L3 · ActionItems act: a settled recommendation leaves the list it was read
   // into, so the landing and every detail stop offering it.
-  it.skip('pending: actionitems — settling a recommendation drops it from the read, and only it', async () => {
+  it('settling a recommendation drops it from the read, and only it', async () => {
     const { api, held } = daemon();
     const m = new WorkspaceMetrics(api, 'w1');
     m.recommendations;
@@ -222,7 +222,7 @@ describe('WorkspaceMetrics', () => {
     expect(api.tryGetWorkspaceRecommendations).toHaveBeenCalledOnce();
   });
 
-  it.skip('pending: actionitems — settling while the read failed keeps the failure (never an empty list)', async () => {
+  it('settling while the read failed keeps the failure (never an empty list)', async () => {
     const { api, held } = daemon();
     const m = new WorkspaceMetrics(api, 'w1');
     m.recommendations;

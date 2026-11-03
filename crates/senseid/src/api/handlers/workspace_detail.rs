@@ -505,6 +505,46 @@ pub(crate) async fn get_workspace_sessions(
     Ok(Json(serde_json::json!({ "sessions": sessions })))
 }
 
+// ── A recommendation, through its own workspace only ────────────────────────
+
+/// The recommendation `rec_id`, as one of the workspace named in the path:
+/// `(workspace, rec)`. 400 for a malformed rec id; 404 when the workspace is
+/// unknown, or the rec is not this workspace's (another workspace's, or none at
+/// all — a 404 either way, so the answer never says which). Every handler that
+/// acts on a recommendation calls this BEFORE it reads or writes anything else.
+async fn own_recommendation(
+    state: &AppState,
+    workspace: &str,
+    rec_id: &str,
+) -> Result<(uuid::Uuid, uuid::Uuid), StatusCode> {
+    let rec = uuid::Uuid::parse_str(rec_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let ws = crate::api::util::resolve_existing_workspace(state, workspace).await?;
+    let owner = state.pg.recommendation_workspace(&rec).await.map_err(|e| {
+        tracing::error!(error = %e, rec = %rec, "recommendation_workspace failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    if owner != Some(ws) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok((ws, rec))
+}
+
+/// [`own_recommendation`] for a handler whose refusals carry `{ "error" }`.
+async fn own_recommendation_json(
+    state: &AppState,
+    workspace: &str,
+    rec_id: &str,
+) -> Result<(uuid::Uuid, uuid::Uuid), (StatusCode, Json<serde_json::Value>)> {
+    own_recommendation(state, workspace, rec_id).await.map_err(|code| {
+        let why = match code {
+            StatusCode::BAD_REQUEST => "bad recommendation id",
+            StatusCode::NOT_FOUND => "no such recommendation in this workspace",
+            _ => "recommendation lookup failed",
+        };
+        (code, Json(serde_json::json!({ "error": why })))
+    })
+}
+
 // ── Recommendation accept / reject (Gap 1 fix) ──────────────────────────────
 //
 // The analyzer writes recommendations in `pending` state, and `MeasureVerdicts`
@@ -515,9 +555,9 @@ pub(crate) async fn get_workspace_sessions(
 /// POST /api/workspaces/{id}/recommendations/{rec_id}/accept
 pub(crate) async fn accept_workspace_recommendation(
     State(state): State<AppState>,
-    Path((_workspace_id, rec_id)): Path<(String, String)>,
+    Path((workspace_id, rec_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let rec_uuid = uuid::Uuid::parse_str(&rec_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let (_, rec_uuid) = own_recommendation(&state, &workspace_id, &rec_id).await?;
     state.pg.accept_recommendation(&rec_uuid).await.map_err(|e| {
         if e.contains("not found") || e.contains("already decided") {
             StatusCode::CONFLICT
@@ -620,12 +660,12 @@ async fn resolve_workspace_namespace(
 /// consent-first accept flow.
 pub(crate) async fn preview_recommendation_materialization(
     State(state): State<AppState>,
-    Path((_workspace_id, rec_id)): Path<(String, String)>,
+    Path((workspace_id, rec_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::materialize::{
         ArtifactKind, artifact_path, render_agent_md, render_skill_md, slugify,
     };
-    let rec_uuid = uuid::Uuid::parse_str(&rec_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let (_, rec_uuid) = own_recommendation(&state, &workspace_id, &rec_id).await?;
     let Some((action_type, title, why, _impact, workspace_id, _based_on)) = state
         .pg
         .recommendation_for_materialize(&rec_uuid)
@@ -684,10 +724,9 @@ pub(crate) async fn materialize_recommendation(
         ArtifactKind, artifact_path, render_agent_md, render_skill_md, slugify, write_artifact,
     };
     let merr = |c: StatusCode, m: &str| (c, Json(serde_json::json!({ "error": m })));
-    let rec_uuid =
-        uuid::Uuid::parse_str(&rec_id).map_err(|_| merr(StatusCode::BAD_REQUEST, "bad rec id"))?;
-    let pid = uuid::Uuid::parse_str(&workspace_id)
-        .map_err(|_| merr(StatusCode::BAD_REQUEST, "bad workspace id"))?;
+    // Ownership first: nothing — not the namespace, not the file — is resolved
+    // for a rec acted on through another workspace's URL.
+    let (pid, rec_uuid) = own_recommendation_json(&state, &workspace_id, &rec_id).await?;
     let b = body.map(|Json(b)| b).unwrap_or_default();
 
     // Peek the action WITHOUT deciding, so a file collision is caught while the rec
@@ -830,9 +869,9 @@ pub(crate) async fn materialize_recommendation(
 /// POST /api/workspaces/{id}/recommendations/{rec_id}/reject
 pub(crate) async fn reject_workspace_recommendation(
     State(state): State<AppState>,
-    Path((_workspace_id, rec_id)): Path<(String, String)>,
+    Path((workspace_id, rec_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let rec_uuid = uuid::Uuid::parse_str(&rec_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let (_, rec_uuid) = own_recommendation(&state, &workspace_id, &rec_id).await?;
     state.pg.reject_recommendation(&rec_uuid).await.map_err(|e| {
         if e.contains("not found") || e.contains("already decided") {
             StatusCode::CONFLICT
@@ -842,6 +881,40 @@ pub(crate) async fn reject_workspace_recommendation(
         }
     })?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Body for snoozing a recommendation.
+#[derive(serde::Deserialize)]
+pub(crate) struct SnoozeBody {
+    pub days: i64,
+}
+
+/// The longest a snooze may hide a recommendation.
+const MAX_SNOOZE_DAYS: i64 = 90;
+
+/// POST /api/workspaces/{id}/recommendations/{rec_id}/snooze `{ days }` — hide a
+/// pending recommendation from the pending read (and the focal pick) for 1–90
+/// days; `{ ok, snoozed_until }`. A re-snooze replaces the wake time. 404 when the
+/// rec is not this workspace's; 409 when it is no longer pending.
+pub(crate) async fn snooze_workspace_recommendation(
+    State(state): State<AppState>,
+    Path((workspace_id, rec_id)): Path<(String, String)>,
+    Json(body): Json<SnoozeBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let merr = |c: StatusCode, m: &str| (c, Json(serde_json::json!({ "error": m })));
+    if !(1..=MAX_SNOOZE_DAYS).contains(&body.days) {
+        return Err(merr(StatusCode::BAD_REQUEST, "days must be 1 to 90"));
+    }
+    let (ws, rec) = own_recommendation_json(&state, &workspace_id, &rec_id).await?;
+    // `days` is within 1..=90, so the narrowing cannot truncate.
+    let until = state.pg.snooze_recommendation(&ws, &rec, body.days as i32).await.map_err(|e| {
+        tracing::error!(error = %e, rec = %rec, "snooze_recommendation failed");
+        merr(StatusCode::INTERNAL_SERVER_ERROR, "snooze failed")
+    })?;
+    match until {
+        Some(t) => Ok(Json(serde_json::json!({ "ok": true, "snoozed_until": t.to_rfc3339() }))),
+        None => Err(merr(StatusCode::CONFLICT, "recommendation already decided")),
+    }
 }
 
 // ── Doc drift scan (T3 Slice 2.3) ───────────────────────────────────────────

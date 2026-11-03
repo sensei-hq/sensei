@@ -139,6 +139,11 @@ export class WorkspaceMetrics {
     return this.#recommendations;
   }
 
-  /** pending: actionitems — drop a decided recommendation from what was read. */
-  settleRecommendation(_id: string): void {}
+  /** Drop a decided recommendation from what was read, so neither the landing
+   *  nor any detail offers it again. A failed or unfinished read is left as is. */
+  settleRecommendation(id: string): void {
+    const r = this.#recommendations;
+    if (r.status !== 'ready' || !r.data) return;
+    this.#recommendations = { ...r, data: r.data.filter((rec) => rec.id !== id) };
+  }
 }

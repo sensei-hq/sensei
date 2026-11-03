@@ -32,7 +32,7 @@ function setup() {
 }
 
 describe('MetricsHost.actions', () => {
-    it.skip('pending: actionitems — one state per workspace: kept while the workspace stays, by the id’s value', () => {
+    it('one state per workspace: kept while the workspace stays, by the id’s value', () => {
         const { host, goTo } = setup();
         const first = host.actions;
         expect(host.actions).toBe(first);
@@ -40,7 +40,7 @@ describe('MetricsHost.actions', () => {
         expect(host.actions).toBe(first);
     });
 
-    it.skip('pending: actionitems — moving to another workspace acts, settles and keeps flows there', async () => {
+    it('moving to another workspace acts, settles and keeps flows there', async () => {
         const { api, host, goTo } = setup();
         const onW1 = host.actions;
         goTo('w2');

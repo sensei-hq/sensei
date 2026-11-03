@@ -28,6 +28,7 @@
     // The datapoint drill-down is day-scoped: the daily series, the same read on daily.
     const daily = $derived(data.grain === 'daily' ? series : metrics.series(data.selectedKey, 'daily'));
     const recommendations = $derived(metrics.recommendations);
+    const actions = $derived(host.actions);
     const view = $derived({
         workspaceId: data.workspaceId,
         rows: grid.data?.rows ?? [],
@@ -203,7 +204,7 @@
                             </p>
                         </div>
 
-                        <ActionItems items={md.actionItems} error={recommendations.error} />
+                        <ActionItems items={md.actionItems} error={recommendations.error} actions={actions} />
                     {:else}
                         <div class="text-sm text-ink-soft py-8">
                             That signal isn’t computed for this workspace — pick one from the list.

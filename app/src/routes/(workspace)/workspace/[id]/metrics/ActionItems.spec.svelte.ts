@@ -118,7 +118,7 @@ describe('ActionItems', () => {
         path: '.claude/skills/retry-budget/SKILL.md', scope: null, confirmLabel: 'Write the file',
     };
 
-    it.skip('pending: actionitems — every item has its one action, labelled by what it does', () => {
+    it('every item has its one action, labelled by what it does', () => {
         const root = mount([
             withAction({ kind: 'propose-rule', label: 'Propose a rule' }, 'a'),
             withAction({ kind: 'review-file', label: 'Review the skill' }, 'b'),
@@ -134,7 +134,7 @@ describe('ActionItems', () => {
         expect(q(root, '[data-action-item="a"] [data-action-do]')?.getAttribute('data-action-do')).toBe('propose-rule');
     });
 
-    it.skip('pending: actionitems — a lens action is a link to the lens, not a button', () => {
+    it('a lens action is a link to the lens, not a button', () => {
         const root = mount([withAction({ kind: 'open-lens', label: 'Open libraries', href: '/workspace/w1/libraries' })]);
         const link = q(root, '[data-action-item="r1"] a[data-action-do="open-lens"]');
         expect(link?.getAttribute('href')).toBe('/workspace/w1/libraries');
@@ -142,7 +142,7 @@ describe('ActionItems', () => {
         expect(q(root, '[data-action-item="r1"] button[data-action-do]')).toBeNull();
     });
 
-    it.skip('pending: actionitems — clicking the action hands the item to the state', () => {
+    it('clicking the action hands the item to the state', () => {
         const actions = fakeActions();
         const it1 = withAction({ kind: 'snooze', label: 'Snooze 7 days', days: 7 });
         const root = mount([it1], null, actions);
@@ -151,14 +151,14 @@ describe('ActionItems', () => {
         expect(actions.act).toHaveBeenCalledWith(it1);
     });
 
-    it.skip('pending: actionitems — a working item disables its action and says it is busy', () => {
+    it('a working item disables its action and says it is busy', () => {
         const root = mount([item()], null, fakeActions({ r1: { status: 'working' } }));
         const btn = q(root, 'button[data-action-do]') as HTMLButtonElement | null;
         expect(btn?.disabled).toBe(true);
         expect(btn?.getAttribute('aria-busy')).toBe('true');
     });
 
-    it.skip('pending: actionitems — a rule to confirm shows its title, text and where it lands, with Add and Cancel', () => {
+    it('a rule to confirm shows its title, text and where it lands, with Add and Cancel', () => {
         const actions = fakeActions({ r1: { status: 'confirm', confirm: RULE_CONFIRM } });
         const it1 = withAction({ kind: 'propose-rule', label: 'Propose a rule' });
         const root = mount([it1], null, actions);
@@ -176,7 +176,7 @@ describe('ActionItems', () => {
         expect(actions.cancel).toHaveBeenCalledWith(it1);
     });
 
-    it.skip('pending: actionitems — a file to confirm shows the path it will write and its full content', () => {
+    it('a file to confirm shows the path it will write and its full content', () => {
         const root = mount(
             [withAction({ kind: 'review-file', label: 'Review the skill' })],
             null,
@@ -187,7 +187,7 @@ describe('ActionItems', () => {
         expect(q(root, 'button[data-action-confirm-yes]')?.textContent?.trim()).toBe('Write the file');
     });
 
-    it.skip('pending: actionitems — an item’s failure is shown on that item, and its action stays to retry', () => {
+    it('an item’s failure is shown on that item, and its action stays to retry', () => {
         const root = mount(
             [item({ id: 'a' }), item({ id: 'b' })],
             null,
@@ -198,7 +198,7 @@ describe('ActionItems', () => {
         expect(q(root, '[data-action-item="a"] button[data-action-do]')).not.toBeNull();
     });
 
-    it.skip('pending: actionitems — what the last action did is said above the list', () => {
+    it('what the last action did is said above the list', () => {
         const root = mount([item()], null, fakeActions({}, 'Snoozed until 2026-11-10'));
         expect(q(root, '[data-action-done]')?.textContent).toContain('Snoozed until 2026-11-10');
         expect(q(mount([item()]), '[data-action-done]')).toBeNull();

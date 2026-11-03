@@ -353,15 +353,45 @@ impl PgStore {
     }
 
     /// Hide one of `workspace_id`'s PENDING recommendations from the pending read
-    /// for `days`, returning when it wakes. `None` when that workspace has no
-    /// pending recommendation with this id. pending: actionitems.
+    /// for `days`, returning when it wakes. A re-snooze replaces the wake time.
+    /// A snoozed rec stops being the focal pick at once. `None` when that
+    /// workspace has no pending recommendation with this id.
     pub async fn snooze_recommendation(
         &self,
-        _workspace_id: &uuid::Uuid,
-        _id: &uuid::Uuid,
-        _days: i32,
+        workspace_id: &uuid::Uuid,
+        id: &uuid::Uuid,
+        days: i32,
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
-        Err("pending: actionitems".into())
+        let row: Option<(chrono::DateTime<chrono::Utc>,)> = sqlx_core::query_as::query_as(
+            "UPDATE inference.recommendations
+                SET snoozed_until = now() + make_interval(days => $3), focal = false
+              WHERE id = $2 AND workspace_id = $1 AND status = 'pending'
+          RETURNING snoozed_until",
+        )
+        .bind(workspace_id)
+        .bind(id)
+        .bind(days)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(t,)| t))
+    }
+
+    /// The workspace a recommendation belongs to, or `None` when no
+    /// recommendation has this id. The handlers act on a rec only through its
+    /// own workspace's URL.
+    pub async fn recommendation_workspace(
+        &self,
+        id: &uuid::Uuid,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT workspace_id FROM inference.recommendations WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(w,)| w))
     }
 
     pub async fn measure_recommendation(
@@ -459,6 +489,7 @@ impl PgStore {
                    ) AS pid(v) ON true
                LEFT JOIN inference.detected_patterns dp ON dp.id = pid.v::uuid
               WHERE r.workspace_id = $1 AND r.status = 'pending'
+                AND (r.snoozed_until IS NULL OR r.snoozed_until <= now())
               GROUP BY r.id, r.action_type, r.urgency",
             )
             .bind(workspace_id)
@@ -1409,6 +1440,11 @@ impl PgStore {
         }))
     }
 
+    /// A workspace's recommendations, ranked. With `status = "pending"` a snoozed
+    /// rec is left out until its `snoozed_until` passes; every other read keeps
+    /// it. Each row carries `file`: the absolute path of the file its source
+    /// pattern is about (a rework hotspot) when that file is still on disk, or
+    /// null — see [`rework_file_path`].
     pub async fn get_workspace_recommendations(
         &self,
         workspace_id: &uuid::Uuid,
@@ -1429,16 +1465,28 @@ impl PgStore {
             Option<f64>,
             bool,
             String,
+            Option<String>,
+            Option<String>,
         )> = sqlx_core::query_as::query_as(
             // `action_type` powers the Upgrades screen's installable filter; it is
             // `not null` on the table and mirrors the impact serializer's `actionType`.
-            "SELECT id, title, urgency::text, status::text, verdict::text, why, impact,
-                        baseline_ftr::float8, current_ftr::float8, acted_at, measured_at,
-                        score::float8, focal, action_type
-                 FROM inference.recommendations WHERE workspace_id = $1
-                   AND ($2::text IS NULL OR status::text = $2)
-                 ORDER BY focal DESC, score DESC NULLS LAST,
-                          CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+            // The source pattern is `based_on.patterns[0]`, cast only when it is a
+            // uuid (a malformed provenance is no pattern, never a failed read).
+            "SELECT r.id, r.title, r.urgency::text, r.status::text, r.verdict::text, r.why, r.impact,
+                        r.baseline_ftr::float8, r.current_ftr::float8, r.acted_at, r.measured_at,
+                        r.score::float8, r.focal, r.action_type, dp.name, f.abs_path
+                 FROM inference.recommendations r
+                 LEFT JOIN inference.detected_patterns dp
+                        ON dp.id = CASE WHEN r.based_on->'patterns'->>0
+                                             ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                                        THEN (r.based_on->'patterns'->>0)::uuid END
+                 LEFT JOIN sensei.folders f ON f.id = dp.folder_id
+                 WHERE r.workspace_id = $1
+                   AND ($2::text IS NULL OR r.status::text = $2)
+                   AND ($2::text IS DISTINCT FROM 'pending'
+                        OR r.snoozed_until IS NULL OR r.snoozed_until <= now())
+                 ORDER BY r.focal DESC, r.score DESC NULLS LAST,
+                          CASE r.urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, r.id
                  LIMIT 50",
         )
         .bind(workspace_id)
@@ -1447,16 +1495,62 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict, why, impact, baseline, current, acted, measured, score, focal, action_type)| {
+        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict, why, impact, baseline, current, acted, measured, score, focal, action_type, pattern, folder)| {
+            // Only a file still on disk: a hotspot whose file was since moved or
+            // deleted offers nothing to open.
+            let file = pattern
+                .as_deref()
+                .and_then(|p| rework_file_path(p, folder.as_deref()))
+                .filter(|f| std::path::Path::new(f).is_file());
             serde_json::json!({
                 "id": id, "title": title, "urgency": urgency, "status": status, "verdict": verdict,
                 "why": why, "impact": impact, "actionType": action_type,
                 "baseline_ftr": baseline, "current_ftr": current,
                 "acted_at": acted.map(|t| t.to_rfc3339()), "measured_at": measured.map(|t| t.to_rfc3339()),
-                "score": score, "focal": focal,
+                "score": score, "focal": focal, "file": file,
             })
         }).collect())
     }
 
     // ── Index Errors ──────────────────────────────────────────────────
+}
+
+/// The absolute path of the file a rework-hotspot pattern is about, from the
+/// pattern's name (`rework: <file>`, as the session saw the file) and its folder's
+/// absolute path. `None` when the pattern is not a rework hotspot, names no file,
+/// names a relative file with no folder to resolve it against, or climbs out
+/// with a `..` segment: a path the action opens is never guessed.
+fn rework_file_path(pattern_name: &str, folder_abs_path: Option<&str>) -> Option<String> {
+    let file = crate::rework_hotspots::rework_file(pattern_name).filter(|f| !f.is_empty())?;
+    if std::path::Path::new(file).components().any(|c| c == std::path::Component::ParentDir) {
+        return None;
+    }
+    if file.starts_with('/') {
+        return Some(file.to_string());
+    }
+    let root = folder_abs_path?.trim_end_matches('/');
+    Some(format!("{root}/{file}"))
+}
+
+#[cfg(test)]
+mod rework_file_path_tests {
+    use super::rework_file_path;
+
+    #[test]
+    fn resolves_relative_against_the_folder_and_keeps_absolute() {
+        assert_eq!(
+            rework_file_path("rework: src/a.rs", Some("/r/")).as_deref(),
+            Some("/r/src/a.rs")
+        );
+        assert_eq!(rework_file_path("rework: /x/b.rs", None).as_deref(), Some("/x/b.rs"));
+    }
+
+    #[test]
+    fn never_guesses() {
+        assert_eq!(rework_file_path("correction-prone", Some("/r")), None);
+        assert_eq!(rework_file_path("rework: ", Some("/r")), None);
+        assert_eq!(rework_file_path("rework: src/a.rs", None), None);
+        assert_eq!(rework_file_path("rework: ../../etc/passwd", Some("/r")), None);
+        assert_eq!(rework_file_path("rework: /r/../etc/passwd", None), None);
+    }
 }

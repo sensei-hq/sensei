@@ -67,7 +67,7 @@ describe('metric detail', () => {
 
   // L3 · ActionItems act: the detail's action items act, end to end through the
   // shared metrics state — a snoozed item leaves the list and the panel says so.
-  it.skip('pending: actionitems — snoozing an action item asks the daemon, removes it and says until when', async () => {
+  it('snoozing an action item asks the daemon, removes it and says until when', async () => {
     const { api, host } = setup();
     (api.tryGetWorkspaceRecommendations as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
       ok([{ id: 'r1', title: 'ftr fell across the torii repositories', status: 'pending', actionType: 'cross_workspace' }]));
@@ -84,7 +84,7 @@ describe('metric detail', () => {
     expect(target.querySelector('[data-action-done]')?.textContent).toContain('Snoozed until 2026-11-10');
   });
 
-  it.skip('pending: actionitems — a rework hotspot’s action shows its file in Finder through the host’s opener', async () => {
+  it('a rework hotspot’s action shows its file in Finder through the host’s opener', async () => {
     const { api } = setup();
     (api.tryGetWorkspaceRecommendations as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
       ok([{ id: 'r2', title: 'High rework: src/ftr.rs', status: 'pending', actionType: 'audit_stale', file: '/repo/src/ftr.rs' }]));

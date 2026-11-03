@@ -67,18 +67,18 @@ describe('actionFor', () => {
     const kindOf = (actionType: string | null, file: string | null = null) =>
         actionFor(rec({ actionType, file }), W).kind;
 
-    it.skip('pending: actionitems — a rule-class recommendation proposes a rule', () => {
+    it('a rule-class recommendation proposes a rule', () => {
         for (const t of ['revise_rule', 'promote_pattern', 'enrich_memory']) {
             expect(actionFor(rec({ actionType: t }), W)).toEqual({ kind: 'propose-rule', label: 'Propose a rule' });
         }
     });
 
-    it.skip('pending: actionitems — a skill or agent recommendation is reviewed before its file is written', () => {
+    it('a skill or agent recommendation is reviewed before its file is written', () => {
         expect(actionFor(rec({ actionType: 'write_skill' }), W)).toEqual({ kind: 'review-file', label: 'Review the skill' });
         expect(actionFor(rec({ actionType: 'create_agent' }), W)).toEqual({ kind: 'review-file', label: 'Review the agent' });
     });
 
-    it.skip('pending: actionitems — a rework hotspot opens its file, named by its base name', () => {
+    it('a rework hotspot opens its file, named by its base name', () => {
         expect(actionFor(rec({ actionType: 'audit_stale', file: '/repo/crates/x/src/lib.rs' }), W)).toEqual({
             kind: 'open-file',
             label: 'Show lib.rs in Finder',
@@ -86,7 +86,7 @@ describe('actionFor', () => {
         });
     });
 
-    it.skip('pending: actionitems — a library update opens the workspace’s Libraries lens', () => {
+    it('a library update opens the workspace’s Libraries lens', () => {
         expect(actionFor(rec({ actionType: 'library_update' }), W)).toEqual({
             kind: 'open-lens',
             label: 'Open libraries',
@@ -99,20 +99,20 @@ describe('actionFor', () => {
         });
     });
 
-    it.skip('pending: actionitems — a rework hotspot whose file the daemon could not resolve is snoozed, never opened at a guessed path', () => {
+    it('a rework hotspot whose file the daemon could not resolve is snoozed, never opened at a guessed path', () => {
         // The title names the file ("High rework: …"), but parsing copy is not a path.
         const a = actionFor(rec({ actionType: 'audit_stale', file: null, title: 'High rework: src/a.rs' }), W);
         expect(a).toEqual({ kind: 'snooze', label: `Snooze ${SNOOZE_DAYS} days`, days: SNOOZE_DAYS });
         expect(kindOf('audit_stale', '   ')).toBe('snooze');
     });
 
-    it.skip('pending: actionitems — anything without a sharper action is snoozed (cross_workspace, unknown, absent)', () => {
+    it('anything without a sharper action is snoozed (cross_workspace, unknown, absent)', () => {
         expect(kindOf('cross_workspace')).toBe('snooze');
         expect(kindOf('something_new')).toBe('snooze');
         expect(kindOf(null)).toBe('snooze');
     });
 
-    it.skip('pending: actionitems — buildActionItems carries each item’s action', () => {
+    it('buildActionItems carries each item’s action', () => {
         const items = buildActionItems(
             [rec({ id: 'a', actionType: 'revise_rule' }), rec({ id: 'b', actionType: 'cross_workspace' })],
             W,

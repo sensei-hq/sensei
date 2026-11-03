@@ -24,6 +24,7 @@ create table if not exists recommendations (
 , acted_at                 timestamptz
 , measured_at              timestamptz
 , materialized_ref         jsonb
+, snoozed_until            timestamptz
 );
 
 create index if not exists recommendations_workspace_id_idx
@@ -111,3 +112,5 @@ materialization): {kind, ...ref, scope, enforcement}. For a rule-class accept â†
 {kind:"skill"|"agent", file_path} and {kind:"pack_rule", pack_rule_id}. NULL when
 the accept was a plain status flip (no artifact materialized). The provenance the
 effect-measurement + un-apply read.';
+comment on column recommendations.snoozed_until
+     is 'While in the future, the pending recommendation is hidden from the pending read and is never the focal pick (metric detail Â· action items "Snooze"). It stays pending; it is shown again once this passes. A re-snooze replaces it. NULL when never snoozed.';

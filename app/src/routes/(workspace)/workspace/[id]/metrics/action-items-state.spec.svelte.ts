@@ -54,7 +54,7 @@ function setup(over: Partial<Record<keyof ActionItemsApi, unknown>> = {}) {
 }
 
 describe('ActionItemsState', () => {
-    it.skip('pending: actionitems — proposing a rule previews it and writes nothing yet', async () => {
+    it('proposing a rule previews it and writes nothing yet', async () => {
         const { api, settle, state } = setup();
         await state.act(RULE);
         expect(api.tryPreviewRecommendation).toHaveBeenCalledWith('w1', 'r1');
@@ -73,7 +73,7 @@ describe('ActionItemsState', () => {
         expect(settle).not.toHaveBeenCalled();
     });
 
-    it.skip('pending: actionitems — the item shows it is working while the preview is read', async () => {
+    it('the item shows it is working while the preview is read', async () => {
         const held = deferred<unknown>();
         const { state } = setup({ tryPreviewRecommendation: vi.fn(() => held.promise) });
         const acting = state.act(RULE);
@@ -84,7 +84,7 @@ describe('ActionItemsState', () => {
         expect(state.flow('r1').status).toBe('confirm');
     });
 
-    it.skip('pending: actionitems — confirming a rule materializes it at workspace scope, recommended, and settles the item', async () => {
+    it('confirming a rule materializes it at workspace scope, recommended, and settles the item', async () => {
         const { api, settle, state } = setup();
         await state.act(RULE);
         await state.confirm(RULE);
@@ -97,7 +97,7 @@ describe('ActionItemsState', () => {
         expect(state.flow('r1')).toEqual({ status: 'idle' });
     });
 
-    it.skip('pending: actionitems — a skill is shown with its path and content, and written only on confirm', async () => {
+    it('a skill is shown with its path and content, and written only on confirm', async () => {
         const { api, settle, state } = setup({
             tryPreviewRecommendation: vi.fn(() => Promise.resolve(ok(SKILL_PREVIEW))),
         });
@@ -120,7 +120,7 @@ describe('ActionItemsState', () => {
         expect(state.done).toBe('Wrote .claude/skills/retry-budget/SKILL.md');
     });
 
-    it.skip('pending: actionitems — cancel leaves the recommendation pending and writes nothing', async () => {
+    it('cancel leaves the recommendation pending and writes nothing', async () => {
         const { api, settle, state } = setup();
         await state.act(RULE);
         state.cancel(RULE);
@@ -129,7 +129,7 @@ describe('ActionItemsState', () => {
         expect(settle).not.toHaveBeenCalled();
     });
 
-    it.skip('pending: actionitems — a preview that cannot be read is the item’s error, never a write', async () => {
+    it('a preview that cannot be read is the item’s error, never a write', async () => {
         const { api, settle, state } = setup({
             tryPreviewRecommendation: vi.fn(() => Promise.resolve(fail(500, 'Internal Server Error'))),
         });
@@ -139,7 +139,7 @@ describe('ActionItemsState', () => {
         expect(settle).not.toHaveBeenCalled();
     });
 
-    it.skip('pending: actionitems — a recommendation the daemon cannot materialize says why', async () => {
+    it('a recommendation the daemon cannot materialize says why', async () => {
         const { api, state } = setup({
             tryPreviewRecommendation: vi.fn(() =>
                 Promise.resolve(ok({ materializable: false, action_type: 'cross_workspace', reason: 'not a materializable action' }))),
@@ -149,7 +149,7 @@ describe('ActionItemsState', () => {
         expect(api.tryMaterializeRecommendationWithReason).not.toHaveBeenCalled();
     });
 
-    it.skip('pending: actionitems — a failed materialize is the item’s error and the item stays', async () => {
+    it('a failed materialize is the item’s error and the item stays', async () => {
         const { settle, state } = setup({
             tryMaterializeRecommendationWithReason: vi.fn(() => Promise.resolve(fail(409, 'recommendation not found or already decided'))),
         });
@@ -160,7 +160,7 @@ describe('ActionItemsState', () => {
         expect(state.done).toBeNull();
     });
 
-    it.skip('pending: actionitems — snooze asks the daemon for the item’s days, settles it and says until when', async () => {
+    it('snooze asks the daemon for the item’s days, settles it and says until when', async () => {
         const { api, settle, state } = setup();
         await state.act(SNOOZE);
         expect(api.trySnoozeWorkspaceRecommendation).toHaveBeenCalledWith('w1', 'r1', 7);
@@ -168,7 +168,7 @@ describe('ActionItemsState', () => {
         expect(state.done).toBe('Snoozed until 2026-11-10');
     });
 
-    it.skip('pending: actionitems — a failed snooze is the item’s error; the item stays', async () => {
+    it('a failed snooze is the item’s error; the item stays', async () => {
         const { settle, state } = setup({
             trySnoozeWorkspaceRecommendation: vi.fn(() => Promise.resolve(fail(409, 'Conflict'))),
         });
@@ -177,7 +177,7 @@ describe('ActionItemsState', () => {
         expect(settle).not.toHaveBeenCalled();
     });
 
-    it.skip('pending: actionitems — a second act while the first is in flight writes once', async () => {
+    it('a second act while the first is in flight writes once', async () => {
         const held = deferred<unknown>();
         const { api, state } = setup({ trySnoozeWorkspaceRecommendation: vi.fn(() => held.promise) });
         const first = state.act(SNOOZE);
@@ -187,7 +187,7 @@ describe('ActionItemsState', () => {
         expect(api.trySnoozeWorkspaceRecommendation).toHaveBeenCalledOnce();
     });
 
-    it.skip('pending: actionitems — opening a file reveals it and leaves the item in place', async () => {
+    it('opening a file reveals it and leaves the item in place', async () => {
         const { reveal, settle, state } = setup();
         await state.act(FILE);
         expect(reveal).toHaveBeenCalledWith('/repo/src/lib.rs');
@@ -195,7 +195,7 @@ describe('ActionItemsState', () => {
         expect(state.flow('r1')).toEqual({ status: 'idle' });
     });
 
-    it.skip('pending: actionitems — a file that cannot be opened says why, never fails silently', async () => {
+    it('a file that cannot be opened says why, never fails silently', async () => {
         const failing = new ActionItemsState({
             api: setup().api,
             workspaceId: () => 'w1',
@@ -207,7 +207,7 @@ describe('ActionItemsState', () => {
         expect(failing.flow('r1')).toEqual({ status: 'error', message: 'Couldn’t open the file — path not allowed' });
     });
 
-    it.skip('pending: actionitems — each item keeps its own flow', async () => {
+    it('each item keeps its own flow', async () => {
         const { state } = setup({
             trySnoozeWorkspaceRecommendation: vi.fn(() => Promise.resolve(fail(500, 'boom'))),
         });
@@ -219,7 +219,7 @@ describe('ActionItemsState', () => {
 
     // ── Review r1 M4: the preview decides, never the item's guessed kind ──────
 
-    it.skip('pending: actionitems — a propose-rule item whose preview is file-class is confirmed and sent as a file', async () => {
+    it('a propose-rule item whose preview is file-class is confirmed and sent as a file', async () => {
         const { api, state } = setup({
             tryPreviewRecommendation: vi.fn(() => Promise.resolve(ok(SKILL_PREVIEW))),
         });
@@ -234,7 +234,7 @@ describe('ActionItemsState', () => {
         expect(api.tryMaterializeRecommendationWithReason).toHaveBeenCalledWith('w1', 'r1', {});
     });
 
-    it.skip('pending: actionitems — a rule is added at the scope and tier its preview proposed', async () => {
+    it('a rule is added at the scope and tier its preview proposed', async () => {
         const { api, state } = setup({
             tryPreviewRecommendation: vi.fn(() =>
                 Promise.resolve(ok({ ...RULE_PREVIEW, gov_scope: 'repository', enforcement: 'advisory' }))),
@@ -251,7 +251,7 @@ describe('ActionItemsState', () => {
 
     // ── Review r1 M1: a failed item can be retried, and the retry writes ──────
 
-    it.skip('pending: actionitems — after a failed snooze, acting again retries and settles', async () => {
+    it('after a failed snooze, acting again retries and settles', async () => {
         const snooze = vi.fn()
             .mockResolvedValueOnce(fail(500, 'boom'))
             .mockResolvedValueOnce(ok({ ok: true, snoozed_until: '2026-11-10T09:00:00+00:00' }));
@@ -265,7 +265,7 @@ describe('ActionItemsState', () => {
         expect(state.flow('r1').status).not.toBe('error');
     });
 
-    it.skip('pending: actionitems — after a failed materialize, acting again previews afresh and the confirm writes', async () => {
+    it('after a failed materialize, acting again previews afresh and the confirm writes', async () => {
         const materialize = vi.fn()
             .mockResolvedValueOnce(fail(409, "a skill named 'retry-budget' already exists in this repo; edit the title"))
             .mockResolvedValueOnce(ok({ ok: true }));

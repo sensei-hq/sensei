@@ -9,7 +9,10 @@ export interface MaterializeOptions {
     enforcement?: string;
 }
 
-/** pending: actionitems */
-export function materializeOptions(_preview: RecommendationPreview): MaterializeOptions {
-    throw new Error('pending: actionitems');
+export function materializeOptions(preview: RecommendationPreview): MaterializeOptions {
+    if (preview.consent_required) return {};
+    const options: MaterializeOptions = {};
+    if (preview.gov_scope) options.gov_scope = preview.gov_scope;
+    if (preview.enforcement) options.enforcement = preview.enforcement;
+    return options;
 }
