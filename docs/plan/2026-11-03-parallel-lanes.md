@@ -134,11 +134,12 @@ Owns: `packages/codemap/**`, `app/src/routes/(workspace)/workspace/[id]/diagrams
 4. Then S6 (diagram history), only after the user says yes.
 
 ### L3 · Claude Code B: metrics that act, then targets
-Owns: `app/src/routes/(workspace)/workspace/[id]/metrics/**`, new `database/ddl/**/{sensei,dojo}/target*`
+Owns: `app/src/routes/(workspace)/workspace/[id]/metrics/**`; **for ActionItems, the whole vertical slice:** `database/ddl/table/inference/recommendations.ddl` (+ its tests), `crates/senseid/src/api/handlers/workspace_detail.rs` (the recommendation handlers), `crates/senseid/src/db/pg_store/patterns.rs`, `crates/senseid/src/tasks/handlers/generate.rs`, and the matching functions in `app/src/lib/api.ts`/`types.ts` (additive only: §3); new `database/ddl/**/{sensei,dojo}/target*`
 and `metric_gating*`, new `database/import/staging/metric_gating.jsonl`, new
 `crates/senseid/src/targets/**`, the target routes under `dojo/src/routes/v1/t/[origin]/[org]/targets/**` and
 `dojo/src/lib/server/targets-data.ts`.
-1. Now, while L0 writes the spec: **ActionItems act.** Today `ActionItems.svelte` has 0 buttons or
+1. Now, while L0 writes the spec: **ActionItems act, as one cohesive unit** (user, 2026-11-03): DDL → store → handler → API → state → screen, in one lane so the contract never splits across sessions. API changes are **additive** (new fields or routes, never a renamed or removed one), because L5's overview refactor reads the same recommendations API; L5 rebases onto it. Schema changes converge with `dbd reconcile` under the Supabase/daemon lock rules (§1.6); the live daemon DB is L0's.
+   **ActionItems act.** Today `ActionItems.svelte` has 0 buttons or
    links. Each item gets the one action it implies: open the file or lens, open the memory, propose a rule
    (the existing `playbook_rules` path), or snooze. Do the state in `action-items.ts`, the specs first,
    and the presentation last.
