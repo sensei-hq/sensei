@@ -67,6 +67,8 @@
   const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected ?? focused }));
   /** Open a module's files — the side panel's explicit action, not a click on a lens. */
   const open = (id: string) => void map.openModule(port, id);
+  /** Read the lens's own data again after it failed: showing it re-reads what is missing. */
+  const retry = () => void map.showLens(port, map.lens);
   /** A click on a module in any lens focuses it (user, 2026-11-03). */
   const focusOn = (id: string) => void map.setFocus(port, { kind: 'module', id });
   const zoomTo = (z: number) => (map.zoom = z);
@@ -111,7 +113,7 @@
             <ModuleList view={listView(map.lens, l0, cochange, zones)} onfocus={focusOn} />
           {:else if map.lens === 'zones'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ZonesLens data={zones} filter={map.zoneFilter} zoom={map.zoom} onfocus={focusOn} />
+              <ZonesLens data={zones} filter={map.zoneFilter} zoom={map.zoom} onfocus={focusOn} failed={map.dataError} onretry={retry} />
             </ZoomFrame>
           {:else if map.lens === 'wheel'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
@@ -124,11 +126,11 @@
               </p>
             {/if}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <CouplingLens data={cochange} zoom={map.zoom} onfocus={focusOn} focus={focusLabel} />
+              <CouplingLens data={cochange} zoom={map.zoom} onfocus={focusOn} focus={focusLabel} failed={map.dataError} onretry={retry} />
             </ZoomFrame>
           {:else if map.lens === 'complexity'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ComplexityLens data={complexity} zoom={map.zoom} onfocus={focusOn} focus={focusLabel} />
+              <ComplexityLens data={complexity} zoom={map.zoom} onfocus={focusOn} focus={focusLabel} failed={map.dataError} onretry={retry} />
             </ZoomFrame>
           {:else if map.lens === 'cycles'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>

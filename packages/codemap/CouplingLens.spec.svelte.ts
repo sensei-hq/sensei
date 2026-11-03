@@ -56,4 +56,17 @@ describe('CouplingLens', () => {
     flushSync();
     expect(target.textContent).toContain('No hidden coupling involving senseid/db');
   });
+
+  // Review r2 N1(a): a failed read shows its reason and a Retry — never "Reading…".
+  it('a failed read says why and offers Retry, never Reading…', () => {
+    const onretry = vi.fn();
+    target = document.body.appendChild(document.createElement('div'));
+    app = mount(CouplingLens, { target, props: { data: null, zoom: 1, onfocus: vi.fn(), failed: 'Gateway Timeout', onretry } });
+    flushSync();
+    expect(target.textContent).not.toContain('Reading');
+    expect(target.textContent).toContain('Gateway Timeout');
+    const retry = [...target.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Retry') as HTMLButtonElement;
+    retry.click();
+    expect(onretry).toHaveBeenCalledOnce();
+  });
 });

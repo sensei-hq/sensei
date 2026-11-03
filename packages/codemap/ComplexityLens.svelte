@@ -4,16 +4,20 @@
   // cyclomatic under it, led by the workspace's overall reading and its
   // maintainability grade. A rokkit Tree; one snippet draws a row's numbers
   // whether it opens or not. A module row opens the module.
+  import LensFailed from './LensFailed.svelte';
   import { Tree } from '@rokkit/ui';
   import type { ProxyItem } from '@rokkit/states';
   import type { ComplexityNode, ComplexityTree } from './types';
 
-  let { data, zoom = 1, onfocus, focus = null }: {
+  let { data, zoom = 1, onfocus, focus = null, failed = null, onretry = () => {} }: {
     data: ComplexityTree | null;
     zoom?: number;
     onfocus: (id: string) => void;
     /** What the map is focused on, so an empty tree says whose it is. */
     focus?: string | null;
+    /** Why this lens's own read failed; shown with Retry instead of "Reading…". */
+    failed?: string | null;
+    onretry?: () => void;
   } = $props();
 
   const pct = (complex: number, functions: number) => (functions ? Math.round((complex / functions) * 100) : 0);
@@ -57,7 +61,9 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div class="w-full overflow-auto flex flex-col gap-4" tabindex="0" role="region" aria-label="Complexity by module and folder, scrollable"
   data-testid="codemap-complexity" style:font-size={`${Math.round(13 * zoom)}px`}>
-  {#if !data}
+  {#if !data && failed}
+    <LensFailed reason={failed} {onretry} />
+  {:else if !data}
     <p class="m-0 text-ink-faint">Reading the measured complexity…</p>
   {:else if !data.total.files}
     {#if focus}

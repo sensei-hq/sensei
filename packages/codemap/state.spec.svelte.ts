@@ -251,4 +251,42 @@ describe('CodeMapState', () => {
     expect(s.focusedCochange?.hidden.map((c) => c.b)).toEqual(['p/x']);
     expect(s.focusedCochange?.hidden.every((c) => c.a === 'p/a' || c.b === 'p/a')).toBe(true);
   });
+
+  // Review r2 N1(b): a failed lens read is retried by showing the lens again,
+  // and a success clears its error.
+  it('Retry after a failed coupling read reads it again, and its success clears the error', async () => {
+    const s = new CodeMapState();
+    const cochange = vi.fn()
+      .mockReturnValueOnce(Promise.resolve({ ok: false as const, error: 'Gateway Timeout' }))
+      .mockReturnValueOnce(ok({ hidden: [], pairs: 0, commits: 9, minTogether: 5 }));
+    const p = port({ cochange });
+    await s.showLens(p, 'coupling');
+    expect([s.lensError, s.dataError]).toEqual(['Gateway Timeout', 'Gateway Timeout']);
+    expect(s.mapError).toBeNull();
+    await s.showLens(p, 'coupling');
+    expect(cochange).toHaveBeenCalledTimes(2);
+    expect(s.lensError).toBeNull();
+  });
+
+  // Review r2 N2: a failed module read belongs to that attempt, not to every lens after it.
+  it('a failed module read does not follow the reader to another lens', async () => {
+    const s = new CodeMapState();
+    const p = port({ module: vi.fn(() => Promise.resolve({ ok: false as const, error: 'Not Found' })) });
+    await s.load(p);
+    await s.openModule(p, 'p/a');
+    expect(s.lensError).toBe('Not Found');
+    await s.showLens(p, 'zones');
+    expect(s.lensError).toBeNull();
+  });
+
+  // Review r2 N3: if the whole map cannot be re-read after a regroup, the finder
+  // falls back to the focused map (already in the new grouping), not the old one.
+  it('a failed whole-map read after a regroup leaves no stale whole map', async () => {
+    const s = new CodeMapState();
+    const p = port({ level0: vi.fn((g, f) => (f ? ok(L0(g)) : g === 'folders' ? Promise.resolve({ ok: false as const, error: 'Bad Gateway' }) : ok(L0(g)))) });
+    await s.load(p);
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    await s.setGroupBy(p, 'folders');
+    expect(s.whole).toBeNull();
+  });
 });
