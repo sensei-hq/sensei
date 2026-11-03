@@ -51,7 +51,7 @@ Priorities are per-module and revisited when a plane file changes. "Shipped"
 beats "designed": promotion to ✅ requires evidence (tests, e2e, live data), not
 a spec.
 
-## The board — all 30 modules at a glance
+## The board — all 31 modules at a glance
 
 | Plane | Modules | Status cells (per module, with evidence) |
 |---|---|---:|
