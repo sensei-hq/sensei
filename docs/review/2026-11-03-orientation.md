@@ -183,7 +183,7 @@ Each review has these sections, even when one is empty ("checked: none"):
   Fix these in rokkit upstream, not with app overrides.
 - **Shared components.** The app and dōjō each have their own empty state, load error (ScreenState vs
   LoadError), banner (DaemonStatusBanner vs Banner vs Notice), page header (PageHeader vs Screen),
-  sparkline (and a dead, unimported `dojo/src/lib/components/Spark.svelte`), and stat cards. **Cowork's
+  sparkline (`kit/Spark.svelte` wraps `dojo/src/lib/components/Spark.svelte`; both are live. Corrected 2026-11-03: an earlier draft called the base file dead), and stat cards. **Cowork's
   Notice streamlining should take empty state, load error and banner into scope**, so the result is one
   `@sensei/ui` family.
 - **Types across the boundary.** Same name, different meaning: `WorkspaceMetricRow` (app daemon row vs

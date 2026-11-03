@@ -111,7 +111,9 @@ Owns: `crates/senseid/src/tasks/{dojo_sync,graph_push}.rs`, `crates/senseid/src/
 `dojo/src/routes/v1/t/[origin]/[org]/workspaces/**`, `dojo/src/lib/server/{workspaces-data,repositories,graph-ingest,metrics-ingest}.ts`,
 `dojo/src/lib/workspace-metrics-*`, `dojo/src/routes/(app)/org/[slug]/workspaces/[id]/**`, DDL
 `database/ddl/**/dojo/{all_my_repositories,register_repositor*,*_metric_series,repository_*}` and their
-tests under `database/tests/dojo/**`; `docs/lanes/L1.md`.
+tests under `database/tests/dojo/**`; `docs/lanes/L1.md`;
+`dojo/src/lib/components/screens/ScrWorkspacePreview.svelte`; for WP5 round 2 also `kit/MetricCards.svelte` (new),
+`kit/Spark.svelte`, `components/Spark.svelte`, `my-metrics-view.ts`, `ScrMyMetrics.svelte`.
 1. **WP4:** apply review round 2 (F4 `having count(*) >= 2`, a shared `isUuid`, F8), unstage
    `packages/codemap/focus.*`, commit in the main checkout, then move to the lane worktree.
 2. **WP8** (D46, `all_my_repositories`), then re-run the WP4 suite.
@@ -126,7 +128,8 @@ tests under `database/tests/dojo/**`; `docs/lanes/L1.md`.
 Owns: `packages/codemap/**`, `app/src/routes/(workspace)/workspace/[id]/diagrams/**`,
 `crates/senseid/src/analysis/**`, `crates/senseid/src/api/handlers/diagrams.rs`,
 `crates/senseid/src/api/diagram_cache.rs`, new `crates/senseid/src/tasks/handlers/metrics/architecture*.rs`,
-**new rows only** at the end of `database/import/staging/metrics.jsonl`.
+**new rows only** at the end of `database/import/staging/metrics.jsonl`;
+`crates/senseid/src/db/pg_store/tests/metric_rows_tests.rs`, `database/ddl/view/sensei/workspace_metric_daily.ddl` (S4 2c).
 1. Commit the uncommitted `packages/codemap/*` work (the S7 tail), then move to the lane worktree.
 2. **S4 2c:** check the ratio pooling double count and fix it. Conservation test: pooled numerator equals
    the sum of the per-commit numerators, counted once per commit.
@@ -190,8 +193,7 @@ exist, before the move. Order: libraries → knowledge-sources → settings/work
 Do not touch `(observatory)/+layout.svelte`; list it in the handoff.
 
 ### L6 · Freebuff: docs consistency + dead code
-Owns: `docs/prd/**`, `docs/roadmap/**`, `docs/backlog.md`, `docs/journeys/**`, and
-`dojo/src/lib/components/Spark.svelte` (delete only).
+Owns: `docs/prd/**`, `docs/roadmap/**`, `docs/backlog.md`, `docs/journeys/**`, `docs/lanes/L6.md`.
 Work through orientation §6 in this order:
 1. Template: add the required column **"Decision it drives / next step"** to "Signals shown" in
    `docs/prd/modules/README.md`, then fill it in for the 17 tables that have no action word.
@@ -204,8 +206,7 @@ Work through orientation §6 in this order:
    T3:155 (code hosts are not trackers), self-hosting (D24) and the solo persona (D46/D52). Fix P2's
    `website/` path (#346). Add D40.
 5. Roadmap 01–05 status cells and `backlog.md`, from the roadmap audit in the orientation §2 table.
-6. Delete `dojo/src/lib/components/Spark.svelte` after
-   `rg --no-ignore -g '!node_modules' "Spark.svelte|components/Spark" dojo/src` shows no importer.
+6. ~~Delete `Spark.svelte`~~: withdrawn. It is live (`kit/Spark.svelte:2` wraps it); L6 verified this and correctly did not delete it.
 
 Every edit cites the decision (D-number) or file:line it follows. **No new product decisions:** anything
 unclear goes in the handoff as a question.
