@@ -1,0 +1,82 @@
+-- PENDING (WP4 F4 follow-up, phase A): a viewer pool with fewer than 2
+-- contributors is withheld (user decision F4, 2026-11-03 — supersedes D10 for
+-- viewer pools). This file is skipped by run.sh (`*.sql.pending`); phase B
+-- folds these assertions into `repository_metric_series.sql` and deletes this
+-- file, so no disabled marker remains.
+--
+-- Fixture: workspace P holds repository R. Two days of user rows: day 1 has
+-- two contributors (pool shown), day 2 has one (pool withheld). `client` is a
+-- pure viewer (no membership, viewer grant on P).
+--
+-- WHAT BREAKS THIS TEST (today): the day-2 pool of one is shown — the
+-- deployed rollup still follows D10.
+begin;
+
+insert into dojo.principals (id, auth_user_id, display_name) values
+  ('a0000000-0000-4000-8000-000000000051', 'a1000000-0000-4000-8000-000000000051', 'amelia'),
+  ('a0000000-0000-4000-8000-000000000052', 'a1000000-0000-4000-8000-000000000052', 'boris'),
+  ('a0000000-0000-4000-8000-000000000053', 'a1000000-0000-4000-8000-000000000053', 'client-f4');
+
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
+  ('b0000000-0000-4000-8000-00000000005a', 'organization/ztest-wsmetrics-f4', 'organization',
+   'ztest-wsmetrics-f4', 'f4 follow-up fixture', 'x');
+
+insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via) values
+  ('b0000000-0000-4000-8000-00000000005a', 'a0000000-0000-4000-8000-000000000051', 'contributor', 'employer', 'github_oauth'),
+  ('b0000000-0000-4000-8000-00000000005a', 'a0000000-0000-4000-8000-000000000052', 'contributor', 'employer', 'github_oauth');
+
+insert into dojo.workspaces (id, tenant_id, slug, name) values
+  ('c0000000-0000-4000-8000-00000000006a',
+   'b0000000-0000-4000-8000-00000000005a', 'ztest-wsmetrics-f4-p', 'workspace F4P');
+
+insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
+  ('90000000-0000-4000-8000-0000000000c1', 'b0000000-0000-4000-8000-00000000005a',
+   'github.com/ztest-wsmetrics-f4/r', 'r', 'github');
+insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant_id) values
+  ('c0000000-0000-4000-8000-00000000006a', '90000000-0000-4000-8000-0000000000c1', 'b0000000-0000-4000-8000-00000000005a');
+
+insert into dojo.workspace_viewers (workspace_id, principal_id) values
+  ('c0000000-0000-4000-8000-00000000006a', 'a0000000-0000-4000-8000-000000000053');
+
+insert into dojo.repository_metrics (id, tenant_id, repository_id, metric_id, scope, principal_id, computed_on, value, props)
+select v.id::uuid, 'b0000000-0000-4000-8000-00000000005a', '90000000-0000-4000-8000-0000000000c1', m.id, 'user', v.who::uuid, v.day::date, v.value, v.props::jsonb
+  from (values
+    ('82000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000051', current_date,     1, '{"denominator": 1}'),
+    ('82000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000052', current_date,     2, '{"denominator": 3}'),
+    ('82000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000051', current_date - 1, 5, '{"denominator": 2}')
+  ) as v(id, who, day, value, props)
+ cross join (select id from sensei.metrics order by key limit 1) m;
+
+set local role authenticated;
+
+do $$
+declare
+    p_id  constant uuid := 'c0000000-0000-4000-8000-00000000006a';
+    since constant date := current_date - 30;
+    n int;
+    v numeric;
+    pn int;
+    pnum numeric;
+    pden numeric;
+begin
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000053"}', true);
+
+    -- The two-contributor pool is shown, carrying its pooled rate.
+    select value, (props->>'pooled_rows')::int, (props->>'numerator')::numeric,
+           (props->>'denominator')::numeric
+      into v, pn, pnum, pden
+      from dojo.workspace_metric_series(p_id, since)
+     where scope = 'pooled' and computed_on = current_date;
+    if v <> 3 or pn <> 2 or pnum <> 7 or pden <> 4 then
+        raise exception 'f4_two_pool_shown: today''s pool should be 3 over 2 rows (7/4), got % over % rows (%/%)', v, pn, pnum, pden;
+    end if;
+
+    -- The pool of one is withheld (F4): one person's number never reaches a viewer.
+    select count(*) into n from dojo.workspace_metric_series(p_id, since)
+     where scope = 'pooled' and computed_on = current_date - 1;
+    if n <> 0 then
+        raise exception 'f4_lone_pool_withheld: yesterday''s pool of one must be withheld from viewers, got % rows', n;
+    end if;
+end $$;
+
+rollback;
