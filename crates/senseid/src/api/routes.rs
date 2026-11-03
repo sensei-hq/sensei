@@ -1542,6 +1542,73 @@ mod tests {
         assert_eq!(st, StatusCode::BAD_REQUEST);
     }
 
+    /// A focus (user, 2026-11-03) narrows L0 to the module and its direct
+    /// neighbours before folding, and says what it focused on; a segment focuses
+    /// a whole group. A focus that names nothing is not found — never an empty
+    /// map — and one request asks for one focus, not two.
+    #[tokio::test]
+    async fn the_code_map_narrows_to_a_focus_and_its_neighbours() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, _) = seed_two_modules(&state).await;
+        let (alpha, beta) = (format!("{pkg}/alpha"), format!("{pkg}/beta"));
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?focus={alpha}"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let mut ids: Vec<&str> =
+            body["blocks"].as_array().unwrap().iter().filter_map(|b| b["id"].as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, [alpha.as_str(), beta.as_str()], "gamma is not a neighbour: {body}");
+        assert_eq!(
+            body["focus"],
+            serde_json::json!({"kind": "module", "id": alpha, "members": [alpha], "neighbours": [beta]})
+        );
+
+        let (_, whole) =
+            req(app.clone(), "GET", &format!("/api/workspaces/{pid}/diagrams/codemap"), None).await;
+        let layer =
+            whole["blocks"].as_array().unwrap().iter().find(|b| b["id"] == alpha.as_str()).unwrap()
+                ["group"]
+                .as_str()
+                .unwrap()
+                .to_string();
+        let (st, seg) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?segment={layer}"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{seg}");
+        assert_eq!(seg["focus"]["kind"], "segment");
+        assert_eq!(seg["focus"]["id"], layer.as_str());
+        assert!(
+            seg["focus"]["members"].as_array().unwrap().contains(&serde_json::json!(alpha)),
+            "{seg}"
+        );
+
+        let (st, _) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?focus={pkg}/nowhere"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+        let (st, _) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?focus={alpha}&segment={layer}"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+    }
+
     /// #133: choosing a glyph mode in Settings stamps when it was chosen, so
     /// the sync with the dōjō can tell the later choice.
     #[tokio::test]

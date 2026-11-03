@@ -517,6 +517,10 @@ const CODEMAP_KINDS: [&str; 2] = ["calls", "imports"];
 pub(crate) struct CodemapQuery {
     #[serde(rename = "groupBy")]
     group_by: Option<String>,
+    /// A module to focus on: L0 narrows to it and its direct neighbours.
+    focus: Option<String>,
+    /// A Group-by group to focus on: every module in it, and their neighbours.
+    segment: Option<String>,
 }
 
 /// How many of the most used referenced libraries L0 names.
@@ -530,6 +534,12 @@ const LIBRARIES_TOP: usize = 5;
 /// by layer (default) or by package, and one band per module pair weighted by
 /// the calls and imports behind it. Each band between two drawn modules
 /// carries its direction from the layering (`down`, `skip`, `up`, `level`).
+///
+/// `focus={module}` or `segment={group}` (user, 2026-11-03) narrows the map to
+/// the focused modules and their direct neighbours BEFORE folding, so the
+/// neighbourhood is drawn whole; the cycles kept are the ones it is in, and the
+/// answer says what it focused on. A focus naming nothing here is 404; both at
+/// once is 400.
 pub(crate) async fn codemap(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -540,10 +550,20 @@ pub(crate) async fn codemap(
     if !matches!(group_by.as_str(), "layers" | "folders") {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let focus = match (q.focus, q.segment) {
+        (Some(_), Some(_)) => return Err(StatusCode::BAD_REQUEST),
+        (Some(id), None) => Some(("module", id)),
+        (None, Some(group)) => Some(("segment", group)),
+        (None, None) => None,
+    };
     let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
     let workspace_id = resolve_workspace_id(&state, &id).await?;
+    let params = match &focus {
+        Some((kind, id)) => format!("{group_by}|{kind}={id}"),
+        None => group_by.clone(),
+    };
 
-    cached(&state, "codemap", &workspace_id, group_by.clone(), async {
+    cached(&state, "codemap", &workspace_id, params, async {
         let (nodes, edges, deps, unplaced, complexity, paths, libraries) = tokio::try_join!(
             state.pg.structure_nodes(&workspace_id, "module"),
             state.pg.structure_edges(&workspace_id, "module", &kinds),
@@ -597,7 +617,46 @@ pub(crate) async fn codemap(
                 count: e.occurrences,
             })
             .collect();
+        let focused = match &focus {
+            None => None,
+            Some((kind, id)) => {
+                let members = match *kind {
+                    "module" => {
+                        modules.iter().filter(|m| &m.id == id).map(|m| m.id.clone()).collect()
+                    }
+                    _ => crate::analysis::codemap::segment_members(&modules, id),
+                };
+                if members.is_empty() {
+                    return Err(StatusCode::NOT_FOUND);
+                }
+                let scoped =
+                    crate::analysis::codemap::focus_scope(&modules, &module_edges, &members);
+                let mut members: Vec<String> = members.into_iter().collect();
+                members.sort_unstable();
+                Some((*kind, id.clone(), members, scoped))
+            }
+        };
+        let (modules, module_edges) = match &focused {
+            Some((.., scoped)) => (scoped.modules.clone(), scoped.edges.clone()),
+            None => (modules, module_edges),
+        };
         let l0 = level0(&modules, &module_edges, BLOCK_BUDGET);
+        let cycles: Vec<_> = match &focused {
+            Some((_, _, members, _)) => ranked
+                .cycles
+                .iter()
+                .filter(|c| c.members.iter().any(|m| members.binary_search(m).is_ok()))
+                .collect(),
+            None => ranked.cycles.iter().collect(),
+        };
+        let focus_json = focused.as_ref().map(|(kind, id, members, scoped)| {
+            serde_json::json!({
+                "kind": kind,
+                "id": id,
+                "members": members,
+                "neighbours": scoped.neighbours,
+            })
+        });
 
         let bands: Vec<serde_json::Value> = l0
             .bands
@@ -617,9 +676,10 @@ pub(crate) async fn codemap(
             "blocks": l0.blocks,
             "bands": bands,
             "budget": l0.budget,
-            "cycles": ranked.cycles,
+            "cycles": cycles,
             "coverage": { "unplaced": unplaced },
             "libraries": crate::analysis::codemap::libraries_summary(&libraries, LIBRARIES_TOP),
+            "focus": focus_json,
         }))
     })
     .await
