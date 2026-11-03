@@ -79,9 +79,10 @@ the dead `Spark.svelte`.
    fails, someone else holds it, so wait. Use dbd reconcile/import, never hand-applied psql.
 7. **Your checkpoint lives in `docs/lanes/<lane>.md`:** one current entry, under 40 lines, with slice,
    done/remaining, next command, open questions, known-broken. It replaces `docs/CHECKPOINT.md` for lanes.
-8. **Handoff = push your branch + paste to the user:** the branch, the commits, what was verified (the
-   commands and their output), and anything left open. The coordinator reviews into
-   `docs/review/YYYY-MM-DD-<slice>.md`. Findings come back to the lane; the coordinator merges when green.
+8. **Handoff = push your branch + write a report in `~/Developer/sensei-hq/coord/inbox/`.** Follow
+   `~/Developer/sensei-hq/coord/README.md`: tests first (phase A, disabled, then wait for the test review),
+   then implement (phase B). Reviews come back in `coord/reviews/`; progress is in `coord/TRACKER.md`. Tell
+   the user only "reported". **Cowork:** start each mockup from its data brief, `coord/briefs/L4-<item>.md`.
 9. **Every screen-facing change** follows presentation | state | load and uses rokkit components first.
    Colours, fonts and shapes come only from rokkit/UnoCSS named tokens: no `<style>` colour literals, no
    `font-family`, no inline `style=` colours. Fix the look upstream in rokkit. Every panel names its next
