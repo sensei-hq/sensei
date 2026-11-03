@@ -180,7 +180,11 @@ the billing and sync-status screens (`ScrBilling*`, `ScrSharing*`) and `dojo/src
 ### L5 · OpenCode: presentation | state | load refactors (no behaviour change)
 Owns exactly: `app/src/routes/(observatory)/{instruments,libraries,knowledge-sources,activity-logs}/**`,
 `app/src/routes/(preferences)/settings/{workspaces,extensions}/**`,
-`app/src/routes/(workspace)/workspace/[id]/{about,overview}/**`, and the state modules beside them.
+`app/src/routes/(workspace)/workspace/[id]/{about,overview}/**`, the state modules beside them, and (L0 ruling)
+`app/src/lib/knowledge-sources.svelte.ts`, `app/src/lib/state/mcp.svelte.ts`,
+`app/src/lib/components/settings/{workspaces-section-state.svelte.ts,WorkspacesSection.svelte}` (the last two only after
+Cowork's Notice commit lands). Page order: libraries → knowledge-sources → settings/extensions → activity-logs →
+about → overview (after L3's ActionItems) → settings/workspaces (after Notice) → instruments.
 For each page, one commit per page:
 - Move the fetch out of `onMount`/`$effect` into `+page.ts` `load` (or a page state when slow, per
   rule a3b74a4bd).
