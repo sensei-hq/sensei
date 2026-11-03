@@ -5,7 +5,7 @@ The goal and the reasons for the order are in `docs/review/2026-11-03-orientatio
 
 ## Queue v2 (user, 2026-11-03 afternoon): five sessions, built around the spine
 
-Sessions: **Claude Code A**, **Claude Code B**, **Cowork**, **Muse-1**, **Muse-2**. The order follows the spine
+Sessions: **Claude Code A**, **Claude Code B**, **Cowork**, **Muse-1**, **Muse-2**, **Freebuff**. L7 never started (user). The order follows the spine
 (orientation §3): sync verified → targets end to end → no fabricated values. Off-spine work waits.
 Where this section and the lane sections below disagree, this section wins.
 
@@ -14,7 +14,8 @@ Where this section and the lane sections below disagree, this section wins.
 | **Muse-1** | L1 · sync push and registration | F4 (finish) → `run.sh --apply` (R1) → WP8 (D46) → WP9A → D18 label on the plan wire → **#314 production verification** |
 | **Muse-2** | L9 · dōjō metric reads, then L8 batch B | `metric_readings` (R2) → WP5 round 2 (D82) → the pack-rule `[]` fix → **L8 batch B** (governance and identity, audit Appendix A) → seat model (D59) |
 | **Claude Code A** | L2 · metrics and analysis, then L8 batches A + C | S7 r3 → S4 2c → #156 (critical path for targets) → **L8 batch A** (data loss) → **L8 batch C** (misleading numbers; `pg_store/metrics.rs` is metrics) |
-| **Claude Code B** | L3 · targets | ActionItems → **targets TG1 → TG5** (TG2 after WP8 merges) → TG6 → the `generate.rs` duplicate flood |
+| **Claude Code B** | L3 · targets | ActionItems → **targets TG1 → TG5** (TG2 after WP8 merges; TG5 includes L7's `TicketReader` + the relink fix that keeps `source='fetch'` links, so L3 owns `crates/senseid/src/tracker/**` for it) → TG6 → the `generate.rs` duplicate flood |
+| **Freebuff** | L6 docs, then L5 | L6 round 3 → Q2 statuses (07/08/09) → the gates sweep → **L5's deferred pages** (knowledge-sources first, then the plan's page order) |
 | **Cowork** | L4 · UI | Notice round 2 (incl. billing D75 fixes and its D83 rows) → rankOf → menu D70 + daemon reachable flag → sync screen → targets UI (mockup, then build on TG7's contract) → viewer shell |
 | **L0** | coordinator | D83 guard (building now) → reviews, merges, converges, install → release |
 
@@ -26,8 +27,9 @@ Where this section and the lane sections below disagree, this section wins.
   metrics read) and the WP5 files. It takes over from L1 **after F4 merges**, so the two Muse sessions never
   share a file.
 - **L8 is split by batch:** A and C go to Claude Code A, B to Muse-2.
-- L6 (Freebuff) and L7 (integrations helper) keep their items if they are still running; neither is on
-  the spine's critical path.
+- **L7 is not running.** TicketReader + relink go to L3 (TG5). The D50 writeback default stays on
+  `feature/tracker_metrics_writeback`, which L0 will not merge while it defaults to `true`.
+- L5's deferred pages go to Freebuff after L6.
 
 ## 0. Decisions in force (user, 2026-11-03)
 
