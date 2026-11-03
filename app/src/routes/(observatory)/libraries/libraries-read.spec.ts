@@ -6,9 +6,8 @@
 // the state's load/retry reuses it — one copy, not two.
 import { describe, it, expect } from 'vitest';
 import type { LibEntry } from '$lib/types.js';
+import { readLibraries } from './libraries-load.js';
 import type { LibrariesApi } from './libraries-state.svelte.js';
-
-type LibrariesRead = { libs: LibEntry[]; error: string | null };
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const down = { ok: false as const, error: { status: 503, message: 'Service Unavailable' } };
@@ -29,33 +28,19 @@ const api = (over: Partial<LibrariesApi> = {}): LibrariesApi => ({
   ...over,
 });
 
-// Phase A guard: `libraries-load.ts` does not exist yet, so the test fails on
-// the missing behaviour instead of a module-resolution error that would fail
-// the whole file before any assertion ran. The path is a variable so the
-// typechecker does not resolve it either. Phase B makes this a static import.
-const LOADER = './libraries-load.js';
-
-async function readLibraries(api: LibrariesApi): Promise<LibrariesRead> {
-  const mod = (await import(/* @vite-ignore */ LOADER).catch(() => null)) as unknown as {
-    readLibraries?: (a: LibrariesApi) => Promise<LibrariesRead>;
-  } | null;
-  if (!mod?.readLibraries) throw new Error('libraries-load.ts has no readLibraries (the read has not moved to the loader yet)');
-  return mod.readLibraries(api);
-}
-
 describe('readLibraries — what the Libraries route load returns', () => {
-  it.skip('pending: L5 libraries — the read moves to the loader: returns every detected library', async () => {
+  it('returns every detected library', async () => {
     const read = await readLibraries(api());
     expect([read.error, read.libs.map((l) => l.name)]).toEqual([null, ['rokkit', 'zod']]);
   });
 
-  it.skip('pending: L5 libraries — the read moves to the loader: asks for every library, never only the shared ones (#63)', async () => {
+  it('asks for every library, never only the shared ones (#63)', async () => {
     asked.length = 0;
     await readLibraries(api());
     expect(asked[0]?.shared).toBeFalsy();
   });
 
-  it.skip('pending: L5 libraries — the read moves to the loader: a failed read is the error, not an empty index', async () => {
+  it('a failed read is the error, not an empty index', async () => {
     const read = await readLibraries(api({ tryGetLibs: async () => down }));
     expect([read.error, read.libs]).toEqual(['Service Unavailable', []]);
   });

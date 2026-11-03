@@ -66,7 +66,7 @@ describe('Libraries /+page — nothing indexed', () => {
 // L5: the list is the loader's (+page.ts) read; the page renders it and makes
 // no read of its own on mount. A failed read stays the error it was (#288).
 describe('Libraries /+page — the loader’s data', () => {
-  it.skip('pending: L5 libraries — the loader’s data: renders the libraries, without a read of its own', async () => {
+  it('renders the libraries, without a read of its own', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 503, statusText: 'Service Unavailable' });
     vi.stubGlobal('fetch', fetchSpy);
     const m = mountComponent(Page, { data: { libs: libraries, error: null } } as never);
@@ -77,7 +77,7 @@ describe('Libraries /+page — the loader’s data', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it.skip('pending: L5 libraries — the loader’s data: a failed loader read is the error with retry, not "No libraries indexed."', async () => {
+  it('a failed loader read is the error with retry, not "No libraries indexed."', async () => {
     const m = mountComponent(Page, { data: { libs: [], error: 'Service Unavailable' } } as never);
     cleanup.push(m.destroy);
     await vi.waitFor(() =>

@@ -1,21 +1,23 @@
 <script lang="ts">
     import { EmptyState, StateView } from '@sensei/ui';
     import { railIcon } from "../observatory-nav";
-    import { onMount } from "svelte";
+    import { untrack } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import { Eyebrow, PageHeader, Screen } from "$lib/components";
     import { LibrariesState } from "./libraries-state.svelte.js";
 
-    const api = senseiApi(appState.port);
-    // Both reads and their failures live in the state (#288).
-    const lib = new LibrariesState();
-    onMount(() => void lib.load(api));
+    let { data } = $props();
 
-    let search = $state("");
-    let filtered = $derived(
-        lib.libs.filter((l) => !search || l.name.toLowerCase().includes(search.toLowerCase())),
-    );
+    // Presentation only: the list read is the loader's (+page.ts); the state
+    // owns the search, the selection and Retry, and every failure it shows is
+    // that read's error (#288).
+    const api = senseiApi(appState.port);
+    const lib = new LibrariesState(untrack(() => data));
+    $effect(() => {
+        const read = data;
+        untrack(() => lib.setRead(read));
+    });
 </script>
 
 <Screen>
@@ -30,7 +32,7 @@
                 class="lib-search flex-1 px-3.5 py-2 border border-paper-edge rounded-md bg-paper-soft text-ink text-sm outline-none"
                 type="text"
                 placeholder="Search libraries..."
-                bind:value={search}
+                bind:value={lib.search}
             />
         </div>
 
@@ -38,7 +40,7 @@
             <p class="text-sm text-ink-mute">Loading libraries...</p>
         {:else if lib.error}
             <StateView status="error" error={lib.error} onretry={() => void lib.load(api)} />
-        {:else if filtered.length === 0}
+        {:else if lib.visible.length === 0}
             <EmptyState size="screen"
                 kanji="書"
                 title="No libraries indexed."
@@ -51,7 +53,7 @@
                          ecosystems (e.g. uuid npm + uuid cargo), so a name-keyed each
                          throws Svelte's each_key_duplicate and breaks the whole list.
                          Show the ecosystem so same-named libs are distinguishable. -->
-                    {#each filtered as l (l.id)}
+                    {#each lib.visible as l (l.id)}
                         <button
                             class="lib-card text-left px-4 py-3.5 border border-paper-edge rounded-md bg-paper-soft cursor-pointer transition-colors duration-fast"
                             class:selected={lib.selected?.id === l.id}
