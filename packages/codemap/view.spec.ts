@@ -86,8 +86,15 @@ describe('moduleChoices', () => {
       ],
     } as unknown as Level0;
     expect(moduleChoices(l0).map((g) => [g.label, g.children.map((c) => c.value)])).toEqual([
-      ['L0', ['p/a']],
-      ['L1', ['p/b', 'p/c', 'p/d', 'p/log']],
+      ['L0', ['group:L0', 'p/a']],
+      ['L1', ['group:L1', 'p/b', 'p/c', 'p/d', 'p/log']],
     ]);
+  });
+
+  // A group heading cannot be picked in rokkit's Select, so each group's first row
+  // focuses the whole group as a segment (user, 2026-11-03).
+  it('each group opens with a row that focuses all of it', () => {
+    const l0 = { groupBy: 'folders', blocks: [block('p/a', { group: 'sensei' }), block('p/b', { group: 'sensei' })] } as unknown as Level0;
+    expect(moduleChoices(l0)[0].children[0]).toEqual({ label: 'Folder sensei · all 2 modules', value: 'group:sensei' });
   });
 });

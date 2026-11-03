@@ -125,6 +125,8 @@ export const ROLE_BG: Record<Role, string> = {
 export function moduleChoices(l0: Level0): { label: string; value: string; children: { label: string; value: string }[] }[] {
   return groupOrder(l0.blocks, l0.groupBy).map((g) => {
     const ids = l0.blocks.filter((b) => b.group === g).flatMap((b) => (b.folded.length ? b.folded : [b.id]));
-    return { label: g, value: `group:${g}`, children: [...ids].sort().map((id) => ({ label: id, value: id })) };
+    // A group heading is not pickable in a Select, so the group's first row focuses all of it.
+    const all = { label: `${l0.groupBy === 'layers' ? 'Layer' : 'Folder'} ${g} · all ${ids.length} modules`, value: `group:${g}` };
+    return { label: g, value: `group:${g}`, children: [all, ...[...ids].sort().map((id) => ({ label: id, value: id }))] };
   });
 }
