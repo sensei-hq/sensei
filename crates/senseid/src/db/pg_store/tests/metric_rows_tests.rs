@@ -1275,10 +1275,9 @@ mod pool2c {
 /// Every wrong picker gives a different total (computed): every row 82/687;
 /// latest write 28→36/327; skipping the write-time key 33/314; sha ascending as
 /// the last key 35/334; largest numerator or value 45/344; sha descending alone
-/// 32/314; unknown commits first 39/340; one reading per repository (identity
+/// 32/314; unknown commits first 38/330; one reading per repository (identity
 /// ignored) 27/254; a reading for all days at once fails the second day.
 #[tokio::test]
-#[ignore = "pending: S4 2c"]
 async fn ratio_pooling_counts_each_repository_and_person_once_its_latest_commit() {
     let s = pg_store().await;
     let uniq = uuid::Uuid::new_v4();
@@ -1295,7 +1294,7 @@ async fn ratio_pooling_counts_each_repository_and_person_once_its_latest_commit(
     let day = chrono::NaiveDate::from_ymd_opt(2020, 6, 7).unwrap();
     let next = day.succ_opt().unwrap();
 
-    let commits: [pool2c::Commit; 7] = [
+    let commits: [pool2c::Commit; 8] = [
         (r1, "f3c9e2", day, 8),
         (r1, "7b2d41", day, 9),
         (r1, "0a1e77", day, 10), // r1 me@x: 0a1e77
@@ -1303,6 +1302,7 @@ async fn ratio_pooling_counts_each_repository_and_person_once_its_latest_commit(
         (r2, "e4d1a0", day, 11),
         (r2, "1b7f3c", day, 12), // r2: 1b7f3c
         (r1, "9d9d9d", next, 8), // the next day
+        (r2, "f3c9e2", day, 23), // r1's earliest sha, known to r2 as its latest: a join on sha alone picks it
     ];
     let rows: [pool2c::Reading; 15] = [
         (r1, "me@x", Some("0a1e77"), 12, 100, day, 50), // latest-authored, written FIRST: the one
@@ -1344,7 +1344,6 @@ async fn ratio_pooling_counts_each_repository_and_person_once_its_latest_commit(
 /// S4 2c, the rule L1's dōjō fix mirrors: a commit git does not know orders after
 /// every commit it knows — even written later, with a larger value and sha.
 #[tokio::test]
-#[ignore = "pending: S4 2c"]
 async fn unknown_sha_orders_after_known() {
     let s = pg_store().await;
     let uniq = uuid::Uuid::new_v4();
