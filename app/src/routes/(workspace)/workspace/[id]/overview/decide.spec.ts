@@ -77,7 +77,7 @@ describe('RecommendationDecision', () => {
     const d = new RecommendationDecision(a, reload, () => true);
     await d.decide('p', 'r', 'reject');
     expect(reload).not.toHaveBeenCalled();
-    expect(d.notice).toEqual({ tone: 'fault', title: "Couldn't record that decision", detail: 'Service Unavailable' });
+    expect(d.notice).toEqual({ tone: 'fault', title: "Couldn't record that decision", detail: 'Service Unavailable', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 
   it('a second press while one is in flight is ignored', async () => {

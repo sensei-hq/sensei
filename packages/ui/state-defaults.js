@@ -10,7 +10,8 @@ const STATE_CONTEXT = Symbol.for('sensei.state-defaults');
 /**
  * Provide the defaults to every StateView below. Call once, during the root
  * layout's init.
- * @param {{ remedy?: string }} defaults
+ * @param {{ remedy?: string, service?: string }} defaults  `service` names the far
+ *        end of every read ("the sensei daemon", "the dōjō").
  * @returns {void}
  */
 export function setStateDefaults(defaults) {
@@ -20,7 +21,7 @@ export function setStateDefaults(defaults) {
 /**
  * The defaults provided above, or none (StateView then uses DEFAULT_REMEDY).
  * Call during component init.
- * @returns {{ remedy?: string }}
+ * @returns {{ remedy?: string, service?: string }}
  */
 export function useStateDefaults() {
   return getContext(STATE_CONTEXT) ?? {};

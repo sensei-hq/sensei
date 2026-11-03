@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Notice } from '@sensei/ui';
 	import { SectionHead } from '$lib/components/kit';
 	// Sharing — the DECISION surface for `dojo.all_my_repositories`.
 	//
@@ -20,7 +22,7 @@
 		repos: MyRepoWire[];
 		/** Non-null when the read FAILED. Rendered instead of an empty list: "you
 		 *  have no repositories" and "we could not ask" are different answers. */
-		error?: string | null;
+		error?: ReadError | string | null;
 		/** Repo keys with a write in flight, so the row can disable itself. */
 		pending?: ReadonlySet<string>;
 		onToggle?: (repoKey: string, elected: boolean) => void;
@@ -60,7 +62,7 @@
 
 	{#if error}
 		<!-- An error state, never an empty list. -->
-		<Notice size="panel" {...loadFailedNotice("your repositories", error)} data-load-error />
+		<Notice size="panel" {...dojoLoadNotice("your repositories", error)} data-load-error />
 	{:else if repos.length === 0}
 		<p class="text-sm text-ink-mute">
 			No repositories yet. They appear once sensei has scanned a clone and the daemon

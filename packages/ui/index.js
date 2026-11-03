@@ -6,6 +6,7 @@ export { default as Eyebrow } from './Eyebrow.svelte';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as Banner } from './Banner.svelte';
 export { default as Loading } from './Loading.svelte';
+export { default as Mark } from './Mark.svelte';
 export { default as StateView } from './StateView.svelte';
 export {
   NOTICE_TONES,

@@ -110,6 +110,21 @@ describe('Settings · Dōjō connection', () => {
     expect(q(m, '[data-no-dojos]')).toBeNull();
   });
 
+  it('a failed membership read shows no "0 dōjōs", no "Not filed" group, no summary', async () => {
+    const m = await mount(data({ memberships: null, membershipsError: 'Failed to fetch' }));
+    expect(q(m, '[data-dojo="unfiled"]')).toBeNull();
+    expect(q(m, '[data-summary]')).toBeNull();
+    expect(m.container.textContent).not.toMatch(/0 dōjōs/);
+  });
+
+  it('a failed sync read shows the dōjōs without "0 of 0" or "Nothing in this view"', async () => {
+    const m = await mount(data({ sync: null, error: 'boom' }));
+    expect(all(m, '[data-dojo]').map((d) => d.dataset.dojo)).toEqual(['p', 'o']);
+    expect(m.container.textContent).not.toMatch(/0 of 0/);
+    expect(q(m, '[data-dojo-empty]')).toBeNull();
+    expect(q(m, '[data-summary]')).toBeNull();
+  });
+
   it('two rows with the same key do not freeze the screen (2026-10-28)', async () => {
     const dup = [...entities, repo({ entity_key: 'github.com/sensei-hq/sensei' })];
     const m = await mount(data({ sync: { count: dup.length, counts: {}, entities: dup } }));

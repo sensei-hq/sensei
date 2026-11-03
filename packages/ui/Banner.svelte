@@ -47,9 +47,9 @@
 >
   <Mark char={mark ?? noticeTone(key).kanji} tone={key} class="{t.mark} text-lg" />
   <div class="min-w-0 flex-1">
-    {#if title}<p data-part="title" class="text-ink m-0 text-sm font-medium leading-snug">{title}</p>{/if}
+    {#if title}<p data-part="title" class="m-0 text-sm font-medium leading-snug {t.text}">{title}</p>{/if}
     {#if detail || children}
-      <div data-part="detail" class="text-ink-mute text-sm leading-normal">
+      <div data-part="detail" class="text-sm leading-normal {t.text}">
         {#if children}{@render children()}{:else}{detail}{/if}
       </div>
     {/if}

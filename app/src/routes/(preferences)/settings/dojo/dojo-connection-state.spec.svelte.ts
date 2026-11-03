@@ -33,7 +33,7 @@ function screen(over: Partial<ConnectionSource> = {}) {
     syncError: null,
     ...over,
   });
-  const actions = { act: vi.fn(), makeDefault: vi.fn(), signOut: vi.fn() };
+  const actions = { act: vi.fn(), makeDefault: vi.fn(), signOut: vi.fn(), reload: vi.fn() };
   return { s: new DojoConnectionScreen(() => src, actions), src, actions };
 }
 
@@ -167,17 +167,44 @@ describe('the dōjōs of the selected identity', () => {
     const { s } = screen({ sync: null, syncError: 'boom' });
     expect(s.loadNotices.map((n) => n.title)).toEqual(["Couldn't load what syncs"]);
   });
+
+  // A failed read is never a list (H1, r1): nothing that depends on it draws a number.
+  it('a failed membership read draws no dōjōs, no strays, no counts', () => {
+    const { s } = screen({ memberships: null, membershipsError: 'Failed to fetch' });
+    expect(s.dojos).toEqual([]);
+    expect(s.summary).toBeNull();
+    expect(s.filters).toEqual([]);
+    expect(s.cards.map((c) => c.summary)).toEqual([null, null, null]);
+  });
+
+  it('a failed sync read names the dōjōs but draws no repositories or counts', () => {
+    const { s } = screen({ sync: null, syncError: 'boom' });
+    expect(s.dojos.map((d) => [d.id, d.count, d.repos.length, d.empty])).toEqual([
+      ['p', null, 0, false],
+      ['o', null, 0, false],
+    ]);
+    expect(s.summary).toBeNull();
+    expect(s.filters).toEqual([]);
+    expect(s.cards.map((c) => c.summary)).toEqual([null, null, null]);
+  });
 });
 
 describe('identity errors', () => {
   it('a failed registry read: a fault Notice instead of the list', () => {
-    const { s } = screen({ identities: [], phase: 'error', identitiesError: 'registry unreachable' });
-    expect(s.identitiesNotice).toEqual({ tone: 'fault', title: "Couldn't read your identities", detail: 'registry unreachable', code: 'personas' });
+    const { s, actions } = screen({ identities: [], phase: 'error', identitiesError: 'registry unreachable' });
+    const n = s.identitiesNotice!;
+    expect(n).toMatchObject({ tone: 'fault', title: "Couldn't read your identities", detail: 'registry unreachable', code: 'personas',
+      remedy: 'Check that the sensei daemon is running, then retry.' });
+    // A failed registry read is not a dead end (H2): Retry reads it again.
+    expect(n.primary).toMatchObject({ label: 'Retry', name: 'retry' });
+    n.primary!.onclick!();
+    expect(actions.reload).toHaveBeenCalledOnce();
   });
 
   it('an action that failed (a sign-in that would not open): said beside the list', () => {
     const { s } = screen({ identitiesError: 'could not open your browser for jt-oss' });
-    expect(s.identitiesNotice).toEqual({ tone: 'fault', title: "That didn't go through", detail: 'could not open your browser for jt-oss', code: 'identity_action' });
+    expect(s.identitiesNotice).toEqual({ tone: 'fault', title: "That didn't go through", detail: 'could not open your browser for jt-oss', code: 'identity_action',
+      remedy: 'Try it again from the identity above.' });
   });
 
   it('none when all is well', () => {
@@ -193,7 +220,8 @@ describe("the identity's own sync — its plan and forge mirror", () => {
 
   it('a failing one is a fault Notice in its own words', () => {
     const { s } = screen({ sync: own });
-    expect(s.identityIssues).toEqual([{ key: 'forge_mirror:jerrythomas:pull', tone: 'fault', title: 'forge mirror is failing', detail: 'could not reach', code: 'forge_mirror' }]);
+    expect(s.identityIssues).toEqual([{ key: 'forge_mirror:jerrythomas:pull', tone: 'fault', title: 'forge mirror is failing', detail: 'could not reach', code: 'forge_mirror',
+      remedy: 'It retries on the next sync. If it keeps failing, sign this identity out and in again.' }]);
   });
 
   it('the activity lists each once, keyed so two dōjōs’ plans never collide', () => {

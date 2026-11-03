@@ -31,8 +31,8 @@
 </script>
 
 <script lang="ts">
-	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
-	import { actionFailedNotice } from '$lib/dojo-notices';
+	import { Screen, Notice } from '@sensei/ui';
+	import { actionFailedNotice, dojoLoadNotice } from '$lib/dojo-notices';
 	import { SectionHead, StatBadge, ListSection, KanjiToken, Chip, Btn } from '$lib/components/kit';
 	import type { KitContribution, KitDownstream, KitContribStat } from '$lib/components/kit/types';
 	import { tallyContributions } from '$lib/personal-view';
@@ -92,7 +92,7 @@
 			<Notice size="inline" expanded {...errorNotice} />
 		{/if}
 		{#if loadError}
-			<Notice size="panel" {...loadFailedNotice("your contributions", loadError)} data-load-error />
+			<Notice size="panel" {...dojoLoadNotice("your contributions", loadError)} data-load-error />
 		{:else}
 		<ListSection icon="upload-square" title="What you've shared" count={mine.length}>
 			{#each mine as c, i (i)}

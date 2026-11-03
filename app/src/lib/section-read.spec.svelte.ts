@@ -15,7 +15,7 @@ describe('SectionRead', () => {
     const r = new SectionRead("Couldn't load routers");
     await r.run(async () => { throw new Error('the daemon did not answer'); });
     expect(r.loading).toBe(false);
-    expect(r.notice).toEqual({ tone: 'fault', title: "Couldn't load routers", detail: 'the daemon did not answer' });
+    expect(r.notice).toEqual({ tone: 'fault', title: "Couldn't load routers", detail: 'the daemon did not answer', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 
   it('a non-Error rejection is still said', async () => {

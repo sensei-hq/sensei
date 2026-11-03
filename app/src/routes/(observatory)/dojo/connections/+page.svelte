@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { EmptyState, StateView } from '@sensei/ui';
+  import { EmptyState, StateView } from '@sensei/ui';
     import { railIcon } from "../../observatory-nav";
   import { invalidateAll } from '$app/navigation';
   import { PageHeader, Screen, Kanji } from '$lib/components';
@@ -85,7 +85,7 @@
 
     <div class="max-w-[1060px] mx-auto px-7 pb-10" data-connections-total={data.connections.length}>
       {#if data.error}
-        <StateView status="error" error={data.error} onretry={invalidateAll} />
+        <StateView status="error" error={data.error} failure={data.failure} onretry={invalidateAll} />
       {:else if data.connections.length === 0}
         <EmptyState size="screen"
           kanji="連"

@@ -107,7 +107,7 @@ describe('notices — through the shared Notice', () => {
     const r = new ChainRoles(() => ({}) as never);
     r.loadError = 'down';
     r.saveError.inference = 'taken';
-    expect(r.loadNotice).toEqual({ tone: 'fault', title: "Couldn't load the chains", detail: 'down' });
-    expect(r.saveNotice('inference')).toEqual({ tone: 'fault', title: "Couldn't save the inference chain", detail: 'taken' });
+    expect(r.loadNotice).toEqual({ tone: 'fault', title: "Couldn't load the chains", detail: 'down', remedy: 'Retry. If it keeps failing, reload the page.' });
+    expect(r.saveNotice('inference')).toEqual({ tone: 'fault', title: "Couldn't save the inference chain", detail: 'taken', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 });

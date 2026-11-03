@@ -300,6 +300,6 @@ describe('CollectiveSharing.notice', () => {
     const state = new CollectiveSharing(prefs(), mockApi());
     expect(state.notice).toBeNull();
     state.error = 'Service Unavailable';
-    expect(state.notice).toEqual({ tone: 'fault', title: "Couldn't save your sharing preferences", detail: 'Service Unavailable' });
+    expect(state.notice).toEqual({ tone: 'fault', title: "Couldn't save your sharing preferences", detail: 'Service Unavailable', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 });

@@ -1,7 +1,7 @@
 // Pure presentation helpers for the admin Plan & billing console (ScrBilling).
-// Side-effect-free (billing state in → numbers, actions and copy out) so the
-// estimate math, the plan actions and the attach notice unit-test without a DOM
-// and the screen stays declarative.
+// Side-effect-free (billing state in → actions and copy out) so the plan
+// actions and the attach notice unit-test without a DOM and the screen stays
+// declarative.
 
 import type { KitBilling } from './components/kit/types';
 
@@ -35,32 +35,35 @@ export interface BillingAccountWire {
 	period_end: string | null;
 }
 
-/** The live monthly total — active (billable) contributors × the per-seat price;
- *  null when either is unknown (no price is set before a payment provider). */
-export function monthlyTotal(b: Pick<KitBilling, 'seatsActive' | 'perSeat'>): number | null {
-	return b.seatsActive === null || b.perSeat === null ? null : b.seatsActive * b.perSeat;
-}
-
-/** A plan card's button: none on the current plan; on Free, Org offers to
- *  attach (the primary step); on Org, Free offers to move back. */
+/** A plan card's button: none on the current plan, or when the current plan is
+ *  not known; on Free, Pro offers to attach (the primary step); on Pro, Free
+ *  offers to move back. */
 export interface TierAction {
 	label: string;
 	primary: boolean;
 }
 
-export function tierAction(id: string, current: string): TierAction | null {
-	if (id === current) return null;
-	return id === 'org' ? { label: 'Attach Org plan', primary: true } : { label: 'Move to Free', primary: false };
+export function tierAction(id: string, current: string | null): TierAction | null {
+	if (current === null || id === current) return null;
+	return id === 'pro' ? { label: 'Attach Pro', primary: true } : { label: 'Move to Free', primary: false };
 }
 
-/** What the screen says about changing plan before a payment provider is
- *  connected (D-BILLING): the actions are shown, but nothing can be attached or
- *  charged yet. A Notice (normal tone) — waiting, not failing. */
-export function attachNotice() {
+/** The id of the current plan, or `null` when the account's plan is unknown. */
+export function currentTier(b: Pick<KitBilling, 'tiers'>): string | null {
+	return b.tiers.find((t) => t.current)?.id ?? null;
+}
+
+/** Why the plan buttons cannot run before a payment provider is connected
+ *  (D-BILLING): shown whenever one is offered (M6). A Notice (normal tone) —
+ *  waiting, not failing. */
+export function attachNotice(current: string) {
 	return {
 		tone: 'normal' as const,
 		title: 'Plan changes open once payments are connected',
-		detail: 'Until then every organization is on Free: its public repositories sync, and its private ones stay hidden.',
+		detail:
+			current === 'free'
+				? 'Until then this organization stays on Free: its public repositories sync, and its private ones stay hidden.'
+				: 'Until then this plan stays as it is.',
 		code: 'billing_not_connected'
 	};
 }

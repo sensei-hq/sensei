@@ -114,7 +114,7 @@
     <div class="px-6 py-6">
         {#if data.error}
             <!-- A failed read is shown, never "no patterns" (#85). -->
-            <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
+            <StateView status="error" error={data.error} failure={data.failure} onretry={() => invalidateAll()} />
         {:else}
         {#if data.followed.length > 0}
             <section class="mb-5">

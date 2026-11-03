@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Screen, EmptyState, Notice, loadFailedNotice } from '@sensei/ui';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, EmptyState, Notice } from '@sensei/ui';
 	import { SectionHead, Btn, Chip, KanjiToken } from '$lib/components/kit';
 	import type { KitApproval } from '$lib/components/kit/types';
 	import { impactTone } from '$lib/triage/candidates-view';
@@ -22,7 +24,7 @@
 		onReview?: (a: KitApproval) => void;
 		onApprove?: (a: KitApproval) => void;
 		/** A failed read — shown in place of the empty state (#335). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 </script>
 
@@ -37,7 +39,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<Notice size="panel" {...loadFailedNotice("the approvals queue", error)} data-load-error />
+			<Notice size="panel" {...dojoLoadNotice("the approvals queue", error)} data-load-error />
 		{:else}
 			{#if approvals.length}
 				<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">

@@ -121,8 +121,8 @@ describe('noticeFromApiError', () => {
     expect(n.remedy).toMatch(/Retry in a moment/);
   });
 
-  it('401/403/404 are refusals, not faults: nothing broke, and each names the next step', () => {
-    const missing = noticeFromApiError({ status: 404, message: 'No such workspace' }, { title: "Couldn't open it" });
+  it('401/403 and an entity\'s 404 are refusals, not faults: nothing broke, and each names the next step', () => {
+    const missing = noticeFromApiError({ status: 404, message: 'No such workspace' }, { title: "Couldn't open it", entity: true });
     expect(missing).toMatchObject({ tone: 'refusal', detail: 'No such workspace', code: 'http_404' });
     expect(missing.remedy).toBe('It may have moved or been removed. Go back and pick it again.');
     expect(noticeFromApiError({ status: 403, message: 'admins only' }, { title: 'x' })).toMatchObject({
@@ -135,10 +135,20 @@ describe('noticeFromApiError', () => {
     });
   });
 
-  it("another 4xx: the server's message is the whole story — no invented remedy", () => {
+  it('a 404 on a read that is not an entity lookup is a version mismatch: a fault, update Sensei (M2)', () => {
+    expect(noticeFromApiError({ status: 404, message: 'Not Found' }, { title: "Couldn't load tickets", service: 'the sensei daemon' })).toEqual({
+      tone: 'fault',
+      title: "Couldn't load tickets",
+      detail: 'Not Found',
+      remedy: "The sensei daemon doesn't know this request. Update Sensei so the app and the sensei daemon match, then retry.",
+      code: 'http_404',
+    });
+  });
+
+  it('another 4xx: the message says what is wrong, and the next step is to fix it (M3)', () => {
     const n = noticeFromApiError({ status: 409, message: 'Already exists' }, { title: "Couldn't save" });
     expect(n).toMatchObject({ tone: 'fault', detail: 'Already exists', code: 'http_409' });
-    expect(n.remedy).toBeUndefined();
+    expect(n.remedy).toBe('Fix what it says, then try again.');
   });
 
   it('defaults the far end to "the server"', () => {
@@ -154,15 +164,29 @@ describe('noticeForRouteError', () => {
       title: "This page isn't",
       emphasis: 'here.',
       detail: 'The link may be old, or the item was removed.',
+      remedy: 'Go back, or start again from home.',
       code: 'http_404',
     });
   });
 
-  it('403: not allowed — says so rather than calling it a fault', () => {
+  it('403: not allowed — says so rather than calling it a fault, and who to ask', () => {
     const n = noticeForRouteError(403, 'Forbidden');
     expect(n.tone).toBe('refusal');
     expect(n.eyebrow).toBe('not allowed');
     expect(n.detail).toBe('Forbidden');
+    expect(n.remedy).toBe('Ask an admin for access.');
+  });
+
+  it('401: signed out, not "no access" — the next step is to sign in (L2)', () => {
+    expect(noticeForRouteError(401, '')).toEqual({
+      tone: 'refusal',
+      eyebrow: 'signed out',
+      title: 'Sign in to',
+      emphasis: 'open this page.',
+      detail: 'Your session ended, or you have not signed in here yet.',
+      remedy: 'Sign in again.',
+      code: 'http_401',
+    });
   });
 
   it("anything else: the page broke — the message is the reason, a reload may clear it", () => {
@@ -188,9 +212,10 @@ describe('failureNotice — a state module\'s failure, said the one way', () => 
     expect(failureNotice("Couldn't load tickets", '')).toBeNull();
   });
 
-  it('the screen names what failed; the error is the reason', () => {
+  it('the screen names what failed; the error is the reason; and it always names a next step (H2)', () => {
     expect(failureNotice("Couldn't load tickets", 'The sensei daemon didn’t respond.')).toEqual({
       tone: 'fault', title: "Couldn't load tickets", detail: 'The sensei daemon didn’t respond.',
+      remedy: 'Retry. If it keeps failing, reload the page.',
     });
   });
 
@@ -243,6 +268,22 @@ describe('stateErrorNotice — what a failed screen says', () => {
   it('with no remedy anywhere, still names the next step', () => {
     expect(stateErrorNotice('x').remedy).toBe('Retry. If it keeps failing, reload the page.');
   });
+
+  it('with the failed read itself, says it through noticeFromApiError: a 403 is a refusal (M1)', () => {
+    expect(stateErrorNotice('forbidden', { failure: { status: 403, message: 'forbidden' }, remedy: 'Check the daemon.' })).toEqual({
+      tone: 'refusal',
+      eyebrow: "couldn't load",
+      title: "Couldn't load this",
+      detail: 'forbidden',
+      remedy: 'Ask an admin for access.',
+      code: 'http_403',
+    });
+  });
+
+  it('an unreachable far end names the service the app provided', () => {
+    expect(stateErrorNotice('Failed to fetch', { failure: { status: 0, message: 'Failed to fetch' }, service: 'the sensei daemon' }).remedy)
+      .toBe('Check that the sensei daemon is running and reachable, then retry.');
+  });
 });
 
 describe('BANNER_TONES — a strip per Notice tone, text on its tint from text-on-*-soft', () => {
@@ -253,7 +294,16 @@ describe('BANNER_TONES — a strip per Notice tone, text on its tint from text-o
       expect(t.edge).toMatch(/^border-[a-z-]+$/);
       expect(t.mark).toMatch(/^text-[a-z-]+$/);
     }
-    expect(BANNER_TONES.fault).toEqual({ bg: 'bg-danger-soft', edge: 'border-danger-soft', mark: 'text-on-danger-soft' });
-    expect(BANNER_TONES.normal).toEqual({ bg: 'bg-paper-soft', edge: 'border-paper-edge', mark: 'text-ink-soft' });
+    expect(BANNER_TONES.fault).toEqual({ bg: 'bg-danger-soft', edge: 'border-danger-soft', mark: 'text-on-danger-soft', text: 'text-on-danger-soft' });
+    expect(BANNER_TONES.normal).toEqual({ bg: 'bg-paper-soft', edge: 'border-paper-edge', mark: 'text-ink-soft', text: 'text-ink' });
+  });
+
+  // Text on a tint is text-on-{role}-soft (rokkit-defaults, M4 r1): ink and ink-mute
+  // fail contrast on a role's tint in dark mode.
+  it("each tint's words are its role's text-on-*-soft; paper keeps ink", () => {
+    const ROLE = { fault: 'danger', refusal: 'warning', action: 'accent' } as const;
+    for (const [tone, role] of Object.entries(ROLE)) {
+      expect(BANNER_TONES[tone as keyof typeof ROLE].text).toBe(`text-on-${role}-soft`);
+    }
   });
 });

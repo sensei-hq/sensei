@@ -68,7 +68,7 @@ describe('AzureConnectState', () => {
 		const s = new AzureConnectState(a);
 		await s.connect();
 		expect(s.error).toBe('Azure DevOps is not configured on this dōjō');
-		expect(s.errorNotice).toEqual({ tone: 'fault', title: "Couldn't finish with Azure DevOps", detail: 'Azure DevOps is not configured on this dōjō' });
+		expect(s.errorNotice).toEqual({ tone: 'fault', title: "Couldn't finish with Azure DevOps", detail: 'Azure DevOps is not configured on this dōjō', remedy: 'Connect Azure DevOps again, then retry.' });
 		expect(a.navigate).not.toHaveBeenCalled();
 		expect(s.busy).toBeNull();
 	});

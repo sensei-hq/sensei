@@ -192,8 +192,8 @@ describe('notices — through the shared Notice', () => {
     s.toolError = 'timeout';
     s.serverFormError = 'name taken';
     s.replayDetailError = 'gone';
-    expect(s.toolNotice).toEqual({ tone: 'fault', title: "The call didn't go through", detail: 'timeout' });
-    expect(s.serverFormNotice).toEqual({ tone: 'fault', title: "Couldn't add that server", detail: 'name taken' });
-    expect(s.replayDetailNotice).toEqual({ tone: 'fault', title: "Couldn't read this session's tool calls", detail: 'gone' });
+    expect(s.toolNotice).toEqual({ tone: 'fault', title: "The call didn't go through", detail: 'timeout', remedy: 'Retry. If it keeps failing, reload the page.' });
+    expect(s.serverFormNotice).toEqual({ tone: 'fault', title: "Couldn't add that server", detail: 'name taken', remedy: 'Retry. If it keeps failing, reload the page.' });
+    expect(s.replayDetailNotice).toEqual({ tone: 'fault', title: "Couldn't read this session's tool calls", detail: 'gone', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 });

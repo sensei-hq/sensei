@@ -4,6 +4,7 @@
 // browser with each. Everything the toggle shows is decided here (audit
 // 2026-10-28, item 13: the state machine lived in the component).
 import type { SubscribeResult } from '$lib/relay-push';
+import { failureNotice } from '@sensei/ui';
 
 export interface RelayNotifyDeps {
 	supported: () => boolean;
@@ -18,7 +19,7 @@ type Phase = 'idle' | 'enabled' | 'denied' | 'unsupported' | 'error';
 export type NotifyView =
 	| { kind: 'on'; text: string }
 	| { kind: 'status'; text: string }
-	| { kind: 'button'; buttonLabel: string; busy: boolean; error: string | null };
+	| { kind: 'button'; buttonLabel: string; busy: boolean; error: string | null; notice: ReturnType<typeof failureNotice> };
 
 export class RelayNotify {
 	phase = $state<Phase>('idle');
@@ -48,7 +49,11 @@ export class RelayNotify {
 					kind: 'button',
 					buttonLabel: this.busy ? 'Enabling…' : 'Notify me',
 					busy: this.busy,
-					error: this.phase === 'error' ? this.message : null
+					error: this.phase === 'error' ? this.message : null,
+					// The failure as a Notice with its next step (M4) — the toggle only renders it.
+					notice: failureNotice("Couldn't turn on notifications", this.phase === 'error' ? this.message : null, {
+						remedy: 'Allow notifications for this site in your browser, then try again.'
+					})
 				};
 		}
 	}

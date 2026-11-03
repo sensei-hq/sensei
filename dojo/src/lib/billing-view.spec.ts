@@ -1,41 +1,51 @@
 import { describe, expect, it } from 'vitest';
-import { monthlyTotal, attachNotice, tierAction } from './billing-view';
+import { attachNotice, tierAction, currentTier } from './billing-view';
+import { toKitBilling } from './billing-map';
 
-// The admin billing helpers — the estimate math, the tier actions and what the
-// screen says about attaching a plan. Pure functions, so they assert without a DOM.
-
-describe('monthlyTotal — active contributors × per-seat', () => {
-	it('multiplies billable seats by the per-seat price', () => {
-		expect(monthlyTotal({ seatsActive: 18, perSeat: 12 })).toBe(216);
-	});
-
-	it('is zero when there are no billable seats', () => {
-		expect(monthlyTotal({ seatsActive: 0, perSeat: 12 })).toBe(0);
-		// No price set, or no seat count: there is no total to show (#106).
-		expect(monthlyTotal({ seatsActive: 34, perSeat: null })).toBeNull();
-		expect(monthlyTotal({ seatsActive: null, perSeat: 12 })).toBeNull();
-	});
-});
+// The admin billing helpers — the plan actions, which plan is current, and what
+// the screen says about changing plan. Pure, so they assert without a DOM.
 
 describe('tierAction — each plan card\'s button', () => {
 	it('the current plan has none', () => {
 		expect(tierAction('free', 'free')).toBeNull();
-		expect(tierAction('org', 'org')).toBeNull();
+		expect(tierAction('pro', 'pro')).toBeNull();
 	});
 
-	it('on Free, Org offers to attach; on Org, Free offers to move back', () => {
-		expect(tierAction('org', 'free')).toEqual({ label: 'Attach Org plan', primary: true });
-		expect(tierAction('free', 'org')).toEqual({ label: 'Move to Free', primary: false });
+	it('on Free, Pro offers to attach; on Pro, Free offers to move back', () => {
+		expect(tierAction('pro', 'free')).toEqual({ label: 'Attach Pro', primary: true });
+		expect(tierAction('free', 'pro')).toEqual({ label: 'Move to Free', primary: false });
+	});
+
+	it('with no known current plan, nothing is offered', () => {
+		expect(tierAction('pro', null)).toBeNull();
 	});
 });
 
-describe('attachNotice — what the screen says about changing plan', () => {
-	it('says plan changes open once payments are connected — nothing is charged or attached yet', () => {
-		expect(attachNotice()).toEqual({
+describe('currentTier', () => {
+	it('the current tier, or null when the plan is unknown', () => {
+		const usage = { seats_used: 0, total_active_seats: 0, billable_users: [] };
+		expect(currentTier(toKitBilling({ account: null, usage }))).toBe('free');
+		const unknown = toKitBilling({ account: { plan: 'x', status: 'active', seats_included: 0, seats_used: 0, seats_computed_at: null, period_start: null, period_end: null }, usage });
+		expect(currentTier(unknown)).toBeNull();
+	});
+});
+
+describe('attachNotice — why the plan buttons cannot run yet (M6)', () => {
+	it('on Free: plan changes open once payments are connected, and what Free means meanwhile', () => {
+		expect(attachNotice('free')).toEqual({
 			tone: 'normal',
 			title: 'Plan changes open once payments are connected',
-			detail: 'Until then every organization is on Free: its public repositories sync, and its private ones stay hidden.',
-			code: 'billing_not_connected',
+			detail: "Until then this organization stays on Free: its public repositories sync, and its private ones stay hidden.",
+			code: 'billing_not_connected'
+		});
+	});
+
+	it('on Pro: the same, and the plan stays as it is', () => {
+		expect(attachNotice('pro')).toEqual({
+			tone: 'normal',
+			title: 'Plan changes open once payments are connected',
+			detail: 'Until then this plan stays as it is.',
+			code: 'billing_not_connected'
 		});
 	});
 });

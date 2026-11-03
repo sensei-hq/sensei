@@ -5,7 +5,7 @@
   // says and how it looks are decided in ./notice.js; this file only lays the
   // parts out. See docs/architecture/notice.md.
   //
-  //   screen  a whole screen that could not do its job (ScreenState's error):
+  //   screen  a whole screen that could not do its job (StateView's error):
   //           eyebrow, display headline, sentence, then the card
   //   panel   the card alone, inside a section (the bootstrap's Remedy card)
   //   inline  one line in a row, a list or a form; "Why?" opens the rest
@@ -16,24 +16,15 @@
   import type { Snippet } from 'svelte';
   import { Button, Card } from '@rokkit/ui';
   import Eyebrow from './Eyebrow.svelte';
+  import Mark from './Mark.svelte';
+  import ActionButton from './ActionButton.svelte';
   import { useGlyphMode } from './glyph-mode.js';
-  import { noticeTone, noticeMark } from './notice.js';
+  import { noticeTone } from './notice.js';
+  import type { NoticeAction, NoticeTone } from './types.js';
 
-  type Tone = 'fault' | 'refusal' | 'action' | 'normal';
+  type Tone = NoticeTone;
   type Size = 'screen' | 'panel' | 'inline';
   type GlyphMode = 'kanji' | 'icon';
-  interface NoticeAction {
-    label: string;
-    onclick?: () => void;
-    /** A link instead of a button — "Open Health", "See plans". */
-    href?: string;
-    /** A page outside the app: opens in the browser, never the webview. */
-    external?: boolean;
-    /** In flight: the button is disabled so it cannot be pressed twice. */
-    busy?: boolean;
-    /** The `data-action` hook (default `primary` / `secondary`) — e.g. `retry`. */
-    name?: string;
-  }
 
   let {
     tone = 'fault',
@@ -106,7 +97,6 @@
   const provided = useGlyphMode();
   const mode = $derived(modeProp ?? provided());
   const view = $derived(noticeTone(tone));
-  const glyph = $derived(noticeMark(tone, mode, { char: mark, icon }));
 
   // Inline: the reader's toggle wins once they have used it.
   let toggled = $state<boolean | null>(null);
@@ -140,27 +130,12 @@
 </script>
 
 {#snippet markEl(extra: string)}
-  {#if glyph.mode === 'icon'}
-    <span data-part="mark" data-glyph="icon" class={[glyph.icon, view.text, extra, 'shrink-0']} aria-hidden="true"></span>
-  {:else}
-    <span data-part="mark" data-glyph="kanji" class={['font-kanji leading-none', view.text, extra, 'shrink-0']} aria-hidden="true">{glyph.char}</span>
-  {/if}
+  <Mark char={mark} {icon} {tone} mode={mode} class="{view.text} {extra}" />
 {/snippet}
 
 <!-- primary: solid · secondary: outline · on an inline line: link. -->
 {#snippet action(a: NoticeAction, which: 'primary' | 'secondary', look: 'solid' | 'outline' | 'link')}
-  <Button
-    label={a.label}
-    size="sm"
-    variant={look === 'solid' ? 'primary' : 'default'}
-    style={look === 'solid' ? 'default' : look}
-    href={a.href}
-    target={a.href && a.external ? '_blank' : undefined}
-    {...(a.href && a.external ? { rel: 'noopener noreferrer' } : {})}
-    disabled={a.busy}
-    onclick={a.onclick}
-    data-action={a.name ?? which}
-  />
+  <ActionButton action={a} {look} name={which} />
 {/snippet}
 
 {#snippet scriptBlock()}

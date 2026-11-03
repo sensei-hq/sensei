@@ -521,22 +521,22 @@ describe('SDLC figures (tracker-sdlc-metrics S8)', () => {
 describe('notices', () => {
   it('a failed load: "Couldn\'t load this workspace\'s tickets", the reason as detail', async () => {
     const { s } = await ready({ tryListTrackers: async () => fail(0) });
-    expect(s.loadNotice).toEqual({ tone: 'fault', title: "Couldn't load this workspace's tickets", detail: 'The sensei daemon didn’t respond.' });
+    expect(s.loadNotice).toEqual({ tone: 'fault', title: "Couldn't load this workspace's tickets", detail: 'The sensei daemon didn’t respond.', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 
   it('a failed ticket read', async () => {
     const { s, l } = await ready({ tryGetTrackerTask: async () => fail(404, 'task_not_found') });
     await s.openTicket(l, 'AUTH-1');
-    expect(s.ticketNotice).toEqual({ tone: 'fault', title: "Couldn't open AUTH-1", detail: 'No ticket with that key in sensei.' });
+    expect(s.ticketNotice).toEqual({ tone: 'fault', title: "Couldn't open AUTH-1", detail: 'No ticket with that key in sensei.', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 
   it("a lane's failed ticket and unlinked reads", async () => {
     const t = await ready({ tryListTrackerTasks: async () => fail(500, 'internal') });
-    expect(t.l.tasksNotice).toEqual({ tone: 'fault', title: "Couldn't load this board's tickets", detail: 'The sensei daemon hit a database error.' });
+    expect(t.l.tasksNotice).toEqual({ tone: 'fault', title: "Couldn't load this board's tickets", detail: 'The sensei daemon hit a database error.', remedy: 'Retry. If it keeps failing, reload the page.' });
     const u = await ready({ tryListUnlinkedSessions: async () => fail(0) });
     await u.l.setFilter('s13');
     await u.l.toggleUnlinked();
-    expect(u.l.unlinkedNotice).toEqual({ tone: 'fault', title: "Couldn't load the sessions not linked to a ticket", detail: 'The sensei daemon didn’t respond.' });
+    expect(u.l.unlinkedNotice).toEqual({ tone: 'fault', title: "Couldn't load the sessions not linked to a ticket", detail: 'The sensei daemon didn’t respond.', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 
   it('none when nothing failed', async () => {

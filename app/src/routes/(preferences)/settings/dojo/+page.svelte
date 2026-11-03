@@ -39,6 +39,7 @@
       act: (id) => personaList.act(id),
       makeDefault: (id) => personaList.makeDefault(id),
       signOut: (id) => personaList.signOut(id),
+      reload: () => personaList.load(),
     },
   );
 
@@ -104,23 +105,25 @@
             {/if}
             {#if screen.noDojos}
               <Notice size="panel" {...screen.noDojos} data-no-dojos />
-            {:else if screen.dojos.length > 0 || screen.filter !== 'all'}
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <p class="m-0 text-sm text-ink-mute" data-summary>{screen.summary}</p>
-                <Toggle
-                  options={filterOptions}
-                  value={screen.filter}
-                  onchange={(v: unknown) => screen.setFilter(v as RepoFilter)}
-                  label="Filter repositories"
-                  size="sm"
-                >
-                  {#snippet itemContent(proxy)}
-                    <span data-filter={proxy.get('value')}>{proxy.label}</span>
-                    <span class="font-mono text-xs">{proxy.get('count')}</span>
-                  {/snippet}
-                </Toggle>
-              </div>
-              <DojoRepos dojos={screen.dojos} />
+            {:else}
+              {#if screen.summary !== null && (screen.dojos.length > 0 || screen.filter !== 'all')}
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <p class="m-0 text-sm text-ink-mute" data-summary>{screen.summary}</p>
+                  <Toggle
+                    options={filterOptions}
+                    value={screen.filter}
+                    onchange={(v: unknown) => screen.setFilter(v as RepoFilter)}
+                    label="Filter repositories"
+                    size="sm"
+                  >
+                    {#snippet itemContent(proxy)}
+                      <span data-filter={proxy.get('value')}>{proxy.label}</span>
+                      <span class="font-mono text-xs">{proxy.get('count')}</span>
+                    {/snippet}
+                  </Toggle>
+                </div>
+              {/if}
+              {#if screen.dojos.length > 0}<DojoRepos dojos={screen.dojos} />{/if}
             {/if}
             {#if screen.activity.length > 0}
               <details class="text-sm text-ink-mute" data-activity>

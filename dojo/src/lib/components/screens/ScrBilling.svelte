@@ -1,18 +1,21 @@
 <script lang="ts">
 	import { Card, Button } from '@rokkit/ui';
-	import { Screen, Notice, Eyebrow, loadFailedNotice } from '@sensei/ui';
-	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection } from '$lib/components/kit';
+	import { Screen, Notice, Eyebrow, Mark } from '@sensei/ui';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { SectionHead, Chip, StatBadge, ListSection } from '$lib/components/kit';
 	import type { KitBilling } from '$lib/components/kit/types';
-	import { monthlyTotal, tierAction, attachNotice } from '$lib/billing-view';
+	import { tierAction, currentTier, attachNotice } from '$lib/billing-view';
 
-	// The admin Plan & billing screen — two plans (D46). Free: every public
-	// repository, and a personal dōjō's private ones. Org: the organization's
-	// private repositories too, per active contributor. A summary row (current
-	// plan · billable seats · what Org costs at the live seat count), the two plan
-	// cards, and the invoice history. Presentational: the page supplies the
-	// billing state from the live `…/billing` read; the copy and actions come from
-	// billing-view. Plan changes are shown but cannot run until a payment provider
-	// is connected (D-BILLING) — the screen says so rather than pretending (#106).
+	// The admin Plan & billing screen — two plans (D46, D52, D59, D75). Free: every
+	// public repository and a personal dōjō's private ones, with targets. Pro: an
+	// organization's private repositories too, with targets, billed by the seats who
+	// work on them; its price is to be announced. A summary (current plan, billable
+	// seats and what they count), the two plan cards, and the invoice history.
+	// Presentational: the page supplies the billing state from the live `…/billing`
+	// read; the copy and actions come from billing-view and billing-map. Plan
+	// changes are shown but cannot run until a payment provider is connected
+	// (D-BILLING), and the screen says so whenever one is offered (#106, M6).
 	let {
 		orgName,
 		billing,
@@ -21,13 +24,12 @@
 		orgName: string;
 		billing: KitBilling;
 		/** A failed read — shown in place of the empty state (#335). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 
-	const monthly = $derived(monthlyTotal(billing));
-	const current = $derived(billing.tiers.find((t) => t.current)?.id ?? 'free');
-	const onFree = $derived(current === 'free');
-	const notice = attachNotice();
+	const current = $derived(currentTier(billing));
+	const notice = $derived(current ? attachNotice(current) : null);
+	const offered = $derived(billing.tiers.some((t) => tierAction(t.id, current) !== null));
 </script>
 
 <Screen>
@@ -35,7 +37,7 @@
 		<div class="px-4 pt-4 md:px-8 md:pt-8">
 			<SectionHead
 				kanji="円" eyebrow={orgName + ' · plan & billing'} title="Plan & billing"
-				description="Public repositories and personal dōjōs are free. An organization's private repositories sync on the Org plan, billed per active contributor. Read-only members, the desktop app and bring-your-own-key inference are always free."
+				description="Public repositories and personal dōjōs are free, with targets. An organization's private repositories sync, with targets, on Pro — billed by the seats who work on them. SSO, SCIM, audit, viewers and the relay's team queue are free on every plan."
 			>
 				{#snippet right()}
 					{#if billing.plan}
@@ -49,10 +51,14 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<Notice size="panel" {...loadFailedNotice("billing", error)} data-load-error />
+			<Notice size="panel" {...dojoLoadNotice('billing', error)} data-load-error />
 		{:else}
-			<!-- Summary — current plan · billable seats · what Org costs. -->
-			<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+			{#if billing.problem}
+				<div data-billing-problem><Notice size="panel" {...billing.problem} /></div>
+			{/if}
+
+			<!-- Summary — current plan · billable seats and what they count. -->
+			<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
 				<Card class="border-accent">
 					<div class="flex flex-col gap-1">
 						<Eyebrow>Current plan</Eyebrow>
@@ -67,24 +73,12 @@
 						<Eyebrow>Billable seats</Eyebrow>
 						<StatBadge
 							n={billing.seatsActive ?? '—'}
-							label="active contributors"
+							label="seats on private workspaces"
 							sub={billing.seatsReadonly === null ? undefined : billing.seatsReadonly + ' read-only free'}
 						/>
-					</div>
-				</Card>
-				<Card>
-					<div class="flex flex-col gap-1">
-						<Eyebrow>{onFree ? 'On Org, per month' : 'This month'}</Eyebrow>
-						{#if monthly === null}
-							<StatBadge n="—" label="no seat count yet" />
-						{:else}
-							<StatBadge
-								n={'$' + monthly}
-								label={billing.seatsActive + ' × $' + billing.perSeat}
-								sub={onFree ? 'an estimate at today\'s seat count' : 'updated live'}
-								toneClass="text-accent"
-							/>
-						{/if}
+						<p class="text-ink-soft m-0 text-xs">
+							People with a seat on a private workspace. Contributors to public repositories and viewers are never counted.
+						</p>
 					</div>
 				</Card>
 			</div>
@@ -96,7 +90,7 @@
 					<Card class={t.current ? 'border-accent' : undefined}>
 						<div class="flex h-full flex-col gap-3" data-tier={t.id}>
 							<div class="flex items-center gap-2">
-								<KanjiToken char={t.kanji} size="lg" toneClass={t.current ? 'text-accent' : 'text-ink-soft'} />
+								<Mark char={t.kanji} class="text-lg {t.current ? 'text-accent' : 'text-ink-soft'}" />
 								<span class="text-ink text-sm font-semibold">{t.name}</span>
 								{#if t.current}
 									<span class="ml-auto">
@@ -106,11 +100,11 @@
 									</span>
 								{/if}
 							</div>
-							<div class="flex items-baseline gap-1">
+							<div class="flex flex-wrap items-baseline gap-1">
 								<span class="display text-ink text-xl font-light">{t.price}</span>
 								<span class="mono text-ink-faint text-xs">{t.sub}</span>
 							</div>
-							<ul class="flex flex-col gap-1">
+							<ul class="m-0 flex list-none flex-col gap-1 p-0">
 								{#each t.lines as l (l)}
 									<li class="text-ink-mute flex gap-2 text-xs">
 										<span class="text-accent flex-shrink-0" aria-hidden="true">·</span>{l}
@@ -123,7 +117,7 @@
 										variant={action.primary ? 'primary' : 'default'}
 										style={action.primary ? 'default' : 'outline'}
 										disabled
-										data-action={t.id === 'org' ? 'attach-org' : 'move-free'}
+										data-action={t.id === 'pro' ? 'attach-pro' : 'move-free'}
 										label={action.label}
 									/>
 								</div>
@@ -133,7 +127,7 @@
 				{/each}
 			</div>
 
-			{#if onFree}
+			{#if offered && notice}
 				<div data-attach-notice>
 					<Notice size="inline" expanded {...notice} />
 				</div>

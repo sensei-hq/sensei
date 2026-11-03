@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Screen, Banner, Notice, loadFailedNotice } from '@sensei/ui';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Banner, Notice } from '@sensei/ui';
 	import { SectionHead, Icon, ClassChip, PhasePill, LadderRung, RuleRow, ConflictCard } from '$lib/components/kit';
 	import Spark from '$lib/components/kit/Spark.svelte';
 	import type { KitConflict, KitLadderRung, KitWorkspace } from '$lib/components/kit/types';
@@ -28,7 +30,7 @@
 		ladder: KitLadderRung[];
 		conflicts: KitConflict[];
 		/** A failed constitution read — shown instead of the empty state (#106). */
-		error?: string | null;
+		error?: ReadError | string | null;
 		/** The workspace's per-repository metrics (WP5); null when the page did
 		 *  not read them (the personal drill-in) or the read failed. */
 		metrics?: WorkspaceMetricsView | null;
@@ -73,7 +75,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<Notice size="panel" {...loadFailedNotice("this workspace's constitution", error)} data-load-error />
+			<Notice size="panel" {...dojoLoadNotice("this workspace's constitution", error)} data-load-error />
 		{:else if ladder.length === 0}
 			<!-- Honest-empty: the composed constitution is resolved by the daemon in the
 			     editor and NOT yet federated to the dōjō (F4). We render the real workspace
@@ -170,7 +172,7 @@
 					{/if}
 				</div>
 				{#if metricsError}
-					<Notice size="panel" {...loadFailedNotice("this workspace's metrics", metricsError)} data-load-error />
+					<Notice size="panel" {...dojoLoadNotice("this workspace's metrics", metricsError)} data-load-error />
 				{:else if metrics && metrics.repos.length === 0}
 					<p class="text-sm text-ink-faint">Nothing sent in this window.</p>
 				{:else if metrics}

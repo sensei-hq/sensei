@@ -28,6 +28,7 @@
   let {
     status,
     error = null,
+    failure = null,
     notice,
     onretry,
     kanji = '空',
@@ -38,6 +39,9 @@
   }: {
     status: 'loading' | 'error' | 'empty' | 'ready';
     error?: string | null;
+    /** The read that failed, status and all (`ApiError`): said through
+     *  noticeFromApiError, so a 401/403 reads as a refusal, not a fault. */
+    failure?: { status: number; message: string } | null;
     notice?: StateNotice;
     onretry?: () => void;
     kanji?: string;
@@ -49,7 +53,7 @@
   } = $props();
 
   const defaults = useStateDefaults();
-  const view = $derived(stateErrorNotice(error, { notice, remedy: defaults.remedy }));
+  const view = $derived(stateErrorNotice(error, { notice, failure, remedy: defaults.remedy, service: defaults.service }));
 </script>
 
 {#if status === 'loading'}

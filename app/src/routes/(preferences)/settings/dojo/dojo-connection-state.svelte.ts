@@ -10,6 +10,7 @@
 // cards show status only, so there is one place to act.
 
 import type { DojoMembership, SyncStateRow } from '$lib/types.js';
+import type { NoticeTone } from '$lib/notice-tone.js';
 import { IDENTITY_TONE_CLASS, type Identity, type IdentitiesPhase } from '$lib/personas.svelte.js';
 import {
   REPO_FILTERS,
@@ -37,15 +38,18 @@ export interface ConnectionActions {
   act: (id: Identity) => unknown;
   makeDefault: (id: Identity) => unknown;
   signOut: (id: Identity) => unknown;
+  /** Read the identities again (the registry read failed). */
+  reload: () => unknown;
 }
 
 /** Notice props the template passes through (packages/ui/Notice.svelte). */
 export interface ScreenNoticeProps {
-  tone: 'fault' | 'refusal' | 'action' | 'normal';
+  tone: NoticeTone;
   title: string;
   detail?: string;
   remedy?: string;
   code?: string;
+  primary?: { label: string; onclick?: () => void; name?: string };
 }
 
 export interface IdentityCard {
@@ -120,7 +124,8 @@ export class DojoConnectionScreen {
       standing: i.standing,
       toneClass: IDENTITY_TONE_CLASS[i.tone],
       selected: i.label === sel,
-      summary: identitySummary(i, memberships ?? [], sync ?? []),
+      // A failed read draws no number (never "0 dōjōs").
+      summary: memberships && sync ? identitySummary(i, memberships, sync) : null,
     }));
   }
 
@@ -185,19 +190,41 @@ export class DojoConnectionScreen {
     return { tone: 'action', title: `${i.name}'s credential expired`, remedy: 'Sign in again above. Nothing synced so far is lost; syncing resumes once you are back.' };
   }
 
+  /** The selected identity's dōjōs. A failed memberships read draws none (its
+   *  Notice says why); a failed sync read names the dōjōs but draws no
+   *  repositories, counts or strays — a failed read is never a list. */
   get dojos(): DojoGroup[] {
+    if (this.#src.sync === null) return this.#named;
+    return this.#grouped(this.filter);
+  }
+
+  get #named(): DojoGroup[] {
     const i = this.selected;
-    if (!i || !isConnected(i)) return [];
-    return dojoGroups(this.#src.memberships ?? [], this.#src.sync ?? [], i.sessionSlot, this.filter);
+    const { memberships } = this.#src;
+    if (!i || !isConnected(i) || memberships === null) return [];
+    return dojoGroups(memberships, [], i.sessionSlot, 'all')
+      .filter((g) => g.id !== 'unfiled')
+      .map((g) => ({ ...g, repos: [], empty: false, count: null }));
+  }
+
+  #grouped(filter: RepoFilter): DojoGroup[] {
+    const i = this.selected;
+    const { memberships, sync } = this.#src;
+    if (!i || !isConnected(i) || memberships === null || sync === null) return [];
+    return dojoGroups(memberships, sync, i.sessionSlot, filter);
+  }
+
+  /** Both reads came back: only then are there counts to filter and sum. */
+  get #counted(): boolean {
+    return this.#src.memberships !== null && this.#src.sync !== null;
   }
 
   get #all(): DojoGroup[] {
-    const i = this.selected;
-    if (!i || !isConnected(i)) return [];
-    return dojoGroups(this.#src.memberships ?? [], this.#src.sync ?? [], i.sessionSlot, 'all');
+    return this.#grouped('all');
   }
 
   get filters(): { key: RepoFilter; label: string; count: number; on: boolean }[] {
+    if (!this.#counted) return [];
     const repos = this.#all.flatMap((g) => g.repos);
     return REPO_FILTERS.map((f) => ({
       ...f,
@@ -206,7 +233,8 @@ export class DojoConnectionScreen {
     }));
   }
 
-  get summary(): string {
+  get summary(): string | null {
+    if (!this.#counted) return null;
     const groups = this.#all.filter((g) => g.id !== 'unfiled');
     const repos = this.#all.flatMap((g) => g.repos);
     const syncing = repos.filter((r) => r.category === 'syncing').length;
@@ -270,6 +298,7 @@ export class DojoConnectionScreen {
         title: `${entityLabel(r.entity)} is failing`,
         detail: r.last_error ?? undefined,
         code: r.entity,
+        remedy: 'It retries on the next sync. If it keeps failing, sign this identity out and in again.',
       }));
   }
 
@@ -277,7 +306,16 @@ export class DojoConnectionScreen {
   get identitiesNotice(): ScreenNoticeProps | null {
     const { phase, identitiesError } = this.#src;
     if (!identitiesError) return null;
-    if (phase === 'error') return { tone: 'fault', title: "Couldn't read your identities", detail: identitiesError, code: 'personas' };
-    return { tone: 'fault', title: "That didn't go through", detail: identitiesError, code: 'identity_action' };
+    if (phase === 'error') {
+      return {
+        tone: 'fault',
+        title: "Couldn't read your identities",
+        detail: identitiesError,
+        code: 'personas',
+        remedy: DAEMON_REMEDY,
+        primary: { label: 'Retry', name: 'retry', onclick: () => void this.#actions.reload() },
+      };
+    }
+    return { tone: 'fault', title: "That didn't go through", detail: identitiesError, code: 'identity_action', remedy: 'Try it again from the identity above.' };
   }
 }

@@ -68,7 +68,7 @@ export class InviteState {
 
 	/** The failure as a Notice — what the panel shows. */
 	get errorNotice() {
-		return failureNotice("Couldn't send the invite", this.error);
+		return failureNotice("Couldn't send the invite", this.error, { remedy: 'Fix what it says, then send it again.' });
 	}
 	issued = $state<IssuedInvite | null>(null);
 

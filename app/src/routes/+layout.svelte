@@ -21,7 +21,10 @@
     // The glyph preference, for every mark below (#133).
     setGlyphMode(() => glyphMode(appState.config));
     // Every screen's failure names the daemon — the one thing every sensei screen depends on.
-    setStateDefaults({ remedy: "Check that the sensei daemon is running, then retry. Health shows which part is down." });
+    setStateDefaults({
+      remedy: "Check that the sensei daemon is running, then retry. Health shows which part is down.",
+      service: "the sensei daemon",
+    });
     const banner = $derived(daemonBanner(daemonHealth.dbMode, appState.configError));
 
     // Which window this is decides what it does beyond its own pages: the

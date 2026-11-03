@@ -3,6 +3,7 @@
 	// like every other failure in the dōjō and sensei (docs/architecture/notice.md).
 	import { page } from '$app/state';
 	import { Notice, noticeForRouteError } from '@sensei/ui';
+	import { routeErrorPrimary } from '$lib/dojo-notices';
 
 	const notice = $derived(noticeForRouteError(page.status, page.error?.message));
 </script>
@@ -10,6 +11,6 @@
 <Notice
 	size="screen"
 	{...notice}
-	primary={{ label: 'Go to your dōjōs', href: '/', name: 'home' }}
+	primary={routeErrorPrimary(page.status)}
 	data-route-error={page.status}
 />

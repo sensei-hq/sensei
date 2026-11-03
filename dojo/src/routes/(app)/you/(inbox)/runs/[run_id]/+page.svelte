@@ -23,7 +23,7 @@
 			? toRelaySession(data.run, data.gates, data.segments, data.tenantKey)
 			: null
 	);
-	const unread = $derived(runUnreadNotice(data.error, () => invalidateAll()));
+	const unread = $derived(runUnreadNotice(data.error, () => invalidateAll(), data.failure));
 	const send: SendReply = (tenantKey, inboxId, reply) =>
 		replyToGate(tenantKey, inboxId, reply, { fetch, accessToken: data.accessToken ?? null });
 

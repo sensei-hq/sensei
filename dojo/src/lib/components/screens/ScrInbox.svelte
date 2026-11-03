@@ -49,9 +49,7 @@
 	<div class="flex flex-col p-4 gap-4 md:px-5 md:py-6">
 		{#if errorNotice}
 			<Notice size="panel" {...errorNotice} />
-		{/if}
-
-		{#if !inbox.length}
+		{:else if !inbox.length}
 			<EmptyState kanji="空" title="Nothing in flight.">
 				Sessions you're running across your dōjōs show up here. When it's quiet, sensei stays quiet.
 			</EmptyState>

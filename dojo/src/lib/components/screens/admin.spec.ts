@@ -218,9 +218,10 @@ describe('ScrHealth — signal cards, bar chart and alerts', () => {
 	});
 });
 
-describe('ScrBilling — two plans, the estimate, and an honest attach', () => {
+describe('ScrBilling — Free and Pro, no price, an honest attach', () => {
 	afterEach(cleanup);
-	const free = () => toKitBilling({ account: null, usage: { seats_used: 18, total_active_seats: 25, billable_users: [] } });
+	const usage = { seats_used: 18, total_active_seats: 25, billable_users: [] };
+	const free = () => toKitBilling({ account: null, usage });
 
 	it('with no billing account, reads Free and shows no renewal or invoice it does not have (#106)', () => {
 		const { getAllByText, getByText, queryByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
@@ -229,34 +230,65 @@ describe('ScrBilling — two plans, the estimate, and an honest attach', () => {
 		expect(queryByText(/Renews/)).toBeNull();
 	});
 
-	it('shows both plans, the Org price per active contributor, and the current one', () => {
-		const { getByText, getAllByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
-		expect(getByText('Org')).toBeTruthy();
-		expect(getAllByText('$12').length).toBeGreaterThanOrEqual(1);
-		expect(getByText('per active contributor / month')).toBeTruthy();
+	it('shows both plans, Pro priced "to be announced", and no dollar amount anywhere (D75)', () => {
+		const { container, getByText, getAllByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(getAllByText('Pro').length).toBeGreaterThanOrEqual(1);
+		expect(getByText('To be announced')).toBeTruthy();
 		expect(getByText('current')).toBeTruthy();
+		expect(container.textContent).not.toMatch(/\$\s?\d/);
 	});
 
-	it('estimates what Org would cost from the live seat count: 18 × $12 = $216', () => {
+	it('says what is always free, and that Pro is what targets on private repositories need', () => {
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(container.textContent).toMatch(/SSO, SCIM, audit/);
+		expect(container.textContent).toContain("Targets on an organization's private repositories");
+	});
+
+	it('the seat card says what it counts (L2)', () => {
 		const { getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
-		expect(getByText('$216')).toBeTruthy();
-		expect(getByText('18 × $12')).toBeTruthy();
+		expect(getByText('seats on private workspaces')).toBeTruthy();
 	});
 
-	it('Attach Org plan is offered but cannot run until payments are connected — and says so', () => {
+	it('Attach Pro is offered but cannot run until payments are connected — and says so', () => {
 		const { container, getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
-		const attach = container.querySelector('[data-action="attach-org"]') as HTMLButtonElement;
-		expect(attach.textContent).toContain('Attach Org plan');
+		const attach = container.querySelector('[data-action="attach-pro"]') as HTMLButtonElement;
+		expect(attach.textContent).toContain('Attach Pro');
 		expect(attach.disabled).toBe(true);
 		const n = container.querySelector('[data-attach-notice] [data-component="notice"]') as HTMLElement;
 		expect(n.dataset.tone).toBe('normal');
 		expect(getByText('Plan changes open once payments are connected')).toBeTruthy();
 	});
 
-	it('an org on the Org plan shows its renewal and no attach', () => {
+	it('on Pro: its renewal, no attach, and the disabled Move to Free says why (M6)', () => {
 		const { container, getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing } });
 		expect(getByText(/Renews Aug 1/)).toBeTruthy();
-		expect(container.querySelector('[data-action="attach-org"]')).toBeNull();
+		expect(container.querySelector('[data-action="attach-pro"]')).toBeNull();
+		expect((container.querySelector('[data-action="move-free"]') as HTMLButtonElement).disabled).toBe(true);
+		expect(container.querySelector('[data-attach-notice]')!.textContent).toContain('Until then this plan stays as it is.');
+	});
+
+	it('a lapsed account says why its private repositories are hidden (M5)', () => {
+		const lapsed = toKitBilling({ account: { plan: 'pro', status: 'past_due', seats_included: 0, seats_used: 0, seats_computed_at: null, period_start: null, period_end: '2026-12-01T00:00:00Z' }, usage }, new Date('2026-11-01T00:00:00Z'));
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: lapsed } });
+		const n = container.querySelector('[data-billing-problem] [data-component="notice"]') as HTMLElement;
+		expect(n.dataset.tone).toBe('refusal');
+		expect(n.textContent).toContain('past due');
+	});
+});
+
+describe('ScrBilling — a read that was refused (M3, r1)', () => {
+	afterEach(cleanup);
+	it('a 403 is a refusal that says who to ask, never "Retry"', () => {
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing, error: { status: 403, message: 'admins only' } } });
+		const n = container.querySelector('[data-load-error]') as HTMLElement;
+		expect(n.dataset.tone).toBe('refusal');
+		expect(n.textContent).toContain('Ask an admin for access.');
+		expect(n.textContent).not.toContain('Retry');
+	});
+
+	it('an unreachable dōjō is a fault that says so', () => {
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing, error: { status: 0, message: 'could not reach the dojo service' } } });
+		expect((container.querySelector('[data-load-error]') as HTMLElement).dataset.tone).toBe('fault');
 	});
 });
 

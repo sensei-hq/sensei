@@ -88,7 +88,7 @@ describe('IntakeState', () => {
     expect(s.phase).toBe('error');
     expect(s.error).toBe('boom');
     // …through the shared Notice: which step failed, then why.
-    expect(s.notice).toEqual({ tone: 'fault', title: "Couldn't classify the chunk", detail: 'boom' });
+    expect(s.notice).toEqual({ tone: 'fault', title: "Couldn't classify the chunk", detail: 'boom', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 
   it('reset returns to the describe phase', async () => {

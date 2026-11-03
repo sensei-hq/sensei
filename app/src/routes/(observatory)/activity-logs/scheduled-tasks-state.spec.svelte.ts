@@ -201,6 +201,7 @@ describe('notices', () => {
   it('a failing worker: its name, then why', () => {
     expect(taskFailureNotice(makeTask({ name: 'dojo_sync', last_ok: false, last_error: 'dōjō returned 502' }))).toEqual({
       tone: 'fault', title: 'dojo_sync is failing', detail: 'dōjō returned 502', code: 'dojo_sync',
+      remedy: 'Retry. If it keeps failing, reload the page.',
     });
   });
 
@@ -212,7 +213,7 @@ describe('notices', () => {
   it("a log that would not read says so", async () => {
     const log = new TaskLog(async () => ({ ok: false as const, error: { status: 500, message: 'read failed' } }));
     await log.toggle();
-    expect(log.notice).toMatchObject({ tone: 'fault', title: "Couldn't read this worker's log" });
+    expect(log.notice).toMatchObject({ tone: 'fault', title: "Couldn't read this worker's log", remedy: 'Retry. If it keeps failing, reload the page.' });
     expect(log.notice!.detail).toContain('read failed');
   });
 });

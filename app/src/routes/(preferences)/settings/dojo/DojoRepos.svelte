@@ -19,7 +19,7 @@
             {#if d.kind !== 'unfiled'}<Kanji char={d.kanji} size="base" tone="accent" />{/if}
             <h3 class="m-0 text-sm font-medium text-ink">{d.name}</h3>
             {#if d.kind !== 'unfiled'}<span class="font-mono text-xs text-ink-mute border border-paper-edge rounded-full px-2">{d.kind}</span>{/if}
-            <span class="ml-auto text-xs text-ink-mute" data-dojo-count>{d.count}</span>
+            {#if d.count !== null}<span class="ml-auto text-xs text-ink-mute" data-dojo-count>{d.count}</span>{/if}
           </div>
         {/snippet}
         {#if d.isOrg}
@@ -27,7 +27,7 @@
         {/if}
         {#if d.empty}
           <p class="m-0 text-sm text-ink-mute" data-dojo-empty>Nothing in this view.</p>
-        {:else}
+        {:else if d.repos.length > 0}
           <ul class="m-0 p-0 list-none divide-y divide-paper-edge">
             {#each d.repos as r (r.key)}
               <li data-repository={r.key} data-state={r.state} class="py-2 flex flex-col gap-1">

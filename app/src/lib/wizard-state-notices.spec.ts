@@ -5,6 +5,7 @@ describe('routerSaveNotice', () => {
   it('a key that did not save: which router, then why', () => {
     expect(routerSaveNotice({ id: 'openrouter', saveState: 'failed', saveError: 'Keychain refused' })).toEqual({
       tone: 'fault', title: "Couldn't save the openrouter key", detail: 'Keychain refused',
+      remedy: 'Retry. If it keeps failing, reload the page.',
     });
   });
 

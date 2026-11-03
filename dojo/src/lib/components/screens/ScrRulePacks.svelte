@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
-	import { actionFailedNotice } from '$lib/dojo-notices';
+	import { Screen, Notice } from '@sensei/ui';
+	import { actionFailedNotice, dojoLoadNotice } from '$lib/dojo-notices';
 	import { SectionHead, Btn, Icon, Chip, ListSection, RuleRow } from '$lib/components/kit';
 	import type { KitRulePack } from '$lib/components/kit/types';
 	import { createRulePacks } from '$lib/rulepacks-state.svelte';
@@ -73,7 +73,7 @@
 			<Notice size="inline" expanded {...errorNotice} />
 		{/if}
 		{#if loadError}
-			<Notice size="panel" {...loadFailedNotice("the rule packs", loadError)} data-load-error />
+			<Notice size="panel" {...dojoLoadNotice("the rule packs", loadError)} data-load-error />
 		{:else}
 		<ListSection
 			icon="check-circle"

@@ -195,6 +195,7 @@ describe('bindingLoadNotice', () => {
   it('a binding that could not be read: a fault Notice, never "no binding"', () => {
     expect(bindingLoadNotice({ state: 'error', message: 'daemon unreachable' })).toEqual({
       tone: 'fault', title: "Couldn't read this workspace's dōjō binding", detail: 'daemon unreachable',
+      remedy: 'Retry. If it keeps failing, reload the page.',
     });
     expect(bindingLoadNotice({ state: 'empty' })).toBeNull();
   });

@@ -126,12 +126,13 @@ describe('IntegrationsState', () => {
 		await s.load();
 		expect([s.errorNotice, s.incompleteNotice]).toEqual([null, null]);
 		s.error = 'GitHub read failed (401)';
-		expect(s.errorNotice).toEqual({ tone: 'fault', title: "Couldn't finish with GitHub", detail: 'GitHub read failed (401)' });
+		expect(s.errorNotice).toEqual({ tone: 'fault', title: "Couldn't finish with GitHub", detail: 'GitHub read failed (401)', remedy: 'Reconnect GitHub, then retry.' });
 		s.complete = false;
 		expect(s.incompleteNotice).toEqual({
 			tone: 'refusal',
 			title: 'This list is not complete',
-			detail: 'GitHub could not read every organization you belong to.'
+			detail: 'GitHub could not read every organization you belong to.',
+			remedy: 'Ask an owner of each missing organization to approve sensei on GitHub, then reload.'
 		});
 	});
 });

@@ -61,7 +61,7 @@
     </PageHeader>
   {/snippet}
   {#if data.error}
-    <StateView status="error" error={data.error} onretry={invalidateAll} />
+    <StateView status="error" error={data.error} failure={data.failure} onretry={invalidateAll} />
   {:else if !ruleset}
     <div class="p-6 flex flex-col items-center gap-5">
       <EmptyState size="screen"

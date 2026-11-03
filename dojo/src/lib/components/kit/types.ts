@@ -545,15 +545,15 @@ export interface KitScopeOwner {
 
 /** A plan tier card on the billing screen (dojo2-data `billing.tiers[]`). */
 export interface KitBillingTier {
-	/** free · org. */
+	/** free · pro. */
 	id: string;
 	/** Tier glyph (無 · 組). */
 	kanji: string;
-	/** The tier name (e.g. "Free" · "Org"). */
+	/** The tier name (e.g. "Free" · "Pro"). */
 	name: string;
-	/** The headline price (e.g. "$0" · "$12"). */
+	/** The headline price (e.g. "Free" · "To be announced"). */
 	price: string;
-	/** The price qualifier (e.g. "per active contributor / month"). */
+	/** The price qualifier (e.g. "per seat on private repositories"). */
 	sub: string;
 	/** The tier's feature lines. */
 	lines: string[];
@@ -574,11 +574,8 @@ export interface KitBillingInvoice {
 /** Plan & billing state for an org (dojo2-data `billing`). Free where public or
  *  personal; seats bill per active contributor. */
 export interface KitBilling {
-	/** The current plan label ("Free" · "Org"); null when nothing was loaded. */
+	/** The current plan label ("Free" · "Pro"); null when nothing was loaded or the plan is unknown. */
 	plan: string | null;
-	/** The Org plan's monthly price per active contributor (the catalog's);
-	 *  null when nothing was loaded. */
-	perSeat: number | null;
 	/** Billable active contributors; null when nothing was loaded. */
 	seatsActive: number | null;
 	/** Read-only members (always free); null when not counted. */
@@ -587,6 +584,17 @@ export interface KitBilling {
 	renews: string | null;
 	tiers: KitBillingTier[];
 	invoices: KitBillingInvoice[];
+	/** Why the account is not what it says — lapsed, or a plan sensei does not
+	 *  know; `null` when there is nothing to say. */
+	problem: KitBillingProblem | null;
+}
+
+/** A billing account that is not current, or not understood (M5). */
+export interface KitBillingProblem {
+	tone: 'refusal' | 'fault';
+	title: string;
+	detail: string;
+	remedy: string;
 }
 
 /** An identity mapping — how a directory/source maps to members + roles

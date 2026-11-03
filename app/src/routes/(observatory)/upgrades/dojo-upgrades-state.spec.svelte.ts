@@ -195,6 +195,6 @@ describe('UpgradeActions.notice', () => {
     const a = new UpgradeActions(mockApi({}), async () => {});
     expect(a.notice).toBeNull();
     a.error = 'forbidden';
-    expect(a.notice).toEqual({ tone: 'fault', title: "Couldn't apply that upgrade", detail: 'forbidden' });
+    expect(a.notice).toEqual({ tone: 'fault', title: "Couldn't apply that upgrade", detail: 'forbidden', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 });

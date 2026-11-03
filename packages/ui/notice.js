@@ -99,41 +99,60 @@ export function noticeFromReason(row) {
   };
 }
 
+/** What every failed read says to do when the screen has nothing better. */
+export const DEFAULT_REMEDY = 'Retry. If it keeps failing, reload the page.';
+
 /** A refusal names its own next step: nothing broke, the reader may not, or the
- *  thing is not there. */
+ *  thing is not there. A 404 is a refusal only for an entity lookup. */
 const REFUSAL_REMEDY = {
   401: 'Sign in again, then retry.',
   403: 'Ask an admin for access.',
-  404: 'It may have moved or been removed. Go back and pick it again.',
 };
+const MISSING_REMEDY = 'It may have moved or been removed. Go back and pick it again.';
 
 /**
  * Pure: a failed API read → Notice props. `title` names WHAT failed ("Couldn't
  * load tickets") because only the screen knows; the error supplies why and what
- * to do. 401/403/404 are refusals (nothing broke). Status 0 is "never reached the server" — the daemon or the network,
- * which is what the reader can check; a 5xx is the server's fault and a retry
- * may clear it; anything else is shown as the server said it.
+ * to do — always something to do:
+ * - 401/403: a refusal (sign in, ask an admin).
+ * - 404 on an entity lookup (`entity: true`): a refusal — it moved or was removed.
+ *   A 404 on any other read is a route the far end does not know: a version
+ *   mismatch, a fault, and the fix is to update (M2).
+ * - 0: the far end was never reached — the daemon or the network.
+ * - 5xx: the server's fault; a retry may clear it.
+ * - any other 4xx: the message says what is wrong; fix it and try again.
  * @param {{ status: number, message: string }} error
- * @param {{ title: string, service?: string }} what  `service` names the far end
- *        ("the daemon", "the dōjō") in the remedy for an unreachable server.
+ * @param {{ title: string, service?: string, entity?: boolean }} what  `service`
+ *        names the far end ("the sensei daemon", "the dōjō").
  */
 export function noticeFromApiError(error, what) {
   const service = what.service ?? 'the server';
-  const refused = REFUSAL_REMEDY[/** @type {keyof typeof REFUSAL_REMEDY} */ (error.status)];
+  const s = error.status;
+  const refusal = s === 401 || s === 403 || (s === 404 && what.entity === true);
   const remedy =
-    refused ??
-    (error.status === 0
-      ? `Check that ${service} is running and reachable, then retry.`
-      : error.status >= 500
-        ? 'This is on the server side. Retry in a moment; if it keeps failing, the logs will say why.'
-        : undefined);
+    s === 401 || s === 403
+      ? REFUSAL_REMEDY[s]
+      : s === 404
+        ? what.entity
+          ? MISSING_REMEDY
+          : `${capitalise(service)} doesn't know this request. Update Sensei so the app and ${service} match, then retry.`
+        : s === 0
+          ? `Check that ${service} is running and reachable, then retry.`
+          : s >= 500
+            ? 'This is on the server side. Retry in a moment; if it keeps failing, the logs will say why.'
+            : 'Fix what it says, then try again.';
   return {
-    tone: /** @type {NoticeTone} */ (refused ? 'refusal' : 'fault'),
+    tone: /** @type {NoticeTone} */ (refusal ? 'refusal' : 'fault'),
     title: what.title,
     detail: error.message || undefined,
     remedy,
-    code: error.status === 0 ? 'unreachable' : `http_${error.status}`,
+    code: s === 0 ? 'unreachable' : `http_${s}`,
   };
+}
+
+/** @param {string} s */
+function capitalise(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /**
@@ -153,16 +172,29 @@ export function noticeForRouteError(status, message) {
       title: "This page isn't",
       emphasis: 'here.',
       detail: 'The link may be old, or the item was removed.',
+      remedy: 'Go back, or start again from home.',
       code,
     };
   }
-  if (status === 401 || status === 403) {
+  if (status === 401) {
+    return {
+      tone: /** @type {NoticeTone} */ ('refusal'),
+      eyebrow: 'signed out',
+      title: 'Sign in to',
+      emphasis: 'open this page.',
+      detail: 'Your session ended, or you have not signed in here yet.',
+      remedy: 'Sign in again.',
+      code,
+    };
+  }
+  if (status === 403) {
     return {
       tone: /** @type {NoticeTone} */ ('refusal'),
       eyebrow: 'not allowed',
       title: "You can't open",
       emphasis: 'this page.',
       detail: message || 'Your account does not have access to it.',
+      remedy: REFUSAL_REMEDY[403],
       code,
     };
   }
@@ -180,33 +212,40 @@ export function noticeForRouteError(status, message) {
 /**
  * Pure: a state module's failure → Notice props, or `null` when nothing failed.
  * The screen names WHAT failed ("Couldn't load tickets"); the error it already
- * holds is the reason — never the headline.
+ * holds is the reason — never the headline. It always names a next step: the
+ * screen's `remedy`, else DEFAULT_REMEDY (H2).
  * @param {string} title
  * @param {string | null | undefined} error
  * @param {{ remedy?: string, code?: string }} [extra]
  */
 export function failureNotice(title, error, extra = {}) {
   if (!error) return null;
-  return { tone: /** @type {NoticeTone} */ ('fault'), title, detail: error, ...extra };
+  return { tone: /** @type {NoticeTone} */ ('fault'), title, detail: error, remedy: DEFAULT_REMEDY, ...extra };
 }
 
-/** What every failed read says to do when the screen has nothing better. */
-export const DEFAULT_REMEDY = 'Retry. If it keeps failing, reload the page.';
 
 /**
  * Pure: a read that failed, named by what it was ("the triage queue") → Notice
- * props. Always a next step: the screen's remedy, or the default.
+ * props. Always a next step. With the failed read itself (`{status, message}`)
+ * it is said through noticeFromApiError, so a 401/403 reads as a refusal; with
+ * only a message, a fault with the screen's remedy or DEFAULT_REMEDY.
  * @param {string} what
- * @param {string | null | undefined} error
- * @param {{ remedy?: string, code?: string }} [extra]
+ * @param {string | { status: number, message: string } | null | undefined} error
+ * @param {{ remedy?: string, code?: string, service?: string }} [extra]
  */
 export function loadFailedNotice(what, error, extra = {}) {
+  const title = `Couldn't load ${what}`;
+  if (error && typeof error === 'object') {
+    const n = noticeFromApiError(error, { title, service: extra.service });
+    return { ...n, detail: n.detail ?? 'No answer came back.', remedy: extra.remedy ?? n.remedy, ...(extra.code ? { code: extra.code } : {}) };
+  }
+  const { service: _service, ...rest } = extra;
   return {
     tone: /** @type {NoticeTone} */ ('fault'),
-    title: `Couldn't load ${what}`,
+    title,
     detail: error || 'No answer came back.',
     remedy: DEFAULT_REMEDY,
-    ...extra,
+    ...rest,
   };
 }
 
@@ -216,12 +255,18 @@ export function loadFailedNotice(what, error, extra = {}) {
  * names the next step — the app's default remedy (`setStateDefaults`), else
  * DEFAULT_REMEDY.
  * @param {string | null | undefined} error
- * @param {{ notice?: { tone?: NoticeTone, eyebrow?: string, title: string, detail?: string, remedy?: string, code?: string }, remedy?: string }} [opts]
+ * @param {{ notice?: { tone?: NoticeTone, eyebrow?: string, title: string, detail?: string, remedy?: string, code?: string }, remedy?: string,
+ *           failure?: { status: number, message: string } | null, service?: string }} [opts]  `failure` is the read
+ *        that failed, status and all: it is said through noticeFromApiError, so a 403 reads as a refusal.
  */
 export function stateErrorNotice(error, opts = {}) {
   const remedy = opts.remedy ?? DEFAULT_REMEDY;
   if (opts.notice) {
     return { tone: /** @type {NoticeTone} */ ('fault'), eyebrow: "couldn't load", ...opts.notice, remedy: opts.notice.remedy ?? remedy };
+  }
+  if (opts.failure) {
+    const n = noticeFromApiError(opts.failure, { title: "Couldn't load this", service: opts.service });
+    return { tone: n.tone, eyebrow: "couldn't load", title: n.title, ...(n.detail ? { detail: n.detail } : {}), remedy: n.remedy ?? remedy, code: n.code };
   }
   return {
     tone: /** @type {NoticeTone} */ ('fault'),
@@ -232,11 +277,11 @@ export function stateErrorNotice(error, opts = {}) {
   };
 }
 
-/** A strip (Banner) per Notice tone: its tint, its edge, and its mark's colour.
+/** A strip (Banner) per Notice tone: its tint, its edge, its mark's colour and its words'.
  *  Text on a tint is `text-on-{role}-soft` (rokkit-defaults). */
 export const BANNER_TONES = {
-  fault: { bg: 'bg-danger-soft', edge: 'border-danger-soft', mark: 'text-on-danger-soft' },
-  refusal: { bg: 'bg-warning-soft', edge: 'border-warning-soft', mark: 'text-on-warning-soft' },
-  action: { bg: 'bg-accent-soft', edge: 'border-accent-soft', mark: 'text-on-accent-soft' },
-  normal: { bg: 'bg-paper-soft', edge: 'border-paper-edge', mark: 'text-ink-soft' },
+  fault: { bg: 'bg-danger-soft', edge: 'border-danger-soft', mark: 'text-on-danger-soft', text: 'text-on-danger-soft' },
+  refusal: { bg: 'bg-warning-soft', edge: 'border-warning-soft', mark: 'text-on-warning-soft', text: 'text-on-warning-soft' },
+  action: { bg: 'bg-accent-soft', edge: 'border-accent-soft', mark: 'text-on-accent-soft', text: 'text-on-accent-soft' },
+  normal: { bg: 'bg-paper-soft', edge: 'border-paper-edge', mark: 'text-ink-soft', text: 'text-ink' },
 };

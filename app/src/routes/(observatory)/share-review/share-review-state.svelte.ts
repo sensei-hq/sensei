@@ -13,6 +13,7 @@
 // free strings, so an unrecognised value degrades to a neutral chip rather than
 // being dropped.
 
+import { DEFAULT_REMEDY } from '@sensei/ui';
 import { failureNotice } from '@sensei/ui';
 import type { ApiResult, SenseiApi } from '$lib/api.js';
 import type { ChipClasses } from '$lib/dojo-artifacts.js';
@@ -195,5 +196,7 @@ export class PublishBatchAction {
 export function itemNotice(item: { result: string; message?: string | null }) {
   if (!item.message) return null;
   const tone = item.result === 'error' ? 'fault' : item.result === 'held_residual_risk' || item.result === 'no_destination' ? 'refusal' : 'normal';
-  return { tone: tone as 'fault' | 'refusal' | 'normal', title: item.message, code: item.result };
+  const n = { tone: tone as 'fault' | 'refusal' | 'normal', title: item.message, code: item.result };
+  // A failed publish names its next step (H2); a hold or a note is not a failure.
+  return tone === 'fault' ? { ...n, remedy: DEFAULT_REMEDY } : n;
 }

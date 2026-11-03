@@ -69,5 +69,9 @@ describe('RelayNotify', () => {
 		const none = harness();
 		await none.notify.enable([]);
 		expect(none.notify.view).toMatchObject({ kind: 'button', error: 'No dōjō to notify you about yet.' });
+		// The failure is a Notice with its next step (M4, r1), decided here, not in the toggle.
+		expect(none.notify.view).toMatchObject({
+			notice: { tone: 'fault', title: "Couldn't turn on notifications", detail: 'No dōjō to notify you about yet.', remedy: 'Allow notifications for this site in your browser, then try again.' }
+		});
 	});
 });

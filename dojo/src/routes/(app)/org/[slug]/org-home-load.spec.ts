@@ -19,7 +19,7 @@ const ROW = {
 	confidence: 0.8, contributor_count: 2, similarity: null, nearest_artifact_id: null, state: 'queued',
 	created_at: new Date().toISOString()
 };
-const run = (role: string) =>
+const run = (role: string | null) =>
 	(load as unknown as (e: unknown) => Promise<Record<string, unknown>>)({
 		params: { slug: 'acme' },
 		fetch,
@@ -55,7 +55,7 @@ describe('org home loader — the needs band', () => {
 	// The membership's role is the server LABEL ('Maintainer', from ROLE_LABEL in
 	// dojo-orgs.ts), not the rank key. The band must load for every label at or
 	// above maintainer — the D69 "needs you" queue depends on it.
-	it.skip.each(['Maintainer', 'Lead', 'Admin'])('pending: rankof-label — a real %s label loads the band', async (label) => {
+	it.each(['Maintainer', 'Lead', 'Admin'])('a real %s label loads the band', async (label) => {
 		const data = await run(label);
 		expect(listTriage).toHaveBeenCalledOnce();
 		expect(data.needs).toEqual([expect.objectContaining({ id: 's1' })]);
@@ -63,6 +63,11 @@ describe('org home loader — the needs band', () => {
 
 	it.each(['Contributor', 'Member'])('a real %s label asks nothing', async (label) => {
 		await run(label);
+		expect(listTriage).not.toHaveBeenCalled();
+	});
+
+	it('no role at all (a viewer, not a member) asks nothing', async () => {
+		await run(null);
 		expect(listTriage).not.toHaveBeenCalled();
 	});
 });

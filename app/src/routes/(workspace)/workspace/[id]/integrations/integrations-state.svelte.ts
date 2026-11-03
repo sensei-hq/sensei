@@ -7,6 +7,7 @@
 // "not connected" — that would invite connecting a board the daemon already
 // has. And the token lives only in `token`, only until its request returns: it
 // is never stored, logged, or read back.
+import { DEFAULT_REMEDY } from '@sensei/ui';
 import { failureNotice } from '@sensei/ui';
 import type { ApiResult } from '$lib/api.js';
 import type {
@@ -195,7 +196,8 @@ export class TrackerIntegration {
    *  already a sentence written for the reader (lib/tracker-errors.ts), so it is
    *  the title; its code is for support. */
   get alertNotice() {
-    return this.alert ? { tone: 'fault' as const, title: this.alert.text, code: this.alert.code } : null;
+    // Every alert names its next step (H2).
+    return this.alert ? { tone: 'fault' as const, title: this.alert.text, code: this.alert.code, remedy: DEFAULT_REMEDY } : null;
   }
   /** Bumped on every new alert so the view can move focus to it. */
   alertSeq = $state(0);

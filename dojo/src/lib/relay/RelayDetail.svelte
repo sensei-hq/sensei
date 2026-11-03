@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Screen, EmptyState } from '@sensei/ui';
+	import { Screen, EmptyState, Notice } from '@sensei/ui';
+	import { runUnreadNotice } from '$lib/dojo-notices';
 	import { KanjiToken, PlanBar, PlanOutline, ListSection, Icon, RunActivity } from '$lib/components/kit';
 	import { Toggle } from '@rokkit/ui';
 	import type { KitTask } from '$lib/components/kit/types';
@@ -33,6 +34,7 @@
 		onBack?: () => void;
 		onAnswered?: () => void;
 	} = $props();
+	const unavailable = $derived(runUnreadNotice(notice));
 
 	const st = relayInboxState;
 	const run = $derived(session ?? st.selected);
@@ -126,10 +128,8 @@
 				</div>
 			{/if}
 
-				{#if notice}
-					<div role="status" class="bg-warning-soft border-warning-edge text-ink-mute rounded-xl border text-sm" style="padding: 12px 16px">
-						Live relay is unavailable. <span class="mono text-ink-soft text-xs">{notice}</span>
-					</div>
+				{#if unavailable}
+					<Notice size="inline" expanded {...unavailable} />
 				{/if}
 
 				<!-- Two tabs: Needs you · Plan. -->

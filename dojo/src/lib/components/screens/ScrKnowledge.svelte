@@ -1,4 +1,6 @@
 <script lang="ts" module>
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
 	// Catalog kind → row icon (mockup `K2_EXT_ICON`). A screen-local map because
 	// the catalog's agent/command/skill glyphs only appear here.
 	const EXT_ICON: Record<string, string> = {
@@ -9,7 +11,7 @@
 </script>
 
 <script lang="ts">
-	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
+	import { Screen, Notice } from '@sensei/ui';
 	import { SectionHead, Btn, Chip, Icon, ListSection, KanjiToken } from '$lib/components/kit';
 	import type { KitKnowledge } from '$lib/components/kit/types';
 
@@ -26,7 +28,7 @@
 		orgName: string;
 		knowledge: KitKnowledge;
 		/** A failed read — shown in place of the empty state (#335). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 </script>
 
@@ -51,7 +53,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<Notice size="panel" {...loadFailedNotice("the knowledge library", error)} data-load-error />
+			<Notice size="panel" {...dojoLoadNotice("the knowledge library", error)} data-load-error />
 		{:else}
 			<ListSection
 				icon="check-circle"

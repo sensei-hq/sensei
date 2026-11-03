@@ -229,8 +229,8 @@ describe('logsPageData', () => {
 
   it('says each failed read through the shared Notice: what failed, then why', () => {
     const d = logsPageData(fail, fail, filters);
-    expect(d.rowsNotice).toEqual({ tone: 'fault', title: "Couldn't read the log", detail: 'boom' });
-    expect(d.tasksNotice).toEqual({ tone: 'fault', title: "Couldn't read the background tasks", detail: 'boom' });
+    expect(d.rowsNotice).toEqual({ tone: 'fault', title: "Couldn't read the log", detail: 'boom', remedy: 'Retry. If it keeps failing, reload the page.' });
+    expect(d.tasksNotice).toEqual({ tone: 'fault', title: "Couldn't read the background tasks", detail: 'boom', remedy: 'Retry. If it keeps failing, reload the page.' });
     expect(logsPageData(ok([]), ok({ tasks: [] }), filters)).toMatchObject({ rowsNotice: null, tasksNotice: null });
   });
 

@@ -10,13 +10,17 @@ import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
 const DANGER = /text-danger|bg-danger|border-danger|role="alert"/g;
+// A hand-built warning box — a warning tint on a bordered box in one class string (L5, r1).
+const WARNING_BOX = /class="[^"]*(?:bg-warning-soft[^"]*\bborder\b|\bborder\b[^"]*bg-warning-soft)[^"]*"/g;
 
 /** file (relative to src/) → how many danger-coloured uses it may keep, and why. */
 const ALLOWED: Record<string, { count: number; why: string }> = {
 	'lib/components/kit/Btn.svelte': { count: 2, why: 'the danger button variant (fill and edge)' },
 	'lib/components/screens/ViewersList.svelte': { count: 1, why: 'the remove link turns danger on hover' },
 	'lib/components/screens/TeamsList.svelte': { count: 1, why: 'the remove link turns danger on hover' },
-	'lib/components/screens/ScrContributions.svelte': { count: 3, why: "the 'declined' contribution chip tone" }
+	'lib/components/screens/ScrContributions.svelte': { count: 3, why: "the 'declined' contribution chip tone" },
+	'lib/components/screens/ScrTriage.svelte': { count: 1, why: "a candidate's conflict, shown as content beside the rule it loses to — not a notice" },
+	'lib/components/RelayOfflineBanner.svelte': { count: 2, why: 'no route imports it (dead code for L6); remove rather than migrate' }
 };
 
 function svelteFiles(dir: string): string[] {
@@ -30,7 +34,8 @@ function svelteFiles(dir: string): string[] {
 describe('error surfaces render through Notice', () => {
 	const found = new Map<string, number>();
 	for (const file of svelteFiles('src')) {
-		const n = readFileSync(file, 'utf8').match(DANGER)?.length ?? 0;
+		const src = readFileSync(file, 'utf8');
+		const n = (src.match(DANGER)?.length ?? 0) + (src.match(WARNING_BOX)?.length ?? 0);
 		if (n > 0) found.set(file.replace(/^src\//, ''), n);
 	}
 

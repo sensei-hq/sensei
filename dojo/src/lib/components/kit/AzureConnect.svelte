@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button } from '@rokkit/ui';
-	import { Notice } from '@sensei/ui';
+	import { Notice, Banner } from '@sensei/ui';
 	import Icon from './Icon.svelte';
 	import ListSection from './ListSection.svelte';
 	import { AZURE_REQUIRED_SCOPES, memberSetLine, tokenLine, writeScopesLine } from '$lib/azure-view';
@@ -60,7 +60,7 @@
 
 	{#if state.grant}
 		{#if warning}
-			<div class="bg-warning-soft border-warning-soft text-ink rounded-lg border p-3 text-sm">{warning}</div>
+			<Banner tone="refusal" detail={warning} data-write-scopes />
 		{/if}
 		{#if !state.grant.complete}
 			<div class="text-ink-soft text-xs">Azure DevOps could not list every organization you belong to.</div>

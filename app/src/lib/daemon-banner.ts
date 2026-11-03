@@ -10,7 +10,8 @@ const OPEN_HEALTH = { label: 'Open Health', href: '/health', name: 'health' };
 export function daemonBanner(mode: DaemonDbMode | undefined, configError: string | null) {
   if (mode === 'degraded') {
     return {
-      tone: 'refusal' as const,
+      // It heals itself: a wait, not a fault (and never a refusal).
+      tone: 'normal' as const,
       title: 'Reconnecting to the database',
       detail: 'Some data may be briefly unavailable while the daemon recovers.',
       action: OPEN_HEALTH,
@@ -18,7 +19,7 @@ export function daemonBanner(mode: DaemonDbMode | undefined, configError: string
   }
   if (configError) {
     return {
-      tone: 'refusal' as const,
+      tone: 'fault' as const,
       title: 'Could not read your settings from the daemon',
       detail: `${configError} — showing the last ones; trying again.`,
       action: OPEN_HEALTH,

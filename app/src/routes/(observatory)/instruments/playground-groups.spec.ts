@@ -84,7 +84,7 @@ describe('buildPlaygroundGroups — a server that could not be read', () => {
 
 describe('groupNotice', () => {
   it("a group whose tools could not be read: a fault Notice with the probe's failure", () => {
-    expect(groupNotice({ error: 'spawn failed' })).toEqual({ tone: 'fault', title: "Couldn't read this server's tools", detail: 'spawn failed' });
+    expect(groupNotice({ error: 'spawn failed' })).toEqual({ tone: 'fault', title: "Couldn't read this server's tools", detail: 'spawn failed', remedy: 'Retry. If it keeps failing, reload the page.' });
     expect(groupNotice({ error: null })).toBeNull();
   });
 });

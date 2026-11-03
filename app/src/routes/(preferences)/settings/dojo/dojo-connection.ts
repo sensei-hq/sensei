@@ -15,6 +15,7 @@
 
 import type { DojoMembership, SyncStateRow } from '$lib/types.js';
 import type { Identity } from '$lib/personas.svelte.js';
+import type { NoticeTone } from '$lib/notice-tone.js';
 import { kindPill } from '../../../(observatory)/dojo/connections/dojo-connections-state.svelte.js';
 import { detailLine } from './dojo-status-state.svelte.js';
 
@@ -61,7 +62,7 @@ export function matchesFilter(filter: RepoFilter, category: RepoCategory): boole
 
 /** A Notice for a repository row (`size="inline"` in the template). */
 export interface RepoNotice {
-  tone: 'fault' | 'refusal' | 'normal';
+  tone: Exclude<NoticeTone, 'action'>;
   title: string;
   detail?: string;
   code: string;
@@ -84,7 +85,8 @@ export interface DojoGroup {
   isOrg: boolean;
   repos: RepoView[];
   empty: boolean;
-  count: string;
+  /** `null` when the sync read failed: no number is drawn from a failed read. */
+  count: string | null;
 }
 
 /** The forge owner of `host/owner/name`, lowercased; `null` with no owner. */

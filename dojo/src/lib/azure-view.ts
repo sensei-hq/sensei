@@ -175,7 +175,8 @@ export function microsoftNotice(s: MicrosoftLinkStatus): MicrosoftNotice | null 
 	return {
 		tone: 'refusal',
 		title: 'Couldn’t link your Microsoft account',
-		detail: `${reason}. Your Azure DevOps organizations’ dōjōs were not joined.`
+		detail: `${reason}. Your Azure DevOps organizations’ dōjōs were not joined.`,
+		remedy: 'Sign in again with the one Microsoft account you use for Azure DevOps.'
 	};
 }
 
@@ -184,4 +185,5 @@ export interface MicrosoftNotice {
 	tone: 'refusal' | 'fault';
 	title: string;
 	detail: string;
+	remedy?: string;
 }

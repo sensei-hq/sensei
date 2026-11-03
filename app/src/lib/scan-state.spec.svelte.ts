@@ -412,6 +412,6 @@ describe('ScanState.notice', () => {
     const st = new ScanState();
     expect(st.notice).toBeNull();
     st.error = 'daemon unreachable';
-    expect(st.notice).toEqual({ tone: 'fault', title: 'The scan failed', detail: 'daemon unreachable' });
+    expect(st.notice).toEqual({ tone: 'fault', title: 'The scan failed', detail: 'daemon unreachable', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 });

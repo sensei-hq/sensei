@@ -241,7 +241,7 @@ describe('PublishBatchAction', () => {
 
 describe('itemNotice — one item\'s publish message, through the shared Notice', () => {
   it('an error is a fault; a hold is a refusal (a decision); anything else a note', () => {
-    expect(itemNotice({ result: 'error', message: 'dōjō refused' })).toEqual({ tone: 'fault', title: 'dōjō refused', code: 'error' });
+    expect(itemNotice({ result: 'error', message: 'dōjō refused' })).toEqual({ tone: 'fault', title: 'dōjō refused', code: 'error', remedy: 'Retry. If it keeps failing, reload the page.' });
     expect(itemNotice({ result: 'held_residual_risk', message: 'residual risk' })!.tone).toBe('refusal');
     expect(itemNotice({ result: 'no_destination', message: 'no dōjō' })!.tone).toBe('refusal');
     expect(itemNotice({ result: 'staged', message: 'later' })!.tone).toBe('normal');
@@ -256,6 +256,6 @@ describe('PublishBatchAction.notice', () => {
   it('a publish that did not go through names what failed', () => {
     const a = new PublishBatchAction(mockApi({}), async () => {});
     a.error = 'Bad Gateway';
-    expect(a.notice).toEqual({ tone: 'fault', title: "Couldn't publish the batch", detail: 'Bad Gateway' });
+    expect(a.notice).toEqual({ tone: 'fault', title: "Couldn't publish the batch", detail: 'Bad Gateway', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 });

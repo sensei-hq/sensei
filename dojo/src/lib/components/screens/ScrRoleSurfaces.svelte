@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Notice } from '@sensei/ui';
 	import { SectionHead, Btn, Chip, Icon, Avatar, RoleTag, KanjiToken } from '$lib/components/kit';
 	import type { KitMember, KitRolePolicy, KitChatTurn } from '$lib/components/kit/types';
 	import { ROLE_SURFACE_TABS, resolveTab } from '$lib/role-surfaces-view';
@@ -70,7 +72,7 @@
 		onRemoveTeamMember?: (team: TeamView, principalId: string) => void;
 		onGrantTeam?: (team: TeamView, workspaceId: string) => void;
 		/** A failed read — shown in place of the empty state (#335). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 
 
@@ -121,7 +123,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<Notice size="panel" {...loadFailedNotice("the members, policies and audit", error)} data-load-error />
+			<Notice size="panel" {...dojoLoadNotice("the members, policies and audit", error)} data-load-error />
 		{:else}
 			<!-- The three admin surfaces — a segmented tab strip. -->
 			<div class="flex flex-wrap gap-2" role="tablist">

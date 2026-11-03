@@ -52,7 +52,7 @@ export class AzureConnectState {
 
 	/** The failure as a Notice — what the connect panel shows. */
 	get errorNotice() {
-		return failureNotice("Couldn't finish with Azure DevOps", this.error);
+		return failureNotice("Couldn't finish with Azure DevOps", this.error, { remedy: 'Connect Azure DevOps again, then retry.' });
 	}
 	/** What the last act came to. */
 	message = $state<string | null>(null);
