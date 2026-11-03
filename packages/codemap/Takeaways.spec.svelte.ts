@@ -14,11 +14,11 @@ const ITEMS: Takeaway[] = [
 ];
 
 function render(props: Record<string, unknown> = {}) {
-  const onopen = vi.fn();
+  const onfocus = vi.fn();
   target = document.body.appendChild(document.createElement('div'));
-  app = mount(Takeaways, { target, props: { items: ITEMS, onopen, label: 'Cycles', ...props } });
+  app = mount(Takeaways, { target, props: { items: ITEMS, onfocus, label: 'Cycles', ...props } });
   flushSync();
-  return onopen;
+  return onfocus;
 }
 
 // The user (2026-11-02): the four sections could not be selected and copied — they
@@ -38,11 +38,11 @@ describe('Takeaways', () => {
   });
 
   it("each module opens from the action beside it", () => {
-    const onopen = render();
-    const open = target.querySelector('[data-takeaway-item] button[aria-label="Open p/c"]') as HTMLButtonElement
-      ?? [...target.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Open p/c') as HTMLButtonElement;
+    const onfocus = render();
+    const open = target.querySelector('[data-takeaway-item] button[aria-label="Focus p/c"]') as HTMLButtonElement
+      ?? [...target.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Focus p/c') as HTMLButtonElement;
     open.click();
-    expect(onopen).toHaveBeenCalledWith('p/c');
+    expect(onfocus).toHaveBeenCalledWith('p/c');
   });
 
   it('Copy puts what to act on on the clipboard as markdown, and says so', async () => {

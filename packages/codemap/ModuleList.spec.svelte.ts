@@ -20,9 +20,9 @@ const VIEW: ListView = {
 
 describe('ModuleList', () => {
   it('draws each row 44px or taller, with its role bar and badges; only a module opens', () => {
-    const onopen = vi.fn();
+    const onfocus = vi.fn();
     target = document.body.appendChild(document.createElement('div'));
-    app = mount(ModuleList, { target, props: { view: VIEW, onopen } });
+    app = mount(ModuleList, { target, props: { view: VIEW, onfocus } });
     flushSync();
     const rows = [...target.querySelectorAll('[data-testid^="list-row-"]')] as HTMLElement[];
     expect(rows.map((r) => r.className.includes('min-h-11'))).toEqual([true, true]);
@@ -30,6 +30,6 @@ describe('ModuleList', () => {
     expect(target.querySelector('[data-testid="list-row-p/a"]')?.textContent).toContain('upward');
     (target.querySelector('[data-testid="list-row-p/a"]') as HTMLButtonElement).click();
     (target.querySelector('[data-testid="list-row-L0 → L1"]') as HTMLElement).click();
-    expect(onopen.mock.calls).toEqual([['p/a']]);
+    expect(onfocus.mock.calls).toEqual([['p/a']]);
   });
 });

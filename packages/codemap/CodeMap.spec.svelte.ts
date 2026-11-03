@@ -81,8 +81,12 @@ describe('CodeMap', () => {
     const p = port();
     render(p);
     await settle();
-    // One click opens a module (M17).
+    // One click focuses a module (user, 2026-11-03); its files open from the side panel.
     (q('[data-testid="block-p/a"]') as SVGElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle();
+    expect(p.level0).toHaveBeenLastCalledWith('layers', { kind: 'module', id: 'p/a' });
+    expect(p.module).not.toHaveBeenCalled();
+    (q('[data-testid="codemap-open"]') as HTMLButtonElement).click();
     await settle();
     expect(p.module).toHaveBeenCalledWith('p/a');
     expect(q('[data-testid="inspector-title"]')?.textContent).toBe('p/a');
@@ -134,7 +138,7 @@ describe('CodeMap', () => {
     expect(q('[data-testid="coupling-summary"]')?.textContent).toContain('1 pairs change together with no dependency between them · from 40 commits');
   });
 
-  it('the Wheel puts the modules on a ring and opens one on a click', async () => {
+  it('the Wheel puts the modules on a ring and focuses one on a click', async () => {
     const p = port();
     const map = render(p);
     await settle();
@@ -144,7 +148,22 @@ describe('CodeMap', () => {
     expect(q('[data-testid="wheel-band-p/a>p/b"]')).not.toBeNull();
     (q('[data-testid="wheel-node-p/a"]') as SVGElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await settle();
-    expect(p.module).toHaveBeenCalledWith('p/a');
+    expect(p.level0).toHaveBeenLastCalledWith('layers', { kind: 'module', id: 'p/a' });
+    expect([map.focus, map.level, map.lens]).toEqual([{ kind: 'module', id: 'p/a' }, 'modules', 'wheel']);
+  });
+
+  it('picking a module on Hidden coupling focuses it and keeps drawing the lens', async () => {
+    const p = port();
+    const map = render(p);
+    await settle();
+    void map.showLens(p, 'coupling');
+    await settle();
+    const pick = target.querySelector('[data-testid="codemap-coupling"] [aria-label^="Focus"]') as HTMLElement;
+    pick.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle();
+    expect(map.focus?.kind).toBe('module');
+    expect([map.level, q('[data-testid="codemap-coupling"]') !== null]).toEqual(['modules', true]);
+    expect(p.module).not.toHaveBeenCalled();
   });
 
   it('Complexity draws the tree, not the block map, and says what to act on from it', async () => {

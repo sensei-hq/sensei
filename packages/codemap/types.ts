@@ -37,9 +37,18 @@ export interface Band {
   direction: Direction | null;
 }
 
+/** What the map is focused on (user, 2026-11-03): one module, or a Group-by
+ *  group of them — every lens narrows to it and its direct neighbours. */
+export interface Focus {
+  kind: 'module' | 'segment';
+  id: string;
+}
+
 export interface Level0 {
   level: 'module';
   groupBy: GroupBy;
+  /** The focus this map was narrowed to: its modules and their neighbours. */
+  focus?: (Focus & { members: string[]; neighbours: string[] }) | null;
   blocks: Block[];
   bands: Band[];
   budget: { drawn: number; modules: number; bands: number; edges: number };
@@ -163,7 +172,8 @@ export interface ComplexityTree {
 }
 
 export interface CodeMapPort {
-  level0(groupBy: GroupBy): Promise<Read<Level0>>;
+  /** L0, narrowed to `focus` and its neighbours when one is given. */
+  level0(groupBy: GroupBy, focus: Focus | null): Promise<Read<Level0>>;
   module(id: string): Promise<Read<Level1>>;
   file(id: string): Promise<Read<Level2>>;
   zones(): Promise<Read<Zones>>;

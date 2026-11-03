@@ -22,9 +22,9 @@ afterEach(() => { if (app) unmount(app); app = null; target?.remove(); });
 
 describe('MatrixLens', () => {
   it('names the columns along the top and the rows down the side, both held in view while it scrolls', () => {
-    const onopen = vi.fn();
+    const onfocus = vi.fn();
     target = document.body.appendChild(document.createElement('div'));
-    app = mount(MatrixLens, { target, props: { data: L0, zoom: 1, onopen } });
+    app = mount(MatrixLens, { target, props: { data: L0, zoom: 1, onfocus } });
     flushSync();
     const cols = [...target.querySelectorAll('[data-testid="matrix-col"]')] as HTMLElement[];
     const rows = [...target.querySelectorAll('[data-testid="matrix-row"]')] as HTMLElement[];
@@ -37,6 +37,6 @@ describe('MatrixLens', () => {
     // The legend leads with what is wrong, counted.
     expect(target.querySelector('[data-testid="matrix-legend"]')?.textContent).toContain('1 upward');
     (rows[1].querySelector('button') as HTMLButtonElement).click();
-    expect(onopen).toHaveBeenCalledWith('p/b');
+    expect(onfocus).toHaveBeenCalledWith('p/b');
   });
 });

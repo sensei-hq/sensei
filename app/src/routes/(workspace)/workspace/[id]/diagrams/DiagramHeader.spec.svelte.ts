@@ -39,4 +39,25 @@ describe('DiagramHeader', () => {
     expect(m.container.textContent).not.toContain('Workspace · sensei');
     expect(m.container.querySelector('[data-testid="diagram-stat-Cycles"] a[data-stat-card-value]')?.getAttribute('href')).toBe('/d/cycles');
   });
+
+  it('shows the focus as a chip under the title, and its ✕ clears it', () => {
+    const onclear = vi.fn();
+    m = mountComponent(DiagramHeader, {
+      view: DIAGRAM_VIEWS[0], about: new DiagramHeaderState(), stats: STATS,
+      workspace: { name: 'sensei', repos: 3 }, hrefFor: (l: string) => `/d/${l}`,
+      focus: { label: 'senseid/db', onclear },
+    });
+    const chip = m.container.querySelector('[data-testid="diagram-focus"]') as HTMLElement;
+    expect(chip.textContent).toContain('senseid/db');
+    (chip.querySelector('button[aria-label="Clear focus"]') as HTMLButtonElement).click();
+    expect(onclear).toHaveBeenCalledOnce();
+  });
+
+  it('shows no chip when nothing is focused', () => {
+    m = mountComponent(DiagramHeader, {
+      view: DIAGRAM_VIEWS[0], about: new DiagramHeaderState(), stats: STATS,
+      workspace: { name: 'sensei', repos: 3 }, hrefFor: (l: string) => `/d/${l}`,
+    });
+    expect(m.container.querySelector('[data-testid="diagram-focus"]')).toBeNull();
+  });
 });

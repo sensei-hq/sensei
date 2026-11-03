@@ -56,8 +56,13 @@
   const l0 = $derived(map.l0);
   const bands = $derived(l0 ? drawnBands(map.lens, l0, map.cochange, { edgeMode: map.edgeMode, minWeight: map.minWeight }) : []);
   const toAct = $derived(l0 ? takeaways(map.lens, l0, map.cochange, map.zones, map.complexity) : []);
-  const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected }));
+  // A focused module is what the side panel inspects when nothing else is selected.
+  const focused = $derived(map.focus?.kind === 'module' ? map.focus.id : null);
+  const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected ?? focused }));
+  /** Open a module's files — the side panel's explicit action, not a click on a lens. */
   const open = (id: string) => void map.openModule(port, id);
+  /** A click on a module in any lens focuses it (user, 2026-11-03). */
+  const focusOn = (id: string) => void map.setFocus(port, { kind: 'module', id });
   const zoomTo = (z: number) => (map.zoom = z);
 </script>
 
@@ -97,14 +102,14 @@
       {#if map.level === 'modules'}
         {#if l0}
           {#if narrow}
-            <ModuleList view={listView(map.lens, l0, map.cochange, map.zones)} onopen={open} />
+            <ModuleList view={listView(map.lens, l0, map.cochange, map.zones)} onfocus={focusOn} />
           {:else if map.lens === 'zones'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ZonesLens data={map.zones} filter={map.zoneFilter} zoom={map.zoom} onopen={open} />
+              <ZonesLens data={map.zones} filter={map.zoneFilter} zoom={map.zoom} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'wheel'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <WheelLens data={l0} selected={map.selected} zoom={map.zoom} onselect={(id) => map.select(id)} onopen={open} />
+              <WheelLens data={l0} selected={map.selected ?? focused} zoom={map.zoom} onselect={(id) => map.select(id)} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'coupling'}
             {#if map.cochange?.commits}
@@ -113,25 +118,25 @@
               </p>
             {/if}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <CouplingLens data={map.cochange} zoom={map.zoom} onopen={open} />
+              <CouplingLens data={map.cochange} zoom={map.zoom} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'complexity'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ComplexityLens data={map.complexity} zoom={map.zoom} onopen={open} />
+              <ComplexityLens data={map.complexity} zoom={map.zoom} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'cycles'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <CyclesLens data={l0} zoom={map.zoom} onopen={open} />
+              <CyclesLens data={l0} zoom={map.zoom} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'matrix'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <MatrixLens data={l0} zoom={map.zoom} onopen={open} />
+              <MatrixLens data={l0} zoom={map.zoom} onfocus={focusOn} />
             </ZoomFrame>
           {:else}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ModuleMap data={l0} {bands} selected={map.selected}
+              <ModuleMap data={l0} {bands} selected={map.selected ?? focused}
                 byDirection={map.byDirection}
-                roles={map.roles} zoom={map.zoom} onselect={(id) => map.select(id)} onopen={open} />
+                roles={map.roles} zoom={map.zoom} onselect={(id) => map.select(id)} onfocus={focusOn} />
             </ZoomFrame>
           {/if}
           {#if l0.libraries.count}
@@ -155,13 +160,16 @@
       <div class="flex flex-col gap-6 min-w-0 min-h-0 overflow-auto pl-6 border-l border-paper-edge" tabindex="0" role="region" aria-label="Side panel" data-testid="codemap-side">
         {#if map.level === 'modules' && map.lens === 'zones'}
           {#if map.zones}
-            <ZonesDetails data={map.zones} filter={map.zoneFilter} onopen={open} />
+            <ZonesDetails data={map.zones} filter={map.zoneFilter} onfocus={focusOn} />
           {/if}
-          <Takeaways items={toAct} onopen={open} {label} />
-        {:else if map.level === 'modules' && !map.selected}
-          <Takeaways items={toAct} onopen={open} {label} />
+          <Takeaways items={toAct} onfocus={focusOn} {label} />
+        {:else if map.level === 'modules' && !map.selected && !focused}
+          <Takeaways items={toAct} onfocus={focusOn} {label} />
         {:else}
           <Inspector data={inspection} onopen={open} />
+          {#if map.level === 'modules' && focused && !map.selected}
+            <Takeaways items={toAct} onfocus={focusOn} {label} />
+          {/if}
         {/if}
       </div>
     {/if}

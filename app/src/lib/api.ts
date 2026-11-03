@@ -1,4 +1,4 @@
-import type { CoChange, ComplexityTree, Level0, Level1, Level2, Zones } from '@sensei/codemap';
+import type { CoChange, ComplexityTree, Focus, Level0, Level1, Level2, Zones } from '@sensei/codemap';
 
 /** The daemon's Complexity tree: the maintainability reading arrives ungraded
  *  (the app grades it — codemap-port). */
@@ -471,8 +471,12 @@ export function senseiApi(port: number) {
     // non-pending verdict. Distinct from the manual `listImpactVerdicts`
     // retrospectives above.
     /** The Code map (M17): L0 modules, one module's files, one file's symbols. */
-    tryGetCodemap: (id: string, groupBy: 'layers' | 'folders') =>
-      tryGet<Level0>(`/api/workspaces/${enc(id)}/diagrams/codemap?groupBy=${enc(groupBy)}`),
+    /** L0; a focus narrows it to a module (`focus`) or a group (`segment`) and their neighbours. */
+    tryGetCodemap: (id: string, groupBy: 'layers' | 'folders', focus: Focus | null) =>
+      tryGet<Level0>(
+        `/api/workspaces/${enc(id)}/diagrams/codemap?groupBy=${enc(groupBy)}` +
+          (focus ? `&${focus.kind === 'module' ? 'focus' : 'segment'}=${enc(focus.id)}` : ''),
+      ),
     tryGetCodemapModule: (id: string, module: string) =>
       tryGet<Level1>(`/api/workspaces/${enc(id)}/diagrams/codemap/module?id=${enc(module)}`),
     tryGetCodemapFile: (id: string, file: string) =>

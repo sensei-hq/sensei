@@ -23,6 +23,7 @@
 <Screen fill>
     {#snippet header()}
     <DiagramHeader view={data.view} {about} level={host.level} stats={host.stats} budget={host.budget}
+        focus={host.focus ? { label: host.focus, onclear: () => host.clearFocus() } : null}
         workspace={{ name: data.workspace.name, repos: data.workspace.repos_count ?? null }}
         hrefFor={(lens) => `/workspace/${data.workspaceId}/diagrams/${lens}`}>
         {#snippet controls()}<CodeMapControls state={host.state} port={host.port} />{/snippet}

@@ -6,7 +6,7 @@
   import { ROLE_BG } from './view';
   import type { Role } from './types';
 
-  let { view, onopen }: { view: ListView; onopen: (id: string) => void } = $props();
+  let { view, onfocus }: { view: ListView; onfocus: (id: string) => void } = $props();
 
   const BADGE = { danger: 'text-danger', warning: 'text-warning', faint: 'text-ink-faint' };
 </script>
@@ -21,7 +21,7 @@
           class="w-full min-h-11 flex flex-col justify-center gap-1 px-3 py-1 bg-paper-soft border border-paper-edge rounded mb-1 text-left"
           class:cursor-pointer={r.open}
           role={r.open ? undefined : 'listitem'}
-          onclick={r.open ? () => onopen(r.id) : undefined}
+          onclick={r.open ? () => onfocus(r.id) : undefined}
           data-testid={`list-row-${r.id}`}>
           <span class="flex items-center justify-between gap-2">
             <span class="font-mono text-xs text-ink truncate">{r.label}</span>

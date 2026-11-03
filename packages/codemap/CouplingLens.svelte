@@ -5,7 +5,7 @@
   // modules appear; either side opens its module. The text follows the zoom.
   import type { CoChange } from './types';
 
-  let { data, zoom = 1, onopen }: { data: CoChange | null; zoom?: number; onopen: (id: string) => void } = $props();
+  let { data, zoom = 1, onfocus }: { data: CoChange | null; zoom?: number; onfocus: (id: string) => void } = $props();
   const pairs = $derived([...(data?.hidden ?? [])].sort((a, b) => b.together - a.together || b.strength - a.strength));
   const most = $derived(Math.max(1, ...pairs.map((p) => p.together)));
 </script>
@@ -14,7 +14,7 @@
   <span class="flex items-center gap-1.5 min-w-0" class:justify-end={align === 'end'}>
     <span class="font-mono text-ink truncate" title={id}>{id}</span>
     <button class="shrink-0 p-0 bg-transparent border-none cursor-pointer text-ink-mute hover:text-ink"
-      aria-label={`Open ${id}`} title={`Open ${id}`} onclick={() => onopen(id)}>↗</button>
+      aria-label={`Focus ${id}`} title={`Focus ${id}`} onclick={() => onfocus(id)}>↗</button>
   </span>
 {/snippet}
 

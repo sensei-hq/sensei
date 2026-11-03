@@ -7,12 +7,12 @@
   import { inZoneFilter, zonesView, type ZoneFilter } from './lenses';
   import type { ZonePoint, Zones } from './types';
 
-  let { data, filter = 'issues', zoom = 1, onopen }: {
+  let { data, filter = 'issues', zoom = 1, onfocus }: {
     data: Zones | null;
     /** Over fitting the plot to the column; 1 is fit. */
     zoom?: number;
     filter?: ZoneFilter;
-    onopen: (id: string) => void;
+    onfocus: (id: string) => void;
   } = $props();
 
   let column = $state(480);
@@ -45,7 +45,7 @@
     {#each placed as p (p.component)}
       <circle cx={x(p)} cy={y(p)} r={shown(p) ? 6 : 4} fill={tone(p.zone)} fill-opacity={shown(p) ? 0.9 : 0.12}
         role="button" tabindex="0" class="cursor-pointer"
-        onclick={() => onopen(p.component)} onkeydown={(e) => e.key === 'Enter' && onopen(p.component)}
+        onclick={() => onfocus(p.component)} onkeydown={(e) => e.key === 'Enter' && onfocus(p.component)}
         data-testid={`zone-${p.component}`}>
         <title>{p.component} — I {p.instability.toFixed(2)}, A {p.abstractness.toFixed(2)}, distance {p.distance.toFixed(2)}, {p.ca} dependents</title>
       </circle>

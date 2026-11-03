@@ -9,7 +9,7 @@
   import { matrix } from './lenses';
   import type { Level0 } from './types';
 
-  let { data, zoom = 1, onopen }: { data: Level0; zoom?: number; onopen: (id: string) => void } = $props();
+  let { data, zoom = 1, onfocus }: { data: Level0; zoom?: number; onfocus: (id: string) => void } = $props();
   const m = $derived(matrix(data));
   const CELL = 14;
   const cell = $derived(`${Math.round(CELL * zoom)}px`);
@@ -58,7 +58,7 @@
       {#each m.ids as id, i (id)}
         <tr>
           <th class="sticky left-0 z-10 bg-paper pr-2 text-right font-normal whitespace-nowrap" scope="row" title={id} data-testid="matrix-row">
-            <button class="p-0 bg-transparent border-none cursor-pointer text-xs text-ink-soft hover:underline" onclick={() => onopen(id)}>{short(id)}</button>
+            <button class="p-0 bg-transparent border-none cursor-pointer text-xs text-ink-soft hover:underline" onclick={() => onfocus(id)}>{short(id)}</button>
           </th>
           {#each m.ids as other, j (other)}
             {@const f = fill(i, j)}

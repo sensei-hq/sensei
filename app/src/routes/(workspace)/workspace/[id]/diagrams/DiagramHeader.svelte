@@ -20,6 +20,7 @@
         budget = null,
         hrefFor,
         controls,
+        focus = null,
     }: {
         view: DiagramView;
         about: DiagramHeaderState;
@@ -33,6 +34,8 @@
         /** The route of a diagram, for a stat one of them shows. */
         hrefFor: (lens: string) => string;
         controls?: Snippet;
+        /** What every lens is focused on (user, 2026-11-03), and how to clear it. */
+        focus?: { label: string; onclear: () => void } | null;
     } = $props();
 
     // The card's tone; plain ink is none.
@@ -65,6 +68,18 @@
     <span class="inline-flex items-baseline gap-3">
         {view.label}
         {#if level}<span class="font-mono text-sm font-normal text-ink-mute" data-testid="diagram-level">{level}</span>{/if}
+        {#if focus}
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-accent text-sm font-normal text-ink self-center"
+                data-testid="diagram-focus">
+                <span class="i-solar-target-bold-duotone text-accent" aria-hidden="true"></span>
+                <span class="text-ink-mute">Focus</span>
+                <span class="font-mono max-w-80 truncate" title={focus.label}>{focus.label}</span>
+                <button type="button" class="p-0 bg-transparent border-none cursor-pointer text-ink-mute hover:text-ink leading-none"
+                    aria-label="Clear focus" title="Clear focus" onclick={focus.onclear}>
+                    <span class="i-solar-close-circle-bold-duotone" aria-hidden="true"></span>
+                </button>
+            </span>
+        {/if}
     </span>
 {/snippet}
 

@@ -8,7 +8,7 @@
   import type { ProxyItem } from '@rokkit/states';
   import type { ComplexityNode, ComplexityTree } from './types';
 
-  let { data, zoom = 1, onopen }: { data: ComplexityTree | null; zoom?: number; onopen: (id: string) => void } = $props();
+  let { data, zoom = 1, onfocus }: { data: ComplexityTree | null; zoom?: number; onfocus: (id: string) => void } = $props();
 
   const pct = (complex: number, functions: number) => (functions ? Math.round((complex / functions) * 100) : 0);
   /** The share's tone: over 20% red, over 10% amber — the lens's tiers. */
@@ -42,7 +42,7 @@
     <span class="shrink-0 tabular-nums text-xs text-ink-faint w-16 text-right">max {n.maxCyclo}</span>
     {#if n.kind === 'module'}
       <button class="shrink-0 p-0 bg-transparent border-none cursor-pointer text-ink-mute hover:text-ink"
-        aria-label={`Open ${n.id}`} title={`Open ${n.id}`} onclick={(e) => { e.stopPropagation(); onopen(n.id); }}>↗</button>
+        aria-label={`Focus ${n.id}`} title={`Focus ${n.id}`} onclick={(e) => { e.stopPropagation(); onfocus(n.id); }}>↗</button>
     {/if}
   </span>
 {/snippet}

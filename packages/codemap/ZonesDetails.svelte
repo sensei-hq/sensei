@@ -4,7 +4,7 @@
   import { inZoneFilter, zonesView, type ZoneFilter } from './lenses';
   import type { Zones } from './types';
 
-  let { data, filter, onopen }: { data: Zones; filter: ZoneFilter; onopen: (id: string) => void } = $props();
+  let { data, filter, onfocus }: { data: Zones; filter: ZoneFilter; onfocus: (id: string) => void } = $props();
 
   const view = $derived(zonesView(data, data.points.length));
   const furthest = $derived(view.furthest.filter((p) => inZoneFilter(p.zone, filter)).slice(0, 10));
@@ -19,7 +19,7 @@
     <ol class="m-0 pl-5 flex flex-col gap-1" data-testid="zones-furthest">
       {#each furthest as p (p.component)}
         <li class="text-sm">
-          <button class="p-0 bg-transparent border-none cursor-pointer text-left font-mono text-xs text-ink hover:underline break-all" onclick={() => onopen(p.component)}>{p.component}</button>
+          <button class="p-0 bg-transparent border-none cursor-pointer text-left font-mono text-xs text-ink hover:underline break-all" onclick={() => onfocus(p.component)}>{p.component}</button>
           <span class="text-xs text-ink-faint"> {p.distance.toFixed(2)} · {p.zone} · {p.ca} dependents</span>
         </li>
       {:else}

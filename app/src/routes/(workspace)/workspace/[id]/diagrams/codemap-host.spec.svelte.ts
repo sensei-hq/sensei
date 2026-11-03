@@ -28,4 +28,17 @@ describe('CodeMapHost', () => {
     expect(host.stats?.[0]).toMatchObject({ label: 'Modules', value: '0' });
     expect(host.budget).toBe('drawing 0 of 0 modules · 0 bands for 0 edges · 0 symbols');
   });
+
+  // The header says what every lens is focused on (user, 2026-11-03).
+  it('names the focus for the header — a module by its id, a segment by its group', () => {
+    const host = new CodeMapHost(() => 'w', {} as CodeMapPort);
+    expect(host.focus).toBeNull();
+    host.state.focus = { kind: 'module', id: 'senseid/db' };
+    expect(host.focus).toBe('senseid/db');
+    host.state.focus = { kind: 'segment', id: 'L1' };
+    expect(host.focus).toBe('Layer L1');
+    host.state.groupBy = 'folders';
+    host.state.focus = { kind: 'segment', id: 'senseid' };
+    expect(host.focus).toBe('Folder senseid');
+  });
 });

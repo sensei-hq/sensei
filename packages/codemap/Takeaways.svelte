@@ -5,9 +5,9 @@
   // action that puts the lens's takeaways on the clipboard as markdown.
   import { takeawaysMarkdown, type Takeaway } from './takeaways';
 
-  let { items, onopen, label = 'Code map' }: {
+  let { items, onfocus, label = 'Code map' }: {
     items: Takeaway[];
-    onopen: (id: string) => void;
+    onfocus: (id: string) => void;
     /** The diagram's name, heading the copied markdown. */
     label?: string;
   } = $props();
@@ -42,7 +42,7 @@
               {#if item.value}<span class="text-ink-mute whitespace-nowrap">{item.value}</span>{/if}
               {#if item.target}
                 <button class="ml-auto shrink-0 p-0 bg-transparent border-none cursor-pointer text-ink-mute hover:text-ink"
-                  aria-label={`Open ${item.target}`} title={`Open ${item.target}`} onclick={() => onopen(item.target!)}>↗</button>
+                  aria-label={`Focus ${item.target}`} title={`Focus ${item.target}`} onclick={() => onfocus(item.target!)}>↗</button>
               {/if}
             </li>
           {/each}

@@ -19,11 +19,11 @@ const TREE: ComplexityTree = {
 };
 
 function render(data: ComplexityTree | null = TREE) {
-  const onopen = vi.fn();
+  const onfocus = vi.fn();
   target = document.body.appendChild(document.createElement('div'));
-  app = mount(ComplexityLens, { target, props: { data, zoom: 1, onopen } });
+  app = mount(ComplexityLens, { target, props: { data, zoom: 1, onfocus } });
   flushSync();
-  return onopen;
+  return onfocus;
 }
 
 // The user (2026-11-02): complexity as a tree, with the numbers at module and

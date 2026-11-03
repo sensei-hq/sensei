@@ -17,11 +17,11 @@ const L0 = {
 } as unknown as Level0;
 
 function render(data: Level0 = L0) {
-  const onopen = vi.fn();
+  const onfocus = vi.fn();
   target = document.body.appendChild(document.createElement('div'));
-  app = mount(CyclesLens, { target, props: { data, zoom: 1, onopen } });
+  app = mount(CyclesLens, { target, props: { data, zoom: 1, onfocus } });
   flushSync();
-  return onopen;
+  return onfocus;
 }
 
 describe('CyclesLens', () => {
@@ -35,9 +35,9 @@ describe('CyclesLens', () => {
   });
 
   it('a member opens its module', () => {
-    const onopen = render();
+    const onfocus = render();
     (target.querySelector('[data-cycle-node="p/d"]') as SVGElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(onopen).toHaveBeenCalledWith('p/d');
+    expect(onfocus).toHaveBeenCalledWith('p/d');
   });
 
   it('says so when there is no cycle', () => {

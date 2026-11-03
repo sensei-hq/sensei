@@ -36,6 +36,18 @@ export class CodeMapHost {
     return budgetLine(m.l0, drawnBands(m.lens, m.l0, m.cochange, { edgeMode: m.edgeMode, minWeight: m.minWeight }).length);
   }
 
+  /** What every lens is focused on, for the header's chip; null when nothing is. */
+  get focus(): string | null {
+    const f = this.state.focus;
+    if (!f) return null;
+    if (f.kind === 'module') return f.id;
+    return `${this.state.groupBy === 'layers' ? 'Layer' : 'Folder'} ${f.id}`;
+  }
+
+  clearFocus(): void {
+    void this.state.clearFocus(this.port);
+  }
+
   /** Where the map is, for the header's level tag. */
   get level(): string {
     return `L${this.state.crumbs.length - 1} · ${this.state.level}`;

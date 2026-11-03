@@ -21,7 +21,7 @@ const DATA: Zones = {
 describe('ZonesLens', () => {
   it('names the points in focus and fades the rest', () => {
     target = document.body.appendChild(document.createElement('div'));
-    app = mount(ZonesLens, { target, props: { data: DATA, filter: 'issues', zoom: 1, onopen: vi.fn() } });
+    app = mount(ZonesLens, { target, props: { data: DATA, filter: 'issues', zoom: 1, onfocus: vi.fn() } });
     flushSync();
     const labels = [...target.querySelectorAll('[data-zone-label]')].map((t) => t.textContent?.trim());
     expect(labels).toEqual(['config', 'ports']);

@@ -80,7 +80,7 @@ describe('CodeMapState', () => {
     s.select('p/a');
     s.lens = 'matrix';
     await s.setGroupBy(p, 'folders');
-    expect(p.level0).toHaveBeenLastCalledWith('folders');
+    expect(p.level0).toHaveBeenLastCalledWith('folders', null);
     expect([s.groupBy, s.selected, s.lens, s.level]).toEqual(['folders', 'p/a', 'matrix', 'modules']);
   });
 
@@ -102,27 +102,50 @@ describe('CodeMapState', () => {
     expect([s.level, s.error]).toEqual(['modules', 'Service Unavailable']);
   });
 
-  it('the Wheel, Zones and Matrix return to modules with the open module selected', async () => {
-    for (const lens of ['wheel', 'zones', 'matrix'] as const) {
+  it('every lens leaves the files view and keeps the focus (user, 2026-11-03)', async () => {
+    for (const lens of ['structure', 'wheel', 'cycles', 'matrix', 'zones', 'coupling', 'complexity'] as const) {
       const s = new CodeMapState();
       const p = port();
-      await s.load(p);
+      await s.setFocus(p, { kind: 'module', id: 'p/a' });
       await s.openModule(p, 'p/a');
       await s.openFile(p, 'f1', 'a/x.rs');
       await s.showLens(p, lens);
-      expect([s.lens, s.level, s.crumbs.length, s.l1, s.l2, s.selected], lens).toEqual([lens, 'modules', 1, null, null, 'p/a']);
+      expect([s.lens, s.level, s.crumbs.length, s.l1, s.l2, s.focus], lens).toEqual([lens, 'modules', 1, null, null, { kind: 'module', id: 'p/a' }]);
     }
   });
 
-  it('Structure, Cycles, Hidden coupling and Complexity keep the level', async () => {
-    for (const lens of ['structure', 'cycles', 'coupling', 'complexity'] as const) {
-      const s = new CodeMapState();
-      const p = port();
-      await s.load(p);
-      await s.openModule(p, 'p/a');
-      await s.showLens(p, lens);
-      expect([s.lens, s.level, s.crumbs.length], lens).toEqual([lens, 'files', 2]);
-    }
+  it('a focus re-reads the map narrowed to it; clearing it reads the whole map again', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.load(p);
+    expect(p.level0).toHaveBeenLastCalledWith('layers', null);
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    expect(p.level0).toHaveBeenLastCalledWith('layers', { kind: 'module', id: 'p/a' });
+    expect(s.focus).toEqual({ kind: 'module', id: 'p/a' });
+    await s.showLens(p, 'cycles');
+    expect(s.focus).toEqual({ kind: 'module', id: 'p/a' });
+    await s.clearFocus(p);
+    expect([s.focus, (p.level0 as ReturnType<typeof vi.fn>).mock.lastCall]).toEqual([null, ['layers', null]]);
+  });
+
+  it('focusing from the files view climbs back to the modules', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.load(p);
+    await s.openModule(p, 'p/a');
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    expect([s.level, s.crumbs.length, s.l1]).toEqual(['modules', 1, null]);
+  });
+
+  it('a regrouping keeps a module focus, and drops a segment focus the new grouping has no group for', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    await s.setGroupBy(p, 'folders');
+    expect(p.level0).toHaveBeenLastCalledWith('folders', { kind: 'module', id: 'p/a' });
+    await s.setFocus(p, { kind: 'segment', id: 'L1' });
+    await s.setGroupBy(p, 'layers');
+    expect([s.focus, (p.level0 as ReturnType<typeof vi.fn>).mock.lastCall]).toEqual([null, ['layers', null]]);
   });
 
   it('reads zones once, when the Zones lens first opens', async () => {
@@ -155,5 +178,36 @@ describe('CodeMapState', () => {
     release({ ok: true, data: L1 });
     await first;
     expect(s.l1?.module).toBe('p/b');
+  });
+
+  it('a lens’s own read is kept when a different read finishes after it (user, 2026-11-03)', async () => {
+    const s = new CodeMapState();
+    let release: (v: { ok: true; data: { hidden: []; pairs: number; commits: number; minTogether: number } }) => void = () => {};
+    const slow = new Promise<{ ok: true; data: { hidden: []; pairs: number; commits: number; minTogether: number } }>((r) => (release = r));
+    const p = port({ cochange: vi.fn(() => slow) });
+    await s.load(p);
+    const coupling = s.showLens(p, 'coupling');
+    await s.openModule(p, 'p/a');
+    release({ ok: true, data: { hidden: [], pairs: 0, commits: 7, minTogether: 5 } });
+    await coupling;
+    expect([s.cochange?.commits, s.loading]).toEqual([7, false]);
+  });
+
+  it('keeps the whole map to find modules in while the lenses draw a focus', async () => {
+    const s = new CodeMapState();
+    const narrowed = { ...L0(), blocks: [] };
+    const p = port({ level0: vi.fn((g, f) => ok(f ? narrowed : L0(g))) });
+    await s.load(p);
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    expect([s.l0, s.whole?.blocks.length]).toEqual([narrowed, 1]);
+  });
+
+  it('a pick from the finder focuses a module, or a whole group as a segment', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.focusChoice(p, 'p/a');
+    expect(s.focus).toEqual({ kind: 'module', id: 'p/a' });
+    await s.focusChoice(p, 'group:L1');
+    expect(s.focus).toEqual({ kind: 'segment', id: 'L1' });
   });
 });

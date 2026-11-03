@@ -17,11 +17,11 @@ const CC: CoChange = {
 };
 
 function render(data: CoChange | null = CC) {
-  const onopen = vi.fn();
+  const onfocus = vi.fn();
   target = document.body.appendChild(document.createElement('div'));
-  app = mount(CouplingLens, { target, props: { data, zoom: 1, onopen } });
+  app = mount(CouplingLens, { target, props: { data, zoom: 1, onfocus } });
   flushSync();
-  return onopen;
+  return onfocus;
 }
 
 // Hidden coupling is its own facet (user, 2026-11-02): only the pairs that change
@@ -36,9 +36,9 @@ describe('CouplingLens', () => {
   });
 
   it('either side opens its module', () => {
-    const onopen = render();
-    (target.querySelector('[data-pair="p/ui|p/api"] button[aria-label="Open p/api"]') as HTMLButtonElement).click();
-    expect(onopen).toHaveBeenCalledWith('p/api');
+    const onfocus = render();
+    (target.querySelector('[data-pair="p/ui|p/api"] button[aria-label="Focus p/api"]') as HTMLButtonElement).click();
+    expect(onfocus).toHaveBeenCalledWith('p/api');
   });
 
   it('tells no history apart from no coupling', () => {
