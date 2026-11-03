@@ -12,6 +12,28 @@ updated: 2026-10-28
 
 ---
 
+## 2026-11-03 — WP4 F4 needed no new decision: D10 shows viewer pools of one
+
+The WP4 review asked whether a viewer-pooled metric row over fewer than N = 2
+contributors should be withheld. No new call: **D10 already answers it** —
+"Hide aggregates over very small groups? **No.** An aggregate over one
+contributor is shown" (`docs/roadmap/09-dojo-expansion.md`, the #307 round that
+also designed the workspace viewer, D8) — and **D26 later reaffirmed D10 stands
+for metric aggregates**. The review's N = 2 recommendation was not applied; the
+lone-day pool in `database/tests/dojo/repository_metric_series.sql` pins
+"shown, carrying its rate".
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **F4 follows D10** | `workspace_metric_series` shows pools of one to viewers, labelled by `props.pooled_rows = 1`. | Re-deriving a settled choice is how the log rots; D10 was decided with the viewer design in hand. |
+| **Not the team-totals floor** | `team_metric_totals`' k ≥ 3-others floor (user, 2026-10-22) stays where it is: member-included team totals, where a reader subtracts their own number. Viewer pools are a different shape and keep D10. | The floor's rationale is the subtraction attack on totals that include the reader. |
+
+Known edge, left open: a viewer who also contributes rows could subtract their
+own from a pool of two. D10's revisit clause (comparison charts across people or
+teams) does not cover it — a future call if it matters.
+
+---
+
 ## 2026-10-28 — A slash command is a prompt
 
 The transcript parser listed `<command-name` and `<command-message` among the injected
