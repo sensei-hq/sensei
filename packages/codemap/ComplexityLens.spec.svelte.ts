@@ -83,4 +83,15 @@ describe('ComplexityLens', () => {
     expect(row.querySelector('.text-warning')).not.toBeNull();
     expect(row.querySelector('.text-danger')).toBeNull();
   });
+
+  // Review r2 L5: a row with no tier is not drawn red, whatever its share.
+  it.skip('pending: #156 — a row the daemon gives no tier is not drawn red', () => {
+    const tree: ComplexityTree = {
+      total: { functions: 10, complex: 9, maxCyclo: 40, files: 1 }, maintainability: null,
+      modules: [{ id: 'p/n', label: 'p/n', kind: 'module', functions: 10, complex: 9, maxCyclo: 40, files: 1, tier: null, children: [] }],
+    };
+    render(tree);
+    const row = target.querySelector('[data-complexity-row="p/n"]') as HTMLElement;
+    expect(row.querySelector('.text-danger')).toBeNull();
+  });
 });

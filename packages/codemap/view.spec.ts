@@ -114,4 +114,10 @@ describe('complexityTier reads the daemon’s tier', () => {
     expect(complexityTier(b).tone).toBe('warning');
     expect(complexityTier(b).label).toBe('30% over cx 10');
   });
+
+  // Review r2 L5: no tier from the daemon is not measured — never the share rule as a fallback.
+  it.skip('pending: #156 — a module the daemon gives no tier is not measured, whatever its share', () => {
+    const b = block('p/a', { complexity: { functions: 10, complex: 9, tier: null } });
+    expect(complexityTier(b).tone).toBe('unmeasured');
+  });
 });
