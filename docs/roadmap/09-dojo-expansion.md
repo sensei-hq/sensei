@@ -74,7 +74,7 @@ creator (`database/ddl/table/dojo/projects.ddl`); the sync keeps filing reposito
 
 | Area | Exists |
 |---|---|
-| Workspaces | Read-only lists (`/v1/t/…/projects`, `/v1/you/projects`); created only by the sync (`file_repository_project`). No create / edit / move-repo. *Since then: the org workspace drill-in reads real data, not fixtures (#106, closed 2026-10-23). Writing a workspace is still A4.* |
+| Workspaces | Read-only lists (`/v1/t/…/projects`, `/v1/you/projects`); created only by the sync (`file_repository_project`). No create / edit / move-repo. *Since then: the org workspace drill-in reads real data, not fixtures (#106, closed 2026-10-23), and R3 (D30) renamed projects to workspaces — the routes are `/v1/t/[origin]/[org]/workspaces` and `/v1/you/workspaces` (`dojo/src/routes/v1/t/[origin]/[org]/workspaces/+server.ts`, `.../v1/you/workspaces/+server.ts`) and the filing function is `dojo.file_repository_workspace` (`database/ddl/function/dojo/file_repository_workspace.ddl:28`). Writing a workspace is still A4.* |
 | Teams & roles | *Since then: teams, invites and viewers are built (A3); create-a-dōjō is retired (R1).* At the inventory: member role change, create-a-dōjō, invite accept and GitHub provisioning work. `dojo.teams`, `team_members`, `team_projects`, `roles` exist but nothing writes them; no default team is seeded; no Teams screen or API; the invite API has no screen. |
 | Integrations | GitHub org identity only (`tenant_connections`, `forge-github.ts`). No tracker or CI adapter, table, route or screen. *Since then: R5a's import (GitHub) and R5b's (Azure DevOps) are on develop, and R9 added trackers by level (`sensei.trackers.level`, several boards per workspace); CI and DORA readers are still Wave D.* |
 | Two-way sync | Daemon → dōjō: repositories, metrics, graph, relay. Dōjō → daemon: sync plan, memberships, resolved rules, relay replies. No entity is authored on one side and mirrored to the other. |
@@ -180,12 +180,13 @@ slice builds, passes and ships on its own.
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
   org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
-  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22; ships in the next release. R5b (Azure) merged to develop 2026-10-23 (18f9311c): Microsoft Entra connect flow (D42), refresh token in Vault with compare-and-set rotation, org → dōjō and project → workspace, repositories filed by project, membership provenance per forge and unit, a scheduled member read every 6 h (D44, Cloudflare Cron through `dojo/worker-entry.js`); two independent security reviews, every finding fixed red-first. Live checks wait on the user's Entra app registration (spec: "R5b · one-time setup"). R5c next.*
-  *R5a (GitHub) is on develop: the adapter interface, the claim (`dojo.claim_forge_unit`,
-  `database/ddl/function/dojo/claim_forge_unit.ddl`), `dojo.forge_unit_mappings` + `map_forge_unit`
-  (`.../map_forge_unit.ddl`, `.../forge_unit_mappings.ddl`), Admin → Integrations, and registration by the
-  mapping (`dojo/src/lib/server/forge-github.ts`) — see the spec's "R5a as built". Production's live check
-  waits on a deploy, not on a merge.*
+  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 and has been in production since v0.19.0 (`fcd28d2de`; v0.19.0 is the first tag containing `8a584e51`). R5b (Azure) merged to develop 2026-10-23 (18f9311c): Microsoft Entra connect flow (D42), refresh token in Vault with compare-and-set rotation, org → dōjō and project → workspace, repositories filed by project, membership provenance per forge and unit, a scheduled member read every 6 h (D44, Cloudflare Cron through `dojo/worker-entry.js`); two independent security reviews, every finding fixed red-first. Live checks wait on the user's Entra app registration (spec: "R5b · one-time setup"). R5c next.*
+  *R5a (GitHub) is in production, not merely on develop (`fcd28d2de`, v0.19.0): the adapter interface, the
+  claim (`dojo.claim_forge_unit`, `database/ddl/function/dojo/claim_forge_unit.ddl`),
+  `dojo.forge_unit_mappings` + `map_forge_unit` (`.../map_forge_unit.ddl`, `.../forge_unit_mappings.ddl`),
+  Admin → Integrations, and registration by the mapping (`dojo/src/lib/server/forge-github.ts`) — see the
+  spec's "R5a as built". What is still owed is a walk through the import in production, not a deploy:
+  connect a GitHub org, claim its unit, and see its repositories land as workspaces.*
 - **R5c · Sign in with Microsoft (D45).** *Merged to develop 2026-10-23 (ed078710, spec: "R5c as built"; two review rounds: `xms_edov` required, oid lowercased and tenant-pinned, member sets at most 48 h old); the oid's place in Supabase's Azure identity is read from GoTrue's source and waits on the live check.* Add `azure` to the dōjō's kavach providers
   and the login page (sign-in scopes only); local `supabase/config.toml` `[auth.external.azure]` and production's Azure
   provider take the app registration's client id and secret. A Microsoft sign-in records the Entra object id as an
