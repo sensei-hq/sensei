@@ -347,4 +347,49 @@ describe('CodeMap', () => {
     expect([q('[data-testid="codemap-clear-focus"]') !== null, q('[data-testid="codemap-open"]')]).toEqual([true, null]);
     expect(q('[data-testid="codemap-takeaways"]')).not.toBeNull();
   });
+
+  // Review r3 N4(b): the page passes a lens's own failure to the lens.
+  it('a lens whose own read failed shows why with Retry, and Retry reads it again', async () => {
+    const p = port();
+    p.cochange = vi.fn()
+      .mockReturnValueOnce(Promise.resolve({ ok: false as const, error: 'Gateway Timeout' }))
+      .mockReturnValue(ok({ hidden: [], pairs: 0, commits: 3, minTogether: 5 }));
+    const map = render(p);
+    await settle();
+    void map.showLens(p, 'coupling');
+    await settle();
+    const failed = q('[data-testid="codemap-coupling"] [data-testid="lens-failed"]') as HTMLElement;
+    expect(failed.textContent).toContain('Gateway Timeout');
+    ([...failed.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Retry') as HTMLButtonElement).click();
+    await settle();
+    expect(p.cochange).toHaveBeenCalledTimes(2);
+    expect(q('[data-testid="lens-failed"]')).toBeNull();
+  });
+
+  // Review r3 N4(a): on a narrow screen the list stands in for the lens, and says the same.
+  it('on a narrow screen a lens whose read failed shows why with Retry, not an empty list', async () => {
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 400 });
+    vi.stubGlobal('ResizeObserver', class {
+      #cb: ResizeObserverCallback;
+      constructor(cb: ResizeObserverCallback) { this.#cb = cb; }
+      observe(el: Element) { this.#cb([{ target: el, contentRect: { width: 400 } } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver); }
+      unobserve() {}
+      disconnect() {}
+    });
+    try {
+      const p = port();
+      p.cochange = vi.fn(() => Promise.resolve({ ok: false as const, error: 'Gateway Timeout' }));
+      const map = render(p);
+      await settle();
+      void map.showLens(p, 'coupling');
+      await settle();
+      expect(q('[data-testid="codemap-list"]')?.textContent).toContain('Gateway Timeout');
+      expect([...target.querySelectorAll('[data-testid="codemap-list"] button')].some((b) => b.textContent?.trim() === 'Retry')).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      if (width) Object.defineProperty(HTMLElement.prototype, 'clientWidth', width);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+    }
+  });
 });

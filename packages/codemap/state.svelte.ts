@@ -73,6 +73,8 @@ export class CodeMapState {
 
   async #read<T>(kind: string, read: () => Promise<Read<T>>): Promise<T | null> {
     const mine = (this.#seq[kind] = (this.#seq[kind] ?? 0) + 1);
+    // A read under way is not its last failure (review r3 L2): the lens reads again.
+    this.#errors[kind] = null;
     this.#pending++;
     try {
       const r = await read();
@@ -147,6 +149,7 @@ export class CodeMapState {
    *  Under a focus the whole map is re-read too, so the finder offers the new
    *  grouping's groups (review r1 F1). */
   async setGroupBy(port: CodeMapPort, groupBy: GroupBy): Promise<void> {
+    this.#forgetOpenFailures();
     this.groupBy = groupBy;
     if (this.focus?.kind === 'segment') this.focus = null;
     // The old grouping's whole map must not outlive a failed re-read (review r2 N3).
@@ -157,6 +160,7 @@ export class CodeMapState {
   /** Focus every lens on a module or a segment (user, 2026-11-03): the map is
    *  re-read narrowed to it and its neighbours, from the modules level. */
   async setFocus(port: CodeMapPort, focus: Focus): Promise<void> {
+    this.#forgetOpenFailures();
     this.focus = focus;
     if (this.level !== 'modules') this.crumbTo(0);
     await this.load(port);
@@ -170,6 +174,7 @@ export class CodeMapState {
   }
 
   async clearFocus(port: CodeMapPort): Promise<void> {
+    this.#forgetOpenFailures();
     this.focus = null;
     await this.load(port);
   }
