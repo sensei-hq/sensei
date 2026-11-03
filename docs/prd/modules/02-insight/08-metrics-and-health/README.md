@@ -27,8 +27,8 @@ as *numbers that don't lie, and say what they're for*.
   `workspace_metric_trend`, `metric_ratings`/`metric_rating_facts`, `metric_status`);
   the derived health score (`workspace_health_score` + `workspace_health_trend`);
   the registry-driven scheduler + per-metric compute handlers; the metrics API family;
-  the **master-detail model + target eligibility** (2026-10-13 decision 8,
-  reorg §9.6 — the spec this module authors; D47 renamed the vocabulary) and the
+  the **master-detail model + gating eligibility** (2026-10-13 decision 8,
+  reorg §9.6 — the spec this module authors) and the
   per-metric design/coverage record (M-9); coverage-aware presentation (#155
   generalised — M-8); the retired-feeds
   accounting (D-6: #153 `churn_rate` and #154 `time_to_useful_result`, both fixed and closed
@@ -148,7 +148,7 @@ as *numbers that don't lie, and say what they're for*.
   never computes (pin `project_health_retired_compute_writes_no_row`) and never
   renders.
 - **Master-detail + targets (decision 8, D47):** every advertised metric has a
-  master-detail record with explicit target eligibility (M-7); a per-metric
+  master-detail record with explicit gating eligibility (M-7); a per-metric
   design/coverage record ties it to its chart and LOD (M-9); thin metrics render as
   coverage-aware, not as strong numbers (M-8, #155 generalised).
 
@@ -190,8 +190,8 @@ curl -s http://localhost:7744/api/workspaces/sensei/health \
 
 ## Open gaps
 
-- [M-7](../../../../roadmap/06-gaps.md) — no master-detail model, no target store or
-  mode; which target may block undefined per metric (P1 — closed by decision 8's spec).
+- [M-7](../../../../roadmap/06-gaps.md) — no master-detail model, no `gating` field;
+  gating eligibility undefined per metric (TG1; P1 — closed by decision 8's spec).
 - [M-8](../../../../roadmap/06-gaps.md) — coverage-aware presentation absent (#155
   generalised; P1).
 - [M-9](../../../../roadmap/06-gaps.md) — no per-metric design/coverage record tying

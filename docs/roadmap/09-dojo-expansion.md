@@ -234,7 +234,7 @@ slice builds, passes and ships on its own.
   key pattern that links a session to a ticket (branch, commit, prompt); the Integrations tab.
 - **C3 · Sensei reads them.** The daemon pulls the mirrored tickets so sessions link to tickets locally.
 
-### Wave D — release pipelines, DORA and release targets
+### Wave D — release pipelines, DORA and release gates
 
 Specified in the PRD as [T5](../prd/modules/04-team/05-releases-and-dora/README.md).
 
@@ -244,7 +244,7 @@ Specified in the PRD as [T5](../prd/modules/04-team/05-releases-and-dora/README.
   linked to the deployment that caused it.
 - **D-3 · The five keys.** Deployment frequency, lead time for changes, change failure rate, time to
   restore and rework rate (D9) as metrics in the existing plumbing; a DORA view in the dōjō and in sensei.
-- **D-4 · Release targets.** T3's targets, ladder (gaining a **Release** scope) and modes
+- **D-4 · Release gates.** T3's targets, ladder (gaining a **Release** scope) and modes
   evaluated over a release's change set; release readiness (green pipeline, no open
   blocking production incident); the stability guardrail (change failure rate / time to
   restore over threshold — `warn` by default, `block` opt-in); the release scorecard.

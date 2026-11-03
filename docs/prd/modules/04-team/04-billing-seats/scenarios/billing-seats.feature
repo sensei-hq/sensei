@@ -9,7 +9,7 @@ Feature: Billing & Seats — tier model, metering, and billing portal (all unbui
   Scenario: an admin moves a dōjō to Paid in the billing page
     Given an admin of a Free dōjō at /org/[slug]/billing
     When they choose "Paid — organizations & teams"
-    Then gating, integrations and consolidated metrics unlock and billing setup begins
+    Then blocking targets on an organisation's private repositories, integrations and consolidated metrics unlock, and billing setup begins
 
   NO TEST
   Scenario: the Free tier covers public repositories forever (D46)

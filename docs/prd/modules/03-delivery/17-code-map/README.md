@@ -147,8 +147,8 @@ when looking at a release (D18).
   seven open this one embedded map and switch lens without reloading. The Code map
   supplies the only header for its lenses.
 - **Dōjō, Workspace › Code health (T3)** — the same map, per repository, with the same
-  lens list plus Database · ER. Each gated reading above it (layer conformance, cycles,
-  zone of pain, complexity) opens the lens that explains it.
+  lens list plus Database · ER. Each reading above it that can carry a target (layer
+  conformance, cycles, zone of pain, complexity) opens the lens that explains it.
 - **Metrics (M8)** — the architecture-metric charts (layers histogram, zones, cycles)
   link into the lens here instead of drawing their own diagram.
 - **Routes today** — `/workspace/[id]/diagrams/{structure,wheel,zones,matrix,cycles,

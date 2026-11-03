@@ -48,9 +48,12 @@ claims unsourced get fixed. The old "these numbers are real" discipline (the
 | **P3** | nice-to-have; only after P0–P2 | DORA module, HF-model support |
 
 **Vocabulary (D47).** A **target** is a metric threshold; a target in mode `block` makes its miss
-**blocking**, and the UI says "target missed (blocking)". "Gate" is relay's approval word, and the
-word for a CI or type-check gate; it never names a target. Where this tree says a prerequisite
-"gates" another module it means ordering, not a threshold.
+**blocking**, and the UI says "target missed (blocking)". Four senses keep the word **gate**, and
+none of them names a single threshold: relay's approval gate, a CI or type-check gate, the **release
+gate** (T5's three-part check — targets over the change set, release readiness, the stability
+guardrail), and **gating eligibility** (whether a metric may carry a blocking target, and how:
+`none | delta | ratchet` — `metric_gating`, TG1). Where this tree says a prerequisite "gates"
+another module it means ordering, not a threshold.
 
 Priorities are per-module and revisited when a plane file changes. "Shipped"
 beats "designed": promotion to ✅ requires evidence (tests, e2e, live data), not
@@ -75,7 +78,7 @@ the cross-plane ones that matter now:
 - **M17 (Code map L0/L1/L2) is a prerequisite for reading architecture metrics at
   any scale** — reorg §9.7. The desktop map is built and G-1 is closed (M17);
   what is missing is the dōjō embed and the daemon-pushed map.
-- **M8 (master-detail + target eligibility) must land before T3 promises targets** —
+- **M8 (master-detail + gating eligibility) must land before T3 promises targets** —
   1 of T3's 7 targets is buildable today, 2 need scoped reads, 4 are
   blocked on #156 (reorg §9.2).
 - **M3 adapter expansion (Claude + OpenCode first)** is the capture plane's

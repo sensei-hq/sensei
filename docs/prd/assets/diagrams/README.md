@@ -13,12 +13,12 @@ these are authored fresh under `prd/assets/diagrams/` as `dNN-<slug>.svg`.
 | D4 | Business model — public free, private on a subscription (D46) | `01-vision.md` | 🚧 Phase 4 |
 | D5 | Data model (schemas + key tables) | `../database/` / `design.dbml` | 🚧 Phase 4 |
 | D6 | Metrics master-detail | reorg §9.6 | 🚧 Phase 4 |
-| D7 | Metric gating funnel (all metrics → gate-eligible → sprint gates) | reorg §9.6 | 🚧 Phase 4 |
+| D7 | Metric gating funnel (all metrics → gating-eligible → sprint targets) | reorg §9.6 | 🚧 Phase 4 |
 | D8 | Graph level-of-detail — L0 birds-eye | reorg §9.7 | 🚧 Phase 4 |
 | D9 | Graph level-of-detail — L1 group | reorg §9.7 | 🚧 Phase 4 |
 | D10 | Graph level-of-detail — L2 detail | reorg §9.7 | 🚧 Phase 4 |
-| D11 | T3 planning — tracker sync + gates | reorg §9 | 🚧 Phase 4 |
-| D12 | Gate vs improvement split | reorg §9.3 | 🚧 Phase 4 |
+| D11 | T3 planning — tracker sync + targets | reorg §9 | 🚧 Phase 4 |
+| D12 | Target vs improvement split | reorg §9.3 | 🚧 Phase 4 |
 | D13 | Own-baseline ratchet | reorg §9.4 | 🚧 Phase 4 |
 | D14 | Platform matrix — macOS / Linux / Windows adapter model | reorg §10 | 🚧 Phase 4 |
 | D15 | Module map — 30 modules across 5 planes | `../modules/README.md` | 🚧 Phase 4 |

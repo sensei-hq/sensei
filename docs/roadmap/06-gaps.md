@@ -38,7 +38,7 @@ evidence is a suspicion, and gets labelled so.
 | A-2 | M2 | the personal-preference surface is narrower than the config the app already supports | decision 10 | P3 |
 | ~~G-1~~ | M17 | ~~graph/layered view unreadable at granular scale — no L0/L1/L2 level of detail~~ — **closed 2026-11-03:** `packages/codemap/` renders L0 (`ModuleMap.svelte:2`), L1 (`FileColumns.svelte`) and L2 (`SymbolView.svelte`) over `…/diagrams/codemap` (`api/routes.rs:139-145`), and an inspect test draws each lens (`app/e2e/tests-inspect/codemap-inspect.spec.ts:109`). Residual, tracked as M17: the dōjō embed and the daemon-pushed map | reorg §9.7 | — |
 | G-2 | M4 · M2 · M3 | the indexer honours `.gitignore` inside a repo scan (`indexer/repo.rs:290`, test `a_repo_scan_honours_gitignore` at `:926`), so "no ignore mechanism" was wrong; **what is missing** is the stored repo config synced via the Dōjō, **seeded from the repo's own ignore sources** (`.gitignore`, qlty `.qlty/qlty.toml` `exclude_patterns`) — not a dotfile — and the config/generated file classes | decision 2026-10-13 | P2 |
-| M-7 | M8 | no master-detail metric model, no target store or mode, which target may block undefined per metric (D47) | reorg §9.6 | P1 |
+| M-7 | M8 | no master-detail metric model, no `gating` field; gating eligibility is undefined per metric (`metric_gating`, TG1; D47) | reorg §9.6 | P1 |
 | M-8 | M8 | coverage-aware presentation absent; thin metrics read as strong (#155 generalised) | reorg §9.6 | P1 |
 | M-9 | M8 | no per-metric design/coverage record tying a metric to its chart and LOD | reorg §9.6 | P1 |
 | C-11 | M3 | transcript-scanning review not scoped as a task | decision 10 | P1 |
