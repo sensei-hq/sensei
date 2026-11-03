@@ -235,6 +235,35 @@ flight.
 - Do not: give a member a switch on an org repository; touch an organisation's billing terms;
   gate anything local on the plan; delete a hidden repository's data.
 
+**WP9 · Registration that scales (dōjō DB + Worker + daemon).** Found 2026-11-03 against production:
+the dōjō runs on Cloudflare Workers, which cap outbound calls PER REQUEST (50 on the free plan), and
+registration costs 1 (caller) + 1 (`register_repository`) + 1 (`file_repository_workspace`) per
+repository — 157 at once failed every pass with "Too many subrequests". The daemon now sends 15 per
+request (fb92e3f39, ≤31 calls): a stopgap that guesses the server's budget from outside. And every
+daemon re-registers EVERY repository on EVERY pass (~1–2 min): ~11 requests and up to ~340 database
+calls a pass for one user, ~7–15k Worker requests a day — a handful of such users exhausts the free
+plan's 100k/day. Concurrency is not the cap's problem (each request has its own budget); volume is.
+- Part A — dōjō, one call per batch: a set-based `dojo.register_repositories(p_repos jsonb)` (returns
+  the same mapped/unmapped rows, filing included) so a request costs ~2 calls whatever its size; the
+  route calls it once, and answers its maximum batch (`max_batch`) so the daemon stops guessing.
+  Tests first: SQL — `registering_many_is_one_call_with_the_same_answers_as_one_by_one`,
+  `a_failed_filing_is_partial_for_that_repository_only`; route —
+  `the_route_makes_one_database_call_for_a_batch`, `it_answers_its_maximum_batch`.
+- Part B — daemon, register only what changed: remember each repository's last registration
+  (key, remote, workspace → answer, at) and offer only new or changed ones, plus everything once a day
+  (and after a sign-in) so a dōjō-side change is still learned. Verdict rows (WP1) still come from the
+  pass's full picture — the cached answers stand in for the ones not re-asked. Use the dōjō's
+  `max_batch` when it answers one, else 15. Tests first in `dojo_sync.rs` with the scripted plane:
+  `an_unchanged_repository_is_not_re_offered`, `a_moved_workspace_is_re_offered`,
+  `everything_is_re_offered_once_a_day`, `verdicts_cover_every_repository_even_when_few_were_offered`.
+- Accept: against production, a pass after the first offers 0 repositories (log `offered=0`) while
+  `sensei.sync_state` still holds a verdict for all mapped+unmapped; the Worker's subrequests per
+  registration request stay ≤ 3 (Cloudflare dashboard → Workers → Metrics).
+- Do not: raise the per-request cap by any means other than the batched call; drop a verdict for a
+  repository that was not re-offered; register on every pass "to be safe".
+- Depends on nothing; Part A ships with a dōjō release, Part B with a daemon release — B works
+  against an older dōjō (falls back to 15), A against an older daemon (it simply sends batches).
+
 ## 5. Context you need
 
 - Build and test:
