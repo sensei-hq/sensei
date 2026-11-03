@@ -3,33 +3,24 @@
 The coordinator (the reviewer session) owns this file. Each lane reads **its own section and §1–§3**.
 The goal and the reasons for the order are in `docs/review/2026-11-03-orientation.md`.
 
-## Queue v2 (user, 2026-11-03 afternoon): five sessions, built around the spine
+## Queue v3 (user, 2026-11-03): five implementation queues; Cowork does mockups only
 
-Sessions: **Claude Code A**, **Claude Code B**, **Cowork**, **Muse-1**, **Muse-2**, **Freebuff**. L7 never started (user). The order follows the spine
-(orientation §3): sync verified → targets end to end → no fabricated values. Off-spine work waits.
-Where this section and the lane sections below disagree, this section wins.
+Implementation sessions: **Muse-1, Muse-2, Claude Code A, Claude Code B, Freebuff.** **Cowork** is slow, so it
+designs (and finishes the Notice round 2 it is already in); the five queues build. Each queue runs top to
+bottom. Where this section and the lane sections below disagree, this section wins. L7 never started.
 
-| Session | Lane | Queue, in order |
+| Queue | Owns | Order |
 |---|---|---|
-| **Muse-1** | L1 · sync push and registration | F4 (finish) → `run.sh --apply` (R1) → WP8 (D46) → WP9A → D18 label on the plan wire → **#314 production verification** |
-| **Muse-2** | L9 · dōjō metric reads, then L8 batch B | `metric_readings` (R2) → WP5 round 2 (D82) → the pack-rule `[]` fix → **L8 batch B** (governance and identity, audit Appendix A) → seat model (D59) |
-| **Claude Code A** | L2 · metrics and analysis, then L8 batches A + C | S7 r3 → S4 2c → #156 (critical path for targets) → **L8 batch A** (data loss) → **L8 batch C** (misleading numbers; `pg_store/metrics.rs` is metrics) |
-| **Claude Code B** | L3 · targets | ActionItems → **targets TG1 → TG5** (TG2 after WP8 merges; TG5 includes L7's `TicketReader` + the relink fix that keeps `source='fetch'` links, so L3 owns `crates/senseid/src/tracker/**` for it) → TG6 → the `generate.rs` duplicate flood |
-| **Freebuff** | L6 docs, then L5 | L6 round 3 → Q2 statuses (07/08/09) → the gates sweep → **L5's deferred pages** (knowledge-sources first, then the plan's page order) |
-| **Cowork** | L4 · UI | Notice round 2 (incl. billing D75 fixes and its D83 rows) → rankOf → menu D70 + daemon reachable flag → sync screen → targets UI (mockup, then build on TG7's contract) → viewer shell |
-| **L0** | coordinator | D83 guard (building now) → reviews, merges, converges, install → release |
+| **Q1 · Muse-1** (L1 sync) | sync push and registration | F4 finish → `run.sh --apply` (R1) → WP8 → WP9A → D18 label on the plan wire → **#314 production verification** → **build the sync screen** from Cowork's final mockup |
+| **Q2 · Muse-2** (L9 dōjō reads) | dōjō metric reads + D83 B | `metric_readings` (R2, after F4 merges) → WP5 round 2 (D82) → the pack-rule `[]` fix → **D83 batch B** (governance and identity) → seat model (D59) → **build the viewer shell** from the mockup |
+| **Q3 · Claude Code A** (L2) | metrics and analysis + D83 A/C | S7 r4 (N4) → S4 2c phase B → #156 → **D83 batch A** (data loss) → **batch C** (numbers, incl. `copilot_cli.rs:294`) → **daemon reachable flag + live indicators** (rail "running", dōjō bell, role-aware phone tabs) |
+| **Q4 · Claude Code B** (L3 targets) | targets end to end | ActionItems phase B → **TG1 → TG5** (TG2 after WP8; TG5 includes `TicketReader` + the relink fix; owns `tracker/**` for it) → TG6 → **build the targets UI** from the mockup on TG7's contract → the `generate.rs` duplicate flood |
+| **Q5 · Freebuff** (L6, then UI chores) | docs, then small UI | L6 round 3 → Q2 statuses (07/08/09) → gates sweep → **build the menu reorder (D70/D79)** from the mockup → L5's deferred pages, in the plan's order |
+| **Cowork** (L4) | design | Notice round 2 (incl. the billing D75 fixes, its D83 rows, rankOf phase B) → **mockups only**, each final one handed off once the user approves it: menu D70 → sync screen → targets UI → viewer shell |
 
-**Moved:**
-- L5's remaining seven pages are **deferred** until a session frees up. Libraries is done (merges after
-  Notice).
-- **L9** is new. It owns the dōjō metric reads that L1 owned: `database/ddl/**/dojo/*_metric_series`,
-  `team_member_metrics`, `my_metric_series`, the new `metric_readings`, their tests, `workspaces-data.ts` (the
-  metrics read) and the WP5 files. It takes over from L1 **after F4 merges**, so the two Muse sessions never
-  share a file.
-- **L8 is split by batch:** A and C go to Claude Code A, B to Muse-2.
-- **L7 is not running.** TicketReader + relink go to L3 (TG5). The D50 writeback default stays on
-  `feature/tracker_metrics_writeback`, which L0 will not merge while it defaults to `true`.
-- L5's deferred pages go to Freebuff after L6.
+A build waits for its final mockup. Until then each queue's other items run, so nobody stalls on
+Cowork. Ownership for a build passes to the queue that builds it: the screen files the brief names, for that
+item only.
 
 ## 0. Decisions in force (user, 2026-11-03)
 
