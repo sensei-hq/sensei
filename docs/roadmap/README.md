@@ -74,7 +74,7 @@ the cross-plane ones that matter now:
   1 of T3's 7 gating targets is buildable today, 2 need scoped reads, 4 are
   blocked on #156 (reorg §9.2).
 - **M3 adapter expansion (Claude + OpenCode first)** is the capture plane's
-  facing work (decision 10; C-13, C-14).
+  facing work (decision 10; C-13, #348, #349).
 - **P1 design is finished before implementation distributes across the three
   targets** (decision 7).
 

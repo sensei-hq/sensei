@@ -63,7 +63,7 @@ status — open or closed is GitHub's answer.
 | [#279](https://github.com/sensei-hq/sensei/issues/279) | EPIC (deferred) · Benchmark: re-design proving sensei's value on transcript history | M18's deferred half — deferred, not dropped |
 | [#316](https://github.com/sensei-hq/sensei/issues/316) | CI and DORA data need a puller that does not depend on a daemon being online | T5's prerequisite |
 | [#234](https://github.com/sensei-hq/sensei/issues/234) | A seeded rule pack cannot be adopted — opt-in means unreachable | still open; check the adoption path before closing |
-| [#191](https://github.com/sensei-hq/sensei/issues/191) | rokkit and kavach are behind: app 1.4.0 / dojo 1.3.4 vs 1.6.0, kavach 1.1.3 vs 1.2.0 | the audit found #191 stale (both current on 2026-10-27) — verify, then close |
+| [#191](https://github.com/sensei-hq/sensei/issues/191) | rokkit and kavach are behind: app 1.4.0 / dojo 1.3.4 vs 1.6.0, kavach 1.1.3 vs 1.2.0 | its numbers are stale but D-12 is not closed: `@kavach/ui@1.3.0` still nests `@rokkit` 1.4.0 under the 1.14.0 direct deps — keep open for the kavach bump |
 
 ## Open — not yet filed
 

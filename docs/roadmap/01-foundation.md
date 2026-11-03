@@ -34,5 +34,5 @@ Full register: [`06-gaps.md`](06-gaps.md).
 
 M6 (data model) is the read base; M4's indexer state gates everything downstream
 (graph 40.3% resolved, 1.6M/2.4M edges on the live sensei DB — see
-`../history/reports/` for the 2026-10-13 placement numbers). C-13/C-14 (M3) are
-the facing capture work this quarter.
+`../history/reports/` for the 2026-10-13 placement numbers). C-13 (M3) and the
+next adapters (#348, #349) are the facing capture work this quarter.
