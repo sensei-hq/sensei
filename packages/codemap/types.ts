@@ -25,7 +25,7 @@ export interface Block {
   /** For a "+N more" block, the modules folded into it. */
   folded: string[];
   /** Functions and how many exceed cyclomatic 10 (local qlty); null: not measured. */
-  complexity?: { functions: number; complex: number } | null;
+  complexity?: { functions: number; complex: number; /** The daemon's reading of it (#156): the one rule the lens and the metrics share. */ tier?: 'danger' | 'warning' | 'neutral' | null } | null;
 }
 
 export interface Band {

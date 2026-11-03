@@ -1179,7 +1179,8 @@ async fn ratio_pooling_counts_each_repository_and_person_once_its_latest_commit(
     let mid = seed_metric(&s, &key, "RatioLike", 0, None).await;
     let day = chrono::NaiveDate::from_ymd_opt(2020, 6, 7).unwrap();
     // (repository, identity, commit, numerator, denominator, minutes before now)
-    let rows: [(&uuid::Uuid, &str, Option<&str>, i64, i64, i64); 6] = [
+    type Reading<'a> = (&'a uuid::Uuid, &'a str, Option<&'a str>, i64, i64, i64);
+    let rows: [Reading; 6] = [
         (&r1, "me@x", Some("r1-c1"), 10, 100, 30),
         (&r1, "me@x", Some("r1-c2"), 12, 100, 20),
         (&r1, "me@x", Some("r1-c3"), 15, 100, 10), // r1's latest commit

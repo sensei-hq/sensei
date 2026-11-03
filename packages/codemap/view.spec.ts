@@ -98,3 +98,13 @@ describe('moduleChoices', () => {
     expect(moduleChoices(l0)[0].children[0]).toEqual({ label: 'Folder sensei · all 2 modules', value: 'group:sensei' });
   });
 });
+
+// The complexity rule lives in the daemon, once (#156): the lens reads the tier
+// the daemon sends, so its outliers are the ones the architecture metrics count.
+describe('complexityTier reads the daemon’s tier', () => {
+  it.skip('pending: #156 — takes the tier the daemon sent, not its own reading of the share', () => {
+    const b = block('p/a', { complexity: { functions: 10, complex: 3, tier: 'warning' } });
+    expect(complexityTier(b).tone).toBe('warning');
+    expect(complexityTier(b).label).toBe('30% over cx 10');
+  });
+});
