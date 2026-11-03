@@ -679,6 +679,15 @@ warmed off the wire).
 - **Target 4, cycles:** judged by **cycle identity = the sorted set of its member modules**, which is stable
   under unrelated edits. "Largest cycle" is a property of `dependency_cycles`, never a summed count.
 - Both identities are still stored, because the screen shows them. Only the verdict uses the rule above.
+- **The stored contract (#156, scope `repo`, one row per key per repository, never summed across
+  repositories):**
+  - `dependency_cycles`: value = the number of cycles; props `{cycles: [[sorted members]…], largest, cross_repository_deps}`.
+  - `layer_up_edges`: value = the Up-edge count; props `{up_edges: ["s→t"…], cross_repository_deps}`.
+  - `zone_of_pain_modules`: value = the count; props `{modules: […]}`.
+  - `hidden_coupling_pairs`, `complexity_outlier_modules`: value only, props `{}`.
+
+  An all-zero reading still stores all five rows (a clean repository is "met", not "not measured"). A reading
+  on an incomplete index stores no rows.
 
 ### TG5 · MCP: `get_ticket`, `get_targets`, `get_missed_targets`
 
