@@ -3,14 +3,18 @@
   // with no dependency between them — strongest first, each a dashed tie whose weight
   // is how often the rarer of the two changes with the other. Only the coupled
   // modules appear; either side opens its module. The text follows the zoom.
+  import LensFailed from './LensFailed.svelte';
   import type { CoChange } from './types';
 
-  let { data, zoom = 1, onfocus, focus = null }: {
+  let { data, zoom = 1, onfocus, focus = null, failed = null, onretry = () => {} }: {
     data: CoChange | null;
     zoom?: number;
     onfocus: (id: string) => void;
     /** What the map is focused on, so an empty list says whose it is. */
     focus?: string | null;
+    /** Why this lens's own read failed; shown with Retry instead of "Reading…". */
+    failed?: string | null;
+    onretry?: () => void;
   } = $props();
   const pairs = $derived([...(data?.hidden ?? [])].sort((a, b) => b.together - a.together || b.strength - a.strength));
   const most = $derived(Math.max(1, ...pairs.map((p) => p.together)));
@@ -28,7 +32,9 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div class="w-full overflow-auto" tabindex="0" role="region" aria-label="Hidden coupling, scrollable" data-testid="codemap-coupling"
   style:font-size={`${Math.round(13 * zoom)}px`}>
-  {#if !data}
+  {#if !data && failed}
+    <LensFailed reason={failed} {onretry} />
+  {:else if !data}
     <p class="m-0 text-ink-faint">Reading the commit history…</p>
   {:else if !data.commits}
     <p class="m-0 text-ink-mute">No commit history read for this workspace yet.</p>

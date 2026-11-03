@@ -60,4 +60,14 @@ describe('ComplexityLens', () => {
     flushSync();
     expect(target.textContent).toContain('senseid/db has no measured files');
   });
+
+  it('a failed read says why and offers Retry, never Reading…', () => {
+    const onretry = vi.fn();
+    target = document.body.appendChild(document.createElement('div'));
+    app = mount(ComplexityLens, { target, props: { data: null, zoom: 1, onfocus: vi.fn(), failed: 'Bad Gateway', onretry } });
+    flushSync();
+    expect(target.textContent).not.toContain('Reading');
+    expect(target.textContent).toContain('Bad Gateway');
+    expect([...target.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Retry')).toBe(true);
+  });
 });
