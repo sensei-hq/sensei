@@ -1,17 +1,6 @@
 use super::*;
 
-/// A change to a workspace's workflow state, as [`PgStore::upsert_workflow_state`]
-/// applies it: each `Some` replaces its column, each `None` keeps the stored value.
-pub struct WorkflowStatePatch<'a> {
-    pub phase: Option<&'a str>,
-    pub plan: Option<&'a str>,
-    pub task: Option<&'a str>,
-    pub issue: Option<i64>,
-    pub checkpoint: Option<&'a str>,
-    pub rules_hash: Option<&'a str>,
-}
-
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     pub async fn get_config(&self, key: &str) -> Result<Option<String>, String> {
         let row: Option<(String,)> =

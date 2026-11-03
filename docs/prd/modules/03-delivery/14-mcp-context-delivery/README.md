@@ -47,11 +47,13 @@ to grep rather than inventing an empty answer.
 
 ## Surfaces
 
-- **API** — `GET /api/mcp/tools` (`mcp::mcp_list_tools`) · `POST /api/mcp/call`
-  (`mcp::mcp_call_tool`) · `/api/instruments/mcp-servers`, `/{id}/enabled`,
-  `/{id}/tools`, `/refresh`.
+- **API** — `POST /api/mcp/call` (`mcp::mcp_call_tool`, the sensei MCP's
+  dispatch) · `/api/instruments/mcp-servers`, `/{id}/enabled`, `/{id}/tools`
+  (the server's own `tools/list`), `/{id}/call` (a tool run through the server
+  over stdio `tools/call`), `/refresh`.
 - **Daemon** — `api/handlers/query.rs::context_pack`; `api/handlers/mcp.rs::call`;
-  `api/handlers/mcp_manifests.rs` (Playground shapes);
+  `api/handlers/mcp_manifests.rs` (kind/summary for workspace tool stats);
+  `tasks/mcp_probe.rs` (stdio session: probe and call);
   `tasks/mcp_discovery.rs` (boot + every 60s, 24h stale prune); `tool_discovery.rs`.
 - **MCP** — tools declared **inline** in `crates/mcp/src/lib.rs`: `context_pack`,
   `get_layered_context`, `search`, `get_patterns`, `get_workspace_summary`,
@@ -96,8 +98,8 @@ to grep rather than inventing an empty answer.
 
 ## Done gate
 
-- Every tool in the tools surface declares a non-empty `defaults` matching its
-  schema; `GET /api/mcp/tools?mcp=sensei` reflects the same categories and defaults.
+- Every tool in the tools surface declares its `inputSchema`; the Playground's
+  form for it is that schema, as `/api/instruments/mcp-servers/{id}/tools` lists it.
 - Third-party MCPs configured in Claude Code / Zed appear in `sensei.mcp_servers`
   within 60s of daemon start.
 - Playground executes any tool round-trip without the user typing an argument; each
@@ -108,7 +110,8 @@ to grep rather than inventing an empty answer.
   the grep fallback fires on `none`.
 
 ```bash
-curl -s "http://localhost:7744/api/mcp/tools?mcp=sensei" | jq '[.[] | select(.defaults|length==0)] | length'   # 0
+id=$(curl -s localhost:7744/api/instruments/mcp-servers | jq -r '.servers[] | select(.mcp_key|test("(^|_)sensei$")) | .id')
+curl -s "localhost:7744/api/instruments/mcp-servers/$id/tools" | jq '[.tools[] | select(.inputSchema == null)] | length'   # 0
 ```
 
 ## Wrong gate

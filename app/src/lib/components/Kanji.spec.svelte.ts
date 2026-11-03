@@ -45,7 +45,7 @@ describe('Kanji', () => {
   });
 
   it.each([
-    ['muted',     /\btext-ink-mute\b/],
+    ['muted',     /\btext-ink-soft\b/],
     ['success',   /\btext-success\b/],
     ['warning',   /\btext-warning\b/],
     ['watermark', /\btext-accent\b/, /\bopacity-55\b/],
@@ -73,7 +73,8 @@ describe('Kanji in icon mode', () => {
   it('keeps the kanji in kanji mode, and when there is no icon', () => {
     for (const props of [
       { char: '具', icon: 'i-solar-test-tube-bold-duotone', mode: 'kanji' as const },
-      { char: '禅', mode: 'icon' as const },
+      // A kanji the vocabulary lacks, with no icon given, has nothing to show but itself.
+      { char: '鬱', mode: 'icon' as const },
     ]) {
       const m = mountComponent(Kanji, props);
       cleanup.push(m.destroy);
@@ -107,25 +108,27 @@ describe('Kanji and the glyph vocabulary', () => {
     expect(m.container.querySelector('[data-component="glyph-icon"]')?.className).toContain('i-solar-history-bold-duotone');
   });
 
-  it('keeps the kanji when told the mark is an identity', () => {
+  // One rule (#133, 2026-10-27): no mark opts out — a null icon is the vocabulary's.
+  it('shows the vocabulary icon for a mark once called an identity', () => {
     const m = mountComponent(Kanji, { char: '書', mode: 'icon', icon: null });
     cleanup.push(m.destroy);
-    expect(m.container.querySelector('[data-component="kanji"]')?.textContent).toBe('書');
+    expect(m.container.querySelector('[data-component="glyph-icon"]')?.className).toContain('i-solar-book-bold-duotone');
   });
+
 });
 
 // #133: a mark converted from a bare span keeps its own classes — size and tone
 // "inherit" add none, and `class` is passed through in both modes.
 describe('Kanji with its own classes', () => {
   it('carries the given classes and adds no size or tone of its own', () => {
-    const k = mountComponent(Kanji, { char: '探', size: 'inherit', tone: 'inherit', class: 'text-xs text-ink-soft' });
+    const k = mountComponent(Kanji, { char: '探', size: 'inherit', tone: 'inherit', class: 'text-xs text-ink-mute' });
     cleanup.push(k.destroy);
     const el = k.container.querySelector('[data-component="kanji"]') as HTMLElement;
-    expect(el.className.split(/\s+/).sort()).toEqual(['kanji', 'text-ink-soft', 'text-xs']);
+    expect(el.className.split(/\s+/).sort()).toEqual(['kanji', 'text-ink-mute', 'text-xs']);
 
-    const i = mountComponent(Kanji, { char: '探', size: 'inherit', tone: 'inherit', class: 'text-xs text-ink-soft', mode: 'icon' });
+    const i = mountComponent(Kanji, { char: '探', size: 'inherit', tone: 'inherit', class: 'text-xs text-ink-mute', mode: 'icon' });
     cleanup.push(i.destroy);
     const icon = i.container.querySelector('[data-component="glyph-icon"]') as HTMLElement;
-    expect(icon.className.split(/\s+/).sort()).toEqual(['i-solar-magnifer-zoom-in-bold-duotone', 'text-ink-soft', 'text-xs']);
+    expect(icon.className.split(/\s+/).sort()).toEqual(['i-solar-magnifer-zoom-in-bold-duotone', 'text-ink-mute', 'text-xs']);
   });
 });

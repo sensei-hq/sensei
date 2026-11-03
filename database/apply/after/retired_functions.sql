@@ -38,3 +38,14 @@ drop function if exists dojo.principal_is_member(uuid, uuid);
 -- new one (its sixth argument has a default).
 drop function if exists dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[]);
 drop function if exists dojo.units_listing_member(dojo.forge_provider, text);
+
+-- The rule-pack imports moved to `staging` (where they pin their search_path);
+-- their old `sensei` copies stayed behind, unused and with a mutable search_path
+-- the Supabase advisor reports (2026-10-27).
+drop procedure if exists sensei.import_rule_packs();
+drop procedure if exists sensei.import_rule_pack_rules();
+
+-- Renamed to dojo.file_metric_rows; the old copy stayed in every database that
+-- had it — production among them, where the Supabase advisor lists it as a
+-- SECURITY DEFINER function signed-in people can call (2026-10-27).
+drop function if exists dojo.upsert_repository_metrics(jsonb);

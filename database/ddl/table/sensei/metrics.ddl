@@ -96,3 +96,10 @@ comment on column metrics.modified_at
 grant select on metrics to authenticated, service_role;
 comment on column metrics.derives_from
      is 'Metric keys whose relationship to this metric is definitional or mechanical rather than informative — the suppression list for correlation analysis, so a ranking is not topped by arithmetic. See docs/database/sensei.md.';
+
+-- Row level security (the Supabase advisor, 2026-10-27: a table in an exposed
+-- schema without it is open to whatever the API grants). The metric catalogue, read by signed-in people through dojo.metric_catalogue:
+-- every row, read only. Inert on the daemon, which connects as the owner.
+alter table metrics enable row level security;
+drop policy if exists metrics_read on metrics;
+create policy metrics_read on metrics for select to authenticated using (true);

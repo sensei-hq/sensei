@@ -199,9 +199,9 @@ function sleep(ms: number): Promise<void> {
  * In both cases a SINGLE navigation lands on the wrong route and the target
  * selector never appears — waiting longer on it can't help (we're elsewhere).
  * Re-navigating once the conditions settle mounts the screen, so we retry the
- * whole navigation. The budget must comfortably exceed the observed cold-boot
- * health-ready time (~50s on a loaded box). Deterministic: polls for a stable
- * selector, no fixed sleeps.
+ * whole navigation — from the page the gate settled on, or after 30s with nothing
+ * moved; never while a slow load is still in flight. The budget must comfortably
+ * exceed the observed cold-boot health-ready time (~50s on a loaded box).
  */
 export async function navigateToScreen(
   tauriPage: {
@@ -213,20 +213,43 @@ export async function navigateToScreen(
   totalMs = 120_000,
 ): Promise<void> {
   const deadline = Date.now() + totalMs;
-  let lastErr: unknown;
-  for (;;) {
-    await navigateTo(tauriPage, route);
-    try {
-      await tauriPage.waitForSelector(screenSelector, 8_000);
-      return;
-    } catch (e) {
-      lastErr = e;
-      if (Date.now() >= deadline) break;
+  const target = route.split(/[?#]/)[0];
+  const sel = JSON.stringify(screenSelector);
+  // Arrival is the path AND the selector: the selector alone can match on the page a
+  // redirect landed on (the boot gate sends an early navigation through /health to Today,
+  // and the rail is on both). The path moves only once the route's loaders finish, so a
+  // slow load is waited out, not re-issued: re-navigating restarts the load, and under a
+  // busy daemon a load slower than the retry interval never landed at all.
+  let origin = (await tauriPage.evaluate('location.pathname')) as string;
+  await navigateTo(tauriPage, route);
+  let issued = Date.now();
+  let at = origin;
+  while (Date.now() < deadline) {
+    const probe = (await tauriPage
+      .evaluate(`JSON.stringify({ at: location.pathname, ready: !!document.querySelector(${sel}) })`)
+      .catch(() => null)) as string | null;
+    if (probe) {
+      const now = JSON.parse(probe) as { at: string; ready: boolean };
+      at = now.at;
+      if (at === target && now.ready) return;
+      const redirected = at !== target && at !== origin;
+      const stalled = at !== target && Date.now() - issued > 30_000;
+      if (redirected || stalled) {
+        // Somewhere else (a gate), or nothing moved: once settled, ask again from there.
+        await new Promise((r) => setTimeout(r, 1_000));
+        origin = at;
+        await navigateTo(tauriPage, route);
+        issued = Date.now();
+        continue;
+      }
     }
+    await new Promise((r) => setTimeout(r, 300));
   }
-  throw lastErr instanceof Error
-    ? lastErr
-    : new Error(`navigateToScreen: '${route}' never mounted '${screenSelector}' within ${totalMs}ms`);
+  throw new Error(
+    at === target
+      ? `navigateToScreen: '${route}' never mounted '${screenSelector}' within ${totalMs}ms`
+      : `navigateToScreen: asked for '${route}', the window is on '${at}'`,
+  );
 }
 
 /** Captured runtime-error buffers from the webview. */
@@ -414,18 +437,49 @@ export async function shot(
   return result;
 }
 
-/** Close the sign-in overlay if it opened itself (an identity needing the
- *  user, e.g. #283's keychain approval): it is modal and covers the page. */
-export async function dismissSignIn(tauriPage: TauriPageLike) {
-  const state = await tauriPage.evaluate(`(function () {
-    var b = document.querySelector('[data-component="sign-in-overlay"] footer button');
-    if (!b) return 'absent';
-    b.click(); return 'closed';
+/**
+ * Record what the browser console would show as an error (user, 2026-10-27:
+ * keep track of console errors): `console.error`, uncaught errors, unhandled
+ * rejections, a fetch that fails or answers non-2xx, and a resource (an `<img>`,
+ * a script) that fails to load. Installed once per window — SvelteKit routes on
+ * the client, so the window and its hooks survive navigation. Idempotent.
+ */
+export async function watchConsole(tauriPage: { evaluate: (script: string) => Promise<unknown> }): Promise<void> {
+  await tauriPage.evaluate(`(function () {
+    if (window.__consoleWatch) return 1;
+    window.__consoleWatch = true;
+    window.__consoleErrors = [];
+    const push = (kind, text) => window.__consoleErrors.push({ kind, text: String(text).slice(0, 300), at: location.pathname });
+    const err = console.error.bind(console);
+    console.error = (...a) => { push('console', a.map((x) => (x && x.message) || x).join(' ')); err(...a); };
+    window.addEventListener('error', (e) => {
+      const t = e.target;
+      if (t && t !== window && (t.src || t.href)) push('resource', (t.tagName || '') + ' ' + (t.src || t.href));
+      else push('error', e.message);
+    }, true);
+    window.addEventListener('unhandledrejection', (e) => push('rejection', (e.reason && e.reason.message) || e.reason));
+    const f = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input.url;
+      try {
+        const r = await f(input, init);
+        if (!r.ok) push('fetch', r.status + ' ' + url);
+        return r;
+      } catch (e) {
+        push('fetch', 'failed ' + url + ': ' + (e && e.message));
+        throw e;
+      }
+    };
+    return 1;
   })()`);
-  console.log(`[inspect] sign-in overlay: ${state}`);
-  await expect
-    .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-component="sign-in-overlay"]')`), {
-      timeout: 5_000,
-    })
-    .toBe(false);
+}
+
+/** The console errors recorded since the last call (which clears them). */
+export async function takeConsoleErrors(
+  tauriPage: { evaluate: (script: string) => Promise<unknown> },
+): Promise<Array<{ kind: string; text: string; at: string }>> {
+  const json = (await tauriPage.evaluate(
+    `JSON.stringify((window.__consoleErrors || []).splice(0))`,
+  )) as string;
+  return JSON.parse(json || '[]');
 }

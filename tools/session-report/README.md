@@ -1,13 +1,22 @@
 # session-report
 
-A retrospective from GitHub Copilot CLI transcripts.
+A retrospective from coding-assistant transcripts.
 
 ```
-session-report --input <folder> [--name <label>] [--out <file.md>]
+session-report --input <folder> [--name <label>] [--out <file.md>] [--facets [endpoint]]
+session-report --compare --input <folder of people> [--out <file.md>]
 ```
 
-`<folder>` holds one directory per session, each containing `events.jsonl`.
-Pointing it straight at a single session directory also works.
+`<folder>` is detected as one of:
+
+| Assistant | The folder |
+|---|---|
+| GitHub Copilot CLI | one directory per session, each containing `events.jsonl` (or a single session directory) |
+| Claude Code | a `projects/` tree |
+| VS Code (Copilot Chat) | a `workspaceStorage/<hash>/chatSessions` tree (the event streams beside it are read too) |
+
+`--compare` treats `<folder>` as a folder of people, one subfolder each, and
+writes a single side-by-side. `--facets` is described below.
 
 ```bash
 cargo build --release

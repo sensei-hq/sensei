@@ -29,3 +29,27 @@ test('libraries shows the daemon reads', async ({ tauriPage }) => {
   expect(cards).toBe(libs.length);
   expect(rows).toBe(usage);
 });
+
+// #341: a library that ships a sensei.library.json shows what it provides —
+// its skills, agents and doc pages, as many as the daemon holds.
+test('a library shows the docs, skills and agents it provides', async ({ tauriPage }) => {
+  const { libs } = await (await fetch(`${DAEMON_URL}/api/libs?`)).json();
+  const lib = libs.find((l: { skillCount?: number }) => (l.skillCount ?? 0) > 0);
+  expect(lib, 'a library with skills — rokkit, dbd or kavach').toBeTruthy();
+  const read = async (what: string) =>
+    (await (await fetch(`${DAEMON_URL}/api/libs/${encodeURIComponent(lib.name)}/${what}`)).json()).length;
+  const [skills, agents, docs] = [await read('skills'), await read('agents'), await read('docs')];
+
+  await navigateTo(tauriPage, '/libraries');
+  await expect
+    .poll(() => tauriPage.evaluate(`document.querySelectorAll('.lib-card').length`), { timeout: 30_000 })
+    .toBeGreaterThan(0);
+  await tauriPage.evaluate(`[...document.querySelectorAll('.lib-card')].find((c) => c.querySelector('.font-medium')?.textContent.trim() === ${JSON.stringify(lib.name)})?.click()`);
+  const shown = (label: string) =>
+    tauriPage.evaluate(`document.body.textContent.match(/${label} · (\\d+)/)?.[1] ?? '0'`);
+  await expect.poll(() => shown('Skills'), { timeout: 30_000 }).toBe(String(skills));
+  const counts = [await shown('Agents'), await shown('Docs')];
+
+  console.log(`\n[inspect] ${lib.name} provides: skills ${skills}, agents ${agents}, docs ${docs}; shown ${[skills, ...counts]}`);
+  expect(counts).toEqual([String(agents), String(docs)]);
+});

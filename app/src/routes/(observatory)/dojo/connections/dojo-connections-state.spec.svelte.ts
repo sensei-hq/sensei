@@ -41,31 +41,31 @@ describe('syncChip', () => {
   it('healthy → success tokens, labelled with the raw status', () =>
     expect(syncChip('healthy')).toEqual({
       bg: 'bg-success-soft',
-      text: 'text-success',
+      text: 'text-on-success-soft',
       label: 'healthy',
     }));
   it('stale → warning tokens', () =>
     expect(syncChip('stale')).toEqual({
       bg: 'bg-warning-soft',
-      text: 'text-warning',
+      text: 'text-on-warning-soft',
       label: 'stale',
     }));
   it('error → danger tokens', () =>
     expect(syncChip('error')).toEqual({
       bg: 'bg-danger-soft',
-      text: 'text-danger',
+      text: 'text-on-danger-soft',
       label: 'error',
     }));
   it('authenticating → info tokens', () =>
     expect(syncChip('authenticating')).toEqual({
       bg: 'bg-info-soft',
-      text: 'text-info',
+      text: 'text-on-info-soft',
       label: 'authenticating',
     }));
   it('unknown → muted ink tokens, still labelled', () =>
     expect(syncChip('weird')).toEqual({
       bg: 'bg-paper-mute',
-      text: 'text-ink-mute',
+      text: 'text-ink-soft',
       label: 'weird',
     }));
 });
@@ -76,13 +76,13 @@ describe('kindPill', () => {
       kanji: '社',
       label: 'employer',
       bg: 'bg-paper-mute',
-      text: 'text-ink-mute',
+      text: 'text-ink-soft',
     }));
   it('distinguishes client visually with the accent treatment', () => {
     const pill = kindPill('client');
     expect(pill.kanji).toBe('客');
     expect(pill.bg).toBe('bg-accent-soft');
-    expect(pill.text).toBe('text-accent');
+    expect(pill.text).toBe('text-on-accent-soft');
   });
   it('community → 群', () => expect(kindPill('community').kanji).toBe('群'));
   it('personal → 己', () => expect(kindPill('personal').kanji).toBe('己'));

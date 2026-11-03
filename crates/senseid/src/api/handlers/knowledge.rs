@@ -169,7 +169,13 @@ pub(crate) async fn get_context(
         .map(|s| (s, q.feature.as_deref().filter(|f| !f.is_empty())));
     let blob = state
         .pg
-        .assemble_context(pid, &stack_ids, tags.as_deref(), q.limit.unwrap_or(200), slot)
+        .assemble_context(&crate::db::pg_store::ContextQuery {
+            workspace_id: pid,
+            stack_ids: &stack_ids,
+            tags: tags.as_deref(),
+            limit: q.limit.unwrap_or(200),
+            slot,
+        })
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(blob))

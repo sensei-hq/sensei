@@ -1,5 +1,7 @@
 # 界 · Diagrams · World
 
+> **Retired 2026-10-27 (M17, `docs/mockups/Sensei/docs/prd-drafts/M17-code-map.md`).** The Code map replaces it: its L0 opens on modules and drills to files and symbols on one canvas. The route, its state and its daemon endpoint are removed; this file is kept for the record.
+
 **Segment:** 04 · Observatory / Project window
 **Route:** `/project/[id]/diagrams/world`
 **Source mockup:** `docs/mockups/Sensei/screenshots/01-world.png` (and `02-`, `03-`)

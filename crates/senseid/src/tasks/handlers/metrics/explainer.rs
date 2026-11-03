@@ -155,8 +155,15 @@ mod tests {
             first_try,
         };
         let fh = facts_hash(InsightKind::MetricDayExplainer, &facts.to_facts_json());
-        pg.upsert_narration_cache("metric_day_explainer", &fh, "a quiet climb", detail, None, None)
-            .await;
+        pg.upsert_narration_cache(&crate::db::pg_store::NarrationRow {
+            kind: "metric_day_explainer",
+            facts_hash: &fh,
+            title: "a quiet climb",
+            detail,
+            model_provider: None,
+            model_id: None,
+        })
+        .await;
     }
 
     #[tokio::test]

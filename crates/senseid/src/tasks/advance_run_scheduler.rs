@@ -80,10 +80,12 @@ async fn resume_due(queue: &TaskQueue, pg: &PgStore) {
         if let Err(e) = pg
             .append_run_event(
                 &id,
-                RunEventKind::Resumed,
-                None,
-                None,
-                &serde_json::json!({ "auto": true }),
+                &crate::db::pg_store::RunEventRow {
+                    kind: RunEventKind::Resumed,
+                    phase: None,
+                    feature: None,
+                    detail: &serde_json::json!({ "auto": true }),
+                },
             )
             .await
         {

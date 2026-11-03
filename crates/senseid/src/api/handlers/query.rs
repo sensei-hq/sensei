@@ -237,11 +237,11 @@ pub(crate) async fn query_files(
     repo_id: &str,
 ) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let results = state.pg.get_files_by_tag(repo_id, &term).await.map_err(|e| {
+    let (results, total) = state.pg.get_files_by_tag(repo_id, &term).await.map_err(|e| {
         tracing::warn!(error = %e, repo_id = %repo_id, "query_files: get_files_by_tag failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    Ok(serde_json::json!({ "type": "files", "query": q, "results": results }))
+    Ok(serde_json::json!({ "type": "files", "query": q, "results": results, "total": total }))
 }
 
 pub(crate) async fn query_patterns(
@@ -895,7 +895,13 @@ async fn fuse_semantic(
     let lexical = score_and_filter_lexical(term, lexical, &distances, SEM_MAX_DISTANCE);
     let sem_rows = match state
         .pg
-        .semantic_search_nodes(ids, query_vec, kinds, SEM_CANDIDATES, SEM_MAX_DISTANCE)
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: ids,
+            query_embedding: query_vec,
+            kinds,
+            limit: SEM_CANDIDATES,
+            max_distance: SEM_MAX_DISTANCE,
+        })
         .await
     {
         Ok(rows) => rows,

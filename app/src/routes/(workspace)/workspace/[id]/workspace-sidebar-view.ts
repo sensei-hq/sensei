@@ -2,7 +2,10 @@
 // the section model, the active-route test, and the health readout formatting
 // are unit-testable without mounting (the component itself only reads `page`
 // and renders these).
-import { ftrPctLabel } from '$lib/ftr.js';
+import { ftrPctLabel, ftrBandView, type FtrBandView } from '$lib/ftr.js';
+import { KANJI_ICONS } from '$lib/glyph-vocabulary';
+import { resolveActiveHref } from '$lib/rail';
+import { DIAGRAM_VIEWS } from './diagrams/diagrams-nav.js';
 
 export interface SidebarSection {
     id: string;
@@ -18,8 +21,6 @@ export const SECTIONS: SidebarSection[] = [
     { id: 'sessions', kanji: '録', label: 'Sessions' },
     { id: 'memories', kanji: '憶', label: 'Memories' },
     { id: 'traceability', kanji: '跡', label: 'Traceability' },
-    { id: 'atlas', kanji: '図', label: 'Atlas' },
-    { id: 'diagrams', kanji: '構', label: 'Diagrams' },
     { id: 'libraries', kanji: '蔵', label: 'Libraries' },
     { id: 'instruments', kanji: '器', label: 'Instruments' },
     { id: 'patterns', kanji: '型', label: 'Patterns' },
@@ -28,6 +29,39 @@ export const SECTIONS: SidebarSection[] = [
     { id: 'integrations', kanji: '繋', label: 'Integrations' },
     { id: 'about', kanji: '情', label: 'About' },
 ];
+
+/** The workspace window's rail (user, 2026-10-28: the same Rail and List as the
+ *  main and settings windows): the section links, each with its kanji and — for
+ *  icon mode (#133) — the vocabulary's icon for that kanji; then the Diagrams
+ *  subsection, one entry per diagram with its hint beneath (M16 mockup). */
+export function buildWorkspaceNav(workspaceId: string) {
+    return [
+        {
+            text: 'This workspace',
+            children: SECTIONS.map((s) => {
+                const href = `/workspace/${workspaceId}/${s.id}`;
+                return { kanji: s.kanji, icon: KANJI_ICONS[s.kanji], text: s.label, href, value: href };
+            }),
+        },
+        {
+            text: 'Diagrams',
+            children: DIAGRAM_VIEWS.map((d) => {
+                const href = diagramHref(workspaceId, d.id);
+                return { kanji: d.kanji, icon: d.icon, text: d.label, subtext: d.hint, href, value: href };
+            }),
+        },
+    ];
+}
+
+const diagramHref = (workspaceId: string, id: string) => `/workspace/${workspaceId}/diagrams/${id}`;
+
+/** The href of the entry the current route is in (the rails' one rule). */
+export function workspaceActiveHref(pathname: string, workspaceId: string): string {
+    return resolveActiveHref(pathname, [
+        ...SECTIONS.map((s) => `/workspace/${workspaceId}/${s.id}`),
+        ...DIAGRAM_VIEWS.map((d) => diagramHref(workspaceId, d.id)),
+    ]);
+}
 
 /** True when the current path is within the given workspace section. */
 export function isSectionActive(pathname: string, workspaceId: string, sectionId: string): boolean {
@@ -39,15 +73,11 @@ export function isSectionActive(pathname: string, workspaceId: string, sectionId
  *  whether it matches the daemon after a deploy. */
 export const APP_VERSION: string = __SENSEI_APP_VERSION__;
 
-export type FtrBand = 'success' | 'accent' | 'warning' | 'ink-faint';
-
-/** FTR-band token for the identity status dot + health tint. ≥0.8 success,
- *  ≥0.6 accent, <0.6 warning, null (no data) ink-faint — never a fabricated band. */
-export function ftrBand(ftr14d: number | null): FtrBand {
-    if (ftr14d == null) return 'ink-faint';
-    if (ftr14d >= 0.8) return 'success';
-    if (ftr14d >= 0.6) return 'accent';
-    return 'warning';
+/** The sidebar's FTR headline: the shared band (lib/ftr) for the dot, and the
+ *  value in ink — warning only when the rate is low. */
+export function ftrHeadline(ftr14d: number | null): FtrBandView & { valueClass: string } {
+    const v = ftrBandView(ftr14d);
+    return { ...v, valueClass: v.band === 'low' ? v.text : 'text-ink' };
 }
 
 /** FTR delta chip vs the prior 14d window: "+N pt" / "−N pt" / "steady", or "—"

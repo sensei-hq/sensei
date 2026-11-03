@@ -564,14 +564,14 @@ pub async fn generate_and_cache(
                 LAST_FAIL_MS.store(0, Ordering::Relaxed);
                 // Provider not exposed on the response; model id is.
                 store
-                    .upsert_narration_cache(
-                        kind.as_str(),
-                        &h,
-                        &copy.title,
-                        &copy.detail,
-                        None,
-                        model.as_deref(),
-                    )
+                    .upsert_narration_cache(&crate::db::pg_store::NarrationRow {
+                        kind: kind.as_str(),
+                        facts_hash: &h,
+                        title: &copy.title,
+                        detail: &copy.detail,
+                        model_provider: None,
+                        model_id: model.as_deref(),
+                    })
                     .await;
                 return Some(copy);
             }
@@ -619,6 +619,24 @@ pub async fn read_cached_copy(
         .get_narration_cache(kind.as_str(), &h)
         .await
         .map(|(title, detail)| InsightCopy { title, detail })
+}
+
+/// [`read_cached_copy`] for many facts in one statement: the copy for each, in
+/// the order asked, `None` where the cache has none.
+pub async fn read_cached_copies(
+    store: &PgStore,
+    asks: &[(InsightKind, &serde_json::Value)],
+) -> Vec<Option<InsightCopy>> {
+    let hashes: Vec<String> = asks.iter().map(|(k, f)| facts_hash(*k, f)).collect();
+    let keys: Vec<(&str, &str)> =
+        asks.iter().zip(&hashes).map(|((k, _), h)| (k.as_str(), h.as_str())).collect();
+    let hits = store.get_narration_cache_many(&keys).await;
+    keys.iter()
+        .map(|(k, h)| {
+            hits.get(&(k.to_string(), h.to_string()))
+                .map(|(title, detail)| InsightCopy { title: title.clone(), detail: detail.clone() })
+        })
+        .collect()
 }
 
 /// In-flight dedup set: a burst of identical cache-misses fires only ONE

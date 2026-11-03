@@ -22,6 +22,19 @@ async fn repo_folder_id(state: &AppState, name: &str) -> Result<Option<uuid::Uui
     Ok(folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"])))
 }
 
+/// A pattern read names a workspace, or a repository by name; one the daemon
+/// knows as neither is a 404 — an empty answer would read as "it has none".
+async fn require_known(state: &AppState, name: &str) -> Result<(), StatusCode> {
+    let workspace = crate::api::util::resolve_workspace_uuid(state, name)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if workspace.is_some() || repo_folder_id(state, name).await?.is_some() {
+        Ok(())
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
 // ── Graph Queries ───────────────────────────────────────────────────────────
 
 /// The edge kinds the Atlas graph lays out.
@@ -539,6 +552,7 @@ pub(crate) async fn match_pattern_handler(
     Path(workspace): Path<String>,
     Query(q): Query<MatchQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_known(&state, &workspace).await?;
     let desc = q.description.unwrap_or_default();
     // Search patterns by folder using BM25 ranking
     if let Some(folder_id) = repo_folder_id(&state, &workspace).await? {
@@ -557,6 +571,7 @@ pub(crate) async fn pattern_for_symbol(
     State(state): State<AppState>,
     Path((workspace, symbol)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_known(&state, &workspace).await?;
     // File-level membership: the pattern(s) whose file instances include the
     // symbol's file. Scoped to the workspace (patterns are workspace-attributed) with
     // node lookup across all the workspace's folders. Genuinely empty when the
@@ -576,57 +591,38 @@ pub(crate) async fn pattern_for_symbol(
 
 #[derive(Deserialize)]
 pub(crate) struct DuplicatesQuery {
-    pub min_similarity: Option<f64>,
     pub limit: Option<i64>,
 }
 
-/// GET /api/patterns/{workspace}/duplicates — near-duplicate functions found by
-/// cosine similarity on code embeddings. `min_similarity` (default 0.92) and
-/// `limit` (default 50) are query params.
-///
-/// #54 — Scope is the WHOLE workspace, not just one folder: when the caller
-/// passes a workspace name we resolve every folder that belongs to it and
-/// run the cosine-similarity self-join across all of them, so a
-/// duplicate that spans two crates in the same workspace surfaces. If the
-/// caller passes a bare repo name that resolves to a folder without a
-/// workspace, we fall back to the single-folder variant.
+/// GET /api/patterns/{workspace}/duplicates — the code local qlty found more
+/// than once in the workspace's repositories, measured at each HEAD (user,
+/// 2026-10-27: from the scan that finds them, not a similarity search per
+/// question). Largest first, at most `limit` (default 50), with the total, and
+/// how many of its repositories have been measured — so "none found" and "not
+/// measured yet" read differently.
 pub(crate) async fn find_duplicates_handler(
     State(state): State<AppState>,
     Path(workspace): Path<String>,
     Query(q): Query<DuplicatesQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let min_similarity = q.min_similarity.unwrap_or(0.92).clamp(0.0, 1.0);
-    let limit = q.limit.unwrap_or(50).clamp(1, 500);
-
-    // Workspace scope first — every folder that belongs to the named workspace.
-    let scope = state.pg.scope_folder_ids(&workspace).await
-        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    if !scope.is_empty() {
-        let dups = state.pg.find_duplicates_scoped(&scope, min_similarity, limit).await
-            .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: find_duplicates_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-        return Ok(Json(serde_json::json!({
-            "count": dups.len(),
-            "min_similarity": min_similarity,
-            "scope": "workspace",
-            "folder_count": scope.len(),
-            "duplicates": dups,
-        })));
-    }
-
-    // Fall back to a single-folder lookup when the caller passed a repo
-    // name (or the workspace resolution returned nothing).
-    let Some(folder_id) = repo_folder_id(&state, &workspace).await? else {
-        return Ok(Json(
-            serde_json::json!({ "duplicates": [], "count": 0, "message": "workspace not indexed" }),
-        ));
+    require_known(&state, &workspace).await?;
+    let Some(workspace_id) = crate::api::util::resolve_workspace_uuid(&state, &workspace)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    else {
+        return Err(StatusCode::NOT_FOUND);
     };
-    let dups = state.pg.find_duplicates(&folder_id, min_similarity, limit).await
-        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: find_duplicates failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+    let (groups, total, measured, repositories) =
+        state.pg.workspace_duplicates(&workspace_id, limit).await.map_err(|e| {
+            tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: workspace_duplicates failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     Ok(Json(serde_json::json!({
-        "count": dups.len(),
-        "min_similarity": min_similarity,
-        "scope": "folder",
-        "duplicates": dups,
+        "duplicates": groups,
+        "total": total,
+        "repositories_measured": measured,
+        "repositories": repositories,
     })))
 }
 
@@ -712,10 +708,12 @@ fn language_for_ext(ext: &str) -> &str {
 }
 
 /// Aggregate naming conventions (dominant case style per node kind), directory
-/// and language structure, and detected design patterns from the code graph.
+/// and language structure (from the workspace's files, repo-relative), and
+/// detected design patterns from the code graph.
 /// Pure over its inputs so it can be unit-tested without a database.
 fn derive_conventions(
     nodes: &[serde_json::Value],
+    files: &[String],
     patterns: &[serde_json::Value],
 ) -> serde_json::Value {
     use std::collections::BTreeMap;
@@ -735,16 +733,13 @@ fn derive_conventions(
             let style = classify_case(name);
             *by_kind.entry(kind_s).or_default().entry(style).or_insert(0) += 1;
         }
-
-        if kind == "file" {
-            file_count += 1;
-            if let Some(fp) = n["file_path"].as_str() {
-                let dir = fp.rsplit_once('/').map(|(d, _)| d).unwrap_or(".").to_string();
-                *dir_files.entry(dir).or_insert(0) += 1;
-                if let Some((_, ext)) = fp.rsplit_once('.') {
-                    *lang_files.entry(language_for_ext(ext).to_string()).or_insert(0) += 1;
-                }
-            }
+    }
+    for fp in files {
+        file_count += 1;
+        let dir = fp.rsplit_once('/').map(|(d, _)| d).unwrap_or(".").to_string();
+        *dir_files.entry(dir).or_insert(0) += 1;
+        if let Some((_, ext)) = fp.rsplit_once('.') {
+            *lang_files.entry(language_for_ext(ext).to_string()).or_insert(0) += 1;
         }
     }
 
@@ -825,6 +820,7 @@ pub(crate) async fn workspace_conventions_handler(
     State(state): State<AppState>,
     Path(workspace): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_known(&state, &workspace).await?;
     let ids = state.pg.scope_folder_ids(&workspace).await
         .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "workspace_conventions_handler: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     if ids.is_empty() {
@@ -843,7 +839,9 @@ pub(crate) async fn workspace_conventions_handler(
             .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "workspace_conventions_handler: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         patterns.append(&mut fp);
     }
-    Ok(Json(derive_conventions(&nodes, &patterns)))
+    let files = state.pg.list_file_paths_scoped(&ids).await
+        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "workspace_conventions_handler: list_file_paths_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(derive_conventions(&nodes, &files, &patterns)))
 }
 
 #[cfg(test)]
@@ -952,11 +950,12 @@ mod tests {
             json!({"kind":"class","name":"UserStore","file_path":"src/store.rs"}),
             json!({"kind":"const","name":"MAX_SIZE","file_path":"src/store.rs"}),
             json!({"kind":"section","name":"Overview","file_path":"README.md"}),
-            json!({"kind":"file","name":"api.rs","file_path":"src/api.rs"}),
-            json!({"kind":"file","name":"store.rs","file_path":"src/store.rs"}),
-            json!({"kind":"file","name":"App.svelte","file_path":"ui/App.svelte"}),
         ];
-        let conv = derive_conventions(&nodes, &[]);
+        // The structure is the workspace's FILES — the indexer writes no
+        // `kind = 'file'` node, so counting those counted nothing.
+        let files: Vec<String> =
+            ["src/api.rs", "src/store.rs", "ui/App.svelte"].map(String::from).to_vec();
+        let conv = derive_conventions(&nodes, &files, &[]);
         let naming = conv["naming"].as_array().unwrap();
 
         let func = naming.iter().find(|n| n["kind"] == "function").unwrap();
@@ -977,7 +976,7 @@ mod tests {
 
     #[test]
     fn derive_conventions_empty_is_safe() {
-        let conv = derive_conventions(&[], &[]);
+        let conv = derive_conventions(&[], &[], &[]);
         assert_eq!(conv["naming"].as_array().unwrap().len(), 0);
         assert_eq!(conv["structure"]["file_count"], 0);
         assert_eq!(conv["patterns"].as_array().unwrap().len(), 0);
@@ -1052,19 +1051,14 @@ mod tests {
         // true total so the trim is visible, not silent. Highest-file-count dirs
         // survive the cap.
         let n = MAX_CONVENTION_ROWS + 40;
-        let mut nodes = Vec::new();
+        let mut files = Vec::new();
         for i in 0..n {
             // Deeper index → more files, so the ranking is deterministic.
-            let files = i + 1;
-            for f in 0..files {
-                nodes.push(json!({
-                    "kind": "file",
-                    "name": format!("f{f}.rs"),
-                    "file_path": format!("src/dir{i:04}/f{f}.rs"),
-                }));
+            for f in 0..=i {
+                files.push(format!("src/dir{i:04}/f{f}.rs"));
             }
         }
-        let conv = derive_conventions(&nodes, &[]);
+        let conv = derive_conventions(&[], &files, &[]);
         let dirs = conv["structure"]["directories"].as_array().unwrap();
         assert_eq!(dirs.len(), MAX_CONVENTION_ROWS, "directories must be capped");
         assert_eq!(
@@ -1090,7 +1084,7 @@ mod tests {
                 })
             })
             .collect();
-        let conv = derive_conventions(&[], &patterns);
+        let conv = derive_conventions(&[], &[], &patterns);
         let ps = conv["patterns"].as_array().unwrap();
         assert_eq!(ps.len(), MAX_CONVENTION_ROWS, "patterns must be capped");
         assert_eq!(conv["patterns_total"].as_u64().unwrap(), n as u64);
@@ -1103,7 +1097,7 @@ mod tests {
         let patterns = vec![json!({
             "name":"Adapter","family":"structural","lifecycle":"rule","instance_count":4
         })];
-        let conv = derive_conventions(&[], &patterns);
+        let conv = derive_conventions(&[], &[], &patterns);
         let p = conv["patterns"].as_array().unwrap();
         assert_eq!(p.len(), 1);
         assert_eq!(p[0]["name"], "Adapter");

@@ -17,6 +17,9 @@ pub struct ProvidedSkill {
     pub path: Option<String>,
     #[serde(default)]
     pub body: Option<String>,
+    /// Where the library publishes it, relative to its `site` (#341).
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// A review/assistant agent a library ships. Same `path`/`body` rule as a skill.
@@ -28,6 +31,22 @@ pub struct ProvidedAgent {
     pub path: Option<String>,
     #[serde(default)]
     pub body: Option<String>,
+    /// Where the library publishes it, relative to its `site` (#341).
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// The library's llm docs (`llms`): where they sit in the repo and on its site.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct LlmsDecl {
+    /// The docs on the library's site, relative to `site` (`/llms-full.txt`).
+    #[serde(default)]
+    pub index: Option<String>,
+    /// The docs folder in the repository (`docs/llms`) — read as stated.
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub focus: Option<String>,
 }
 
 /// An MCP tool a library ships — declared for surfacing (D2); sensei does not execute
@@ -72,6 +91,23 @@ pub struct LibraryManifest {
     pub agents: Vec<ProvidedAgent>,
     #[serde(default)]
     pub tools: Vec<ProvidedTool>,
+    /// The library's llm docs (#341).
+    #[serde(default)]
+    pub llms: Option<LlmsDecl>,
+    /// The concrete release the docs describe (`0.27.8`), beside `version`'s range.
+    #[serde(default)]
+    pub documents: Option<String>,
+    /// Where the library publishes docs, skills and agents.
+    #[serde(default)]
+    pub site: Option<String>,
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// The tag the docs correspond to.
+    #[serde(default, rename = "ref")]
+    pub git_ref: Option<String>,
+    /// How a user installs the skills and agents (`{"skills": "dbd install"}`).
+    #[serde(default)]
+    pub install: Option<serde_json::Value>,
 }
 
 /// Parse a `sensei.library.json`. `Err` on malformed JSON or a missing required field

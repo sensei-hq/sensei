@@ -62,7 +62,6 @@ pub async fn detect_communities_for_folder(
 
     let mut assignments = Vec::with_capacity(kept.len());
     for (rank, (_min_idx, members)) in kept.iter().enumerate() {
-        let label = generate_community_label(&nodes, members);
         let member_node_ids: Vec<uuid::Uuid> =
             members.iter().filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok()).collect();
         // D4.5 god nodes: the community's top-5 members by degree (the hubs).
@@ -85,6 +84,7 @@ pub async fn detect_communities_for_folder(
         let mut by_degree = members.clone();
         by_degree
             .sort_by(|&a, &b| adjacency[b].len().cmp(&adjacency[a].len()).then_with(|| a.cmp(&b)));
+        let label = generate_community_label(&nodes, members);
         let god_node_ids: Vec<uuid::Uuid> = by_degree
             .iter()
             .take(5)
@@ -313,28 +313,36 @@ fn label_propagation(adjacency: &[Vec<usize>], n: usize, max_iterations: usize) 
     labels
 }
 
-/// Generate a human-readable label for a community from its member nodes.
+/// A community's label: its dominant node kind and the directory most of its
+/// members live in, `"{kind} ({dir})"` — the shape the Atlas splits to colour by
+/// kind and to show the directory.
+///
+/// The directory used to be the FIRST member's, which read "function ()" when
+/// that member sat at the top level, so a repository's largest communities were
+/// indistinguishable. Ties go to the lexically smallest kind and directory, so an
+/// unchanged graph keeps its labels.
 fn generate_community_label(nodes: &[serde_json::Value], members: &[usize]) -> String {
-    // Count node kinds
-    let mut kind_counts: HashMap<&str, usize> = HashMap::new();
+    let mut kinds: HashMap<&str, usize> = HashMap::new();
+    let mut dirs: HashMap<&str, usize> = HashMap::new();
     for &idx in members {
-        let kind = nodes[idx]["kind"].as_str().unwrap_or("unknown");
-        *kind_counts.entry(kind).or_insert(0) += 1;
+        *kinds.entry(nodes[idx]["kind"].as_str().unwrap_or("unknown")).or_insert(0) += 1;
+        let dir = nodes[idx]["file_path"]
+            .as_str()
+            .and_then(|f| std::path::Path::new(f).parent())
+            .and_then(|p| p.to_str())
+            .filter(|d| !d.is_empty());
+        if let Some(d) = dir {
+            *dirs.entry(d).or_insert(0) += 1;
+        }
     }
-
-    let dominant_kind = kind_counts
-        .into_iter()
-        .max_by_key(|&(_, count)| count)
-        .map(|(kind, _)| kind)
-        .unwrap_or("mixed");
-
-    // Use first member's file_path for context
-    let first_file =
-        members.first().and_then(|&idx| nodes[idx]["file_path"].as_str()).unwrap_or("unknown");
-
-    let dir = std::path::Path::new(first_file).parent().and_then(|p| p.to_str()).unwrap_or("");
-
-    format!("{} ({})", dominant_kind, dir)
+    let pick = |m: HashMap<&str, usize>| -> Option<String> {
+        m.into_iter()
+            .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))
+            .map(|(k, _)| k.to_string())
+    };
+    let kind = pick(kinds).unwrap_or_else(|| "mixed".to_string());
+    let dir = pick(dirs).unwrap_or_default();
+    format!("{kind} ({dir})")
 }
 
 /// How many communities (largest first) a single detect run will attempt to
@@ -515,15 +523,25 @@ mod tests {
     }
 
     #[test]
-    fn generate_label_from_nodes() {
+    fn a_community_is_labelled_by_where_most_of_it_lives() {
+        // The first member sits at the top level, so labelling by it gave
+        // "function ()": nothing a reader can tell apart.
         let nodes = vec![
-            serde_json::json!({"kind": "function", "file_path": "src/api/handler.rs"}),
-            serde_json::json!({"kind": "function", "file_path": "src/api/routes.rs"}),
-            serde_json::json!({"kind": "struct", "file_path": "src/api/types.rs"}),
+            serde_json::json!({"kind": "function", "name": "main", "file_path": "main.rs"}),
+            serde_json::json!({"kind": "function", "name": "build", "file_path": "build.rs"}),
+            serde_json::json!({"kind": "function", "name": "parse_session", "file_path": "src/claude/parse.rs"}),
         ];
-        let label = generate_community_label(&nodes, &[0, 1, 2]);
-        assert!(label.contains("function"));
-        assert!(label.contains("src/api"));
+        // The top level is no directory: a real one names the community.
+        assert_eq!(generate_community_label(&nodes, &[0, 1, 2]), "function (src/claude)");
+    }
+
+    #[test]
+    fn a_community_with_no_directory_keeps_the_shape_the_atlas_splits() {
+        let nodes = vec![
+            serde_json::json!({"kind": "function", "name": "main", "file_path": "main.rs"}),
+            serde_json::json!({"kind": "function", "name": "run"}),
+        ];
+        assert_eq!(generate_community_label(&nodes, &[0, 1]), "function ()");
     }
 }
 

@@ -16,6 +16,7 @@ use axum::{
     response::Json,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 
 use crate::api::handlers::err;
 use crate::api::state::AppState;
@@ -109,27 +110,7 @@ pub(crate) async fn get_tools(
     }
 
     // Probe path: fetch the server config and spawn the tool manifest probe.
-    let server = state
-        .pg
-        .get_mcp_server_by_id(&uuid)
-        .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "mcp server not found"))?;
-
-    let command = server.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let args: Vec<String> = server
-        .get("args")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    let env: std::collections::HashMap<String, String> = server
-        .get("env")
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
-        })
-        .unwrap_or_default();
-
+    let (command, args, env) = server_launch(&state, &uuid).await?;
     let outcome = crate::tasks::mcp_probe::probe_tools(&command, &args, &env, None).await;
 
     match outcome {
@@ -173,6 +154,151 @@ pub(crate) async fn get_tools(
             err(StatusCode::INTERNAL_SERVER_ERROR, "manifest upserted but not readable")
         })?;
     Ok(Json(refreshed))
+}
+
+/// How to start a discovered server: its `command`, `args` and `env`, from its
+/// config row. 404 when there is no such server.
+async fn server_launch(
+    state: &AppState,
+    id: &uuid::Uuid,
+) -> Result<(String, Vec<String>, HashMap<String, String>), (StatusCode, Json<serde_json::Value>)> {
+    let server = state
+        .pg
+        .get_mcp_server_by_id(id)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "mcp server not found"))?;
+    let command = server.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let args: Vec<String> = server
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let env: HashMap<String, String> = server
+        .get("env")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
+        })
+        .unwrap_or_default();
+    Ok((command, args, env))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CallBody {
+    pub tool: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+    /// The workspace the call is made for: the server runs in its root, as it
+    /// would for an assistant working there.
+    #[serde(default)]
+    pub workspace_id: Option<uuid::Uuid>,
+}
+
+/// POST /api/instruments/mcp-servers/{id}/call — run one tool through the
+/// server itself, over stdio, as an assistant would. Body:
+/// `{ "tool": name, "arguments": {…} }`. Answers
+/// `{ result, isError, duration_ms }` — a tool's own failure is its answer
+/// (`isError: true`), while a server that cannot be reached is a 502 naming why.
+pub(crate) async fn call(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<CallBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    if body.tool.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "tool is required"));
+    }
+    let (command, args, env) = server_launch(&state, &uuid).await?;
+    let arguments = if body.arguments.is_null() { serde_json::json!({}) } else { body.arguments };
+    let cwd = match body.workspace_id {
+        Some(ws) => Some(
+            state
+                .pg
+                .workspace_root_path(&ws)
+                .await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+                .map(std::path::PathBuf::from)
+                .ok_or_else(|| err(StatusCode::NOT_FOUND, "the workspace has no root folder"))?,
+        ),
+        None => None,
+    };
+    let started = std::time::Instant::now();
+    let outcome = crate::tasks::mcp_probe::call_tool(
+        &command,
+        &args,
+        &env,
+        cwd.as_deref(),
+        &body.tool,
+        &arguments,
+    )
+    .await;
+    let duration_ms = started.elapsed().as_millis() as u64;
+    match outcome {
+        crate::tasks::mcp_probe::CallOutcome::Ok { result, is_error } => Ok(Json(
+            serde_json::json!({"result": result, "isError": is_error, "duration_ms": duration_ms}),
+        )),
+        crate::tasks::mcp_probe::CallOutcome::Error(e) => Err(err(StatusCode::BAD_GATEWAY, &e)),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RegisterBody {
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+/// POST /api/instruments/mcp-servers — register a stdio server by hand
+/// (#343). 409 when a server is already registered under the name.
+pub(crate) async fn register(
+    State(state): State<AppState>,
+    Json(body): Json<RegisterBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let name = body.name.trim();
+    let command = body.command.trim();
+    if name.is_empty() || command.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "name and command are required"));
+    }
+    let id = state
+        .pg
+        .register_manual_mcp_server(
+            name,
+            command,
+            &serde_json::json!(body.args),
+            &serde_json::json!(body.env),
+        )
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| {
+            err(StatusCode::CONFLICT, "a server is already registered under that name")
+        })?;
+    Ok(Json(serde_json::json!({"id": id})))
+}
+
+/// DELETE /api/instruments/mcp-servers/{id} — remove a hand-registered
+/// server. A discovered one is refused (409): its config file owns it.
+pub(crate) async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    match state
+        .pg
+        .remove_manual_mcp_server(&uuid)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    {
+        None => Err(err(StatusCode::NOT_FOUND, "mcp server not found")),
+        Some(false) => Err(err(
+            StatusCode::CONFLICT,
+            "a discovered server is removed from its assistant's config, not here",
+        )),
+        Some(true) => Ok(Json(serde_json::json!({"id": uuid, "removed": true}))),
+    }
 }
 
 pub(crate) async fn refresh(

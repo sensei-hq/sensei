@@ -18,7 +18,8 @@ as $$
       fi.file_path,
       count(t.term) as matched_terms
     from sensei.nodes n
-    left join sensei.files fi on fi.id = n.file_id
+    -- A node in no file (a package, a module) names nothing to rank.
+    join sensei.files fi on fi.id = n.file_id
     cross join terms t
     where n.folder_id = p_folder_id
       and (

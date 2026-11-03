@@ -43,7 +43,7 @@ pub struct Facet {
     /// mix feature work with testing and schema changes.
     #[serde(default)]
     pub goal_categories: Vec<String>,
-    /// How it ended. Mirrors sensei's `session_outcome` enum.
+    /// How it ended. Mirrors sensei's `goal_outcome` enum — NOT `session_outcome`.
     #[serde(default)]
     pub outcome: String,
     #[serde(default)]
@@ -371,6 +371,23 @@ fn snippet(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// A record's `outcome` is sensei's `goal_outcome`, NOT `session_outcome`
+    /// (which has no `mostly_achieved` or `unclear`): loading one into the wrong
+    /// column would fail the cast or coerce the value.
+    #[test]
+    fn outcomes_are_the_goal_outcome_enum() {
+        let ddl = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../database/ddl/enum/sensei/goal_outcome.ddl"
+        ))
+        .unwrap();
+        let open = ddl.find("enum (").unwrap() + "enum (".len();
+        let close = open + ddl[open..].find(')').unwrap();
+        let values: Vec<String> =
+            ddl[open..close].split(',').map(|v| v.trim().trim_matches('\'').to_string()).collect();
+        assert_eq!(values, OUTCOMES);
+    }
+
     use super::*;
 
     /// A thinking model narrates before it answers; the object still has to be

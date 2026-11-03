@@ -10,6 +10,7 @@ set search_path to dojo, extensions;
 create or replace function dojo.member_set_max_age_hours()
     returns integer
     language sql
+    set search_path = dojo, pg_temp
     immutable
 as $$
     select 48;

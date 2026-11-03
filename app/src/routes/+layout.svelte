@@ -7,42 +7,38 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { healthState } from "$lib/health-state.svelte.js";
     import { daemonHealth } from "$lib/daemon-health.svelte.js";
-    import { forgeAuth } from "$lib/forge-auth.svelte.js";
     import { glyphMode, setGlyphMode } from "$lib/glyphs";
     import { personaList } from "$lib/personas.svelte.js";
-    import { DaemonStatusBanner, SignInOverlay } from "$lib/components";
+    import { DaemonStatusBanner } from "$lib/components";
+    import { windowDuties } from "$lib/window-duties.js";
+    import { openSettingsWindow } from "$lib/stores/windows.svelte.js";
+    import { AlertList } from "@rokkit/ui";
+    import { alerts } from "@rokkit/states";
 
     let { children } = $props();
 
-    // The overlay is opened by need, and closable. An expired credential stops
-    // syncing but does not stop sensei, so blocking the app behind it would be
-    // out of proportion.
     // The glyph preference, for every mark below (#133).
     setGlyphMode(() => glyphMode(appState.config));
 
-    let dismissed = $state(false);
-    // Asked for explicitly, from View → Identities…. Kept separate from the
-    // automatic path so opening it by hand is not undone by `dismissed`, and so
-    // it works when nothing is wrong — connecting a new identity is an
-    // intentional act, not a repair.
-    let requested = $state(false);
-    // The automatic half opens only when a CONNECTED identity has broken. It
-    // deliberately ignores never-connected personas (an install has several) and
-    // renewal (which is silent), or the overlay would appear on every launch.
-    let overlayOpen = $derived(requested || (!dismissed && personaList.needsAttention));
+    // Which window this is decides what it does beyond its own pages: the
+    // global work is the main window's alone (a second copy in Settings opened
+    // a second browser tab for one renewal). No Tauri (a browser, a test): main.
+    const label = (() => {
+        if (!hasTauri()) return "main";
+        try {
+            return (window as { __TAURI_INTERNALS__?: { metadata?: { currentWebview?: { label?: string } } } })
+                .__TAURI_INTERNALS__?.metadata?.currentWebview?.label ?? "main";
+        } catch {
+            return "main";
+        }
+    })();
+    const duties = windowDuties(label);
 
-    function closeOverlay() {
-        requested = false;
-        dismissed = true;
-    }
-
-    async function signIn(p: Parameters<typeof personaList.act>[0]) {
-        await personaList.act(p);
-        // Re-read rather than assume: the standing changes only once the daemon
-        // has observed the new credential, and reporting success from the click
-        // is how a failed sign-in looks like a successful one.
-        await personaList.load();
-    }
+    // An identity that needs you pauses sync but not sensei: no screen-covering
+    // overlay (user, 2026-10-29). The sidebar footer says so while it lasts, and a
+    // NEW need is announced once, in the main window, as a toast that fades —
+    // with the way to Settings · Dōjō, where every identity has its action.
+    const openIdentities = () => void openSettingsWindow("/settings/dojo");
 
     // Expose appState + healthState on window for E2E test helpers (dev builds
     // only). Tests inject daemon config via `__sensei_state__.appState.config`
@@ -72,58 +68,69 @@
         // daemon is healthy: it stops after the first `full` reading.
         daemonHealth.start();
 
-        // Watch the forge credential and re-authorize before it expires. The
-        // daemon cannot do this: renewal re-runs the authorize flow Supabase
-        // performs (that is where the App's client secret lives, in one place),
-        // and that needs a browser. For an already-authorized App it is a
-        // redirect with no prompt — measured at ~6s, no clicks.
+        // The identity state: every identity's standing, and — in the main window
+        // only — the one automatic re-authorization per renewal window (renewal
+        // runs the authorize flow in a browser; see PersonaList).
         //
         // Tauri-only. A browser dev session has no opener plugin, and polling
         // there would report a standing nobody can act on.
         if (!hasTauri()) return () => daemonHealth.stop();
-        // Five minutes against an 8h token with a 1h renewal window: ~12 checks
-        // inside the window, and the ONE automatic attempt per window is
-        // enforced in ForgeAuth, not by the interval.
-        forgeAuth.start();
-        // The identity list backs the overlay. Loaded once here and re-read
-        // after each attempt; the 5-minute forgeAuth poll is what notices a
-        // credential dying while the app sits open.
-        void personaList.load();
+        if (duties.announcesIdentities) {
+            personaList.onAttention = (text) =>
+                void alerts.push({ type: "warning", text, timeout: 8000, actions: openSettingsAction });
+        }
+        if (duties.renewsCredentials) {
+            personaList.renews = true;
+            void personaList.load();
+            personaList.start();
+        }
         const unlistens: Array<() => void> = [];
         // eslint-disable-next-line @typescript-eslint/no-floating-promises
-        import("@tauri-apps/api/event").then(({ listen }) => {
-            listen<void>("open-logs", () => {
-                goto("/logs");
-            }).then((fn) => unlistens.push(fn));
-            listen<void>("open-identities", () => {
-                // Re-read on open: the list is polled every five minutes, and a
-                // stale standing is what makes a "ready" row fail on click.
-                void personaList.load();
-                requested = true;
-            }).then((fn) => unlistens.push(fn));
+        import("@tauri-apps/api/event").then(({ listen, emit }) => {
+            if (duties.handlesMenu) {
+                listen<void>("open-logs", () => {
+                    goto("/logs");
+                }).then((fn) => unlistens.push(fn));
+                listen<void>("open-identities", openIdentities).then((fn) => unlistens.push(fn));
+            }
+            // A navigation for another window is that window's to take.
             listen<string>("dev-navigate", (e) => {
-                goto(e.payload, { replaceState: true });
+                if (duties.goesTo(e.payload.split("?")[0])) goto(e.payload, { replaceState: true });
+            }).then((fn) => unlistens.push(fn));
+            // Each window holds its own copy of the config: a change saved in
+            // one (Settings, say) is re-read by the others.
+            appState.onConfigSaved = () => void emit("config-saved", { from: label });
+            listen<{ from: string }>("config-saved", (e) => {
+                if (e.payload.from !== label) void appState.load();
+            }).then((fn) => unlistens.push(fn));
+            // The same for identities: the sidebar footer (main) and Settings · Dōjō
+            // (settings window) each hold the identity state; a sign-in, an
+            // approval or a new default in one is re-read by the other.
+            personaList.onChanged = () => void emit("identities-changed", { from: label });
+            listen<{ from: string }>("identities-changed", (e) => {
+                if (e.payload.from !== label) void personaList.load();
             }).then((fn) => unlistens.push(fn));
         });
         return () => {
             for (const fn of unlistens) fn();
             daemonHealth.stop();
-            forgeAuth.stop();
+            if (duties.renewsCredentials) {
+                personaList.renews = false;
+                personaList.stop();
+            }
+            appState.onConfigSaved = null;
+            personaList.onChanged = null;
+            personaList.onAttention = null;
         };
     });
 </script>
 
-<DaemonStatusBanner mode={daemonHealth.dbMode} />
-<SignInOverlay
-    open={overlayOpen}
-    personas={personaList.personas}
-    error={personaList.error ?? forgeAuth.lastError}
-    loaded={personaList.loaded}
-    isBusy={(p) => personaList.isBusy(p)}
-    actionLabel={(p) => personaList.actionLabel(p)}
-    describe={(p) => personaList.describe(p, Math.floor(Date.now() / 1000))}
-    onSignIn={signIn}
-    onClose={closeOverlay}
-    pending={personaList.pending}
-/>
+{#snippet openSettingsAction()}
+    <button type="button" data-open-identities onclick={openIdentities}>Open Settings</button>
+{/snippet}
+
+<DaemonStatusBanner mode={daemonHealth.dbMode} configError={appState.configError} />
+{#if duties.announcesIdentities}
+    <AlertList position="bottom-right" />
+{/if}
 {@render children()}

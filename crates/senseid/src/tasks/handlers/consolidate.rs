@@ -220,14 +220,14 @@ pub async fn consolidate_for_workspace(
     let trigger_detail = serde_json::json!({ "signature": signature, "patterns": pattern_ids });
     let trace_id = ctx
         .pg()
-        .insert_reasoning_trace(
-            Some(workspace_id),
-            "consolidation",
-            &trigger_detail,
-            &models,
-            &exchanges,
-            &consensus,
-        )
+        .insert_reasoning_trace(&crate::db::pg_store::ReasoningTraceRow {
+            workspace_id: Some(workspace_id),
+            trigger_event: "consolidation",
+            trigger_detail: &trigger_detail,
+            models_used: &models,
+            exchanges: &exchanges,
+            consensus: &consensus,
+        })
         .await?;
 
     let based_on = serde_json::json!({ "patterns": pattern_ids });

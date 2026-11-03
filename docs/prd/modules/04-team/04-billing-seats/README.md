@@ -9,7 +9,9 @@ Billing & Seats is the **business layer**: a hosted Dōjō can be
 subscribed and metered. **Every dōjō gets the free tier** (D20); billing pays for
 what is beyond it — **gating, integrations and consolidated metrics in the dōjō** —
 **per active contributor**. Sensei itself serves the individual; the shared views and
-gates are the dōjō's. The model stays **free for individuals and open source**; read-only members are free;
+gates are the dōjō's. **Public repositories and every personal dōjō (private repositories included) are
+free; an organisation's private repositories need a subscription** taken by its admin or owner (D46).
+The plan lives only in the dōjō — local sensei works in full on any plan. Read-only members are free;
 GitHub Sponsors is optional support. There is **no separate Enterprise tier** —
 SSO/SCIM, audit retention, SLA become options on the paid org tier. There is no
 self-hosting (Q14). **Viewers and invited guests are never metered** — only active
@@ -30,11 +32,12 @@ the shared Dōjō, and the free tier isn't a trial.*
 
 ## In scope / out of scope
 
-- In: the three tiers (Free individuals/OSS · Paid organizations · GitHub
+- In: the three tiers (Free public repositories · Paid private repositories · GitHub
   Sponsors support); **active contributor metering** (definition, detection,
-  invoicing); plan selection in the org's billing page (a dōjō arrives from a git
-  integration on the free tier — D20); billing portal in org context
-  (`/org/[slug]/billing` — admin surface); the **no-Enterprise decision** (fold
+  invoicing); plan selection in the organisation's Plan & billing (a dōjō arrives from a git
+  integration on the free tier — D20); **Settings › Plan & billing for every
+  organisation**, reading Free until a subscription exists (a personal dōjō has nothing
+  to buy — D46) — `/org/[slug]/billing` (admin surface); the **no-Enterprise decision** (fold
   SSO/SCIM, audit retention, SLA into paid org options).
 - Out: the federation backbone (T1), role consoles (T2), workspace planning (T3),
   the marketing website claims (P2).
@@ -55,8 +58,18 @@ the shared Dōjō, and the free tier isn't a trial.*
 
 ## Data invariants
 
-- **Lead.** **Free = individuals & open source, forever.** Public/OSS repos
-  never require a paid plan.
+- **Lead.** **Free = public repositories, forever** (D46). A public repository never
+  requires a paid plan — an organisation's sync automatically (no member toggle; an
+  admin may turn one off as org policy), a personal dōjō's, public and private, are the
+  person's to choose, all by default.
+- **Lead.** **A personal dōjō is free, private repositories included** (D46).
+- **Lead.** **An organisation's private repositories need a subscription**, taken by
+  its admin or owner. Until there is one they are **hidden** from the organisation's
+  repository lists, which say private repositories are
+  supported on paid plans and link to Plan & billing (D46).
+- **Lead.** **The plan lives only in the dōjō.** Local sensei (app, daemon, CLI, MCP)
+  works in full on any plan; a subscription is needed only for sync and the dōjō's
+  benefits (D46).
 - **Lead.** **Paid = per active contributor.** Read-only members are free.
   "Active contributor" = a user who authored a commit/push/contribution in the
   billing window (exact definition TBD — gap).
@@ -64,8 +77,8 @@ the shared Dōjō, and the free tier isn't a trial.*
   options on the paid org tier.
 - **Lead.** **Viewers and invited guests are never metered** (T6) — a seat is an active
   contributor.
-- **Lead.** **Every dōjō starts on the free tier**; the plan is chosen in the org's
-  billing page, never at creation — a dōjō arrives from a git integration (D20).
+- **Lead.** **Every dōjō starts on the free tier**; the plan is chosen in the
+  organisation's Plan & billing, never at creation — a dōjō arrives from a git integration (D20).
 - **Lead.** The billing portal is **admin-only** in the org context.
 
 ## Signals shown
@@ -87,7 +100,9 @@ the shared Dōjō, and the free tier isn't a trial.*
   contributor count, invoices, and payment method (admin only).
 - Active contributors are metered correctly (definition implemented); invoices
   are generated and paid via the payment processor.
-- Downgrade/upgrade works; the free tier is truly free for individuals/OSS.
+- Downgrade/upgrade works; the free tier is truly free for public repositories.
+- An organisation's private repositories stay hidden until its admin or owner
+  subscribes; a personal dōjō syncs its private repositories free (D46).
 - GitHub Sponsors link is present and functional.
 
 ```bash
@@ -99,6 +114,12 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ## Wrong gate
 
 - **A public/OSS repo requires a paid plan** — free tier regressed.
+- **An organisation's private repository is listed or synced with no subscription**
+  — the D46 gate regressed.
+- **A personal dōjō asks for a subscription, or hides its private repositories** —
+  D46 regressed.
+- **Local sensei refuses a feature because of the plan** — the plan leaked out of
+  the dōjō (D46).
 - **A read-only member is counted as an active contributor** — metering
   definition regressed.
 - **An invoice is generated for a free-tier Dōjō** — billing logic regressed.

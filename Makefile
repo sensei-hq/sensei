@@ -8,11 +8,11 @@
 ##     mcp        — MCP server
 ##     bootstrap  — installer/prereq checker
 ##     logger     — structured logging crate
-##   website/     — Marketing website
 ##   docs/        — Documentation
 ##
 ## Sibling repos (pulled in as git deps, not in this tree):
 ##   sensei-hq/gateway — LLM routing library (git dep `gateway-embedded`)
+##   sensei-hq/website — sensei-hq.com, its own repo (not a dependency)
 ##
 ## Versioning:
 ##   VERSION file is the single source of truth.
@@ -36,7 +36,6 @@
         install install-service install-app install-debug \
         db-backup-essential \
         app-dev app-check \
-        website-dev website-build \
         test test-fast test-crates test-crates-fast \
         test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build app-e2e-bundle \
         _e2e-cold-pre _e2e-cold-post reset-e2e-db \
@@ -248,6 +247,7 @@ install-app: db-backup-essential
 	  fi; \
 	  rm -rf /Applications/Sensei.app; \
 	  cp -R app/src-tauri/target/release/bundle/macos/Sensei.app /Applications/; \
+	  scripts/codesign-local.sh --keep-identifier /Applications/Sensei.app; \
 	  echo "Installed Sensei.app to /Applications/"; \
 	else \
 	  echo "Warning: app/src-tauri/target/release/bundle/macos/Sensei.app not found — skipping /Applications copy"; \
@@ -361,14 +361,6 @@ app-e2e-bundle:
 # Not in `test-fast` because it is ~30s and that target is the pre-commit hook.
 app-check:
 	cd app && bun run check
-
-# ── Website ───────────────────────────────────────────────────────────────────
-
-website-dev:
-	cd website && bun run dev
-
-website-build:
-	cd website && bun run build
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 #
@@ -586,12 +578,10 @@ update:
 	cargo update
 	@echo "Updating Node dependencies (app)..."
 	cd app && bun update
-	@echo "Updating Node dependencies (website)..."
-	cd website && bun update
 	@echo "Running tests to verify updates..."
 	$(MAKE) test
 	@echo "All dependencies updated and tests passed."
-	@echo "Review: git diff Cargo.lock app/bun.lock website/bun.lock"
+	@echo "Review: git diff Cargo.lock app/bun.lock"
 
 # ── Version bump ──────────────────────────────────────────────────────────────
 # Usage:
@@ -657,7 +647,6 @@ bump:
 	@echo "$(_v)" > VERSION
 	@# Node manifests
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' app/package.json
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' website/package.json
 	@# Dōjō web app — the version is stamped into the build (vite reads
 	@# package.json) and shown in the console footer / served at /version.
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' dojo/package.json
@@ -688,8 +677,6 @@ bump:
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/catalog.json
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/.claude-plugin/marketplace.json
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/plugins/sensei/.claude-plugin/plugin.json
-	@# Website footer version
-	@sed -i '' 's/v[0-9]*\.[0-9]*\.[0-9]*<\/div>/v$(_v)<\/div>/' website/src/routes/+page.svelte
 	@# Capture the schema as a versioned snapshot — but ONLY once the project is
 	@# released. Pre-release nothing is written, so `database/snapshots/` does not
 	@# exist and the folder stays clean until there is a baseline worth diffing
@@ -718,7 +705,7 @@ bump:
 	@# Commit everything
 	@git add VERSION Cargo.lock app/src-tauri/Cargo.lock \
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
-	  website/package.json website/src/routes/+page.svelte dojo/package.json \
+	  dojo/package.json \
 	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml \
 	  crates/bootstrap/Cargo.toml crates/logger/Cargo.toml \
 	  homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb \

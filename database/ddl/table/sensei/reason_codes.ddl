@@ -64,3 +64,10 @@ comment on column reason_codes.actor
 -- denied" until both were granted. Inert on the daemon, whose owner connection
 -- never queries as either role.
 grant select on reason_codes to authenticated, service_role;
+
+-- Row level security (the Supabase advisor, 2026-10-27: a table in an exposed
+-- schema without it is open to whatever the API grants). The reason vocabulary, read by signed-in people through dojo.reason_codes:
+-- every row, read only. Inert on the daemon, which connects as the owner.
+alter table reason_codes enable row level security;
+drop policy if exists reason_codes_read on reason_codes;
+create policy reason_codes_read on reason_codes for select to authenticated using (true);

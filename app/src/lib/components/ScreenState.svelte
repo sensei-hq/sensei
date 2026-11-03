@@ -54,7 +54,7 @@
   >
     <Kanji char="難" size="inherit" tone="inherit" class="text-4xl text-danger opacity-40" />
     <p class="display text-xl font-normal m-0 text-ink">Couldn't load this</p>
-    <p class="text-sm text-ink-soft max-w-[420px] leading-normal m-0">
+    <p class="text-sm text-ink-mute max-w-[420px] leading-normal m-0">
       {error ?? 'sensei couldn’t be reached. Check that the daemon is running, then retry.'}
     </p>
     {#if onretry}

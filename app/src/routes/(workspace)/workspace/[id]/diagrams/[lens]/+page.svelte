@@ -1,0 +1,37 @@
+<script lang="ts">
+    import { untrack } from 'svelte';
+    import { Screen } from '$lib/components';
+    import { CodeMap, CodeMapControls } from '@sensei/codemap';
+    import { codeMapHost } from '../codemap-host.svelte.js';
+    import { DiagramHeaderState } from '../diagram-header.svelte.js';
+    import DiagramHeader from '../DiagramHeader.svelte';
+
+    let { data } = $props();
+
+    const host = codeMapHost();
+    const about = new DiagramHeaderState();
+    // The route names the lens; the map follows it. Untracked, so drilling into a
+    // module does not re-run the switch and climb back out.
+    $effect(() => {
+        const [map, lens] = [host.state, data.lens];
+        untrack(() => void map.showLens(host.port, lens));
+    });
+</script>
+
+<!-- Each diagram is its own screen; the map they share lives in the layout. -->
+{#key data.lens}
+<Screen fill>
+    {#snippet header()}
+    <DiagramHeader view={data.view} {about} level={host.level} stats={host.stats} budget={host.budget}
+        workspace={{ name: data.workspace.name, repos: data.workspace.repos_count ?? null }}
+        hrefFor={(lens) => `/workspace/${data.workspaceId}/diagrams/${lens}`}>
+        {#snippet controls()}<CodeMapControls state={host.state} port={host.port} />{/snippet}
+    </DiagramHeader>
+    {/snippet}
+    <div class="flex-1 min-h-0 flex flex-col p-4" data-testid="codemap-screen" data-lens={data.lens}>
+        {#key data.workspaceId}
+            <CodeMap state={host.state} port={host.port} controls={false} side={about.side} label={data.view.label} />
+        {/key}
+    </div>
+</Screen>
+{/key}

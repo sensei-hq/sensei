@@ -64,7 +64,7 @@
 		{/if}
 
 		{#if owners.length === 0}
-			<p class="text-ink-mute text-sm m-0">
+			<p class="text-ink-soft text-sm m-0">
 				No scope has an owner yet — every queue is triaged by the dōjō's maintainers.
 			</p>
 		{/if}

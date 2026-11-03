@@ -3,7 +3,8 @@
 // sensei's kanji are a vocabulary: a kanji means the same thing wherever it
 // appears (連 is "connect", 録 is "record"), so ONE table gives each its icon
 // for icon mode (#133). A mark's own `icon` still wins — the rails and ROLES
-// name theirs — and this table is the fallback for every other mark. Every
+// name theirs — and this table is the fallback for every other mark. One rule
+// everywhere (user, 2026-10-27): kanji mode shows kanji, icon mode icons. Every
 // icon is a Solar Bold Duotone class (the design system's only icon style); a
 // spec checks each is installed and that every kanji the app renders is here.
 
@@ -11,6 +12,9 @@
 /** @type {Record<string, string>} */
 export const KANJI_ICONS = {
   '書': 'i-solar-book-bold-duotone',
+  // The assistants' marks: Claude 書 above, Cursor 刀, Zed 禅.
+  '刀': 'i-solar-cursor-bold-duotone',
+  '禅': 'i-solar-code-square-bold-duotone',
   '器': 'i-solar-tuning-2-bold-duotone',
   '連': 'i-solar-link-round-bold-duotone',
   '結': 'i-solar-link-circle-bold-duotone',
@@ -34,7 +38,7 @@ export const KANJI_ICONS = {
   '群': 'i-solar-users-group-rounded-bold-duotone',
   '果': 'i-solar-graph-up-bold-duotone',
   '図': 'i-solar-chart-square-bold-duotone',
-  '構': 'i-solar-structure-bold-duotone',
+  '構': 'i-solar-widget-4-bold-duotone',
   '場': 'i-solar-folder-with-files-bold-duotone',
   '紋': 'i-solar-widget-5-bold-duotone',
   '守': 'i-solar-shield-bold-duotone',
@@ -112,7 +116,13 @@ export const KANJI_ICONS = {
   '式': 'i-solar-code-square-bold-duotone',
   '層': 'i-solar-layers-minimalistic-bold-duotone',
   '界': 'i-solar-global-bold-duotone',
-  '環': 'i-solar-refresh-circle-bold-duotone',
+  // The Diagrams list (M17 mockup): 構 structure and 環 cycles above, then the lenses.
+  '環': 'i-solar-repeat-bold-duotone',
+  '輪': 'i-solar-refresh-circle-bold-duotone',
+  '域': 'i-solar-map-bold-duotone',
+  '格': 'i-solar-widget-5-bold-duotone',
+  '縁': 'i-solar-link-round-bold-duotone',
+  '繁': 'i-solar-graph-bold-duotone',
   '隣': 'i-solar-map-point-bold-duotone',
   '表': 'i-solar-database-bold-duotone',
   '聴': 'i-solar-headphones-round-bold-duotone',
@@ -155,16 +165,20 @@ export const KANJI_ICONS = {
   '要': 'i-solar-bell-bing-bold-duotone',
 };
 
-/** Marks that are identities, not vocabulary: an assistant's own kanji. They
- *  stay kanji in both modes — Solar has no logo to stand for them. */
-/** @type {Set<string>} */
-export const IDENTITY_KANJI = new Set(['刀', '禅']);
+/** The icon for a kanji that is DATA, by what it names: a workspace's,
+ *  an organisation's or a dōjō's own kanji has no vocabulary meaning, so in
+ *  icon mode it shows its kind (#133: one rule, every mark follows the mode). */
+export const KIND_ICONS = {
+  workspace: 'i-solar-folder-with-files-bold-duotone',
+  organisation: 'i-solar-buildings-2-bold-duotone',
+  dojo: 'i-solar-link-circle-bold-duotone',
+};
 
-/** The vocabulary icon for a kanji; none for an identity mark or an unknown one. */
+/** The vocabulary icon for a kanji; none for one the vocabulary lacks. */
 /**
  * @param {string} kanji
  * @returns {string | undefined}
  */
 export function iconForKanji(kanji) {
-  return IDENTITY_KANJI.has(kanji) ? undefined : KANJI_ICONS[kanji];
+  return KANJI_ICONS[kanji];
 }

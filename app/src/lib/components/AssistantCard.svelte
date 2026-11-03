@@ -14,74 +14,37 @@
    *   error       — cross (failed; see consolidated `error`)
    */
   import AssistantBrandMark from './AssistantBrandMark.svelte';
-  import type { AssistantPartStatus } from '$lib/types.js';
+  import type { AssistantView } from '$lib/wizard-state.svelte.js';
 
-  interface PartView {
-    id: string;
-    label: string;
-    status: AssistantPartStatus;
-  }
-
+  // Renders the wizard state's view of a family (assistantView) and decides
+  // nothing: found, on, parts, the header, the error and whether it is busy are
+  // all the state's (audit 2026-10-28, item 12).
   let {
-    id, name, found = true, enabled = false,
-    parts = [], error = null,
-    onToggle, onRetry,
+    view,
+    onToggle,
+    onRetry,
   }: {
-    id: string;
-    name: string;
-    found?: boolean;
-    enabled?: boolean;
-    parts?: PartView[];
-    /** Consolidated family-level error — the parent derives this by
-     *  joining `partErrors` for parts whose status is `error`. */
-    error?: string | null;
+    view: AssistantView;
     onToggle?: () => void;
     onRetry?: () => void;
   } = $props();
 
-  const busy = $derived(enabled && parts.some(p => p.status === 'configuring'));
-  const showError = $derived(enabled && !!error && !busy);
+  const id = $derived(view.id);
+  const name = $derived(view.name);
+  const found = $derived(view.found);
+  const enabled = $derived(view.enabled);
+  const parts = $derived(view.parts);
+  const error = $derived(view.error);
+  const busy = $derived(view.busy);
+  const showError = $derived(view.showError);
+  const status = $derived(view.header);
 
-  /** Coarse, e2e-friendly view of the family's overall state.
-   *  Drives data-configure-state for selectors in the playwright suite —
-   *  the chip strip carries the fine-grained truth, this attribute is
-   *  the headline summary.
-   *  In-flight `configuring` wins regardless of `enabled` so an active
-   *  remove (which clears the switch first) still surfaces progress. */
-  const configureState = $derived.by(() => {
-    if (parts.some(p => p.status === 'configuring')) return 'configuring';
-    if (!enabled) return 'idle';
-    if (parts.some(p => p.status === 'error'))       return 'failed';
-    if (parts.length && parts.every(p => p.status === 'done')) return 'done';
-    return 'idle';
-  });
-
-  /** True iff the user-visible "configured ✓" badge would show. */
-  const configured = $derived(
-    enabled && parts.length > 0 && parts.every(p => p.status === 'done')
-  );
-
-  /** Direct click on the switch button. Disabled (no-op) while the
-   *  family is busy or has no installed variants — the daemon would
-   *  reject either path anyway. */
+  /** Direct click on the switch. A no-op while busy or with nothing installed —
+   *  the daemon would reject either. */
   function handleSwitchClick() {
     if (!found || busy) return;
     onToggle?.();
   }
-
-  /** Header status label — mirrors mockup's headerStatus() derivation. */
-  function headerLabel(): { text: string; tone: string; icon: 'spinner' | 'check' | 'cross' | null } {
-    if (!found)   return { text: 'not found',     tone: 'muted-italic',    icon: null };
-    if (!enabled) return { text: 'off',           tone: 'muted',           icon: null };
-    if (parts.some(p => p.status === 'configuring'))
-                  return { text: 'configuring…',  tone: 'accent',          icon: 'spinner' };
-    if (parts.some(p => p.status === 'error'))
-                  return { text: 'failed',        tone: 'danger',          icon: 'cross' };
-    if (parts.length && parts.every(p => p.status === 'done'))
-                  return { text: 'configured',    tone: 'success',         icon: 'check' };
-    return { text: '', tone: 'muted', icon: null };
-  }
-  const status = $derived(headerLabel());
 </script>
 
 <div
@@ -90,8 +53,8 @@
   data-testid={`assistant-card-${id}`}
   data-found={found}
   data-enabled={enabled}
-  data-configure-state={configureState}
-  data-configured={configured}
+  data-configure-state={view.state}
+  data-configured={view.configured}
 >
   <div class="header">
     <div class="logo-tile" class:dim={!enabled && found}>
@@ -194,7 +157,7 @@
        --paper-2  ↔ Rokkit --paper-soft   (card surface)
        --paper-3  ↔ Rokkit --paper-mute   (chip-configuring bg)
        --edge     ↔ Rokkit --paper-edge   (hairlines)
-       --ink-2/3/4 ↔ --ink-mute / --ink-soft / --ink-faint
+       --ink-2/3/4 ↔ --ink-soft / --ink-mute / --ink-faint
   */
   .card {
     display: flex;
@@ -233,7 +196,7 @@
     justify-content: center;
     color: var(--ink);
   }
-  .logo-tile.dim { color: var(--ink-mute); }
+  .logo-tile.dim { color: var(--ink-soft); }
 
   .title {
     font-size: 15px;
@@ -256,8 +219,8 @@
     flex-shrink: 0;
     font-family: var(--font-mono);
   }
-  .status-muted        { color: var(--ink-soft); }
-  .status-muted-italic { color: var(--ink-soft); font-style: italic; font-family: var(--font-sans); }
+  .status-muted        { color: var(--ink-mute); }
+  .status-muted-italic { color: var(--ink-mute); font-style: italic; font-family: var(--font-sans); }
   .status-accent       { color: var(--primary); }
   .status-success      { color: var(--success); }
   .status-danger       { color: var(--danger); }
@@ -269,7 +232,7 @@
   }
   /* All chips share a solid 1px edge; only colour and bg differ between
      states (mirrors docs/mockups/lib/assistant-card.jsx CapChip skin).
-     Disabled (base) chip uses ink-mute text instead of ink-faint so the
+     Disabled (base) chip uses ink-soft text instead of ink-faint so the
      unchecked capabilities are still legible — ink-faint was too close
      to paper-edge and disappeared. */
   .chip {
@@ -282,7 +245,7 @@
     border-radius: 999px;
     border: 1px solid var(--paper-edge);
     background: transparent;
-    color: var(--ink-mute);
+    color: var(--ink-soft);
     white-space: nowrap;
     transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
   }
@@ -329,7 +292,7 @@
     min-width: 0;
     flex: 1;
     font-size: 12.5px;
-    color: var(--ink-mute);
+    color: var(--ink-soft);
     line-height: 1.45;
   }
   .error-message {

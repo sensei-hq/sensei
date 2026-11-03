@@ -40,72 +40,34 @@
 
 use super::{ManifestAdapter, ParsedManifest};
 use crate::indexer::lib_indexer::DepVersion;
-use serde::Deserialize;
+use dbd_core::config::DesignConfig;
 
 pub struct DbdManifestAdapter;
 
-/// The parts of `design.yaml` this adapter reads.
-///
-/// Every field optional and `#[serde(default)]`, because the format has grown:
-/// the corpus holds manifests with `source:` and without, with extensions under
-/// `target` and at the top level. A missing key is a fact about that project's
-/// vintage, not a parse failure.
-#[derive(Debug, Default, Deserialize)]
-struct Design {
-    #[serde(default)]
-    project: Project,
-    #[serde(default)]
-    source: Option<SourceBlock>,
-    #[serde(default)]
-    target: Option<serde_yaml::Value>,
-    #[serde(default)]
-    extensions: Vec<Extension>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct Project {
-    #[serde(default)]
-    name: Option<String>,
-    /// dbd spells the description `note`.
-    #[serde(default)]
-    note: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SourceBlock {
-    #[serde(default)]
-    dialect: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Extension {
-    name: String,
-}
-
-/// Parse, or nothing. A `design.yaml` that is not valid YAML states nothing,
-/// and an empty [`Design`] is what "stated nothing" looks like to every reader
-/// below — no name, no dialect, no extensions.
-fn design(content: &str) -> Design {
-    serde_yaml::from_str(content).unwrap_or_default()
+/// The design, read as dbd reads it (#190), or nothing. A `design.yaml` dbd
+/// refuses — not YAML, no `project` block, the legacy `project: <name>` string
+/// — states nothing to any reader below: no name, no dialect, no extensions.
+fn design(content: &str) -> Option<DesignConfig> {
+    dbd_core::config::parse(content).ok()
 }
 
 impl DbdManifestAdapter {
     /// The dialect this project's SQL is written in, when the manifest says.
     ///
     /// `None` means the manifest stated nothing — NOT that it is Postgres.
-    /// dbd is Postgres-only today, so filling that in would usually be right;
-    /// it would also be a fact about dbd rather than about the project, and
-    /// `lang::sql::Dialect::detect` already answers from the source for the
-    /// manifests that predate the `source:` key.
+    /// dbd falls back to `postgresql` and says whether it did
+    /// (`dialect_stated`, dbd#109); that fallback is a fact about dbd rather
+    /// than about the project, and `lang::sql::Dialect::detect` already answers
+    /// from the source for the manifests that predate the `source:` key.
     ///
     /// The string is returned rather than a `Dialect`, so this module does not
     /// depend on the indexer's language vocabulary — `Dialect::from_label`
     /// owns the mapping and is the one place a label becomes a dialect.
     pub fn stated_dialect(content: &str) -> Option<String> {
-        let dialect = design(content).source?.dialect?;
-        let dialect = dialect.trim();
+        let source = design(content)?.source;
+        let dialect = source.dialect.trim();
         // An EMPTY value is not a statement.
-        (!dialect.is_empty()).then(|| dialect.to_string())
+        (source.dialect_stated && !dialect.is_empty()).then(|| dialect.to_string())
     }
 }
 
@@ -119,42 +81,31 @@ impl ManifestAdapter for DbdManifestAdapter {
     }
 
     fn parse_manifest(&self, content: &str) -> ParsedManifest {
-        let design = design(content);
+        let Some(design) = design(content) else { return ParsedManifest::default() };
         ParsedManifest {
-            name: design.project.name.filter(|n| !n.trim().is_empty()),
-            // NO VERSION. No `design.yaml` in the corpus carries one, and
-            // inventing `0.0.0` would be a value a caller cannot tell from a
-            // version the project actually set.
+            name: Some(design.project.name).filter(|n| !n.trim().is_empty()),
+            // NO VERSION. A `project.version` is the schema's migration number,
+            // not a package version, and inventing `0.0.0` would be a value a
+            // caller cannot tell from a version the project actually set.
             version: None,
             description: design.project.note,
         }
     }
 
-    /// The Postgres EXTENSIONS the schema requires, from either shape the
-    /// corpus uses.
+    /// The Postgres EXTENSIONS the schema requires: `target.<engine>.extensions`,
+    /// as dbd reads them, under whatever engine key (`postgres`, `supabase`).
     fn parse_dependencies(&self, content: &str) -> Vec<DepVersion> {
-        let design = design(content);
-        let mut names: Vec<String> = design.extensions.into_iter().map(|e| e.name).collect();
-        // `target.<engine>.extensions` — the engine key varies (`postgres`,
-        // `supabase`), so every value under `target` is looked at rather than
-        // a fixed name being expected.
-        if let Some(serde_yaml::Value::Mapping(targets)) = design.target {
-            for engine in targets.values() {
-                let Some(list) = engine.get("extensions").and_then(|e| e.as_sequence()) else {
-                    continue;
-                };
-                names.extend(
-                    list.iter()
-                        .filter_map(|e| e.get("name").and_then(|n| n.as_str()))
-                        .map(str::to_string),
-                );
-            }
-        }
+        let Some(design) = design(content) else { return Vec::new() };
+        let mut names: Vec<String> = design
+            .target
+            .values()
+            .flat_map(|t| t.extensions.iter().map(|e| e.name().to_string()))
+            .filter(|n| !n.trim().is_empty())
+            .collect();
         names.sort();
         names.dedup();
         names
             .into_iter()
-            .filter(|n| !n.trim().is_empty())
             .map(|name| DepVersion {
                 lib_name: name,
                 // `*` is this registry's spelling for "no constraint stated",
@@ -277,31 +228,42 @@ mod tests {
         assert_eq!(Dialect::from_label(&stated), Some(Dialect::PostgreSql));
     }
 
-    /// Extensions are the dependencies, in both shapes the corpus uses.
+    /// Extensions are the dependencies, read as dbd reads `target.<engine>.extensions`
+    /// — a bare name or `{name, schema}`, under whatever engine key (#190).
     ///
     /// MUTATION: read only `target.postgres.extensions` — torii declares its
-    /// under `target.supabase`, and burn-e at the top level, so both lose
-    /// every dependency.
+    /// under `target.supabase`, and loses every dependency.
     #[test]
-    fn extensions_are_the_dependencies_under_target_or_at_the_top() {
-        let under_target: Vec<String> =
-            DbdManifestAdapter.parse_dependencies(SENSEI).into_iter().map(|d| d.lib_name).collect();
-        assert_eq!(under_target, ["uuid-ossp", "vector"]);
+    fn extensions_are_the_dependencies_dbd_reads() {
+        let deps = |content: &str| -> Vec<String> {
+            DbdManifestAdapter.parse_dependencies(content).into_iter().map(|d| d.lib_name).collect()
+        };
+        assert_eq!(deps(SENSEI), ["uuid-ossp", "vector"]);
 
-        let top_level: Vec<String> =
-            DbdManifestAdapter.parse_dependencies(OLD).into_iter().map(|d| d.lib_name).collect();
-        assert_eq!(top_level, ["postgis"]);
-
-        // The ENGINE KEY VARIES — supabase, not postgres.
-        let supabase = "target:\n  supabase:\n    extensions:\n      - name: vector\n";
-        let found: Vec<String> = DbdManifestAdapter
-            .parse_dependencies(supabase)
-            .into_iter()
-            .map(|d| d.lib_name)
-            .collect();
-        assert_eq!(found, ["vector"]);
+        // The ENGINE KEY VARIES, and a bare name is an extension too.
+        let supabase = "project:\n  name: t\ntarget:\n  supabase:\n    extensions:\n      \
+                        - vector\n      - name: postgis\n        schema: extensions\n";
+        assert_eq!(deps(supabase), ["postgis", "vector"]);
 
         assert!(DbdManifestAdapter.parse_dependencies(SENSEI).iter().all(|d| !d.dev));
+    }
+
+    /// The legacy top-level `extensions:` is not read: dbd itself ignores it,
+    /// and `dbd doctor --fix` moves it under the target. Reading it here would
+    /// be a second, older reading of a file dbd owns (#190).
+    #[test]
+    fn the_legacy_top_level_extensions_are_dbds_to_migrate() {
+        assert!(DbdManifestAdapter.parse_dependencies(OLD).is_empty());
+    }
+
+    /// The adapter reads `design.yaml` THROUGH dbd, keeping no copy of its
+    /// struct to drift from it (#190).
+    #[test]
+    fn the_manifest_is_read_through_dbd() {
+        let src = include_str!("dbd.rs");
+        let production = &src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())];
+        assert!(production.contains("dbd_core::config::parse"));
+        assert!(!production.contains("serde_yaml::from_str"), "a second reading of design.yaml");
     }
 
     /// The stack says SQL, and names the dialect only when the manifest did.

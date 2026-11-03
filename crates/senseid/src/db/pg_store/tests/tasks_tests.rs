@@ -852,7 +852,16 @@ async fn signing_out_matches_the_slot_however_the_caller_cased_the_persona() {
     let hint = format!("Ztest-SignOut-{uniq}");
 
     s.upsert_persona(&hint, true).await.unwrap();
-    let id = s.link_persona_identity(&hint, "ztest-cased-login", gh_id, None, &[]).await.unwrap();
+    let id = s
+        .link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+            persona_hint: &hint,
+            github_login: "ztest-cased-login",
+            github_user_id: gh_id,
+            primary_email: None,
+            verified_emails: &[],
+        })
+        .await
+        .unwrap();
 
     let slot: Option<String> =
         query_as::<_, (Option<String>,)>("SELECT session_slot FROM sensei.personas WHERE id = $1")

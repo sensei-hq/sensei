@@ -1,3 +1,5 @@
+import { ftrBand, ftrBandView } from '$lib/ftr';
+import { KIND_ICONS } from '$lib/glyph-vocabulary';
 import type { GlyphMode } from '$lib/glyphs';
 import type { WorkspaceListItem } from '$lib/types.js';
 import { failureReason, type ApiResult } from '$lib/api.js';
@@ -114,7 +116,15 @@ export function isWarning(
   sessions7d: number,
 ): boolean {
   if (sessions7d <= 0) return false;
-  return signals.open_drift_count > 0 || signals.ftr_7d < 0.6;
+  return signals.open_drift_count > 0 || ftrBand(signals.ftr_7d) === 'low';
+}
+
+/** The dot beside a workspace: the shared FTR band (lib/ftr), unless a live
+ *  warning wins. */
+export function workspaceDotView(ftr: number | null, warn: boolean): { dot: string; label: string } {
+  if (warn) return { dot: 'bg-warning', label: 'needs attention' };
+  const v = ftrBandView(ftr);
+  return { dot: v.dot, label: v.label };
 }
 
 /** The default hero/list glyph — 場 (place) — when nothing else is known.
@@ -130,8 +140,8 @@ export type WorkspaceIcon =
   | { kind: 'kanji'; glyph: string }
   | { kind: 'icon'; cls: string; glyph: string };
 
-/** The default workspace mark in icon mode (#133) — the Workspaces rail's icon. */
-export const WORKSPACE_ICON = 'i-solar-folder-with-files-bold-duotone';
+/** A workspace's mark in icon mode (#133) — the kind icon from the shared vocabulary. */
+export const WORKSPACE_ICON = KIND_ICONS.workspace;
 
 /** Pure: does a stored icon value already point somewhere the browser can load
  *  directly? An author/About-form icon may be an absolute URL or a data URI;
@@ -153,16 +163,17 @@ export function workspaceIcon(
   mode: GlyphMode = 'kanji',
 ): WorkspaceIcon {
   const icon = p.icon;
-  if (icon && icon.kind === 'image' && icon.value) {
+  // An image the daemon says it cannot serve is no image: asking would 404.
+  if (icon && icon.kind === 'image' && icon.value && icon.available !== false) {
     const src = isDirectUrl(icon.value)
       ? icon.value
       : `${base}/api/workspaces/${encodeURIComponent(p.id)}/icon`;
     return { kind: 'image', src, glyph: DEFAULT_GLYPH };
   }
-  if (icon && icon.kind === 'kanji' && icon.value) return { kind: 'kanji', glyph: icon.value };
-  // Only the default mark has an icon to stand for it (#133).
-  if (mode === 'icon') return { kind: 'icon', cls: WORKSPACE_ICON, glyph: DEFAULT_GLYPH };
-  return { kind: 'kanji', glyph: DEFAULT_GLYPH };
+  const glyph = icon && icon.kind === 'kanji' && icon.value ? icon.value : DEFAULT_GLYPH;
+  // Every glyph follows the mode (#133): a chosen kanji too, kept as the fallback.
+  if (mode === 'icon') return { kind: 'icon', cls: WORKSPACE_ICON, glyph };
+  return { kind: 'kanji', glyph };
 }
 
 /** Pure: compact "last session" label from an ISO timestamp. `now` is

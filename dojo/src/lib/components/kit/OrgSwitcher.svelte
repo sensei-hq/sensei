@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { KIND_ICONS } from '@sensei/glyphs';
 	import { goto } from '$app/navigation';
 	import KanjiToken from './KanjiToken.svelte';
 	import { kindTone } from './vocab';
@@ -56,14 +57,14 @@
 			: 'border-paper-edge'}"
 		style="padding: 4px 12px; min-height: 32px"
 	>
-		<KanjiToken char={isYou ? '携' : (org?.kanji ?? '')} icon={isYou ? undefined : null} size="inherit" toneClass="" class="text-sm {triggerTone}" />
+		<KanjiToken char={isYou ? '携' : (org?.kanji ?? '')} icon={isYou ? undefined : KIND_ICONS.organisation} size="inherit" toneClass="" class="text-sm {triggerTone}" />
 		<span class="text-ink text-sm">{isYou ? 'Your work' : org?.name}</span>
 		{#if !isYou && org}
 			<span class="mono text-ink-faint text-xs uppercase" style="letter-spacing: 0.08em"
 				>{org.kind}</span
 			>
 		{/if}
-		<span class="text-ink-mute text-xs" aria-hidden="true">▾</span>
+		<span class="text-ink-soft text-xs" aria-hidden="true">▾</span>
 	</button>
 
 	{#if open}
@@ -81,7 +82,7 @@
 			style="top: calc(100% + 6px); width: 320px"
 		>
 			<div class="border-paper-edge flex items-center gap-2 border-b" style="padding: 8px 12px">
-				<KanjiToken char="探" size="sm" toneClass="text-ink-mute" />
+				<KanjiToken char="探" size="sm" toneClass="text-ink-soft" />
 				<span class="text-ink-faint flex-1 text-sm">Switch context…</span>
 				<span
 					class="mono text-ink-faint bg-paper-mute rounded-sm text-xs"
@@ -101,7 +102,7 @@
 				<KanjiToken char="携" size="base" toneClass="text-accent" w={20} />
 				<div class="flex-1" style="min-width: 0">
 					<div class="text-ink text-sm font-medium">Your work</div>
-					<div class="text-ink-mute text-xs">every dōjō · nothing to switch</div>
+					<div class="text-ink-soft text-xs">every dōjō · nothing to switch</div>
 				</div>
 				{#if isYou}<span class="text-accent text-sm" aria-hidden="true">✓</span>{/if}
 			</button>
@@ -113,15 +114,15 @@
 				class="border-paper-edge flex w-full cursor-pointer items-center gap-3 border-b bg-transparent text-left"
 				style="padding: 12px"
 			>
-				<KanjiToken char="全" size="base" toneClass="text-ink-mute" w={20} />
+				<KanjiToken char="全" size="base" toneClass="text-ink-soft" w={20} />
 				<div class="flex-1" style="min-width: 0">
 					<div class="text-ink text-sm font-medium">All organizations</div>
-					<div class="text-ink-mute text-xs">browse every dōjō you can join</div>
+					<div class="text-ink-soft text-xs">browse every dōjō you can join</div>
 				</div>
 			</button>
 
 			<div
-				class="text-ink-mute text-xs font-semibold uppercase"
+				class="text-ink-soft text-xs font-semibold uppercase"
 				style="letter-spacing: 0.18em; padding: 12px 12px 4px"
 			>
 				My dōjōs
@@ -139,7 +140,7 @@
 						style="padding: 8px 12px"
 					>
 						<!-- A dōjō's own mark: an identity, kanji in both modes (#133). -->
-						<KanjiToken char={d.kanji} icon={null} size="sm" toneClass={kindTone(d.kind).text} w={20} />
+						<KanjiToken char={d.kanji} icon={KIND_ICONS.dojo} size="sm" toneClass={kindTone(d.kind).text} w={20} />
 						<div class="flex-1" style="min-width: 0">
 							<div class="text-ink truncate text-sm">{d.name}</div>
 							<div class="mono text-ink-faint text-xs">{K2_ROLE[d.role]?.label} · {d.kind}</div>

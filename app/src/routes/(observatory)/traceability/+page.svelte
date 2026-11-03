@@ -1,10 +1,10 @@
 <script lang="ts">
+    import { driftChipClasses } from '$lib/traceability.svelte.js';
     import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
   import { PageHeader, Screen, EmptyState, ScreenState, UnreadWorkspacesNotice } from '$lib/components';
   import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
   import {
-    driftChipClasses,
     rollupHeadline,
     type DriftGroup,
     type DriftRow,
@@ -79,7 +79,7 @@
           description="Doc-to-code references are all resolving. Broken or drifted mentions will surface here once a workspace's next scan finds one."
         />
       {:else}
-        <p class="text-sm text-ink-soft mb-6" data-traceability-rollup>{rollupHeadline(data.rollup)}</p>
+        <p class="text-sm text-ink-mute mb-6" data-traceability-rollup>{rollupHeadline(data.rollup)}</p>
         {#each data.groups as g (g.workspaceId)}
           {@render group(g)}
         {/each}

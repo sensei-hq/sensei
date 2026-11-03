@@ -23,9 +23,9 @@
             {#if signal.trend}
                 <span data-component="mover-delta" class="mono text-xs {TREND_TEXT[signal.color]}">{signal.trend.label}</span>
             {/if}
-            <span class="text-sm text-ink-soft">{signal.name}</span>
+            <span class="text-sm text-ink-mute">{signal.name}</span>
         </div>
-        <div data-component="mover-insight" class="text-sm text-ink-soft leading-relaxed text-pretty">
+        <div data-component="mover-insight" class="text-sm text-ink-mute leading-relaxed text-pretty">
             {signal.insight}
         </div>
     </div>

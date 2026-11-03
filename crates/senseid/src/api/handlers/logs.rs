@@ -91,7 +91,13 @@ pub(crate) async fn get_logs(
 
     let rows = state
         .pg
-        .query_logs(q.level.as_deref(), q.source.as_deref(), q.module.as_deref(), since, limit)
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: q.level.as_deref(),
+            source: q.source.as_deref(),
+            module: q.module.as_deref(),
+            since,
+            limit,
+        })
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "get_logs: query_logs failed");

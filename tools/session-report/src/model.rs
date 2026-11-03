@@ -89,7 +89,6 @@ pub struct Session {
     /// `session.permissions_changed` — each one is a point where the agent
     /// stopped and waited for the human.
     pub permission_events: usize,
-    pub event_count: usize,
     /// Every event timestamp, ascending. Kept so ACTIVE time can be measured as
     /// the sum of gaps below an idle cutoff — a session left open overnight
     /// spans days of wall clock that nobody was working through.

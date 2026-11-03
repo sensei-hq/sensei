@@ -1,6 +1,6 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// Read the single collective-preferences row, or `None` when unset (the API
     /// then returns conservative defaults). `categories` comes back as raw jsonb.
@@ -306,15 +306,9 @@ impl PgStore {
 
     /// Record a successful publish (idempotent on the `(membership_id, signature)`
     /// dedup key — a repeat send just refreshes the assigned seq/id).
-    pub async fn outbox_mark_sent(
-        &self,
-        membership_id: &uuid::Uuid,
-        batch_id: Option<&uuid::Uuid>,
-        memory_id: Option<&uuid::Uuid>,
-        signature: &str,
-        sent_seq: i64,
-        remote_id: &str,
-    ) -> Result<(), String> {
+    pub async fn outbox_mark_sent(&self, sent: &OutboxSentRow<'_>) -> Result<(), String> {
+        let &OutboxSentRow { membership_id, batch_id, memory_id, signature, sent_seq, remote_id } =
+            sent;
         sqlx_core::query::query(
             "INSERT INTO sensei.dojo_outbox
                 (membership_id, batch_id, memory_id, signature, state, sent_seq, remote_id, last_attempt_at)
@@ -331,14 +325,8 @@ impl PgStore {
     /// Record a non-sent outbox state (`held` | `queued` | `error`). Never
     /// downgrades an already-`sent` row (the `WHERE` guard), so a late held/queued
     /// signal can't erase a successful publish.
-    pub async fn outbox_mark_state(
-        &self,
-        membership_id: &uuid::Uuid,
-        batch_id: Option<&uuid::Uuid>,
-        memory_id: Option<&uuid::Uuid>,
-        signature: &str,
-        state: &str,
-    ) -> Result<(), String> {
+    pub async fn outbox_mark_state(&self, entry: &OutboxStateRow<'_>) -> Result<(), String> {
+        let &OutboxStateRow { membership_id, batch_id, memory_id, signature, state } = entry;
         if !matches!(state, "held" | "queued" | "error" | "pending") {
             return Err(format!("invalid outbox state {state}"));
         }
@@ -795,12 +783,10 @@ impl PgStore {
 
     pub async fn upsert_federated_memory(
         &self,
-        source_id: &uuid::Uuid,
-        remote_rule_id: &uuid::Uuid,
-        content_hash: &str,
-        memory_id: Option<&uuid::Uuid>,
-        remote_seq: i64,
+        federated_memory: &FederatedMemoryRow<'_>,
     ) -> Result<(), String> {
+        let &FederatedMemoryRow { source_id, remote_rule_id, content_hash, memory_id, remote_seq } =
+            federated_memory;
         sqlx_core::query::query(
             "INSERT INTO sensei.federated_memories(knowledge_source_id, remote_rule_id, content_hash, memory_id, remote_seq)
              VALUES($1,$2,$3,$4,$5)

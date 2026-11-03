@@ -1,7 +1,7 @@
 /**
  * Inspect the REAL Schema diagram (#221) for this repository's workspace. Done
  * gate 1: `ErDiagram` and `DependencyDiagram` MOUNT against the live payload
- * (169 tables, 184 keys, 784 deps) without a runtime throw — the e2e DB has no
+ * (every table and key in its payload) without a runtime throw — the e2e DB has no
  * schema to draw, so only this harness can show it. Captures
  * /tmp/sensei-shots/schema-*.png. Run: `bun run test:inspect`.
  */
@@ -42,19 +42,32 @@ async function drawn(tauriPage: TauriPageLike): Promise<{ nodes: number; edges: 
   })`)) as { nodes: number; edges: number };
 }
 
-/** Click the toolbar button whose label starts with `label`. The tauri bridge's
- *  locator engine has no `:has-text`, so the button is found in the page. */
-async function pick(tauriPage: TauriPageLike, toolbar: string, label: string): Promise<void> {
+/** Choose `label` in the controls band: the schema from its picker (rokkit Select),
+ *  the scope from its toggle. The tauri bridge's locator engine has no `:has-text`,
+ *  so the option is found in the page. */
+async function pick(tauriPage: TauriPageLike, control: 'Schema' | 'Show', label: string): Promise<void> {
+  // The controls sit in the header's band, which a reader may have closed: open it,
+  // and let it render, before looking for one.
+  await tauriPage.evaluate(`(() => {
+    const band = document.querySelector('[data-testid="diagram-controls-toggle"]');
+    if (band?.getAttribute('aria-pressed') === 'false') band.click();
+  })()`);
+  await settle(500);
+  if (control === 'Schema') {
+    await tauriPage.evaluate(`document.querySelector('[data-testid="schema-pick"] [data-select-trigger]')?.click()`);
+    await settle(500);
+  }
   const clicked = await tauriPage.evaluate(`
     (() => {
-      const bar = document.querySelector('[data-toolbar][aria-label="${toolbar}"]');
-      const btn = [...(bar?.querySelectorAll('button') ?? [])]
-        .find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)}));
+      const options = ${JSON.stringify(control)} === 'Schema'
+        ? [...document.querySelectorAll('[data-select-option]')]
+        : [...document.querySelectorAll('[data-testid="schema-controls"] [data-toggle][aria-label="Show"] [data-toggle-option]')];
+      const btn = options.find((b) => (b.getAttribute('aria-label') ?? b.textContent).trim().startsWith(${JSON.stringify(label)}));
       btn?.click();
       return !!btn;
     })()
   `);
-  expect(clicked, `${toolbar} → ${label}`).toBe(true);
+  expect(clicked, `${control} → ${label}`).toBe(true);
 }
 
 test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
@@ -71,13 +84,37 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   await navigateToScreen(tauriPage, `/workspace/${id}/diagrams/schema`, '[data-testid="schema-screen"]');
   await tauriPage.waitForSelector('[data-testid="schema-diagram"], [data-testid="schema-error"], [data-testid="schema-none"]', 60_000);
   await settle();
+  // Live data grows: the screen must say what the daemon's payload holds, not a past count.
+  type End = { s: string };
+  /** Counts as the screen writes them (lib/format: thousands grouped). */
+  const n = (v: number) => v.toLocaleString('en-US');
+  const payload = (await (await fetch(`${DAEMON_URL}/api/workspaces/${id}/diagrams/schema`)).json()) as {
+    tables: { schema: string }[];
+    refs: { from: End & { t?: string }; to: End & { t?: string } }[];
+    entities: { schema: string }[];
+    deps: { from: End & { n?: string }; to: End & { n?: string }; unresolved?: boolean }[];
+  };
+  // One schema's share, derived here from the payload rather than taken from the screen:
+  // links with both ends inside are drawn, links with one end outside are counted as cut.
+  const share = (S: string, links: { from: End; to: End }[]) => ({
+    inside: links.filter((l) => l.from.s === S && l.to.s === S).length,
+    cut: links.filter((l) => (l.from.s === S) !== (l.to.s === S)).length,
+  });
+  const dojoTables = payload.tables.filter((t) => t.schema === 'dojo').length;
+  const dojoObjects = dojoTables + payload.entities.filter((e) => e.schema === 'dojo').length;
+  const dojoKeys = share('dojo', payload.refs);
+  // A dependency on a built-in or undescribed object has no far end to place: it is drawn
+  // (dimmed) whenever its source is, and never counted as cut.
+  const resolved = payload.deps.filter((d) => !d.unresolved);
+  const dimmedIn = (S: string | null) => payload.deps.filter((d) => d.unresolved && (S === null || d.from.s === S)).length;
+  const dojoDeps = { inside: share('dojo', resolved).inside + dimmedIn('dojo'), cut: share('dojo', resolved).cut };
   const coverage = await text(tauriPage, '[data-testid="schema-coverage"]');
   console.log(`[inspect] schema coverage (all): ${coverage}`);
-  expect(coverage).toContain('169 tables');
-  expect(coverage).toContain('184 keys');
+  expect(coverage).toContain(`${n(payload.tables.length)} tables`);
+  expect(coverage).toContain(`${n(payload.refs.length)} keys`);
   const all = await drawn(tauriPage);
   console.log(`[inspect] drawn (all): ${JSON.stringify(all)}`);
-  expect(all.nodes, 'one card per table').toBe(169);
+  expect(all.nodes, 'one card per table').toBe(payload.tables.length);
   expect(all.edges).toBeGreaterThan(0);
   await snap(tauriPage, 'schema-er-all');
 
@@ -97,36 +134,48 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   expect(entity).toContain('from_node_id');
   expect(entity?.indexOf('from_column')).toBeGreaterThan(entity?.indexOf('from_node_id') ?? -1);
   await snap(tauriPage, 'schema-er-selected');
+  // What a change to it reaches, derived here from the payload: the keys it holds,
+  // the keys pointing at it, and the objects reading or writing it.
+  const at = (e: { s: string; t?: string; n?: string }) => e.t ?? e.n;
+  const refsOut = payload.refs.filter((r) => at(r.from) === 'schema_refs').length;
+  const refsIn = payload.refs.filter((r) => at(r.to) === 'schema_refs').length;
+  const readers = payload.deps.filter((d) => !d.unresolved && at(d.to) === 'schema_refs').length;
+  const reach = (await tauriPage.evaluate(`[...document.querySelectorAll('[data-testid="schema-reach"] ul')].map((u) => u.children.length)`)) as number[];
+  console.log(`[inspect] schema_refs reach: ${refsOut} out · ${refsIn} in · ${readers} readers; panel lists ${JSON.stringify(reach)}`);
+  expect(reach.reduce((a, v) => a + v, 0)).toBe(refsOut + refsIn + readers);
+
+  // Back to the diagram, where the coverage is read.
+  await tauriPage.evaluate(`document.querySelector('[data-testid="schema-back"]')?.click()`);
+  await settle();
 
   // One schema: only its tables, and the keys leading out of it counted.
   await pick(tauriPage, 'Schema', 'dojo');
   await settle();
   const filtered = await text(tauriPage, '[data-testid="schema-coverage"]');
   console.log(`[inspect] schema coverage (dojo): ${filtered}`);
-  // Done gate 2, against counts derived independently from the live payload
-  // (2026-10-12): dojo has 39 tables, 63 keys inside it and 4 with one end out.
-  expect(filtered).toContain('39 tables · 63 keys');
-  expect(filtered).toContain('4 keys lead out of the shown schema, not drawn');
+  // Done gate 2, against counts derived independently from the live payload (above).
+  expect(filtered).toContain(`${n(dojoTables)} tables · ${n(dojoKeys.inside)} keys`);
+  expect(filtered).toContain(`${n(dojoKeys.cut)} keys lead out of the shown schema, not drawn`);
   const dojo = await drawn(tauriPage);
   console.log(`[inspect] drawn (dojo): ${JSON.stringify(dojo)}`);
-  expect(dojo.nodes, 'only the chosen schema').toBe(39);
+  expect(dojo.nodes, 'only the chosen schema').toBe(dojoTables);
   await snap(tauriPage, 'schema-er-dojo');
 
   await pick(tauriPage, 'Show', 'Dependencies');
   await settle();
   const deps = await text(tauriPage, '[data-testid="schema-coverage"]');
   console.log(`[inspect] schema coverage (deps, dojo): ${deps}`);
-  expect(deps).toContain('51 objects · 159 dependencies');
-  expect(deps).toContain('18 dependencies cross out of the shown schema, not drawn');
-  expect(deps).toContain('80 dependencies on a built-in or undescribed object, drawn dimmed');
+  expect(deps).toContain(`${n(dojoObjects)} objects · ${n(dojoDeps.inside)} dependencies`);
+  expect(deps).toContain(`${n(dojoDeps.cut)} dependencies cross out of the shown schema, not drawn`);
+  expect(deps).toContain(`${n(dimmedIn('dojo'))} dependencies on a built-in or undescribed object, drawn dimmed`);
   await snap(tauriPage, 'schema-deps-dojo');
 
-  await pick(tauriPage, 'Schema', 'All');
+  await pick(tauriPage, 'Schema', 'All schemas');
   await settle();
   const allDeps = await text(tauriPage, '[data-testid="schema-coverage"]');
   console.log(`[inspect] schema coverage (deps, all): ${allDeps}`);
-  expect(allDeps).toContain('262 objects · 784 dependencies');
-  expect(allDeps).toContain('360 dependencies on a built-in or undescribed object, drawn dimmed');
+  expect(allDeps).toContain(`${n(payload.tables.length + payload.entities.length)} objects · ${n(payload.deps.length)} dependencies`);
+  expect(allDeps).toContain(`${n(dimmedIn(null))} dependencies on a built-in or undescribed object, drawn dimmed`);
   await snap(tauriPage, 'schema-deps-all');
 
   const errs = await readErrors(tauriPage);

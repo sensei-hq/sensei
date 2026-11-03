@@ -9,8 +9,10 @@
  * objects; status persists via commitStage; active flips on route change.
  */
 
-import { senseiApi, failureReason, daemonFailure, type ApiResult } from './api.js';
+import { senseiApi, failureReason, daemonFailure, type ApiResult, type SenseiApi } from './api.js';
+import { EventManager } from './events.js';
 import { roleAssignments } from './setup/role-meta.js';
+import { assignChainRoles } from './setup/chain-roles.svelte.js';
 import { DEFAULT_PREFERENCES } from './setup/preferences.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
@@ -103,6 +105,32 @@ export function routerKeyStatus(r: RouterEntry): { label: string; tone: 'success
   return r.configured
     ? { label: 'configured ✓', tone: 'success' }
     : { label: 'not configured', tone: 'mute' };
+}
+
+/**
+ * Save a provider's drafted key to the Keychain (through the daemon) and update
+ * the row's status — the one key save, for the wizard's commit step and
+ * Settings · Providers (audit 2026-10-28, item 13: Settings carried a copy).
+ * An empty draft is not a save.
+ */
+export async function saveRouterKey(
+  router: RouterEntry,
+  api: Pick<SenseiApi, 'setGatewayRouterKey'>,
+): Promise<void> {
+  const key = router.draftKey.trim();
+  if (key.length === 0) return;
+  router.saveState = 'saving';
+  router.saveError = '';
+  const result = await api.setGatewayRouterKey(router.id, key);
+  if (result.ok) {
+    router.configured = result.data.configured;
+    router.keyError = null;
+    router.draftKey = '';
+    router.saveState = 'done';
+  } else {
+    router.saveState = 'failed';
+    router.saveError = result.error.message;
+  }
 }
 
 export interface InferenceSlice {
@@ -241,26 +269,11 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
     // the UI shows progress. Failures are non-fatal — user can retry
     // later from settings — but we surface them via saveError.
     for (const router of ws.inference.routers) {
-      if (!router.needsKey || router.draftKey.trim().length === 0) continue;
-      router.saveState = 'saving';
-      router.saveError = '';
-      const result = await api.setGatewayRouterKey(router.id, router.draftKey.trim());
-      if (result.ok) {
-        router.configured = result.data.configured;
-        router.keyError = null;
-        router.draftKey = '';
-        router.saveState = 'done';
-      } else {
-        router.saveState = 'failed';
-        router.saveError = result.error.message;
-      }
+      if (router.needsKey) await saveRouterKey(router, api);
     }
   },
   assignments: async (ws, api) => {
-    // Diff pending vs. daemon truth so we PUT the minimal set. Two-phase
-    // order matters: CLEARS first (chain-role writes fail with 409 if
-    // another chain still owns the same role), THEN sets. Skip roles
-    // whose pending pick equals current truth.
+    // Diff pending vs. daemon truth so only the roles that changed are written.
     const roles: SenseiRole[] = ['inference', 'consolidation', 'embedding', 'voice'];
     const current = ws.assignments.roleAssignments;
     const pending = ws.assignments.pendingAssignments;
@@ -269,24 +282,9 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       .filter(r => (pending[r] ?? null) !== (current[r] ?? null))
       .map(r => ({ role: r, next: pending[r] ?? null, prev: current[r] ?? null }));
 
-    // A refused write fails the commit (#288) — it used to be logged and the
-    // stage marked done, with the role never assigned.
-    const refused: string[] = [];
-    // Phase 1 — clear every OLD chain that's losing its role.
-    // (Includes both "role unassigned" and "role moved to a different chain".)
-    for (const c of changes) {
-      if (c.prev) {
-        const result = await api.setGatewayChainRole(c.prev, null);
-        if (!result.ok) refused.push(`clearing ${c.role}: ${failureReason(result.error)}`);
-      }
-    }
-    // Phase 2 — set every NEW chain to its role.
-    for (const c of changes) {
-      if (c.next) {
-        const result = await api.setGatewayChainRole(c.next, c.role);
-        if (!result.ok) refused.push(`assigning ${c.role}: ${failureReason(result.error)}`);
-      }
-    }
+    // The one role write (clear old holders, then set new ones). A refusal
+    // fails the commit (#288) — it used to be logged and the stage marked done.
+    const refused = await assignChainRoles(api, changes);
     // Refresh state so `roleAssignments` reflects the daemon's truth — after a
     // refusal too, so the screen shows what actually stuck.
     await ws.refreshAssignments();
@@ -317,6 +315,80 @@ function initialSetupComplete(): boolean {
     console.warn('[wizardState] localStorage read failed at cold start; defaulting to false', e);
     return false;
   }
+}
+
+/** A family as the card and the setup summary render it — see `assistantView`. */
+export interface AssistantView {
+  id: string;
+  name: string;
+  /** Some variant is installed. */
+  found: boolean;
+  /** The switch. */
+  enabled: boolean;
+  parts: { id: string; label: string; status: AssistantPartStatus }[];
+  error: string | null;
+  busy: boolean;
+  showError: boolean;
+  state: 'idle' | 'configuring' | 'failed' | 'done';
+  configured: boolean;
+  header: { text: string; tone: string; icon: 'spinner' | 'check' | 'cross' | null };
+}
+
+/** Pure: one family's view from its live part statuses and errors — what
+ *  `WizardState.assistantView` returns, testable without the store. */
+export function assistantViewOf(
+  family: DaemonAssistantFamily,
+  partStatus: Record<string, AssistantPartStatus> = {},
+  partErrors: Record<string, string | undefined> = {},
+): AssistantView {
+  const parts = family.parts.map((p) => ({
+    id: p.id,
+    label: p.label,
+    status: (partStatus[p.id] ?? 'idle') as AssistantPartStatus
+  }));
+  const found = family.variants.some((v) => v.installed);
+  const enabled = family.selected;
+  const statuses = parts.map((p) => p.status);
+  const configuring = statuses.includes('configuring');
+  const failed = statuses.includes('error');
+  const allDone = parts.length > 0 && statuses.every((st) => st === 'done');
+  const live = statuses.some((st) => st !== 'idle');
+  const configured = enabled && (live ? allDone : familyIsConfigured(family));
+  const errs = Object.values(partErrors).filter(Boolean) as string[];
+  const error = errs.length ? Array.from(new Set(errs)).join('; ') : null;
+  const state: AssistantView['state'] = configuring
+    ? 'configuring'
+    : !enabled
+      ? 'idle'
+      : failed
+        ? 'failed'
+        : configured
+          ? 'done'
+          : 'idle';
+  const header: AssistantView['header'] = !found
+    ? { text: 'not found', tone: 'muted-italic', icon: null }
+    : state === 'configuring'
+      ? { text: 'configuring…', tone: 'accent', icon: 'spinner' }
+      : !enabled
+        ? { text: 'off', tone: 'muted', icon: null }
+        : state === 'failed'
+          ? { text: 'failed', tone: 'danger', icon: 'cross' }
+          : state === 'done'
+            ? { text: 'configured', tone: 'success', icon: 'check' }
+            : { text: '', tone: 'muted', icon: null };
+  return {
+    id: family.id,
+    name: family.name,
+    found,
+    enabled,
+    parts,
+    error,
+    busy: configuring,
+    showError: enabled && !!error && !configuring,
+    state,
+    configured,
+    header
+  };
 }
 
 export class WizardState {
@@ -435,6 +507,75 @@ export class WizardState {
   }
 
   // ── Assistant per-part state ────────────────────────────────────
+
+  /**
+   * One family as the card and the setup summary show it (audit 2026-10-28,
+   * item 12: the card decided its state twice with different precedence, and
+   * the summary counted "configured" by a third rule). In-flight work wins —
+   * a removal clears the switch first, and still reads configuring. Configured
+   * is the live parts once any has moved, else the daemon's word.
+   */
+  assistantView(family: DaemonAssistantFamily): AssistantView {
+    return assistantViewOf(family, this.assistants.partStatus[family.id], this.assistants.partErrors[family.id]);
+  }
+
+  /** What setup configured, as the Done page says it (audit 2026-10-28, item 15:
+   *  the page assembled these in its template). */
+  get doneSummary(): { kanji: string; label: string; sub: string }[] {
+    const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+    const assistants = this.configuredAssistants;
+    const roots = this.roots.roots.length;
+    const workspaces = this.workspaces.workspaces.length;
+    const folders = this.workspaces.workspaces.reduce((t, p) => t + p.folders.length, 0);
+    const libs = this.libraries.libs.filter((l) => l.enabled).length;
+    const selected = this.instruments.mcps.filter((m) => m.selected).length;
+    const installed = this.instruments.mcps.filter((m) => m.installed).length;
+    return [
+      {
+        kanji: '連',
+        label: assistants === 0 ? 'No assistants' : n(assistants, 'assistant', 'assistants'),
+        sub: assistants === 0 ? 'install Claude/Cursor/etc. to enable sessions' : 'configured with sensei',
+      },
+      {
+        kanji: '庵',
+        label: roots === 0 ? 'No roots' : n(roots, 'root', 'roots'),
+        sub: folders > 0
+          ? `${n(folders, 'folder', 'folders')} across ${n(workspaces, 'workspace', 'workspaces')}`
+          : 'no folders scanned yet',
+      },
+      {
+        kanji: '書',
+        label: libs === 0 ? 'No libraries' : n(libs, 'library', 'libraries'),
+        sub: libs === 0 ? 'nothing to wrap yet' : 'docs & code indexed by sensei',
+      },
+      {
+        kanji: '器',
+        label: selected === 0 ? 'No instruments' : n(selected, 'instrument', 'instruments'),
+        sub: installed > 0 ? `${installed} already installed in your assistants` : 'recommended for your stack',
+      },
+    ];
+  }
+
+  /** How many families are configured — the same rule the cards show. */
+  get configuredAssistants(): number {
+    return this.assistants.assistants.filter((f) => this.assistantView(f).configured).length;
+  }
+
+  /** Follow the daemon's per-part events (entity "assistant" on the scan
+   *  stream) so the cards' chips settle live. Returns the unsubscribe. */
+  watchAssistantEvents(port: number): () => void {
+    const events = new EventManager<{ action: string; entity: string; data: AssistantPartEvent }>(
+      `http://127.0.0.1:${port}/api/scan/events`,
+      (data) => JSON.parse(data)
+    );
+    const unsubscribe = events.subscribe((evt) => {
+      if (evt.entity === 'assistant') this.applyAssistantEvent(evt.data);
+    });
+    return () => {
+      unsubscribe();
+      events.destroy();
+    };
+  }
 
   /**
    * Apply one assistant-part SSE event from the daemon. Single entry point
@@ -809,16 +950,20 @@ export class WizardState {
    * to avoid showing stale libs from the persistent DB.
    */
   async refreshLibraries(): Promise<void> {
-    const read = await senseiApi(appState.port).tryGetLibs();
+    const api = senseiApi(appState.port);
+    // The folders are read with the libraries: the session's copy is a snapshot, and
+    // folders indexed since would hide their libraries until a restart.
+    const [read, folders] = await Promise.all([api.tryGetLibs(), api.tryListWorkspaces()]);
     // A failed read throws: the section shows why (#288), not "no libraries".
     if (!read.ok) throw new Error(failureReason(read.error));
+    if (!folders.ok) throw new Error(failureReason(folders.error));
     const fresh = read.data;
 
-    // Set of repo (folder) names scanned in this wizard run. Filter libs to those
+    // Repo (folder) names of the registered workspaces. Filter libs to those
     // touching at least one of these so we don't show the entire persistent DB.
     const scannedRepoNames = new Set<string>();
-    for (const p of this.workspaces.workspaces) {
-      for (const f of p.folders) scannedRepoNames.add(f.name);
+    for (const p of folders.data) {
+      for (const f of p.folders ?? []) scannedRepoNames.add(f.name);
     }
 
     const previous = new Map(this.libraries.libs.map(l => [l.name, l.enabled]));

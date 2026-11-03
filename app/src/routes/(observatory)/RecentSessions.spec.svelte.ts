@@ -51,6 +51,16 @@ describe('RecentSessions', () => {
     expect(dot?.getAttribute('data-tone')).toBe('success');
   });
 
+  it('marks an unscored session neutral — absence is not a red signal (audit 2026-10-28, item 6)', () => {
+    const m = mountComponent(RecentSessions, {
+      sessions: [session({ id: 's-1', ftr: null })],
+    });
+    cleanup.push(m.destroy);
+    const dot = m.container.querySelector('[data-session-row="s-1"] [data-ftr-dot]');
+    expect(dot?.getAttribute('data-tone')).toBe('none');
+    expect(dot?.classList.contains('bg-warning')).toBe(false);
+  });
+
   it('marks a failed (ftr < 1) session with a warning indicator', () => {
     const m = mountComponent(RecentSessions, {
       sessions: [session({ id: 's-1', ftr: 0 })],

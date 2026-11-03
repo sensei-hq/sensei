@@ -212,7 +212,7 @@
 		<span class="flex-1">{org.actionError}</span>
 		<button
 			type="button"
-			class="text-ink-mute cursor-pointer text-xs underline"
+			class="text-ink-soft cursor-pointer text-xs underline"
 			onclick={() => (org.actionError = null)}
 		>
 			dismiss

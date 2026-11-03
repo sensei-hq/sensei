@@ -42,8 +42,8 @@ describe('ActionItems', () => {
     it('maps urgency to a named-token chip (high→danger, medium→warning, low→ink-faint)', () => {
         const chip = (u: ActionUrgency) =>
             q(mount([item({ urgency: u, urgencyLabel: u })]), '[data-action-urgency]');
-        expect(chip('high')?.className).toContain('text-danger');
-        expect(chip('medium')?.className).toContain('text-warning');
+        expect(chip('high')?.className).toContain('text-on-danger-soft');
+        expect(chip('medium')?.className).toContain('text-on-warning-soft');
         expect(chip('low')?.className).toContain('text-ink-faint');
     });
 

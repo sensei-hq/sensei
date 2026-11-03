@@ -46,4 +46,13 @@ describe('org screens show a failed read (#335)', () => {
 		expect(fields.length).toBeGreaterThan(5);
 		expect(fields.filter((f) => !page.includes(`data.${f}`))).toEqual([]);
 	});
+
+	it('the personal page passes every loader error to its screen', () => {
+		const dir = 'src/routes/(app)/you/[section]';
+		const loader = readFileSync(`${dir}/+page.ts`, 'utf8');
+		const page = readFileSync(`${dir}/+page.svelte`, 'utf8');
+		const fields = [...new Set([...loader.matchAll(/^\t\t(\w+Error),?$/gm)].map((m) => m[1]))];
+		expect(fields).toContain('metricsError');
+		expect(fields.filter((f) => !page.includes(`data.${f}`))).toEqual([]);
+	});
 });

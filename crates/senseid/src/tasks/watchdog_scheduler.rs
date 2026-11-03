@@ -67,13 +67,7 @@ async fn apply_action(
         // A running run went stale → mark it stalled so the next tick's Recover
         // ladder picks it up. Event first, then the status flip.
         WatchdogAction::Stall => {
-            pg.append_run_event(
-                run_id,
-                RunEventKind::Stalled,
-                None,
-                None,
-                &serde_json::json!({ "note": "no progress in a while — nudge to continue" }),
-            )
+            pg.append_run_event(run_id, &crate::db::pg_store::RunEventRow { kind: RunEventKind::Stalled, phase: None, feature: None, detail: &serde_json::json!({ "note": "no progress in a while — nudge to continue" }) })
             .await
             .map_err(|e| format!("append_run_event(Stalled) failed: {e}"))?;
             pg.update_run_status(run_id, RelayRunStatus::Stalled, None, None)
@@ -90,10 +84,12 @@ async fn apply_action(
                 .map_err(|e| format!("recover_run failed: {e}"))?;
             pg.append_run_event(
                 run_id,
-                RunEventKind::Recovered,
-                None,
-                None,
-                &serde_json::json!({ "attempt": attempt, "auto": true }),
+                &crate::db::pg_store::RunEventRow {
+                    kind: RunEventKind::Recovered,
+                    phase: None,
+                    feature: None,
+                    detail: &serde_json::json!({ "attempt": attempt, "auto": true }),
+                },
             )
             .await
             .map_err(|e| format!("append_run_event(Recovered) failed: {e}"))?;
@@ -104,13 +100,7 @@ async fn apply_action(
         // Bounded recovery exhausted → crashed (terminal, surfaced). A push
         // notification is P4 (FOLLOW-UP: notify the phone on crash).
         WatchdogAction::Crash => {
-            pg.append_run_event(
-                run_id,
-                RunEventKind::Crashed,
-                None,
-                None,
-                &serde_json::json!({ "note": "exhausted bounded recovery", "attempts": recovery_attempts }),
-            )
+            pg.append_run_event(run_id, &crate::db::pg_store::RunEventRow { kind: RunEventKind::Crashed, phase: None, feature: None, detail: &serde_json::json!({ "note": "exhausted bounded recovery", "attempts": recovery_attempts }) })
             .await
             .map_err(|e| format!("append_run_event(Crashed) failed: {e}"))?;
             pg.update_run_status(run_id, RelayRunStatus::Crashed, None, None)
@@ -291,10 +281,12 @@ mod tests {
         force_liveness(&pg, &id, RelayRunStatus::Running, 3600, 0).await; // started 1h ago
         pg.append_run_event(
             &id,
-            RunEventKind::PhaseStarted,
-            Some("P1"),
-            None,
-            &serde_json::json!({}),
+            &crate::db::pg_store::RunEventRow {
+                kind: RunEventKind::PhaseStarted,
+                phase: Some("P1"),
+                feature: None,
+                detail: &serde_json::json!({}),
+            },
         )
         .await
         .unwrap(); // fresh progress, just now

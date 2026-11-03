@@ -2,6 +2,32 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
 import AssistantCard from './AssistantCard.svelte';
+import { assistantViewOf } from '$lib/wizard-state.svelte.js';
+import type { AssistantPartStatus } from '$lib/types.js';
+
+// The card renders the wizard state's view of a family (audit 2026-10-28, item
+// 12); these build that view from raw facts with the same pure function the
+// state uses, so every assertion below runs through the real derivation.
+function mountCard(o: {
+  id: string;
+  name: string;
+  found: boolean;
+  enabled: boolean;
+  parts: { id: string; label: string; status: AssistantPartStatus }[];
+  error?: string;
+  onRetry?: () => void;
+}) {
+  const family = {
+    id: o.id,
+    name: o.name,
+    selected: o.enabled,
+    variants: [{ id: o.id, name: o.name, installed: o.found, configured: false }],
+    parts: o.parts.map((p) => ({ id: p.id, label: p.label })),
+  };
+  const status = Object.fromEntries(o.parts.map((p) => [p.id, p.status]));
+  const errors = o.error ? { [o.parts[0]!.id]: o.error } : {};
+  return mountComponent(AssistantCard, { view: assistantViewOf(family as never, status, errors), onRetry: o.onRetry });
+}
 
 let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
@@ -18,7 +44,7 @@ function card(m: { container: HTMLElement }, id: string): HTMLElement {
 
 describe('AssistantCard', () => {
   it('renders the family name and a chip per part', () => {
-    const m = mountComponent(AssistantCard, {
+    const m = mountCard({
       id: 'claude', name: 'Claude', found: true, enabled: true, parts: PARTS_CLAUDE,
     });
     cleanup.push(m.destroy);
@@ -34,7 +60,7 @@ describe('AssistantCard', () => {
     // The wizard greys these cards down — we lock the data-found attr so a
     // styling refactor that drops the class still leaves the e2e selector
     // working, and the label text so the user-visible signal is asserted.
-    const m = mountComponent(AssistantCard, {
+    const m = mountCard({
       id: 'kiro', name: 'Kiro', found: false, enabled: false,
       parts: [{ id: 'mcp', label: 'mcp server', status: 'idle' }],
     });
@@ -45,7 +71,7 @@ describe('AssistantCard', () => {
   });
 
   it('renders "off" header label when enabled=false but found', () => {
-    const m = mountComponent(AssistantCard, {
+    const m = mountCard({
       id: 'cursor', name: 'Cursor', found: true, enabled: false,
       parts: [{ id: 'mcp', label: 'mcp server', status: 'idle' }],
     });
@@ -54,7 +80,7 @@ describe('AssistantCard', () => {
   });
 
   it('renders "configuring…" header label when any part is configuring', () => {
-    const m = mountComponent(AssistantCard, {
+    const m = mountCard({
       id: 'claude', name: 'Claude', found: true, enabled: true,
       parts: [
         { id: 'plugins', label: 'plugins', status: 'configuring' },
@@ -69,7 +95,7 @@ describe('AssistantCard', () => {
     // The mockup is explicit: a mix of done + idle still reads as
     // "not yet finished". Pin this so a refactor doesn't accidentally
     // flip the card to "configured" while a part is still pending.
-    const m1 = mountComponent(AssistantCard, {
+    const m1 = mountCard({
       id: 'claude', name: 'Claude', found: true, enabled: true,
       parts: [
         { id: 'plugins', label: 'plugins', status: 'done' },
@@ -79,7 +105,7 @@ describe('AssistantCard', () => {
     cleanup.push(m1.destroy);
     expect(card(m1, 'claude').textContent).not.toMatch(/configured/);
 
-    const m2 = mountComponent(AssistantCard, {
+    const m2 = mountCard({
       id: 'claude', name: 'Claude', found: true, enabled: true,
       parts: [
         { id: 'plugins', label: 'plugins', status: 'done' },
@@ -98,7 +124,7 @@ describe('AssistantCard', () => {
     // Retry button is rendered only when an onRetry handler is supplied —
     // pass a noop so the assertion exercises both the error block and the
     // retry affordance.
-    const m = mountComponent(AssistantCard, {
+    const m = mountCard({
       id: 'claude', name: 'Claude', found: true, enabled: true,
       parts: [{ id: 'plugins', label: 'plugins', status: 'error' }],
       error: '~/.claude/agents — permission denied',
@@ -112,7 +138,7 @@ describe('AssistantCard', () => {
   });
 
   it('omits retry button when onRetry is not provided', () => {
-    const m = mountComponent(AssistantCard, {
+    const m = mountCard({
       id: 'claude', name: 'Claude', found: true, enabled: true,
       parts: [{ id: 'plugins', label: 'plugins', status: 'error' }],
       error: 'no callback supplied',
@@ -125,7 +151,7 @@ describe('AssistantCard', () => {
     // If configure() relaunched but the previous failure message is still
     // hanging around, we shouldn't display it under the chip strip — the
     // chip's own spinner is the active signal. Lock the suppression.
-    const m = mountComponent(AssistantCard, {
+    const m = mountCard({
       id: 'claude', name: 'Claude', found: true, enabled: true,
       parts: [{ id: 'plugins', label: 'plugins', status: 'configuring' }],
       error: 'prior failure that should not show during a retry',
@@ -140,7 +166,7 @@ describe('AssistantCard', () => {
     // If the chip clamped to idle on enabled=false, the user would see
     // no spinner during removal. Trust partStatus directly — the slice
     // is responsible for setting it to idle when truly idle.
-    const m = mountComponent(AssistantCard, {
+    const m = mountCard({
       id: 'claude', name: 'Claude', found: true, enabled: false,
       parts: [{ id: 'plugins', label: 'plugins', status: 'configuring' }],
     });

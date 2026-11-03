@@ -33,6 +33,8 @@ create table if not exists activity.transcript_turns (
   , git_branch     text     -- per-turn branch (folders.branch is checkout-grain)
   , effort         text     -- reasoning effort requested
   , service_tier   text     -- billing tier
+  , origin         text not null default 'human'  -- who started the turn: human, or Claude Code's scheduled / peer / task_notification / auto_continuation
+  , prompt_id      text     -- the transcript's promptId — the hook's prompt_id for the same prompt
   , unique (source, session_id, turn_index)
 );
 

@@ -8,7 +8,7 @@
 </script>
 
 <div class="max-w-[680px] mt-2.5">
-    <div class="text-xs text-ink-soft tracking-wide uppercase mb-2">
+    <div class="text-xs text-ink-mute tracking-wide uppercase mb-2">
         <Kanji char="礼" size="inherit" tone="inherit" class="text-accent mr-1.5 opacity-80" />· Welcome
     </div>
     <h1
@@ -18,13 +18,13 @@
         <span class="text-accent">write the code.</span>
     </h1>
 
-    <p class="text-base text-ink-mute leading-loose max-w-[560px] m-0 mb-7">
+    <p class="text-base text-ink-soft leading-loose max-w-[560px] m-0 mb-7">
         Sensei watches how you and your AI assistants work together — the
         sessions that completed cleanly, the ones that didn't, and the patterns
         underneath both.
     </p>
 
-    <p class="text-sm text-ink-soft leading-loose max-w-[560px] m-0 mb-11">
+    <p class="text-sm text-ink-mute leading-loose max-w-[560px] m-0 mb-11">
         The next few minutes: install the local components, point to your
         folders, confirm what was found. Nothing leaves your machine.
     </p>
@@ -36,7 +36,7 @@
             <div>
                 <Kanji char={pillar.kanji} size="inherit" tone="inherit" class="block text-2xl text-accent mb-2" />
                 <div class="display text-xl">{pillar.title}</div>
-                <div class="text-xs text-ink-soft mt-1">{pillar.sub}</div>
+                <div class="text-xs text-ink-mute mt-1">{pillar.sub}</div>
             </div>
         {/each}
     </div>

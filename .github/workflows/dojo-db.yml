@@ -1,0 +1,104 @@
+name: dōjō database
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "database/**"
+      - "supabase/**"
+      - "scripts/deploy-dojo-db.sh"
+      - ".github/workflows/dojo-db.yml"
+  pull_request:
+    paths:
+      - "database/**"
+      - "supabase/**"
+      - "scripts/deploy-dojo-db.sh"
+      - ".github/workflows/dojo-db.yml"
+  # Nightly: a dependency (Supabase's images, dbd's behaviour on a fresh stack)
+  # can break the deploy with no change here, and a failure opens an issue.
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# NO UNTRUSTED INPUT REACHES A `run:` BLOCK IN THIS FILE. The `${{ }}` uses are
+# `github.ref` (a grouping key) and the run's own URL parts, passed through
+# `env:`. Nothing reads an issue title, a PR body or a commit message.
+concurrency:
+  group: dojo-db-${{ github.ref }}
+  cancel-in-progress: true
+
+# WHY THIS EXISTS (#123 B2/B3). 58 of the 61 SQL test files are the dōjō's
+# access rules — the row-level security that decides who reads whose metrics,
+# sessions and repositories — and none ran in CI: the runner needed both
+# databases, and only a developer's machine had the dōjō's. A policy change that
+# broke one shipped green.
+#
+# It also REHEARSES THE PRODUCTION DEPLOY. The schema goes onto a fresh Supabase
+# through scripts/deploy-dojo-db.sh, the same script release.yml's deploy-dojo
+# runs against production, so a deploy that would fail there fails here first.
+jobs:
+  access-rules:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        with:
+          version: 2.120.0
+
+      - name: Start Supabase
+        # Postgres and auth (the seed creates auth users); the rest of the stack
+        # is not what these tests read. PostgREST (and kong, its gateway) is left
+        # out too: config.toml exposes the `dojo` schema, which a fresh database
+        # does not have until the deploy step creates it, so PostgREST reports
+        # unhealthy and `supabase start` fails (the first run, 2026-10-26). The
+        # tests speak to Postgres directly.
+        run: supabase start -x postgrest,kong,realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+
+      - name: Install dbd
+        # The same pin as rust.yml and release.yml, held by
+        # crates/bootstrap/tests/dbd_pins.rs. The package is `dbd-cli`.
+        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.27.8 dbd-cli
+
+      - name: Deploy the dōjō schema (the production path)
+        working-directory: database
+        run: ../scripts/deploy-dojo-db.sh
+
+      - name: Run the access-rule tests
+        # `shell: bash` is -eo pipefail: without it the step would report tee's
+        # status, and a failing suite would pass.
+        shell: bash
+        run: ./database/tests/run.sh dojo 2>&1 | tee sql-tests.log
+
+      - name: Open an issue when the nightly run fails
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "The nightly dōjō database run failed: $RUN_URL"
+            echo
+            echo "It deploys the schema to a fresh Supabase with scripts/deploy-dojo-db.sh (the production path), then runs database/tests/run.sh dojo."
+            echo
+            echo "**Reproduce:** \`supabase start\`, then \`cd database && DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres ../scripts/deploy-dojo-db.sh\`, then \`./database/tests/run.sh dojo\`."
+            echo
+            echo "**What failed** (each assertion names what it expected and what it saw):"
+            echo '```'
+            if [ -f sql-tests.log ]; then grep -E "FAIL|ERROR|expected|failed" sql-tests.log | head -40; else echo "the deploy failed before the tests ran — see the run log"; fi
+            echo '```'
+          } > body.md
+          gh issue create --title "Nightly dōjō database run failed" --body-file body.md --label bug

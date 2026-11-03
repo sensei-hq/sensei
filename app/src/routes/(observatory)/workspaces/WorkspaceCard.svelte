@@ -32,11 +32,11 @@
 
 {#snippet stat(label: string, value: string | number, tone: 'default' | 'mute' | 'warn')}
   <div class="flex flex-col h-full">
-    <div class="text-xs uppercase tracking-[0.08em] text-ink-mute leading-tight">{label}</div>
+    <div class="text-xs uppercase tracking-[0.08em] text-ink-soft leading-tight">{label}</div>
     <div
       class="display text-base font-normal mt-auto leading-tight tabular-nums"
       class:text-ink={tone === 'default'}
-      class:text-ink-mute={tone === 'mute'}
+      class:text-ink-soft={tone === 'mute'}
       class:text-warning={tone === 'warn'}
     >{value}</div>
   </div>
@@ -65,7 +65,7 @@
 
   <!-- Row 2 — vision (omitted entirely when absent) -->
   {#if p.vision}
-    <div data-vision class="text-xs text-ink-soft leading-snug text-pretty">{p.vision}</div>
+    <div data-vision class="text-xs text-ink-mute leading-snug text-pretty">{p.vision}</div>
   {/if}
 
   <!-- Stat grid -->
@@ -74,7 +74,7 @@
       {#if p.readError}
         <!-- The quality reads failed (#288): said so, never a blank rate. -->
         <div data-ftr-unavailable title={p.readError} class="flex flex-col h-full">
-          <div class="text-xs uppercase tracking-[0.08em] text-ink-mute leading-tight">ftr</div>
+          <div class="text-xs uppercase tracking-[0.08em] text-ink-soft leading-tight">ftr</div>
           <div class="text-xs text-danger mt-auto leading-tight">{FTR_UNAVAILABLE}</div>
         </div>
       {:else}

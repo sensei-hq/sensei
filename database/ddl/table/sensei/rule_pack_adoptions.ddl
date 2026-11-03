@@ -36,3 +36,8 @@ comment on column rule_pack_adoptions.namespace_id
 -- (server-only; service_role bypasses RLS, and the per-caller filter lives in the route).
 -- Inert on the local daemon (owner connection; never queries as service_role via PostgREST).
 grant select on rule_pack_adoptions to service_role;
+
+-- Row level security (the Supabase advisor, 2026-10-27), with no client policy.
+-- Read by the server only (service_role, which bypasses RLS), through dojo.pack_adoption; a client role reads nothing here. Inert on the daemon, which connects
+-- as the owner.
+alter table sensei.rule_pack_adoptions enable row level security;

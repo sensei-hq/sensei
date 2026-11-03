@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { WizardState, routerKeyStatus } from './wizard-state.svelte.js';
+import { WizardState, routerKeyStatus, saveRouterKey } from './wizard-state.svelte.js';
 import { scanState } from './scan-state.svelte.js';
-import { mockWizardLoadData, mockWatchRoot, mockRouter } from './setup/mock-contracts.js';
+import { mockWizardLoadData, mockWatchRoot, mockRouter, mockWorkspace, mockLibEntry } from './setup/mock-contracts.js';
 
 describe('WizardState', () => {
   let ws: WizardState;
@@ -162,6 +162,45 @@ describe('WizardState', () => {
       const before = ws.assistants.partStatus['ghost'];
       ws.applyAssistantEvent({ family: 'ghost', part: 'plugins', status: 'configuring' });
       expect(ws.assistants.partStatus['ghost']).toBe(before);
+    });
+  });
+
+  // Audit item 12 (2026-10-28): the card decided its state twice with different
+  // precedence (its header said "off" while a removal was configuring) and the
+  // done page counted "configured" by a third rule (the daemon's variant flags).
+  describe('assistantView — one view of a family, for the card and the summary', () => {
+    it('in-flight work wins: a removal that cleared the switch still reads configuring', () => {
+      ws.hydrate(mockWizardLoadData());
+      ws.applyAssistantEvent({ family: 'claude', part: 'plugins', status: 'configuring' });
+      ws.assistants.assistants[0]!.selected = false;
+      const v = ws.assistantView(ws.assistants.assistants[0]!);
+      expect(v).toMatchObject({ state: 'configuring', busy: true, header: { text: 'configuring…', tone: 'accent', icon: 'spinner' } });
+    });
+
+    it('is configured once every part is done, and the summary counts the same', () => {
+      ws.hydrate(mockWizardLoadData());
+      const claude = ws.assistants.assistants[0]!;
+      expect(ws.assistantView(claude).configured).toBe(false);
+      for (const p of claude.parts) ws.applyAssistantEvent({ family: 'claude', part: p.id, status: 'done' });
+      expect(ws.assistantView(claude)).toMatchObject({ state: 'done', configured: true, header: { text: 'configured', tone: 'success' } });
+      expect(ws.configuredAssistants).toBe(1);
+    });
+
+    it('before any live event, configured is the daemon\'s word', () => {
+      const data = mockWizardLoadData();
+      data.assistantFamilies[0]!.variants = data.assistantFamilies[0]!.variants.map((v) => ({ ...v, configured: true }));
+      ws.hydrate(data);
+      expect(ws.assistantView(ws.assistants.assistants[0]!).configured).toBe(true);
+      expect(ws.configuredAssistants).toBe(1);
+    });
+
+    it('a family with nothing installed is not found, and an error is said once', () => {
+      ws.hydrate(mockWizardLoadData());
+      const cursor = ws.assistants.assistants[1]!;
+      expect(ws.assistantView(cursor)).toMatchObject({ found: false, header: { text: 'not found' } });
+      ws.applyAssistantEvent({ family: 'claude', part: 'plugins', status: 'error', error: 'denied' });
+      ws.applyAssistantEvent({ family: 'claude', part: 'skills', status: 'error', error: 'denied' });
+      expect(ws.assistantView(ws.assistants.assistants[0]!)).toMatchObject({ state: 'failed', error: 'denied', showError: true });
     });
   });
 
@@ -708,5 +747,75 @@ describe('WizardState — assistant and workspace writes that fail (#304)', () =
     const ws = new WizardState();
     ws.hydrate(mockWizardLoadData());
     await expect(ws.commitStage('workspaces')).rejects.toThrow(/app.*Conflict/);
+  });
+});
+
+// Audit item 13 (2026-10-28): Settings · Providers carried a line-for-line copy of
+// the wizard's key save. One action, both callers.
+describe('saveRouterKey', () => {
+  const row = () => ({ id: 'openai', draftKey: '  sk-test  ', saveState: 'idle', saveError: '', configured: false, keyError: 'missing' } as never as Parameters<typeof saveRouterKey>[0]);
+
+  it('saves the trimmed key and clears the draft', async () => {
+    const r = row();
+    const api = { setGatewayRouterKey: vi.fn(async () => ({ ok: true, data: { configured: true } })) };
+    await saveRouterKey(r, api as never);
+    expect(api.setGatewayRouterKey).toHaveBeenCalledWith('openai', 'sk-test');
+    expect(r).toMatchObject({ saveState: 'done', configured: true, keyError: null, draftKey: '' });
+  });
+
+  it('says why a save failed and keeps the draft', async () => {
+    const r = row();
+    const api = { setGatewayRouterKey: vi.fn(async () => ({ ok: false, error: { message: 'keychain locked' } })) };
+    await saveRouterKey(r, api as never);
+    expect(r).toMatchObject({ saveState: 'failed', saveError: 'keychain locked', draftKey: '  sk-test  ' });
+  });
+
+  it('does nothing for an empty draft', async () => {
+    const r = { ...row(), draftKey: '   ' } as Parameters<typeof saveRouterKey>[0];
+    const api = { setGatewayRouterKey: vi.fn() };
+    await saveRouterKey(r, api as never);
+    expect(api.setGatewayRouterKey).not.toHaveBeenCalled();
+  });
+});
+
+// Audit item 15 (2026-10-28): the Done page assembled its summary sentences in
+// the component. The state says them.
+describe('doneSummary', () => {
+  it('says what setup configured, in the singular and plural', () => {
+    const ws = new WizardState();
+    ws.hydrate(mockWizardLoadData());
+    const [assistants, roots, libs, instruments] = ws.doneSummary;
+    expect(assistants).toEqual({ kanji: '連', label: 'No assistants', sub: 'install Claude/Cursor/etc. to enable sessions' });
+    expect(roots).toMatchObject({ kanji: '庵', label: '1 root', sub: '1 folder across 1 workspace' });
+    expect(libs.kanji).toBe('書');
+    expect(instruments.kanji).toBe('器');
+  });
+});
+
+
+// Settings · Libraries re-reads on every visit, but filtered by the folders the wizard read
+// once per session: right after a reinstall, while the daemon re-indexed, libraries of newly
+// indexed folders stayed hidden (180 → 198 → 209 shown of 209, live, 2026-10-28).
+describe('WizardState — refreshLibraries reads the folders it filters by', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('keeps a library of a folder indexed after the session loaded', async () => {
+    const later = mockWorkspace({
+      folders: [
+        { id: 'f-1', name: 'app', path: 'app', abs_path: '/Users/test/code/app', kind: 'git', role: 'frontend' },
+        { id: 'f-2', name: 'api', path: 'api', abs_path: '/Users/test/code/api', kind: 'git', role: 'backend' },
+      ],
+    });
+    const libs = [mockLibEntry({ id: 'svelte', name: 'svelte', repos: ['app'] }), mockLibEntry({ id: 'axum', name: 'axum', ecosystem: 'cargo', repos: ['api'] })];
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      const p = new URL(String(input), 'http://localhost').pathname;
+      if (p === '/api/libs') return new Response(JSON.stringify({ total: libs.length, libs }), { status: 200 });
+      if (p === '/api/workspaces') return new Response(JSON.stringify([later]), { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+    const ws = new WizardState();
+    ws.hydrate(mockWizardLoadData({ workspaces: [mockWorkspace()] }));
+    await ws.refreshLibraries();
+    expect(ws.libraries.libs.map((l) => l.name).sort()).toEqual(['axum', 'svelte']);
   });
 });

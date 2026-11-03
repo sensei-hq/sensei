@@ -16,6 +16,7 @@
     untrack(() => data.sessions),
     untrack(() => data.range as SessionRange),
     untrack(() => data.error),
+    untrack(() => data.activity),
   );
 </script>
 

@@ -20,6 +20,11 @@
 // shown, drawn dimmed by rokkit as `unplaced`.
 
 import { toGraphInput } from '@rokkit/graph/schema';
+import { DEFAULT_ICONS } from '@rokkit/graph/icons';
+import { resolveGroupStyles } from '@rokkit/graph';
+
+/** The sidebar's reading order: storage, then derived data, then behaviour (as dbd's). */
+const KIND_ORDER = ['table', 'view', 'materialized_view', 'function', 'procedure'];
 import type { SchemaDep, SchemaEntity, SchemaPayload, SchemaRef, SchemaTable } from '$lib/types.js';
 
 export type SchemaScope = 'er' | 'dependencies';
@@ -192,16 +197,135 @@ export class SchemaState {
     return lines;
   }
 
-  /** The selected table's id, or null. A selection the filter hides is gone. */
+  /** The selected entity's id — a table, view or routine — or null. A selection
+   *  the filter hides is gone. */
   get selected(): string | null {
     const id = this.#picked;
     if (id === null) return null;
-    return this.#tables.some((t) => objectId(t.schema, t.name) === id) ? id : null;
+    const shown = [...this.#tables, ...this.#entities].some((t) => objectId(t.schema, t.name) === id);
+    return shown ? id : null;
+  }
+
+  /** The selected view or routine, or null (a table is `selectedTable`). */
+  get selectedEntity(): SchemaEntity | null {
+    const id = this.selected;
+    return id === null ? null : (this.#entities.find((e) => objectId(e.schema, e.name) === id) ?? null);
+  }
+
+  /** What the selected view or routine reads, writes and calls — a built-in by name. */
+  get entityReach(): { reads: string[]; writes: string[]; calls: string[] } | null {
+    const e = this.selectedEntity;
+    if (!e) return null;
+    const from = (this.payload?.deps ?? []).filter((d) => d.from.s === e.schema && d.from.n === e.name);
+    const name = (d: SchemaDep) => (d.to.s ? `${d.to.s}.${d.to.n}` : d.to.n);
+    const of = (kind: SchemaDep['kind']) => from.filter((d) => d.kind === kind).map(name);
+    return { reads: of('reads'), writes: of('writes'), calls: of('calls') };
+  }
+
+  /** The entity types hidden from the list. */
+  #hiddenKinds = $state<Set<string>>(new Set());
+  /** Narrows the list to names holding it (case-folded). */
+  query = $state('');
+
+  toggleKind(kind: string) {
+    const next = new Set(this.#hiddenKinds);
+    if (next.has(kind)) next.delete(kind);
+    else next.add(kind);
+    this.#hiddenKinds = next;
+  }
+
+  #all(): { schema: string; name: string; kind: string }[] {
+    return [
+      ...this.#tables.map((t) => ({ schema: t.schema, name: t.name, kind: 'table' })),
+      ...this.#entities.map((e) => ({ schema: e.schema, name: e.name, kind: e.kind as string })),
+    ];
+  }
+
+  /** Each schema's colour, as the diagram paints its group (rokkit's assignment). */
+  schemaColours(mode: 'light' | 'dark'): Map<string, string> {
+    const styles = resolveGroupStyles(this.schemaOptions.flatMap((o) => (o.value ? [o.value] : [])), mode);
+    return new Map([...styles].map(([schema, st]) => [schema, (st as Record<string, string>)['--group-fill']]));
+  }
+
+  /** Each entity type present, how many, and whether the list shows it. */
+  get kindCounts(): { kind: string; count: number; shown: boolean }[] {
+    const all = this.#all();
+    return KIND_ORDER.map((kind) => ({ kind, count: all.filter((x) => x.kind === kind).length, shown: !this.#hiddenKinds.has(kind) }))
+      .filter((k) => k.count > 0);
+  }
+
+  /** Every schema to choose from, with its tables — items for a rokkit Select. */
+  get schemaChoices(): { label: string; value: string }[] {
+    return this.schemaOptions.map((o) => ({
+      label: `${o.value === null ? 'All schemas' : o.label} · ${o.tables}`,
+      value: o.value ?? '',
+    }));
+  }
+
+  /** The selected entity and everything it is keyed or linked to, as the diagram's
+   *  input — dbd's entity diagram. Null with nothing selected. */
+  get entityGraph() {
+    const id = this.selected;
+    const p = this.payload;
+    if (id === null || !p) return null;
+    const near = new Set([id]);
+    for (const r of p.refs) {
+      const [a, b] = [objectId(r.from.s, r.from.t), objectId(r.to.s, r.to.t)];
+      if (a === id) near.add(b);
+      if (b === id) near.add(a);
+    }
+    const deps = p.deps.filter((d) => !d.unresolved);
+    for (const d of deps) {
+      const [a, b] = [objectId(d.from.s, d.from.n), objectId(d.to.s, d.to.n)];
+      if (a === id) near.add(b);
+      if (b === id) near.add(a);
+    }
+    const isNear = (s: string, n: string) => near.has(objectId(s, n));
+    const model = {
+      tables: p.tables.filter((t) => isNear(t.schema, t.name)),
+      refs: p.refs.filter((r) => isNear(r.from.s, r.from.t) && isNear(r.to.s, r.to.t)),
+      entities: p.entities.filter((e) => isNear(e.schema, e.name)),
+      deps: deps.filter((d) => isNear(d.from.s, d.from.n) && isNear(d.to.s, d.to.n)),
+    };
+    return toGraphInput(model, this.selectedTable ? 'er' : 'dependencies');
+  }
+
+  /** Every shown entity grouped by schema, tables first, then views and routines —
+   *  the sidebar's items (dbd's /diagram sidebar), narrowed by type and name. */
+  get sidebar(): { label: string; value: string; badge: string; children: { label: string; value: string; kind: string; icon: string }[] }[] {
+    const q = this.query.trim().toLowerCase();
+    const all = this.#all().filter((x) => !this.#hiddenKinds.has(x.kind) && (!q || x.name.toLowerCase().includes(q)));
+    const order = (k: string) => KIND_ORDER.indexOf(k);
+    const schemas = [...new Set(all.map((x) => x.schema))].sort();
+    return schemas.map((schema) => {
+      const children = all
+        .filter((x) => x.schema === schema)
+        .sort((a, b) => order(a.kind) - order(b.kind) || a.name.localeCompare(b.name))
+        .map((x) => ({ label: x.name, value: objectId(x.schema, x.name), kind: x.kind, icon: DEFAULT_ICONS[x.kind] ?? DEFAULT_ICONS.table }));
+      return { label: schema, value: `schema:${schema}`, badge: String(children.length), children };
+    });
   }
 
   get selectedTable(): SchemaTable | null {
     const id = this.selected;
     return id === null ? null : (this.#tables.find((t) => objectId(t.schema, t.name) === id) ?? null);
+  }
+
+  /** What a change to the selected table reaches, over the whole model — a key
+   *  or a reader in another schema still counts: the tables it references, those
+   *  referencing it (each with the key column), and the objects that depend on it. */
+  get reach(): { references: string[]; referencedBy: string[]; dependents: string[] } | null {
+    const t = this.selectedTable;
+    if (!t) return null;
+    const is = (s: string, n: string) => s === t.schema && n === t.name;
+    const refs = this.payload?.refs ?? [];
+    return {
+      references: refs.filter((r) => is(r.from.s, r.from.t)).map((r) => `${r.to.s}.${r.to.t} (${r.from.c})`),
+      referencedBy: refs.filter((r) => is(r.to.s, r.to.t)).map((r) => `${r.from.s}.${r.from.t} (${r.from.c})`),
+      dependents: (this.payload?.deps ?? [])
+        .filter((d) => !d.unresolved && is(d.to.s, d.to.n))
+        .map((d) => `${d.from.s}.${d.from.n} ${d.kind}`),
+    };
   }
 
   select(id: string | null) {

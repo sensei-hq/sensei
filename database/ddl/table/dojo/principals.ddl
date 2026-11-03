@@ -41,3 +41,8 @@ comment on column principals.auth_user_id
      is 'The Supabase auth.users row this principal currently signs in as. Re-pointable by design; UNIQUE so two principals can never claim one login.
 
 A POINTER, not the identity. Nullable so a principal can exist before (or after) it has a login — a re-attribution transiently has neither side attached, and an invited-but-unregistered member has no account yet.';
+
+-- Row level security (the Supabase advisor, 2026-10-27), with no client policy.
+-- Read and written by the server only (service_role, which bypasses RLS); a client role reads nothing here. Inert on the daemon, which connects
+-- as the owner.
+alter table dojo.principals enable row level security;

@@ -38,6 +38,38 @@ async fn rank_bm25_returns_results() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// A node that belongs to no file — a package, a module — matches the query
+/// like any other, but it names no file to rank: it is left out, not ranked as
+/// a file with no path (which failed the whole read).
+#[tokio::test]
+async fn rank_bm25_ranks_only_nodes_in_a_file() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("bm25_fileless_{}", uuid::Uuid::new_v4())).await;
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "authenticate_user",
+        "src/auth.rs",
+        None,
+        Some("fn authenticate_user(token: &str)"),
+        Some(1),
+        Some(20),
+    )
+    .await
+    .unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.nodes(folder_id, kind, name) VALUES($1, 'package', 'authenticate-kit')",
+    )
+    .bind(fid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let results = s.rank_bm25(&fid, "authenticate").await.unwrap();
+    assert_eq!(results.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), ["src/auth.rs"]);
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
 #[tokio::test]
 async fn rank_bm25_empty_folder() {
     let s = pg_store().await;
@@ -164,8 +196,16 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     // Permissive bound (1.0 admits everything): this test is about ORDER, and
     // `beta` is deliberately orthogonal, so a production-strength cutoff would
     // correctly drop it. The bound itself is exercised by the test below.
-    let hits =
-        s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10, 1.0).await.unwrap();
+    let hits = s
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &query,
+            kinds: &["function", "method"],
+            limit: 10,
+            max_distance: 1.0,
+        })
+        .await
+        .unwrap();
 
     let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
     assert!(
@@ -179,12 +219,43 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     );
 
     // A kind filter that matches neither node returns nothing.
-    let none = s.semantic_search_nodes(&[fid], &query, &["class"], 10, 1.0).await.unwrap();
+    let none = s
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &query,
+            kinds: &["class"],
+            limit: 10,
+            max_distance: 1.0,
+        })
+        .await
+        .unwrap();
     assert!(none.is_empty(), "kind filter should exclude functions, got {none:?}");
 
     // Empty inputs are cheap no-ops, never a query.
-    assert!(s.semantic_search_nodes(&[], &query, &["function"], 10, 1.0).await.unwrap().is_empty());
-    assert!(s.semantic_search_nodes(&[fid], &[], &["function"], 10, 1.0).await.unwrap().is_empty());
+    assert!(
+        s.semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[],
+            query_embedding: &query,
+            kinds: &["function"],
+            limit: 10,
+            max_distance: 1.0
+        })
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        s.semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &[],
+            kinds: &["function"],
+            limit: 10,
+            max_distance: 1.0
+        })
+        .await
+        .unwrap()
+        .is_empty()
+    );
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
@@ -205,23 +276,23 @@ async fn a_lib_node_records_the_language_that_minted_it() {
     let fid = create_test_folder(&s, &format!("liblang_{}", uuid::Uuid::new_v4())).await;
 
     let rust_id = s
-        .upsert_lib_node_by_fqn(
-            &fid,
-            "lib·serde_json·serde_json·Value",
-            "Value",
-            "serde_json",
-            Some("rust"),
-        )
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn: "lib·serde_json·serde_json·Value",
+            name: "Value",
+            package: "serde_json",
+            language: Some("rust"),
+        })
         .await
         .unwrap();
     let py_id = s
-        .upsert_lib_node_by_fqn(
-            &fid,
-            "lib·pydantic·pydantic·Value",
-            "Value",
-            "pydantic",
-            Some("python"),
-        )
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn: "lib·pydantic·pydantic·Value",
+            name: "Value",
+            package: "pydantic",
+            language: Some("python"),
+        })
         .await
         .unwrap();
 
@@ -290,7 +361,17 @@ async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_ca
     // `library_content_identity_uq`, permanently, with an error naming the
     // constraint rather than the abandoned cleanup.
     let lib_name = format!("_test:s9lib:{}", uuid::Uuid::new_v4());
-    let lib = s.upsert_library(&lib_name, "npm", Some("1.2.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &lib_name,
+            ecosystem: "npm",
+            version: Some("1.2.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     // Two held versions: the one this folder pins, and a newer one.
     for (v, page) in [("1.2.0", "list @ 1.2"), ("3.0.0", "list @ 3.0")] {
         let vid = s.ensure_library_version(&lib, Some(v)).await.unwrap();
@@ -339,8 +420,17 @@ async fn registry_urls_land_on_the_right_level_and_a_later_silence_does_not_wipe
     // means "this one did not say", never "there is none".
     use crate::libraries::registry::RegistryUrls;
     let s = pg_store().await;
-    let lib =
-        s.upsert_library("_test:urls", "cargo", Some("1.0.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:urls",
+            ecosystem: "cargo",
+            version: Some("1.0.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
 
     s.set_library_urls(
         &lib,
@@ -393,8 +483,17 @@ async fn a_docs_read_failure_is_recorded_as_a_gap_and_never_deletes_the_pages() 
     //   2. the pages SURVIVE it. Stale content is the last known-true content,
     //      and dropping it on a read error trades a stale answer for no answer.
     let s = pg_store().await;
-    let lib =
-        s.upsert_library("_test:stale", "npm", Some("1.0.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:stale",
+            ecosystem: "npm",
+            version: Some("1.0.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     s.upsert_library_page(&LibraryPageRow {
         library_id: &lib,
         title: "Overview",
@@ -456,8 +555,17 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
     // and `@rokkit/chart`, and each can have a `List` page. Keyed without the
     // package, the second upserts over the first and one is simply lost.
     let s = pg_store().await;
-    let lib =
-        s.upsert_library("_test:pagekey", "npm", Some("1.0.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:pagekey",
+            ecosystem: "npm",
+            version: Some("1.0.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
 
     let ui = s
         .upsert_library_page(&LibraryPageRow {
@@ -583,7 +691,18 @@ async fn a_repo_relative_path_resolves_to_a_file_in_a_module_folder() {
         .unwrap();
 
     // The file is FOLDER-relative to the module.
-    let fid = s.upsert_file_row(&module, "src/lib.rs", 1, "h", None).await.unwrap();
+    let fid = s
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &module,
+                file_path: "src/lib.rs",
+                mtime: 1,
+                content_hash: "h",
+            },
+            None,
+        )
+        .await
+        .unwrap();
 
     // Asked for from the REPO folder, repo-relative — the v1 caller's shape.
     assert_eq!(
@@ -657,8 +776,30 @@ async fn a_file_two_folders_both_track_resolves_to_the_callers_own_folder() {
         .unwrap();
 
     // One file on disk, tracked by both folders at their own grains.
-    let outer_row = s.upsert_file_row(&outer, "vendored/src/lib.rs", 1, "h", None).await.unwrap();
-    let inner_row = s.upsert_file_row(&inner, "src/lib.rs", 1, "h", None).await.unwrap();
+    let outer_row = s
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &outer,
+                file_path: "vendored/src/lib.rs",
+                mtime: 1,
+                content_hash: "h",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let inner_row = s
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &inner,
+                file_path: "src/lib.rs",
+                mtime: 1,
+                content_hash: "h",
+            },
+            None,
+        )
+        .await
+        .unwrap();
     assert_ne!(outer_row, inner_row, "the fixture must really create two rows");
 
     assert_eq!(
@@ -752,7 +893,14 @@ async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     // denominator. This assertion is the one that catches a `decided`
     // predicate keyed on `indexed_at`, which is NOT NULL DEFAULT now() and so
     // counts every walked file the instant its row appears.
-    s.upsert_scan_state(&grand, "a.rs", 1, "h").await.unwrap();
+    s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+        folder_id: &grand,
+        file_path: "a.rs",
+        mtime: 1,
+        content_hash: "h",
+    })
+    .await
+    .unwrap();
     assert!(!complete!(grand), "a walked-but-unparsed file is discovered, not decided");
 
     // NOW decide it.
@@ -764,7 +912,14 @@ async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     // A CONTENT CHANGE un-decides it. The recorded parse described bytes that
     // no longer exist, so the file returns to `discovered` and the whole tree
     // is incomplete again — otherwise a stale parse counts as current work.
-    s.upsert_scan_state(&grand, "a.rs", 2, "DIFFERENT").await.unwrap();
+    s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+        folder_id: &grand,
+        file_path: "a.rs",
+        mtime: 2,
+        content_hash: "DIFFERENT",
+    })
+    .await
+    .unwrap();
     assert!(!complete!(grand), "a changed file needs re-parsing");
     assert!(!complete!(root), "...and that reaches the root too");
 
@@ -965,8 +1120,16 @@ async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
     let mut query = vec![0.0f32; dim];
     query[0] = 1.0;
 
-    let hits =
-        s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10, 0.45).await.unwrap();
+    let hits = s
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &query,
+            kinds: &["function", "method"],
+            limit: 10,
+            max_distance: 0.45,
+        })
+        .await
+        .unwrap();
     let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
     assert_eq!(
         names,
@@ -988,7 +1151,13 @@ async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
     let mut orthogonal = vec![0.0f32; dim];
     orthogonal[2] = 1.0;
     let none = s
-        .semantic_search_nodes(&[fid], &orthogonal, &["function", "method"], 10, 0.45)
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &orthogonal,
+            kinds: &["function", "method"],
+            limit: 10,
+            max_distance: 0.45,
+        })
         .await
         .unwrap();
     assert!(none.is_empty(), "no node is within the bound — must return empty, got {none:?}");
@@ -2082,13 +2251,13 @@ async fn an_upsert_whose_identity_moved_does_not_fail_the_file() {
 
     // The upsert that used to fail: same fqn, now top-level (no parent), line 20.
     let got = s
-        .upsert_node_by_fqn(
-            &fid,
-            held,
-            "function",
-            "generatePrescriptionSchedule",
-            Some("typescript"),
-            Some(FqnDef {
+        .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+            folder_id: &fid,
+            fqn: held,
+            kind: "function",
+            name: "generatePrescriptionSchedule",
+            language: Some("typescript"),
+            def: Some(FqnDef {
                 file_path: file,
                 signature: None,
                 line_start: Some(20),
@@ -2096,7 +2265,7 @@ async fn an_upsert_whose_identity_moved_does_not_fail_the_file() {
                 is_exported: true,
                 parent_id: None,
             }),
-        )
+        })
         .await
         .expect("an upsert whose identity moved must not fail the whole file");
 
@@ -2424,8 +2593,16 @@ async fn lib_node_by_fqn() {
     let fid = create_test_folder(&s, &format!("lib_{}", uuid::Uuid::new_v4())).await;
     let fqn = "lib·serde_json·serde_json·from_str";
 
-    let a =
-        s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
+    let a = s
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn,
+            name: "from_str",
+            package: "serde_json",
+            language: Some("rust"),
+        })
+        .await
+        .unwrap();
     let (kind, resolved, fp, pkg): (String, bool, Option<String>, Option<String>) = query_as(
         "SELECT n.kind::text, n.resolved, np.file_path, n.props->>'package' FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id=$1",
     )
@@ -2441,8 +2618,16 @@ async fn lib_node_by_fqn() {
     assert_eq!(pkg.as_deref(), Some("serde_json"), "grouped by package in props");
 
     // A second reference to the same external fqn shares the one node.
-    let b =
-        s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
+    let b = s
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn,
+            name: "from_str",
+            package: "serde_json",
+            language: Some("rust"),
+        })
+        .await
+        .unwrap();
     assert_eq!(a, b, "repeated external references share one lib node");
     let (n,): (i64,) = query_as(&format!(
         "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 \
@@ -3106,4 +3291,66 @@ async fn community_upsert_and_list() {
         .execute(s.pool())
         .await
         .unwrap();
+}
+
+/// A workspace's duplicates are its repositories' groups as qlty measured
+/// them, largest first, at most `limit`, with the total — and how many of its
+/// repositories were measured, so "none found" and "not measured" differ.
+#[tokio::test]
+async fn a_workspaces_duplicates_are_its_repositories_measured_groups() {
+    use crate::qlty::{DuplicateGroup, FileComplexity, Span};
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (ws, fid) = crate::tasks::test_support::seed_metrics_workspace_folder(&s, &uniq).await;
+    let (repo,): (uuid::Uuid,) =
+        sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    let group = |hash: &str, mass: f64| DuplicateGroup {
+        hash: hash.into(),
+        identical: false,
+        mass,
+        lines: 12,
+        copies: vec![
+            Span { path: "src/a.rs".into(), start: 1, end: 12 },
+            Span { path: "src/b.rs".into(), start: 30, end: 41 },
+        ],
+    };
+
+    let (groups, total, measured, repos) = s.workspace_duplicates(&ws, 10).await.unwrap();
+    assert_eq!(
+        (groups.len(), total, measured, repos),
+        (0, 0, 0, 1),
+        "not measured is not none found"
+    );
+
+    s.replace_file_complexity(
+        &repo,
+        "sha1",
+        &[("src/a.rs".to_string(), FileComplexity::default())].into(),
+    )
+    .await
+    .unwrap();
+    s.replace_duplicates(
+        &repo,
+        "sha1",
+        &[group("small", 40.0), group("big", 90.0), group("mid", 60.0)],
+    )
+    .await
+    .unwrap();
+    let (groups, total, measured, repos) = s.workspace_duplicates(&ws, 2).await.unwrap();
+    assert_eq!((total, measured, repos), (3, 1, 1));
+    assert_eq!(
+        groups.iter().map(|g| g["hash"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["big", "mid"]
+    );
+    assert_eq!(groups[0]["copies"][1]["path"], "src/b.rs");
+
+    s.replace_duplicates(&repo, "sha2", &[]).await.unwrap();
+    let (_, total, _, _) = s.workspace_duplicates(&ws, 10).await.unwrap();
+    assert_eq!(total, 0, "a measurement replaces the repository's groups whole");
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &ws, Some(&fid), &[]).await;
 }

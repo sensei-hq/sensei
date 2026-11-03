@@ -13,8 +13,8 @@
     // kind of map the guidelines allow inside a component): high → danger,
     // medium → warning, low → a muted ink-faint chip. 'none' never renders.
     const URGENCY_CHIP: Record<ActionUrgency, string> = {
-        high: 'bg-danger-soft text-danger',
-        medium: 'bg-warning-soft text-warning',
+        high: 'bg-danger-soft text-on-danger-soft',
+        medium: 'bg-warning-soft text-on-warning-soft',
         low: 'bg-paper-mute text-ink-faint',
         none: '',
     };
@@ -27,7 +27,7 @@
     </div>
 
     {#if error}
-        <p data-action-items-error class="text-sm text-ink-mute">
+        <p data-action-items-error class="text-sm text-ink-soft">
             Couldn’t load action items — {error}
         </p>
     {:else if items.length}
@@ -47,7 +47,7 @@
                         {/if}
                     </div>
                     {#if item.why}
-                        <p data-action-why class="text-sm text-ink-soft leading-relaxed text-pretty">
+                        <p data-action-why class="text-sm text-ink-mute leading-relaxed text-pretty">
                             {item.why}
                         </p>
                     {/if}

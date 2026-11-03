@@ -56,7 +56,7 @@
     </div>
     {#if remedy.url}
       <a data-role="remedy-url" href={remedy.url} target="_blank" rel="noopener noreferrer"
-         class="text-xs text-ink-mute underline">Learn more</a>
+         class="text-xs text-ink-soft underline">Learn more</a>
     {/if}
   </header>
 

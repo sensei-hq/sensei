@@ -22,7 +22,9 @@ set search_path to staging, dojo, extensions;
 -- `settings` is deliberately not seeded — it is tenant-owned state, and the
 -- seed has no business resetting it on every deploy.
 create or replace procedure import_tenants()
-language plpgsql as $$
+language plpgsql
+set search_path = staging, dojo, extensions
+as $$
 begin
   insert into dojo.tenants (id, key, origin, slug, dojo, scope, name, dojo_url, updated_at)
   select

@@ -46,6 +46,17 @@ pub(crate) async fn set_config_handler(
             };
             state.pg.set_config(key, &v).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }
+        // The glyph choice syncs with the dōjō, the later choice winning (#133):
+        // record when it was made.
+        use crate::dojo_client::glyph_sync::{GLYPHS_KEY, GLYPHS_SET_AT_KEY};
+        if obj.contains_key(GLYPHS_KEY) && !obj.contains_key(GLYPHS_SET_AT_KEY) {
+            let now = chrono::Utc::now().to_rfc3339();
+            state
+                .pg
+                .set_config(GLYPHS_SET_AT_KEY, &now)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
     }
     Ok(Json(serde_json::json!({"ok": true})))
 }

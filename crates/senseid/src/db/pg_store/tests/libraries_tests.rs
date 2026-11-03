@@ -6,7 +6,14 @@ use super::*;
 async fn library_upsert_and_get() {
     let s = pg_store().await;
     let id = s
-        .upsert_library("_test:tokio", "cargo", Some("1.0"), Some("async runtime"), None, None)
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:tokio",
+            ecosystem: "cargo",
+            version: Some("1.0"),
+            description: Some("async runtime"),
+            source_type: None,
+            base_url: None,
+        })
         .await
         .unwrap();
     let lib = s.get_library(&id).await.unwrap().unwrap();
@@ -26,18 +33,24 @@ async fn upsert_folder_dependency_is_idempotent_and_stores_all_columns() {
     let to_fid = create_test_folder(&s, &format!("fd-to-{}", uuid::Uuid::new_v4())).await;
 
     // First upsert
-    s.upsert_folder_dependency(&from_fid, &to_fid, "link", "package.json", Some("../actions"))
-        .await
-        .unwrap();
+    s.upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+        from_folder_id: &from_fid,
+        to_folder_id: &to_fid,
+        source_protocol: "link",
+        source_manifest: "package.json",
+        resolved_target: Some("../actions"),
+    })
+    .await
+    .unwrap();
     // Repeat with a different resolved_target — same PK, so this must
     // update in place (last-writer wins on non-key columns).
-    s.upsert_folder_dependency(
-        &from_fid,
-        &to_fid,
-        "link",
-        "package.json",
-        Some("../actions-renamed"),
-    )
+    s.upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+        from_folder_id: &from_fid,
+        to_folder_id: &to_fid,
+        source_protocol: "link",
+        source_manifest: "package.json",
+        resolved_target: Some("../actions-renamed"),
+    })
     .await
     .unwrap();
 
@@ -75,7 +88,14 @@ async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
     let suffix = uuid::Uuid::new_v4();
     let pid = s.ensure_test_workspace(&format!("vc-{suffix}")).await.unwrap();
     let lib = s
-        .upsert_library(&format!("_test:vc-lib-{suffix}"), "npm", Some("1.0"), None, None, None)
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &format!("_test:vc-lib-{suffix}"),
+            ecosystem: "npm",
+            version: Some("1.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
         .await
         .unwrap();
 
@@ -134,9 +154,15 @@ async fn list_workspace_dependencies_joins_target_name_and_folder() {
         create_test_workspace_and_folder(&s, &format!("lpd-from-{suffix}")).await;
     let (to_pid, to_fid) = create_test_workspace_and_folder(&s, &format!("lpd-to-{suffix}")).await;
 
-    s.upsert_folder_dependency(&from_fid, &to_fid, "link", "package.json", Some("../actions"))
-        .await
-        .unwrap();
+    s.upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+        from_folder_id: &from_fid,
+        to_folder_id: &to_fid,
+        source_protocol: "link",
+        source_manifest: "package.json",
+        resolved_target: Some("../actions"),
+    })
+    .await
+    .unwrap();
 
     let deps = s.list_workspace_dependencies(&from_pid).await.unwrap();
 
@@ -181,9 +207,15 @@ async fn folder_dependency_records_an_intra_workspace_edge() {
     let to_fid = create_test_folder(&s, &format!("intra-b-{suffix}")).await;
     s.set_folder_workspace(&to_fid, &pid, "root", None).await.unwrap();
 
-    s.upsert_folder_dependency(&from_fid, &to_fid, "path", "Cargo.toml", Some("../b"))
-        .await
-        .unwrap();
+    s.upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+        from_folder_id: &from_fid,
+        to_folder_id: &to_fid,
+        source_protocol: "path",
+        source_manifest: "Cargo.toml",
+        resolved_target: Some("../b"),
+    })
+    .await
+    .unwrap();
 
     let deps = s.list_workspace_dependencies(&pid).await.unwrap();
     assert_eq!(deps.len(), 1, "an intra-workspace folder edge MUST be recorded, not skipped");
@@ -204,7 +236,15 @@ async fn upsert_folder_dependency_rejects_self_edges() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("self-fid-{}", uuid::Uuid::new_v4())).await;
 
-    let err = s.upsert_folder_dependency(&fid, &fid, "path", "Cargo.toml", Some(".")).await;
+    let err = s
+        .upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+            from_folder_id: &fid,
+            to_folder_id: &fid,
+            source_protocol: "path",
+            source_manifest: "Cargo.toml",
+            resolved_target: Some("."),
+        })
+        .await;
 
     assert!(err.is_err(), "self-edge must be rejected");
     assert!(err.unwrap_err().contains("check"), "err message must reference the check constraint");
@@ -219,14 +259,14 @@ async fn upsert_referenced_library_merges_props() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("refprops_{}", uuid::Uuid::new_v4())).await;
     let lib = s
-        .upsert_library(
-            &format!("_test:refprops-{}", uuid::Uuid::new_v4()),
-            "npm",
-            Some("1.0"),
-            None,
-            None,
-            None,
-        )
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &format!("_test:refprops-{}", uuid::Uuid::new_v4()),
+            ecosystem: "npm",
+            version: Some("1.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
         .await
         .unwrap();
 
@@ -267,8 +307,17 @@ async fn workspace_library_promotion_shows_in_resolved_and_is_idempotent() {
     // workspace_libraries_resolved (the Workspaces screen). Was never populated.
     let s = pg_store().await;
     let pid = s.ensure_test_workspace("proj-lib-promo").await.unwrap();
-    let lib =
-        s.upsert_library("_test:@rokkit/core", "npm", Some("1.2"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:@rokkit/core",
+            ecosystem: "npm",
+            version: Some("1.2"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     // Promote twice — must be idempotent (no error, no duplicate row).
     s.upsert_workspace_library(&lib, &pid).await.unwrap();
     s.upsert_workspace_library(&lib, &pid).await.unwrap();
@@ -369,7 +418,18 @@ async fn repair_sessions_from_transcripts_creates_the_missing_session() {
         attrs: serde_json::json!({ "cwd": "/_test/repair-tt" }),
         ..Default::default()
     };
-    s.upsert_transcript_turns("claude_code", sess, "claude", None, None, &[turn]).await.unwrap();
+    s.upsert_transcript_turns(
+        &crate::db::pg_store::TranscriptSource {
+            source: "claude_code",
+            session_id: sess,
+            family: "claude",
+            provider: None,
+            model: None,
+        },
+        &[turn],
+    )
+    .await
+    .unwrap();
     assert_eq!(session_row_folder(&s, sess).await, None, "no session before the repair");
 
     let n = s.repair_sessions_from_transcripts().await.unwrap();
@@ -472,7 +532,18 @@ async fn repair_from_transcripts_leaves_an_unresolvable_cwd_alone() {
         attrs: serde_json::json!({ "cwd": "/_nowhere/not/tracked" }),
         ..Default::default()
     };
-    s.upsert_transcript_turns("claude_code", sess, "claude", None, None, &[turn]).await.unwrap();
+    s.upsert_transcript_turns(
+        &crate::db::pg_store::TranscriptSource {
+            source: "claude_code",
+            session_id: sess,
+            family: "claude",
+            provider: None,
+            model: None,
+        },
+        &[turn],
+    )
+    .await
+    .unwrap();
     s.repair_sessions_from_transcripts().await.unwrap();
     assert_eq!(
         session_row_folder(&s, sess).await,
@@ -574,4 +645,59 @@ async fn repair_prefers_the_renamed_subdir_over_a_live_parent() {
         "attributes to the renamed subdir (via its alias), NOT the shadowing live parent"
     );
     assert_ne!(session_row_folder(&s, sess).await, Some(parent));
+}
+
+/// A name two ecosystems share (`uuid` is a crate and an npm package) names no
+/// one library: it is refused, saying which ecosystems hold it, rather than
+/// failing the read whole. The library's id, or `ecosystem:name`, names one.
+#[tokio::test]
+async fn a_name_two_ecosystems_share_is_named_by_ecosystem() {
+    let s = pg_store().await;
+    let name = format!("_test:shared-{}", uuid::Uuid::new_v4().simple());
+    let mut ids = Vec::new();
+    for ecosystem in ["cargo", "npm"] {
+        ids.push(
+            s.upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &name,
+                ecosystem,
+                version: Some("1.0"),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
+            .await
+            .unwrap(),
+        );
+    }
+    let said = s.library_id_for(&name).await.unwrap_err();
+    assert!(said.contains("cargo") && said.contains("npm") && said.contains("cargo:"), "{said}");
+    assert_eq!(s.library_id_for(&format!("npm:{name}")).await.unwrap(), Some(ids[1]));
+    assert_eq!(s.library_id_for(&ids[0].to_string()).await.unwrap(), Some(ids[0]));
+    assert_eq!(s.library_id_for("pypi:_test:no-such").await.unwrap(), None);
+    for id in ids {
+        sqlx_core::query::query("DELETE FROM sensei.libraries WHERE id = $1")
+            .bind(id)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+}
+
+/// Every manifest adapter's ecosystem is one the database accepts — the dbd
+/// adapter's `dbd` was not, so every design.yaml's extensions failed to file
+/// (830 failures a day in the log) and the schema's libraries never appeared.
+#[tokio::test]
+async fn every_manifest_ecosystem_is_a_library_ecosystem() {
+    let s = pg_store().await;
+    let (known,): (Vec<String>,) =
+        sqlx_core::query_as::query_as("SELECT enum_range(NULL::sensei.library_ecosystem)::text[]")
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    let missing: Vec<&str> = crate::adapters::manifest::registered_adapters()
+        .iter()
+        .map(|a| a.ecosystem())
+        .filter(|e| !known.iter().any(|k| k == e))
+        .collect();
+    assert!(missing.is_empty(), "not library ecosystems: {missing:?}");
 }

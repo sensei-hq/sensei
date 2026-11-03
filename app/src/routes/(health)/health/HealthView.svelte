@@ -62,7 +62,7 @@
       {/if}
 
       {#if state.status === 'ok' && auto}
-        <div class="mt-5 flex items-center gap-2.5 text-xs text-ink-soft">
+        <div class="mt-5 flex items-center gap-2.5 text-xs text-ink-mute">
           <div class="h-[2px] w-20 bg-success rounded-sm" style="animation: tickle 2.4s ease-in-out infinite;"></div>
           <span class="font-mono tracking-tight">opening…</span>
         </div>

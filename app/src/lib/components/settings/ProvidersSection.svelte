@@ -1,7 +1,7 @@
 <script lang="ts">
     import Kanji from '$lib/components/Kanji.svelte';
   import { onMount } from 'svelte';
-  import { wizardState, routerKeyStatus } from '$lib/wizard-state.svelte.js';
+  import { wizardState, routerKeyStatus, saveRouterKey, type RouterEntry } from '$lib/wizard-state.svelte.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
 
@@ -21,30 +21,13 @@
     }
   });
 
-  /** Per-row inline save. Settings has no Continue mechanic, so each row
-   *  persists on demand via the Save button — same daemon endpoint the
-   *  wizard's commit-hook used. Runs on the row's `router` object so the
-   *  status chips (`saveState`) reflect progress. */
-  async function saveKey(router: { id: string; draftKey: string; saveState: string; saveError: string; configured: boolean | null; keyError: string | null }): Promise<void> {
-    const trimmed = router.draftKey.trim();
-    if (trimmed.length === 0) return;
-    router.saveState = 'saving';
-    router.saveError = '';
-    const result = await senseiApi(appState.port).setGatewayRouterKey(router.id, trimmed);
-    if (result.ok) {
-      router.configured = result.data.configured;
-      router.keyError = null;
-      router.draftKey = '';
-      router.saveState = 'done';
-    } else {
-      router.saveState = 'failed';
-      router.saveError = result.error.message;
-    }
-  }
+  /** Per-row inline save — the wizard's own key save (saveRouterKey); Settings
+   *  has no Continue step, so each row saves on demand. */
+  const saveKey = (router: RouterEntry) => saveRouterKey(router, senseiApi(appState.port));
 </script>
 
 <div class="max-w-[820px]">
-  <p class="text-sm text-ink-soft leading-normal m-0 mb-6">
+  <p class="text-sm text-ink-mute leading-normal m-0 mb-6">
     Connect inference providers so sensei can route chat, embedding, and
     image-generation requests on your behalf. Keys are stored in the macOS
     Keychain — never on disk in plaintext, never in the database.
@@ -53,16 +36,16 @@
   {#if loading}
     <div data-testid="inference-loading" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
       <Kanji char="想" size="inherit" tone="inherit" class="text-4xl text-accent opacity-20 block mb-4" />
-      <p class="text-sm text-ink-soft">Loading routers…</p>
+      <p class="text-sm text-ink-mute">Loading routers…</p>
     </div>
   {:else if error}
     <div data-testid="inference-error" class="mb-6 p-4 rounded-md border border-danger bg-paper-mute">
       <div class="text-sm font-semibold text-danger">Could not load routers</div>
-      <div class="text-xs text-ink-mute mt-1 font-mono">{error}</div>
+      <div class="text-xs text-ink-soft mt-1 font-mono">{error}</div>
     </div>
   {:else}
     <div class="flex items-center gap-2 mb-6">
-      <span class="font-mono py-1 px-2 text-xs text-success bg-success-soft border border-success rounded-sm">
+      <span class="font-mono py-1 px-2 text-xs text-on-success-soft bg-success-soft border border-success rounded-sm">
         {configuredCount} of {routers.length} configured
       </span>
     </div>
@@ -78,7 +61,7 @@
           <div class="flex items-baseline justify-between gap-3">
             <div class="flex items-baseline gap-2 min-w-0">
               <span class="text-sm text-ink font-semibold">{router.name}</span>
-              <span class="font-mono text-xs text-ink-soft uppercase">{router.id}</span>
+              <span class="font-mono text-xs text-ink-mute uppercase">{router.id}</span>
             </div>
             {#if router.saveState === 'saving'}
               <span class="text-xs text-accent font-mono">saving…</span>
@@ -89,7 +72,7 @@
             {:else}
               {@const status = routerKeyStatus(router)}
               <span
-                class="text-xs font-mono {status.tone === 'success' ? 'text-success' : status.tone === 'warning' ? 'text-warning' : 'text-ink-soft'}"
+                class="text-xs font-mono {status.tone === 'success' ? 'text-success' : status.tone === 'warning' ? 'text-warning' : 'text-ink-mute'}"
                 data-key-status={status.tone}
               >{status.label}</span>
             {/if}
@@ -98,7 +81,7 @@
           <!-- Providers + capabilities chips -->
           <div class="flex flex-wrap gap-1">
             {#each router.providers as p}
-              <span class="font-mono text-xs text-ink-mute bg-paper-soft border border-paper-edge rounded-sm px-1.5 py-0.5">{p}</span>
+              <span class="font-mono text-xs text-ink-soft bg-paper-soft border border-paper-edge rounded-sm px-1.5 py-0.5">{p}</span>
             {/each}
             {#each router.capabilities as c}
               <span class="font-mono text-xs text-accent bg-paper-soft border border-accent rounded-sm px-1.5 py-0.5">{c}</span>
@@ -126,7 +109,7 @@
                 <button
                   type="button"
                   data-testid={`router-clear-${router.id}`}
-                  class="text-xs text-ink-soft hover:text-danger cursor-pointer bg-none border-none"
+                  class="text-xs text-ink-mute hover:text-danger cursor-pointer bg-none border-none"
                   onclick={() => wizardState.clearInferenceRouterKey(router.id)}
                 >Clear</button>
               {/if}
@@ -143,7 +126,7 @@
 
 <style>
   .key-input::placeholder {
-    color: var(--ink-soft);
+    color: var(--ink-mute);
   }
   .key-input:focus {
     border-color: var(--accent);

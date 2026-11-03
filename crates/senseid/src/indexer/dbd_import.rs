@@ -41,14 +41,25 @@ pub struct Skipped {
 /// Load the design at `design_yaml` and import it. `package` is the name the
 /// manifest states — the caller already holds it from placement.
 ///
+/// Through dbd's `Workspace` (#190): a design with `modules:` is one design per
+/// module, and `Design::from_config` refuses it; a design without is a workspace
+/// of one, so one path imports both. Each module's model is built on its own —
+/// its dependencies' entities are its externals, never its own facts — so no
+/// object is imported twice.
+///
 /// The env label only filters seed-data files, which the schema model never
 /// reads.
 pub fn import_design(design_yaml: &Path, package: &str) -> Result<Imported, String> {
-    let design = dbd_core::Design::from_config(design_yaml, "dev")
-        .map_err(|e| format!("dbd import: {}: {e}", design_yaml.display()))?;
-    let model = dbd_core::schema_model::build(&design, None)
-        .map_err(|e| format!("dbd import: {}: {e}", design_yaml.display()))?;
-    facts_of(&model, package)
+    let fail = |e: dbd_core::DbdError| format!("dbd import: {}: {e}", design_yaml.display());
+    let workspace = dbd_core::design::Workspace::load(design_yaml, "dev", None).map_err(fail)?;
+    let mut imported = Imported { facts: Vec::new(), skipped: Vec::new() };
+    for module in workspace.modules() {
+        let model = dbd_core::schema_model::build(module.design(), None).map_err(fail)?;
+        let one = facts_of(&model, package)?;
+        imported.facts.extend(one.facts);
+        imported.skipped.extend(one.skipped);
+    }
+    Ok(imported)
 }
 
 /// The pure half: a built model, as schema facts.
@@ -85,6 +96,23 @@ pub fn facts_of(model: &SchemaModel, package: &str) -> Result<Imported, String> 
             columns: Vec::new(),
             indexes: Vec::new(),
             refs: Vec::new(),
+            enum_values: Vec::new(),
+        });
+    }
+
+    for e in &model.enums {
+        facts.push(SchemaFact {
+            fqn: identity(package, &e.schema, &e.name)?,
+            kind: SchemaKind::Enum,
+            db_schema: e.schema.clone(),
+            source: SchemaSource::Dbd,
+            naming: Naming::Stated,
+            note: e.note.clone(),
+            note_md: e.note_md.clone(),
+            columns: Vec::new(),
+            indexes: Vec::new(),
+            refs: Vec::new(),
+            enum_values: e.values.clone(),
         });
     }
 
@@ -146,6 +174,7 @@ fn table_fact(table: &TableNode, package: &str) -> Result<SchemaFact, String> {
             })
             .collect(),
         refs: Vec::new(),
+        enum_values: Vec::new(),
     })
 }
 
@@ -223,6 +252,48 @@ mod tests {
         assert!(tables > 100 && others > 20, "{tables} tables, {others} views/routines");
     }
 
+    /// #190: a WORKSPACE design (`modules:`) imports every module's tables. It
+    /// was refused outright — `Design::from_config` takes one design — so a
+    /// repository whose design.yaml declares modules imported nothing.
+    #[test]
+    fn a_workspace_design_imports_every_module() {
+        let tmp = tempfile::tempdir().unwrap();
+        let write = |rel: &str, body: &str| {
+            let path = tmp.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body).unwrap();
+        };
+        write(
+            "design.yaml",
+            "project:\n  name: shop\n\nschemas:\n  - app\n\n\
+             modules:\n  shared: {}\n  core:\n    depends_on: [shared]\n",
+        );
+        write(
+            "shared/ddl/table/app/currencies.ddl",
+            "set search_path to app;\n\ncreate table if not exists currencies (\n  code text primary key\n);\n",
+        );
+        write(
+            "core/ddl/table/app/orders.ddl",
+            "set search_path to app;\n\ncreate table if not exists orders (\n  id integer primary key\n\
+             , currency text references currencies (code)\n);\n",
+        );
+
+        let imported =
+            import_design(&tmp.path().join("design.yaml"), "shop").expect("a workspace imports");
+        let mut tables: Vec<&str> = imported
+            .facts
+            .iter()
+            .filter(|f| f.kind == SchemaKind::Table)
+            .map(|f| f.fqn.as_str())
+            .collect();
+        tables.sort();
+        assert_eq!(tables.len(), 2, "both modules' tables: {tables:?}");
+        assert!(
+            tables.iter().any(|t| t.contains("currencies"))
+                && tables.iter().any(|t| t.contains("orders"))
+        );
+    }
+
     /// The detail is dbd's, field for field — checked against a table whose DDL
     /// is in this repository, so a reader can verify it by opening the file.
     #[test]
@@ -263,6 +334,27 @@ mod tests {
             && r.to.as_str().contains("·schema_entities·")
             && r.to_column == "node_id"));
         assert!(fact.note.as_deref().is_some_and(|n| n.contains("column PAIR")));
+    }
+
+    /// Database · ER's Overview counts a design's enums and opens each on its
+    /// values (dbd's viewer): an enum is imported as one, its values in order.
+    #[test]
+    fn an_enum_is_imported_with_its_values() {
+        let mut m = model(vec![], vec![], vec![]);
+        m.enums = vec![dbd_core::schema_model::EnumNode {
+            schema: "app".into(),
+            name: "order_status".into(),
+            values: vec!["pending".into(), "paid".into(), "shipped".into()],
+            note: Some("Lifecycle state.".into()),
+            note_md: None,
+            module: None,
+        }];
+        let got = facts_of(&m, "p").unwrap();
+        assert_eq!(got.facts.len(), 1);
+        let e = &got.facts[0];
+        assert_eq!(e.kind, SchemaKind::Enum);
+        assert_eq!(e.enum_values, vec!["pending", "paid", "shipped"]);
+        assert_eq!(e.note.as_deref(), Some("Lifecycle state."));
     }
 
     fn model(tables: Vec<TableNode>, entities: Vec<EntityNode>, refs: Vec<Ref>) -> SchemaModel {

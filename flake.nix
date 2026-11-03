@@ -82,7 +82,7 @@
               rustfmt
               rust-analyzer
 
-              # SvelteKit frontends (app/, dojo/, website/)
+              # SvelteKit frontends (app/, dojo/)
               bun
               nodejs
 

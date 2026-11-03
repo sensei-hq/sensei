@@ -45,10 +45,11 @@ export interface TeamMetricsView {
 
 const DASH = '—';
 
-/** A count compactly (12 · 4.2k · 1.3M); a rate (0..1) as a whole percent. */
+/** A count compactly (12 · 4.2k · 1.3M · 17.7B); a rate (0..1) as a whole percent. */
 export function formatMetric(value: number, as: TeamMetricDef['as']): string {
 	if (as === 'percent') return `${Math.round(value * 100)}%`;
 	const abs = Math.abs(value);
+	if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
 	if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
 	if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
 	return String(Math.round(value));

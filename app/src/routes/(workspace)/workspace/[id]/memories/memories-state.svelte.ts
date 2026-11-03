@@ -11,6 +11,7 @@
  * generalise, widen — with the API and the reload handed in, so the whole thing
  * is testable without a transport. Every failure is shown, never swallowed.
  */
+import { strengthView, type StrengthView } from '$lib/memoryState.svelte.js';
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 import { failureReason, type ApiResult } from '$lib/api.js';
 import type { WorkspaceMemory } from '$lib/types.js';
@@ -92,6 +93,12 @@ export interface HeroDisplay {
 export type ScopeChoice = 'proceed' | 'confirm';
 
 export class WorkspaceMemoriesState {
+    /** A memory's strength on the daemon's 1–5 scale (audit 2026-10-28, item 1:
+     *  this screen read "300%" for 3). */
+    strengthOf(m: WorkspaceMemory): StrengthView {
+        return strengthView(m.strength);
+    }
+
     memories = $state<WorkspaceMemory[]>([]);
 
     // Per-memory generalise UI state machine. Ids currently running + the last

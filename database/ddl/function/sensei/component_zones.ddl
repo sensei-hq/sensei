@@ -114,11 +114,17 @@ universe as (
        , count(*) filter (
            where n.kind in ('class', 'interface', 'struct', 'enum', 'type', 'trait')
          )                                                               as types
+       -- ABSTRACT BY DECLARATION: an interface or a trait is abstract whether or
+       -- not anything is recorded implementing it — TypeScript interfaces are
+       -- structural, so "something implements it" counted 743 of sensei's 756
+       -- as concrete. A class has no abstract modifier in the graph; one that
+       -- something extends stands in for an abstract class.
        , count(*) filter (
-           where n.kind in ('class', 'interface', 'struct', 'enum', 'type', 'trait')
-             and exists (select 1 from sensei.edges ab
-                          where ab.target_id = n.id
-                            and ab.kind in ('implements', 'extends'))
+           where n.kind in ('interface', 'trait')
+              or (n.kind = 'class'
+                  and exists (select 1 from sensei.edges ab
+                               where ab.target_id = n.id
+                                 and ab.kind in ('implements', 'extends')))
          )                                                               as abstract_types
     from sensei.folder_workspaces fp
     join sensei.nodes n on n.folder_id = fp.folder_id

@@ -1082,3 +1082,77 @@ async fn correlations_read_past_a_repository_in_no_workspace() {
         sqlx_core::query::query(sql).bind(id).execute(s.pool()).await.unwrap();
     }
 }
+
+/// When one repository holds several rows for a metric on a day (one per commit
+/// measured), the daily roll-up's representative row — a point-in-time value, and
+/// the props every metric shows (explainer, commit) — is the one written LAST, not
+/// whichever the plan happened to read first. Measured 2026-11-02: 70 such groups
+/// live, and re-planning the view changed 32 rows' explainer text.
+#[tokio::test]
+async fn the_daily_rollup_represents_a_repository_by_its_latest_row() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let pid = s.create_workspace(&format!("_test:latest:{uniq}"), None, None).await.unwrap();
+    let rid =
+        crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
+    let key = format!("_test:latest:{uniq}:score");
+    let mid = seed_metric(&s, &key, "ScoreLike", 0, None).await;
+    sqlx_core::query::query(
+        "UPDATE sensei.metrics SET type = 'score'::sensei.metric_type WHERE id = $1",
+    )
+    .bind(mid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let day = chrono::NaiveDate::from_ymd_opt(2020, 5, 6).unwrap();
+    for (commit, value) in [("c-earlier", 40.0), ("c-later", 70.0)] {
+        s.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: Some(commit),
+            computed_on: day,
+            grain: "daily",
+            value,
+            props: &serde_json::json!({ "explainer": format!("from {commit}") }),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+    // c-later is the newer row: stamp it so, whatever order the rows sit in.
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics
+            SET modified_at = CASE commit_sha WHEN 'c-later' THEN now() ELSE now() - interval '1 hour' END
+          WHERE metric_id = $1",
+    )
+    .bind(mid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let got: (f64, String) = query_as(
+        "SELECT value::float8, props->>'explainer' FROM sensei.workspace_metric_daily
+          WHERE workspace_id = $1 AND metric = $2 AND date = $3",
+    )
+    .bind(pid)
+    .bind(&key)
+    .bind(day)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+        .bind(mid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(got, (70.0, "from c-later".to_string()));
+}

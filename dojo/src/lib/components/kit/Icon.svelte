@@ -10,7 +10,7 @@
 	let {
 		name,
 		size = 18,
-		toneClass = 'text-ink-mute'
+		toneClass = 'text-ink-soft'
 	}: { name: string; size?: number; toneClass?: string } = $props();
 </script>
 

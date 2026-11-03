@@ -99,10 +99,9 @@ const OBSERVATORY: Array<{ route: string; sel: string }> = [
   { route: '/libraries',     sel: 'main' },
   { route: '/instruments',   sel: 'main' },
   { route: '/sessions',      sel: 'main' },
-  { route: '/memories',      sel: 'main' },
   { route: '/learnings',     sel: 'main' },
   { route: '/upgrades',      sel: 'main' },
-  { route: '/settings',      sel: 'main' },
+  { route: '/settings/general', sel: 'main' },
 ];
 
 test.describe('accessibility (axe) — light + dark', () => {
@@ -119,7 +118,7 @@ test.describe('accessibility (axe) — light + dark', () => {
       ? [
           { route: `/workspace/${pid}/overview`, sel: '[data-component="workspace-sidebar"]' },
           { route: `/workspace/${pid}/intake`,   sel: '[data-testid="intake-input"]' },
-          { route: `/workspace/${pid}/atlas`,    sel: '[data-screen="atlas"]' },
+          { route: `/workspace/${pid}/diagrams/structure`, sel: '[data-testid="codemap-screen"]' },
           { route: `/workspace/${pid}/libraries`, sel: '[data-testid="library-search"]' },
           { route: `/workspace/${pid}/about`,    sel: 'main' },
           { route: `/workspace/${pid}/integrations`, sel: '[data-screen="integrations"]' },

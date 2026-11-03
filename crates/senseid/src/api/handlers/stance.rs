@@ -139,13 +139,13 @@ pub(crate) async fn set_stance(
 
     let updated_at = state
         .pg
-        .upsert_stance(
-            &user_key,
-            namespace_id.as_ref(),
-            &input.autonomy,
-            &input.sharing,
-            &input.review,
-        )
+        .upsert_stance(&crate::db::pg_store::StanceRow {
+            user_key: &user_key,
+            namespace_id: namespace_id.as_ref(),
+            autonomy: &input.autonomy,
+            sharing: &input.sharing,
+            review: &input.review,
+        })
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 

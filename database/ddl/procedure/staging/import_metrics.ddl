@@ -18,7 +18,9 @@ set search_path to staging, sensei, extensions;
 -- column list — a new row takes the table default (current_date) and an existing
 -- row keeps its original start; only the end boundary + reason are seed-owned.
 create or replace procedure import_metrics()
-language plpgsql as $$
+language plpgsql
+set search_path = staging, sensei, extensions
+as $$
 begin
   insert into sensei.metrics (
       key, name, description, family, type, unit, direction,

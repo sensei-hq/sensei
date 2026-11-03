@@ -8,7 +8,16 @@ async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
     let suffix = format!("prune_keep_unanalyzed_{}", uuid::Uuid::new_v4());
     let (_pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let csid = format!("{}-csid", suffix);
-    let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
     // Age the session past the cutoff but leave analyzed_at NULL.
     sqlx_core::query::query(
         "UPDATE activity.sessions SET started_at = now() - interval '90 days' WHERE id = $1",
@@ -58,7 +67,16 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     let suffix = format!("prune_del_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let csid = format!("{}-csid", suffix);
-    let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
     // Age to 40 days: past the 30-day retention window but INSIDE the 60-day
     // backstop, so the ONLY thing that makes it prune-eligible is the
     // capture path — its day must already exist in sensei.workspace_metrics.
@@ -134,7 +152,15 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     // Its survival is what made the prune self-sealing (#125): `ingest_one`
     // gates the turn re-import on it, so a pruned session never re-imported
     // while `synthesize_session` kept re-creating the session row.
-    s.set_capture_watermark("claude_code", &csid, Some(&csid), 1, 1).await.unwrap();
+    s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+        source: "claude_code",
+        file_path: &csid,
+        session_id: Some(&csid),
+        mtime_ns: 1,
+        turns: 1,
+    })
+    .await
+    .unwrap();
 
     // Prove the fixture landed — an assertion that the row is GONE passes
     // trivially if it was never there.
@@ -270,7 +296,16 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
         age_days: i32,
     ) -> uuid::Uuid {
         let csid = format!("{suffix}-{tag}");
-        let sid = s.record_session_event(&csid, fid, None, "claude", true).await.unwrap();
+        let sid = s
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: fid,
+                workspace_id: None,
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
         sqlx_core::query::query(
             "UPDATE activity.sessions
                     SET started_at = date_trunc('day', now() - (interval '1 day' * $2)),
@@ -579,8 +614,16 @@ async fn a_session_closes_by_its_client_id_and_a_miss_is_a_miss() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "sess_client_close").await;
     let client = uuid::Uuid::new_v4();
-    let row =
-        s.record_session_event(&client.to_string(), &fid, None, "claude", false).await.unwrap();
+    let row = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &client.to_string(),
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
     assert_ne!(row, client, "the row id is not the client id — which is the whole bug");
 
     let close = |id| SessionOutcomeRow {
@@ -860,7 +903,16 @@ async fn query_logs_no_filter_newest_first_and_capped() {
 
     // Scope to this run via the `source` (running_on) filter is not enough
     // (two distinct sources), so fetch broadly and filter in-memory.
-    let all = pg.query_logs(None, None, None, None, 1000).await.unwrap();
+    let all = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: None,
+            module: None,
+            since: None,
+            limit: 1000,
+        })
+        .await
+        .unwrap();
     let mine: Vec<_> = all
         .iter()
         .filter(|r| r["source"].as_str().is_some_and(|s| s.starts_with(&marker)))
@@ -886,18 +938,44 @@ async fn query_logs_level_and_source_and_module_filters() {
     seed_logs(&pg, &marker).await;
 
     // level filter → only the warn row.
-    let warns =
-        pg.query_logs(Some("warn"), Some(&format!("{marker}-a")), None, None, 1000).await.unwrap();
+    let warns = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: Some("warn"),
+            source: Some(&format!("{marker}-a")),
+            module: None,
+            since: None,
+            limit: 1000,
+        })
+        .await
+        .unwrap();
     assert_eq!(warns.len(), 1);
     assert_eq!(warns[0]["level"], "warn");
 
     // source (running_on) filter → the two `-a` rows only.
-    let a_rows = pg.query_logs(None, Some(&format!("{marker}-a")), None, None, 1000).await.unwrap();
+    let a_rows = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: Some(&format!("{marker}-a")),
+            module: None,
+            since: None,
+            limit: 1000,
+        })
+        .await
+        .unwrap();
     assert_eq!(a_rows.len(), 2);
     assert!(a_rows.iter().all(|r| r["source"] == format!("{marker}-a")));
 
     // module column filter → only the analyzer row.
-    let ana = pg.query_logs(None, None, Some("analyzer"), None, 1000).await.unwrap();
+    let ana = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: None,
+            module: Some("analyzer"),
+            since: None,
+            limit: 1000,
+        })
+        .await
+        .unwrap();
     let mine: Vec<_> = ana
         .iter()
         .filter(|r| r["source"].as_str().is_some_and(|s| s.starts_with(&marker)))
@@ -917,7 +995,16 @@ async fn query_logs_since_excludes_older_rows() {
     // Cutoff at 1h ago excludes the two rows at base(-2h) and base+30m(-90m),
     // keeping only the base+90m(-30m) analyzer/error row.
     let since = chrono::Utc::now() - chrono::Duration::hours(1);
-    let recent = pg.query_logs(None, None, None, Some(since), 1000).await.unwrap();
+    let recent = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: None,
+            module: None,
+            since: Some(since),
+            limit: 1000,
+        })
+        .await
+        .unwrap();
     let mine: Vec<_> = recent
         .iter()
         .filter(|r| r["source"].as_str().is_some_and(|s| s.starts_with(&marker)))
@@ -935,7 +1022,16 @@ async fn query_logs_limit_is_honored() {
     seed_logs(&pg, &marker).await;
 
     // Scope to this run's sources so the global limit is deterministic.
-    let a = pg.query_logs(None, Some(&format!("{marker}-a")), None, None, 1).await.unwrap();
+    let a = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: Some(&format!("{marker}-a")),
+            module: None,
+            since: None,
+            limit: 1,
+        })
+        .await
+        .unwrap();
     assert_eq!(a.len(), 1, "limit=1 returns exactly one of the two -a rows");
     // Newest -a row is the warn/watcher one.
     assert_eq!(a[0]["level"], "warn");
@@ -947,8 +1043,16 @@ async fn query_logs_limit_is_honored() {
 async fn query_logs_empty_result_is_empty_array() {
     let pg = PgStore::test_store().await;
     // A source that never exists → empty Vec, not an error.
-    let none =
-        pg.query_logs(None, Some("_test:logs:does-not-exist"), None, None, 200).await.unwrap();
+    let none = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: Some("_test:logs:does-not-exist"),
+            module: None,
+            since: None,
+            limit: 200,
+        })
+        .await
+        .unwrap();
     assert!(none.is_empty());
 }
 
@@ -986,4 +1090,208 @@ async fn importing_the_same_staged_event_twice_keeps_one_row() {
         sqlx_core::query::query(sql).bind(&session).execute(s.pool()).await.ok();
     }
     assert_eq!(n, 1, "a re-import must not add a second copy");
+}
+
+/// Instruments · Health: one row per tool source. Calls to a tool its server
+/// no longer lists (a renamed or retired tool) belong to that server's row —
+/// matched by the prefix the harness records — not to a second row with the
+/// same key, which drew sensei twice and broke the whole grid on a duplicate
+/// key. A prefix no server claims is still its own row.
+#[tokio::test]
+async fn a_servers_retired_tools_count_on_its_own_health_row() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().simple().to_string();
+    let key = format!("srv{}", &uniq[..10]);
+    let prefix = format!("plugin_p{0}_p{0}", &uniq[..8]);
+    let orphan = format!("orphan{}", &uniq[..10]);
+    s.upsert_assistant_tool(&AssistantToolRow {
+        assistant_family: "claude",
+        source_type: "mcp",
+        source_key: &key,
+        tool_name: "kept",
+        invoked_name: &format!("mcp__{prefix}__kept"),
+        description: None,
+        server_id: None,
+    })
+    .await
+    .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    let csid = format!("health-{uniq}");
+    for tool in [
+        format!("mcp__{prefix}__kept"),
+        format!("mcp__{prefix}__retired"),
+        format!("mcp__{prefix}__retired"),
+        format!("mcp__{orphan}__x"),
+    ] {
+        s.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some(&tool),
+            cwd: None,
+            ts: now,
+            success: Some(true),
+            payload: &serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    }
+
+    let rows = s.get_tools_health().await.unwrap();
+    let mine: Vec<_> = rows
+        .iter()
+        .filter(|r| {
+            [key.as_str(), prefix.as_str(), orphan.as_str()]
+                .contains(&r["source_key"].as_str().unwrap())
+        })
+        .map(|r| {
+            (
+                r["source_key"].as_str().unwrap().to_string(),
+                r["tools_registered"].as_i64(),
+                r["tools_invoked_14d"].as_i64().unwrap(),
+                r["calls_14d"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        mine,
+        vec![(key.clone(), Some(1), 1, 3), (orphan.clone(), None, 1, 1),],
+        "the retired tool's calls count on its server's row; the share stays registered-only"
+    );
+}
+
+/// A server is also called under its own config key: the inventory bridged
+/// playwright's tools to an older `playwright` prefix, while calls through the
+/// plugin arrive as `plugin_playwright_playwright` — the same server, which
+/// Health drew twice.
+#[tokio::test]
+async fn calls_under_a_servers_own_key_count_on_its_health_row() {
+    use crate::db::pg_store::McpServerRow;
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().simple().to_string();
+    let (key, plugin_key) =
+        (format!("pw{}", &uniq[..10]), format!("plugin_pw{0}_pw{0}", &uniq[..8]));
+    let empty = serde_json::json!({});
+    let server = s
+        .upsert_mcp_server(&McpServerRow {
+            acp_family: "claude",
+            mcp_key: &plugin_key,
+            workspace_id: None,
+            config_source: "/tmp/plugin.json",
+            command: "npx",
+            args: &serde_json::json!([]),
+            env: &empty,
+        })
+        .await
+        .unwrap();
+    s.upsert_assistant_tool(&AssistantToolRow {
+        assistant_family: "claude",
+        source_type: "mcp",
+        source_key: &key,
+        tool_name: "click",
+        invoked_name: &format!("mcp__{key}__click"),
+        description: None,
+        server_id: Some(server),
+    })
+    .await
+    .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    for tool in [format!("mcp__{key}__click"), format!("mcp__{plugin_key}__click")] {
+        s.insert_hook_event(&HookEventRow {
+            session_id: &format!("health-{uniq}"),
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some(&tool),
+            cwd: None,
+            ts: now,
+            success: Some(true),
+            payload: &empty,
+        })
+        .await
+        .unwrap();
+    }
+
+    let rows = s.get_tools_health().await.unwrap();
+    let mine: Vec<(String, i64)> = rows
+        .iter()
+        .filter(|r| {
+            [key.as_str(), plugin_key.as_str()].contains(&r["source_key"].as_str().unwrap())
+        })
+        .map(|r| (r["source_key"].as_str().unwrap().to_string(), r["calls_14d"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(mine, vec![(key.clone(), 2)], "one row for the server, with both calls");
+}
+
+// ── Workspace hotspots ─────────────────────────────────────────────
+
+/// The workspace window's Hotspots read: recent Edit/Write/MultiEdit calls per
+/// file, re-edits within a session counted as corrections; an edit older than the
+/// 30-day window, another tool and another event type are not counted. Pins the
+/// behaviour while the view's time filter is rewritten to use an index (a
+/// `to_timestamp(ts)` filter scanned all 543k events on every request).
+#[tokio::test]
+async fn workspace_hotspots_count_recent_file_edits_and_reedits() {
+    let s = pg_store().await;
+    let suffix = format!("hotspots_{}", uuid::Uuid::new_v4());
+    let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let day_ms = 86_400_000_i64;
+    let mut sessions = Vec::new();
+    for n in 0..2 {
+        let csid = format!("{suffix}-s{n}");
+        s.record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
+        sessions.push(csid);
+    }
+    let edit = |file: &str| serde_json::json!({ "tool_input": { "file_path": file } });
+    let events: Vec<(&str, &str, &str, i64, serde_json::Value)> = vec![
+        (&sessions[0], "PostToolUse", "Edit", now_ms - day_ms, edit("src/a.rs")),
+        (&sessions[0], "PostToolUse", "Edit", now_ms - 2 * day_ms, edit("src/a.rs")),
+        (&sessions[1], "PostToolUse", "Write", now_ms - 3 * day_ms, edit("src/a.rs")),
+        (&sessions[1], "PostToolUse", "Edit", now_ms - 40 * day_ms, edit("src/old.rs")),
+        (&sessions[1], "PostToolUse", "Read", now_ms - day_ms, edit("src/read.rs")),
+        (&sessions[1], "PreToolUse", "Edit", now_ms - day_ms, edit("src/pre.rs")),
+    ];
+    for (sid, event_type, tool, ts, payload) in &events {
+        sqlx_core::query::query(
+            "INSERT INTO activity.assistant_events (session_id, event_type, tool_name, ts, payload)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(sid)
+        .bind(event_type)
+        .bind(tool)
+        .bind(ts)
+        .bind(payload)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+
+    let got = s.get_hotspots(&pid, 30).await;
+
+    sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = ANY($1)")
+        .bind(&sessions)
+        .execute(s.pool())
+        .await
+        .ok();
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE workspace_id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .ok();
+    s.delete_workspace(&pid).await.ok();
+
+    let rows = got.unwrap();
+    let files: Vec<(&str, i64, i64)> = rows
+        .iter()
+        .map(|r| (r["file_path"].as_str().unwrap(), r["edit_count"].as_i64().unwrap(), r["correction_count"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(files, vec![("src/a.rs", 3, 1)], "{rows:?}");
 }

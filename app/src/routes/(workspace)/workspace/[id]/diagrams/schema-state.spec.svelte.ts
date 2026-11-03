@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SchemaState, type SchemaApi } from './schema-state.svelte.js';
+import { SchemaState, objectId, type SchemaApi } from './schema-state.svelte.js';
 import type { SchemaPayload, SchemaTable } from '$lib/types.js';
 
 function table(schema: string, name: string, columns = ['id']): SchemaTable {
@@ -15,7 +15,8 @@ function table(schema: string, name: string, columns = ['id']): SchemaTable {
  *  built-in — the shapes the live payload has. */
 function payload(over: Partial<SchemaPayload> = {}): SchemaPayload {
   return {
-    version: 2,
+    version: 3,
+    enums: [],
     tables: [
       table('app', 'customers'),
       table('app', 'orders', ['id', 'customer_id', 'account_id']),
@@ -50,6 +51,66 @@ async function loaded(api: SchemaApi = okApi()) {
 }
 
 describe('SchemaState', () => {
+  // The sidebar (dbd's /diagram, flipped right): every entity, grouped by schema,
+  // tables first, each with its kind's glyph — a rokkit List's items.
+  it('lists every entity by schema for the sidebar, tables before views', async () => {
+    const s = await loaded();
+    expect(s.sidebar.map((g) => [g.label, g.badge, g.children.map((c) => c.label)])).toEqual([
+      ['app', '2', ['customers', 'orders']],
+      ['crm', '1', ['accounts']],
+      ['report', '1', ['order_totals']],
+    ]);
+    expect(s.sidebar[2].children[0]).toMatchObject({ value: objectId('report', 'order_totals'), kind: 'view' });
+  });
+
+  it('the list narrows by entity type and by name', async () => {
+    const s = await loaded();
+    s.toggleKind('table');
+    expect(s.sidebar.map((g) => [g.label, g.children.map((c) => c.label)])).toEqual([['report', ['order_totals']]]);
+    s.toggleKind('table');
+    s.query = 'ord';
+    expect(s.sidebar.map((g) => [g.label, g.children.map((c) => c.label)])).toEqual([
+      ['app', ['orders']], ['report', ['order_totals']],
+    ]);
+    expect(s.kindCounts).toEqual([{ kind: 'table', count: 3, shown: true }, { kind: 'view', count: 1, shown: true }]);
+  });
+
+  it('every schema to choose from, with its count — a picker, not a row that runs out of room', async () => {
+    const s = await loaded();
+    expect(s.schemaChoices.map((c) => [c.label, c.value])).toEqual([
+      ['All schemas · 3', ''], ['app · 2', 'app'], ['crm · 1', 'crm'], ['report · 0', 'report'],
+    ]);
+  });
+
+  it("a selected entity's diagram is it and what it is keyed or linked to", async () => {
+    const s = await loaded();
+    s.select(objectId('app', 'customers'));
+    expect((s.entityGraph?.nodes as { id: string }[]).map((n) => n.id).sort()).toEqual([objectId('app', 'customers'), objectId('app', 'orders')].sort());
+  });
+
+  it('a view can be selected too: what it is, and what it reads', async () => {
+    const s = await loaded();
+    s.select(objectId('report', 'order_totals'));
+    expect(s.selectedEntity).toMatchObject({ schema: 'report', name: 'order_totals', kind: 'view' });
+    expect(s.selectedTable).toBeNull();
+    expect(s.entityReach).toEqual({ reads: ['app.orders', 'crm.accounts'], writes: [], calls: ['count'] });
+  });
+
+  // The inspector says what a change to a table reaches (M17 Database · ER).
+  it('a selected table: the tables it references, those referencing it, and what reads it', async () => {
+    const s = await loaded();
+    s.select(objectId('app', 'orders'));
+    expect(s.reach).toEqual({
+      references: ['app.customers (customer_id)', 'crm.accounts (account_id)'],
+      referencedBy: [],
+      dependents: ['report.order_totals reads'],
+    });
+    s.select(objectId('app', 'customers'));
+    expect(s.reach).toEqual({ references: [], referencedBy: ['app.orders (customer_id)'], dependents: [] });
+    s.select(null);
+    expect(s.reach).toBeNull();
+  });
+
   it('starts in loading, before any request has settled', () => {
     expect(new SchemaState(okApi(), () => 'p1').view).toBe('loading');
   });

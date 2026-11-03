@@ -10,7 +10,14 @@ async fn pattern_upsert_and_list() {
     let instances =
         serde_json::json!([{"file":"src/lib.rs","line":10},{"file":"src/main.rs","line":20}]);
     let pat_id = s
-        .upsert_pattern(&proj_id, Some(&fid), "_test:Adapter", false, Some(0.85), &instances)
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:Adapter",
+            is_anti: false,
+            confidence: Some(0.85),
+            instances: &instances,
+        })
         .await
         .unwrap();
     let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
@@ -34,7 +41,14 @@ async fn pattern_promote() {
     let suffix = format!("pat_promote_{}", uuid::Uuid::new_v4());
     let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let pat_id = s
-        .upsert_pattern(&proj_id, Some(&fid), "_test:Factory", false, None, &serde_json::json!([]))
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:Factory",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([]),
+        })
         .await
         .unwrap();
     s.promote_pattern(&pat_id, "rule").await.unwrap();
@@ -59,25 +73,25 @@ async fn pattern_upsert_updates_existing() {
     let suffix = format!("pat_dup_{}", uuid::Uuid::new_v4());
     let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let id1 = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid),
-            "_test:Singleton",
-            false,
-            Some(0.5),
-            &serde_json::json!([{"file":"a.rs"}]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:Singleton",
+            is_anti: false,
+            confidence: Some(0.5),
+            instances: &serde_json::json!([{"file":"a.rs"}]),
+        })
         .await
         .unwrap();
     let id2 = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid),
-            "_test:Singleton",
-            false,
-            Some(0.9),
-            &serde_json::json!([{"file":"a.rs"},{"file":"b.rs"}]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:Singleton",
+            is_anti: false,
+            confidence: Some(0.9),
+            instances: &serde_json::json!([{"file":"a.rs"},{"file":"b.rs"}]),
+        })
         .await
         .unwrap();
     assert_eq!(id1, id2); // same row updated
@@ -108,25 +122,25 @@ async fn pattern_upsert_merges_across_folders_in_same_workspace() {
     s.set_folder_workspace(&fid_b, &proj_id, "root", None).await.unwrap();
 
     let id_a = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid_a),
-            "_test:Shared",
-            false,
-            None,
-            &serde_json::json!([{"file":"a.rs"}]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid_a),
+            name: "_test:Shared",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([{"file":"a.rs"}]),
+        })
         .await
         .unwrap();
     let id_b = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid_b),
-            "_test:Shared",
-            false,
-            None,
-            &serde_json::json!([{"file":"b.rs"},{"file":"b2.rs"}]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid_b),
+            name: "_test:Shared",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([{"file":"b.rs"},{"file":"b2.rs"}]),
+        })
         .await
         .unwrap();
     assert_eq!(id_a, id_b, "same (workspace_id, name) must merge into one row");
@@ -213,4 +227,58 @@ async fn correction_upsert_is_idempotent_by_signature() {
         !after["corrections"].as_array().unwrap().iter().any(|c| c["id"] == id1.to_string()),
         "a signature not in the keep set is pruned"
     );
+}
+
+/// The Metrics read asked the narration cache once per metric — 28 sequential
+/// `UPDATE … RETURNING` per page load (median 1.37 s each in the slow log). One
+/// statement now reads every key: each hit's copy, keyed, its `last_used_at`
+/// bumped so hot copy stays warm; a miss is absent.
+#[tokio::test]
+async fn the_narration_cache_reads_many_keys_in_one_statement_and_bumps_the_hits() {
+    let s = pg_store().await;
+    let kind = format!("_test_kind_{}", uuid::Uuid::new_v4());
+    for (hash, detail) in [("h1", "one"), ("h2", "two")] {
+        s.upsert_narration_cache(&crate::db::pg_store::NarrationRow {
+            kind: &kind,
+            facts_hash: hash,
+            title: "t",
+            detail,
+            model_provider: None,
+            model_id: None,
+        })
+        .await;
+    }
+    sqlx_core::query::query(
+        "UPDATE sensei.narration_cache SET last_used_at = now() - interval '1 day' WHERE kind = $1",
+    )
+    .bind(&kind)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let got = s.get_narration_cache_many(&[(&kind, "h1"), (&kind, "missing"), (&kind, "h2")]).await;
+    let fresh: Vec<(String, bool)> = query_as(
+        "SELECT facts_hash, last_used_at > now() - interval '1 minute' FROM sensei.narration_cache
+          WHERE kind = $1 ORDER BY facts_hash",
+    )
+    .bind(&kind)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.narration_cache WHERE kind = $1")
+        .bind(&kind)
+        .execute(s.pool())
+        .await
+        .ok();
+
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert_eq!(
+        got.get(&(kind.clone(), "h1".to_string())),
+        Some(&("t".to_string(), "one".to_string()))
+    );
+    assert_eq!(
+        got.get(&(kind.clone(), "h2".to_string())),
+        Some(&("t".to_string(), "two".to_string()))
+    );
+    assert_eq!(fresh, vec![("h1".to_string(), true), ("h2".to_string(), true)]);
 }

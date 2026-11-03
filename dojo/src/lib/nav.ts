@@ -24,7 +24,8 @@ export const NAV_YOU: KitNavGroup[] = [
 		group: 'Work',
 		items: [
 			{ id: 'inbox', icon: 'inbox', label: 'Inbox', kanji: '受' },
-			{ id: 'workspaces', icon: 'folder', label: 'Workspaces', kanji: '場' }
+			{ id: 'workspaces', icon: 'folder', label: 'Workspaces', kanji: '場' },
+			{ id: 'metrics', icon: 'pulse', label: 'My metrics', kanji: '測' }
 		]
 	},
 	{

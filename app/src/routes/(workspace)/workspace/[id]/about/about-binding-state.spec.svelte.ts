@@ -62,13 +62,13 @@ describe('confirmedChip / inferredChip', () => {
   it('confirmed reads the success tone with a sentence-case label', () =>
     expect(confirmedChip()).toEqual({
       bg: 'bg-success-soft',
-      text: 'text-success',
+      text: 'text-on-success-soft',
       label: 'confirmed',
     }));
   it('inferred reads the warning tone with a sentence-case label', () =>
     expect(inferredChip()).toEqual({
       bg: 'bg-warning-soft',
-      text: 'text-warning',
+      text: 'text-on-warning-soft',
       label: 'inferred',
     }));
 });

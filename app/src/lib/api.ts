@@ -1,16 +1,20 @@
+import type { CoChange, ComplexityTree, Level0, Level1, Level2, Zones } from '@sensei/codemap';
+
+/** The daemon's Complexity tree: the maintainability reading arrives ungraded
+ *  (the app grades it — codemap-port). */
+export type ComplexityWire = Omit<ComplexityTree, 'maintainability'> & {
+  maintainability: { value: number; date: string } | null;
+};
 import type {
   ServerWorkspace,
-  GraphSymbolNode, GraphCallEdge,
-  WorkspaceGraphResponse, SolutionAnalysis,
-  FunctionMatch, CommunityInfo,
-  LibEntry, SessionData, SessionsDigest,
+  SolutionAnalysis,
+  LibEntry, LibCapability, LibPage, SessionData, SessionsDigest,
   WorkspaceMemory, DriftItem, PatternEntry, Recommendation,
-  CallFlowModule, CallFlowCall,
   WorkspaceListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   DojoMembership, DojoBindingSuggestion, DojoUpgradesResponse, CollectivePreferences,
   ShareReviewResponse, PublishBatchOutcome,
-  McpToolManifest, MemoryShareBatch, ImpactVerdictEntry,
+  McpToolCallResult, MemoryShareBatch, ImpactVerdictEntry,
   WorkspaceMcpToolStat, ToolSignal, WorkspaceService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, WorkspaceOverview,
@@ -19,10 +23,6 @@ import type {
   SyncStateResponse,
   IntakeGuide, PlaybookRecommendation,
   ProvisionModel, ProvisionPhase,
-  StructureLevel, StructurePayload,
-  LayeringLevel, LayeringPayload,
-  WorldGroupBy, WorldPayload,
-  NeighbourhoodPayload,
   SchemaPayload,
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
   TranscriptSourceConsent,
@@ -202,15 +202,6 @@ export function senseiApi(port: number) {
 
   return {
     // ── Auth ──────────────────────────────────────────────────────────────
-    // Result-based on purpose. A failed read of the credential's standing must
-    // NOT collapse into a fallback body: `{}` is indistinguishable from a
-    // daemon reporting a shape we do not understand, and either way the caller
-    // would be told something about a credential we never asked about.
-    // No persona named → the daemon resolves the DEFAULT identity (#296), the
-    // one owning the global git email; never the literal `default` slot.
-    tryGetAuthStatus: (persona?: string) =>
-      tryGet<Record<string, unknown>>(`/api/auth/status${personaQuery(persona)}`),
-
     /** Every identity and what each one needs. Result-based: a failed read must
      *  not become `[]`, which reads as "you have no identities". */
     tryGetPersonas: () =>
@@ -231,6 +222,9 @@ export function senseiApi(port: number) {
 
     /** Let the daemon read a persona's stored session, with the Keychain's
      *  dialog allowed — the user clicked, so it has someone to answer it (#283). */
+    /** Make default (user, 2026-10-27): this identity is the default from now on. */
+    tryMakeDefaultPersona: (label: string) =>
+      tryPost<{ ok: boolean; default: string }>(`/api/auth/personas/${enc(label)}/default`, {}),
     tryApproveKeychain: (persona: string) =>
       tryPost<{ ok: boolean; error?: string }>(
         `/api/auth/keychain/approve?persona=${encodeURIComponent(persona)}`,
@@ -286,6 +280,12 @@ export function senseiApi(port: number) {
     // One read of the list, typed as the wire carries it: the settings and
     // setup view (`DaemonWorkspace`) and the workspaces-index view (`WorkspaceListItem`).
     tryListWorkspaces: () => tryGet<Array<DaemonWorkspace & WorkspaceListItem>>('/api/workspaces'),
+    /** One workspace exactly as the list gives it (folders and icon included). */
+    tryGetWorkspace: (id: string) => tryGet<DaemonWorkspace & WorkspaceListItem>(`/api/workspaces/${enc(id)}`),
+    /** The workspaces under a watched root — the ones whose code is current, so
+     *  the ones a tool can run in. Repo roots only. */
+    tryListWatchedWorkspaces: () =>
+      tryGet<Array<DaemonWorkspace & WorkspaceListItem>>('/api/workspaces?watched=true&folders=roots'),
     /** Update a single folder. Currently only `role` is honored daemon-side. */
     tryUpdateFolder: (id: string, patch: { role?: string | null }) =>
       tryPut(`/api/folders/${enc(id)}`, patch),
@@ -311,7 +311,13 @@ export function senseiApi(port: number) {
     // workspace with no computed metrics yet, so the screen shows an error state
     // rather than an empty grid that hides a broken daemon (no-fabrication).
     getWorkspaceMetrics: (id: string) =>
-      tryGet<{ metrics: WorkspaceMetricRow[]; count: number; narrative?: MetricsNarrative | null }>(
+      tryGet<{
+        metrics: WorkspaceMetricRow[];
+        count: number;
+        narrative?: MetricsNarrative | null;
+        /** Each metric's daily series, dated, for the sparklines. */
+        series?: Record<string, MetricSeriesPoint[]>;
+      }>(
         `/api/workspaces/${enc(id)}/metrics`,
       ),
 
@@ -466,52 +472,17 @@ export function senseiApi(port: number) {
     // consensus for recommendations that carry a reasoning trace or a
     // non-pending verdict. Distinct from the manual `listImpactVerdicts`
     // retrospectives above.
-    /** #205 — the Structure diagram payload.
-     *
-     *  Result-based deliberately. This screen must tell "no edges here" apart
-     *  from "the daemon failed", and the fallback-returning `get` collapses
-     *  both into an empty graph — which is the one thing the spec names as a
-     *  wrong gate, being indistinguishable from an unindexed workspace. */
-    tryGetWorkspaceStructure: (id: string, level: StructureLevel, kinds: string[]) =>
-      tryGet<StructurePayload>(
-        `/api/workspaces/${enc(id)}/diagrams/structure?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
-      ),
-
-    /** #232 — the Layers/Cycles payload, one request serving both screens.
-     *
-     *  ONE CALL, TWO SCREENS. The layering, the cycles and the coverage all
-     *  come out of a single `analyse` over one read of `structure_edges`, and
-     *  that read is the whole cost (1.5 s to 74 s per workspace). Splitting it
-     *  into a layering endpoint and a cycles endpoint would pay it twice for
-     *  answers that have to agree.
-     *
-     *  Result-based for the reason the Structure one is: this screen must tell
-     *  "no cycles here" apart from "the daemon failed", and an empty canvas
-     *  reads as a clean architecture. */
-    tryGetWorkspaceLayering: (id: string, level: LayeringLevel, kinds: string[]) =>
-      tryGet<LayeringPayload>(
-        `/api/workspaces/${enc(id)}/diagrams/layering?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
-      ),
-
-    /** #219 — the World payload: every indexed declaration, nested.
-     *
-     *  CROSS-WORKSPACE. The workspace in the path names the view and does not scope
-     *  it — the picture is all indexed code, with workspace as its outermost ring.
-     *
-     *  Result-based like its siblings: this screen must tell "nothing indexed"
-     *  apart from "the daemon failed", and on a picture whose whole subject is
-     *  how much there is, an empty canvas is the worse lie. */
-    tryGetWorkspaceWorld: (id: string, groupBy: WorldGroupBy) =>
-      tryGet<WorldPayload>(
-        `/api/workspaces/${enc(id)}/diagrams/world?groupBy=${enc(groupBy)}`
-      ),
-
-    /** #220 — one symbol, its callers and callees, `depth` rings out.
-     *  `focus` is a node id; a missing one is a 400, never a default symbol. */
-    tryGetWorkspaceNeighbourhood: (id: string, focus: string, depth: number) =>
-      tryGet<NeighbourhoodPayload>(
-        `/api/workspaces/${enc(id)}/diagrams/neighbourhood?focus=${enc(focus)}&depth=${depth}`
-      ),
+    /** The Code map (M17): L0 modules, one module's files, one file's symbols. */
+    tryGetCodemap: (id: string, groupBy: 'layers' | 'folders') =>
+      tryGet<Level0>(`/api/workspaces/${enc(id)}/diagrams/codemap?groupBy=${enc(groupBy)}`),
+    tryGetCodemapModule: (id: string, module: string) =>
+      tryGet<Level1>(`/api/workspaces/${enc(id)}/diagrams/codemap/module?id=${enc(module)}`),
+    tryGetCodemapFile: (id: string, file: string) =>
+      tryGet<Level2>(`/api/workspaces/${enc(id)}/diagrams/codemap/file?id=${enc(file)}`),
+    tryGetZones: (id: string) => tryGet<Zones>(`/api/workspaces/${enc(id)}/diagrams/zones`),
+    tryGetCochange: (id: string) => tryGet<CoChange>(`/api/workspaces/${enc(id)}/diagrams/codemap/cochange`),
+    tryGetComplexity: (id: string) =>
+      tryGet<ComplexityWire>(`/api/workspaces/${enc(id)}/diagrams/codemap/complexity`),
 
     /** #221 — the workspace's database structure: tables, keys, views and
      *  routines, and what depends on what (dbd `SchemaModel` v2's ER half).
@@ -622,6 +593,14 @@ export function senseiApi(port: number) {
     tryGetToolsHealth: () => tryGet<ToolsHealth>('/api/instruments/tools-health'),
 
     /** Where a library is used (#288: a failure is an error, not "unused"). */
+    /** What a library provides — read by its id, `ecosystem:name`, or a name
+     *  (its own or one of its packages', #341) that only one library holds. */
+    tryGetLibrarySkills: (ref: string) =>
+      tryGet<LibCapability[]>(`/api/libs/${enc(ref)}/skills`),
+    tryGetLibraryAgents: (ref: string) =>
+      tryGet<LibCapability[]>(`/api/libs/${enc(ref)}/agents`),
+    tryGetLibraryDocs: (ref: string) =>
+      tryGet<LibPage[]>(`/api/libs/${enc(ref)}/docs`),
     tryGetLibraryUsage: (id: string) =>
       tryGet<{ usage: Array<{ library_name: string; folder: string; version_used: string | null; import_count: number }> }>(
         `/api/libs/${enc(id)}/usage`,
@@ -643,34 +622,6 @@ export function senseiApi(port: number) {
       new EventSource(`${base}/api/index/progress`),
 
     // ── Graph ────────────────────────────────────────────────────────────
-    /** Functions and methods whose name or signature contains `q`.
-     *
-     *  Result-based, unlike the `get(…, [])` it replaces: a picker that shows
-     *  "no matches" when the daemon is down sends the reader looking for a
-     *  symbol that exists. */
-    trySearchFunctions: (repoId: string, q: string) =>
-      tryGet<FunctionMatch[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`),
-
-    // Atlas (#288): each read is the daemon's answer or why it failed — never
-    // an empty graph, zero calls or a 0-repo roll-up standing in for a failure.
-    tryGetGraphNodes: (repoId: string) =>
-      tryGet<{ nodes: GraphSymbolNode[]; edges: GraphCallEdge[] }>(`/api/graph/nodes?repoId=${enc(repoId)}`),
-
-    tryGetCommunities: (repoId: string) =>
-      tryGet<CommunityInfo[]>(`/api/graph/communities/info?repoId=${enc(repoId)}`),
-
-    /** Refresh the repo's clustering, so the communities read after it is current. */
-    tryDetectCommunities: (repoId: string) =>
-      tryPost<{ ok: boolean; communities: number }>('/api/graph/communities', { repoId }),
-
-    tryGetCallFlow: (repoId: string) =>
-      tryGet<{ modules: CallFlowModule[]; calls: CallFlowCall[]; moduleCount: number; exportCount: number; callCount: number }>(
-        `/api/graph/call-flow?repoId=${enc(repoId)}`,
-      ),
-
-    /** The workspace's solution roll-up across its repos. */
-    tryGetWorkspaceGraph: (id: string) => tryGet<WorkspaceGraphResponse>(`/api/workspaces/${enc(id)}/graph`),
-
     // ── Libraries ────────────────────────────────────────────────────────
     /** Every detected library (#288: a failure is an error, not an empty index). */
     tryGetLibs: (params?: { repoId?: string; workspaceId?: string; shared?: boolean }) => {
@@ -856,12 +807,15 @@ export function senseiApi(port: number) {
     tryScanFolder: (root: string, maxDepth = 3) =>
       tryPost<{ ok: boolean; scanning: boolean }>('/api/scan', { root, max_depth: maxDepth }),
 
-    // ── MCP Tool Proxy ────────────────────────────────────────────────
-    tryMcpListTools: () => tryGet<{ tools: McpToolManifest[] }>('/api/mcp/tools'),
-
-    /** Call a tool from the Playground — its answer, or why there is none. */
-    tryMcpCallTool: (tool: string, params: Record<string, string>) =>
-      tryPost<Record<string, unknown>>('/api/mcp/call', { tool, params }),
+    /** Run one tool through its MCP server, as an assistant would — in the
+     *  workspace's root when one is given: the tool's result and its own
+     *  `isError`, or why the server could not answer. */
+    tryCallServerTool: (serverId: string, tool: string, args: Record<string, unknown>, workspaceId: string | null) =>
+      tryPost<McpToolCallResult>(`/api/instruments/mcp-servers/${enc(serverId)}/call`, {
+        tool,
+        arguments: args,
+        ...(workspaceId ? { workspace_id: workspaceId } : {}),
+      }),
 
     // #84 T2 Slice C — Replay timeline with #90 verdicts joined + session
     // summary. Set `classify: true` to run the classifier before the read
@@ -884,6 +838,12 @@ export function senseiApi(port: number) {
       tryPut(`/api/instruments/mcp-servers/${enc(id)}/enabled`, { enabled }),
     refreshMcpServers: () =>
       tryPost<{ discovered: number; pruned: number }>('/api/instruments/mcp-servers/refresh', {}),
+    /** Register a stdio MCP server by hand (#343); 409 when the name is taken. */
+    tryRegisterMcpServer: (server: { name: string; command: string; args: string[]; env: Record<string, string> }) =>
+      tryPost<{ id: string }>('/api/instruments/mcp-servers', server),
+    /** Remove a hand-registered server; a discovered one is refused (409). */
+    tryRemoveMcpServer: (id: string) =>
+      tryDeleteJson<{ removed: boolean }>(`/api/instruments/mcp-servers/${enc(id)}`),
 
     // #84 T2 Slice B — cached tool manifest per server. `?refresh=true`
     // forces a re-probe; `?probe=false` returns stale-badged cache without

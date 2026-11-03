@@ -1,3 +1,5 @@
+import { isSettingsPath } from './settings-path.js';
+
 /**
  * The boot gate: where a navigation must go instead, given the app's state.
  *
@@ -14,10 +16,11 @@ const ALWAYS_REACHABLE = new Set(['/health', '/logs', '/upgrade']);
 // where healthState starts 'checking' (isOk=false) and setup state is
 // unhydrated. It is only ever opened from an already-healthy main window, so it
 // must bypass the boot gates — otherwise the gate bounces the fresh window to
-// /health and the workspace never renders. This matches the singular `/workspace/`
+// /health and the workspace never renders. The settings window is the same
+// kind of window (user, 2026-10-27). This matches the singular `/workspace/`
 // window routes, not the observatory's plural `/workspaces` list (still gated).
 function isReachable(path: string): boolean {
-  return ALWAYS_REACHABLE.has(path) || path.startsWith('/workspace/');
+  return ALWAYS_REACHABLE.has(path) || path.startsWith('/workspace/') || isSettingsPath(path);
 }
 
 export function gateTarget(

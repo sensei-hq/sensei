@@ -41,6 +41,7 @@ pub mod pattern_effectiveness;
 pub mod plan_graph;
 pub mod planner;
 pub mod playbook;
+mod qlty;
 pub mod ranking;
 pub mod relay_drivers;
 pub mod resolution;
@@ -376,7 +377,7 @@ fn tail_logs() {
         .arg(&log_path)
         .status()
         .expect("failed to run tail");
-    std::process::exit(status.code().unwrap_or(0));
+    std::process::exit(sensei_bootstrap::util::exit_code(status));
 }
 
 fn clear_logs() {

@@ -11,7 +11,7 @@ The relay journey now lives as a section of the Dōjō journey:
   — reach a live session · watch progress · approve · answer a decision · chat back.
 - **Architecture:** [`../architecture/dojo.md` → Relay](../architecture/dojo.md#relay--through-the-dōjō)
   — the realtime line, PWA + Web Push, the native wrapper, and the relay data model.
-- **Business model:** Relay is [free for individuals, paid where shared](dojo.md#business-model--free-where-public-or-personal).
+- **Business model:** Relay is [free for individuals, paid where shared](dojo.md#business-model--public-free-private-on-a-subscription).
 
 The prior standalone "pair once + zero-knowledge relay transport" model is
 superseded: the transport is now the daemon's existing outbound Dōjō connection,

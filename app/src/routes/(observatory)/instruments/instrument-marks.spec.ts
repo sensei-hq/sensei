@@ -8,9 +8,8 @@ const solar = new Set(
   Object.keys(JSON.parse(readFileSync('node_modules/@iconify-json/solar/icons.json', 'utf8')).icons),
 );
 
-// #133: every Instruments mark carries a kanji AND a Solar Bold Duotone icon,
-// except the assistants' own marks, which are identities with no Solar logo
-// and stay kanji in both modes (as workspaces do).
+// #133: every Instruments mark carries a kanji AND a Solar Bold Duotone icon —
+// the assistants' marks included (one rule across the app and the dōjō).
 describe('instrument marks', () => {
   it('gives every tab and kind chip a kanji and a Solar icon', () => {
     expect(INSTRUMENT_TABS.map((t) => t.id)).toEqual(['playground', 'replay', 'insights']);
@@ -27,19 +26,19 @@ describe('instrument marks', () => {
     expect(kindMark('other')).toEqual({ kanji: '·' });
   });
 
-  it('gives the sensei group and an unknown server an icon, and leaves the assistants kanji', () => {
+  it('gives every group an icon: sensei, an assistant from the vocabulary, an unknown server', () => {
     const groups = buildPlaygroundGroups(
-      [],
       [
         { id: 'a', acp_family: 'claude', mcp_key: 'x', enabled: true },
         { id: 'b', acp_family: 'windsurf', mcp_key: 'y', enabled: true },
+        { id: 's', acp_family: 'claude', mcp_key: 'plugin_sensei_sensei', enabled: true },
       ],
       {},
     );
     const [sensei, claude, unknown] = groups;
     expect(isSolarBoldDuotone(sensei.icon ?? '', solar)).toBe(true);
     expect(claude.kanji).toBe('書');
-    expect(claude.icon, 'an identity: never the vocabulary icon').toBeNull();
+    expect(claude.icon, 'every mark follows the mode (#133)').toBe('i-solar-book-bold-duotone');
     expect(isSolarBoldDuotone(unknown.icon ?? '', solar)).toBe(true);
   });
 });

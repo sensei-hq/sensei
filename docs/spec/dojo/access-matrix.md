@@ -122,6 +122,13 @@ member and reads none (D6, `viewer_audit.sql`). Relay sessions stay owner-only
 console reads through `dojo.team_member_metrics` (SECURITY INVOKER — the row
 policy decides), pinned by `database/tests/dojo/lead_team_metrics.sql`.
 
+**A person reads their own series (developer console, 2026-10-26).**
+`dojo.my_metric_series(since)` returns the caller's own daily `scope = user` rows,
+one per metric and day, pooled across their repositories like the lead's view
+(counts summed, rates by their denominators). It is SECURITY INVOKER **and** bound
+to `current_principal_id()`, so an admin or lead who may read others' rows still
+gets only their own series. Pinned by `database/tests/dojo/my_metric_series.sql`.
+
 **Every member reads their teams' totals (#307 R8, 2026-10-22).** The Teams view
 serves every member: per-person rows for a lead (their teams) and an admin (every
 team); for a contributor or maintainer, team totals only. `dojo.team_metric_totals`
@@ -245,6 +252,6 @@ Each has a test under `database/tests/dojo/`. (`create_dojo` was dropped in R1,
 
 ## Related
 
-- #236 (this work), #249 (relay owner-only), #252 (peer status), jerrythomas/kavach#51
+- #236 (this work), #249 (relay owner-only), #252 (peer status), sensei-hq/kavach#51
 - `database/policies/dojo/*.sql`, `database/ddl/function/dojo/*.ddl` — today's policies and helpers
 - Findings from the 2026-10-12 inventory are tracked as private security advisories on this repository, not here.

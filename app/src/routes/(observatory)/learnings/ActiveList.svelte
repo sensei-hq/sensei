@@ -22,7 +22,7 @@
             </div>
             <button type="button" class="title-btn" onclick={() => memoryState.select(m.id)}>{m.title}</button>
             <div class="metrics">
-                <span title="strength">★ {m.strength.toFixed(1)} / 5</span>
+                <span title="strength">★ {memoryState.strengthOf(m).label}</span>
                 <span title="applied">✓ {m.applied_count}</span>
                 <span title="violated">✗ {m.violated_count}</span>
             </div>
@@ -36,7 +36,7 @@
                 >Reinforce</button>
                 <button
                     type="button"
-                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-mute border border-paper-edge cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="challenge-btn"
                     disabled={acting || terminal}
                     onclick={() => memoryState.challenge(m.id)}
@@ -44,7 +44,7 @@
                 <span class="flex-1"></span>
                 <button
                     type="button"
-                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-mute border border-paper-edge cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="archive-btn"
                     disabled={acting}
                     onclick={() => memoryState.archiveMemory(m.id)}

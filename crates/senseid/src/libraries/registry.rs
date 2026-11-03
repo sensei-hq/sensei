@@ -313,7 +313,14 @@ mod tests {
     async fn s8_end_to_end_a_real_lookup_persists_a_repository_url() {
         let pg = crate::db::pg_store::PgStore::connect_test().await.expect("connect");
         let lib = pg
-            .upsert_library("_test:s8", "cargo", Some("1.0.0"), None, None, None)
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: "_test:s8",
+                ecosystem: "cargo",
+                version: Some("1.0.0"),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
             .await
             .expect("library");
 

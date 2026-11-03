@@ -42,9 +42,11 @@ this as *what the site promises is what the product does.*
   built", `roadmap/03-delivery.md` (or the relevant plane) must show ✅ for X.
 - **Lead.** **No roadmap language in marketing.** The site says "sensei does X"
   — not "sensei will do X" or "sensei aims to do X".
-- **Lead.** **Pricing page reflects the final model.** Free = individuals/OSS
-  forever; Paid = per active contributor; no Enterprise tier; GitHub Sponsors
-  optional.
+- **Lead.** **Pricing page reflects the final model.** Free = public repositories
+  and every personal dōjō (private repositories included), forever; Paid = an
+  organisation's private repositories, on its admin's or owner's subscription, per
+  active contributor; local sensei is never limited by plan (D46); no Enterprise tier;
+  GitHub Sponsors optional.
 - **Lead.** **Install command is the unified one-liner** (P1) — not
   platform-specific instructions.
 - **Lead.** **Changelog is generated from git tags** — not hand-written.

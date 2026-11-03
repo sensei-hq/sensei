@@ -17,7 +17,7 @@ set search_path to sensei, extensions;
 -- workspaces and that resolution is MULTI-VALUED.
 --
 -- ONE ROW PER FILE NODE IS A CONTRACT HERE, not a preference. The sole reader is
--- `PgStore::get_files_by_tag`, which runs `WHERE folder = $1 AND $2 = ANY(tags)
+-- `PgStore::get_files_by_tag`, which runs `WHERE $1 = ANY(workspaces) AND $2 = ANY(tags)
 -- ORDER BY file_path LIMIT 200` — a second row per node would both repeat files
 -- and halve that window. The sub-select below collapses the set per folder
 -- BEFORE anything joins a node, so the grain is untouched: measured 2026-10-02,
@@ -43,24 +43,24 @@ set search_path to sensei, extensions;
 -- within `join_collapse_limit` (8 here, read not assumed) — an aggregate blocks
 -- sub-query pull-up, so this counts as ONE relation, and it REPLACES the
 -- `workspaces` join it reads the maturity out of rather than adding to it.
-create or replace view file_tags as
-select n.id
-     , n.folder_id
+drop view if exists file_tags;
+
+create view file_tags as
+select fi.id
+     , fi.folder_id
      , f.name            as folder
      , case when cardinality(ps.workspace_ids)         = 1 then ps.workspace_ids[1]         end as workspace_id
      , case when cardinality(ps.workspaces)            = 1 then ps.workspaces[1]            end as workspace
      , case when cardinality(ps.workspace_maturities)  = 1 then ps.workspace_maturities[1]  end as workspace_maturity
-     , np.file_path
-     , n.tags
-     , n.props
-     , n.modified_at
+     , repo_relative_path(f.kind, f.path, fi.file_path) as file_path
+     , fi.tags
+     , fi.modified_at
      , ps.workspace_ids
      , ps.workspaces
      , ps.workspace_maturities
-  from nodes n
-  left join node_paths np on np.node_id = n.id
-  join folders  f on f.id = n.folder_id
-  -- One row per folder, grouped HERE — before any node joins it — so the
+  from files    fi
+  join folders  f on f.id = fi.folder_id
+  -- One row per folder, grouped HERE — before any file joins it — so the
   -- multi-valued source cannot change this view's grain.
   left join (
     select fp.folder_id
@@ -70,12 +70,12 @@ select n.id
       from folder_workspaces fp
       left join workspaces pj on pj.id = fp.workspace_id
      group by fp.folder_id
-  ) ps on ps.folder_id = f.id
- where n.kind = 'file';
+  ) ps on ps.folder_id = f.id;
 
 comment on view file_tags is
-'File nodes with classification tags, folder and workspace context.
-Tags assigned during indexing: src, test, e2e, config.
+'Files (`sensei.files`) with their framework tags, repo-relative path, folder
+and workspace context. Tags are written by the scan: the kinds of the symbols a
+file holds (hook, component) and its role by path (route, middleware).
 
 Filter/group dimensions: workspace, workspace_maturity, folder, tags.
 
@@ -88,14 +88,14 @@ NULL when there is more than one, because naming one of two true answers is the
 drift this replaces. Measured 2026-10-02: 2,122 of 7,120 file nodes (29.8%) sit
 in a folder whose repository serves two workspaces and so read a NULL scalar.
 
-ONE ROW PER FILE NODE, STILL. The set is collapsed per folder before any node
-joins it, so `id` stays unique and a `LIMIT` still means what it says. Verified
+ONE ROW PER FILE. The set is collapsed per folder before any file joins it, so
+`id` stays unique and a `LIMIT` still means what it says. Verified
 2026-10-02: 7,120 rows and 7,120 distinct ids, unchanged by the migration, where
 a plain join to `folder_workspaces` would have returned 9,242.
 
 Common queries:
-  SELECT file_path FROM file_tags WHERE folder = ''myrepo'' AND ''test'' = ANY(tags)
   -- by workspace — the spelling that reads a multi-workspace repository right
+  SELECT file_path FROM file_tags WHERE ''sensei'' = ANY(workspaces) AND ''route'' = ANY(tags)
   SELECT unnest(tags) as tag, count(*) FROM file_tags WHERE ''sensei'' = ANY(workspaces) GROUP BY tag
   SELECT folder, count(*) FROM file_tags WHERE ''active'' = ANY(workspace_maturities) AND ''test'' = ANY(tags) GROUP BY folder';
 

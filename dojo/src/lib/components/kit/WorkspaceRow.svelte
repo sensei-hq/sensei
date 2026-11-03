@@ -45,9 +45,9 @@
 	</div>
 	<span class="hidden items-center md:flex"><ClassChip kind={p.classification} /></span>
 	{#if showDojo}
-		<span class="text-ink-mute hidden truncate text-xs md:block">{p.dojoName || ''}</span>
+		<span class="text-ink-soft hidden truncate text-xs md:block">{p.dojoName || ''}</span>
 	{/if}
-	<span class="text-ink-mute hidden truncate text-xs md:block">{p.note || ''}</span>
+	<span class="text-ink-soft hidden truncate text-xs md:block">{p.note || ''}</span>
 	<span class="hidden items-center justify-start md:flex">
 		{#if p.spark}<Spark data={p.spark} />{/if}
 	</span>

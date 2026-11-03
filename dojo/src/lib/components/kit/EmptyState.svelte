@@ -23,7 +23,7 @@
 		<KanjiToken char={kanji} size="3xl" toneClass="text-ink-faint" />
 		<div class="display text-ink text-lg font-normal">{title}</div>
 		{#if children}
-			<div class="text-ink-soft text-sm">{@render children()}</div>
+			<div class="text-ink-mute text-sm">{@render children()}</div>
 		{/if}
 		{#if action}<div class="mt-2">{@render action()}</div>{/if}
 	</div>

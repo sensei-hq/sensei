@@ -1,47 +1,49 @@
 /**
- * The Playground rail's model: sensei's own tools, then one group per MCP
- * server discovered in an assistant's config (#84 T2), and the discovered
- * servers grouped by assistant for the section that manages them.
+ * The Playground rail's model: one group per MCP server discovered in an
+ * assistant's config (#84 T2) — sensei's own first — each with the tools the
+ * server itself lists, and the discovered servers grouped by assistant for the
+ * section that manages them.
  *
  * Pure — the page passes the store's values in.
  */
 
+import { iconForKanji } from '$lib/glyph-vocabulary';
+
 export type PlaygroundTool = {
   id: string;
-  mcp: string;
+  serverId: string;
   name: string;
   kind: 'query' | 'action' | 'other';
   summary: string;
+  /** The tool's `inputSchema`, as the server declared it. */
+  schema: unknown;
 };
 
 export type PlaygroundGroup = {
   id: string;
   kanji: string;
-  /** Icon-mode mark (#133); `null` for an assistant's own mark, an identity
-   *  that stays kanji in both modes. */
+  /** Icon-mode mark (#133). */
   icon?: string | null;
   name: string;
   installed: boolean;
-  source: 'sensei' | 'discovered';
-  serverId?: string;
+  /** Sensei's own server: listed first, open by default. */
+  primary: boolean;
+  serverId: string;
   tools: PlaygroundTool[];
-  /** Why a discovered server's tools are not shown: the read failed, or the
-   *  daemon's probe did (#288). null when there is nothing to say. */
+  /** Why a server's tools are not shown: the read failed, or the daemon's
+   *  probe did (#288). null when there is nothing to say. */
   error?: string | null;
 };
 
 /** The fields of a discovered server this model reads. */
 export type DiscoveredServer = { id: string; acp_family: string; mcp_key: string; enabled: boolean };
 
-/** The tool shape of sensei's own catalog this model reads. */
-export type SenseiTool = { name: string; kind?: string; summary: string };
-
 /** A cached manifest, as probed from the server: its tools are untyped JSON,
  *  and `error` is the probe's failure when it had one. */
 export type ServerManifest = { tools?: unknown[]; error?: string | null };
 
 /** A manifest entry this rail can show: one with a string name. */
-function namedTool(t: unknown): t is { name: string; description?: unknown } {
+function namedTool(t: unknown): t is { name: string; description?: unknown; inputSchema?: unknown } {
   return typeof t === 'object' && t !== null && typeof (t as { name?: unknown }).name === 'string'
     && (t as { name: string }).name !== '';
 }
@@ -53,8 +55,7 @@ const FAMILIES: Array<{ family: string; label: string; kanji: string }> = [
   { family: 'zed', label: 'Zed', kanji: '禅' },
 ];
 const UNKNOWN_KANJI = '器';
-/** Icon-mode marks (#133). The assistants keep their kanji: they are
- *  identities, and Solar has no logo for them. */
+/** Icon-mode marks (#133); the assistants' come from the shared vocabulary. */
 const SENSEI_ICON = 'i-solar-ruler-pen-bold-duotone';
 const UNKNOWN_ICON = 'i-solar-plug-circle-bold-duotone';
 
@@ -68,53 +69,44 @@ export function inferKind(name: string, declared: string | undefined): Playgroun
   return 'other';
 }
 
+/** A plugin's server is keyed `plugin_<plugin>_<server>`; it reads as its name. */
+export function serverName(key: string): string {
+  const m = /^plugin_(.+)_([^_]+)$/.exec(key);
+  if (!m) return key;
+  return m[1] === m[2] ? m[2] : `${m[1]} · ${m[2]}`;
+}
+
+const isSensei = (key: string) => serverName(key) === 'sensei';
+
 export function buildPlaygroundGroups(
-  senseiTools: SenseiTool[],
   servers: DiscoveredServer[],
   manifests: Record<string, ServerManifest | undefined>,
   readErrors: Record<string, string | undefined> = {},
 ): PlaygroundGroup[] {
-  const groups: PlaygroundGroup[] = [
-    {
-      id: 'sensei',
-      kanji: '具',
-      icon: SENSEI_ICON,
-      name: 'Sensei',
-      installed: true,
-      source: 'sensei',
-      tools: senseiTools.map((t) => ({
-        id: `sensei:${t.name}`,
-        mcp: 'sensei',
-        name: t.name,
-        kind: t.kind === 'action' || t.kind === 'query' ? t.kind : 'other',
-        summary: t.summary,
-      })),
-    },
-  ];
-  for (const server of servers) {
-    const tools = (manifests[server.id]?.tools ?? [])
-      .filter(namedTool)
-      .map((t) => ({
+  const groups = servers.map((server): PlaygroundGroup => {
+    const primary = isSensei(server.mcp_key);
+    const family = FAMILIES.find((f) => f.family === server.acp_family);
+    return {
+      id: server.id,
+      kanji: primary ? '具' : family?.kanji ?? UNKNOWN_KANJI,
+      // Every mark follows the mode (#133): an assistant's from the vocabulary.
+      icon: primary ? SENSEI_ICON : family ? (iconForKanji(family.kanji) ?? UNKNOWN_ICON) : UNKNOWN_ICON,
+      name: serverName(server.mcp_key),
+      installed: server.enabled,
+      primary,
+      serverId: server.id,
+      tools: (manifests[server.id]?.tools ?? []).filter(namedTool).map((t) => ({
         id: `${server.id}:${t.name}`,
-        mcp: server.id,
+        serverId: server.id,
         name: t.name,
         kind: inferKind(t.name, undefined),
         summary: typeof t.description === 'string' ? t.description : '',
-      }));
-    const family = FAMILIES.find((f) => f.family === server.acp_family);
-    groups.push({
-      id: server.id,
-      kanji: family?.kanji ?? UNKNOWN_KANJI,
-      icon: family ? null : UNKNOWN_ICON,
-      name: server.mcp_key,
-      installed: server.enabled,
-      source: 'discovered',
-      serverId: server.id,
-      tools,
+        schema: t.inputSchema,
+      })),
       error: readErrors[server.id] ?? manifests[server.id]?.error ?? null,
-    });
-  }
-  return groups;
+    };
+  });
+  return [...groups.filter((g) => g.primary), ...groups.filter((g) => !g.primary)];
 }
 
 /** Discovered servers by assistant: known assistants first in a fixed order,
@@ -132,7 +124,7 @@ export function serversByFamily<S extends DiscoveredServer>(
     .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
     .map(([family, rows]) => ({
       family,
-      label: FAMILIES.find((f) => f.family === family)?.label ?? family,
+      label: FAMILIES.find((f) => f.family === family)?.label ?? (family === 'manual' ? 'Added in sensei' : family),
       servers: [...rows].sort((a, b) => a.mcp_key.localeCompare(b.mcp_key)),
     }));
 }

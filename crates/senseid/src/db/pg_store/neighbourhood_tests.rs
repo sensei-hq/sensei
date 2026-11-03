@@ -7,7 +7,7 @@
 use super::graph_seed::SeedGraph;
 use super::*;
 use crate::analysis::neighbourhood::{Call, Side};
-use crate::db::pg_store::graph::{EdgeRow, EdgeTarget};
+use crate::db::pg_store::{EdgeRow, EdgeTarget};
 
 struct Corpus {
     workspace: uuid::Uuid,

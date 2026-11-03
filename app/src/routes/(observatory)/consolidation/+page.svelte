@@ -78,14 +78,14 @@
         {cs.busy === 'consolidate' ? 'consolidating…' : 'consolidate now'}
       </button>
       {#if cs.notice}
-        <p class="text-sm text-ink-soft italic m-0" data-notice>{cs.notice}</p>
+        <p class="text-sm text-ink-mute italic m-0" data-notice>{cs.notice}</p>
       {/if}
     </div>
   {:else}
     <div class="pt-5 pb-6 px-7">
       <div class="max-w-[920px]">
         <!-- Eyebrow line — id + model -->
-        <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-soft mb-3">
+        <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-mute mb-3">
           <span>Consolidated ruleset</span>
           <span class="text-ink-faint">·</span>
           <span class="font-mono normal-case tracking-normal">{ruleset.id}</span>
@@ -101,7 +101,7 @@
             <div class="bg-paper-mute py-3 px-4">
               <div class="text-xs uppercase tracking-wider text-ink-faint mb-1">{s.label}</div>
               <div class="flex items-baseline gap-2">
-                <span class="font-mono text-xs text-ink-mute">{s.before}</span>
+                <span class="font-mono text-xs text-ink-soft">{s.before}</span>
                 <span class="text-xs text-ink-faint">→</span>
                 <span class="display text-lg font-normal {toneClass(s.tone)}">{s.after}</span>
                 {#if s.delta}
@@ -127,7 +127,7 @@
                 <h3 class="display text-base font-medium text-ink m-0 mb-1">{section.heading}</h3>
               {/if}
               {#if section.body}
-                <pre class="font-mono text-sm text-ink-soft leading-relaxed whitespace-pre-wrap m-0">{section.body}</pre>
+                <pre class="font-mono text-sm text-ink-mute leading-relaxed whitespace-pre-wrap m-0">{section.body}</pre>
               {/if}
             </div>
           {/each}
@@ -157,7 +157,7 @@
           </button>
           <span class="flex-1"></span>
           {#if cs.notice}
-            <span class="text-sm text-ink-soft italic" data-notice>{cs.notice}</span>
+            <span class="text-sm text-ink-mute italic" data-notice>{cs.notice}</span>
           {/if}
         </div>
       </div>

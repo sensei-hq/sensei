@@ -82,17 +82,17 @@ export function buildLogsQuery(filters: LogFilters): string {
 export function levelTone(level: string): { text: string; bg: string } {
   switch (level) {
     case 'error':
-      return { text: 'text-error', bg: 'bg-error-soft' };
+      return { text: 'text-on-error-soft', bg: 'bg-error-soft' };
     case 'warn':
-      return { text: 'text-warning', bg: 'bg-warning-soft' };
+      return { text: 'text-on-warning-soft', bg: 'bg-warning-soft' };
     case 'info':
-      return { text: 'text-info', bg: 'bg-info-soft' };
+      return { text: 'text-on-info-soft', bg: 'bg-info-soft' };
     case 'debug':
-      return { text: 'text-ink-soft', bg: 'bg-paper-mute' };
+      return { text: 'text-ink-mute', bg: 'bg-paper-mute' };
     case 'trace':
       return { text: 'text-ink-faint', bg: 'bg-paper-mute' };
     default:
-      return { text: 'text-ink-mute', bg: 'bg-paper-mute' };
+      return { text: 'text-ink-soft', bg: 'bg-paper-mute' };
   }
 }
 

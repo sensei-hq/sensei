@@ -1,21 +1,21 @@
 <script lang="ts">
   // TREND — first-try-right rate over the range as a smooth line, with a
-  // 7-day rolling average and daily dots colored by the day's dominant
-  // quality. Pure presentation: the per-day rollup is computed upstream in
-  // sessions-digest.ts and handed in as `buckets`.
-  import type { DayBucket, QualityTone } from '$lib/sessions-digest.js';
+  // 7-day rolling average and daily dots — corrected turns, or all first-try.
+  // Pure presentation: each day's turns are filed upstream (turnsByDay, from the
+  // turns themselves, so a session that ran for days counts on each day).
+  import { labelStride, rollingFtr, type TurnDay, type QualityTone } from '$lib/sessions-digest.js';
 
   interface Props {
-    buckets: DayBucket[];
+    days: TurnDay[];
     width?: number;
     height?: number;
   }
-  let { buckets, width = 1100, height = 300 }: Props = $props();
+  let { days, width = 1100, height = 300 }: Props = $props();
 
   const padL = 46, padR = 30, padT = 26, padB = 34;
   const innerW = $derived(width - padL - padR);
   const innerH = $derived(height - padT - padB);
-  const n = $derived(buckets.length);
+  const n = $derived(days.length);
 
   // Geometry helpers (inline SVG maths — not view state).
   const x = (i: number) => padL + (i / Math.max(n - 1, 1)) * innerW;
@@ -26,14 +26,8 @@
     good: 'var(--success)',
     bad: 'var(--warning)',
     ugly: 'var(--accent)',
-    neutral: 'var(--ink-mute)',
+    neutral: 'var(--ink-soft)',
   };
-  function dominant(b: DayBucket): QualityTone {
-    if (b.ugly > 0) return 'ugly';
-    if (b.bad > b.good) return 'bad';
-    if (b.good > 0) return 'good';
-    return 'neutral';
-  }
 
   function linePath(points: Array<[number, number]>): string {
     if (points.length === 0) return '';
@@ -49,22 +43,18 @@
 
   // Daily FTR points (skip empty days) + a 7-day rolling mean line.
   const dailyPts = $derived(
-    buckets
+    days
       .map((b, i): [number, number] | null => (b.ftr == null ? null : [x(i), yFtr(b.ftr)]))
       .filter((p): p is [number, number] => p !== null),
   );
+  // The 7-day rolling FTR is the digest's (rollingFtr); the chart only places it.
   const rollingPts = $derived(
-    buckets
-      .map((b, i): [number, number] | null => {
-        const slice = buckets.slice(Math.max(0, i - 6), i + 1).filter((d) => d.ftr != null);
-        if (slice.length === 0 || b.ftr == null) return null;
-        const avg = slice.reduce((a, d) => a + (d.ftr ?? 0), 0) / slice.length;
-        return [x(i), yFtr(avg)];
-      })
+    rollingFtr(days)
+      .map((v, i): [number, number] | null => (v == null ? null : [x(i), yFtr(v)]))
       .filter((p): p is [number, number] => p !== null),
   );
 
-  const labelStride = $derived(n > 14 ? Math.ceil(n / 8) : 1);
+  const stride = $derived(labelStride(n));
   const hasData = $derived(dailyPts.length > 0);
 </script>
 
@@ -85,38 +75,38 @@
       stroke="var(--paper-edge)"
       stroke-dasharray="2 4"
     />
-    <text x={padL - 8} y={yFtr(t) + 3} font-size="10" fill="var(--ink-mute)" text-anchor="end">
+    <text x={padL - 8} y={yFtr(t) + 3} font-size="10" fill="var(--ink-soft)" text-anchor="end">
       {Math.round(t * 100)}%
     </text>
   {/each}
 
   {#if hasData}
     <!-- Daily FTR — faint line + colored dots -->
-    <path d={linePath(dailyPts)} fill="none" stroke="var(--ink-mute)" stroke-width="1" opacity="0.4" />
+    <path d={linePath(dailyPts)} fill="none" stroke="var(--ink-soft)" stroke-width="1" opacity="0.4" />
     <!-- 7-day rolling mean — the quiet narrative line -->
     <path d={linePath(rollingPts)} fill="none" stroke="var(--success)" stroke-width="2.2" />
-    {#each buckets as b, i (b.day)}
+    {#each days as b, i (b.day)}
       {#if b.ftr != null}
         <circle
           cx={x(i)}
           cy={yFtr(b.ftr)}
           r="3.5"
-          fill={TONE_COLOR[dominant(b)]}
+          fill={TONE_COLOR[b.tone]}
           stroke="var(--paper)"
           stroke-width="1"
         />
       {/if}
     {/each}
   {:else}
-    <text x={width / 2} y={height / 2} font-size="12" fill="var(--ink-mute)" text-anchor="middle">
-      no scored sessions in this range yet
+    <text x={width / 2} y={height / 2} font-size="12" fill="var(--ink-soft)" text-anchor="middle">
+      no turns in this range yet
     </text>
   {/if}
 
   <!-- X labels -->
-  {#each buckets as b, i (b.day)}
-    {#if i % labelStride === 0 || i === n - 1}
-      <text x={x(i)} y={height - 10} font-size="10" fill="var(--ink-soft)" text-anchor="middle">
+  {#each days as b, i (b.day)}
+    {#if i % stride === 0 || i === n - 1}
+      <text x={x(i)} y={height - 10} font-size="10" fill="var(--ink-mute)" text-anchor="middle">
         {b.label}
       </text>
     {/if}

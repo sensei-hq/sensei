@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
     SECTIONS,
+    buildWorkspaceNav,
+    workspaceActiveHref,
     isSectionActive,
     healthRows,
-    ftrBand,
     ftrDelta,
     ftrSparkTone,
+    ftrHeadline,
 } from './workspace-sidebar-view.js';
 
 describe('workspace-sidebar-view', () => {
@@ -21,6 +23,37 @@ describe('workspace-sidebar-view', () => {
         });
         it('scopes to the workspace id', () => {
             expect(isSectionActive('/workspace/other/overview', 'abc', 'overview')).toBe(false);
+        });
+    });
+
+    describe('the Diagrams subsection', () => {
+        it('lists each diagram under its own heading, with its hint', () => {
+            const [sections, diagrams] = buildWorkspaceNav('w');
+            expect(sections.children.some((c) => c.text === 'Diagrams')).toBe(false);
+            expect(diagrams.text).toBe('Diagrams');
+            expect(diagrams.children.map((c) => c.href)).toEqual(
+                ['structure', 'wheel', 'zones', 'matrix', 'cycles', 'coupling', 'complexity', 'schema'].map(
+                    (id) => `/workspace/w/diagrams/${id}`,
+                ),
+            );
+            expect(diagrams.children[1]).toMatchObject({
+                kanji: '輪',
+                icon: 'i-solar-refresh-circle-bold-duotone',
+                text: 'Wheel',
+                subtext: 'which groups lean on which',
+            });
+        });
+        it('repeats no mark anywhere in the sidebar, kanji or icon (M16)', () => {
+            const entries = buildWorkspaceNav('w').flatMap((g) => g.children);
+            for (const mark of ['kanji', 'icon'] as const) {
+                const seen = entries.map((e) => e[mark]);
+                expect(seen.every(Boolean), mark).toBe(true);
+                expect(new Set(seen).size, mark).toBe(seen.length);
+            }
+        });
+        it('marks the diagram in view as current', () => {
+            expect(workspaceActiveHref('/workspace/w/diagrams/zones', 'w')).toBe('/workspace/w/diagrams/zones');
+            expect(workspaceActiveHref('/workspace/w/sessions', 'w')).toBe('/workspace/w/sessions');
         });
     });
 
@@ -74,15 +107,6 @@ describe('workspace-sidebar-view', () => {
         });
     });
 
-    describe('ftrBand', () => {
-        it('bands FTR by threshold, and null → ink-faint (no fabricated band)', () => {
-            expect(ftrBand(null)).toBe('ink-faint');
-            expect(ftrBand(0.85)).toBe('success');
-            expect(ftrBand(0.7)).toBe('accent');
-            expect(ftrBand(0.4)).toBe('warning');
-        });
-    });
-
     describe('ftrDelta', () => {
         it('renders the point delta, steady, or an em dash when a window is absent', () => {
             expect(ftrDelta(0.72, 0.6)).toBe('+12 pt');
@@ -100,5 +124,16 @@ describe('workspace-sidebar-view', () => {
             expect(ftrSparkTone(0.6, 0.6)).toBe('neutral');
             expect(ftrSparkTone(0.6, null)).toBe('neutral');
         });
+    });
+});
+
+// Audit item 6 (2026-10-28): the sidebar bands FTR as every screen does (lib/ftr);
+// its headline is ink, warning only when low — no accent middle band.
+describe('ftrHeadline', () => {
+    it('is the shared band; the value is ink unless the rate is low', () => {
+        expect(ftrHeadline(0.85)).toMatchObject({ dot: 'bg-success', valueClass: 'text-ink' });
+        expect(ftrHeadline(0.7)).toMatchObject({ dot: 'bg-ink-soft', valueClass: 'text-ink' });
+        expect(ftrHeadline(0.4)).toMatchObject({ dot: 'bg-warning', valueClass: 'text-warning' });
+        expect(ftrHeadline(null)).toMatchObject({ dot: 'bg-ink-faint', band: 'none' });
     });
 });

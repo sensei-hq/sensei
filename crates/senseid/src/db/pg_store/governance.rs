@@ -1,30 +1,6 @@
 use super::*;
 
-/// One checker run, as [`PgStore::insert_check_run`] appends it (D-CHECKER).
-pub struct CheckRunRow<'a> {
-    pub folder_id: &'a uuid::Uuid,
-    pub rule_statement: &'a str,
-    pub checker_ref: &'a str,
-    pub command: &'a str,
-    /// A `sensei.check_verdict` label.
-    pub verdict: &'a str,
-    pub exit_code: Option<i32>,
-    pub output_tail: &'a str,
-}
-
-/// One consolidated ruleset version, as [`PgStore::insert_consolidated_ruleset`]
-/// writes it.
-pub struct ConsolidatedRulesetRow<'a> {
-    pub scope: &'a str,
-    pub version: i32,
-    pub content: &'a str,
-    pub conflicts: &'a serde_json::Value,
-    pub model: Option<&'a str>,
-    pub source_hash: &'a str,
-    pub status: &'a str,
-}
-
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// Assemble a blended context blob: workspace-scoped + stack-scoped + global memories.
     /// Only active/reinforced/battle_tested/challenged memories are included.
@@ -300,14 +276,8 @@ impl PgStore {
     /// `user_key` where `namespace_id IS NULL` vs. the `(user_key, namespace_id)`
     /// composite), so the conflict target differs by branch. Callers validate the
     /// enum fields first (via [`crate::stance::StanceInput`]).
-    pub async fn upsert_stance(
-        &self,
-        user_key: &str,
-        namespace_id: Option<&uuid::Uuid>,
-        autonomy: &str,
-        sharing: &str,
-        review: &str,
-    ) -> Result<String, String> {
+    pub async fn upsert_stance(&self, stance: &StanceRow<'_>) -> Result<String, String> {
+        let &StanceRow { user_key, namespace_id, autonomy, sharing, review } = stance;
         let sql = if namespace_id.is_some() {
             "INSERT INTO sensei.stances (user_key, namespace_id, autonomy, sharing, review, updated_at)
              VALUES ($1, $2, $3::sensei.stance_autonomy, $4::sensei.stance_sharing, $5::sensei.stance_review, now())
@@ -522,12 +492,9 @@ impl PgStore {
 
     pub async fn assemble_context(
         &self,
-        workspace_id: uuid::Uuid,
-        stack_ids: &[String],
-        tags: Option<&[String]>,
-        limit: i64,
-        slot: Option<(&str, Option<&str>)>,
+        q: &ContextQuery<'_>,
     ) -> Result<serde_json::Value, String> {
+        let &ContextQuery { workspace_id, stack_ids, tags, limit, slot } = q;
         let allowed = ["active", "reinforced", "battle_tested", "challenged"];
         let allowed_owned: Vec<String> = allowed.iter().map(|s| s.to_string()).collect();
         let stack_owned: Vec<String> = stack_ids.to_vec();

@@ -33,7 +33,7 @@ fn run_on(
             // Like the real tool, more output follows the match: under
             // `pipefail` a `| grep -q` that exits at the match SIGPIPEs it, and
             // the pipeline read as "no identity" — the flake seen under the hook.
-            "#!/bin/sh\n[ \"$HAS_DEV_ID\" = 1 ] && echo '  1) ABCDEF \"sensei-dev\"'\ni=0; while [ $i -lt 20000 ]; do echo \"  $i) 0000 \\\"other\\\"\"; i=$((i+1)); done\necho '     1 valid identities found'\n",
+            "#!/bin/sh\n[ \"$HAS_DEV_ID\" = 1 ] && echo '  1) ABCDEF \"sensei-dev\"'\n[ \"$HAS_DEVELOPER_ID\" = 1 ] && echo '  2) 123456 \"Developer ID Application: Example Co (TEAM123456)\"'\ni=0; while [ $i -lt 20000 ]; do echo \"  $i) 0000 \\\"other\\\"\"; i=$((i+1)); done\necho '     1 valid identities found'\n",
         ),
         ("codesign", "#!/bin/sh\necho \"$@\" >> \"$CODESIGN_LOG\"\n"),
     ] {
@@ -102,4 +102,66 @@ fn an_app_bundle_gets_its_own_stable_identifier() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert!(log.contains("--identifier dev.sensei.app.sensei"), "{log}");
     assert!(log.contains("Sensei.app"), "signs the bundle itself: {log}");
+}
+
+/// #282: the company's Developer ID, once its certificate is in the keychain, is the
+/// identity users' grants are keyed on — it beats the self-signed `sensei-dev`, and
+/// it is signed with a secure timestamp, which notarization requires.
+#[test]
+fn a_developer_id_in_the_keychain_wins_and_is_timestamped() {
+    let t = tempfile::tempdir().unwrap();
+    let (o, log) = run(t.path(), true, &[("HAS_DEVELOPER_ID", "1")]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(log.contains("--sign Developer ID Application: Example Co (TEAM123456)"), "{log}");
+    assert!(log.contains("--timestamp"), "{log}");
+    assert!(log.contains("--options runtime"), "{log}");
+}
+
+/// The self-signed dev identity is not timestamped: a local install must not need the
+/// network to sign.
+#[test]
+fn the_dev_identity_is_not_timestamped() {
+    let t = tempfile::tempdir().unwrap();
+    let (_, log) = run(t.path(), true, &[]);
+    assert!(!log.contains("--timestamp"), "{log}");
+}
+
+/// CI names the identity explicitly (`SENSEI_SIGN_IDENTITY`, from the release secrets);
+/// a Developer ID named that way is timestamped too.
+#[test]
+fn an_explicit_developer_id_is_timestamped() {
+    let t = tempfile::tempdir().unwrap();
+    let (_, log) =
+        run(t.path(), false, &[("SENSEI_SIGN_IDENTITY", "Developer ID Application: X (T)")]);
+    assert!(log.contains("--timestamp"), "{log}");
+}
+
+/// The installed app keeps its own bundle identifier (`com.senseihq.desktop`, the one the
+/// release signs it with), so local and released builds share their grants; the e2e bundle
+/// still gets `dev.sensei.app.<name>` (#284).
+#[test]
+fn keep_identifier_signs_a_bundle_under_its_own_identifier() {
+    let t = tempfile::tempdir().unwrap();
+    let bin = t.path().join("bin");
+    let (o, log) = {
+        // Prime the fakes and target with the usual run, then sign again with the flag.
+        let _ = run_on(t.path(), "Sensei.app", true, &[("HAS_DEVELOPER_ID", "1")]);
+        std::fs::write(t.path().join("codesign.log"), "").unwrap();
+        let out = Command::new("bash")
+            .arg(script())
+            .arg("--keep-identifier")
+            .arg(t.path().join("Sensei.app"))
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("HAS_DEV_ID", "1")
+            .env("HAS_DEVELOPER_ID", "1")
+            .env("CODESIGN_LOG", t.path().join("codesign.log"))
+            .env_remove("SENSEI_SIGN_IDENTITY")
+            .output()
+            .unwrap();
+        (out, std::fs::read_to_string(t.path().join("codesign.log")).unwrap())
+    };
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(!log.contains("--identifier"), "the bundle's own identifier is kept: {log}");
+    assert!(log.contains("--sign Developer ID Application"), "{log}");
+    assert!(log.contains("Sensei.app"), "{log}");
 }

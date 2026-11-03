@@ -8,6 +8,7 @@
   // (multi-repo workspaces); it stays dormant on the multi-workspace observatory
   // view and on single-folder workspaces.
   import type { EnrichedSession, QualityTone } from '$lib/sessions-digest.js';
+  import { correctionsView, sessionFtrView } from '$lib/ftr';
 
   interface Props {
     session: EnrichedSession;
@@ -20,20 +21,14 @@
     good: 'bg-success',
     bad: 'bg-warning',
     ugly: 'bg-accent',
-    neutral: 'bg-ink-mute',
+    neutral: 'bg-ink-soft',
   };
 
-  // FTR badge agrees with the underlying `ftr` column (spec done-gate): a
-  // green ✓ only when ftr is truthy, an amber marker when explicitly false,
-  // a faint dash when the session isn't scored yet.
-  const ftrClass = $derived(
-    session.ftr === true ? 'text-success' : session.ftr === false ? 'text-warning' : 'text-ink-faint',
-  );
-  const ftrLabel = $derived(session.ftr === true ? '✓ FTR' : session.ftr === false ? 'no FTR' : '—');
+  // The shared session view (lib/ftr): the same words and colours as Today and
+  // Instruments; an unscored session is a faint dash.
+  const ftr = $derived(sessionFtrView(session.ftr));
 
-  const correctionsLabel = $derived(
-    session.corrections === 0 ? 'first-try' : `${session.corrections}× rework`,
-  );
+  const corrections = $derived(correctionsView(session.corrections));
 
   // Token column: the in+out sum, with an in/out breakdown on hover. A dash when
   // the session's source carried no usage (honest — never shown as 0).
@@ -53,15 +48,15 @@
 >
   <span class="w-2.5 h-2.5 rounded-full {DOT[session.quality]}"></span>
 
-  <span class="font-mono text-xs text-ink-mute" style='font-feature-settings: "tnum";'>{session.time}</span>
+  <span class="font-mono text-xs text-ink-soft" style='font-feature-settings: "tnum";'>{session.time}</span>
 
   <span class="flex flex-col gap-0.5 min-w-0">
     <span class="text-sm text-ink truncate">{session.title}</span>
-    <span class="text-xs text-ink-soft truncate flex items-center gap-1.5">
+    <span class="text-xs text-ink-mute truncate flex items-center gap-1.5">
       <span class="truncate">{session.workspace || 'unlinked'}{#if session.agent} · {session.agent}{/if}</span>
       {#if session.folderRole}
         <span
-          class="shrink-0 py-px px-1.5 rounded-full bg-paper-mute text-ink-mute uppercase tracking-wide text-xs"
+          class="shrink-0 py-px px-1.5 rounded-full bg-paper-mute text-ink-soft uppercase tracking-wide text-xs"
           data-folder-role={session.folderRole}
         >{session.folderRole}</span>
       {/if}
@@ -69,15 +64,15 @@
   </span>
 
   <span class="flex items-center gap-4 text-xs">
-    <span class="font-mono text-ink-mute w-14 text-right" style='font-feature-settings: "tnum";'>{session.duration}</span>
+    <span class="font-mono text-ink-soft w-14 text-right" style='font-feature-settings: "tnum";'>{session.duration}</span>
     <span
       class="font-mono text-ink-faint w-14 text-right"
       style='font-feature-settings: "tnum";'
       title={tokensTitle}
     >{session.tokensLabel}</span>
-    <span class="text-ink-soft w-20 text-right">{correctionsLabel}</span>
-    <span class="{ftrClass} w-16 text-right uppercase tracking-wide">{ftrLabel}</span>
-    <span class="text-ink-soft w-20 text-right capitalize">{session.outcome}</span>
+    <span class="text-ink-mute w-20 text-right">{corrections.label}</span>
+    <span class="{ftr.text} w-16 text-right uppercase tracking-wide">{ftr.label}</span>
+    <span class="text-ink-mute w-20 text-right capitalize">{session.outcome}</span>
   </span>
 </button>
 

@@ -932,23 +932,24 @@ mod tests {
     }
 
     /// Poll `GET …/trackers` until the status leaves `pending` (≤ 3 s).
+    /// The first sync has FINISHED: its status is written AND its lock released.
+    /// It writes the status before the lock drops, so a test that synced on the
+    /// status alone could arrive in between and read `busy` — a 409 seen under the
+    /// full parallel suite (2026-10-26).
     async fn settled(h: &Harness, p: uuid::Uuid) -> Value {
         for _ in 0..300 {
             let (_, body) =
                 call(h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
             let v = json(&body);
-            if v[0]["status"] != json!("pending") {
-                // The sync's write-back pass (W2) still holds the board's lock for a
-                // moment after the status settles; under load a call made now is
-                // `busy`. Wait for the lock too.
-                let id: uuid::Uuid = v[0]["id"].as_str().unwrap().parse().unwrap();
-                for _ in 0..1_000 {
-                    if h.rt.locks.try_lock(id).is_some() {
-                        return v;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                }
-                panic!("the post-sync write-back pass never released the board");
+            let ids: Vec<uuid::Uuid> = v
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|t| t["id"].as_str().and_then(|s| s.parse().ok()))
+                .collect();
+            let idle = ids.iter().all(|id| h.rt.locks.try_lock(*id).is_some());
+            if v[0]["status"] != json!("pending") && idle {
+                return v;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }

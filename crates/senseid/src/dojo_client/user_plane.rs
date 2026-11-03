@@ -287,6 +287,16 @@ pub trait UserPlane: Send + Sync {
     /// The person's own memberships (`GET /v1/you/memberships`).
     async fn my_memberships(&self, token: &str) -> Result<Vec<MyMembership>, String>;
 
+    /// The person's glyph choice and when it was made (`GET /v1/you/preferences`, #133).
+    async fn preferences(&self, token: &str) -> Result<super::glyph_sync::GlyphPref, String>;
+
+    /// Send a glyph choice; the dōjō keeps the later one and answers what it holds.
+    async fn put_glyphs(
+        &self,
+        token: &str,
+        choice: &super::glyph_sync::GlyphPref,
+    ) -> Result<super::glyph_sync::GlyphPref, String>;
+
     /// Hand the dōjō the forge token so it can re-read repository visibility.
     ///
     /// `Err` when the dōjō reports it did NOT provision, even though that answer
@@ -365,6 +375,20 @@ impl UserPlane for HttpUserPlane {
     }
     async fn my_memberships(&self, token: &str) -> Result<Vec<MyMembership>, String> {
         my_memberships(&self.dojo_url, token).await
+    }
+    async fn preferences(&self, token: &str) -> Result<super::glyph_sync::GlyphPref, String> {
+        let req = crate::federation::http_client().get(endpoint(&self.dojo_url, "preferences"));
+        decode("preferences", &send(req, token, "preferences").await?)
+    }
+    async fn put_glyphs(
+        &self,
+        token: &str,
+        choice: &super::glyph_sync::GlyphPref,
+    ) -> Result<super::glyph_sync::GlyphPref, String> {
+        let req = crate::federation::http_client()
+            .put(endpoint(&self.dojo_url, "preferences"))
+            .json(choice);
+        decode("preferences", &send(req, token, "preferences").await?)
     }
     async fn set_metric_activation(
         &self,

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { clock } from '$lib/clock.svelte.js';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { EmptyState, PageHeader, Screen } from '$lib/components';
@@ -37,13 +38,13 @@
     return l;
   }
 
-  // Fresh "x ago" baseline, recomputed whenever a new page loads. Kept a pure
-  // derivation (not an $effect assigning state) — reading `data.rows` registers
-  // the dependency so the baseline moves forward on every refetch.
-  const now = $derived.by(() => {
-    data.rows.length;
-    return Date.now();
+  // "x ago", "running" and "next in …" read the app's ticking clock, so they
+  // move while the screen sits open (audit 2026-10-28, item 14).
+  $effect(() => {
+    clock.start();
+    return () => clock.stop();
   });
+  const now = $derived(clock.now);
 
   const sources = $derived(distinctSources(data.rows, data.filters.source));
   const modules = $derived(distinctModules(data.rows, data.filters.module));
@@ -82,7 +83,7 @@
     {:else if data.tasks.length > 0}
       <section class="border-b border-paper-edge" data-testid="scheduled-tasks">
         <div class="flex items-baseline gap-2 px-6 pt-4 pb-2">
-          <h2 class="text-xs uppercase tracking-wider text-ink-soft m-0">Background tasks</h2>
+          <h2 class="text-xs uppercase tracking-wider text-ink-mute m-0">Background tasks</h2>
           <span class="text-xs text-ink-faint">
             what the daemon is running, and when — run-health tracking is a follow-up
           </span>
@@ -107,7 +108,7 @@
     <!-- Controls -->
     <div class="flex items-center gap-3 flex-wrap px-6 py-3 border-b border-paper-edge">
       <!-- level (exact match — clearly labelled) -->
-      <label class="flex items-center gap-2 text-xs text-ink-mute">
+      <label class="flex items-center gap-2 text-xs text-ink-soft">
         <span class="uppercase tracking-wider">Level</span>
         <select
           class="font-mono text-xs bg-paper-soft text-ink border border-paper-edge rounded py-1 px-2 cursor-pointer"
@@ -124,7 +125,7 @@
       </label>
 
       <!-- source -->
-      <label class="flex items-center gap-2 text-xs text-ink-mute">
+      <label class="flex items-center gap-2 text-xs text-ink-soft">
         <span class="uppercase tracking-wider">Source</span>
         <div class="max-w-[160px]" data-log-filter-source>
           <Select
@@ -136,7 +137,7 @@
       </label>
 
       <!-- module -->
-      <label class="flex items-center gap-2 text-xs text-ink-mute">
+      <label class="flex items-center gap-2 text-xs text-ink-soft">
         <span class="uppercase tracking-wider">Module</span>
         <div class="max-w-[160px]" data-log-filter-module>
           <Select
@@ -169,7 +170,7 @@
             class:text-ink={active}
             class:font-semibold={active}
             class:bg-transparent={!active}
-            class:text-ink-mute={!active}
+            class:text-ink-soft={!active}
             aria-pressed={active}
             onclick={() => apply({ since: opt.value })}
             data-log-since={opt.value}
@@ -180,7 +181,7 @@
       </div>
 
       <!-- limit -->
-      <label class="flex items-center gap-2 text-xs text-ink-mute">
+      <label class="flex items-center gap-2 text-xs text-ink-soft">
         <span class="uppercase tracking-wider">Limit</span>
         <div data-log-filter-limit>
           <Select
@@ -193,7 +194,7 @@
     </div>
 
     <!-- Count / cap note -->
-    <div class="flex items-center gap-2 px-6 py-2 border-b border-paper-edge text-xs text-ink-mute">
+    <div class="flex items-center gap-2 px-6 py-2 border-b border-paper-edge text-xs text-ink-soft">
       <span class="font-mono" data-log-count>
         {#if view.search.trim()}
           showing {rendered.length} of {data.rows.length} loaded
@@ -234,7 +235,7 @@
   {:else}
     <div>
       {#if rendered.length === 0}
-        <p class="text-sm text-ink-mute px-6 py-6">No rows match “{view.search}”.</p>
+        <p class="text-sm text-ink-soft px-6 py-6">No rows match “{view.search}”.</p>
       {:else}
         {#each rendered as row (row.id)}
           <LogRow

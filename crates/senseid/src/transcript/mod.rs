@@ -48,12 +48,29 @@ pub(crate) const INJECTED_MARKERS: &[&str] = &[
     "## Security Guidance",
 ];
 
-/// The human prompt text of a `user` record, or `None` if it's a tool result,
-/// a meta/injected message, or empty.
-pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
-    if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
-        return None;
+/// Origins Claude Code labels a turn it started itself with (`turnOrigin`): a loop or
+/// cron tick, an agent's hand-back, a background task's notification, a continuation.
+/// Each starts an assistant turn that spends tokens (user, 2026-10-29).
+pub(crate) const AUTOMATED_ORIGINS: &[&str] =
+    &["scheduled", "task_notification", "peer", "auto_continuation"];
+
+/// The turn a `user` record starts — its origin and prompt text — or `None` when it
+/// starts none (a tool result, an injected skill body or notice, an empty prompt). A
+/// record labelled with an automated `turnOrigin` starts one with that origin; anything
+/// else is a turn only when it is a human prompt, as before origins were labelled.
+pub(crate) fn turn_start(v: &serde_json::Value) -> Option<(String, String)> {
+    if let Some(origin) = v.get("turnOrigin").and_then(|o| o.as_str())
+        && AUTOMATED_ORIGINS.contains(&origin)
+    {
+        let text = record_text(v).map(|t| t.trim().to_string()).unwrap_or_default();
+        return Some((origin.to_string(), text));
     }
+    human_prompt_text(v).map(|t| ("human".to_string(), t))
+}
+
+/// The text a `user` record carries — the string content, or its `text` blocks joined —
+/// or `None` for a tool result or a record without content.
+fn record_text(v: &serde_json::Value) -> Option<String> {
     let content = v.get("message").and_then(|m| m.get("content"))?;
     let text = match content {
         serde_json::Value::String(s) => s.clone(),
@@ -77,11 +94,42 @@ pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
         }
         _ => return None,
     };
+    Some(text)
+}
+
+/// The human prompt text of a `user` record, or `None` if it's a tool result,
+/// a meta/injected message, or empty.
+pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
+    if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
+        return None;
+    }
+    let text = record_text(v)?;
     let trimmed = text.trim();
+    if let Some(command) = slash_command(trimmed) {
+        return Some(command);
+    }
     if trimmed.is_empty() || is_injected_noise(trimmed) {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+/// A slash command the person typed, as `/name args`: Claude Code records it as
+/// `<command-name>` and `<command-args>` tags, in either order alongside
+/// `<command-message>`. `None` when the text names no command.
+fn slash_command(text: &str) -> Option<String> {
+    let tag = |name: &str| {
+        let (open, close) = (format!("<{name}>"), format!("</{name}>"));
+        let start = text.find(&open)? + open.len();
+        let len = text[start..].find(&close)?;
+        Some(text[start..start + len].trim())
+    };
+    let name = tag("command-name").filter(|n| !n.is_empty())?;
+    let slash = if name.starts_with('/') { "" } else { "/" };
+    Some(match tag("command-args").filter(|a| !a.is_empty()) {
+        Some(args) => format!("{slash}{name} {args}"),
+        None => format!("{slash}{name}"),
+    })
 }
 
 /// Check whether a prompt string is injected noise (not a genuine human turn).
@@ -181,6 +229,10 @@ pub(crate) fn turn_attrs(v: &serde_json::Value, drop_keys: &[&str]) -> serde_jso
 #[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptTurn {
     pub turn_index: i32,
+    /// Who started the turn: `human`, or an automated origin (see [`AUTOMATED_ORIGINS`]).
+    pub origin: String,
+    /// The transcript's `promptId` — the hook's `prompt_id` for the same prompt.
+    pub prompt_id: Option<String>,
     pub user_text: Option<String>,
     pub assistant_text: String,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -204,6 +256,8 @@ impl Default for TranscriptTurn {
     fn default() -> Self {
         Self {
             turn_index: 0,
+            origin: "human".to_string(),
+            prompt_id: None,
             user_text: None,
             assistant_text: String::new(),
             started_at: None,
@@ -470,7 +524,7 @@ fn adapters() -> Vec<Box<dyn TranscriptAdapter>> {
         Box::new(zed::ZedAdapter::new(zed_db_path())),
         Box::new(opencode::OpenCodeAdapter::new(opencode_db_path())),
         Box::new(cursor::CursorAdapter::new(cursor_transcript_root())),
-        Box::new(vscode::VscodeAdapter::new(vscode_user_root("Code").unwrap_or_else(claude_root))),
+        Box::new(vscode::VscodeAdapter::installed()),
         Box::new(copilot_cli::CopilotCliAdapter::new(copilot_home())),
     ]
 }
@@ -491,9 +545,7 @@ fn adapter_for_source(source: &str) -> Option<Box<dyn TranscriptAdapter>> {
         "zed" => Some(Box::new(zed::ZedAdapter::new(zed_db_path()))),
         "opencode" => Some(Box::new(opencode::OpenCodeAdapter::new(opencode_db_path()))),
         "cursor" => Some(Box::new(cursor::CursorAdapter::new(cursor_transcript_root()))),
-        "vscode" => Some(Box::new(vscode::VscodeAdapter::new(
-            vscode_user_root("Code").unwrap_or_else(claude_root),
-        ))),
+        "vscode" => Some(Box::new(vscode::VscodeAdapter::installed())),
         "copilot_cli" => Some(Box::new(copilot_cli::CopilotCliAdapter::new(copilot_home()))),
         _ => None,
     }
@@ -569,11 +621,13 @@ async fn ingest_one(
         };
         turns = pg
             .upsert_transcript_turns(
-                adapter.source(),
-                &session_id,
-                adapter.family(),
-                provider,
-                model_name,
+                &crate::db::pg_store::TranscriptSource {
+                    source: adapter.source(),
+                    session_id: &session_id,
+                    family: adapter.family(),
+                    provider,
+                    model: model_name,
+                },
                 &parsed.turns,
             )
             .await?;
@@ -587,8 +641,14 @@ async fn ingest_one(
         // with reality, so a watermark claiming turns that no longer exist was
         // undetectable — 1,986 Zed turns were claimed against an empty table for
         // two days (#125). With the real count, that mismatch is queryable.
-        pg.set_capture_watermark(adapter.source(), key, Some(&session_id), stamp, turns as i32)
-            .await?;
+        pg.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+            source: adapter.source(),
+            file_path: key,
+            session_id: Some(&session_id),
+            mtime_ns: stamp,
+            turns: turns as i32,
+        })
+        .await?;
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
@@ -632,7 +692,16 @@ async fn set_session_metadata(
         None => (None, None),
     };
     if let Err(e) = pg
-        .set_session_metadata(session_id, provider, model_name, tokens_in, tokens_out, t.as_ref())
+        .set_session_metadata(
+            session_id,
+            &crate::db::pg_store::SessionMetadataPatch {
+                provider,
+                model: model_name,
+                tokens_in,
+                tokens_out,
+                split: t.as_ref(),
+            },
+        )
         .await
     {
         tracing::warn!(error = %e, session = %session_id, "set_session_metadata: write failed");
@@ -706,8 +775,15 @@ async fn synthesize_session(
         tracing::debug!(session = %session_id, "synthesize_session: no tracked folder for cwds — skipping");
         return None;
     };
-    if let Err(e) =
-        pg.record_session_event(session_id, &folder_id, workspace_id.as_ref(), family, true).await
+    if let Err(e) = pg
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: session_id,
+            folder_id: &folder_id,
+            workspace_id: workspace_id.as_ref(),
+            family,
+            is_end: true,
+        })
+        .await
     {
         tracing::warn!(error = %e, "synthesize_session: record_session_event failed");
         return None;
@@ -828,14 +904,18 @@ pub async fn backfill(
         tracing::error!(error = %e, "transcript backfill: consent unreadable; reading no transcripts");
         std::collections::HashSet::new()
     });
-    // Once: re-read Claude transcripts ingested before each response was counted
-    // once (session-api-cost C6). A failure retries on the next backfill.
-    match pg.reset_claude_watermarks_once().await {
-        Ok(true) => {
-            tracing::info!("transcript backfill: re-reading Claude transcripts once (messages_v1)")
+    // Once per rule change: re-read the transcripts ingested under the old rule.
+    // A failure retries on the next backfill.
+    for &(done, sources, why) in WATERMARK_RESETS {
+        match pg.reset_watermarks_once(done, sources).await {
+            Ok(true) => {
+                tracing::info!(done, why, "transcript backfill: re-reading transcripts once")
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, done, "transcript backfill: watermark reset failed")
+            }
         }
-        Ok(false) => {}
-        Err(e) => tracing::warn!(error = %e, "transcript backfill: messages_v1 reset failed"),
     }
     let (files_seen, enqueued) = dispatch(queue, parent, since, &consented).await;
     let sessions_repaired = repair_sessions(pg).await;
@@ -901,6 +981,26 @@ pub async fn repair_sessions(pg: &crate::db::pg_store::PgStore) -> u32 {
     }
     repaired
 }
+
+/// The rule changes that re-read transcripts once: (config key set when done,
+/// sources re-read, why).
+const WATERMARK_RESETS: &[(&str, &[&str], &str)] = &[
+    (
+        "transcripts.messages_v1",
+        &["claude_code"],
+        "each response counted once (session-api-cost C6)",
+    ),
+    (
+        "transcripts.slash_prompts_v1",
+        &["claude_code", "cursor"],
+        "a slash command is a prompt (decisions 2026-10-28)",
+    ),
+    (
+        "transcripts.turn_origins_v1",
+        &["claude_code"],
+        "an automated prompt is a turn, labelled with its origin (user, 2026-10-29)",
+    ),
+];
 
 /// Scan all adapters and enqueue one `IngestCapture` task per
 /// transcript. Returns `(files_seen, enqueued)`. Each per-file task does the
@@ -991,6 +1091,19 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Claude Code transcripts read before automated prompts were turns are read once
+    /// more, so their scheduled, peer and task-notification turns — and tokens — land.
+    #[test]
+    fn claude_transcripts_are_re_read_once_for_automated_turns() {
+        assert!(
+            WATERMARK_RESETS
+                .iter()
+                .any(|&(done, sources, _)| done == "transcripts.turn_origins_v1"
+                    && sources == ["claude_code"]),
+            "no once-only re-read for turn origins"
+        );
+    }
 
     /// #280: a backfill's repair pass brings existing sessions to their turn sums.
     /// A fully-ingested transcript is skipped as fresh, so without this pass a
@@ -1128,6 +1241,41 @@ mod tests {
 {"type":"user","timestamp":"2026-06-22T10:01:00.000Z","message":{"role":"user","content":"now wire it up"}}
 {"type":"assistant","timestamp":"2026-06-22T10:01:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Wired."}]}}
 "#;
+
+    /// #123 A5: a test that needs a real-data sample must not pass by skipping.
+    /// `let Ok(dir) = env::var("SENSEI_…_SAMPLE") else { return; }` reports `ok`
+    /// while executing nothing, and no Makefile or workflow sets those
+    /// variables, so A2 and A4 survived the very tests meant to catch them.
+    /// Such a test is `#[ignore]` with its reason (visible as "ignored" in every
+    /// run) and fails loudly when run without its sample.
+    #[test]
+    fn no_sample_test_passes_by_skipping() {
+        fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    rust_files(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        rust_files(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+        // Spelled at runtime so this test's own text never matches itself.
+        let skip = ["_SAMPLE\")", " else {"].concat();
+        let mut found = Vec::new();
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap();
+            for (i, line) in text.lines().enumerate() {
+                let code = line.trim_start();
+                if !code.starts_with("//") && code.contains(&skip) && code.contains("SENSEI_") {
+                    found.push(format!("{}:{}", f.display(), i + 1));
+                }
+            }
+        }
+        assert!(found.is_empty(), "sample tests that pass by skipping: {found:#?}");
+    }
 
     /// The Claude adapter, counting how often a transcript is parsed.
     struct CountingClaude {
@@ -1288,7 +1436,15 @@ mod tests {
         .await
         .unwrap();
         let stamp = ad.stamp_for(&key).unwrap();
-        pg.set_capture_watermark("claude_code", &key, Some(&sid), stamp, 1).await.unwrap();
+        pg.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+            source: "claude_code",
+            file_path: &key,
+            session_id: Some(&sid),
+            mtime_ns: stamp,
+            turns: 1,
+        })
+        .await
+        .unwrap();
         // Its metadata pass is done too, so nothing else asks for a re-read.
         sqlx_core::query::query(
             "UPDATE activity.sessions SET meta_synced_at = now() WHERE client_session_id = $1",

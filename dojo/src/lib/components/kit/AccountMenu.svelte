@@ -4,7 +4,8 @@
 	import { getInitials } from './initials';
 	import { createLogout } from './logout.svelte';
 	import { colorMode, setColorMode } from '$lib/theme.svelte';
-	import { GLYPH_OPTIONS, glyphs, setGlyphMode, type GlyphMode } from '$lib/glyphs.svelte';
+	import { onMount } from 'svelte';
+	import { GLYPH_OPTIONS, chooseGlyphMode, glyphs, syncGlyphs, type GlyphMode } from '$lib/glyphs.svelte';
 	import type { ColorMode } from '@rokkit/app';
 	import type { KitMe } from './types';
 
@@ -30,6 +31,12 @@
 		open = false;
 		logout.run();
 	}
+
+	// The glyph choice syncs with the app through the dōjō (#133): the menu is
+	// the signed-in person's, so it brings this browser to the later choice.
+	onMount(() => {
+		void syncGlyphs();
+	});
 </script>
 
 <div class="relative">
@@ -46,7 +53,7 @@
 		}}
 		title={me?.name ?? 'Account'}
 		aria-label="Account menu"
-		class="bg-accent-soft text-accent flex flex-shrink-0 cursor-pointer items-center justify-center rounded-full border-none text-xs font-semibold"
+		class="bg-accent-soft text-on-accent-soft flex flex-shrink-0 cursor-pointer items-center justify-center rounded-full border-none text-xs font-semibold"
 		style="width: 30px; height: 30px"
 	>
 		{initials}
@@ -73,7 +80,7 @@
 			{/if}
 
 			<div class="flex flex-col gap-2 px-4 py-3">
-				<span class="text-ink-mute text-xs font-semibold uppercase" style="letter-spacing: 0.18em">Theme</span>
+				<span class="text-ink-soft text-xs font-semibold uppercase" style="letter-spacing: 0.18em">Theme</span>
 				<Toggle
 					options={MODES}
 					value={colorMode.mode}
@@ -84,11 +91,11 @@
 			</div>
 
 			<div class="flex flex-col gap-2 px-4 pb-3">
-				<span class="text-ink-mute text-xs font-semibold uppercase" style="letter-spacing: 0.18em">Glyphs</span>
+				<span class="text-ink-soft text-xs font-semibold uppercase" style="letter-spacing: 0.18em">Glyphs</span>
 				<Toggle
 					options={GLYPH_OPTIONS}
 					value={glyphs.mode}
-					onchange={(v) => setGlyphMode(v as GlyphMode)}
+					onchange={(v) => void chooseGlyphMode(v as GlyphMode)}
 					size="sm"
 					label="Glyphs"
 				/>
@@ -99,9 +106,9 @@
 				role="menuitem"
 				onclick={doLogout}
 				disabled={logout.busy}
-				class="border-paper-edge text-ink-soft hover:text-ink flex w-full cursor-pointer items-center gap-2 border-t bg-transparent px-4 py-3 text-left text-sm"
+				class="border-paper-edge text-ink-mute hover:text-ink flex w-full cursor-pointer items-center gap-2 border-t bg-transparent px-4 py-3 text-left text-sm"
 			>
-				<KanjiToken char="出" size="inherit" toneClass="" class="text-ink-mute text-xs" /> Log out
+				<KanjiToken char="出" size="inherit" toneClass="" class="text-ink-soft text-xs" /> Log out
 			</button>
 		</div>
 	{/if}

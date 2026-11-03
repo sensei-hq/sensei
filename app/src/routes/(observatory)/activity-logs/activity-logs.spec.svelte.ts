@@ -86,15 +86,15 @@ describe('buildLogsQuery', () => {
 
 describe('levelTone', () => {
   it('maps each known level to a rokkit role token', () => {
-    expect(levelTone('error').text).toBe('text-error');
-    expect(levelTone('warn').text).toBe('text-warning');
-    expect(levelTone('info').text).toBe('text-info');
-    expect(levelTone('debug').text).toBe('text-ink-soft');
+    expect(levelTone('error').text).toBe('text-on-error-soft');
+    expect(levelTone('warn').text).toBe('text-on-warning-soft');
+    expect(levelTone('info').text).toBe('text-on-info-soft');
+    expect(levelTone('debug').text).toBe('text-ink-mute');
     expect(levelTone('trace').text).toBe('text-ink-faint');
   });
 
   it('falls back to the neutral ramp for an unknown level', () => {
-    expect(levelTone('nope')).toEqual({ text: 'text-ink-mute', bg: 'bg-paper-mute' });
+    expect(levelTone('nope')).toEqual({ text: 'text-ink-soft', bg: 'bg-paper-mute' });
   });
 });
 

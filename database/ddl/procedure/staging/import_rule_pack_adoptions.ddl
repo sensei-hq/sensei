@@ -13,7 +13,9 @@ set search_path to staging, sensei, extensions;
 -- procedure did — an adoption pins what it adopted, and re-adopting is how a
 -- namespace takes an update.
 create or replace procedure import_rule_pack_adoptions()
-language plpgsql as $$
+language plpgsql
+set search_path = staging, sensei, extensions
+as $$
 begin
   -- The namespace first: an adoption cannot reference one that does not exist.
   -- Fixed id, seeded — see the note on staging.rule_pack_adoptions.

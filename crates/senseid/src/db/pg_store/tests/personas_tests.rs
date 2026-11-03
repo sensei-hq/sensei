@@ -600,3 +600,32 @@ async fn all_task_kinds_match_the_database_enum() {
         );
     }
 }
+
+/// Make default (user, 2026-10-27): one identity at most is chosen; choosing
+/// another moves the choice; an identity that does not exist is refused, not
+/// silently ignored.
+#[tokio::test]
+async fn choosing_a_default_identity_moves_the_one_choice() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().simple().to_string();
+    let (a, b) = (format!("_test:def-a-{uniq}"), format!("_test:def-b-{uniq}"));
+    s.upsert_persona(&a, true).await.unwrap();
+    s.upsert_persona(&b, true).await.unwrap();
+
+    assert!(s.choose_default_persona(&a).await.unwrap());
+    assert_eq!(s.chosen_default_persona().await.unwrap().map(|(l, _)| l), Some(a.clone()));
+    assert!(s.choose_default_persona(&b).await.unwrap());
+    assert_eq!(s.chosen_default_persona().await.unwrap().map(|(l, _)| l), Some(b.clone()));
+    assert!(!s.choose_default_persona(&format!("_test:none-{uniq}")).await.unwrap());
+    assert_eq!(
+        s.chosen_default_persona().await.unwrap().map(|(l, _)| l),
+        Some(b.clone()),
+        "a refused choice moves nothing"
+    );
+
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE label = ANY($1)")
+        .bind(vec![a, b])
+        .execute(s.pool())
+        .await
+        .unwrap();
+}

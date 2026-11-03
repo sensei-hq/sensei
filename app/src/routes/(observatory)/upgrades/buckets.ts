@@ -26,12 +26,14 @@ export interface UpgradeBuckets {
 
 /** The single-glyph icon and human label per bucket — kept next to the
  *  bucketer so a new action_type only touches one file. */
-export const KIND_META: Record<UpgradeKind, { kanji: string; title: string; sub: string }> = {
-  skill: { kanji: '技', title: 'Skills',   sub: 'reusable how-to files sensei can inject when relevant' },
-  agent: { kanji: '作', title: 'Agents',   sub: 'multi-step operators that own a task' },
-  rule:  { kanji: '則', title: 'Rules',    sub: 'inline guardrails the analyzer wants to promote' },
-  lint:  { kanji: '禁', title: 'Lints',    sub: 'anti-patterns worth flagging automatically' },
-  other: { kanji: '他', title: 'Other',    sub: 'recommendations that don\'t map to a known category' },
+/** Each kind's kanji, title, sub and colour — the mockup's KIND_META: concrete
+ *  kinds (skill, agent) read accent, rules success, lints warning. */
+export const KIND_META: Record<UpgradeKind, { kanji: string; title: string; sub: string; tone: string }> = {
+  skill: { kanji: '技', title: 'Skills',   sub: 'reusable how-to files sensei can inject when relevant', tone: 'text-accent' },
+  agent: { kanji: '作', title: 'Agents',   sub: 'multi-step operators that own a task', tone: 'text-accent' },
+  rule:  { kanji: '則', title: 'Rules',    sub: 'inline guardrails the analyzer wants to promote', tone: 'text-success' },
+  lint:  { kanji: '禁', title: 'Lints',    sub: 'anti-patterns worth flagging automatically', tone: 'text-warning' },
+  other: { kanji: '他', title: 'Other',    sub: 'recommendations that don\'t map to a known category', tone: 'text-ink-mute' },
 };
 
 /** Pure: bucket an action_type into its upgrade kind. Kept exported so

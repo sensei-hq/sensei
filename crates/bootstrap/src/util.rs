@@ -148,8 +148,36 @@ pub fn command_for(name: &str) -> Result<Command, String> {
     Ok(Command::new(path))
 }
 
+/// The exit code to pass on for a child that has finished: its own code, or —
+/// killed by a signal, so it has none — 128 + the signal, as a shell reports it.
+/// Never 0 for a child that did not succeed: `code().unwrap_or(0)` turned a
+/// killed daemon into a successful `sensei restart`.
+pub fn exit_code(status: std::process::ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
+        return 128 + signal;
+    }
+    1
+}
+
 #[cfg(test)]
 mod tests {
+    /// A child killed by a signal has no exit code, and `code().unwrap_or(0)`
+    /// reported it as SUCCESS: `sensei restart` exited 0 for a daemon that died.
+    /// The shell's convention instead: 128 + the signal.
+    #[test]
+    fn a_child_killed_by_a_signal_is_not_a_success() {
+        let run =
+            |script: &str| std::process::Command::new("sh").args(["-c", script]).status().unwrap();
+        assert_eq!(exit_code(run("exit 0")), 0);
+        assert_eq!(exit_code(run("exit 3")), 3);
+        assert_eq!(exit_code(run("kill -9 $$")), 137);
+        assert_eq!(exit_code(run("kill -15 $$")), 143);
+    }
+
     use super::*;
 
     #[test]

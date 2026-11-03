@@ -70,14 +70,14 @@ describe('HeroKoan', () => {
     expect(m.container.querySelector('[data-hero-source]')).toBeNull();
   });
 
-  it('switches the vertical caption by mode', () => {
-    const mature = mountComponent(HeroKoanHarness, { hero: hero(), mode: 'mature' });
-    cleanup.push(mature.destroy);
-    expect(mature.container.textContent).toContain('sensei speaks');
-
-    const early = mountComponent(HeroKoanHarness, { hero: hero(), mode: 'early' });
-    cleanup.push(early.destroy);
-    expect(early.container.textContent).toContain('sensei is listening');
+  // The user (2026-10-27): no vertical "sensei speaks" / "sensei is listening"
+  // caption beside the kanji, in either mode.
+  it('draws no vertical caption beside the kanji', () => {
+    for (const mode of ['mature', 'early'] as const) {
+      const m = mountComponent(HeroKoanHarness, { hero: hero(), mode });
+      cleanup.push(m.destroy);
+      expect(m.container.textContent).not.toMatch(/sensei speaks|sensei is listening/);
+    }
   });
 
   it('tags the root with the mode discriminator', () => {

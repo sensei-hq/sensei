@@ -65,16 +65,20 @@ fn churn_rate_describes_the_git_source_it_is_computed_from() {
     assert!(text(&m, "formula").contains("git"), "the formula names its source");
 }
 
-/// #177: tokens_per_day is ~all cache reads, so it cannot proxy cost; the fresh
-/// tokens are the ones that track spend, and they need a metric of their own.
+/// #177: the fresh tokens are the ones that track spend, and they have a metric.
+/// 2026-10-26 (user): cache reads are counted on their own, never as tokens —
+/// summed in, they were ~all of tokens_per_day and inflated any cost read off it.
 #[test]
-fn fresh_tokens_have_a_metric_and_tokens_per_day_says_it_is_not_cost() {
+fn cache_reads_are_counted_apart_from_tokens() {
     let fresh = metric("tokens_fresh_per_day");
     assert_eq!(text(&fresh, "unit"), "tokens");
-    assert_eq!(text(&fresh, "task_name"), text(&metric("tokens_in_per_day"), "task_name"));
-    let read = text(&metric("tokens_per_day"), "how_to_read");
-    assert!(!read.starts_with("A volume/cost signal"), "{read}");
-    assert!(read.contains("tokens_fresh_per_day"), "points to the cost signal: {read}");
+    let reads = metric("cache_read_per_day");
+    assert_eq!(text(&reads, "unit"), "tokens");
+    assert_eq!(text(&reads, "task_name"), text(&metric("tokens_per_day"), "task_name"));
+
+    let formula = text(&metric("tokens_per_day"), "formula");
+    assert!(formula.contains("tokens_fresh + cache_write + tokens_out"), "{formula}");
+    assert!(!formula.contains("tokens_in"), "tokens_in carries the cache reads: {formula}");
 }
 
 /// #157: the catalog documents exactly the registered metrics — it had drifted to

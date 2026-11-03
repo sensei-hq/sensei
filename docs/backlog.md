@@ -53,6 +53,10 @@ evidence) are preserved in [`history/backlog/writeups.md`](history/backlog/write
 
 Full one-liners and prior context: [`history/backlog/writeups.md`](history/backlog/writeups.md).
 
+- **The Rust indexer does not follow `pub use` re-exports.** A use through a re-exported path
+  (`pg_store::X` for an item declared in `pg_store::x`) names an identity no declaration mints, so it
+  dangles in the code graph (`indexer::resolve` ratchet). It is cross-file resolution, stage-12 work. The
+  store's row types were moved instead (decision 2026-10-26, #161); the other re-exports remain.
 - **A branch's DDL change never reaches the dev database on start** — the boot
   deploy (`tasks/schema_deploy.rs`) runs only when the binary's version differs
   from `sensei.config.schema_deployed_version`, so with `SENSEI_DDL_DIR` set (the

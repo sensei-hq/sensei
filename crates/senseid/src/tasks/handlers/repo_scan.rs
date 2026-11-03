@@ -161,14 +161,14 @@ pub async fn process_manifest(ctx: &TaskContext, task: &Task) -> Result<u32, Str
         && !dir_rel.as_os_str().is_empty()
     {
         ctx.pg()
-            .upsert_subfolder_kind(
-                &root_id,
-                "module",
-                package,
-                &dir_rel.to_string_lossy(),
-                &dir_abs.to_string_lossy(),
-                Some(&repo_folder_id),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "module",
+                name: package,
+                path: &dir_rel.to_string_lossy(),
+                abs_path: &dir_abs.to_string_lossy(),
+                parent_id: Some(&repo_folder_id),
+            })
             .await?;
     }
 
@@ -506,21 +506,21 @@ async fn write_folder_tree(
         let abs = repo_abs.join(&f.rel_path);
         match ctx
             .pg()
-            .upsert_subfolder_kind(
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
                 root_id,
-                f.kind,
-                &name,
-                &f.rel_path.to_string_lossy(),
-                &abs.to_string_lossy(),
-                Some(&parent),
-            )
+                kind: f.kind,
+                name: &name,
+                path: &f.rel_path.to_string_lossy(),
+                abs_path: &abs.to_string_lossy(),
+                parent_id: Some(&parent),
+            })
             .await
         {
             Ok(id) => {
                 ids.insert(f.rel_path.clone(), id);
             }
             Err(e) => {
-                tracing::warn!(folder = %f.rel_path.display(), error = %e, "repo scan: upsert_subfolder_kind failed")
+                tracing::warn!(folder = %f.rel_path.display(), error = %e, "repo scan: upsert_subfolder failed")
             }
         }
     }
@@ -597,7 +597,15 @@ async fn write_file_rows(
                         };
                         let row = ctx
                             .pg()
-                            .upsert_file_row(folder_id, &rel, mtime, &hash, Some(reason))
+                            .upsert_file_row(
+                                &crate::db::pg_store::FileFingerprint {
+                                    folder_id,
+                                    file_path: &rel,
+                                    mtime,
+                                    content_hash: &hash,
+                                },
+                                Some(reason),
+                            )
                             .await;
                         // A file that is skipped NOW may have been indexed before
                         // (it became vendored, generated, binary): what it put in
@@ -646,7 +654,17 @@ async fn write_file_rows(
                                 (BARRIER_MTIME, BARRIER_HASH.to_string())
                             }
                         };
-                        ctx.pg().upsert_file_row(folder_id, &rel, mtime, &hash, None).await
+                        ctx.pg()
+                            .upsert_file_row(
+                                &crate::db::pg_store::FileFingerprint {
+                                    folder_id,
+                                    file_path: &rel,
+                                    mtime,
+                                    content_hash: &hash,
+                                },
+                                None,
+                            )
+                            .await
                     }
                 }
             }
@@ -660,10 +678,12 @@ async fn write_file_rows(
                 };
                 ctx.pg()
                     .upsert_file_row(
-                        folder_id,
-                        &rel,
-                        mtime,
-                        &hash,
+                        &crate::db::pg_store::FileFingerprint {
+                            folder_id,
+                            file_path: &rel,
+                            mtime,
+                            content_hash: &hash,
+                        },
                         Some(crate::classifiers::ScanSkipReason::UnsupportedFormat),
                     )
                     .await
@@ -838,6 +858,17 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             "",
         ))
         .await;
+    // AND ITS COMPLEXITY, by local qlty (Code map). The task measures only when
+    // HEAD moved, so a re-scan costs a `git rev-parse`.
+    if let Some(rid) = repository_id {
+        ctx.queue
+            .enqueue_unique(crate::tasks::Task::new(
+                crate::tasks::TaskKind::MeasureComplexity,
+                &task.folder_path,
+                &rid.to_string(),
+            ))
+            .await;
+    }
 
     // The indexed git branch, in the TYPED column. Preferred from the
     // `BranchSwitch` task that triggered this re-index, else read from
@@ -969,6 +1000,57 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
 
     let manifests: Vec<String> =
         contents.manifests().iter().map(|e| e.rel_path.to_string_lossy().to_string()).collect();
+
+    // THIS REPO MAY BE A LIBRARY (#341): its `sensei.library.json` registers its
+    // docs, skills, agents and packages. Here, in the scan that runs — the
+    // pipeline stage that did it had no production caller, so dbd and rokkit
+    // were only ever registered by hand. A failure is the library's, logged and
+    // shown; it never fails the repository's scan.
+    let root_manifests: Vec<(std::path::PathBuf, &'static str)> = contents
+        .manifests()
+        .iter()
+        .filter(|e| e.rel_path.parent().is_none_or(|p| p.as_os_str().is_empty()))
+        .filter_map(|e| {
+            let file = e.rel_path.file_name()?.to_str()?;
+            let adapter = crate::adapters::manifest::manifest_adapter_for_filename(file)?;
+            Some((repo_abs.join(&e.rel_path), adapter.ecosystem()))
+        })
+        .collect();
+    let mut library = crate::indexer::pipeline::RepoResult::default();
+    crate::indexer::pipeline::ingest_library(ctx.pg(), repo_abs, &root_manifests, &mut library)
+        .await;
+    if let Some(lib) = &library.library {
+        emit(
+            ActivityLevel::Info,
+            format!(
+                "{name}: library {lib} — {} packages, {} doc pages",
+                library.library_packages, library.library_pages
+            ),
+        );
+    }
+    for e in library.errors.iter().chain(library.library_docs_error.iter()) {
+        tracing::warn!(repo = %name, error = %e, "process_git_folder: library discovery");
+    }
+
+    // ITS DEPENDENCIES MAY BE LIBRARIES (#341): each one's repository is queued
+    // to be asked for a manifest. Queued, not read — the network is the task's.
+    let package_jsons: Vec<std::path::PathBuf> = contents
+        .manifests()
+        .iter()
+        .filter(|e| e.rel_path.file_name().is_some_and(|f| f == "package.json"))
+        .map(|e| repo_abs.join(&e.rel_path))
+        .collect();
+    match super::discover_library::enqueue_dependency_discovery(ctx, repo_abs, &package_jsons).await
+    {
+        Ok(0) => {}
+        Ok(n) => emit(
+            ActivityLevel::Info,
+            format!("{name}: {n} dependency repositories to ask for a library"),
+        ),
+        Err(e) => {
+            tracing::warn!(repo = %name, error = %e, "process_git_folder: dependency discovery")
+        }
+    }
     emit(ActivityLevel::Info, msg::repo_manifests_processed_message(&name, manifests.len()));
     let gate = enqueue_manifest_gate(ctx, &task.folder_path, &manifests, task.force).await;
 
@@ -1114,6 +1196,143 @@ mod scan_tests {
     /// file rows for supported AND unsupported files, a workspace attached, and
     /// the manifest gate enqueued with the file fan-out behind it.
     #[tokio::test]
+    async fn a_scanned_repo_that_ships_a_library_manifest_registers_the_library() {
+        // #341: the daemon's scan never read sensei.library.json. Library
+        // discovery lived in `scan_and_write_structure`, which only tests call;
+        // production scans through this task, so dbd — under a watch root and
+        // scanned today — still held only what a manual scan stored in September.
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let lib = format!("tlib{}", &uniq[..12]);
+        let repo = t.path().join(&lib);
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("docs/skills/x")).unwrap();
+        // A docs folder that is NOT the conventional docs/llms: the manifest's
+        // `llms.path` says where the docs are, and is read as stated.
+        std::fs::create_dir_all(repo.join("docs/reference")).unwrap();
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            format!("[package]\nname = \"{lib}-core\"\nversion = \"3.2.1\"\n"),
+        )
+        .unwrap();
+        std::fs::write(repo.join("docs/skills/x/SKILL.md"), "# use it\n").unwrap();
+        std::fs::write(repo.join("docs/reference/overview.txt"), "# Overview\nWhat it is.\n")
+            .unwrap();
+        std::fs::write(
+            repo.join("sensei.library.json"),
+            format!(
+                r#"{{"library":"{lib}","version":">=3","packages":["{lib}-core"],
+                    "llms":{{"path":"docs/reference"}},"site":"https://{lib}.example",
+                    "repo":"git+https://github.com/acme/{lib}.git",
+                    "skills":[{{"name":"{lib}","focus":"use","path":"docs/skills/x/SKILL.md",
+                                "url":"/skills/x/SKILL.md"}}]}}"#
+            ),
+        )
+        .unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        ctx.pg().upsert_repo_kind(&root_id, "git", &lib, &repo.to_string_lossy()).await.unwrap();
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo.to_string_lossy(), "");
+        super::process_git_folder(&ctx, &task).await.unwrap();
+
+        let skills = ctx.pg().list_library_skills(&lib).await.unwrap();
+        assert_eq!(skills.len(), 1, "the library's skill is registered by the scan");
+        assert_eq!(skills[0]["url"], "/skills/x/SKILL.md", "the skill's url is kept");
+        assert_eq!(
+            ctx.pg().library_id_for(&format!("{lib}-core")).await.unwrap(),
+            ctx.pg().library_id_for(&lib).await.unwrap()
+        );
+        let id = ctx.pg().library_id_for(&lib).await.unwrap().unwrap();
+        assert_eq!(
+            ctx.pg().library_repository_url(&id).await.unwrap(),
+            Some(format!("https://github.com/acme/{lib}")),
+            "its repository, so a dependent's scan knows it is held here"
+        );
+        let libs = ctx.pg().list_libraries_with_usage(None, None, 1).await.unwrap();
+        let row = libs.iter().find(|l| l["name"] == lib.as_str()).expect("listed");
+        assert_eq!(row["version"], "3.2.1", "the library's own release, from Cargo.toml");
+        assert!(
+            !ctx.pg().get_library_pages(&lib, None).await.unwrap().is_empty(),
+            "its llm docs, read from the folder llms.path names"
+        );
+    }
+
+    /// A scanned repo's dependencies lead to their repositories, and each is
+    /// queued to be asked for a library manifest (#341) — rokkit reaches a
+    /// workspace through `@rokkit/ui`, whose npm package carries no manifest.
+    #[tokio::test]
+    async fn a_scanned_repos_dependencies_are_queued_for_library_discovery() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let dep = format!("dep{}", &uniq[..12]);
+        let repo = t.path().join("app");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(
+            repo.join("package.json"),
+            format!(r#"{{"name":"app","dependencies":{{"{dep}":"^1"}}}}"#),
+        )
+        .unwrap();
+        let installed = repo.join("node_modules").join(&dep);
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(
+            installed.join("package.json"),
+            format!(r#"{{"name":"{dep}","repository":"github:acme/{dep}"}}"#),
+        )
+        .unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        ctx.pg().upsert_repo_kind(&root_id, "git", "app", &repo.to_string_lossy()).await.unwrap();
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo.to_string_lossy(), "");
+        super::process_git_folder(&ctx, &task).await.unwrap();
+
+        assert!(
+            ctx.queue
+                .has_pending_kind_folder(
+                    TaskKind::DiscoverLibrary,
+                    &format!("https://github.com/acme/{dep}")
+                )
+                .await
+        );
+    }
+
+    /// A scanned repository's complexity is measured by local qlty (Code map,
+    /// Complexity lens): the scan queues it, for the repository it resolved.
+    #[tokio::test]
+    async fn a_scanned_repository_is_queued_for_its_complexity() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join(format!("cx{}", &uuid::Uuid::new_v4().simple().to_string()[..10]));
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"cx\"\n").unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        ctx.pg().upsert_repo_kind(&root_id, "git", "cx", &repo.to_string_lossy()).await.unwrap();
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo.to_string_lossy(), "");
+        super::process_git_folder(&ctx, &task).await.unwrap();
+
+        assert!(
+            ctx.queue
+                .has_pending_kind_folder(TaskKind::MeasureComplexity, &repo.to_string_lossy())
+                .await,
+            "the repository's complexity is queued"
+        );
+    }
+
+    #[tokio::test]
     async fn scan_repo_writes_structure_and_enqueues_the_gate() {
         // This test writes `files` rows and then parses from them. Excluded
         // against the version-rescan sweep, which deletes them database-wide.
@@ -1200,14 +1419,14 @@ mod scan_tests {
         // As the indexer pipeline leaves it.
         let app = repo.join("app");
         ctx.pg()
-            .upsert_subfolder_kind(
-                &root_id,
-                "module",
-                "app",
-                "app",
-                &app.to_string_lossy(),
-                Some(&fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "module",
+                name: "app",
+                path: "app",
+                abs_path: &app.to_string_lossy(),
+                parent_id: Some(&fid),
+            })
             .await
             .unwrap();
 

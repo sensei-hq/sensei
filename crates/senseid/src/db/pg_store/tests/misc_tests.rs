@@ -8,7 +8,14 @@ async fn extension_create_and_list() {
     let s = pg_store().await;
     let name = format!("_test:ext_{}", uuid::Uuid::new_v4());
     let id = s
-        .create_extension("skill", &name, Some("test skill"), Some("# content"), "global", "local")
+        .create_extension(&crate::db::pg_store::ExtensionRow {
+            kind: "skill",
+            name: &name,
+            description: Some("test skill"),
+            content: Some("# content"),
+            scope: "global",
+            source: "local",
+        })
         .await
         .unwrap();
     let skills = s.list_extensions_by_kind("skill").await.unwrap();
@@ -20,7 +27,17 @@ async fn extension_create_and_list() {
 async fn extension_historize_trigger() {
     let s = pg_store().await;
     let name = format!("_test:ext_hist_{}", uuid::Uuid::new_v4());
-    let id = s.create_extension("skill", &name, Some("v1"), None, "global", "local").await.unwrap();
+    let id = s
+        .create_extension(&crate::db::pg_store::ExtensionRow {
+            kind: "skill",
+            name: &name,
+            description: Some("v1"),
+            content: None,
+            scope: "global",
+            source: "local",
+        })
+        .await
+        .unwrap();
     s.update_extension(&id, Some("v2"), None).await.unwrap();
     let history = s.get_extension_history(&id).await.unwrap();
     assert!(history.len() >= 2, "historize trigger should create INSERT + UPDATE entries");
@@ -33,14 +50,14 @@ async fn extension_historize_trigger() {
 async fn benchmark_create_and_list() {
     let s = pg_store().await;
     let id = s
-        .create_benchmark_report(
-            None,
-            "_test:bench",
-            "strategy_a",
-            Some(95.5),
-            Some(1000),
-            Some(5000),
-        )
+        .create_benchmark_report(&crate::db::pg_store::BenchmarkReportRow {
+            folder_id: None,
+            run_name: "_test:bench",
+            strategy: "strategy_a",
+            score: Some(95.5),
+            tokens: Some(1000),
+            elapsed_ms: Some(5000),
+        })
         .await
         .unwrap();
     let reports = s.list_benchmark_reports().await.unwrap();
@@ -71,14 +88,7 @@ async fn reasoning_trace_insert_and_get() {
     let s = pg_store().await;
     let pid = s.create_workspace("_test:rt_proj", None, None).await.unwrap();
     let tid = s
-        .insert_reasoning_trace(
-            Some(&pid),
-            "pattern_emerging",
-            &serde_json::json!({}),
-            &["gemma4:27b".into()],
-            &serde_json::json!([{"model":"gemma4","role":"proposer","content":"analyze"}]),
-            &serde_json::json!({"conclusion":"adopt adapter pattern","confidence":0.9}),
-        )
+        .insert_reasoning_trace(&crate::db::pg_store::ReasoningTraceRow { workspace_id: Some(&pid), trigger_event: "pattern_emerging", trigger_detail: &serde_json::json!({}), models_used: &["gemma4:27b".into()], exchanges: &serde_json::json!([{"model":"gemma4","role":"proposer","content":"analyze"}]), consensus: &serde_json::json!({"conclusion":"adopt adapter pattern","confidence":0.9}) })
         .await
         .unwrap();
     let traces = s.get_reasoning_traces_by_workspace(&pid).await.unwrap();
@@ -100,13 +110,13 @@ async fn service_upsert_and_list() {
     let s = pg_store().await;
     let name = format!("_test:svc_{}", uuid::Uuid::new_v4());
     let id = s
-        .upsert_service(
-            &name,
-            "Test MCP",
-            "data",
-            "mcp",
-            &serde_json::json!({"url":"http://localhost"}),
-        )
+        .upsert_service(&crate::db::pg_store::ServiceRow {
+            name: &name,
+            display_name: "Test MCP",
+            kind: "data",
+            protocol: "mcp",
+            config: &serde_json::json!({"url":"http://localhost"}),
+        })
         .await
         .unwrap();
     let svcs = s.list_services().await.unwrap();
@@ -122,17 +132,24 @@ async fn snapshot_create_and_get_latest() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("snap_{}", uuid::Uuid::new_v4())).await;
     let sid = s.create_session(&fid, "snapshot test", None).await.unwrap();
-    s.create_snapshot(&sid, &fid, "manual", "Step 1 done", Some("Do step 2"), &["Step 1".into()])
-        .await
-        .unwrap();
-    s.create_snapshot(
-        &sid,
-        &fid,
-        "checkpoint",
-        "Step 2 done",
-        None,
-        &["Step 1".into(), "Step 2".into()],
-    )
+    s.create_snapshot(&crate::db::pg_store::SnapshotRow {
+        session_id: &sid,
+        folder_id: &fid,
+        kind: "manual",
+        progress: "Step 1 done",
+        next_step: Some("Do step 2"),
+        completed_steps: &["Step 1".into()],
+    })
+    .await
+    .unwrap();
+    s.create_snapshot(&crate::db::pg_store::SnapshotRow {
+        session_id: &sid,
+        folder_id: &fid,
+        kind: "checkpoint",
+        progress: "Step 2 done",
+        next_step: None,
+        completed_steps: &["Step 1".into(), "Step 2".into()],
+    })
     .await
     .unwrap();
     let latest = s.get_latest_snapshot(&sid).await.unwrap().unwrap();

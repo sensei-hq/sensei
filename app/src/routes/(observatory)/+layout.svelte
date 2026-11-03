@@ -1,13 +1,14 @@
 <script lang="ts">
+    import { personaList } from '$lib/personas.svelte.js';
     import { onMount } from 'svelte';
     import { page } from '$app/state';
-    import { goto } from '$app/navigation';
+    import { beforeNavigate, goto } from '$app/navigation';
     import { commands } from '@rokkit/states';
     import { shortcuts } from '@rokkit/actions';
     import { CommandPalette } from '@rokkit/ui';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi, failureReason } from '$lib/api.js';
-    import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
+    import { isSettingsPath, openSettingsWindow, openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
     import ObservatorySidebar from './ObservatorySidebar.svelte';
     import { glyphMode } from '$lib/glyphs';
     import { buildNavItems } from './observatory-nav.js';
@@ -69,6 +70,19 @@
             unregisterWorkspaces?.();
         };
     });
+
+    // Settings is its own window (user, 2026-10-27, as a Mac app's preferences
+    // are): a link to a settings page — the rail's Settings, Dōjō · Connections'
+    // link — opens that window at the page, and this window stays where it is.
+    // An e2e build drives this window alone and opens settings here instead
+    // (`__SENSEI_E2E__`, set only by the e2e-testing build).
+    beforeNavigate((nav) => {
+        const to = nav.to?.url.pathname;
+        if ((window as { __SENSEI_E2E__?: boolean }).__SENSEI_E2E__) return;
+        if (!to || !isSettingsPath(to) || nav.type === 'leave') return;
+        nav.cancel();
+        void openSettingsWindow(to === '/settings' ? '/settings/general' : to);
+    });
 </script>
 
 <div class="w-full h-screen flex flex-col bg-paper-soft text-ink overflow-hidden" use:shortcuts={commands}>
@@ -80,6 +94,8 @@
             pathname={page.url.pathname}
             workspaceCount={appState.workspaceCount ?? undefined}
             glyphs={glyphMode(appState.config)}
+            attention={personaList.attentionLine}
+            onAttention={() => void openSettingsWindow('/settings/dojo')}
         />
 
         <!-- Not a scroller: each screen's body is, and takes focus itself (#245, #293). -->

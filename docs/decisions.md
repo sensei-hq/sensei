@@ -30,6 +30,25 @@ the 13 usage keys (`spec/daemon/tracker-sdlc-metrics.md`, analysis D1–D11, ame
 | **Rate- and calibration-derived figures are never written** (S9) | `effort_cost`, `rework_cost`, `expected_minutes` and `time_variance_minutes` depend on settings, not measurement; `estimated_points` is Jira's own field | Write them all |
 | **The hourly rate is project-level only** (D3) | No per-person cost | A rate per person |
 
+---
+
+## 2026-10-28 — A slash command is a prompt
+
+The transcript parser listed `<command-name` and `<command-message` among the injected
+markers (#73 v1, 2026-06-22, no recorded reason), so a session begun with
+`/opsx:explore P057542601-784` kept no prompt: it parsed as 0 turns, and ticket linkage,
+which reads prompts, never saw the key.
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **A slash command is a prompt** | A `user` record naming a command is the prompt `/name args` (`human_prompt_text`), and a turn boundary. What a command prints (`<local-command-stdout>` etc.) stays injected. | The person typed it, and its arguments are where a ticket key or a task goes. |
+| **Re-read once** | Claude and Cursor transcripts are read again once (`transcripts.slash_prompts_v1`, through `reset_watermarks_once`). | Their watermarks say "read" for files parsed under the old rule. |
+
+Effect: more transcript turns per session where commands were used. Rejected: keeping only
+commands with arguments (a bare `/compact` is still the person's turn).
+
+---
+
 ## 2026-10-26 — Usage metrics are written back to the tracker (superseded 2026-10-29 (tracker-sdlc-metrics): SDLC metrics too)
 
 Each ticket's usage (sessions, active time, tokens, cost) was visible only in sensei. The user
@@ -48,6 +67,24 @@ successful sync, on by default for every board, existing ones included
 Rejected: a manual export action; writing from the dōjō; storing the assignee.
 
 ---
+
+## 2026-10-26 — The store's row types live in `pg_store/mod.rs` (#161)
+
+**Decision (user):** the typed row/argument types of `db/pg_store` (`NodeRow`, `FolderRow`, `EdgeTarget`,
+`MetricRow`, `HookEventRow`, …) are declared in `pg_store/mod.rs`, the path every caller names. They are not
+declared beside their writers and re-exported.
+
+**Why:** the Rust indexer does not follow `pub use`. A re-exported row was a reference to an identity no
+declaration mints, at every use. #161's conversions pushed the first-party dangling-reference ratchet
+(`indexer::resolve`) to 1,304 against its 1,300 ceiling. Moving 22 types took it to 1,045, and the ceiling
+was lowered to 1,060.
+
+**Cost:** a row is read in `mod.rs`, away from the writer that destructures it. Each one is labelled with
+its writer file.
+
+**Alternatives considered:** teaching the indexer to resolve `pub use` (the right long-term fix; it is
+cross-file, stage-12 work, listed in `docs/backlog.md`), and raising the ceiling (rejected: the ratchet
+exists to stop exactly this growth).
 
 ## 2026-10-25 — A database per test (#183)
 

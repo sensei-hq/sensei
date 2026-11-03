@@ -6,6 +6,7 @@ set search_path to dojo, extensions;
 create or replace function dojo.forge_permission_to_role(p_permission text)
     returns dojo.member_role
     language sql
+    set search_path = dojo, pg_temp
     immutable
 as $$
     select case lower(p_permission)

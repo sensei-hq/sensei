@@ -55,3 +55,14 @@ describe('bucketUpgrades', () => {
     }
   });
 });
+
+// Audit item 15 (2026-10-28): the page coloured each kind with its own function;
+// the colour is part of the kind's meta, beside its kanji and title.
+describe('KIND_META tone', () => {
+  it('colours concrete kinds accent, rules success, lints warning, the rest muted', () => {
+    expect(Object.fromEntries(Object.entries(KIND_META).map(([k, v]) => [k, v.tone]))).toEqual({
+      skill: 'text-accent', agent: 'text-accent', rule: 'text-success', lint: 'text-warning', other: 'text-ink-mute',
+    });
+  });
+});
+

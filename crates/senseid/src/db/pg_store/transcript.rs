@@ -1,27 +1,26 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// Upsert parsed transcript turns for a (source, session). Idempotent by
     /// (source, session_id, turn_index). Returns the number of rows written.
     pub async fn upsert_transcript_turns(
         &self,
-        source: &str,
-        session_id: &str,
-        family: &str,
-        provider: Option<&str>,
-        model: Option<&str>,
+        from: &TranscriptSource<'_>,
         turns: &[crate::transcript::TranscriptTurn],
     ) -> Result<u32, String> {
+        let &TranscriptSource { source, session_id, family, provider, model } = from;
         let mut n = 0u32;
         for t in turns {
             let char_count = t.assistant_text.chars().count() as i32;
             sqlx_core::query::query(
                 "INSERT INTO activity.transcript_turns
                     (source, session_id, family, provider, model, turn_index, user_text, assistant_text, char_count, started_at,
-                     attrs, tokens_in, tokens_out, cache_read, cache_write, stop_reason, is_sidechain, skill, plugin, git_branch, effort, service_tier)
+                     attrs, tokens_in, tokens_out, cache_read, cache_write, stop_reason, is_sidechain, skill, plugin, git_branch, effort, service_tier,
+                     origin, prompt_id)
                  VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+                        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+                        $23, $24)
                  ON CONFLICT(source, session_id, turn_index) DO UPDATE SET
                    provider       = EXCLUDED.provider,
                    model          = EXCLUDED.model,
@@ -45,7 +44,9 @@ impl PgStore {
                    plugin         = COALESCE(EXCLUDED.plugin,       activity.transcript_turns.plugin),
                    git_branch     = COALESCE(EXCLUDED.git_branch,   activity.transcript_turns.git_branch),
                    effort         = COALESCE(EXCLUDED.effort,       activity.transcript_turns.effort),
-                   service_tier   = COALESCE(EXCLUDED.service_tier, activity.transcript_turns.service_tier)"
+                   service_tier   = COALESCE(EXCLUDED.service_tier, activity.transcript_turns.service_tier),
+                   origin         = EXCLUDED.origin,
+                   prompt_id      = COALESCE(EXCLUDED.prompt_id,    activity.transcript_turns.prompt_id)"
             )
             .bind(source).bind(session_id).bind(family).bind(provider).bind(model).bind(t.turn_index)
             .bind(&t.user_text).bind(&t.assistant_text).bind(char_count).bind(t.started_at)
@@ -55,6 +56,7 @@ impl PgStore {
             .bind(&t.facts.stop_reason).bind(t.facts.is_sidechain)
             .bind(&t.facts.skill).bind(&t.facts.plugin)
             .bind(&t.facts.git_branch).bind(&t.facts.effort).bind(&t.facts.service_tier)
+            .bind(&t.origin).bind(&t.prompt_id)
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
             n += 1;
         }
@@ -118,22 +120,23 @@ impl PgStore {
         tx.commit().await.map_err(|e| e.to_string())
     }
 
-    /// Spec session-api-cost C6: the first time it runs, clear the Claude
-    /// transcripts' ingest watermarks so each is read again — its turns' tokens
-    /// counted once per message and its message rows written. `true` when it
-    /// cleared them; `false` once done (`transcripts.messages_v1` is set).
-    pub async fn reset_claude_watermarks_once(&self) -> Result<bool, String> {
-        const DONE: &str = "transcripts.messages_v1";
-        if self.get_config(DONE).await?.is_some() {
+    /// Clear the ingest watermarks of `sources` the first time `done` is seen, so
+    /// each of their transcripts is read again under a changed rule. `true` when it
+    /// cleared them; `false` once `done` is set.
+    pub async fn reset_watermarks_once(
+        &self,
+        done: &str,
+        sources: &[&str],
+    ) -> Result<bool, String> {
+        if self.get_config(done).await?.is_some() {
             return Ok(false);
         }
-        sqlx_core::query::query(
-            "DELETE FROM activity.capture_watermarks WHERE source = 'claude_code'",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        self.set_config(DONE, &chrono::Utc::now().to_rfc3339()).await?;
+        sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE source = ANY($1)")
+            .bind(sources)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.set_config(done, &chrono::Utc::now().to_rfc3339()).await?;
         Ok(true)
     }
 
@@ -158,12 +161,9 @@ impl PgStore {
     /// Advance the ingest cursor for a transcript file (idempotent upsert).
     pub async fn set_capture_watermark(
         &self,
-        source: &str,
-        file_path: &str,
-        session_id: Option<&str>,
-        mtime_ns: i64,
-        turns: i32,
+        mark: &CaptureWatermarkRow<'_>,
     ) -> Result<(), String> {
+        let &CaptureWatermarkRow { source, file_path, session_id, mtime_ns, turns } = mark;
         sqlx_core::query::query(
             "INSERT INTO activity.capture_watermarks
                 (source, file_path, session_id, last_mtime_ns, turns_ingested, untracked, updated_at)
@@ -260,8 +260,10 @@ impl PgStore {
             String,
             Option<chrono::DateTime<chrono::Utc>>,
             Option<String>,
+            String,
+            Option<String>,
         )> = sqlx_core::query_as::query_as(
-            "SELECT turn_index, user_text, assistant_text, started_at, family
+            "SELECT turn_index, user_text, assistant_text, started_at, family, origin, prompt_id
                    FROM activity.transcript_turns
                   WHERE session_id = $1 ORDER BY turn_index",
         )
@@ -273,15 +275,27 @@ impl PgStore {
         let family = rows.iter().find_map(|r| r.4.clone().filter(|f| !f.trim().is_empty()));
         let turns = rows
             .into_iter()
-            .map(|(turn_index, user_text, assistant_text, started_at, _family)| {
-                crate::transcript::TranscriptTurn {
+            .map(
+                |(
                     turn_index,
                     user_text,
                     assistant_text,
                     started_at,
-                    ..Default::default()
-                }
-            })
+                    _family,
+                    origin,
+                    prompt_id,
+                )| {
+                    crate::transcript::TranscriptTurn {
+                        turn_index,
+                        origin,
+                        prompt_id,
+                        user_text,
+                        assistant_text,
+                        started_at,
+                        ..Default::default()
+                    }
+                },
+            )
             .collect();
         Ok((turns, family))
     }

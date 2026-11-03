@@ -115,17 +115,20 @@ flowchart LR
     c5 -.->|received downstream, opt-in pull| c1
 ```
 
-## Business model — free where public or personal
+## Business model — public free, private on a subscription
 
-The line is drawn by **who the knowledge is for**, not by features. You pay to
-**coordinate a group's private knowledge** — never to use sensei, never for tokens
-(inference is BYO-key and runs locally).
+The line is drawn by **whose private code it is**, not by features (D46). Public
+repositories are free in every dōjō, and a personal dōjō is free with its private
+repositories included. An organisation's private repositories need a subscription
+taken by its admin or owner, and stay hidden from its dōjō until there is one. You never pay to use sensei, and never for tokens
+(inference is BYO-key and runs locally): the plan lives only in the dōjō, and local
+sensei works in full on any plan.
 
 | Tier | Who | Price |
 |---|---|---|
-| **Public / OSS** `公` | open-source projects & communities; `github/<org>` | **free forever** — full governance + Relay for your projects |
-| **Personal** `己` | your own constitution & rules for your own projects; `personal/<you>` | **free** — private to you, across every linked email, Relay included |
-| **Team** `組` | a private, **shared** org Dōjō on the SaaS | **paid per active contributor** (read-only free) — private scopes, role consoles, governance authoring, shared-team Relay, client engagements |
+| **Public / OSS** `公` | public repositories, organisation or personal; `github/<org>` | **free forever** — an organisation's sync automatically (an admin may turn one off) |
+| **Personal** `己` | your own dōjō, across every linked email; `personal/<you>` | **free**, private repositories included — public and private are yours to choose, all by default; nothing to buy |
+| **Team** `組` | an organisation's **private** repositories on the SaaS | **subscription, per active contributor** (read-only free), taken by an admin — private scopes, role consoles, governance authoring, shared-team Relay, client engagements |
 | **Enterprise** `企` | control & compliance | **custom** — SSO (OIDC/SAML) + SCIM, audit retention, SSO on mobile, SLA (no self-hosting product — D17, D24) |
 
 Relay's individual loop stays **free**: the individual loop (watch · approve ·
@@ -146,4 +149,4 @@ From the journey map — the non-negotiables that make the boundary exact:
 - **Specificity wins conflicts** — distribution follows priority ladders (org › team › global › personal), the more specific rule winning; both rules shown, winner marked.
 - **Relay lives in the Dōjō** — the daemon's live line carries away-from-keyboard work to any phone or console over realtime, no pairing; the native app stays for push + offline.
 - **Your own Dōjō, your own rules** — governance scales down to one person; a personal Dōjō is the same authoring model as an org, sized for one, following you across every linked email.
-- **Free where public or personal** — public/OSS and personal Dōjōs are free forever; a private, shared team Dōjō is where it's paid.
+- **Public and personal free, an organisation's private on a subscription** — public repositories and personal dōjōs are free forever; an organisation's private repositories need its admin's or owner's subscription and stay hidden until then (D46). Local sensei is never limited by plan.

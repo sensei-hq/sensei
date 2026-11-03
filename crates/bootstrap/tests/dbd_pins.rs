@@ -6,11 +6,12 @@
 
 use std::path::Path;
 
-const PINNED_IN: [&str; 4] = [
+const PINNED_IN: [&str; 5] = [
     "crates/bootstrap/Cargo.toml",
     "crates/senseid/Cargo.toml",
     ".github/workflows/rust.yml",
     ".github/workflows/release.yml",
+    ".github/workflows/dojo-db.yml",
 ];
 
 /// Every `tag` given for a `sensei-hq/dbd` git source in `text`.

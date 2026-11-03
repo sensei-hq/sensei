@@ -236,6 +236,8 @@ Enum "sensei"."library_ecosystem" {
   "composer"
   "swiftpm"
   "docs"
+  "cmake"
+  "dbd"
 }
 
 Enum "sensei"."library_kind" {
@@ -701,6 +703,8 @@ Enum "sensei"."task_execution_kind" {
   "advance_run"
   "publish_run"
   "tracker_discover"
+  "discover_library"
+  "measure_complexity"
   "build_connections"
   "resolve_edges"
   "plan_metric_days"
@@ -857,7 +861,7 @@ unchanged transcripts. Shared by the backfill and forward-capture workers.'''
 Table "activity"."session_facet_tags" {
   "session_id" text [pk, not null]
   "kind" sensei.facet_tag_kind [pk, not null]
-  "value" text [pk, not null, note: 'Deliberately text, not an enum: the goal and friction vocabularies grow as more\nACPs are seen, and a new value should not need a migration. The analyzer discards\nvalues outside its current closed list before writing, so a model inventing a\ncategory cannot break a group-by. `kind` IS an enum because it is closed.']
+  "value" text [pk, not null, note: 'Deliberately text, not an enum: the goal and friction vocabularies grow as more\nACPs are seen, and a new value should not need a migration. The analyzer is to\ndiscard values outside its current closed list before writing, so a model\ninventing a category cannot break a group-by. `kind` IS an enum because it is closed.']
   "weight" int [not null, default: 1, note: 'How strongly the tag applies. 1 for a plain occurrence; higher when the analyzer\nsaw a session dominated by one kind of work.']
 
   indexes {
@@ -865,13 +869,14 @@ Table "activity"."session_facet_tags" {
   }
 
   Note: '''Goal categories and friction kinds per session, one row per tag (spec 2026-08-26).
-One table for both multisets, discriminated by `kind`. Rewritten in place when a
-session is re-analyzed.'''
+One table for both multisets, discriminated by `kind`. To be rewritten in place
+when a session is re-analyzed. Not yet written: nothing populates this table
+until the daemon's facet pass is built.'''
 }
 
 Table "activity"."session_facets" {
   "session_id" text [pk, not null, note: 'The assistant\'s own session id (activity.sessions.client_session_id), matching\nsession_process_evidence.session_id — the join key for the cited turns. Not an FK:\na session row can be pruned while its derived record and quotes stay legible.']
-  "underlying_goal" text [note: 'One sentence describing what the person was trying to achieve. NULL until the\nfull facet pass has run — a row may exist carrying only a stage, written by the\nprocess analyzer, before anything else about the session has been derived.']
+  "underlying_goal" text [note: 'One sentence describing what the person was trying to achieve. NULL until the\nfull facet pass has run — a row may exist carrying only a stage, written by the\nprocess analyzer, before anything else about the session has been derived. A\nrecord whose evidence quote is not found verbatim in the transcript is to be\nDROPPED by the analyzer, never stored (spec 2026-08-20 D5).']
   "goal_outcome" sensei.goal_outcome [note: 'Whether the session achieved its goal, read from the transcript. Distinct from\nactivity.sessions.outcome, which is mechanical — a session is routinely both\n`corrected` and `mostly_achieved`. NULL means the analyzer would not commit to a\nreading.']
   "primary_success" text [not null, default: '']
   "friction_detail" text [not null, default: '', note: 'One sentence naming what got in the way. Empty string means the analyzer saw no\nfriction — distinct from a session with no record at all, which is simply absent\nfrom this table.']
@@ -892,7 +897,9 @@ Table "activity"."session_facets" {
 Scalar facets only; the goal/friction multisets live in
 activity.session_facet_tags and the grounding quotes in
 activity.session_process_evidence. brief_summary is NOT here — it is
-activity.sessions.summary.'''
+activity.sessions.summary. Not yet written: nothing populates this table until
+the daemon's facet pass is built, so an empty table means no writer, not no
+findings.'''
 }
 
 Table "activity"."session_process_evidence" {
@@ -1036,6 +1043,8 @@ Table "activity"."transcript_turns" {
   "git_branch" text
   "effort" text
   "service_tier" text
+  "origin" text [not null, default: 'human']
+  "prompt_id" text
 
   indexes {
     (source, session_id, turn_index) [unique, note: 'unique constraint']
@@ -1592,6 +1601,7 @@ Table "sensei"."personas" {
   "is_self" boolean [not null, default: true, note: 'FALSE when this persona is another contributor, not the local user — so their commits are never counted as "mine".\n\nFALSE for a contributor who is NOT the local user. `contributor@example.com` above may well be someone else; folding it into the user\'s own numbers would be a fabricated attribution, so an unrecognised email gets its own persona with is_self = false rather than a guess.']
   "principal_id" uuid [note: 'The dōjō login this persona pushes under (dojo.principals.id). Plain uuid — the referent is in another database. NULL until linked.\n\nThe dōjō login this persona pushes under. Plain uuid, no FK: the referent lives in another database, exactly as `sensei.repositories.tenant_id` does. NULL until the user links this persona (Phase 6).']
   "session_slot" text [note: 'The Keychain slot holding this persona\'s dōjō session (session.rs::account_for formats refresh_token.<slot>). NOT the label: a successful sign-in rewrites label to the verified GitHub login, so signing in as "default" yields a row labelled "sensei-hq-org" whose session is still at refresh_token.default. Looking the session up by label finds nothing and silently skips the persona. NULL = never signed in from this machine.\n\nThe KEYCHAIN SLOT this persona\'s dōjō session is stored under, as chosen by whoever started the sign-in (`/api/auth/signin?persona=X`).\n\nDistinct from `label`, and that distinction is the whole reason the column exists. `label` is a DISPLAY name that a successful sign-in REWRITES to the verified GitHub login — a user who signs in as `default` ends up with a row labelled `sensei-hq-org`. An unattended task that looked up the session by `label` would read `refresh_token.sensei-hq-org`, find nothing, and skip the persona while reporting the cycle successful. Observed, not theorised.']
+  "is_chosen_default" boolean [not null, default: false, note: 'Chosen in sensei as the default identity (Make default; user, 2026-10-27). At most one. When none is chosen, the default is the identity owning the global git email (#296).']
   "forge_token_state" sensei.forge_token_state [not null, default: 'unknown', note: 'What we believe about this persona\'s FORGE (GitHub) token — a different credential from the dōjō session, with a different lifetime. The session refreshes on every use; the GitHub token expires on a measured ~8h cycle. `unknown` is the default and a REAL state: a persona nothing has asked GitHub about has no standing, and defaulting to `active` would claim a credential never tested.']
   "forge_token_expires_at" timestamptz [note: 'When the forge token stops working, as the forge states it. NULL = not yet known, never "does not expire" — GoTrue\'s exchange does not report the provider\'s deadline, so it can only come from GitHub\'s `github-authentication-token-expiration` response header.\n\nWhen the token stops working, as the FORGE states it. Null when no expiry has ever been learned — GoTrue\'s exchange does not report the provider\'s deadline, so it can only come from GitHub\'s own `github-authentication-token-expiration` response header. Null therefore means "not yet known", never "does not expire".']
   "forge_token_checked_at" timestamptz [note: 'When anything was last learned about the forge token. Deliberately NOT stamped when a probe could not reach the forge: recording a check that told us nothing would make a stale belief look fresh.']
@@ -1603,6 +1613,7 @@ Table "sensei"."personas" {
     github_user_id [unique, name: 'personas_github_user_unique', note: 'where: github_user_id IS NOT NULL']
     principal_id [unique, name: 'personas_principal_unique', note: 'where: principal_id IS NOT NULL']
     session_slot [unique, name: 'personas_session_slot_unique', note: 'where: session_slot IS NOT NULL']
+    `(true)` [unique, name: 'personas_one_chosen_default', note: 'where: is_chosen_default']
   }
 
   Note: '''A working identity kept separate from the user's others — business vs personal
@@ -1790,6 +1801,7 @@ Table "sensei"."sync_state" {
   "attempted_at" timestamptz
   "synced_at" timestamptz
   "updated_at" timestamptz [not null, default: `now()`]
+  "persona" text [note: 'The identity (its Keychain session slot) whose sync last wrote this row. NULL on a row no sync has written since the column was added; the next pass fills it.']
 
   indexes {
     (entity, direction) [name: 'sync_state_pending_idx', note: 'where: state <> \'synced\'']
@@ -2399,6 +2411,23 @@ Table "inference"."reasoning_traces" {
 - action_proposed: the recommendation generated, if any'''
 }
 
+Table "sensei"."code_duplicates" {
+  "repository_id" uuid [pk, not null, note: 'The repository measured.']
+  "hash" text [pk, not null, note: 'qlty\'s structural hash: the copies of one piece of code share it.']
+  "identical" boolean [not null, note: 'True when the copies are identical; false when qlty found them similar.']
+  "mass" real [not null, note: 'qlty\'s mass — the size of the duplicated syntax; groups are ranked by it.']
+  "lines" int [not null, note: 'Lines in the longest copy.']
+  "copies" jsonb [not null, note: 'Every copy: [{path, start, end}], repository-relative paths, inclusive lines.']
+  "measured_sha" text [not null, note: 'The HEAD commit measured; a scan re-measures only when HEAD moved.']
+  "measured_at" timestamptz [not null, default: `now()`, note: 'When it was measured.']
+
+  Note: '''Code that local `qlty smells` finds more than once in a repository (user, 2026-10-27:
+duplicates come from the scan that already finds them, not a similarity search run per
+question). One row per group of copies. Measured at the repository's HEAD in a temporary
+worktree against the pinned qlty ruler, with the Complexity lens' measurement; replaced
+whole per repository, so every row of a repository carries the same `measured_sha`.'''
+}
+
 Table "sensei"."commits" {
   "repository_id" uuid [pk, not null, note: 'FK to sensei.repositories — the grain, and the reason two checkouts of one remote converge on a single row set instead of each keeping its own. ON DELETE CASCADE: these facts are about the repository and none of them outlive it.']
   "sha" text [pk, not null, note: 'The full commit object id as git reports it (`%H`), verbatim and never truncated. No length constraint — 40 hex characters under sha-1, 64 under sha-256. Unique only WITHIN a repository, hence the composite primary key: a fork, a mirror or a subtree copy legitimately carries the same sha in a different repository.']
@@ -2492,12 +2521,29 @@ workspace_id = X  = active only in that workspace.
 extensions.scope column is a seeding hint only; this table is authoritative at runtime.'''
 }
 
+Table "sensei"."file_complexity" {
+  "repository_id" uuid [pk, not null, note: 'The repository measured.']
+  "path" text [pk, not null, note: 'Repository-relative path, as git and qlty name it.']
+  "functions" int [not null, note: 'Functions and methods qlty counted in the file.']
+  "complex" int [not null, note: 'Of those, how many exceed cyclomatic complexity 10.']
+  "max_cyclo" int [not null, note: 'The largest cyclomatic complexity of any function in the file.']
+  "measured_sha" text [not null, note: 'The HEAD commit measured; a scan re-measures only when HEAD moved.']
+  "measured_at" timestamptz [not null, default: `now()`, note: 'When it was measured.']
+
+  Note: '''Per-file function complexity as local `qlty metrics --functions` measures it (user,
+2026-10-27: rely on local qlty rather than re-deriving what it measures), for the Code
+map's Complexity lens (M17). Measured at the repository's HEAD in a temporary worktree
+against the pinned qlty ruler — never in the working copy. Replaced whole per
+repository at each measurement; one HEAD per repository, so every row of a repository
+carries the same `measured_sha`.'''
+}
+
 Table "sensei"."folders" {
   "id" uuid [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "root_id" uuid [not null, note: 'Foreign key to folders_to_watch — which watched root this folder was discovered under.']
   "parent_id" uuid [note: 'Self-referencing FK for folder hierarchy. Null means direct child of the watch root.']
   "repository_id" uuid [note: 'FK to sensei.repositories — the global repository this folder belongs to.\n\nSET ON EVERY FOLDER, inherited from its repo anchor at WRITE time by\nupsert_subfolder_kind / upsert_folder. `kind` (git/standalone/subtree) is what\nmarks which folder IS the anchor.\n\nSUPERSEDES I16 (2026-10-01, see docs/decisions.md D-REPO-ANCHOR), which set this\nonly on the anchor and had subfolders resolve via repo_anchor_for. That is a\nset-returning FUNCTION, and a predicate cannot be pushed into a function scan —\n`WHERE workspace = $1` seq-scanned all 13,715 folders with 13,715 function calls to\nanswer a 45-row question, and four of eight views migrated onto it regressed\ncatastrophically (one ~450x). Resolving the anchor once per folder WRITTEN\ninstead of per row READ makes every read a Bitmap Index Scan on\nfolders_repository_id_idx.\n\nNULL only while the scanner has not yet resolved the owning repository.\nON DELETE SET NULL.']
-  "workspace_root_id" uuid [note: 'WHICH workspace declares this module as a member — not whether one does.\n\n- Membership is a RELATIONSHIP, so it is stored as one. `kind` says what a\n  folder IS; this says who claims it. Naming the workspace rather than a bare\n  yes/no makes "the members of this workspace" a single indexed lookup.\n- DERIVED from the declaring manifest\'s member list (package.json\n  `workspaces`, Cargo.toml `[workspace] members`), matched on the repo-relative\n  PATH — never on the directory name or its position in the tree. Asserting\n  membership no manifest states is the R4 fabrication.\n- Refreshed on every scan, so a folder that leaves the member list stops\n  reading as a member.\n- NULL means nothing declares it. A real and common state, not "unknown":\n  `marketplace/`, `app/`, `dojo/` and `website/` here are all genuine build\n  units that no workspace lists.\n- KNOWN GAP, named rather than silent: only the REPO ROOT\'s manifest is read\n  today, so a nested workspace root is not detected and its members resolve as\n  undeclared.']
+  "workspace_root_id" uuid [note: 'WHICH workspace declares this module as a member — not whether one does.\n\n- Membership is a RELATIONSHIP, so it is stored as one. `kind` says what a\n  folder IS; this says who claims it. Naming the workspace rather than a bare\n  yes/no makes "the members of this workspace" a single indexed lookup.\n- DERIVED from the declaring manifest\'s member list (package.json\n  `workspaces`, Cargo.toml `[workspace] members`), matched on the repo-relative\n  PATH — never on the directory name or its position in the tree. Asserting\n  membership no manifest states is the R4 fabrication.\n- Refreshed on every scan, so a folder that leaves the member list stops\n  reading as a member.\n- NULL means nothing declares it. A real and common state, not "unknown":\n  `marketplace/`, `app/` and `dojo/` here are all genuine build\n  units that no workspace lists.\n- KNOWN GAP, named rather than silent: only the REPO ROOT\'s manifest is read\n  today, so a nested workspace root is not detected and its members resolve as\n  undeclared.']
   "kind" sensei.folder_kind [not null, default: 'git', note: 'What this folder IS: git (repository), module (a manifest-bearing build unit inside a repo — a crate, an npm package, a Go module), subtree (nested git repo), standalone (non-git, no git siblings — written only by v1 scan paths, retiring with them), folder (an ordinary directory inside a repo, no manifest).\n\nIt does NOT say who claims the folder. Whether a workspace declares a module is a relationship and lives in workspace_root_id. `workspace_member` and `package` were once two values here; merged, because that split flips for several folders the moment a `workspaces` array is added — nothing about the directory changes — and a kind that moves under an unrelated edit describes the wrong thing.']
   "status" sensei.folder_status [not null, default: 'discovered', note: 'Indexing lifecycle: discovered → queued → indexing → indexed, or failed. Or archived, when the directory is gone but its history is worth keeping.\n\nThere is no "not indexed" state. A folders row exists only for a repo root or a manifest-bearing directory, and every one of those is indexed; a directory we do not index has no row at all.']
   "role" sensei.folder_role [note: 'Workspace role assigned during setup: backend, frontend, library, docs, infra. Null until assigned.']
@@ -2602,7 +2648,7 @@ Populated by daemon indexer from referenced_libraries; editable by user.'''
 Table "sensei"."library_packages" {
   "package_name" text [pk, not null, note: 'Ecosystem-qualified name as a dependency file spells it (@rokkit/ui) — matches what detection stored, so resolution is an equality join.']
   "library_id" uuid [not null, note: 'FK to libraries — the parent whose skills/agents this package should resolve to.']
-  "source" text [not null, default: 'manifest', note: 'Provenance: manifest (declared) — reserved for a future curated/registry writer.']
+  "source" text [not null, default: 'manifest', note: 'Provenance: manifest (declared by the library), workspace (its repo\'s workspace members), dependency (a dependent used it and its repository\'s manifest named the library).']
   "modified_at" timestamptz [not null, default: `now()`]
 
   indexes {
@@ -2995,6 +3041,7 @@ Table "activity"."sessions" {
   "duration" interval [note: 'Gap-aware active work time (excludes idle gaps > threshold). The full\nwall-clock span is started_at..completed_at; per-turn/segment detail lives in\nactivity.turns.']
   "claude_time" interval
   "user_time" interval
+  "active_by_hour" jsonb
   "module" text [note: 'Primary code module touched. For per-module FTR.']
   "summary" text [note: 'Brief summary of what happened in this session. Populated at checkpoint time by the assistant.']
   "provider" text [note: 'Inference provider that ran this session (e.g. anthropic, openai, copilot_chat, ollama). Captured from the transcript at synthesis (#75); NULL for live hook-captured sessions whose model the hook stream doesn\'t carry. Powers effectiveness-by-model.']
@@ -3403,6 +3450,7 @@ Table "sensei"."files" {
   "skip_reason" sensei.scan_skip_reason [note: 'Null when the file was indexed. Non-null records why it was examined but deliberately not indexed (unsupported format, binary content, invalid UTF-8, parse error, excluded by config). Recording the fingerprint alongside the reason is what stops a skipped file from being re-enqueued on every reconcile; because the skip is keyed to the fingerprint, fixing the file re-triggers indexing automatically.']
   "skip_detail" text [note: 'The parser\'s VERBATIM error with file, line and column, when the grammar produced one (R10.9). skip_reason is the code; this is the text. An agent handed "x.rs:142: expected `}`" can fix the file; one handed "parse_error" can only shrug. Null when there is no detail to record.']
   "parsed_at" timestamptz [note: 'When a parse outcome was last recorded for this file. NULL means the walk created the row and no parse has run yet — the "discovered" state. Together with skip_reason this yields the full file lifecycle: (null, null) discovered; (set, null) parsed; (set, non-null) unparseable or skipped per the reason. It exists because those first two are otherwise indistinguishable, which would make a stalled parse task look identical to a file that parsed and legitimately declared nothing.']
+  "tags" text[] [not null, default: '{}', note: 'Framework roles, sorted: the kinds of the symbols it holds (hook, component) and its role by path (route, middleware). Written by the scan; read through file_tags.']
   "indexed_at" timestamptz [not null, default: `now()`, note: 'Timestamp when this file was last examined (indexed, or skipped with a reason).']
   "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
@@ -3948,6 +3996,7 @@ Table "activity"."turns" {
   "is_correction" boolean [not null, default: false, note: 'True if this turn\'s prompt corrected the previous turn (FTR detractor).']
   "triage_signal" text [note: 'Which correction heuristic matched (revert/correction/actually/...). Null if not a correction.']
   "tool_calls" int [not null, default: 0, note: 'Number of tool invocations (PostToolUse) in the turn.']
+  "origin" text [note: 'Who started the turn — human, or an automated prompt (scheduled, peer, task_notification, auto_continuation) — from the transcript turn with the same prompt id. Null when no transcript turn matched.']
 
   indexes {
     (session_id, turn_number) [unique, note: 'unique constraint']
@@ -4618,11 +4667,13 @@ Ref: "activity"."assistant_events"."repository_id" > "sensei"."repositories"."id
 Ref: "activity"."runs"."workspace_id" > "sensei"."workspaces"."id" [delete: set null]
 Ref: "gateway"."models"."provider_id" > "gateway"."providers"."id" [delete: cascade]
 Ref: "inference"."reasoning_traces"."workspace_id" > "sensei"."workspaces"."id" [delete: set null]
+Ref: "sensei"."code_duplicates"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
 Ref: "sensei"."commits"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
 Ref: "sensei"."dojo_membership_personas"."membership_id" > "sensei"."dojo_memberships"."id" [delete: cascade]
 Ref: "sensei"."dojo_membership_personas"."persona_id" > "sensei"."personas"."id" [delete: cascade]
 Ref: "sensei"."extension_workspaces"."extension_id" > "sensei"."extensions"."id" [delete: cascade]
 Ref: "sensei"."extension_workspaces"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
+Ref: "sensei"."file_complexity"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
 Ref: "sensei"."folders"."root_id" > "sensei"."folders_to_watch"."id" [delete: cascade]
 Ref: "sensei"."folders"."parent_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."folders"."repository_id" > "sensei"."repositories"."id" [delete: set null]

@@ -49,4 +49,4 @@ prefix-inferred: a guess would claim packages in a shared scope that belong to
 someone else. Keyed on package_name because a package belongs to one library.';
 comment on column library_packages.package_name is 'Ecosystem-qualified name as a dependency file spells it (@rokkit/ui) — matches what detection stored, so resolution is an equality join.';
 comment on column library_packages.library_id   is 'FK to libraries — the parent whose skills/agents this package should resolve to.';
-comment on column library_packages.source       is 'Provenance: manifest (declared) — reserved for a future curated/registry writer.';
+comment on column library_packages.source       is 'Provenance: manifest (declared by the library), workspace (its repo''s workspace members), dependency (a dependent used it and its repository''s manifest named the library).';

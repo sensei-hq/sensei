@@ -9,6 +9,7 @@
  * Rail layout mirrors docs/mockups/Sensei/lib/observatory.jsx (~L247-323).
  */
 
+import { resolveActiveHref as resolveRailHref } from "$lib/rail";
 import { WORKSPACE_ICON } from "./workspaces/buckets";
 
 /** A navigable rail entry. `value` mirrors `href` so List's value-match
@@ -136,16 +137,7 @@ function allHrefs(): string[] {
  * nothing matches.
  */
 export function resolveActiveHref(pathname: string): string {
-  const hrefs = allHrefs();
-  if (hrefs.includes(pathname)) return pathname;
-
-  let best = "";
-  for (const href of hrefs) {
-    if (href === "/") continue;
-    if (pathname.startsWith(href + "/") && href.length > best.length)
-      best = href;
-  }
-  return best;
+  return resolveRailHref(pathname, allHrefs(), ["/"]);
 }
 
 /** The icon of the rail entry at `href` (#133), for that screen's header. */

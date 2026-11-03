@@ -7,7 +7,7 @@ SvelteKit + Tauri desktop app. Frontend.
 **Canonical rules: `sensei/docs/architecture/frontend-svelte-guidelines.md`** — token
 system, the 8-stop type scale (never literal px), spacing grid, **responsive `md:`
 prefixes (§1.7)**, per-surface config parity (§1.8), state separation, component
-patterns, voice, testing. Shared across app/ · dojo/ · website/. Every new screen and
+patterns, voice, testing. Shared across app/ · dojo/ · the website (its own repo, sensei-hq/website). Every new screen and
 every refactor follows it.
 
 Companion references:
@@ -30,8 +30,9 @@ Companion references:
 2. **State** — `*.svelte.ts` files own derivations, status mapping, copy,
    and actions. Components are pure templates: props in, markup out.
 
-3. **Data** — `+page.ts` / `+page.server.ts` `load()` for pre-fetched data.
-   Client-side state only when data must come from runtime.
+3. **Data** — `+page.ts` / `+page.server.ts` `load()` for pre-fetched data by
+   default. Where `load()` is not performant, a page state manages the fetch
+   (renders at once, fills by section, caches) — guidelines §2.3.
 
 4. **API contracts win** — type primitive props against the wire enum from
    `*-types.ts`, not against the mockup's prototype values.

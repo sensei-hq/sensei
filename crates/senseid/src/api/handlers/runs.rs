@@ -228,13 +228,7 @@ pub(crate) async fn pause_run(
     // Cadence marker so the feed shows the pause + when it resumes. Best-effort.
     let _ = state
         .pg
-        .append_run_event(
-            &run_id,
-            RunEventKind::PausedOnLimit,
-            None,
-            None,
-            &serde_json::json!({ "until": until, "reason": reason, "via": "pause_run" }),
-        )
+        .append_run_event(&run_id, &crate::db::pg_store::RunEventRow { kind: RunEventKind::PausedOnLimit, phase: None, feature: None, detail: &serde_json::json!({ "until": until, "reason": reason, "via": "pause_run" }) })
         .await;
 
     match state.pg.get_run(&run_id).await {
@@ -372,13 +366,7 @@ pub(crate) async fn update_task_status(
     if let Some(kind) = task_event_kind(new_state) {
         let _ = state
             .pg
-            .append_run_event(
-                &run_id,
-                kind,
-                None,
-                Some(&task_id),
-                &serde_json::json!({ "state": new_state.as_db_str(), "note": note, "via": "update_task_status" }),
-            )
+            .append_run_event(&run_id, &crate::db::pg_store::RunEventRow { kind, phase: None, feature: Some(&task_id), detail: &serde_json::json!({ "state": new_state.as_db_str(), "note": note, "via": "update_task_status" }) })
             .await;
     }
     Ok(Json(serde_json::json!({ "ok": true, "task_id": task_id, "state": new_state.as_db_str() })))
@@ -436,10 +424,12 @@ pub(crate) async fn report_run_outcome(
         .pg
         .append_run_event(
             &run_id,
-            kind,
-            None,
-            None,
-            &serde_json::json!({ "summary": summary, "via": "report_run_outcome" }),
+            &crate::db::pg_store::RunEventRow {
+                kind,
+                phase: None,
+                feature: None,
+                detail: &serde_json::json!({ "summary": summary, "via": "report_run_outcome" }),
+            },
         )
         .await;
 
@@ -468,14 +458,17 @@ pub(crate) async fn report_run_outcome(
 pub(crate) async fn get_pending_nudges(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let run_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let refuse =
+        |status: StatusCode, msg: String| (status, Json(serde_json::json!({ "error": msg })));
+    let run_id = uuid::Uuid::parse_str(&id)
+        .map_err(|_| refuse(StatusCode::BAD_REQUEST, format!("'{id}' is not a run id")))?;
     let run = match state.pg.get_run(&run_id).await {
         Ok(Some(run)) => run,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => return Err(refuse(StatusCode::NOT_FOUND, format!("no run {run_id}"))),
         Err(e) => {
             tracing::error!(error = %e, run = %id, "get_pending_nudges: get_run failed");
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(refuse(StatusCode::INTERNAL_SERVER_ERROR, e));
         }
     };
     let empty = || Ok(Json(serde_json::json!({ "nudges": [] })));
@@ -633,10 +626,12 @@ mod tests {
             .pg
             .append_run_event(
                 &id,
-                RunEventKind::Housekeeping,
-                None,
-                None,
-                &serde_json::json!({ "tick": true }),
+                &crate::db::pg_store::RunEventRow {
+                    kind: RunEventKind::Housekeeping,
+                    phase: None,
+                    feature: None,
+                    detail: &serde_json::json!({ "tick": true }),
+                },
             )
             .await
             .unwrap();
@@ -832,12 +827,12 @@ mod tests {
         };
         // Bad uuid → 400.
         let e = get_pending_nudges(State(state.clone()), Path("nope".into())).await.unwrap_err();
-        assert_eq!(e, StatusCode::BAD_REQUEST);
+        assert_eq!(e.0, StatusCode::BAD_REQUEST);
         // Unknown run → 404.
         let e = get_pending_nudges(State(state.clone()), Path(uuid::Uuid::new_v4().to_string()))
             .await
             .unwrap_err();
-        assert_eq!(e, StatusCode::NOT_FOUND);
+        assert_eq!(e.0, StatusCode::NOT_FOUND);
         // A real run with no enrolled dojo → empty nudges (fail-soft), not a 500.
         let id = state.pg.create_run(&NewRun::default()).await.unwrap();
         let Json(body) =

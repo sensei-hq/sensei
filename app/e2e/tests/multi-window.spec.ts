@@ -89,12 +89,12 @@ test.describe('Observatory nav — section links', () => {
 
 test.describe('Workspaces page', () => {
   test.beforeEach(async ({ tauriPage }) => {
-    await navigateToScreen(tauriPage, '/workspaces', '[data-component="workspaces-page"]');
+    await navigateToScreen(tauriPage, '/workspaces', '[data-screen="workspaces"]');
   });
 
   test('renders the Workspaces heading', async ({ tauriPage }) => {
     const text = await tauriPage.evaluate(
-      `document.querySelector('[data-component="workspaces-page"]')?.textContent ?? ''`,
+      `document.querySelector('[data-screen="workspaces"]')?.textContent ?? ''`,
     ) as string;
     expect(text).toContain('Workspaces');
     expect(text).toContain('All the places you work.');
@@ -102,11 +102,11 @@ test.describe('Workspaces page', () => {
 
   test('shows workspace cards, or an honest empty state', async ({ tauriPage }) => {
     const cards = await tauriPage
-      .locator('[data-component="workspaces-page"] [data-workspace-card], [data-component="workspaces-page"] [data-workspace-row]')
+      .locator('[data-screen="workspaces"] [data-workspace-card], [data-screen="workspaces"] [data-workspace-row]')
       .count();
     if (cards === 0) {
       const text = await tauriPage.evaluate(
-        `document.querySelector('[data-component="workspaces-page"]')?.textContent ?? ''`,
+        `document.querySelector('[data-screen="workspaces"]')?.textContent ?? ''`,
       ) as string;
       expect(text).toMatch(/No workspaces/i);
       return;
@@ -186,9 +186,9 @@ test.describe('Workspace window — chrome', () => {
     await navigateToScreen(tauriPage, `/workspace/${workspaceId}/overview`, '[data-component="workspace-sidebar"]');
 
     const navItems = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('[data-component="workspace-sidebar"] .proj-nav-item')).map(el => ({
-        kanji: el.querySelector('.kanji')?.textContent?.trim(),
-        label: el.querySelector('span:not(.kanji)')?.textContent?.trim(),
+      `Array.from(document.querySelectorAll('[data-component="workspace-sidebar"] [data-list-item]')).map(el => ({
+        kanji: el.querySelector('[data-item-icon-literal]')?.textContent?.trim(),
+        label: el.querySelector('[data-item-label]')?.textContent?.trim(),
       }))`,
     ) as Array<{ kanji: string; label: string }>;
 
@@ -199,13 +199,22 @@ test.describe('Workspace window — chrome', () => {
       { kanji: '録', label: 'Sessions'     },
       { kanji: '憶', label: 'Memories'     },
       { kanji: '跡', label: 'Traceability' },
-      { kanji: '図', label: 'Atlas'        },
-      { kanji: '構', label: 'Diagrams'     },
       { kanji: '蔵', label: 'Libraries'    },
       { kanji: '器', label: 'Instruments'  },
       { kanji: '型', label: 'Patterns'     },
       { kanji: '響', label: 'Impact'       },
+      { kanji: '札', label: 'Tickets'      },
+      { kanji: '繋', label: 'Integrations' },
       { kanji: '情', label: 'About'        },
+      // The Diagrams subsection (M16): one entry per diagram.
+      { kanji: '構', label: 'Structure'         },
+      { kanji: '輪', label: 'Wheel'             },
+      { kanji: '域', label: 'Zones'             },
+      { kanji: '格', label: 'Dependency matrix' },
+      { kanji: '環', label: 'Cycles'            },
+      { kanji: '縁', label: 'Hidden coupling'   },
+      { kanji: '繁', label: 'Complexity'        },
+      { kanji: '表', label: 'Database · ER'     },
     ];
 
     expect(navItems).toHaveLength(expected.length);
@@ -250,7 +259,6 @@ test.describe('Workspace window — section pages', () => {
     { id: 'sessions',     label: 'Sessions',     kanji: '録' },
     { id: 'memories',     label: 'Memories',     kanji: '憶' },
     { id: 'traceability', label: 'Traceability', kanji: '跡' },
-    { id: 'atlas',        label: 'Atlas',        kanji: '図' },
     { id: 'libraries',    label: 'Libraries',    kanji: '蔵' },
     { id: 'instruments',  label: 'Instruments',  kanji: '器' },
     { id: 'patterns',     label: 'Patterns',     kanji: '型' },
@@ -272,13 +280,13 @@ test.describe('Workspace window — section pages', () => {
         `[data-component="workspace-main"][data-section="${section.id}"]`,
       );
 
-      // Active nav item: .proj-nav-item.active, label is the non-.kanji span.
+      // The rail's current entry: the List item marked active.
       const active = await tauriPage.evaluate(
         `(function(){
-          const el = document.querySelector('.proj-nav-item.active');
+          const el = document.querySelector('[data-component="workspace-sidebar"] [data-list-item][data-active="true"]');
           return {
-            label: el?.querySelector('span:not(.kanji)')?.textContent?.trim(),
-            kanji: el?.querySelector('.kanji')?.textContent?.trim(),
+            label: el?.querySelector('[data-item-label]')?.textContent?.trim(),
+            kanji: el?.querySelector('[data-item-icon-literal]')?.textContent?.trim(),
           };
         })()`,
       ) as { label: string; kanji: string };
@@ -329,7 +337,7 @@ test.describe('Design fidelity — chrome widths', () => {
     workspaceId = await getFirstWorkspaceId();
   });
 
-  test('workspace sidebar is 180px wide', async ({ tauriPage }) => {
+  test('workspace sidebar is 220px wide, as every rail', async ({ tauriPage }) => {
     if (!workspaceId) {
       test.skip(true, 'No workspaces in dev database');
       return;
@@ -338,7 +346,7 @@ test.describe('Design fidelity — chrome widths', () => {
     const width = await tauriPage.evaluate(
       `document.querySelector('[data-component="workspace-sidebar"]')?.getBoundingClientRect().width`,
     ) as number;
-    expect(width).toBe(180);
+    expect(width).toBe(220);
   });
 
   test('observatory sidebar is 220px wide', async ({ tauriPage }) => {

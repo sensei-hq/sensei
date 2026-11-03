@@ -17,7 +17,7 @@
 			<KanjiToken char="封" size="inherit" toneClass="" class="text-ink-faint text-4xl" />
 			<div class="display text-ink text-lg">This invite couldn't be accepted.</div>
 			{#if data.error}
-				<div class="text-ink-soft text-sm">{data.error}</div>
+				<div class="text-ink-mute text-sm">{data.error}</div>
 			{/if}
 			<a
 				href={data.back}

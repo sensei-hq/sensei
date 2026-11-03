@@ -102,6 +102,8 @@ pub fn parse_cursor_transcript(content: &str) -> Vec<TranscriptTurn> {
                     let attrs = turn_attrs(&v, &["message"]);
                     cur = Some(TranscriptTurn {
                         turn_index: turns.len() as i32 + 1,
+                        origin: "human".to_string(),
+                        prompt_id: None,
                         user_text: Some(prompt),
                         assistant_text: String::new(),
                         started_at: super::parse_timestamp(&v),

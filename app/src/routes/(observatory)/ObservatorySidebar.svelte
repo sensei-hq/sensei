@@ -1,8 +1,7 @@
 <script lang="ts">
-    import { List } from '@rokkit/ui';
-    import { Eyebrow, Wordmark } from '$lib/components';
+    import { Eyebrow, Rail, Wordmark } from '$lib/components';
     import { buildNavItems, resolveActiveHref } from './observatory-nav';
-    import { glyphFields, type GlyphMode } from '$lib/glyphs';
+    import type { GlyphMode } from '$lib/glyphs';
 
     interface Props {
         /** Daemon port, shown in the footer. */
@@ -13,36 +12,41 @@
         workspaceCount?: number;
         /** Kanji or icons (#133); the layout reads it from the preference. */
         glyphs?: GlyphMode;
+        /** What needs you, in one sentence (PersonaList.attentionLine), or null. */
+        attention?: string | null;
+        /** Where that is handled — Settings · Dōjō. */
+        onAttention?: () => void;
     }
-    let { port, pathname, workspaceCount, glyphs = 'kanji' }: Props = $props();
+    let { port, pathname, workspaceCount, glyphs = 'kanji', attention = null, onAttention }: Props = $props();
 
     const items = $derived(buildNavItems({ workspaceCount }));
     const activeHref = $derived(resolveActiveHref(pathname));
-
-    // List's default rendering handles icon + label + badge; `glyphFields` says
-    // which property fills the icon slot (#133). href / value / badge /
-    // children / type keep their default field names.
-    const fields = $derived(glyphFields(glyphs));
 </script>
 
-<aside
-    data-component="observatory-sidebar"
-    class="w-[220px] shrink-0 flex flex-col gap-4 overflow-auto border-r border-paper-edge bg-paper px-3 py-5"
->
-    <div class="px-1">
-        <Wordmark />
-    </div>
-
-    <div class="px-2">
-        <Eyebrow>Observatory</Eyebrow>
-    </div>
-
-    <List {items} {fields} value={activeHref} collapsible={false} />
-
-    <div class="flex-1"></div>
-
-    <div class="border-t border-paper-edge pt-2 text-xs leading-relaxed">
-        <span class="font-mono text-ink-mute">daemon · running</span><br />
-        <span class="font-mono text-ink-faint">port {port}</span>
-    </div>
-</aside>
+<Rail component="observatory-sidebar" label="Observatory" {items} value={activeHref} {glyphs}>
+    {#snippet header()}
+        <div class="px-1">
+            <Wordmark />
+        </div>
+        <div class="px-2">
+            <Eyebrow>Observatory</Eyebrow>
+        </div>
+    {/snippet}
+    {#snippet footer()}
+        {#if attention}
+            <button
+                type="button"
+                data-attention
+                class="flex items-start gap-2 w-full text-left text-xs leading-snug text-warning bg-transparent border-0 p-1 rounded-sm cursor-pointer hover:bg-paper-mute"
+                onclick={() => onAttention?.()}
+            >
+                <span class="mt-1 w-1.5 h-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
+                <span>{attention}</span>
+            </button>
+        {/if}
+        <div class="border-t border-paper-edge pt-2 text-xs leading-relaxed">
+            <span class="font-mono text-ink-soft">daemon · running</span><br />
+            <span class="font-mono text-ink-faint">port {port}</span>
+        </div>
+    {/snippet}
+</Rail>

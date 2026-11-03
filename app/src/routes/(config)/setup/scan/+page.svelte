@@ -15,7 +15,7 @@
     // transitions queued → indexing → indexed (or → failed), each shown
     // with its own colour so the user can see live state at a glance.
     const STATUS_COLORS: Record<string, string> = {
-        discovered: "var(--ink-soft)",
+        discovered: "var(--ink-mute)",
         queued:     "var(--warning)",
         indexing:   "var(--accent)",
         indexed:    "var(--success)",
@@ -30,7 +30,7 @@
         >
             <Kanji char="探" size="4xl" tone="inherit" class="block text-accent opacity-25" />
             <p
-                class="text-base text-ink-mute max-w-[440px] leading-normal m-0"
+                class="text-base text-ink-soft max-w-[440px] leading-normal m-0"
             >
                 The daemon will recurse your folders, identify folders, and
                 extract the code graph.
@@ -46,7 +46,7 @@
                     <div class="text-sm font-semibold text-danger">
                         Scan failed
                     </div>
-                    <div class="text-xs text-ink-mute mt-1 font-mono">
+                    <div class="text-xs text-ink-soft mt-1 font-mono">
                         {scanState.error}
                     </div>
                 </div>
@@ -56,7 +56,7 @@
             </div>
         {:else if !scanState.daemonReachable}
             <div
-                class="mb-4 p-2.5 rounded-md bg-warning-soft text-xs text-warning"
+                class="mb-4 p-2.5 rounded-md bg-warning-soft text-xs text-on-warning-soft"
             >
                 Daemon unreachable — retrying…
             </div>
@@ -71,7 +71,7 @@
                     <div class="display text-3xl leading-tight">
                         {stat.value}
                     </div>
-                    <div class="text-xs tracking-wide text-ink-soft mt-1">
+                    <div class="text-xs tracking-wide text-ink-mute mt-1">
                         {stat.label}
                     </div>
                 </div>
@@ -83,18 +83,11 @@
             <div class="flex flex-col gap-4">
                 {#each workspaces.sortedItems as proj (proj.id)}
                     {@const path = workspaces.workspacePath(proj)}
-                    {@const folderCount = proj.folders.length}
-                    {@const readyCount = proj.folders.filter(
-                        (f) => f.status === "indexed",
-                    ).length}
-                    {@const totalFiles = proj.folders.reduce(
-                        (s, f) => s + f.filesTotal,
-                        0,
-                    )}
-                    {@const completedFiles = proj.folders.reduce(
-                        (s, f) => s + f.filesCompleted,
-                        0,
-                    )}
+                    {@const progress = workspaces.progressOf(proj)}
+                    {@const folderCount = progress.folders}
+                    {@const readyCount = progress.ready}
+                    {@const totalFiles = progress.files}
+                    {@const completedFiles = progress.completed}
 
                     <div
                         class="bg-paper-mute rounded-lg p-5 border border-paper-edge"
@@ -104,20 +97,20 @@
                                 <div class="text-base font-semibold">
                                     {proj.name}
                                 </div>
-                                <div class="text-xs text-ink-soft mt-0.5">
+                                <div class="text-xs text-ink-mute mt-0.5">
                                     {path} · {folderCount} folders · {readyCount}
                                     ready
                                 </div>
                             </div>
                             <span
-                                class="text-xs tracking-wide text-ink-soft font-semibold"
+                                class="text-xs tracking-wide text-ink-mute font-semibold"
                                 class:text-success={proj.status === "active"}
                                 >{proj.status.toUpperCase()}</span
                             >
                         </div>
 
                         {#if totalFiles > 0}
-                            <div class="text-sm text-ink-mute font-mono mb-3">
+                            <div class="text-sm text-ink-soft font-mono mb-3">
                                 {completedFiles.toLocaleString()} / {totalFiles.toLocaleString()}
                             </div>
                         {/if}
@@ -131,12 +124,12 @@
                                     >
                                     {#if f.stack.length > 0}
                                         <span
-                                            class="text-xs text-ink-soft min-w-[80px]"
+                                            class="text-xs text-ink-mute min-w-[80px]"
                                             >{f.stack.join(", ")}</span
                                         >
                                     {:else if f.filesTotal > 0}
                                         <span
-                                            class="text-xs text-ink-soft min-w-[80px]"
+                                            class="text-xs text-ink-mute min-w-[80px]"
                                             >{f.filesTotal}f</span
                                         >
                                     {/if}
@@ -159,7 +152,7 @@
                 {/each}
 
                 {#if workspaces.items.length === 0 && scanState.started}
-                    <div class="text-sm text-ink-soft p-6 text-center">
+                    <div class="text-sm text-ink-mute p-6 text-center">
                         Discovering workspaces...
                     </div>
                 {/if}
@@ -172,22 +165,22 @@
             >
                 {#if scanState.completed}
                     <div
-                        class="flex justify-between pb-3 border-b border-paper-edge mb-3 text-xs text-ink-soft"
+                        class="flex justify-between pb-3 border-b border-paper-edge mb-3 text-xs text-ink-mute"
                     >
                         <span class="font-mono">SUMMARY</span>
                         <span class="font-mono text-success">complete</span>
                     </div>
                     <div class="flex flex-col gap-3" data-testid="scan-summary">
                         <div class="flex justify-between text-sm">
-                            <span class="text-ink-mute">Folders scanned</span>
+                            <span class="text-ink-soft">Folders scanned</span>
                             <span class="font-mono">{workspaces.readyFolders}</span>
                         </div>
                         <div class="flex justify-between text-sm">
-                            <span class="text-ink-mute">Files indexed</span>
+                            <span class="text-ink-soft">Files indexed</span>
                             <span class="font-mono">{workspaces.completedFiles.toLocaleString()}</span>
                         </div>
                         <div class="flex justify-between text-sm">
-                            <span class="text-ink-mute">Time elapsed</span>
+                            <span class="text-ink-soft">Time elapsed</span>
                             <span class="font-mono">{activities.totalElapsed.toFixed(1)}s</span>
                         </div>
                         <button
@@ -200,10 +193,10 @@
                     </div>
                 {:else}
                     <div
-                        class="flex justify-between pb-3 border-b border-paper-edge mb-3 text-xs text-ink-soft"
+                        class="flex justify-between pb-3 border-b border-paper-edge mb-3 text-xs text-ink-mute"
                     >
                         <span class="font-mono">TASKS</span>
-                        <span class="font-mono text-ink-mute"
+                        <span class="font-mono text-ink-soft"
                             >{workspaces.pendingFolders} active · {activities.totalElapsed.toFixed(
                                 1,
                             )}s</span
@@ -221,21 +214,21 @@
                                 <span
                                     class="text-xs min-w-[64px] text-right"
                                     style="color: {STATUS_COLORS[f.status] ??
-                                        'var(--ink-soft)'}"
+                                        'var(--ink-mute)'}"
                                     >{f.status}</span
                                 >
                                 {#if f.filesTotal > 0}
                                     <span
-                                        class="font-mono text-xs text-ink-soft min-w-[60px] text-right"
+                                        class="font-mono text-xs text-ink-mute min-w-[60px] text-right"
                                         >{f.filesCompleted}/{f.filesTotal}</span
                                     >
                                 {:else}
-                                    <span class="font-mono text-xs text-ink-soft min-w-[60px] text-right">—</span>
+                                    <span class="font-mono text-xs text-ink-mute min-w-[60px] text-right">—</span>
                                 {/if}
                             </div>
                         {/each}
                         {#if workspaces.allFolders.length === 0}
-                            <div class="text-xs text-ink-soft text-center p-4">
+                            <div class="text-xs text-ink-mute text-center p-4">
                                 Waiting for the daemon to discover folders…
                             </div>
                         {/if}

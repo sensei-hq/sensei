@@ -119,13 +119,19 @@ pub(crate) struct DefaultPersona {
     pub slot: String,
 }
 
-/// The default identity: the one that owns the machine's global git email.
-/// No email, no owner, or two owners is an ERROR naming what is missing — never
-/// the `default` slot, which would silently answer for whoever signed in first.
+/// The default identity: the one chosen in sensei (Make default), else the one
+/// that owns the machine's global git email. No choice and no email, no owner,
+/// or two owners is an ERROR naming what is missing — never the `default` slot,
+/// which would silently answer for whoever signed in first.
 pub(crate) fn resolve_default(
+    chosen: Option<(String, Option<String>)>,
     global_email: Option<&str>,
     owners: &[(String, Option<String>)],
 ) -> Result<DefaultPersona, String> {
+    if let Some((label, slot)) = chosen {
+        let slot = slot.unwrap_or_else(|| label.clone());
+        return Ok(DefaultPersona { label, slot });
+    }
     let Some(email) = global_email else {
         return Err("no default identity: git has no global user.email \
                     (set one with `git config --global user.email …`, or name a persona)"
@@ -155,7 +161,23 @@ pub(crate) async fn default_persona(state: &AppState) -> Result<DefaultPersona, 
         Some(e) => state.pg.personas_owning_email(e).await?,
         None => Vec::new(),
     };
-    resolve_default(email.as_deref(), &owners)
+    resolve_default(state.pg.chosen_default_persona().await?, email.as_deref(), &owners)
+}
+
+/// `POST /api/auth/personas/{label}/default` — Make default: this identity is
+/// the default from now on, over the git-email rule. 404 for an identity this
+/// machine does not have.
+pub(crate) async fn make_default(
+    State(state): State<AppState>,
+    axum::extract::Path(label): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let fail =
+        |status, msg: String| (status, Json(serde_json::json!({ "ok": false, "error": msg })));
+    match state.pg.choose_default_persona(&label).await {
+        Ok(true) => Ok(Json(serde_json::json!({ "ok": true, "default": label }))),
+        Ok(false) => Err(fail(axum::http::StatusCode::NOT_FOUND, format!("no identity {label}"))),
+        Err(e) => Err(fail(axum::http::StatusCode::INTERNAL_SERVER_ERROR, e)),
+    }
 }
 
 /// The persona a request addresses: the one it names, or the default (#296).
@@ -1059,16 +1081,14 @@ pub(crate) async fn status(
 pub(crate) async fn personas(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-    use crate::dojo_client::forge_token::persona_action;
-
     let rows = state.pg.persona_rows().await.map_err(|e| {
         tracing::error!(error = %e, "personas: could not read the registry");
         axum::http::StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let now = chrono::Utc::now().timestamp();
     // One quiet read per connected persona: a millisecond, and it cannot prompt.
-    // It is what tells "signed in" from "signed in, but the Keychain withholds
-    // the session" — the second needs the user's approval (#283).
+    // What the Keychain SAID is reported as a fact; the identity state in the app
+    // decides what it means beside the expiry (user, 2026-10-28).
     let slots: Vec<Option<String>> =
         rows.iter().map(|r| r.session_slot.clone().filter(|_| r.verified)).collect();
     let sessions = tokio::task::spawn_blocking(move || {
@@ -1090,8 +1110,6 @@ pub(crate) async fn personas(
         .iter()
         .zip(&sessions)
         .map(|(r, session)| {
-            let action =
-                persona_action(r.session_slot.as_deref(), r.verified, &r.state, r.expires_at, now);
             serde_json::json!({
                 "label": r.label,
                 // The DISPLAY label is rewritten to the verified login on
@@ -1104,7 +1122,10 @@ pub(crate) async fn personas(
                 "sessionSlot": r.session_slot,
                 "connected": r.session_slot.is_some() && r.verified,
                 "forgeToken": { "state": r.state, "expiresAt": r.expires_at },
-                "action": action_name(action, session.as_ref()),
+                // Facts, not a decision: the app's identity state decides the
+                // status from these and the clock.
+                "renewalDue": renewal_due(&r.state, r.expires_at, now),
+                "keychain": keychain_wire(session.as_ref()),
                 "isDefault": default_label.as_deref() == Some(r.label.as_str()),
             })
         })
@@ -1116,24 +1137,25 @@ pub(crate) async fn personas(
     })))
 }
 
-/// The wire name of a persona's action. `approve` when its stored session is
-/// there but the Keychain will not hand it over without the user (#283) —
-/// the daemon never prompts, so only a click can. `session` is the quiet read
-/// of a connected persona's session; `None` when there is nothing to read.
-fn action_name(
-    action: crate::dojo_client::forge_token::PersonaAction,
+/// What the Keychain said about a persona's stored session, as a wire name.
+/// `needsApproval` is the user's to grant (#283) — the daemon never prompts.
+/// `None` when nothing was read (the persona is not connected).
+fn keychain_wire(
     session: Option<&Result<(), crate::gateway_keys::KeychainError>>,
-) -> &'static str {
-    use crate::dojo_client::forge_token::PersonaAction;
-    if let Some(Err(crate::gateway_keys::KeychainError::NeedsApproval)) = session {
-        return "approve";
+) -> Option<&'static str> {
+    use crate::gateway_keys::KeychainError;
+    match session? {
+        Ok(()) => Some("readable"),
+        Err(KeychainError::NeedsApproval) => Some("needsApproval"),
+        Err(_) => Some("missing"),
     }
-    match action {
-        PersonaAction::Connect => "connect",
-        PersonaAction::SignIn => "signIn",
-        PersonaAction::Renew => "renew",
-        PersonaAction::None => "none",
-    }
+}
+
+/// Whether a renewal is due, by the scheduler's own rule (`forge_token_action`),
+/// so the margin lives in one place.
+fn renewal_due(state: &str, expires_at: Option<i64>, now: i64) -> bool {
+    use crate::dojo_client::forge_token::{ForgeTokenAction, forge_token_action, token_state_of};
+    forge_token_action(expires_at, now, token_state_of(state)) == ForgeTokenAction::Refresh
 }
 
 /// What approving a persona's Keychain item came to (#283). The refresh token
@@ -1320,7 +1342,17 @@ async fn link_verified_identity(
     emails.sort();
     emails.dedup();
 
-    match state.pg.link_persona_identity(persona, login, gh_id, primary, &emails).await {
+    match state
+        .pg
+        .link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+            persona_hint: persona,
+            github_login: login,
+            github_user_id: gh_id,
+            primary_email: primary,
+            verified_emails: &emails,
+        })
+        .await
+    {
         Ok(id) => serde_json::json!({
             "verified": true,
             "personaId": id,
@@ -1423,8 +1455,11 @@ mod default_persona_tests {
 
     #[test]
     fn the_identity_owning_the_global_email_is_the_default() {
-        let got =
-            resolve_default(Some("dev@example.com"), &[owner("jerrythomas", Some("jerrythomas"))]);
+        let got = resolve_default(
+            None,
+            Some("dev@example.com"),
+            &[owner("jerrythomas", Some("jerrythomas"))],
+        );
         assert_eq!(
             got,
             Ok(DefaultPersona { label: "jerrythomas".into(), slot: "jerrythomas".into() })
@@ -1433,27 +1468,47 @@ mod default_persona_tests {
 
     #[test]
     fn a_default_never_signed_in_here_is_addressed_by_its_label() {
-        let got = resolve_default(Some("a@b.c"), &[owner("joel", None)]);
+        let got = resolve_default(None, Some("a@b.c"), &[owner("joel", None)]);
         assert_eq!(got, Ok(DefaultPersona { label: "joel".into(), slot: "joel".into() }));
     }
 
     #[test]
     fn no_global_email_is_an_error_not_the_default_slot() {
-        let err = resolve_default(None, &[owner("x", Some("default"))]).unwrap_err();
+        let err = resolve_default(None, None, &[owner("x", Some("default"))]).unwrap_err();
         assert!(err.contains("user.email"), "{err}");
     }
 
     #[test]
     fn an_email_no_identity_owns_is_an_error_that_names_it() {
-        let err = resolve_default(Some("nobody@x.y"), &[]).unwrap_err();
+        let err = resolve_default(None, Some("nobody@x.y"), &[]).unwrap_err();
         assert!(err.contains("nobody@x.y"), "{err}");
     }
 
     #[test]
     fn an_email_two_identities_own_is_an_error_that_names_both() {
-        let err =
-            resolve_default(Some("a@b.c"), &[owner("one", None), owner("two", None)]).unwrap_err();
+        let err = resolve_default(None, Some("a@b.c"), &[owner("one", None), owner("two", None)])
+            .unwrap_err();
         assert!(err.contains("one") && err.contains("two"), "{err}");
+    }
+
+    /// A default chosen in sensei (Make default) is the default, whatever the
+    /// git email says — and one is reported even with no email at all. With
+    /// none chosen, the git-email rule decides (user, 2026-10-27).
+    #[test]
+    fn a_chosen_default_wins_over_the_git_email_rule() {
+        let chosen = Some(owner("sensei-hq-org", Some("default")));
+        assert_eq!(
+            resolve_default(
+                chosen.clone(),
+                Some("dev@example.com"),
+                &[owner("jerrythomas", Some("jerrythomas"))]
+            ),
+            Ok(DefaultPersona { label: "sensei-hq-org".into(), slot: "default".into() })
+        );
+        assert_eq!(
+            resolve_default(chosen, None, &[]),
+            Ok(DefaultPersona { label: "sensei-hq-org".into(), slot: "default".into() })
+        );
     }
 }
 
@@ -1758,25 +1813,28 @@ mod tests {
         assert!(!wants_html(None));
     }
 
-    /// #283: a session the Keychain will not hand over is the user's to
-    /// approve, whatever the forge standing says; otherwise the action is as
-    /// `persona_action` decided.
+    /// The persona list reports what the Keychain SAID, not a decision (user,
+    /// 2026-10-28: the identity state decides, the views render it). One wire
+    /// name per answer; `null` when nothing was read.
     #[test]
-    fn a_session_the_keychain_withholds_is_to_be_approved() {
-        use crate::dojo_client::forge_token::PersonaAction;
+    fn the_keychain_answer_is_reported_as_a_fact() {
         use crate::gateway_keys::KeychainError;
-        let withheld = Err(KeychainError::NeedsApproval);
-        assert_eq!(action_name(PersonaAction::None, Some(&withheld)), "approve");
-        assert_eq!(action_name(PersonaAction::Renew, Some(&withheld)), "approve");
-        assert_eq!(action_name(PersonaAction::None, Some(&Ok(()))), "none");
-        assert_eq!(action_name(PersonaAction::Renew, Some(&Ok(()))), "renew");
-        assert_eq!(action_name(PersonaAction::SignIn, None), "signIn");
-        assert_eq!(action_name(PersonaAction::Connect, None), "connect");
-        assert_eq!(
-            action_name(PersonaAction::None, Some(&Err(KeychainError::NotFound))),
-            "none",
-            "a missing item is the forge standing's to report, not an approval"
-        );
+        assert_eq!(keychain_wire(Some(&Ok(()))), Some("readable"));
+        assert_eq!(keychain_wire(Some(&Err(KeychainError::NeedsApproval))), Some("needsApproval"));
+        assert_eq!(keychain_wire(Some(&Err(KeychainError::NotFound))), Some("missing"));
+        assert_eq!(keychain_wire(None), None);
+    }
+
+    /// Renewal is due by the scheduler's own rule — the margin is not copied.
+    #[test]
+    fn renewal_is_due_by_the_schedulers_rule() {
+        use crate::dojo_client::forge_token::REFRESH_MARGIN_SECS;
+        let now = 1_788_120_000;
+        assert!(renewal_due("active", Some(now + REFRESH_MARGIN_SECS - 1), now));
+        assert!(!renewal_due("active", Some(now + REFRESH_MARGIN_SECS + 1), now));
+        assert!(!renewal_due("active", Some(now - 1), now), "past expiry is not a renewal");
+        assert!(!renewal_due("dead", Some(now + 60), now));
+        assert!(!renewal_due("active", None, now));
     }
 
     #[test]

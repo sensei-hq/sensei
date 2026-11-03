@@ -22,7 +22,7 @@
     data-testid="transcript-consent"
 >
     <h3 class="text-base m-0 mb-1">Conversation history</h3>
-    <p class="text-sm text-ink-soft m-0 mb-6 leading-normal">{consent.explanation}</p>
+    <p class="text-sm text-ink-mute m-0 mb-6 leading-normal">{consent.explanation}</p>
 
     {#if consent.failure}
         <p class="text-sm text-warning m-0 mb-4" data-testid="transcript-consent-error">
@@ -38,7 +38,7 @@
                 data-source={s.source}
             >
                 <span class="text-sm text-ink flex-1">{s.label}</span>
-                <span class="text-xs text-ink-soft">
+                <span class="text-xs text-ink-mute">
                     {s.consented ? 'reading history' : 'not read'}
                 </span>
                 <Switch

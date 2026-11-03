@@ -44,7 +44,7 @@
 					<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 16px">
 						<div class="mb-2 flex items-center gap-2">
 							<KanjiToken char={s.kanji} size="base" toneClass={signalToneClass(s.tone)} />
-							<span class="text-ink-mute text-xs">{s.label}</span>
+							<span class="text-ink-soft text-xs">{s.label}</span>
 						</div>
 						<StatBadge n={s.n} label="" sub={s.sub} toneClass={signalToneClass(s.tone)} />
 					</div>
@@ -55,14 +55,14 @@
 				<!-- Contributions vs approvals — bars scaled to the tallest week. -->
 				<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 16px">
 					<div class="mb-3 flex items-center gap-2">
-						<span class="text-ink-mute text-xs font-semibold uppercase" style="letter-spacing: 0.18em"
+						<span class="text-ink-soft text-xs font-semibold uppercase" style="letter-spacing: 0.18em"
 							>Contributions vs approvals</span
 						>
 						<span class="flex-1"></span>
-						<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+						<Chip toneClass="text-on-accent-soft" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 							>contrib</Chip
 						>
-						<Chip toneClass="text-success" softClass="bg-success-soft" edgeClass="border-success-soft"
+						<Chip toneClass="text-on-success-soft" softClass="bg-success-soft" edgeClass="border-success-soft"
 							>approved</Chip
 						>
 					</div>

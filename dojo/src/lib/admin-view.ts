@@ -28,7 +28,7 @@ export function roleToneClass(role: string): string {
 			return 'text-ink';
 		case 'contributor':
 		case 'lead':
-			return 'text-ink-soft';
+			return 'text-ink-mute';
 		default:
 			return 'text-ink-faint';
 	}
@@ -94,7 +94,7 @@ export function attributionLabel(mode: string): string {
 
 /** Token tone for an attribution mode (anonymous reads as the accent/privacy mark). */
 export function attributionToneClass(mode: string): string {
-	return mode === 'anonymous' ? 'text-accent' : 'text-ink-soft';
+	return mode === 'anonymous' ? 'text-accent' : 'text-ink-mute';
 }
 
 /** The two selectable attribution modes (for a policy picker). Source-dereference
@@ -119,7 +119,7 @@ export function errorRateToneClass(errorRate: number): string {
 
 /** Token tone for the queue-depth cell: a backed-up queue reads accent. */
 export function queueDepthToneClass(queueDepth: number): string {
-	return queueDepth > 0 ? 'text-accent' : 'text-ink-mute';
+	return queueDepth > 0 ? 'text-accent' : 'text-ink-soft';
 }
 
 // ── audit action => label + tone (mockup DojoAudit evTone families) ──────────
@@ -149,7 +149,7 @@ export function actionToneClass(action: string): string {
 	if (/_(added|created|invited|granted)$/.test(action) || action.includes('_granted_')) return 'text-success';
 	if (action.endsWith('_changed') || action.endsWith('_edited') || action.endsWith('_updated'))
 		return 'text-accent';
-	return 'text-ink-soft';
+	return 'text-ink-mute';
 }
 
 // ── timestamps ────────────────────────────────────────────────────────────────

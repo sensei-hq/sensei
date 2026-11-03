@@ -9,7 +9,7 @@ export interface RecentSession {
   completedAt?: string;
   ftr?: number | null;
   // Present when the daemon has completed the session — RecentSessions
-  // renders "first-try" for 0, "N× rework" otherwise, per the mockup.
+  // renders it with the shared correctionsView (lib/ftr).
   corrections?: number | null;
 }
 

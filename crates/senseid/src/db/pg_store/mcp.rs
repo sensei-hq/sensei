@@ -1,67 +1,6 @@
 use super::*;
 
-/// One discovered MCP server, as [`PgStore::upsert_mcp_server`] writes it.
-pub struct McpServerRow<'a> {
-    /// `claude` | `zed` | `cursor` | `codex` | `opencode` | `other`.
-    pub acp_family: &'a str,
-    /// The key in the assistant's config, e.g. `sensei`, `postgres`.
-    pub mcp_key: &'a str,
-    /// `Some` for the assistant's project scope, `None` for user scope.
-    pub workspace_id: Option<uuid::Uuid>,
-    /// The absolute path the entry was discovered in.
-    pub config_source: &'a str,
-    pub command: &'a str,
-    /// JSON array of args, from the config.
-    pub args: &'a serde_json::Value,
-    /// JSON object of env vars, from the config.
-    pub env: &'a serde_json::Value,
-}
-
-/// One probe of an MCP server, as [`PgStore::upsert_mcp_tool_manifest`] writes it.
-pub struct McpManifestRow<'a> {
-    pub server_id: &'a uuid::Uuid,
-    pub tools: &'a serde_json::Value,
-    pub tool_count: i32,
-    pub protocol_version: Option<&'a str>,
-    pub server_name: Option<&'a str>,
-    pub server_version: Option<&'a str>,
-    /// Why the probe failed; `None` on success.
-    pub error: Option<&'a str>,
-}
-
-impl<'a> McpManifestRow<'a> {
-    /// A probe that failed: no tools, and the reason.
-    pub fn failed(
-        server_id: &'a uuid::Uuid,
-        no_tools: &'a serde_json::Value,
-        error: &'a str,
-    ) -> Self {
-        Self {
-            server_id,
-            tools: no_tools,
-            tool_count: 0,
-            protocol_version: None,
-            server_name: None,
-            server_version: None,
-            error: Some(error),
-        }
-    }
-}
-
-/// One registered tool, as [`PgStore::upsert_assistant_tool`] writes it.
-pub struct AssistantToolRow<'a> {
-    pub assistant_family: &'a str,
-    /// `builtin` | `mcp`.
-    pub source_type: &'a str,
-    pub source_key: &'a str,
-    pub tool_name: &'a str,
-    /// The name the harness records when the tool is called.
-    pub invoked_name: &'a str,
-    pub description: Option<&'a str>,
-    pub server_id: Option<uuid::Uuid>,
-}
-
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// List every installed service, joined with the given workspace's per-scope
     /// override so the UI can render enabled/disabled state without a second
@@ -251,14 +190,8 @@ impl PgStore {
 
     // ── Manual impact-verdict log (T3 Slice 3) ─────────────────────────────
 
-    pub async fn upsert_service(
-        &self,
-        name: &str,
-        display_name: &str,
-        kind: &str,
-        protocol: &str,
-        config: &serde_json::Value,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_service(&self, svc: &ServiceRow<'_>) -> Result<uuid::Uuid, String> {
+        let &ServiceRow { name, display_name, kind, protocol, config } = svc;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.services(name, display_name, kind, protocol, config) VALUES($1, $2, $3::sensei.service_kind, $4::sensei.service_protocol, $5)
              ON CONFLICT(name) DO UPDATE SET display_name = EXCLUDED.display_name, config = EXCLUDED.config, modified_at = now()
@@ -569,6 +502,58 @@ impl PgStore {
         Ok(row.map(|(e,)| e))
     }
 
+    /// Register a stdio MCP server by hand (#343), under family `manual`.
+    /// `None` when a server is already registered under that name — a second
+    /// registration is the caller's to resolve, never a silent overwrite.
+    pub async fn register_manual_mcp_server(
+        &self,
+        name: &str,
+        command: &str,
+        args: &serde_json::Value,
+        env: &serde_json::Value,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.mcp_servers (acp_family, mcp_key, scope, config_source, command, args, env)
+             VALUES ('manual', $1, 'user', 'sensei', $2, $3, $4)
+             ON CONFLICT (acp_family, mcp_key) WHERE scope = 'user' DO NOTHING
+             RETURNING id",
+        )
+        .bind(name)
+        .bind(command)
+        .bind(args)
+        .bind(env)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("register_manual_mcp_server: {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// Remove a hand-registered server. `None`: no such server; `Some(false)`:
+    /// it was discovered, so its assistant's config is what removes it.
+    pub async fn remove_manual_mcp_server(&self, id: &uuid::Uuid) -> Result<Option<bool>, String> {
+        let family: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT acp_family FROM sensei.mcp_servers WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("remove_manual_mcp_server: {e}"))?;
+        match family {
+            None => Ok(None),
+            Some((f,)) if f != "manual" => Ok(Some(false)),
+            Some(_) => {
+                sqlx_core::query::query(
+                    "DELETE FROM sensei.mcp_servers WHERE id = $1 AND acp_family = 'manual'",
+                )
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| format!("remove_manual_mcp_server: {e}"))?;
+                Ok(Some(true))
+            }
+        }
+    }
+
     /// Delete rows the current scan did NOT touch — servers that no longer
     /// appear in any ACP config. Compares against `not_seen_before` so a
     /// row scanned after the cutoff survives. Returns the number of rows
@@ -577,11 +562,15 @@ impl PgStore {
         &self,
         not_seen_before: chrono::DateTime<chrono::Utc>,
     ) -> Result<u64, String> {
-        let res = sqlx_core::query::query("DELETE FROM sensei.mcp_servers WHERE last_seen_at < $1")
-            .bind(not_seen_before)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        // A hand-registered server (#343) is in no config file, so no scan
+        // ever sees it: it leaves only when its owner removes it.
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.mcp_servers WHERE last_seen_at < $1 AND acp_family <> 'manual'",
+        )
+        .bind(not_seen_before)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
@@ -675,6 +664,8 @@ impl PgStore {
     /// The Instruments · Health L1 grid — one row per tool source. Unions the
     /// inventory (registered known) with usage-observed MCP sources not yet in
     /// the inventory (registered unknown → null share, never a fabricated bar).
+    /// Calls to a tool an inventoried server no longer lists count on that
+    /// server's row (its calls, not its share).
     pub async fn get_tools_health(&self) -> Result<Vec<serde_json::Value>, String> {
         #[allow(clippy::type_complexity)]
         let rows: Vec<(String, String, String, Option<i64>, Option<uuid::Uuid>, i64, i64, Option<String>)> =
@@ -710,19 +701,47 @@ impl PgStore {
                  FROM evt e
                 WHERE e.tool_name LIKE 'mcp__%'
                   AND NOT EXISTS (SELECT 1 FROM sensei.assistant_tools at WHERE at.invoked_name = e.tool_name)
-                GROUP BY split_part(e.tool_name,'__',2) )
+                GROUP BY split_part(e.tool_name,'__',2) ),
+             -- The prefix each inventoried source is called under. Usage of a
+             -- tool its server no longer lists (renamed, retired) carries the
+             -- same prefix: those calls are that source's, on its row — a
+             -- second row under the same key drew the server twice.
+             prefix AS (
+               SELECT DISTINCT assistant_family, source_type, source_key,
+                      split_part(invoked_name,'__',2) AS prefix
+                 FROM sensei.assistant_tools
+                WHERE invoked_name LIKE 'mcp__%'
+               UNION
+               -- A server is also called under its own config key (a plugin's
+               -- `plugin_x_x`), whatever older prefix its tools were bridged to.
+               SELECT DISTINCT at.assistant_family, at.source_type, at.source_key, ms.mcp_key
+                 FROM sensei.assistant_tools at
+                 JOIN sensei.mcp_servers ms ON ms.id = at.server_id ),
+             retired AS (
+               SELECT p.assistant_family, p.source_type, p.source_key,
+                      sum(u.calls_14d)::bigint AS calls_14d
+                 FROM uncovered u
+                 JOIN prefix p ON p.prefix = u.source_key
+                               AND p.assistant_family = u.assistant_family
+                GROUP BY p.assistant_family, p.source_type, p.source_key )
              SELECT r.assistant_family, r.source_type, r.source_key,
                     r.registered, r.server_id,
-                    coalesce(i.invoked_14d,0)::bigint, coalesce(i.calls_14d,0)::bigint,
+                    coalesce(i.invoked_14d,0)::bigint,
+                    (coalesce(i.calls_14d,0) + coalesce(t.calls_14d,0))::bigint,
                     s.connection_state
                FROM reg r
                LEFT JOIN inv i ON i.assistant_family=r.assistant_family
                               AND i.source_type=r.source_type AND i.source_key=r.source_key
+               LEFT JOIN retired t ON t.assistant_family=r.assistant_family
+                              AND t.source_type=r.source_type AND t.source_key=r.source_key
                LEFT JOIN sensei.mcp_servers s ON s.id = r.server_id
              UNION ALL
              SELECT assistant_family, source_type, source_key,
                     NULL::bigint, NULL::uuid, invoked_14d, calls_14d, NULL::text
-               FROM uncovered
+               FROM uncovered u
+              WHERE NOT EXISTS (SELECT 1 FROM prefix p
+                                 WHERE p.prefix = u.source_key
+                                   AND p.assistant_family = u.assistant_family)
              ORDER BY 7 DESC"
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 

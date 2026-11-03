@@ -63,7 +63,13 @@ describe('gateTarget', () => {
       setSetupComplete(false);
       expect(target('http://localhost/')).toBe('/setup/welcome');
       expect(target('http://localhost/workspaces')).toBe('/setup/welcome');
-      expect(target('http://localhost/settings')).toBe('/setup/welcome');
+    });
+
+    // Settings is its own window (user, 2026-10-27): a fresh webview whose
+    // health and setup state start unknown, as a workspace window's do.
+    it('lets the settings window through, as a workspace window is', () => {
+      setSetupComplete(false);
+      expect(target('http://localhost/settings/general')).toBeUndefined();
     });
 
     it('allows /setup/* through even when incomplete', () => {

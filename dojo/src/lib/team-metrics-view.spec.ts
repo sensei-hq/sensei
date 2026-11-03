@@ -52,6 +52,8 @@ describe('formatMetric', () => {
 		expect(formatMetric(12, 'count')).toBe('12');
 		expect(formatMetric(1_250_000, 'count')).toBe('1.3M');
 		expect(formatMetric(4_200, 'count')).toBe('4.2k');
+		// A month of tokens runs to billions; "17738.8M" is a number nobody reads.
+		expect(formatMetric(17_738_800_000, 'count')).toBe('17.7B');
 		expect(formatMetric(0.8, 'percent')).toBe('80%');
 		expect(formatMetric(0.123, 'percent')).toBe('12%');
 	});

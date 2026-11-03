@@ -232,18 +232,29 @@ pub fn resolve_icon_path(root: &Path, rel: &str) -> Option<PathBuf> {
 /// non-image extension, or the file is missing/unreadable. Blocking disk I/O —
 /// call from `spawn_blocking`.
 pub fn read_icon_bytes(root: &Path, rel: &str) -> Option<(&'static str, Vec<u8>)> {
+    let (content_type, path) = locate_icon(root, rel)?;
+    let bytes = std::fs::read(&path).ok()?;
+    Some((content_type, bytes))
+}
+
+/// The icon file inside `root`, safely: the lexical check, an image extension,
+/// and — both sides canonicalized — containment in `root`, which defeats a
+/// symlink pointing out and any residual traversal. `None` when any fails or the
+/// file is missing. Blocking disk I/O.
+fn locate_icon(root: &Path, rel: &str) -> Option<(&'static str, PathBuf)> {
     let candidate = resolve_icon_path(root, rel)?;
     let ext = candidate.extension().and_then(|e| e.to_str())?;
     let content_type = icon_content_type(ext)?;
-    // Canonicalize both sides and assert containment — defeats symlink-out and
-    // any residual traversal the lexical check couldn't see.
     let canon = candidate.canonicalize().ok()?;
     let root_canon = root.canonicalize().ok()?;
-    if !canon.starts_with(&root_canon) {
-        return None;
-    }
-    let bytes = std::fs::read(&canon).ok()?;
-    Some((content_type, bytes))
+    (canon.starts_with(&root_canon) && canon.is_file()).then_some((content_type, canon))
+}
+
+/// Whether an image icon could be served from one of `roots` — what the
+/// workspace list says, so the app asks for no image that answers 404. The same
+/// checks serving makes, without reading the bytes. Blocking disk I/O.
+pub fn icon_available(roots: &[String], rel: &str) -> bool {
+    roots.iter().any(|root| locate_icon(Path::new(root), rel).is_some())
 }
 
 /// Serve an inferred image icon by trying each repo root in turn — the stored

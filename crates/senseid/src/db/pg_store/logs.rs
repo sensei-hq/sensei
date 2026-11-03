@@ -18,19 +18,6 @@ type TaskExecutionRow = (
     Option<chrono::DateTime<chrono::Utc>>, // completed_at
 );
 
-/// One attempt at a task, as [`PgStore::start_task_execution`] records it
-/// (`running`, until completed or failed).
-pub struct TaskExecutionStart<'a> {
-    /// The queue's id — it restarts at 1 with every daemon session.
-    pub task_id: i64,
-    pub parent_task_id: Option<i64>,
-    /// A `sensei.task_execution_kind` label.
-    pub task_kind: &'a str,
-    pub folder_path: &'a str,
-    pub path: &'a str,
-    pub retry_number: i32,
-}
-
 /// Watchdog abandonments over a window — see [`PgStore::watchdog_abandonments`].
 #[derive(Debug, serde::Serialize)]
 pub struct Abandonments {
@@ -82,33 +69,10 @@ fn task_execution_json(r: TaskExecutionRow) -> serde_json::Value {
     })
 }
 
-/// One structured log line as it is stored.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct LogRow<'a> {
-    pub level: &'a str,
-    pub running_on: &'a str,
-    pub module: Option<&'a str>,
-    pub logged_at: &'a str,
-    pub message: &'a str,
-    pub context: &'a serde_json::Value,
-    pub data: &'a Option<serde_json::Value>,
-    pub error: &'a Option<serde_json::Value>,
-}
-
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
-    pub async fn log_index_error(
-        &self,
-        folder_id: &uuid::Uuid,
-        file_path: &str,
-        error: &str,
-        adapter: Option<&str>,
-        phase: Option<&str>,
-    ) -> Result<(), String> {
+    pub async fn log_index_error(&self, index_error: &IndexErrorRow<'_>) -> Result<(), String> {
+        let &IndexErrorRow { folder_id, file_path, error, adapter, phase } = index_error;
         sqlx_core::query::query(
             "INSERT INTO sensei.index_errors(folder_id, file_path, error, adapter, phase) VALUES($1, $2, $3, $4, $5)"
         )
@@ -449,14 +413,8 @@ impl PgStore {
     /// - `module`  → exact match on the indexed `module` column
     ///   (finer source: scanner / watcher / analyzer / scheduler / …).
     /// - `since`   → lower bound on the indexed `logged_at` timestamp.
-    pub async fn query_logs(
-        &self,
-        level: Option<&str>,
-        source: Option<&str>,
-        module: Option<&str>,
-        since: Option<chrono::DateTime<chrono::Utc>>,
-        limit: i64,
-    ) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn query_logs(&self, q: &LogQuery<'_>) -> Result<Vec<serde_json::Value>, String> {
+        let &LogQuery { level, source, module, since, limit } = q;
         type LogRow = (
             uuid::Uuid,
             String,

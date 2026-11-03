@@ -15,6 +15,115 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.21.1] — 2026-10-27
+
+### Added
+
+- **The Code map** (M17), the workspace window's first diagram: modules → files →
+  symbols, with lenses Structure, Wheel, Cycles, Matrix, Zones, Hidden coupling
+  (modules that change together with no edge) and Complexity (function complexity
+  from local qlty). Shared with the dōjō as `@sensei/codemap`. World and Atlas are
+  retired.
+- **The Playground runs any MCP tool through its own server**, as an assistant
+  would, in the workspace you pick ("Runs in" — only workspaces under a watched
+  root). Register and remove an MCP server by hand (#343).
+- **Libraries show what a library provides** — its packages, docs, skills and
+  agents (#341).
+- **Settings is its own window**: Preferences… (⌘,), with its own sidebar.
+- **Make default**: choose which identity is the default, over the git-email rule.
+- **Settings · Dōjō by identity**: each identity's credential, then what it agreed
+  with its dōjō, by day and repository; every sync record names its identity.
+- **The glyph choice (kanji or icons) syncs** between the app and the dōjō (#133).
+- **`get_duplicates` reads what qlty's scan found** at each repository's HEAD,
+  instead of a similarity search per call (over 200s on a large workspace).
+- **A baseline of the app** (`docs/baseline/2026-10-27-app.md`): every screen
+  crawled, and every read-only sensei tool run and checked against an answer
+  worked out without it (31 of 32 right).
+
+### Fixed
+
+- The Playground ran tools in the daemon's own folder, so a tool that takes no
+  workspace answered about the wrong place.
+- `get_patterns` was always empty; workspace conventions counted no files;
+  `match_pattern` answered 500; pattern reads for an unknown workspace answered an
+  empty success; `recommend_playbook` and `get_pending_nudges` hid their refusals;
+  `get_communities` returned half a megabyte.
+- A library name two ecosystems share (`uuid`) broke its docs, skills and agents;
+  every `design.yaml`'s extensions failed to file (830 failures a day).
+- An expired credential asks for a sign-in, not a Keychain approval first; a
+  finished sign-in clears "your browser is open".
+- No request for a workspace icon the daemon cannot serve.
+- Only the main window renews credentials and answers the menu; a setting saved
+  in one window reaches the others.
+
+### Changed
+
+- **rokkit 1.9.1**: the switch reads when off, and every size lands right.
+- Settings · General's digest, tone and glyph choices are toggle groups.
+
+### Security
+
+- **The dōjō database**: row level security on every table it carries (13 had
+  none, among them `sensei.metrics` and `sensei.reason_codes`, which production
+  exposed through its API); every function pins its `search_path`; a test holds
+  that each SECURITY DEFINER function a signed-in person can call answers only
+  for the caller. A stale copy of `dojo.upsert_repository_metrics`, renamed long
+  ago, is dropped.
+
+## [0.21.0] — 2026-10-26
+
+### Added
+
+- **My metrics in the dōjō** (`/you/metrics`). A developer's own sessions,
+  first-try rate, rework share and tokens over 30 days, each with a daily line.
+  They are the Teams view's metrics, pooled the same way, so a person's numbers
+  and their lead's agree. Read through `GET /v1/you/metrics` and
+  `dojo.my_metric_series`, as the caller only.
+- **`cache_read_per_day`**: cache reads, counted on their own.
+- **The dōjō's access rules run in CI** (`dojo-db.yml`). On every schema change and
+  nightly, the schema is deployed to a fresh Supabase with the same script the
+  release uses (`scripts/deploy-dojo-db.sh`), and the 58 row-level-security test
+  files run against it. A failed nightly opens an issue. Until now none of them ran
+  in CI.
+
+### Changed
+
+- **Tokens no longer count cache reads.** `tokens_per_day` is now fresh input +
+  cache writes + output. Before, cache reads made it about 45 times too high
+  (62.9 billion of 64.3 billion tokens over 90 days). A day whose sessions lack the
+  cache split has no total, rather than an inflated one.
+- **dbd 0.27.8.** A changed table comment is now detected and applied (dbd#110).
+  `design.yaml` is read through dbd, including workspace designs with `modules:`,
+  which imported nothing before (#190).
+- **Every database writer takes a typed row** (#161), so a field added to a row
+  cannot be dropped silently.
+
+### Fixed
+
+- **This week's sessions include a long one that started earlier.** "Last 7 days"
+  and a workspace's session count went by start date, so one long session holding
+  a week's work left the week empty.
+- **Communities are named by where most of their code lives.** The largest ones
+  used to read "function ()".
+- **Scheduled workers run every interval** (#338). They ran every other one.
+- **VS Code transcripts** (#123):
+  - the daemon reads through the installed scan (OTel and event streams included);
+  - a session with both a journal and an event stream is ingested once (on a shared
+    sample, 121 units for 84 sessions before);
+  - a journal's large opening snapshot is replayed (two real journals had kept 13
+    of 167 prompts);
+  - a line anchor (`main.ts#1-50`) no longer hides a file's language;
+  - a non-ASCII folder name decodes correctly.
+- **A failed dōjō read is an error, not an empty list** (rule packs,
+  contributions). Counts in billions read `17.7B`.
+- **`sensei start`/`stop`/`restart` report a daemon killed by a signal as a
+  failure** (128 + the signal), not success.
+- **Session report:**
+  - one failure-rate denominator;
+  - no invented turn ends;
+  - a failed facet write is reported;
+  - the docs say what it reads.
+
 ## [0.20.2] — 2026-10-25
 
 ### Security

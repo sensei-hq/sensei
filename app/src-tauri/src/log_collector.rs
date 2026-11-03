@@ -11,27 +11,27 @@ use std::time::Instant;
 /// System metadata captured at session start.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemInfo {
-    pub os:        String,
-    pub arch:      String,
-    pub ram_gb:    u64,
+    pub os: String,
+    pub arch: String,
+    pub ram_gb: u64,
     pub cpu_cores: usize,
 }
 
 /// A single incremental log entry (app logger).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
-    pub id:    String,
-    pub ts:    String,
+    pub id: String,
+    pub ts: String,
     /// "info" | "warn" | "error"
     pub level: String,
     /// "ui" | "api" | "sidecar" | "data_load"
     pub layer: String,
-    pub step:  String,
-    pub msg:   String,
+    pub step: String,
+    pub msg: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data:  Option<serde_json::Value>,
+    pub data: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub err:   Option<String>,
+    pub err: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stack: Option<String>,
 }
@@ -39,41 +39,38 @@ pub struct LogEntry {
 /// A completed log session — stored on disk as one JSON file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogSession {
-    pub id:          String,
-    pub module:      String,
-    pub started_at:  String,
+    pub id: String,
+    pub module: String,
+    pub started_at: String,
     pub app_version: String,
     pub system_info: SystemInfo,
-    pub outcome:     String,
+    pub outcome: String,
     pub duration_ms: u64,
     /// BootstrapTrace[] or LogEntry[] serialised as JSON values.
-    pub traces:      Vec<serde_json::Value>,
+    pub traces: Vec<serde_json::Value>,
 }
 
 struct ActiveSession {
-    module:        String,
-    started_at:    String,
+    module: String,
+    started_at: String,
     start_instant: Instant,
-    app_version:   String,
-    system_info:   SystemInfo,
-    entries:       Vec<serde_json::Value>,
+    app_version: String,
+    system_info: SystemInfo,
+    entries: Vec<serde_json::Value>,
     /// 0 = info, 1 = warn, 2 = error
-    max_level:     u8,
+    max_level: u8,
 }
 
 /// Thread-safe log session manager.
 /// Writes via temp-file+rename to `{log_dir}/{module}/{session_id}.json` on session end.
 pub struct LogCollector {
     sessions: Mutex<HashMap<String, ActiveSession>>,
-    log_dir:  PathBuf,
+    log_dir: PathBuf,
 }
 
 impl LogCollector {
     pub fn new(log_dir: PathBuf) -> Self {
-        Self {
-            sessions: Mutex::new(HashMap::new()),
-            log_dir,
-        }
+        Self { sessions: Mutex::new(HashMap::new()), log_dir }
     }
 
     /// Start a new incremental session. Returns the generated session ID.
@@ -88,13 +85,13 @@ impl LogCollector {
         self.rotate_if_needed(&dir);
 
         let session = ActiveSession {
-            module:        module.to_string(),
-            started_at:    chrono::Utc::now().to_rfc3339(),
+            module: module.to_string(),
+            started_at: chrono::Utc::now().to_rfc3339(),
             start_instant: Instant::now(),
-            app_version:   app_version.to_string(),
+            app_version: app_version.to_string(),
             system_info,
-            entries:       Vec::new(),
-            max_level:     0,
+            entries: Vec::new(),
+            max_level: 0,
         };
 
         self.sessions.lock().unwrap().insert(session_id.clone(), session);
@@ -107,8 +104,8 @@ impl LogCollector {
         if let Some(s) = sessions.get_mut(session_id) {
             let level = match entry.level.as_str() {
                 "error" => 2,
-                "warn"  => 1,
-                _       => 0,
+                "warn" => 1,
+                _ => 0,
             };
             if level > s.max_level {
                 s.max_level = level;
@@ -126,11 +123,7 @@ impl LogCollector {
     /// keys on the presence of `action_type`. Failed traces (`ok=false`)
     /// bump the session's `max_level` to `error` so the session outcome
     /// reflects the underlying health failure.
-    pub fn append_trace(
-        &self,
-        session_id: &str,
-        trace: &sensei_bootstrap::health::BootstrapTrace,
-    ) {
+    pub fn append_trace(&self, session_id: &str, trace: &sensei_bootstrap::health::BootstrapTrace) {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(s) = sessions.get_mut(session_id) {
             if !trace.ok && s.max_level < 2 {
@@ -164,14 +157,14 @@ impl LogCollector {
         let duration_ms = session.start_instant.elapsed().as_millis() as u64;
 
         let log_session = LogSession {
-            id:          session_id.to_string(),
-            module:      session.module,
-            started_at:  session.started_at,
+            id: session_id.to_string(),
+            module: session.module,
+            started_at: session.started_at,
             app_version: session.app_version,
             system_info: session.system_info,
-            outcome:     outcome.to_string(),
+            outcome: outcome.to_string(),
             duration_ms,
-            traces:      session.entries,
+            traces: session.entries,
         };
 
         self.write_session(&log_session);
@@ -228,7 +221,9 @@ impl LogCollector {
                         if let Ok(content) = std::fs::read_to_string(&path) {
                             match serde_json::from_str::<LogSession>(&content) {
                                 Ok(session) => results.push(session),
-                                Err(e) => eprintln!("log_collector: failed to parse session file {path:?}: {e}"),
+                                Err(e) => eprintln!(
+                                    "log_collector: failed to parse session file {path:?}: {e}"
+                                ),
                             }
                         }
                     }
@@ -252,7 +247,7 @@ impl LogCollector {
             .collect();
 
         if files.len() >= 20 {
-            files.sort();  // sess-{n:08x} names are lexicographically ordered by creation sequence
+            files.sort(); // sess-{n:08x} names are lexicographically ordered by creation sequence
             for file in files.iter().take(files.len() - 19) {
                 let _ = std::fs::remove_file(file);
             }
@@ -274,9 +269,9 @@ mod tests {
 
     fn make_sys_info() -> SystemInfo {
         SystemInfo {
-            os:        "macOS 15.0".to_string(),
-            arch:      "arm64".to_string(),
-            ram_gb:    16,
+            os: "macOS 15.0".to_string(),
+            arch: "arm64".to_string(),
+            ram_gb: 16,
             cpu_cores: 10,
         }
     }
@@ -286,22 +281,18 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let collector = LogCollector::new(tmp.path().to_path_buf());
 
-        let sid = collector.start_session(
-            "wizard",
-            "0.1.0",
-            make_sys_info(),
-        );
+        let sid = collector.start_session("wizard", "0.1.0", make_sys_info());
         assert!(sid.starts_with("sess-"));
 
         let entry = LogEntry {
-            id:    "e1".to_string(),
-            ts:    "2026-05-01T10:00:00Z".to_string(),
+            id: "e1".to_string(),
+            ts: "2026-05-01T10:00:00Z".to_string(),
             level: "info".to_string(),
             layer: "ui".to_string(),
-            step:  "prefs_load".to_string(),
-            msg:   "Preferences loaded".to_string(),
-            data:  None,
-            err:   None,
+            step: "prefs_load".to_string(),
+            msg: "Preferences loaded".to_string(),
+            data: None,
+            err: None,
             stack: None,
         };
         collector.append_entry(&sid, entry);
@@ -322,16 +313,25 @@ mod tests {
         let collector = LogCollector::new(tmp.path().to_path_buf());
         let sid = collector.start_session("wizard", "0.1.0", make_sys_info());
 
-        collector.append_entry(&sid, LogEntry {
-            id: "e1".to_string(), ts: "2026-05-01T10:00:00Z".to_string(),
-            level: "error".to_string(), layer: "api".to_string(),
-            step: "save_prefs".to_string(), msg: "Save failed".to_string(),
-            data: None, err: Some("timeout".to_string()), stack: None,
-        });
+        collector.append_entry(
+            &sid,
+            LogEntry {
+                id: "e1".to_string(),
+                ts: "2026-05-01T10:00:00Z".to_string(),
+                level: "error".to_string(),
+                layer: "api".to_string(),
+                step: "save_prefs".to_string(),
+                msg: "Save failed".to_string(),
+                data: None,
+                err: Some("timeout".to_string()),
+                stack: None,
+            },
+        );
 
         collector.end_session(&sid);
         let path = tmp.path().join("wizard").join(format!("{sid}.json"));
-        let session: LogSession = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let session: LogSession =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(session.outcome, "failed");
     }
 
@@ -340,14 +340,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let collector = LogCollector::new(tmp.path().to_path_buf());
         let session = LogSession {
-            id:          "sess-00000001".to_string(),
-            module:      "bootstrap".to_string(),
-            started_at:  "2026-05-01T10:00:00Z".to_string(),
+            id: "sess-00000001".to_string(),
+            module: "bootstrap".to_string(),
+            started_at: "2026-05-01T10:00:00Z".to_string(),
             app_version: "0.1.0".to_string(),
             system_info: make_sys_info(),
-            outcome:     "success".to_string(),
+            outcome: "success".to_string(),
             duration_ms: 1234,
-            traces:      vec![],
+            traces: vec![],
         };
         collector.write_session(&session);
         let path = tmp.path().join("bootstrap").join("sess-00000001.json");
@@ -366,10 +366,14 @@ mod tests {
         for i in 0..22u64 {
             let sid = format!("fixture-{i:08x}");
             let session = LogSession {
-                id: sid.clone(), module: "bootstrap".to_string(),
+                id: sid.clone(),
+                module: "bootstrap".to_string(),
                 started_at: format!("2026-05-01T10:00:{i:02}Z"),
-                app_version: "0.1.0".to_string(), system_info: make_sys_info(),
-                outcome: "success".to_string(), duration_ms: i * 100, traces: vec![],
+                app_version: "0.1.0".to_string(),
+                system_info: make_sys_info(),
+                outcome: "success".to_string(),
+                duration_ms: i * 100,
+                traces: vec![],
             };
             let path = dir.join(format!("{sid}.json"));
             std::fs::write(&path, serde_json::to_string(&session).unwrap()).unwrap();
@@ -379,7 +383,8 @@ mod tests {
         let sid = collector.start_session("bootstrap", "0.1.0", make_sys_info());
         collector.end_session(&sid);
 
-        let count = std::fs::read_dir(&dir).unwrap()
+        let count = std::fs::read_dir(&dir)
+            .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
             .count();
@@ -397,9 +402,14 @@ mod tests {
         {
             let sid = format!("sess-0000000{i}");
             collector.write_session(&LogSession {
-                id: sid.clone(), module: "bootstrap".to_string(), started_at: ts.to_string(),
-                app_version: "0.1.0".to_string(), system_info: make_sys_info(),
-                outcome: "success".to_string(), duration_ms: 100, traces: vec![],
+                id: sid.clone(),
+                module: "bootstrap".to_string(),
+                started_at: ts.to_string(),
+                app_version: "0.1.0".to_string(),
+                system_info: make_sys_info(),
+                outcome: "success".to_string(),
+                duration_ms: 100,
+                traces: vec![],
             });
         }
 

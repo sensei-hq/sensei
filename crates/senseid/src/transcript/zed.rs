@@ -311,6 +311,8 @@ pub fn parse_zed_thread(content: &str) -> Vec<TranscriptTurn> {
             idx += 1;
             cur = Some(TranscriptTurn {
                 turn_index: idx,
+                origin: "human".to_string(),
+                prompt_id: None,
                 user_text: Some(m.text.trim().to_string()),
                 assistant_text: String::new(),
                 started_at: span.map(|sp| {

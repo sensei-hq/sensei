@@ -12,7 +12,6 @@
   import { Screen } from '$lib/components';
   import TrendChart from './TrendChart.svelte';
   import StreamChart from './StreamChart.svelte';
-  import ConstellationChart from './ConstellationChart.svelte';
   import BandsChart from './BandsChart.svelte';
   import TokensChart from './TokensChart.svelte';
   import MiniChart from './MiniChart.svelte';
@@ -34,7 +33,6 @@
 
   // Memoized slices so the header and the chart read one filtered source.
   const enriched = $derived(digest.enriched);
-  const buckets = $derived(digest.dayBuckets);
   const days = $derived(digest.days);
   const totals = $derived(digest.totals);
   const miniChartMode = $derived(
@@ -44,17 +42,15 @@
 
   // Chip metadata + cycler glyphs (kanji per mode).
   const CHIP_META: Record<ChartVariant, { kanji: string; sub: string }> = {
-    trend: { kanji: '線', sub: 'first-try-right over time' },
-    stream: { kanji: '流', sub: 'time spent, stacked' },
-    constellation: { kanji: '星', sub: 'duration vs day' },
-    bands: { kanji: '帯', sub: 'stacked per day' },
+    trend: { kanji: '線', sub: 'first-try turns, per day' },
+    stream: { kanji: '流', sub: 'turns per day, corrected under first-try' },
+    bands: { kanji: '帯', sub: 'agent and your time, per day' },
     tokens: { kanji: '燃', sub: 'token volume per day' },
   };
   const MINI_GLYPH: Record<MiniMode, string> = {
     numbers: '数',
     trend: '線',
     stream: '流',
-    constellation: '星',
     bands: '帯',
     pulse: '脈',
   };
@@ -77,9 +73,9 @@
     <header class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge bg-paper">
       <Kanji char={copy.kanji} size="3xl" />
       <div class="flex-1 min-w-0">
-        <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">{copy.eyebrow}</div>
+        <div class="text-xs uppercase tracking-[0.18em] text-ink-soft mb-1">{copy.eyebrow}</div>
         <h1 class="display text-xl font-normal m-0 text-ink">{copy.title}</h1>
-        <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[720px]">
+        <p class="text-sm text-ink-mute leading-normal mt-1 mb-0 max-w-[720px]">
           {copy.sub}
         </p>
         <!-- Range chips — each refetches /api/sessions?range= -->
@@ -94,7 +90,7 @@
               class:text-paper={on}
               class:border-ink={on}
               class:bg-transparent={!on}
-              class:text-ink-soft={!on}
+              class:text-ink-mute={!on}
               class:border-paper-edge={!on}
               data-testid={`range-${r}`}
               aria-pressed={on}
@@ -111,7 +107,7 @@
 
       {#if !digest.error}
       <!-- Right cluster — numbers at rest, mini chart when cycled; the cycler
-           badge steps through numbers/trend/stream/constellation/bands/pulse.
+           badge steps through numbers/trend/stream/bands/pulse.
            Pulse lives ONLY on the cycler, never in the chip group below. -->
       <div class="flex items-center gap-3 pl-5 border-l border-paper-edge shrink-0">
         {#if digest.miniMode === 'numbers'}
@@ -127,7 +123,7 @@
           </div>
         {:else}
           <div class="flex items-center gap-3" data-testid="mini-view">
-            <MiniChart mode={miniChartMode} {buckets} sessions={enriched} {days} />
+            <MiniChart mode={miniChartMode} buckets={digest.turnDays} sessions={enriched} {days} activity={digest.activity.days} />
             <div class="min-w-[56px]">
               <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{totals.count}</div>
               <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">sessions</div>
@@ -178,7 +174,7 @@
       <div class="flex items-baseline gap-3 mb-3 pb-2 border-b border-paper-edge">
         <Kanji char={CHIP_META[digest.chart].kanji} size="inherit" tone="inherit" class="text-base text-accent" />
         <h2 class="display text-base font-normal m-0 text-ink capitalize">Sessions · {digest.chart}</h2>
-        <span class="text-xs text-ink-mute">· {CHIP_META[digest.chart].sub}</span>
+        <span class="text-xs text-ink-soft">· {CHIP_META[digest.chart].sub}</span>
         <span class="flex-1"></span>
         <!-- Exactly four chips. pulse is never here (mini-cycler only). -->
         <div class="flex gap-0 p-1 bg-paper-soft border border-paper-edge rounded" data-testid="chart-chips">
@@ -191,7 +187,7 @@
               class:text-ink={on}
               class:border-paper-edge={on}
               class:bg-transparent={!on}
-              class:text-ink-mute={!on}
+              class:text-ink-soft={!on}
               class:border-transparent={!on}
               data-testid={`chip-${v}`}
               aria-pressed={on}
@@ -205,20 +201,18 @@
 
       <div class="bg-paper-soft border border-paper-edge rounded-lg pt-5 pb-4 px-5" data-testid="chart-body">
         {#if digest.chart === 'trend'}
-          <TrendChart {buckets} />
+          <TrendChart days={digest.turnDays} />
         {:else if digest.chart === 'stream'}
-          <StreamChart {buckets} />
-        {:else if digest.chart === 'constellation'}
-          <ConstellationChart sessions={enriched} {days} />
+          <StreamChart days={digest.turnDays} />
         {:else if digest.chart === 'tokens'}
-          <TokensChart {buckets} />
+          <TokensChart days={digest.turnDays} />
         {:else}
-          <BandsChart {buckets} />
+          <BandsChart activity={digest.activity} />
         {/if}
       </div>
 
       <!-- Legend — token in/out for the volume chart, quality tones otherwise -->
-      <div class="flex justify-end gap-4 mt-3 text-xs text-ink-mute">
+      <div class="flex justify-end gap-4 mt-3 text-xs text-ink-soft">
         {#if digest.chart === 'tokens'}
           <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-accent-soft"></span>input</span>
           <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-accent"></span>output</span>
@@ -235,7 +229,7 @@
       <div class="flex items-baseline gap-3 mb-2 pb-2 border-b border-paper-edge">
         <Kanji char="刻" size="inherit" tone="inherit" class="text-base text-accent" />
         <h2 class="display text-base font-normal m-0 text-ink">Sessions</h2>
-        <span class="text-xs text-ink-mute">· newest first, click to replay</span>
+        <span class="text-xs text-ink-soft">· newest first, click to replay</span>
         <span class="flex-1"></span>
         <span class="font-mono text-xs text-ink-faint">{enriched.length} shown</span>
       </div>

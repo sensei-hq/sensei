@@ -5,6 +5,7 @@ import {
   workspaceIcon,
   lastSessionLabel,
   isWarning,
+  workspaceDotView,
   baseWorkspace,
   withQuality,
   type EnrichedWorkspace, WORKSPACE_ICON } from './buckets.js';
@@ -143,21 +144,26 @@ describe('workspaceIcon', () => {
     expect(workspaceIcon(p({ icon: null }))).toEqual({ kind: 'kanji', glyph: '場' });
   });
 
-  // #133: in icon mode only the DEFAULT mark becomes an icon. A logo is the
-  // workspace's own identity and a chosen kanji has no icon to stand for it, so
-  // both stay as they are.
-  it('shows the workspace icon for the default mark in icon mode only', () => {
-    expect(workspaceIcon(p({ icon: null }), '', 'icon')).toEqual({
+  // #133: one rule (user, 2026-10-27) — in icon mode every glyph is an icon,
+  // a workspace's chosen kanji included; it is kept as the fallback glyph. An
+  // uploaded logo is an image, not a glyph, and stays.
+  it('shows the workspace icon for any kanji mark in icon mode', () => {
+    expect(workspaceIcon(p({ icon: null }), '', 'icon')).toEqual({ kind: 'icon', cls: WORKSPACE_ICON, glyph: '場' });
+    expect(workspaceIcon(p({ icon: { kind: 'kanji', value: '禅' } }), '', 'icon')).toEqual({
       kind: 'icon',
       cls: WORKSPACE_ICON,
-      glyph: '場',
-    });
-    expect(workspaceIcon(p({ icon: { kind: 'kanji', value: '禅' } }), '', 'icon')).toEqual({
-      kind: 'kanji',
       glyph: '禅',
     });
+    expect(workspaceIcon(p({ icon: { kind: 'kanji', value: '禅' } }), '', 'kanji')).toEqual({ kind: 'kanji', glyph: '禅' });
     expect(workspaceIcon(p({ icon: { kind: 'image', value: 'http://x/y.png' } }), '', 'icon').kind).toBe('image');
     expect(workspaceIcon(p({ icon: null }), '', 'kanji')).toEqual({ kind: 'kanji', glyph: '場' });
+  });
+
+  // The daemon says when an image cannot be served (its repository is not on
+  // disk, or the logo is gone): no request that would answer 404.
+  it('shows the glyph, not an image, when the daemon says the image is unavailable', () => {
+    expect(workspaceIcon(p({ icon: { kind: 'image', value: 'logo.svg', available: false } }))).toEqual({ kind: 'kanji', glyph: '場' });
+    expect(workspaceIcon(p({ icon: { kind: 'image', value: 'logo.svg', available: true } })).kind).toBe('image');
   });
 
   it('falls back to 場 for an image icon with no value', () => {
@@ -232,5 +238,17 @@ describe('withQuality', () => {
   it('a failed FTR read is an error, not a blank rate', () => {
     const p = withQuality(base, down, ok(calm));
     expect([p.ftr14d, p.readError]).toEqual([null, 'Bad Gateway']);
+  });
+});
+
+// Audit item 6 (2026-10-28): the dot beside a workspace bands its FTR the way
+// every other screen does (lib/ftr), and a live warning still wins.
+describe('workspaceDotView', () => {
+  it('is the shared FTR band, unless a live warning wins', () => {
+    expect(workspaceDotView(0.9, false)).toEqual({ dot: 'bg-success', label: 'healthy' });
+    expect(workspaceDotView(0.7, false)).toEqual({ dot: 'bg-ink-soft', label: 'ok' });
+    expect(workspaceDotView(0.3, false)).toEqual({ dot: 'bg-warning', label: 'needs attention' });
+    expect(workspaceDotView(null, false)).toEqual({ dot: 'bg-ink-faint', label: 'no ftr data' });
+    expect(workspaceDotView(0.9, true)).toEqual({ dot: 'bg-warning', label: 'needs attention' });
   });
 });

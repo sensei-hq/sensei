@@ -78,6 +78,24 @@ impl DaemonRequest {
 /// This is the anti-drift seam: the contract test builds requests here and
 /// issues them against the real daemon router, so a renamed path, a changed
 /// query key, or a dropped tool fails the suite.
+/// The workspace list the MCP resolves a name, and the current folder, against:
+/// every workspace with its repo-root folders only — enough for the longest-prefix
+/// cwd match, and a fraction of the full tree the app's list carries.
+pub const WORKSPACES_FOR_RESOLUTION: &str = "/api/workspaces?folders=roots";
+
+/// The tools that name their workspace in the daemon path. With none resolved
+/// they are not sent (an empty path segment read as a workspace with nothing in
+/// it); the binary answers that no workspace was resolved.
+pub const NEEDS_WORKSPACE: &[&str] = &[
+    "update_phase",
+    "get_workflow_state",
+    "match_pattern",
+    "get_pattern_for",
+    "get_duplicates",
+    "get_workspace_conventions",
+    "get_commands",
+];
+
 pub fn daemon_request_for(
     tool: &str,
     args: &Value,
@@ -86,6 +104,10 @@ pub fn daemon_request_for(
 ) -> Option<DaemonRequest> {
     // The binary's `repo_id`: the resolved workspace NAME, or "" when unresolved.
     let repo_id = resolved_workspace.unwrap_or("");
+    let named = args["workspace"].as_str().is_some_and(|s| !s.is_empty());
+    if repo_id.is_empty() && !named && NEEDS_WORKSPACE.contains(&tool) {
+        return None;
+    }
 
     match tool {
         // ── Handled inline by the binary (custom client / response / no-op) ──
@@ -165,7 +187,18 @@ pub fn daemon_request_for(
             let symbol = args["symbol"].as_str().unwrap_or("");
             Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/for/{symbol}")))
         }
-        "get_duplicates" => Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/duplicates"))),
+        "get_duplicates" => {
+            let mut req = DaemonRequest::get(format!("/api/patterns/{repo_id}/duplicates"));
+            let limit = match &args["limit"] {
+                Value::Number(n) => Some(n.to_string()),
+                Value::String(s) if !s.is_empty() => Some(s.clone()),
+                _ => None,
+            };
+            if let Some(l) = limit {
+                req = req.with_query("limit", &l);
+            }
+            Some(req)
+        }
         "get_workspace_conventions" => {
             Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/conventions")))
         }
@@ -561,6 +594,30 @@ pub fn handle_initialize() -> Value {
     })
 }
 
+/// The arguments `tool_name` declares required that `args` does not give: absent,
+/// null, or an empty string. A tool this server does not list requires nothing.
+pub fn missing_required(tool_name: &str, args: &Value) -> Vec<String> {
+    let tools = handle_list_tools();
+    let Some(tool) = tools["tools"]
+        .as_array()
+        .and_then(|ts| ts.iter().find(|t| t["name"].as_str() == Some(tool_name)))
+    else {
+        return Vec::new();
+    };
+    tool["inputSchema"]["required"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|name| match args.get(*name) {
+            None | Some(Value::Null) => true,
+            Some(Value::String(s)) => s.is_empty(),
+            Some(_) => false,
+        })
+        .map(str::to_string)
+        .collect()
+}
+
 pub fn handle_list_tools() -> Value {
     json!({
         "tools": [
@@ -594,7 +651,7 @@ pub fn handle_list_tools() -> Value {
                 ("workspace", "string", "Workspace name. Defaults to current workspace."),
             ]),
             tool("get_lib_docs", "Get indexed documentation for a library. Without component param returns the index/overview. With component returns that specific component's docs (e.g. 'list', 'select', 'button').", &[
-                ("name", "string", "Library name (e.g. 'bits-ui', 'rokkit', 'hono')"),
+                ("name", "string", "Library name (e.g. 'bits-ui', 'rokkit', 'hono'); one two ecosystems share is named as ecosystem:name (e.g. 'cargo:uuid')"),
             ], &[
                 ("component", "string", "Specific component name to get docs for (e.g. 'list', 'select', 'button'). Omit for the library index."),
                 ("folder", "string", "Absolute path of the repository folder asking. Defaults to the current working directory. Used to serve docs matching the version YOUR repository pins, and to label the answer when none match."),
@@ -603,19 +660,20 @@ pub fn handle_list_tools() -> Value {
                 ("query", "string", "What to search for in library docs"),
             ], &[]),
             tool("list_library_skills", "List the focused skills a library provides (declared in its sensei.library.json manifest, or generated). Call when working with a library to see what curated how-to skills exist for it.", &[
-                ("name", "string", "Library name (e.g. 'rokkit')"),
+                ("name", "string", "Library name (e.g. 'rokkit'); one two ecosystems share is named as ecosystem:name (e.g. 'cargo:uuid')"),
             ], &[]),
             tool("get_library_skill", "Get one library-provided skill by its topic focus (e.g. 'styling'). Returns the skill body to load. Use after list_library_skills.", &[
-                ("name", "string", "Library name (e.g. 'rokkit')"),
+                ("name", "string", "Library name (e.g. 'rokkit'); one two ecosystems share is named as ecosystem:name (e.g. 'cargo:uuid')"),
                 ("focus", "string", "Topic focus of the skill (e.g. 'styling')"),
             ], &[]),
             tool("list_library_agents", "List the review agents a library provides (declared in its sensei.library.json manifest) — e.g. a config/pattern reviewer for that library. Use during /sensei:review when the repository depends on the library.", &[
-                ("name", "string", "Library name (e.g. 'rokkit')"),
+                ("name", "string", "Library name (e.g. 'rokkit'); one two ecosystems share is named as ecosystem:name (e.g. 'cargo:uuid')"),
             ], &[]),
-            tool("get_communities", "Get code architecture — clusters of related functions detected by community analysis.", &[], &[
+            tool("get_communities", "Get code architecture — clusters of related functions detected by community analysis, largest first, with the total.", &[], &[
                 ("workspace", "string", "Workspace name. Defaults to current workspace."),
+                ("limit", "integer", "How many to return, largest first (default 50)."),
             ]),
-            tool("get_patterns", "Get files tagged with a framework pattern (e.g. 'hook', 'middleware', 'route', 'component').", &[
+            tool("get_patterns", "Get files tagged with a framework pattern (e.g. 'hook', 'middleware', 'route', 'component') — up to 200, by path, with the total.", &[
                 ("pattern", "string", "Pattern to search for"),
             ], &[
                 ("workspace", "string", "Workspace name. Defaults to current workspace."),
@@ -675,7 +733,9 @@ pub fn handle_list_tools() -> Value {
             tool("get_pattern_for", "Check if a specific symbol belongs to a detected pattern. Use during /sensei:review to check pattern conformance.", &[
                 ("symbol", "string", "Symbol name to check (e.g. 'SqlAdapter', 'TaskWorker')"),
             ], &[]),
-            tool("get_duplicates", "Find duplicate or very similar functions across different files. Use during /sensei:review to catch code duplication.", &[], &[]),
+            tool("get_duplicates", "Code duplicated in the workspace, as local qlty's scan found it at each repository's HEAD: groups of identical or similar copies (file + lines), largest first, with the total and how many repositories were measured. Use during /sensei:review to catch code duplication.", &[], &[
+                ("limit", "integer", "How many groups to return, largest first (default 50)."),
+            ]),
             tool("get_workspace_conventions", "Analyze workspace conventions — naming patterns, directory structure, design patterns. Use to understand how this workspace is structured.", &[], &[]),
             tool("resolve_risk_class", "Classify how hard a change must be reviewed (auto | review | approve) from its changed file paths. Call FIRST in /sensei:review to set the depth: 'approve' (identity/auth/money/secrets/schema/governance) demands the full adversarial review + human sign-off; 'review' is a standard review; 'auto' can skip the heavy pass. Returns {class, reasons}.", &[
                 ("paths", "array", "Changed file paths (repo-relative or absolute)."),
@@ -897,7 +957,8 @@ pub fn handle_list_tools() -> Value {
             tool("get_pending_nudges",
                 "Pull the pending human→agent steer for a run from Dōjō — the 'check in' pull side of the \
                  contract. Poll it each executor loop and act on any nudge/chat the human sent. Read-only \
-                 and fail-soft (empty list if there's no dojo or the poll fails). Steer, not drive.",
+                 and fail-soft (empty list if there's no dojo or the poll fails); a run the daemon \
+                 has no record of is an error. Steer, not drive.",
                 &[("run_id", "string", "The run's UUID.")],
                 &[]),
             // ── Front-door intake ────────────────────────────────────────────
@@ -1477,6 +1538,21 @@ mod tests {
         assert_eq!(req, json!(["sessionId", "outcome"]));
     }
 
+    /// A call missing an argument its tool declares required is refused with
+    /// the names it lacks — never sent on as an empty value. `list_library_skills`
+    /// without `name` asked the daemon for `/api/libs//skills` and answered `[]`,
+    /// an empty list that reads as "this library provides nothing".
+    #[test]
+    fn a_call_missing_a_required_argument_names_what_it_lacks() {
+        assert_eq!(missing_required("list_library_skills", &json!({})), vec!["name"]);
+        assert_eq!(missing_required("list_library_skills", &json!({"name": ""})), vec!["name"]);
+        assert_eq!(missing_required("list_library_skills", &json!({"name": null})), vec!["name"]);
+        assert!(missing_required("list_library_skills", &json!({"name": "dbd"})).is_empty());
+        assert_eq!(missing_required("get_library_skill", &json!({"name": "dbd"})), vec!["focus"]);
+        assert!(missing_required("list_workspaces", &json!({})).is_empty(), "nothing required");
+        assert!(missing_required("no_such_tool", &json!({})).is_empty());
+    }
+
     #[test]
     fn tool_helper_lists_only_required_in_required_array() {
         let t = tool(
@@ -1638,6 +1714,48 @@ mod tests {
             daemon_request_for("get_layered_context", &json!({}), "/cwd", Some("sensei")).unwrap();
         assert_eq!(q(&no_slot, "slot"), None, "no slot arg → no slot query param");
         assert_eq!(q(&no_slot, "feature"), None, "no feature arg → no feature query param");
+    }
+
+    /// get_duplicates asks for `limit` groups, as a number or a string.
+    #[test]
+    fn duplicates_forward_their_limit() {
+        for limit in [json!(5), json!("5")] {
+            let req = daemon_request_for(
+                "get_duplicates",
+                &json!({ "limit": limit }),
+                "/cwd",
+                Some("sensei"),
+            )
+            .unwrap();
+            assert_eq!(q(&req, "limit"), Some("5"));
+        }
+        let req = daemon_request_for("get_duplicates", &json!({}), "/cwd", Some("sensei")).unwrap();
+        assert_eq!(q(&req, "limit"), None);
+    }
+
+    /// A tool that names its workspace in the daemon path, with none resolved,
+    /// is not sent as `/api/patterns//match` — the daemon read that as a
+    /// workspace with nothing in it and answered an empty success.
+    #[test]
+    fn a_tool_that_needs_a_workspace_is_not_sent_without_one() {
+        for t in NEEDS_WORKSPACE {
+            assert_eq!(daemon_request_for(t, &json!({}), "/cwd", None), None, "{t}");
+            assert!(daemon_request_for(t, &json!({}), "/cwd", Some("sensei")).is_some(), "{t}");
+        }
+        assert_eq!(
+            NEEDS_WORKSPACE.iter().copied().collect::<std::collections::BTreeSet<_>>(),
+            [
+                "get_commands",
+                "get_duplicates",
+                "get_pattern_for",
+                "get_workflow_state",
+                "get_workspace_conventions",
+                "match_pattern",
+                "update_phase",
+            ]
+            .into_iter()
+            .collect()
+        );
     }
 
     #[test]

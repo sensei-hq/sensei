@@ -88,6 +88,8 @@ create type task_execution_kind as enum (
 , 'advance_run'
 , 'publish_run'
 , 'tracker_discover'
+, 'discover_library'
+, 'measure_complexity'
   -- ── RETIRED (see header) ──
 , 'build_connections'
 , 'resolve_edges'

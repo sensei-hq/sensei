@@ -1,3 +1,4 @@
+import { KIND_ICONS } from '@sensei/glyphs';
 import { render, cleanup } from '@testing-library/svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import KanjiToken from './KanjiToken.svelte';
@@ -27,10 +28,14 @@ describe('KanjiToken and the glyph choice', () => {
 		expect(container.querySelector('.kanji')?.textContent).toBe('検');
 	});
 
-	it('keeps an identity mark kanji in icon mode', () => {
+	// One rule (#133, 2026-10-27): the brand mark follows the mode too, and a
+	// kanji that is data shows its kind's icon.
+	it('shows the brand mark and a dōjō’s own kanji as icons in icon mode', () => {
 		glyphs.mode = 'icon';
-		const { container } = render(KanjiToken, { char: '結', icon: null });
-		expect(container.querySelector('.kanji')?.textContent).toBe('結');
-		expect(container.querySelector('[data-component="glyph-icon"]')).toBeNull();
+		const brand = render(KanjiToken, { char: '結' }).container;
+		expect(brand.querySelector('[data-component="glyph-icon"]')?.className).toContain('i-solar-link-circle-bold-duotone');
+		const own = render(KanjiToken, { char: '鬱', icon: KIND_ICONS.dojo }).container;
+		expect(own.querySelector('.kanji')).toBeNull();
+		expect(own.querySelector('[data-component="glyph-icon"]')?.className).toContain(KIND_ICONS.dojo);
 	});
 });

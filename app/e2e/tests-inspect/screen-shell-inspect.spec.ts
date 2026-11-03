@@ -11,8 +11,9 @@ import { DAEMON_URL } from '../helpers';
 /** Workspace-scoped screens on `Screen`; grows as screens move (#293). */
 const WORKSPACE_SCREENS = [
   'traceability', 'instruments', 'libraries', 'memories',
-  'diagrams/cycles', 'diagrams/layers', 'diagrams/neighbourhood', 'diagrams/schema', 'diagrams/structure', 'diagrams/world',
-  'overview', 'about', 'patterns', 'impact', 'intake', 'metrics', 'sessions', 'atlas',
+  'diagrams/structure', 'diagrams/wheel', 'diagrams/zones', 'diagrams/matrix', 'diagrams/cycles',
+  'diagrams/coupling', 'diagrams/complexity', 'diagrams/schema',
+  'overview', 'about', 'patterns', 'impact', 'intake', 'metrics', 'sessions',
 ];
 
 /** Observatory screens on `Screen`, by path; grows as screens move (#293). */
@@ -35,14 +36,8 @@ const FRESH_BODY = '[data-component="screen-body"]:not([data-probed])';
 
 type Page = { evaluate: (script: string) => Promise<unknown> };
 
-/** Navigate and wait for the new screen's body to be in the DOM. The identities
- *  dialog (#283) is modal and holds navigation while a credential needs
- *  approval, so it is closed first — it can open at any point, once the
- *  personas load. */
+/** Navigate and wait for the new screen's body to be in the DOM. */
 async function openScreen(page: Page, route: string) {
-  await page.evaluate(
-    `document.querySelector('[data-component="sign-in-overlay"] footer button')?.click()`,
-  );
   // Navigated ONCE and not awaited: re-issuing restarts a slow loader, and
   // awaiting the navigation inside evaluate trips the harness's 30s call limit
   // on a screen whose load is slower than that (workspace Instruments, #298).
@@ -54,7 +49,7 @@ async function openScreen(page: Page, route: string) {
     a.remove();
   })()`);
   for (const until = Date.now() + 120_000; Date.now() < until; ) {
-    // A page busy mounting (atlas lays its graph out on the main thread) cannot
+    // A page busy mounting (a diagram lays its graph out on the main thread) cannot
     // answer; that is "not yet", not a failure.
     const mounted = await page.evaluate(`!!document.querySelector('${FRESH_BODY}')`).catch(() => false);
     if (mounted) return;
@@ -71,6 +66,8 @@ const PROBE = `(() => {
   const screen = body?.closest('[data-component="screen"]');
   const header = screen?.querySelector(':scope > [data-component="screen-header"]');
   const main = screen?.closest('main');
+  // Marked even when it fails, so the next screen is probed rather than this one again.
+  body?.setAttribute('data-probed', '');
   if (!main || !screen || !header || !body) return null;
   const fill = body.dataset.fill === 'true';
   const spacer = document.createElement('div');
@@ -87,8 +84,6 @@ const PROBE = `(() => {
   };
   body.scrollTop = 0;
   spacer.remove();
-  // Marked, so the next navigation waits for ITS screen rather than this one.
-  body.setAttribute('data-probed', '');
   return out;
 })()`;
 
@@ -116,6 +111,6 @@ test('screens on the shared layout keep the header fixed over one scroll body', 
   for (const screen of [...screens, ...OBSERVATORY_SCREENS]) {
     expect(results[screen], screen).toEqual(expected(results[screen]?.fill ?? false));
   }
-  // The two list-and-detail screens are the fill ones.
-  expect(screens.filter((s) => results[s]?.fill)).toEqual(['atlas', screens.at(-1)]);
+  // The list-and-detail screen is the fill one.
+  expect(screens.filter((s) => results[s]?.fill)).toEqual([screens.at(-1)]);
 });

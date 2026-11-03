@@ -1,6 +1,6 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     pub async fn create_workspace(
         &self,
@@ -84,11 +84,9 @@ impl PgStore {
     pub async fn set_workspace_identity(
         &self,
         id: &uuid::Uuid,
-        description: Option<&str>,
-        client: Option<&str>,
-        stack: &[String],
-        tags: &[String],
+        identity: &WorkspaceIdentity<'_>,
     ) -> Result<(), String> {
+        let &WorkspaceIdentity { description, client, stack, tags } = identity;
         let stack_json = serde_json::json!(stack);
         let tags_vec: Vec<String> = tags.to_vec();
         sqlx_core::query::query(
@@ -349,6 +347,24 @@ impl PgStore {
         self.list_workspaces_under(None).await
     }
 
+    /// The workspaces with a folder under a root that is being watched — the
+    /// ones whose code is current, and so the ones a tool can run in.
+    pub async fn watched_workspace_ids(
+        &self,
+    ) -> Result<std::collections::HashSet<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT fw.workspace_id
+               FROM sensei.folder_workspaces fw
+               JOIN sensei.folders f ON f.id = fw.folder_id
+               JOIN sensei.folders_to_watch w ON w.id = f.root_id
+              WHERE w.status::text = 'watching'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("watched_workspace_ids: {e}"))?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     /// Like [`list_workspaces`], optionally scoped to a folder. When `under` is
     /// `Some(path)`, only workspaces that own at least one folder whose `abs_path`
     /// is `path` itself OR lives beneath `path` are returned — path-boundary-safe,
@@ -360,6 +376,24 @@ impl PgStore {
     pub async fn list_workspaces_under(
         &self,
         under: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        self.list_workspaces_where(under, None).await
+    }
+
+    /// One workspace exactly as `list_workspaces_under` lists it — the window
+    /// reading its own workspace, not all of them. `None` when there is no such
+    /// workspace.
+    pub async fn workspace_listing(
+        &self,
+        id: &uuid::Uuid,
+    ) -> Result<Option<serde_json::Value>, String> {
+        Ok(self.list_workspaces_where(None, Some(id)).await?.into_iter().next())
+    }
+
+    async fn list_workspaces_where(
+        &self,
+        under: Option<&str>,
+        only: Option<&uuid::Uuid>,
     ) -> Result<Vec<serde_json::Value>, String> {
         // Additive: also returns icon/stack/vision(goal) plus repos_count /
         // libs_count / last_session_at / sessions7d so the Workspaces index can
@@ -373,24 +407,42 @@ impl PgStore {
             chrono::DateTime<chrono::Utc>, Option<serde_json::Value>, Option<serde_json::Value>,
             Option<String>, Option<uuid::Uuid>, i64, i64, Option<chrono::DateTime<chrono::Utc>>, i64,
         )> = sqlx_core::query_as::query_as(
-                "SELECT p.id, p.name, p.description, p.client, p.maturity::text, p.tags, p.modified_at,
+                // Each count aggregated ONCE and joined (user, 2026-10-28: the list
+                // was slow). It used to be four subqueries per workspace, the repo
+                // count through the `folder_workspaces` view — a scan of every
+                // folder for every workspace. Same answers (the counts test).
+                "WITH repos AS (
+                     SELECT riw.workspace_id, count(*) AS n
+                       FROM sensei.repositories_in_workspaces riw
+                       JOIN sensei.folders f ON f.repository_id = riw.repository_id
+                      WHERE f.kind::text IN ('git','standalone')
+                      GROUP BY riw.workspace_id),
+                 libs AS (
+                     SELECT workspace_id, count(*) AS n FROM sensei.library_enablement
+                      WHERE workspace_id IS NOT NULL GROUP BY workspace_id),
+                 sess AS (
+                     SELECT workspace_id,
+                            max(coalesce(completed_at, started_at)) AS last_at,
+                            count(*) FILTER (WHERE coalesce(completed_at, started_at) > now() - interval '7 days') AS n7d
+                       FROM activity.sessions WHERE workspace_id IS NOT NULL GROUP BY workspace_id)
+                 SELECT p.id, p.name, p.description, p.client, p.maturity::text, p.tags, p.modified_at,
                         p.icon, p.stack, p.goal, p.dojo_id,
-                        (SELECT count(*) FROM sensei.folders f
-                           JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
-                          WHERE fp.workspace_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
-                        (SELECT count(*) FROM sensei.library_enablement pl
-                          WHERE pl.workspace_id = p.id)::bigint AS libs_count,
-                        (SELECT max(s.started_at) FROM activity.sessions s WHERE s.workspace_id = p.id) AS last_session_at,
-                        (SELECT count(*) FROM activity.sessions s
-                          WHERE s.workspace_id = p.id AND s.started_at > now() - interval '7 days')::bigint AS sessions7d
-                 FROM sensei.workspaces p
-                 WHERE $1::text IS NULL OR EXISTS (
+                        coalesce(r.n, 0)::bigint AS repos_count,
+                        coalesce(l.n, 0)::bigint AS libs_count,
+                        s.last_at AS last_session_at,
+                        coalesce(s.n7d, 0)::bigint AS sessions7d
+                   FROM sensei.workspaces p
+                   LEFT JOIN repos r ON r.workspace_id = p.id
+                   LEFT JOIN libs l ON l.workspace_id = p.id
+                   LEFT JOIN sess s ON s.workspace_id = p.id
+                  WHERE ($1::text IS NULL OR EXISTS (
                           SELECT 1 FROM sensei.folder_workspaces fp
                            WHERE fp.workspace_id = p.id
                              AND (fp.folder_abs_path = $1::text
-                               OR left(fp.folder_abs_path, length($1::text) + 1) = $1::text || '/'))
-                 ORDER BY p.name"
-            ).bind(under).fetch_all(&self.pool).await
+                               OR left(fp.folder_abs_path, length($1::text) + 1) = $1::text || '/')))
+                    AND ($2::uuid IS NULL OR p.id = $2)
+                  ORDER BY p.name"
+            ).bind(under).bind(only).fetch_all(&self.pool).await
             .map_err(|e| { tracing::error!(error = %e, "list_workspaces failed"); e.to_string() })?;
 
         Ok(rows

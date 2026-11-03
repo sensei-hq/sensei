@@ -25,9 +25,9 @@
 	disabled={logout.busy}
 	title="Log out"
 	aria-label="Log out"
-	class="text-ink-soft hover:text-ink border-paper-edge flex flex-shrink-0 items-center border bg-transparent {shape}"
+	class="text-ink-mute hover:text-ink border-paper-edge flex flex-shrink-0 items-center border bg-transparent {shape}"
 	style={compact ? undefined : 'padding: 4px 10px'}
 >
-	<KanjiToken char="出" size="inherit" toneClass="" class="text-ink-mute text-xs" />
+	<KanjiToken char="出" size="inherit" toneClass="" class="text-ink-soft text-xs" />
 	{#if !compact}<span class="hidden text-xs md:inline">Log out</span>{/if}
 </button>

@@ -132,11 +132,15 @@ keeps the pair (and the fleet) legible and steerable at a distance. Detail:
 
 **The code is open source** and stays that way: anyone can run sensei and a Dōjō
 themselves (D24). The **hosted** Dōjō is free for every Dōjō (D20) — sensei serves the
-individual, and every Dōjō gets its shared basics. **The benefits of the paid tier**
+individual, and every Dōjō gets its shared basics. **Public repositories are free in every
+Dōjō, and a personal Dōjō is free with its private repositories; an organisation's private
+repositories need a subscription** taken by its admin or owner, and stay hidden from its Dōjō
+until then (D46). **The benefits of the paid tier**
 are the features a team pays for on the hosted Dōjō: **gating**, **integrations**
 (trackers, CI) and **consolidated metrics**, plus the control a business needs (SSO,
-audit) — never to use sensei, never for tokens (inference is BYO-key and local). Tiers + open pricing questions:
-[journeys/dojo → Business model](../journeys/dojo.md#business-model--free-where-public-or-personal).
+audit) — never to use sensei, never for tokens (inference is BYO-key and local). The plan lives
+only in the Dōjō: local sensei works in full on any plan. Tiers + open pricing questions:
+[journeys/dojo → Business model](../journeys/dojo.md#business-model--public-free-private-on-a-subscription).
 
 ## Why it's worth building — one loop, not two products
 

@@ -4,6 +4,6 @@
 
 <RootsSection />
 
-<p class="max-w-[780px] text-sm text-ink-soft mt-4">
+<p class="max-w-[780px] text-sm text-ink-mute mt-4">
     You can manage roots and exclusions later from Settings.
 </p>

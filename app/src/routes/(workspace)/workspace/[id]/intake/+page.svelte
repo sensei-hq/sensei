@@ -42,7 +42,7 @@
     {#if intake.phase !== 'recorded'}
       <section class="flex flex-col gap-2">
         {#if intake.guide.frame}
-          <p class="text-sm text-ink-soft m-0">{intake.guide.frame}</p>
+          <p class="text-sm text-ink-mute m-0">{intake.guide.frame}</p>
         {/if}
         <textarea
           class="w-full min-h-32 rounded bg-paper-soft border border-paper-edge py-2 px-3 text-sm text-ink"
@@ -66,7 +66,7 @@
     {/if}
 
     {#if intake.phase === 'error'}
-      <p class="text-sm bg-danger-soft text-danger border border-danger rounded py-2 px-3 m-0" data-testid="intake-error">{intake.error}</p>
+      <p class="text-sm bg-danger-soft text-on-danger-soft border border-danger rounded py-2 px-3 m-0" data-testid="intake-error">{intake.error}</p>
     {/if}
 
     {#if intake.rec && (intake.phase === 'recommended' || intake.phase === 'recorded')}
@@ -75,16 +75,16 @@
         <div class="flex items-center justify-between gap-2">
           <h2 class="text-sm font-medium text-ink m-0" data-testid="intake-playbook-title">{intake.playbookTitle}</h2>
           {#if r.auto_select}
-            <span class="text-xs bg-success-soft text-success rounded-sm py-1 px-2" data-testid="intake-trust-badge">
+            <span class="text-xs bg-success-soft text-on-success-soft rounded-sm py-1 px-2" data-testid="intake-trust-badge">
               trusted · FTR {r.trust.ftr.toFixed(2)} over {r.trust.n}
             </span>
           {/if}
         </div>
-        <p class="text-sm text-ink-soft m-0 leading-snug">{r.rationale}</p>
+        <p class="text-sm text-ink-mute m-0 leading-snug">{r.rationale}</p>
         {#if r.opening_tone}
           <p class="text-xs italic text-ink-faint m-0">{r.opening_tone}</p>
         {/if}
-        <div class="flex flex-wrap gap-2 text-xs text-ink-soft" data-testid="intake-axes">
+        <div class="flex flex-wrap gap-2 text-xs text-ink-mute" data-testid="intake-axes">
           <span class="border border-paper-edge rounded-sm py-1 px-2">{r.lifecycle}</span>
           <span class="border border-paper-edge rounded-sm py-1 px-2">{r.intent}</span>
           <span class="border border-paper-edge rounded-sm py-1 px-2">{r.risk}</span>

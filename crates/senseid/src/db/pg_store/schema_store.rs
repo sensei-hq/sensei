@@ -36,6 +36,8 @@ pub struct StoredSchemaEntity {
     pub columns: Vec<SchemaColumn>,
     pub indexes: Vec<SchemaIndex>,
     pub refs: Vec<StoredSchemaRef>,
+    /// An enum's values, in declaration order; empty for every other kind.
+    pub enum_values: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,13 +94,14 @@ impl PgStore {
             let at = fact.fqn.as_str();
             sqlx_core::query::query(
                 "INSERT INTO sensei.schema_entities
-                        (node_id, kind, db_schema, source, naming, note, note_md)
+                        (node_id, kind, db_schema, source, naming, note, note_md, enum_values)
                  VALUES ($1, $2::sensei.schema_object_kind, $3, $4::sensei.schema_source,
-                         $5::sensei.schema_naming, $6, $7)
+                         $5::sensei.schema_naming, $6, $7, $8)
                  ON CONFLICT (node_id) DO UPDATE
                     SET kind = EXCLUDED.kind, db_schema = EXCLUDED.db_schema,
                         source = EXCLUDED.source, naming = EXCLUDED.naming,
                         note = EXCLUDED.note, note_md = EXCLUDED.note_md,
+                        enum_values = EXCLUDED.enum_values,
                         modified_at = now()",
             )
             .bind(node)
@@ -108,6 +111,7 @@ impl PgStore {
             .bind(fact.naming.as_label())
             .bind(&fact.note)
             .bind(&fact.note_md)
+            .bind(&fact.enum_values)
             .execute(&mut *tx)
             .await
             .map_err(|e| format!("schema store: entity {at}: {e}"))?;
@@ -323,10 +327,11 @@ impl PgStore {
             String,
             Option<String>,
             Option<String>,
+            Vec<String>,
         );
         let entities: Vec<EntityTuple> = sqlx_core::query_as::query_as(
             "SELECT se.node_id, n.fqn, n.name, se.kind::text, se.db_schema, se.source::text,
-                    se.naming::text, se.note, se.note_md
+                    se.naming::text, se.note, se.note_md, se.enum_values
                FROM sensei.schema_entities se
                JOIN sensei.nodes n ON n.id = se.node_id
               WHERE n.folder_id = ANY($1)
@@ -379,52 +384,55 @@ impl PgStore {
 
         Ok(entities
             .into_iter()
-            .map(|(node, fqn, name, kind, db_schema, source, naming, note, note_md)| {
-                StoredSchemaEntity {
-                    fqn,
-                    name,
-                    kind,
-                    db_schema,
-                    source,
-                    naming,
-                    note,
-                    note_md,
-                    columns: columns
-                        .iter()
-                        .filter(|c| c.0 == node)
-                        .map(|c| SchemaColumn {
-                            name: c.1.clone(),
-                            sql_type: c.2.clone(),
-                            primary_key: c.3,
-                            not_null: c.4,
-                            unique_key: c.5,
-                            foreign_key: c.6,
-                            enum_typed: c.7,
-                            default_expr: c.8.clone(),
-                            note: c.9.clone(),
-                        })
-                        .collect(),
-                    indexes: indexes
-                        .iter()
-                        .filter(|i| i.0 == node)
-                        .map(|i| SchemaIndex {
-                            name: i.1.clone(),
-                            definition: i.2.clone(),
-                            unique: i.3,
-                        })
-                        .collect(),
-                    refs: refs
-                        .iter()
-                        .filter(|r| r.0 == node)
-                        .map(|r| StoredSchemaRef {
-                            from_column: r.1.clone(),
-                            to: r.2.clone(),
-                            to_column: r.3.clone(),
-                            on_delete: r.4.clone(),
-                        })
-                        .collect(),
-                }
-            })
+            .map(
+                |(node, fqn, name, kind, db_schema, source, naming, note, note_md, enum_values)| {
+                    StoredSchemaEntity {
+                        fqn,
+                        name,
+                        kind,
+                        db_schema,
+                        source,
+                        naming,
+                        note,
+                        note_md,
+                        enum_values,
+                        columns: columns
+                            .iter()
+                            .filter(|c| c.0 == node)
+                            .map(|c| SchemaColumn {
+                                name: c.1.clone(),
+                                sql_type: c.2.clone(),
+                                primary_key: c.3,
+                                not_null: c.4,
+                                unique_key: c.5,
+                                foreign_key: c.6,
+                                enum_typed: c.7,
+                                default_expr: c.8.clone(),
+                                note: c.9.clone(),
+                            })
+                            .collect(),
+                        indexes: indexes
+                            .iter()
+                            .filter(|i| i.0 == node)
+                            .map(|i| SchemaIndex {
+                                name: i.1.clone(),
+                                definition: i.2.clone(),
+                                unique: i.3,
+                            })
+                            .collect(),
+                        refs: refs
+                            .iter()
+                            .filter(|r| r.0 == node)
+                            .map(|r| StoredSchemaRef {
+                                from_column: r.1.clone(),
+                                to: r.2.clone(),
+                                to_column: r.3.clone(),
+                                on_delete: r.4.clone(),
+                            })
+                            .collect(),
+                    }
+                },
+            )
             .collect())
     }
 }

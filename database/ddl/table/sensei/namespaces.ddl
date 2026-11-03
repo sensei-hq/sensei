@@ -45,3 +45,8 @@ comment on column namespaces.modified_at
 -- dojo.tenant_seat_usage as service_role (server-only; service_role bypasses RLS). Inert on
 -- the local daemon (owner connection; never queries as service_role via PostgREST).
 grant select on namespaces to service_role;
+
+-- Row level security (the Supabase advisor, 2026-10-27), with no client policy.
+-- Read by the server only (service_role, which bypasses RLS), through dojo.namespaces; a client role reads nothing here. Inert on the daemon, which connects
+-- as the owner.
+alter table sensei.namespaces enable row level security;

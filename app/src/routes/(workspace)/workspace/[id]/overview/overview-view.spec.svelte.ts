@@ -5,7 +5,6 @@ import {
   repoChipLabel,
   heroContent,
   statBlocks,
-  sessionDuration,
   relativeTime,
   sessionRows,
   workspaceVisibilityLabel,
@@ -162,21 +161,6 @@ describe('statBlocks', () => {
   });
 });
 
-describe('sessionDuration', () => {
-  it('formats sub-hour, hour, and multi-day spans', () => {
-    expect(sessionDuration('2026-07-08T01:00:00Z', '2026-07-08T01:42:00Z')).toBe('42m');
-    expect(sessionDuration('2026-07-08T01:00:00Z', '2026-07-08T02:30:00Z')).toBe('1h 30m');
-    expect(sessionDuration('2026-07-08T01:00:00Z', '2026-07-08T03:00:00Z')).toBe('2h');
-    // 2 days + 3 hours
-    expect(sessionDuration('2026-07-01T00:00:00Z', '2026-07-03T03:00:00Z')).toBe('2d 3h');
-  });
-
-  it('returns null when incomplete or the timestamps do not advance', () => {
-    expect(sessionDuration('2026-07-08T01:00:00Z', null)).toBeNull();
-    expect(sessionDuration('2026-07-08T02:00:00Z', '2026-07-08T01:00:00Z')).toBeNull();
-  });
-});
-
 describe('relativeTime', () => {
   const now = Date.parse('2026-07-08T12:00:00Z');
 
@@ -199,9 +183,12 @@ describe('sessionRows', () => {
     expect(row.meta).toBe('c6dbe60f · 42m · 2 corrections');
   });
 
-  it('says "first-try right" for a clean session', () => {
-    const [row] = sessionRows([session({ corrections: 0 })], now);
-    expect(row.meta).toContain('first-try right');
+  it('says "no corrections" for a clean session, and "1 correction" in the singular', () => {
+    const [clean] = sessionRows([session({ corrections: 0 })], now);
+    expect(clean.meta).toContain('no corrections');
+    const [one] = sessionRows([session({ corrections: 1 })], now);
+    expect(one.meta).toContain('1 correction');
+    expect(one.meta).not.toContain('1 corrections');
   });
 
   it('falls back to a generic title when the session title is blank', () => {
@@ -210,7 +197,7 @@ describe('sessionRows', () => {
 
   it('tones the time column by FTR', () => {
     expect(sessionRows([session({ ftr: true })], now)[0].timeToneClass).toBe('text-success');
-    expect(sessionRows([session({ ftr: false })], now)[0].timeToneClass).toBe('text-ink-mute');
+    expect(sessionRows([session({ ftr: false })], now)[0].timeToneClass).toBe('text-ink-soft');
   });
 
   it('passes the folder role through, including null (no chip)', () => {

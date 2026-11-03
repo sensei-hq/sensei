@@ -315,7 +315,9 @@ async fn write_one_repo(
 
     // ── Stage 2b: this repo may BE a library ─────────────────────────────
     let stage = events.begin("library_discovery", &abs);
-    ingest_library(pg, root, &scan, &mut out).await;
+    let root_manifests: Vec<(std::path::PathBuf, &'static str)> =
+        scan.manifests.iter().filter(|(p, _)| p.parent() == Some(root)).cloned().collect();
+    ingest_library(pg, root, &root_manifests, &mut out).await;
     match out.library_docs_error.as_deref() {
         // A docs walk that failed is not an ingestion of zero pages. Saying so
         // is the difference between "this library ships no docs" and "we could
@@ -474,13 +476,13 @@ pub(crate) async fn apply_manifest(pg: &PgStore, job: ManifestJob<'_>) -> Manife
                 continue; // the table's CHECK forbids a self-edge
             }
             if let Err(e) = pg
-                .upsert_folder_dependency(
-                    &job.folder_id,
-                    &to_id,
-                    protocol,
-                    &dep.source,
-                    Some(target),
-                )
+                .upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+                    from_folder_id: &job.folder_id,
+                    to_folder_id: &to_id,
+                    source_protocol: protocol,
+                    source_manifest: &dep.source,
+                    resolved_target: Some(target),
+                })
                 .await
             {
                 out.errors.push(format!("upsert_folder_dependency({}): {e}", dep.lib_name));
@@ -501,7 +503,14 @@ pub(crate) async fn apply_manifest(pg: &PgStore, job: ManifestJob<'_>) -> Manife
         }
         let version = scan_repo::resolve_pin(&pins, &dep.lib_name, &dep.version);
         let lib_id = match pg
-            .upsert_library(&dep.lib_name, job.ecosystem, Some(&version), None, None, None)
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &dep.lib_name,
+                ecosystem: job.ecosystem,
+                version: Some(&version),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
             .await
         {
             Ok(id) => id,
@@ -577,10 +586,15 @@ fn workspace_inherited_version(content: &str) -> Option<String> {
 /// `library_packages` still had zero rows, because the only two callers were a
 /// manual API endpoint and a task that requires a URL. Nothing ran it during a
 /// scan, so a library sitting on disk was never noticed.
-async fn ingest_library(
+///
+/// `root_manifests` are the package manifests AT the repo root, with their
+/// ecosystem — all this needs from a walk. The production scan
+/// (`process_git_folder`) and this pipeline both call it, so a scanned library is
+/// registered by the scan that actually runs (#341: only tests ran this one).
+pub(crate) async fn ingest_library(
     pg: &PgStore,
     repo_root: &std::path::Path,
-    scan: &RepoScan,
+    root_manifests: &[(std::path::PathBuf, &'static str)],
     out: &mut RepoResult,
 ) {
     let Some(m) = crate::libraries::read_manifest(repo_root) else {
@@ -594,9 +608,7 @@ async fn ingest_library(
     // wrong ecosystem mints a second identity for one library and the grouping
     // attaches to the wrong row. No root manifest means no answer, and this
     // says so rather than picking one.
-    let Some(ecosystem) =
-        scan.manifests.iter().find(|(p, _)| p.parent() == Some(repo_root)).map(|(_, eco)| *eco)
-    else {
+    let Some(ecosystem) = root_manifests.first().map(|(_, eco)| *eco) else {
         out.errors.push(format!(
             "library {}: no manifest at the repo root, so its ecosystem is unknown — not registered",
             m.library
@@ -609,16 +621,27 @@ async fn ingest_library(
     // sensei.library.json's applies-to RANGE (`>=1.3`): a range is not a
     // release, and storing one as a version key produced rows like `>=1.3`
     // holding the local pages, which no pin can ever match.
-    let own_version =
-        scan.manifests.iter().find(|(p, _)| p.parent() == Some(repo_root)).and_then(|(p, eco)| {
+    let own_version = root_manifests
+        .iter()
+        .find_map(|(p, eco)| {
             let content = std::fs::read_to_string(p).ok()?;
             let a = crate::adapters::manifest::registered_adapters()
                 .iter()
                 .find(|a| a.ecosystem() == *eco)?;
             a.parse_manifest(&content).version.or_else(|| workspace_inherited_version(&content))
-        });
+        })
+        // No release in a package manifest: the one the manifest says its docs
+        // describe (`documents`, #341) — a release, unlike its `version` range.
+        .or_else(|| m.documents.clone());
     let library_id = match pg
-        .upsert_library(&m.library, ecosystem, own_version.as_deref(), None, None, None)
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &m.library,
+            ecosystem,
+            version: own_version.as_deref(),
+            description: None,
+            source_type: None,
+            base_url: m.site.as_deref(),
+        })
         .await
     {
         Ok(id) => id,
@@ -633,7 +656,8 @@ async fn ingest_library(
         None => out.errors.push(format!("ingest_manifest_at({}): returned nothing", m.library)),
     }
 
-    ingest_library_pages(pg, &library_id, repo_root, &m.library, out).await;
+    let llms_root = m.llms_path.as_deref().map(|p| repo_root.join(p));
+    ingest_library_pages(pg, &library_id, repo_root, llms_root.as_deref(), &m.library, out).await;
 }
 
 /// Walk a library's LOCAL docs corpus and store its pages (02b S7b.1).
@@ -649,13 +673,25 @@ async fn ingest_library_pages(
     pg: &PgStore,
     library_id: &uuid::Uuid,
     repo_root: &std::path::Path,
+    llms_root: Option<&std::path::Path>,
     lib_name: &str,
     out: &mut RepoResult,
 ) {
-    use crate::indexer::lib_indexer::{LibSource, resolve_library_pages};
+    use crate::indexer::lib_indexer::{LibSource, local_llms_pages, resolve_library_pages};
 
-    let source = LibSource::LocalDir(repo_root.to_string_lossy().to_string());
-    let pages = match resolve_library_pages(&source, lib_name).await {
+    // A docs folder the manifest STATES is read there (#341); otherwise the
+    // conventional guess — the repo root as an llms root, else `docs/llms`.
+    let read = match llms_root {
+        Some(root) => local_llms_pages(root, lib_name),
+        None => {
+            resolve_library_pages(
+                &LibSource::LocalDir(repo_root.to_string_lossy().to_string()),
+                lib_name,
+            )
+            .await
+        }
+    };
+    let pages = match read {
         Ok(p) => p,
         Err(e) => {
             // S7b.2/S7b.3. The error IS the staleness signal — recorded against
@@ -811,9 +847,17 @@ async fn write_structure(
 
         for (rel, _) in &plan.files {
             let Some(f) = current.get(rel) else { continue };
-            pg.upsert_file_row(&folder_id, rel, f.mtime, &f.hash, None)
-                .await
-                .map_err(|e| format!("upsert_file_row({rel}): {e}"))?;
+            pg.upsert_file_row(
+                &crate::db::pg_store::FileFingerprint {
+                    folder_id: &folder_id,
+                    file_path: rel,
+                    mtime: f.mtime,
+                    content_hash: &f.hash,
+                },
+                None,
+            )
+            .await
+            .map_err(|e| format!("upsert_file_row({rel}): {e}"))?;
             out.files += 1;
         }
 
@@ -1281,10 +1325,12 @@ mod parse_task {
         // Stage 3's barrier: the `files` row exists before the parse, which is
         // what lets node persistence fail closed on a missing one (R13).
         pg.upsert_file_row(
-            &folder_id,
-            "src/lib.rs",
-            crate::db::pg_store::folders::BARRIER_MTIME,
-            crate::db::pg_store::folders::BARRIER_HASH,
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &folder_id,
+                file_path: "src/lib.rs",
+                mtime: crate::db::pg_store::folders::BARRIER_MTIME,
+                content_hash: crate::db::pg_store::folders::BARRIER_HASH,
+            },
             None,
         )
         .await
@@ -1656,7 +1702,14 @@ mod corpus {
 
         for (name, eco, owner, repo, tag, site) in libs {
             let lib_id = pg
-                .upsert_library(name, eco, None, None, None, None)
+                .upsert_library(&crate::db::pg_store::LibraryRow {
+                    name,
+                    ecosystem: eco,
+                    version: None,
+                    description: None,
+                    source_type: None,
+                    base_url: None,
+                })
                 .await
                 .unwrap_or_else(|e| panic!("{name}: upsert_library: {e}"));
 

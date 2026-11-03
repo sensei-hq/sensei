@@ -583,6 +583,91 @@ async fn structure_level_module_groups_by_the_modules_top_segment() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// ABSTRACTNESS IS WHAT A MODULE DECLARES: interfaces and traits (M17 Zones,
+/// "how much of it is interfaces and traits"). It was "a type something implements
+/// or extends", and TypeScript interfaces are structural — nothing `implements`
+/// them — so 743 of sensei's 756 counted as concrete and every depended-on
+/// TypeScript module fell into the zone of pain (2026-10-30).
+///
+/// Mutation that must break it: count a type as abstract only when implemented.
+#[tokio::test]
+async fn an_interface_is_abstract_by_declaration() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, fid) = create_test_workspace_and_folder(&s, &format!("zones_{uniq}")).await;
+    for (fqn, kind, name) in [
+        ("typescript·pkg·shapes·Shape·item", "interface", "Shape"),
+        ("typescript·pkg·shapes·Circle·item", "struct", "Circle"),
+    ] {
+        s.seed_node_by_fqn(
+            &fid,
+            fqn,
+            kind,
+            name,
+            Some("typescript"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: "src/shapes.ts",
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    }
+    let zones = s.component_zones(&pid).await.unwrap();
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+    let shapes = zones.iter().find(|z| z.component == "pkg/shapes").expect("the module is placed");
+    assert_eq!((shapes.types, shapes.abstract_types), (2, 1), "the interface is abstract, the struct is not");
+    assert_eq!(shapes.abstractness, Some(0.5));
+}
+
+/// Every file of the workspace with the module the map files it under — what L0
+/// counts by role (M17). Grouped by the same top segment as `structure_nodes`.
+#[tokio::test]
+async fn codemap_module_paths_names_each_files_module() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, fid) = create_test_workspace_and_folder(&s, &format!("paths_{uniq}")).await;
+    for (fqn, path) in [
+        ("rust·pkg·tasks::alpha·run·item", "src/tasks/alpha.rs"),
+        ("rust·pkg·tasks::alpha_test·run·item", "src/tasks/tests/alpha_test.rs"),
+        ("rust·pkg·api::handler·run·item", "src/api/handler.rs"),
+    ] {
+        s.seed_node_by_fqn(
+            &fid,
+            fqn,
+            "function",
+            "run",
+            Some("rust"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: path,
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    }
+    let mut paths = s.codemap_module_paths(&pid).await.unwrap();
+    paths.sort();
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+    assert_eq!(
+        paths,
+        [
+            ("pkg/api", "src/api/handler.rs"),
+            ("pkg/tasks", "src/tasks/alpha.rs"),
+            ("pkg/tasks", "src/tasks/tests/alpha_test.rs"),
+        ]
+        .map(|(m, p)| (m.to_string(), p.to_string()))
+    );
+}
+
 /// COVERAGE COUNTS WHAT COULD NOT BE PLACED, not every edge there is.
 ///
 /// The first version of this asked `graph_placement` for

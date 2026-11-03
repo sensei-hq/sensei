@@ -21,20 +21,16 @@
   data-mode={mode}
   class="relative grid grid-cols-[auto_1fr] gap-5 px-6 py-6 bg-paper-soft border border-paper-edge rounded-lg"
 >
-  <!-- Giant kanji anchor + vertical caption -->
+  <!-- Giant kanji anchor -->
   <div class="relative">
     <Kanji char={hero.kanji} size="4xl" tone={mode === 'early' ? 'watermark' : 'accent'} />
-    <span
-      class="absolute -left-1.5 -top-1 text-xs tracking-wide uppercase text-ink-soft"
-      style="writing-mode: vertical-rl; transform: rotate(180deg); height: 96px;"
-    >{mode === 'early' ? 'sensei is listening' : 'sensei speaks'}</span>
   </div>
 
   <div class="flex flex-col">
     <p class="display text-2xl font-normal m-0 mb-3 tracking-tight leading-tight text-ink">
       {hero.koan}
     </p>
-    <p class="text-base text-ink-mute leading-relaxed m-0 mb-4 max-w-[620px]">{hero.body}</p>
+    <p class="text-base text-ink-soft leading-relaxed m-0 mb-4 max-w-[620px]">{hero.body}</p>
 
     <div class="flex items-center gap-4 flex-wrap mt-auto">
       {#if hero.action}
@@ -48,7 +44,7 @@
       {/if}
       <span class="flex-1"></span>
       {#if provenance}
-        <span data-hero-source class="font-mono text-xs text-ink-soft">{provenance}</span>
+        <span data-hero-source class="font-mono text-xs text-ink-mute">{provenance}</span>
       {/if}
     </div>
   </div>

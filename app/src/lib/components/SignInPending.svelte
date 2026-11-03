@@ -29,7 +29,7 @@
 </script>
 
 {#if pending}
-  <div data-component="sign-in-pending" class="flex flex-col gap-2 rounded-md border border-paper-edge bg-paper-soft px-3 py-2 text-xs text-ink-soft">
+  <div data-component="sign-in-pending" class="flex flex-col gap-2 rounded-md border border-paper-edge bg-paper-soft px-3 py-2 text-xs text-ink-mute">
     <p class="m-0">
       {#if pending.expectedLogin}
         Your browser is open for <span class="text-ink">{pending.label}</span>: sign in to GitHub as

@@ -3,12 +3,12 @@
 // The Metrics screen carries the SDLC settings panel and reads its values on
 // mount (docs/spec/screen/workspace-metrics-settings.md, done gate 1).
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mountComponent } from '$lib/test-mount.js';
+import { flushSync, mount, unmount } from 'svelte';
 import Page from './+page.svelte';
-import type { PageData } from './$types.js';
+import { METRICS_HOST, MetricsHost } from './metrics-host.svelte.js';
+import type { MetricsApi } from './metrics-state.svelte.js';
 
 const reads: string[] = [];
-vi.mock('$app/state', () => ({ page: { params: { id: 'w-1' } } }));
 vi.mock('$lib/appstate.svelte.js', () => ({ appState: { port: 7744 } }));
 vi.mock('$lib/api.js', () => ({
   senseiApi: () => ({
@@ -20,20 +20,34 @@ vi.mock('$lib/api.js', () => ({
   }),
 }));
 
-let cleanup: Array<() => void> = [];
+let app: Record<string, unknown> | null = null;
+let target: HTMLElement;
 afterEach(() => {
-  cleanup.forEach((fn) => fn());
-  cleanup = [];
+  if (app) unmount(app);
+  app = null;
+  target?.remove();
 });
+
+// The metric reads never land: this spec is about the settings panel alone.
+const pending = () => new Promise(() => {});
+const metricsApi = {
+  getWorkspaceMetrics: pending,
+  getMetricsRegistry: pending,
+  getWorkspaceHealth: pending,
+  getMetricCorrelations: pending,
+  tryGetTranscriptConsent: pending,
+  getWorkspaceMetricSeries: pending,
+  tryGetWorkspaceRecommendations: pending,
+} as unknown as MetricsApi;
 
 describe('Workspace Metrics /+page — SDLC settings', () => {
   it("mounts the panel and shows this workspace's stored values", async () => {
-    const data = {
-      workspace: { id: 'w-1', name: 'w' }, rows: [], registry: [], series: {}, narrative: null,
-      health: null, correlations: [], history: [], error: null,
-    } as unknown as PageData;
-    const m = mountComponent(Page, { data });
-    cleanup.push(m.destroy);
+    const host = new MetricsHost(() => 'w-1', () => metricsApi);
+    target = document.body.appendChild(document.createElement('div'));
+    const data = { workspaceId: 'w-1', workspace: { id: 'w-1', name: 'w', repos_count: 1 } };
+    app = mount(Page, { target, props: { data } as never, context: new Map([[METRICS_HOST, host]]) });
+    flushSync();
+    const m = { container: target };
     await vi.waitFor(() =>
       expect(m.container.querySelector<HTMLInputElement>('[data-setting="hourly_rate"]')?.value).toBe('40'),
     );

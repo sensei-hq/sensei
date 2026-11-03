@@ -69,7 +69,7 @@ describe('confidence helpers', () => {
 		expect(confidenceToneClass(0.9)).toBe('text-success');
 		expect(confidenceToneClass(0.75)).toBe('text-accent');
 		expect(confidenceToneClass(0.5)).toBe('text-warning');
-		expect(confidenceToneClass(null)).toBe('text-ink-mute');
+		expect(confidenceToneClass(null)).toBe('text-ink-soft');
 	});
 	it('renders percent + width, with a dash for unscored', () => {
 		expect(confidencePct(0.84)).toBe('84');
@@ -89,7 +89,7 @@ describe('similarity bands', () => {
 	it('tones the chip by band', () => {
 		expect(similarityToneClass(0.95)).toBe('text-accent');
 		expect(similarityToneClass(0.8)).toBe('text-warning');
-		expect(similarityToneClass(0.2)).toBe('text-ink-mute');
+		expect(similarityToneClass(0.2)).toBe('text-ink-soft');
 	});
 });
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Sign locally-built sensei binaries with a STABLE identity.
+# Sign sensei binaries with a STABLE identity — local installs, and the release (CI
+# names the Developer ID through $SENSEI_SIGN_IDENTITY, #282).
 #
-#   scripts/codesign-local.sh <binary>...
+#   scripts/codesign-local.sh [--keep-identifier] <binary>...
 #
 # macOS ties a keychain item's "Always Allow", and folder-access (TCC) grants,
 # to the program's code signature. An ad-hoc signature (`--sign -`) changes
@@ -9,11 +10,22 @@
 # keychain asked again. With a stable identity and a fixed identifier, the
 # grant survives rebuilds.
 #
-# Identity: $SENSEI_SIGN_IDENTITY if set, else `sensei-dev` when it is in the
-# keychain (create it once with `make dev-signing-cert`), else ad-hoc — said
-# out loud. The identifier is always `dev.sensei.<binary name>`, never the
-# hash-bearing default.
+# Identity: $SENSEI_SIGN_IDENTITY if set, else a `Developer ID Application`
+# identity in the keychain (the company's, the one users' grants are keyed on),
+# else `sensei-dev` (create it once with `make dev-signing-cert`), else ad-hoc —
+# said out loud. A Developer ID signature carries a secure timestamp, which
+# notarization requires; the self-signed one does not, so a local install needs
+# no network. The identifier is `dev.sensei.<binary name>`, never the
+# hash-bearing default; `--keep-identifier` signs a bundle under its own
+# CFBundleIdentifier instead (the installed app, `com.senseihq.desktop`, the
+# identity the release signs it with).
 set -euo pipefail
+
+keep_identifier=0
+if [[ "${1:-}" == "--keep-identifier" ]]; then
+  keep_identifier=1
+  shift
+fi
 
 identity="${SENSEI_SIGN_IDENTITY:-}"
 if [[ -z "$identity" ]]; then
@@ -21,7 +33,10 @@ if [[ -z "$identity" ]]; then
   # pipefail is a race: grep exits at the match, `security` SIGPIPEs on its next
   # line, and the pipeline reads as "no identity".
   ids=$(security find-identity -v -p codesigning 2>/dev/null || true)
-  if grep -q '"sensei-dev"' <<<"$ids"; then
+  developer_id=$(grep -o '"Developer ID Application: [^"]*"' <<<"$ids" | head -n 1 | tr -d '"' || true)
+  if [[ -n "$developer_id" ]]; then
+    identity="$developer_id"
+  elif grep -q '"sensei-dev"' <<<"$ids"; then
     identity="sensei-dev"
   else
     identity="-"
@@ -29,6 +44,9 @@ if [[ -z "$identity" ]]; then
     echo "  permissions will be asked for again after each build. Run 'make dev-signing-cert' once."
   fi
 fi
+
+timestamp=()
+[[ "$identity" == "Developer ID Application:"* ]] && timestamp=(--timestamp)
 
 for f in "$@"; do
   name=$(basename "$f")
@@ -40,6 +58,8 @@ for f in "$@"; do
   else
     id="dev.sensei.$name"
   fi
-  codesign --sign "$identity" --identifier "$id" --options runtime --force "$f"
+  identifier=(--identifier "$id")
+  [[ $keep_identifier == 1 ]] && identifier=()
+  codesign --sign "$identity" ${identifier[@]+"${identifier[@]}"} --options runtime ${timestamp[@]+"${timestamp[@]}"} --force "$f"
 done
 echo "codesign-local: signed $# binary(ies) as '$identity'"

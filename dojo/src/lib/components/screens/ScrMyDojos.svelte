@@ -62,7 +62,7 @@
 			>
 				{#snippet right()}
 					<div class="flex items-center gap-3">
-						{#if syncMessage}<span class="text-ink-mute text-xs">{syncMessage}</span>{/if}
+						{#if syncMessage}<span class="text-ink-soft text-xs">{syncMessage}</span>{/if}
 						{#if onSyncGithub}
 							<Button style="outline" size="sm" onclick={onSyncGithub} disabled={syncing}>
 								{syncing ? 'Syncing…' : 'Sync from GitHub'}

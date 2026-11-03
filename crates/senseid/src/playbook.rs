@@ -21,6 +21,7 @@ pub enum Risk {
 }
 
 impl Lifecycle {
+    pub const ALL: [Self; 2] = [Self::Greenfield, Self::Stable];
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Greenfield => "greenfield",
@@ -36,6 +37,8 @@ impl Lifecycle {
     }
 }
 impl Intent {
+    pub const ALL: [Self; 5] =
+        [Self::Explore, Self::Ux, Self::Feature, Self::Enhancement, Self::Bug];
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Explore => "explore",
@@ -57,6 +60,7 @@ impl Intent {
     }
 }
 impl Risk {
+    pub const ALL: [Self; 2] = [Self::Low, Self::High];
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Low => "low",

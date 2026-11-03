@@ -1,27 +1,6 @@
 use super::*;
 
-/// One row of `sensei.playbook_runs` — a classification and what produced it.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct PlaybookRunRow<'a> {
-    pub session_id: Option<uuid::Uuid>,
-    pub feature: Option<&'a str>,
-    pub lifecycle: &'a str,
-    pub intent: &'a str,
-    pub risk: &'a str,
-    pub rule_id: Option<uuid::Uuid>,
-    pub playbook: &'a str,
-    pub rationale: &'a str,
-    pub confirmed: bool,
-    pub classified_by: Option<&'a str>,
-    pub model_fallback: bool,
-    pub workspace_id: uuid::Uuid,
-}
-
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     pub async fn list_playbooks(&self) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, String, String, String, Option<String>)> =
@@ -164,12 +143,9 @@ impl PgStore {
     /// within `workspace_id`.
     pub async fn playbook_combo_trust(
         &self,
-        lifecycle: &str,
-        intent: &str,
-        risk: &str,
-        playbook: &str,
-        workspace_id: &uuid::Uuid,
+        q: &ComboTrustQuery<'_>,
     ) -> Result<(i64, f64), String> {
+        let &ComboTrustQuery { lifecycle, intent, risk, playbook, workspace_id } = q;
         let row: (i64, f64) = sqlx_core::query_as::query_as(
             "SELECT count(*)::int8, coalesce(avg(outcome_ftr::int)::float8, 0.0)
                FROM sensei.playbook_run
@@ -192,7 +168,6 @@ impl PgStore {
     /// a gateway model id, or "heuristic") and `model_fallback`
     /// flags whether the local-model path fell back to the heuristic —
     /// both feed the §9 measurement of local-model usefulness.
-    #[allow(clippy::too_many_arguments)]
     pub async fn insert_playbook_run(
         &self,
         row: &PlaybookRunRow<'_>,

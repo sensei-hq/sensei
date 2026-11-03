@@ -126,7 +126,7 @@ Fails with 500 on a DB error — never an empty payload
 - **Empty state on a DB error.** Indistinguishable from an unindexed project.
 - **Loading everything at symbol level.** sensei is 27,441 nodes at project
   grain; symbol level across a client monorepo is not renderable and must wait
-  for drill-down ([rokkit#165](https://github.com/jerrythomas/rokkit/issues/165)).
+  for drill-down ([rokkit#165](https://github.com/sensei-hq/rokkit/issues/165)).
 
 ## Not in scope
 

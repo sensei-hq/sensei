@@ -534,7 +534,16 @@ not json
         let pg = PgStore::connect_test().await.unwrap();
         let fid = crate::db::pg_store::tests::create_test_folder(&pg, "drain-list-cost").await;
         let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let id = pg.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+        let id = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &sid,
+                folder_id: &fid,
+                workspace_id: None,
+                family: "claude",
+                is_end: false,
+            })
+            .await
+            .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let line = json!({
             "session_id": sid, "assistant_family": "claude", "hook_event_name": "SessionMeasure",
@@ -572,7 +581,16 @@ not json
         let pg = PgStore::connect_test().await.unwrap();
         let fid = crate::db::pg_store::tests::create_test_folder(&pg, "drain-turn-usage").await;
         let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let id = pg.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+        let id = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &sid,
+                folder_id: &fid,
+                workspace_id: None,
+                family: "claude",
+                is_end: false,
+            })
+            .await
+            .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let line = json!({
             "session_id": sid, "assistant_family": "claude", "hook_event_name": "TurnComplete",

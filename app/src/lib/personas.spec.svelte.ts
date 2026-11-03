@@ -1,62 +1,172 @@
 // app/src/lib/personas.spec.svelte.ts
 //
-// The identity list behind the sign-in overlay.
+// The identity state behind the sign-in overlay AND Settings · Dōjō.
 //
-// Two properties carry the weight. First, each row's action comes from the
-// DAEMON, never re-derived here. Second (#300, decided 2026-10-20): every
-// sign-in opens the SYSTEM browser — the in-app window could not complete
-// passkey, SMS or GitHub Mobile — and the wrong account is caught by the
-// daemon's guard, not by a private window. So the list records which account a
-// sign-in expects and the link, for the UI to show and to copy into a private
-// window.
+// The user (2026-10-28): "credential expired" beside "ready", a Keychain
+// approval asked for a credential that had expired 14 hours earlier — because
+// the daemon decided an `action`, the UI decided a sentence and a colour, and
+// each screen combined them its own way. Now the daemon reports FACTS and this
+// state decides everything — status, the sentence, the tone, the button — per
+// identity, from those facts and its own clock. Views render what it says.
+//
+// Unchanged (#300, decided 2026-10-20): every sign-in opens the SYSTEM browser;
+// the wrong account is caught by the daemon's guard, so the state records which
+// account a sign-in expects and the link, for the UI to show and copy.
 import { describe, it, expect, vi } from 'vitest';
-import { PersonaList } from './personas.svelte.js';
+import { PersonaList, type PersonaWire } from './personas.svelte.js';
 
-const LIST = {
-  personas: [
-    {
-      label: 'sensei-hq-org',
-      githubLogin: 'sensei-hq-org',
-      sessionSlot: 'default',
-      connected: true,
-      forgeToken: { state: 'active', expiresAt: 1_788_204_679 },
-      action: 'none'
-    },
-    {
-      label: 'devuser',
-      githubLogin: null,
-      sessionSlot: null,
-      connected: false,
-      forgeToken: { state: 'unknown', expiresAt: null },
-      action: 'connect'
-    }
-  ]
+const NOW = 1_788_200_000;
+const H = 3600;
+
+const live: PersonaWire = {
+  label: 'sensei-hq-org',
+  githubLogin: 'sensei-hq-org',
+  sessionSlot: 'default',
+  connected: true,
+  forgeToken: { state: 'active', expiresAt: NOW + 7 * H },
+  renewalDue: false,
+  keychain: 'readable'
 };
+const fresh: PersonaWire = {
+  label: 'devuser',
+  githubLogin: null,
+  sessionSlot: null,
+  connected: false,
+  forgeToken: { state: 'unknown', expiresAt: null },
+  renewalDue: false,
+  keychain: null
+};
+const LIST = { personas: [live, fresh] };
 
 function harness(
   payload: unknown,
   url: string | null = 'https://github.test/authorize',
-  approved: string | null = null
+  approved: string | null = null,
+  now = NOW
 ) {
   const opened: string[] = [];
   const startSignIn = vi.fn(async () => url);
   const approveKeychain = vi.fn(async () => approved);
+  const announce = vi.fn();
+  const clock = { now };
   const list = new PersonaList({
     fetchPersonas: vi.fn(async () => (payload === null ? null : (payload as never))),
     startSignIn,
     approveKeychain,
     openAuth: vi.fn(async (u: string) => {
       opened.push(u);
-    })
+    }),
+    makeDefault: vi.fn(async () => null),
+    now: () => clock.now
   });
-  return { list, opened, startSignIn, approveKeychain };
+  list.onChanged = announce;
+  return { list, opened, startSignIn, approveKeychain, announce, clock };
 }
+
+const one = async (p: Partial<PersonaWire>, now = NOW) => {
+  const h = harness({ personas: [{ ...live, ...p }] }, undefined, null, now);
+  await h.list.load();
+  return h.list.identities[0];
+};
+
+describe('the status, decided once from the facts and the clock', () => {
+  it('never connected is neutral and offers Connect, not a repair', async () => {
+    const h = harness(LIST);
+    await h.list.load();
+    expect(h.list.identities[1]).toMatchObject({
+      status: 'neverConnected',
+      standing: 'never signed in on this machine',
+      tone: 'idle',
+      action: { kind: 'connect', label: 'Connect' }
+    });
+  });
+
+  it('a dead or absent token is expired', async () => {
+    for (const state of ['dead', 'absent']) {
+      expect(await one({ forgeToken: { state, expiresAt: null } })).toMatchObject({
+        status: 'expired',
+        standing: 'credential expired',
+        tone: 'dead',
+        action: { kind: 'signIn', label: 'Sign in again' }
+      });
+    }
+  });
+
+  it('a live token past its expiry is expired — whatever else is reported', async () => {
+    // The user's case: `active`, expired 14 hours ago, Keychain withholding it.
+    // Expired wins: approving a dead credential only reveals that it is dead.
+    const id = await one({ forgeToken: { state: 'active', expiresAt: NOW - 14 * H }, keychain: 'needsApproval' });
+    expect(id).toMatchObject({ status: 'expired', standing: 'credential expired', action: { kind: 'signIn' } });
+  });
+
+  it('a withheld session on a live credential needs the Keychain approved', async () => {
+    expect(await one({ keychain: 'needsApproval' })).toMatchObject({
+      status: 'needsKeychain',
+      standing: 'keychain access needs approval',
+      tone: 'warn',
+      action: { kind: 'approve', label: 'Approve keychain access' }
+    });
+  });
+
+  it('renewal due is expiring, offered as Renew', async () => {
+    expect(await one({ renewalDue: true, forgeToken: { state: 'active', expiresAt: NOW + 1800 } })).toMatchObject({
+      status: 'expiring',
+      tone: 'warn',
+      action: { kind: 'renew', label: 'Renew' }
+    });
+  });
+
+  it('ready says its remaining life and offers no button', async () => {
+    const id = await one({});
+    expect(id).toMatchObject({ status: 'ready', standing: '7.0 hours left', tone: 'ok', action: null });
+    expect(await one({ forgeToken: { state: 'active', expiresAt: NOW + 1800 } })).toMatchObject({
+      status: 'ready',
+      standing: '30 minutes left',
+      tone: 'warn'
+    });
+  });
+
+  it('an unknown expiry is ready and neutral, never assumed expired', async () => {
+    expect(await one({ forgeToken: { state: 'active', expiresAt: null } })).toMatchObject({
+      status: 'ready',
+      standing: 'signed in — expiry not yet known',
+      tone: 'idle',
+      action: null
+    });
+  });
+
+  it('the clock moves the status: a credential that expires while open becomes expired', async () => {
+    const h = harness({ personas: [{ ...live, forgeToken: { state: 'active', expiresAt: NOW + 60 } }] });
+    await h.list.load();
+    expect(h.list.identities[0].status).toBe('ready');
+    h.clock.now = NOW + 61;
+    await h.list.tick();
+    expect(h.list.identities[0]).toMatchObject({ status: 'expired', standing: 'credential expired' });
+  });
+});
+
+describe('PersonaList.needsAttention', () => {
+  it('opens for an expired or withheld identity, not for one never connected or renewing', async () => {
+    const cases: [Partial<PersonaWire>, boolean][] = [
+      [{}, false],
+      [{ forgeToken: { state: 'dead', expiresAt: null } }, true],
+      [{ forgeToken: { state: 'active', expiresAt: NOW - 1 } }, true],
+      [{ keychain: 'needsApproval' }, true],
+      [{ renewalDue: true }, false]
+    ];
+    for (const [p, wanted] of cases) {
+      const h = harness({ personas: [{ ...live, ...p }, fresh] });
+      await h.list.load();
+      expect(h.list.needsAttention, JSON.stringify(p)).toBe(wanted);
+    }
+  });
+});
 
 describe('PersonaList.load', () => {
   it('keeps which identity is the default, and why there is none when there is none (#296)', async () => {
-    const { list } = harness({ ...LIST, personas: LIST.personas.map((p, i) => ({ ...p, isDefault: i === 0 })) });
+    const { list } = harness({ personas: LIST.personas.map((p, i) => ({ ...p, isDefault: i === 0 })) });
     await list.load();
-    expect(list.personas.map((p) => p.isDefault)).toEqual([true, false]);
+    expect(list.identities.map((p) => p.isDefault)).toEqual([true, false]);
     expect(list.defaultError).toBeNull();
 
     const unresolved = harness({ ...LIST, defaultError: 'no default identity: git has no global user.email' });
@@ -64,114 +174,91 @@ describe('PersonaList.load', () => {
     expect(unresolved.list.defaultError).toMatch(/no global user.email/);
   });
 
-  it('keeps the daemon-supplied action rather than deciding for itself', async () => {
-    const { list } = harness(LIST);
-    await list.load();
-    expect(list.personas.map((p) => p.action)).toEqual(['none', 'connect']);
-    expect(list.error).toBeNull();
-  });
-
   it('reports a failed read instead of showing an empty list', async () => {
-    // "You have no identities" invites the user to connect one, which is the
-    // wrong action against a registry that is merely unreachable.
     const { list } = harness(null);
     await list.load();
-    expect(list.personas).toHaveLength(0);
+    expect(list.identities).toHaveLength(0);
     expect(list.error).toMatch(/could not/i);
+    expect(list.loaded).toBe(false);
   });
 
   it('distinguishes a genuinely empty registry from a failure', async () => {
     const { list } = harness({ personas: [] });
     await list.load();
-    expect(list.personas).toHaveLength(0);
+    expect(list.identities).toHaveLength(0);
     expect(list.error).toBeNull();
     expect(list.loaded).toBe(true);
   });
 
   it('is NOT loaded before the first read resolves', async () => {
-    // Otherwise the overlay renders "No identities yet" over data we have not
-    // fetched — an empty answer to a question we never asked. Visible for real:
-    // opening from the menu sets the overlay open and starts the read in the
-    // same tick, so the fabricated empty shows until the fetch lands.
     const { list } = harness(LIST);
     expect(list.loaded).toBe(false);
     await list.load();
     expect(list.loaded).toBe(true);
   });
-
-  it('stays loaded=false when the read failed, so nothing claims emptiness', async () => {
-    const { list } = harness(null);
-    await list.load();
-    expect(list.loaded).toBe(false);
-    expect(list.error).toBeTruthy();
-  });
 });
 
-describe('PersonaList.signIn', () => {
-  it('opens the system browser with the daemon\'s link, for every kind of sign-in', async () => {
-    const { list, opened } = harness(LIST);
+describe('PersonaList.act', () => {
+  it('approves the slot for a withheld session — no browser', async () => {
+    const { list, startSignIn, approveKeychain, opened, announce } = harness({
+      personas: [{ ...live, keychain: 'needsApproval' }]
+    });
     await list.load();
-    await list.signIn(list.personas[1]); // connect
-    await list.signIn({ ...list.personas[0], action: 'renew' });
-    await list.signIn({ ...list.personas[0], action: 'signIn' });
-    expect(opened).toEqual([
-      'https://github.test/authorize',
-      'https://github.test/authorize',
-      'https://github.test/authorize'
-    ]);
+    await list.act(list.identities[0]);
+    expect(approveKeychain).toHaveBeenCalledWith('default');
+    expect(startSignIn).not.toHaveBeenCalled();
+    expect(opened).toEqual([]);
+    expect(announce).toHaveBeenCalled();
+  });
+
+  it('a declined approval says why', async () => {
+    const { list } = harness({ personas: [{ ...live, keychain: 'needsApproval' }] }, null, 'declined');
+    await list.load();
+    await list.act(list.identities[0]);
+    expect(list.error).toBe('declined');
+  });
+
+  it('every other button is a sign-in, in the system browser', async () => {
+    const { list, opened, approveKeychain } = harness({
+      personas: [{ ...live, forgeToken: { state: 'dead', expiresAt: null } }, fresh]
+    });
+    await list.load();
+    await list.act(list.identities[0]);
+    await list.act(list.identities[1]);
+    expect(opened).toEqual(['https://github.test/authorize', 'https://github.test/authorize']);
+    expect(approveKeychain).not.toHaveBeenCalled();
+  });
+
+  it('asks for the persona by its KEYCHAIN SLOT, the label only when there is none', async () => {
+    const { list, startSignIn } = harness(LIST);
+    await list.load();
+    await list.signIn(list.identities[0]);
+    await list.signIn(list.identities[1]);
+    expect(startSignIn).toHaveBeenNthCalledWith(1, 'default', 'sensei-hq-org');
+    expect(startSignIn).toHaveBeenNthCalledWith(2, 'devuser', null);
   });
 
   it('records the sign-in in flight: which identity, which account, and the link', async () => {
-    // What the UI shows ("sign in to GitHub as …") and what Copy link copies.
     const { list } = harness(LIST);
     await list.load();
-    await list.signIn(list.personas[0]);
-    expect(list.pending).toEqual({
+    await list.signIn(list.identities[0]);
+    expect(list.pending).toMatchObject({
       label: 'sensei-hq-org',
       expectedLogin: 'sensei-hq-org',
       url: 'https://github.test/authorize'
     });
   });
 
-  it('a first connect expects no particular account', async () => {
-    const { list } = harness(LIST);
-    await list.load();
-    await list.signIn(list.personas[1]);
-    expect(list.pending).toMatchObject({ label: 'devuser', expectedLogin: null });
-  });
-
-  it('asks for the persona by its KEYCHAIN SLOT, not its display label', async () => {
-    // The label is rewritten to the verified login on sign-in; the slot is not.
-    // Signing in against the label addresses a persona that does not exist and
-    // silently connects nothing.
-    const { list, startSignIn } = harness(LIST);
-    await list.load();
-    await list.signIn(list.personas[0]);
-    expect(startSignIn).toHaveBeenCalledWith('default', 'sensei-hq-org');
-  });
-
-  it('falls back to the label when there is no slot yet', async () => {
-    // A never-connected persona has no slot — the label is all there is, and it
-    // is what the daemon will create the slot from.
-    const { list, startSignIn } = harness(LIST);
-    await list.load();
-    await list.signIn(list.personas[1]);
-    expect(startSignIn).toHaveBeenCalledWith('devuser', null);
-  });
-
   it('surfaces a refusal rather than opening nothing in silence', async () => {
     const { list, opened } = harness(LIST, null);
     await list.load();
-    await list.signIn(list.personas[0]);
+    await list.signIn(list.identities[0]);
     expect(opened).toHaveLength(0);
     expect(list.error).toMatch(/could not start/i);
     expect(list.pending).toBeNull();
   });
 
-  it('marks the row busy while its own sign-in is in flight, and no others', async () => {
-    // Per-row, so one slow sign-in does not disable the whole list.
-    const { list } = harness(LIST);
-    await list.load();
+  it('marks only its own row busy, and the button says so', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => {
       release = r;
@@ -183,165 +270,325 @@ describe('PersonaList.signIn', () => {
         return 'https://github.test/a';
       },
       approveKeychain: async () => null,
-      openAuth: async () => {}
+      openAuth: async () => {},
+      makeDefault: vi.fn(async () => null),
+      now: () => NOW
     });
     await slow.load();
-    const p = slow.signIn(slow.personas[0]);
-    expect(slow.isBusy(slow.personas[0])).toBe(true);
-    expect(slow.isBusy(slow.personas[1])).toBe(false);
+    const p = slow.signIn(slow.identities[1]);
+    expect(slow.identities[1]).toMatchObject({ busy: true, buttonLabel: 'opening…' });
+    expect(slow.identities[0].busy).toBe(false);
     release();
     await p;
-    expect(slow.isBusy(slow.personas[0])).toBe(false);
+    expect(slow.identities[1]).toMatchObject({ busy: false, buttonLabel: 'Connect' });
   });
 });
 
-describe('PersonaList.needsAttention', () => {
-  it('does NOT open for identities that were merely never connected', async () => {
-    // sensei infers personas from commit authorship, so this machine has two
-    // that have never been connected and may never need to be. Treating those
-    // as "attention needed" pops the overlay on every single launch — the exact
-    // nuisance the automatic path exists to avoid.
-    const { list } = harness({
-      personas: [
-        LIST.personas[0], // action: none
-        LIST.personas[1] // action: connect
-      ]
+describe('a sign-in in flight', () => {
+  it('clears once the identity holds a NEW credential, and announces it', async () => {
+    let payload: unknown = LIST;
+    const announce = vi.fn();
+    const list = new PersonaList({
+      fetchPersonas: vi.fn(async () => payload as never),
+      startSignIn: vi.fn(async () => 'https://github.test/authorize'),
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async () => {}),
+      makeDefault: vi.fn(async () => null),
+      now: () => NOW
     });
+    list.onChanged = announce;
     await list.load();
-    expect(list.needsAttention).toBe(false);
+    await list.signIn(list.identities[0]);
+    await list.load();
+    expect(list.pending).not.toBeNull();
+
+    const renewed = { ...live, label: 'renamed', forgeToken: { state: 'active', expiresAt: NOW + 8 * H } };
+    payload = { personas: [renewed, fresh] };
+    await list.load();
+    expect(list.pending).toBeNull();
+    expect(announce).toHaveBeenCalled();
   });
 
-  it('opens when a CONNECTED identity has broken', async () => {
-    // This one is different in kind: it worked, it stopped, and sync is silently
-    // down until the user acts.
-    const { list } = harness({
-      personas: [{ ...LIST.personas[0], action: 'signIn' }, LIST.personas[1]]
+  it('is followed by re-reading the list until it finishes', async () => {
+    vi.useFakeTimers();
+    try {
+      let payload: unknown = LIST;
+      const fetchPersonas = vi.fn(async () => payload as never);
+      const list = new PersonaList({
+        fetchPersonas,
+        startSignIn: vi.fn(async () => 'https://github.test/authorize'),
+        approveKeychain: vi.fn(async () => null),
+        openAuth: vi.fn(async () => {}),
+        makeDefault: vi.fn(async () => null),
+        now: () => NOW
+      });
+      await list.load();
+      await list.signIn(list.identities[0]);
+      const before = fetchPersonas.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(fetchPersonas.mock.calls.length).toBeGreaterThan(before);
+      payload = { personas: [{ ...live, forgeToken: { state: 'active', expiresAt: NOW + 8 * H } }] };
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(list.pending).toBeNull();
+      list.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('PersonaList.makeDefault', () => {
+  it('asks the daemon, re-reads, and announces the change', async () => {
+    const made: string[] = [];
+    const fetchPersonas = vi.fn(async () => LIST as never);
+    const announce = vi.fn();
+    const list = new PersonaList({
+      fetchPersonas,
+      startSignIn: vi.fn(async () => null),
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async () => {}),
+      makeDefault: vi.fn(async (label: string) => {
+        made.push(label);
+        return null;
+      }),
+      now: () => NOW
     });
+    list.onChanged = announce;
     await list.load();
-    expect(list.needsAttention).toBe(true);
-  });
-
-  it('does not open merely because renewal is due', async () => {
-    // Renewal is automatic and prompt-free. Announcing it would be noise.
-    const { list } = harness({ personas: [{ ...LIST.personas[0], action: 'renew' }] });
-    await list.load();
-    expect(list.needsAttention).toBe(false);
-  });
-});
-
-describe('PersonaList presentation', () => {
-  it('labels the action by what it actually is', async () => {
-    // "Sign in" for an identity that was never connected reads as a fault the
-    // user caused; "Connect" is the truthful first-time verb.
-    const { list } = harness(LIST);
-    await list.load();
-    expect(list.actionLabel(list.personas[1])).toBe('Connect');
-    expect(list.actionLabel({ ...list.personas[0], action: 'signIn' })).toBe('Sign in again');
-    expect(list.actionLabel({ ...list.personas[0], action: 'renew' })).toBe('Renew');
-    expect(list.actionLabel(list.personas[0])).toBe('Sign in');
-  });
-
-  it('describes a connected persona by its remaining life, never a negative', async () => {
-    const { list } = harness(LIST);
-    await list.load();
-    const text = list.describe(list.personas[0], 1_788_204_679 - 25_200);
-    expect(text).toMatch(/7\.0 hours/);
-    const past = list.describe(list.personas[0], 1_788_204_679 + 9999);
-    expect(past).not.toContain('-');
-  });
-
-  it('says an unconnected persona has never signed in rather than showing no expiry', async () => {
-    const { list } = harness(LIST);
-    await list.load();
-    expect(list.describe(list.personas[1], 0)).toMatch(/never/i);
-  });
-});
-
-describe('PersonaList.tone', () => {
-  // The whole point of #127: renewal is automatic and takes ~6s, so a credential
-  // with hours left needs no alarm — but when it CANNOT renew there is currently
-  // nowhere to see it coming. The tone is what makes "30 minutes left" look
-  // different from "7 hours left" at a glance.
-  it('is calm with hours left and urgent within the hour', async () => {
-    const { list } = harness(LIST);
-    await list.load();
-    const p = list.personas[0];
-    const exp = 1_788_204_679;
-    expect(list.tone(p, exp - 25_200)).toBe('ok'); // 7 hours
-    expect(list.tone(p, exp - 1_800)).toBe('warn'); // 30 minutes
-  });
-
-  it('is urgent for an expired credential, not merely a warning', async () => {
-    const { list } = harness(LIST);
-    await list.load();
-    const dead = { ...list.personas[0], forgeToken: { state: 'dead', expiresAt: 1 } };
-    expect(list.tone(dead, 2)).toBe('dead');
-  });
-
-  it('treats a never-connected persona as neutral, not as a failure', async () => {
-    // Nothing is wrong with an identity you have not connected. Colouring it red
-    // makes the settings screen look broken on a fresh install.
-    const { list } = harness(LIST);
-    await list.load();
-    expect(list.tone(list.personas[1], 0)).toBe('idle');
-  });
-
-  it('is neutral when the expiry is unknown rather than assuming the worst', async () => {
-    // `expiresAt` is null for a session whose expiry the daemon has not learned.
-    // Rendering that as expired would send the user to re-authenticate a
-    // credential that is probably fine.
-    const { list } = harness(LIST);
-    await list.load();
-    const unknown = { ...list.personas[0], forgeToken: { state: 'active', expiresAt: null } };
-    expect(list.tone(unknown, 0)).toBe('idle');
-  });
-});
-
-// #283: the daemon never prompts for the Keychain, so a session it holds but
-// cannot read after a rebuild waits for the user's click. That click is an
-// approval, not a sign-in: no browser, no OAuth round trip.
-describe('PersonaList approve', () => {
-  const withheld = { ...LIST.personas[0], action: 'approve' };
-
-  it('opens the overlay unasked: sync is down until it is done', async () => {
-    const { list } = harness({ personas: [withheld] });
-    await list.load();
-    expect(list.needsAttention).toBe(true);
-  });
-
-  it('says what it is and what the button does', async () => {
-    const { list } = harness({ personas: [withheld] });
-    await list.load();
-    const p = list.personas[0];
-    expect(list.actionLabel(p)).toBe('Approve keychain access');
-    expect(list.describe(p, 0)).toBe('keychain access needs approval');
-    expect(list.tone(p, 0)).toBe('warn');
-  });
-
-  it('approves the slot instead of starting a sign-in', async () => {
-    const { list, startSignIn, approveKeychain, opened } = harness({ personas: [withheld] });
-    await list.load();
-    await list.act(list.personas[0]);
-    expect(approveKeychain).toHaveBeenCalledWith('default');
-    expect(startSignIn).not.toHaveBeenCalled();
-    expect(opened).toEqual([]);
+    await list.makeDefault(list.identities[0]);
+    expect(made).toEqual(['sensei-hq-org']);
+    expect(fetchPersonas).toHaveBeenCalledTimes(2);
+    expect(announce).toHaveBeenCalled();
     expect(list.error).toBeNull();
   });
 
-  it('a declined or failed approval says why', async () => {
-    const { list } = harness({ personas: [withheld] }, null, 'keychain access needs approval');
-    await list.load();
-    await list.act(list.personas[0]);
-    expect(list.error).toBe('keychain access needs approval');
-  });
-
-  it('any other action is still a sign-in', async () => {
-    const { list, startSignIn, approveKeychain } = harness({
-      personas: [{ ...LIST.personas[0], action: 'signIn' }]
+  it('a refusal is said', async () => {
+    const list = new PersonaList({
+      fetchPersonas: vi.fn(async () => LIST as never),
+      startSignIn: vi.fn(async () => null),
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async () => {}),
+      makeDefault: vi.fn(async () => 'no identity x'),
+      now: () => NOW
     });
     await list.load();
-    await list.act(list.personas[0]);
-    expect(startSignIn).toHaveBeenCalled();
-    expect(approveKeychain).not.toHaveBeenCalled();
+    await list.makeDefault(list.identities[0]);
+    expect(list.error).toBe('no identity x');
+  });
+});
+
+// The audit (2026-10-28, docs/review/2026-10-28-state-view-audit.md items 2, 4):
+// what the views still decided for themselves.
+describe('what every identity view renders, decided here', () => {
+  it('names an identity by its GitHub login, the label until one is known', async () => {
+    const h = harness(LIST);
+    await h.list.load();
+    expect(h.list.identities.map((i) => i.name)).toEqual(['sensei-hq-org', 'devuser']);
+  });
+
+  it('labels a ready identity, and only a ready one', async () => {
+    expect((await one({})).badge).toBe('ready');
+    expect((await one({ keychain: 'needsApproval' })).badge).toBeNull();
+  });
+
+  it('says which phase the list is in, so no view claims emptiness early', async () => {
+    const loading = harness(LIST);
+    expect(loading.list.phase).toBe('loading');
+    await loading.list.load();
+    expect(loading.list.phase).toBe('list');
+    const failed = harness(null);
+    await failed.list.load();
+    expect(failed.list.phase).toBe('error');
+    const empty = harness({ personas: [] });
+    await empty.list.load();
+    expect(empty.list.phase).toBe('empty');
+  });
+});
+
+describe('PersonaList.writeSlot — the credential a write signs with', () => {
+  // Settings · Metrics took the first slot it found, ignoring status and the
+  // default: a write as a dead or the wrong identity while the overlay said
+  // "credential expired".
+  const def = (p: Partial<PersonaWire> = {}) => ({ ...live, isDefault: true, ...p });
+  const other = { ...live, label: 'other', sessionSlot: 'other', isDefault: false };
+
+  it('is the default identity while it is usable', async () => {
+    const h = harness({ personas: [other, def()] });
+    await h.list.load();
+    expect(h.list.writeSlot).toBe('default');
+  });
+
+  it('is none when the default cannot be used — never another identity in its place', async () => {
+    for (const broken of [{ forgeToken: { state: 'dead', expiresAt: null } }, { keychain: 'needsApproval' as const }]) {
+      const h = harness({ personas: [other, def(broken)] });
+      await h.list.load();
+      expect(h.list.writeSlot, JSON.stringify(broken)).toBeNull();
+    }
+  });
+
+  it('with no default, is the one usable identity', async () => {
+    const h = harness({ personas: [{ ...live, forgeToken: { state: 'dead', expiresAt: null } }, other] });
+    await h.list.load();
+    expect(h.list.writeSlot).toBe('other');
+  });
+
+  it('follows the clock: a default that expires stops being the write credential', async () => {
+    const h = harness({ personas: [def({ forgeToken: { state: 'active', expiresAt: NOW + 60 } })] });
+    await h.list.load();
+    expect(h.list.writeSlot).toBe('default');
+    h.clock.now = NOW + 61;
+    await h.list.tick();
+    expect(h.list.writeSlot).toBeNull();
+  });
+});
+
+describe('PersonaList.start / stop', () => {
+  it('keeps ticking while any view still needs it', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchPersonas = vi.fn(async () => LIST as never);
+      const list = new PersonaList({
+        fetchPersonas,
+        startSignIn: vi.fn(async () => null),
+        approveKeychain: vi.fn(async () => null),
+        openAuth: vi.fn(async () => {}),
+        makeDefault: vi.fn(async () => null),
+        now: () => NOW
+      });
+      list.start(); // the overlay
+      list.start(); // the settings screen
+      list.stop(); // the settings screen goes
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchPersonas).toHaveBeenCalledTimes(1);
+      list.stop();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fetchPersonas).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Audit item 3 (2026-10-28): renewal was a second store (forge-auth) with its
+// own endpoint, its own 5-minute clock and its own error, and the layout picked
+// whose error to show. The identity state now owns it: ONE automatic attempt per
+// identity per renewal window — renewal opens a browser, so a naive "renew while
+// due" would open a tab every minute at someone whose GitHub session lapsed.
+describe('automatic renewal', () => {
+  const due = { ...live, renewalDue: true, forgeToken: { state: 'active', expiresAt: NOW + 1800 } };
+
+  function renewing(first: unknown) {
+    let payload = first;
+    const opened: string[] = [];
+    const startSignIn = vi.fn(async () => 'https://github.test/renew');
+    const list = new PersonaList({
+      fetchPersonas: vi.fn(async () => payload as never),
+      startSignIn,
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async (u: string) => {
+        opened.push(u);
+      }),
+      makeDefault: vi.fn(async () => null),
+      now: () => NOW
+    });
+    list.renews = true;
+    return { list, opened, startSignIn, set: (p: unknown) => (payload = p) };
+  }
+
+  it('re-authorizes an identity once when its renewal falls due', async () => {
+    const r = renewing({ personas: [due] });
+    await r.list.load();
+    expect(r.startSignIn).toHaveBeenCalledWith('default', 'sensei-hq-org');
+    expect(r.opened).toEqual(['https://github.test/renew']);
+  });
+
+  it('does not try again while the same window is still due', async () => {
+    const r = renewing({ personas: [due] });
+    await r.list.load();
+    await r.list.load();
+    await r.list.load();
+    expect(r.opened).toHaveLength(1);
+  });
+
+  it('tries again in the next renewal window', async () => {
+    const r = renewing({ personas: [due] });
+    await r.list.load();
+    r.set({ personas: [live] }); // renewed: ready again
+    await r.list.load();
+    r.set({ personas: [due] }); // the next window
+    await r.list.load();
+    expect(r.opened).toHaveLength(2);
+  });
+
+  it('never opens a browser unasked for an expired, withheld or never-connected identity', async () => {
+    const r = renewing({
+      personas: [
+        { ...due, forgeToken: { state: 'dead', expiresAt: null } },
+        { ...due, label: 'w', sessionSlot: 'w', keychain: 'needsApproval' },
+        fresh
+      ]
+    });
+    await r.list.load();
+    expect(r.opened).toEqual([]);
+  });
+
+  it('only where renewal is owned — the settings window does not open a second tab', async () => {
+    const r = renewing({ personas: [due] });
+    r.list.renews = false;
+    await r.list.load();
+    expect(r.opened).toEqual([]);
+  });
+
+  it('a failed attempt is the list\'s one error', async () => {
+    const r = renewing({ personas: [due] });
+    r.startSignIn.mockResolvedValueOnce(null as never);
+    await r.list.load();
+    expect(r.list.error).toMatch(/could not start/i);
+  });
+});
+
+// The identities overlay covered the screen whenever something needed you (user,
+// 2026-10-29). The state now says it in one sentence for the sidebar footer, and
+// announces a NEW need once — for a toast that fades — rather than on every check.
+describe('attention: one sentence, and an announcement only when it starts', () => {
+  const expired: PersonaWire = { ...live, label: 'a', forgeToken: { state: 'dead', expiresAt: NOW - H } };
+  const locked: PersonaWire = { ...live, label: 'b', keychain: 'needsApproval' };
+
+  it('says nothing when nothing needs you, and names the cause when something does', async () => {
+    const line = async (personas: PersonaWire[]) => {
+      const h = harness({ personas });
+      await h.list.load();
+      return h.list.attentionLine;
+    };
+    expect(await line([live, fresh])).toBeNull();
+    expect(await line([expired])).toBe('Sync paused — 1 identity needs sign-in');
+    expect(await line([locked, { ...locked, label: 'c' }])).toBe('Sync paused — 2 identities need Keychain approval');
+    expect(await line([expired, locked])).toBe('Sync paused — 2 identities need you');
+  });
+
+  it('announces once when an identity starts needing you, again only after it recovered', async () => {
+    let personas: PersonaWire[] = [live];
+    const list = new PersonaList({
+      fetchPersonas: vi.fn(async () => ({ personas })),
+      startSignIn: vi.fn(async () => null),
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async () => {}),
+      makeDefault: vi.fn(async () => null),
+      now: () => NOW
+    });
+    const announced: string[] = [];
+    list.onAttention = (line) => announced.push(line);
+
+    await list.load();
+    expect(announced).toEqual([]);
+    personas = [{ ...live, forgeToken: { state: 'dead', expiresAt: NOW - H } }];
+    await list.load();
+    await list.load();
+    expect(announced).toEqual(['Sync paused — 1 identity needs sign-in']);
+    personas = [live];
+    await list.load();
+    personas = [{ ...live, keychain: 'needsApproval' }];
+    await list.load();
+    expect(announced).toEqual(['Sync paused — 1 identity needs sign-in', 'Sync paused — 1 identity needs Keychain approval']);
   });
 });

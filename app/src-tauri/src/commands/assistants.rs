@@ -30,14 +30,12 @@ pub fn detect_assistants() -> Result<Vec<Value>, String> {
 #[tauri::command]
 pub fn configure_mcp(assistants: Vec<String>) -> Result<Vec<String>, String> {
     let body = json!({"acps": assistants});
-    match ureq::post(&format!("{}/api/assistants/configure", daemon_url()))
-        .send_json(&body)
-    {
+    match ureq::post(&format!("{}/api/assistants/configure", daemon_url())).send_json(&body) {
         Ok(resp) => {
             // A malformed 200 body must error, not silently become {} → an empty
             // "configured nothing, no errors" success (#109 audit).
-            let result: Value = resp.into_json()
-                .map_err(|e| format!("parse configure response: {e}"))?;
+            let result: Value =
+                resp.into_json().map_err(|e| format!("parse configure response: {e}"))?;
             let configured: Vec<String> = result["configured"]
                 .as_array()
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())

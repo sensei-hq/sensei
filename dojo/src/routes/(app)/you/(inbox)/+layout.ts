@@ -19,5 +19,6 @@ export const load: LayoutLoad = async ({ parent, fetch }) => {
 		(result) => ({ ok: true as const, result }),
 		(e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : String(e) })
 	);
-	return { inbox };
+	// The dōjōs the inbox spans — "Notify me" registers this browser with each.
+	return { inbox, tenantKeys: list.map((m) => m.url) };
 };

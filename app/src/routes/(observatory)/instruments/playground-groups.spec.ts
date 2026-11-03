@@ -21,21 +21,37 @@ describe('serversByFamily', () => {
     expect(groups.flatMap((g) => g.servers)).toHaveLength(2);
   });
 
+  it('names the servers added by hand (#343)', () => {
+    expect(serversByFamily([server('1', 'manual', 'gh')])[0].label).toBe('Added in sensei');
+  });
+
   it('is empty for no servers', () => {
     expect(serversByFamily([])).toEqual([]);
   });
 });
 
 describe('buildPlaygroundGroups', () => {
-  it('puts sensei first, then one group per discovered server with its manifest tools', () => {
+  it('is one group per discovered server, its tools as the server lists them', () => {
+    const schema = { type: 'object', properties: { owner: { type: 'string' } } };
     const groups = buildPlaygroundGroups(
-      [{ name: 'search', kind: 'query', summary: 's' }],
       [server('srv', 'claude', 'github', false)],
-      { srv: { tools: [{ name: 'list_issues', description: 'd' }, { description: 'nameless' }] } },
+      { srv: { tools: [{ name: 'list_issues', description: 'd', inputSchema: schema }, { description: 'nameless' }] } },
     );
-    expect(groups.map((g) => g.id)).toEqual(['sensei', 'srv']);
-    expect(groups[1]).toMatchObject({ name: 'github', installed: false, source: 'discovered', serverId: 'srv' });
-    expect(groups[1].tools.map((t) => [t.name, t.kind])).toEqual([['list_issues', 'query']]);
+    expect(groups.map((g) => g.id)).toEqual(['srv']);
+    expect(groups[0]).toMatchObject({ name: 'github', installed: false, primary: false, serverId: 'srv' });
+    expect(groups[0].tools.map((t) => [t.name, t.kind, t.serverId])).toEqual([['list_issues', 'query', 'srv']]);
+    expect(groups[0].tools[0].schema).toEqual(schema);
+  });
+
+  it('puts sensei’s own server first, named plainly, and a plugin’s server by its name', () => {
+    const groups = buildPlaygroundGroups(
+      [server('pw', 'claude', 'plugin_playwright_playwright'), server('se', 'claude', 'plugin_sensei_sensei')],
+      {},
+    );
+    expect(groups.map((g) => [g.id, g.name, g.primary])).toEqual([
+      ['se', 'sensei', true],
+      ['pw', 'playwright', false],
+    ]);
   });
 });
 
@@ -53,15 +69,15 @@ describe('inferKind', () => {
 describe('buildPlaygroundGroups — a server that could not be read', () => {
   const server = { id: 'srv', acp_family: 'claude', mcp_key: 'github', enabled: true };
   it('carries the read error, and no tools', () => {
-    const [, g] = buildPlaygroundGroups([], [server], {}, { srv: 'Service Unavailable' });
+    const [g] = buildPlaygroundGroups([server], {}, { srv: 'Service Unavailable' });
     expect([g.tools, g.error]).toEqual([[], 'Service Unavailable']);
   });
   it('carries the probe error the daemon reported', () => {
-    const [, g] = buildPlaygroundGroups([], [server], { srv: { tools: [], error: 'spawn failed' } });
+    const [g] = buildPlaygroundGroups([server], { srv: { tools: [], error: 'spawn failed' } });
     expect(g.error).toBe('spawn failed');
   });
   it('has no error for a server read cleanly', () => {
-    const [, g] = buildPlaygroundGroups([], [server], { srv: { tools: [{ name: 'list_issues' }], error: null } });
+    const [g] = buildPlaygroundGroups([server], { srv: { tools: [{ name: 'list_issues' }], error: null } });
     expect([g.tools.length, g.error]).toEqual([1, null]);
   });
 });

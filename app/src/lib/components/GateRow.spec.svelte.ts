@@ -31,12 +31,12 @@ describe('GateRow', () => {
     expect(m.container.textContent).toContain('The local database where every session and memory is stored.');
   });
 
-  it('shows description in italic with ink-soft', () => {
+  it('shows description in italic with ink-mute', () => {
     const m = mountComponent(GateRowHarness, { gate: makeGate(), numeral: '二' });
     cleanup.push(m.destroy);
     const desc = m.container.querySelector('[data-component="gate-row-description"]') as HTMLElement;
     expect(desc.className).toMatch(/\bitalic\b/);
-    expect(desc.className).toMatch(/\btext-ink-soft\b/);
+    expect(desc.className).toMatch(/\btext-ink-mute\b/);
   });
 
   // A stable hook for the gate's state — the e2e bootstrap specs wait on it.

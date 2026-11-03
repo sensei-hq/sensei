@@ -1,7 +1,6 @@
 // Observatory · Instruments — the screen's pure view logic: which tab a deep
-// link opens, each tab's hero copy, tool-input prefill, search over the
+// link opens, each tab's hero copy, search over the
 // playground rail, and payload formatting. No state, no reads.
-import type { McpToolManifest } from '$lib/types.js';
 import type { PlaygroundGroup } from './playground-groups';
 
 export type InstrumentsTab = 'playground' | 'replay' | 'insights';
@@ -27,32 +26,8 @@ export function heroCopy(tab: InstrumentsTab): { tagline: string; sub: string } 
   }
   return {
     tagline: 'Sensei · what your instruments can do.',
-    sub: "Sensei's own MCP + every server discovered from your assistant configs. Try each tool interactively; sensei never wraps third-party MCPs — it just surfaces them.",
+    sub: "Every MCP server your assistants are configured with, sensei's own first. Each tool runs through its server, so what you see is what an assistant gets.",
   };
-}
-
-/**
- * Prefill a sensei tool's inputs so execute works on first click. `repoId`
- * takes the active workspace (a wrong one returns an empty answer), then the
- * manifest's placeholder; other inputs take their default, then their
- * placeholder, which for sensei's own tools is a known-good example. A tool
- * without a manifest (a discovered server's) gets nothing.
- */
-export function pickToolDefaults(
-  manifest: McpToolManifest | null,
-  activeWorkspaceId: string | null,
-): Record<string, string> {
-  const params: Record<string, string> = {};
-  for (const input of manifest?.inputs ?? []) {
-    if (input.key === 'repoId') {
-      params[input.key] = activeWorkspaceId || input.placeholder || input.default || 'sensei';
-    } else if (input.default != null) {
-      params[input.key] = String(input.default);
-    } else if (input.placeholder) {
-      params[input.key] = input.placeholder;
-    }
-  }
-  return params;
 }
 
 /** The rail narrowed to tools whose name or summary matches; empty groups go. */
@@ -88,12 +63,40 @@ export function fmtPayload(value: unknown): string {
   }
 }
 
-export function fmtDuration(ms: number | null): string {
-  if (ms == null) return '—';
-  if (ms < 1000) return `${ms} ms`;
-  return `${(ms / 1000).toFixed(2)} s`;
-}
-
 export function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString();
 }
+
+/** A tool's kind, as every part of the Instruments screen shows it (audit
+ *  2026-10-28, item 8: coloured three times in the markup). */
+export interface ToolKindView {
+  label: string;
+  /** The Kanji `tone` prop. */
+  tone: 'accent' | 'success' | 'muted';
+  text: string;
+  /** The left-edge colour. */
+  edge: string;
+  hint: string;
+  /** The execute button's label. */
+  runLabel: string;
+}
+
+export function toolKindView(kind: 'action' | 'query' | 'other' | string): ToolKindView {
+  if (kind === 'action') return { label: 'action', tone: 'accent', text: 'text-accent', edge: 'var(--accent)', hint: 'performs an operation', runLabel: 'Run →' };
+  if (kind === 'query') return { label: 'query', tone: 'success', text: 'text-success', edge: 'var(--success)', hint: 'returns information', runLabel: 'Query →' };
+  return { label: 'call', tone: 'muted', text: 'text-ink-soft', edge: 'var(--ink-soft)', hint: 'returns information', runLabel: 'Query →' };
+}
+
+/** A recorded call's verdict (#90): used, partial, ignored, else failed or
+ *  unclassified — one glyph and colour (it was decided three times). */
+export function callVerdictView(call: { verdict: 'used' | 'partial' | 'ignored' | null; success?: boolean | null }): {
+  glyph: string;
+  text: string;
+  edge: string;
+} {
+  if (call.verdict === 'used') return { glyph: '用', text: 'text-success', edge: 'var(--success)' };
+  if (call.verdict === 'partial') return { glyph: '部', text: 'text-warning', edge: 'var(--warning)' };
+  if (call.verdict === 'ignored') return { glyph: '無', text: 'text-ink-soft', edge: 'var(--ink-soft)' };
+  return { glyph: call.success === false ? '✗' : '問', text: 'text-accent', edge: 'var(--accent)' };
+}
+

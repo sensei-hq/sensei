@@ -12,17 +12,17 @@
 // Screens: docs/spec/screen/observatory-sessions.md
 //          docs/spec/screen/workspace-sessions.md
 // Mockup:  docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
-import type { SessionRow } from '$lib/types.js';
+import type { HourActivity, SessionRow } from '$lib/types.js';
 
 /** The chart chips (pulse is deliberately NOT here — it is a mini-cycler-only
  *  mode, see MINI_MODES). `tokens` is the per-day token-volume bars. */
-export type ChartVariant = 'trend' | 'stream' | 'constellation' | 'bands' | 'tokens';
-export const CHART_VARIANTS: ChartVariant[] = ['trend', 'stream', 'constellation', 'bands', 'tokens'];
+export type ChartVariant = 'trend' | 'stream' | 'bands' | 'tokens';
+export const CHART_VARIANTS: ChartVariant[] = ['trend', 'stream', 'bands', 'tokens'];
 
 /** The collapsed-header mini-cycler modes. `numbers` is the resting stat trio;
  *  `pulse` lives ONLY here — it is never one of the CHART_VARIANTS chips. */
-export type MiniMode = 'numbers' | 'trend' | 'stream' | 'constellation' | 'bands' | 'pulse';
-export const MINI_MODES: MiniMode[] = ['numbers', 'trend', 'stream', 'constellation', 'bands', 'pulse'];
+export type MiniMode = 'numbers' | 'trend' | 'stream' | 'bands' | 'pulse';
+export const MINI_MODES: MiniMode[] = ['numbers', 'trend', 'stream', 'bands', 'pulse'];
 
 /** Time-window chips. Each refetches `/api/sessions?range=`. */
 export type SessionRange = '7d' | '30d' | '90d';
@@ -71,7 +71,6 @@ export function durationMinutes(startedAt: string, completedAt: string | null): 
   return Math.round((end - start) / 60_000);
 }
 
-/** Compact duration label: "12m" / "1h 04m" / "2h" / "—". */
 /** The median duration as the totals show it: "—" only when no session has a
  *  duration, "<1m" for short ones (which round to 0). */
 export function medianLabel(mins: number | null): string {
@@ -79,10 +78,17 @@ export function medianLabel(mins: number | null): string {
   return mins < 1 ? '<1m' : compactDuration(mins);
 }
 
+/** A session's duration as every screen shows it: "12m", "1h 04m", "2h",
+ *  "2d 3h"; "—" when it has none. */
 export function compactDuration(mins: number | null): string {
   if (mins == null) return '—';
   if (mins < 60) return `${mins}m`;
   const h = Math.floor(mins / 60);
+  if (h >= 24) {
+    const d = Math.floor(h / 24);
+    const rest = h % 24;
+    return rest === 0 ? `${d}d` : `${d}d ${rest}h`;
+  }
   const m = mins % 60;
   return m === 0 ? `${h}h` : `${h}h ${String(m).padStart(2, '0')}m`;
 }
@@ -255,71 +261,6 @@ export function buildDays(range: SessionRange, now: Date = new Date()): string[]
   return out;
 }
 
-/** Per-day rollup used by the trend / stream / bands charts. */
-export interface DayBucket {
-  day: string;
-  label: string;
-  total: number;
-  good: number;
-  bad: number;
-  ugly: number;
-  neutral: number;
-  mins: number;
-  goodMins: number;
-  badMins: number;
-  uglyMins: number;
-  /** Minutes actually drawn in the quality charts = good + bad + ugly. Excludes
-   *  neutral (blocked/partial) sessions, which have no quality tone/segment — so
-   *  chart scales and per-day captions agree with the rendered bars/areas. */
-  chartedMins: number;
-  /** first-try rate for the day (good / total), or null when the day is empty. */
-  ftr: number | null;
-  /** Token volume for the day (sum over sessions carrying usage). `tokens` is
-   *  in+out; the split feeds the input/output balance. 0 when no session that day
-   *  carried tokens — a real absence at day grain, safe to draw as an empty bar. */
-  tokensIn: number;
-  tokensOut: number;
-  tokens: number;
-}
-
-/** Bucket enriched sessions into the ordered `days` axis by calendar day. */
-export function aggregateByDay(
-  sessions: EnrichedSession[],
-  days: string[],
-  now: Date = new Date(),
-): DayBucket[] {
-  return days.map((day) => {
-    const ofDay = sessions.filter((s) => s.dayKey === day);
-    const by = (tone: QualityTone) => ofDay.filter((s) => s.quality === tone);
-    const good = by('good');
-    const bad = by('bad');
-    const ugly = by('ugly');
-    const neutral = by('neutral');
-    const sumMins = (xs: EnrichedSession[]) => xs.reduce((a, s) => a + (s.mins ?? 0), 0);
-    const tokensIn = ofDay.reduce((a, s) => a + (s.tokensIn ?? 0), 0);
-    const tokensOut = ofDay.reduce((a, s) => a + (s.tokensOut ?? 0), 0);
-    const total = ofDay.length;
-    return {
-      day,
-      label: shortDayLabel(day, now),
-      total,
-      good: good.length,
-      bad: bad.length,
-      ugly: ugly.length,
-      neutral: neutral.length,
-      mins: sumMins(ofDay),
-      goodMins: sumMins(good),
-      badMins: sumMins(bad),
-      uglyMins: sumMins(ugly),
-      chartedMins: sumMins(good) + sumMins(bad) + sumMins(ugly),
-      ftr: total ? good.length / total : null,
-      tokensIn,
-      tokensOut,
-      tokens: tokensIn + tokensOut,
-    };
-  });
-}
-
 /** Median of a numeric list (0 for empty). */
 export function median(xs: number[]): number {
   if (xs.length === 0) return 0;
@@ -402,4 +343,226 @@ export function sessionsCopy(workspace: string | null): SessionsCopy {
       'Start a session with your assistant on this workspace, or widen the range. Each session becomes a moment of learning.',
     acrossWorkspaces: false,
   };
+}
+
+
+/** The 7-day rolling mean FTR at each day — over the scored days in the window,
+ *  and only on a day that is itself scored (null otherwise). */
+export function rollingFtr(days: { ftr: number | null }[]): (number | null)[] {
+  return days.map((d, i) => {
+    if (d.ftr == null) return null;
+    const scored = days.slice(Math.max(0, i - 6), i + 1).filter((x) => x.ftr != null);
+    return scored.reduce((a, x) => a + (x.ftr ?? 0), 0) / scored.length;
+  });
+}
+
+
+/** The range a Sessions page opens on: the narrowest window that holds the newest
+ *  session — 7 days when it ran within the week, 30 within the month, else 90
+ *  (also when nothing ran). A quiet workspace no longer opens on an empty week. */
+export function recencyRange(startedAts: string[], now: Date = new Date()): SessionRange {
+  if (startedAts.length === 0) return '90d';
+  const newest = Math.min(...startedAts.map((iso) => calendarDaysAgo(new Date(iso), now)));
+  return newest < rangeDays('7d') ? '7d' : newest < rangeDays('30d') ? '30d' : '90d';
+}
+
+/** Every how-many days a day axis is labelled: each day up to two weeks, then
+ *  about eight labels across. */
+export function labelStride(days: number): number {
+  return days > 14 ? Math.ceil(days / 8) : 1;
+}
+
+/** One local day of activity: minutes the agent worked and minutes spent on you. */
+export interface ActivityDay {
+  day: string;
+  label: string;
+  agentMins: number;
+  userMins: number;
+}
+
+/** Each session's active time, filed by the hour it happened, summed per local day of the
+ *  axis — the activity hotspots. A session running past midnight counts on both days;
+ *  hours outside the axis are left out. Sessions not yet analysed (`activeByHour` null)
+ *  are counted in `unmeasured`, never drawn as an empty day. */
+export function activityByDay(
+  rows: Pick<SessionRow, 'activeByHour'>[],
+  days: string[],
+  now: Date = new Date(),
+): { days: ActivityDay[]; unmeasured: number } {
+  const byDay = new Map(days.map((day) => [day, { agentMs: 0, userMs: 0 }]));
+  let unmeasured = 0;
+  for (const r of rows) {
+    if (!r.activeByHour) {
+      unmeasured += 1;
+      continue;
+    }
+    for (const [hour, agentMs, userMs] of r.activeByHour) {
+      const slot = byDay.get(dayKey(new Date(hour * 3_600_000).toISOString()));
+      if (!slot) continue;
+      slot.agentMs += agentMs;
+      slot.userMs += userMs;
+    }
+  }
+  return {
+    days: days.map((day) => {
+      const { agentMs, userMs } = byDay.get(day)!;
+      return { day, label: shortDayLabel(day, now), agentMins: Math.round(agentMs / 60_000), userMins: Math.round(userMs / 60_000) };
+    }),
+    unmeasured,
+  };
+}
+
+/** One local day of turns: how many, how many a correction followed, the first-try
+ *  rate, and the tokens spent (null where none were captured — unknown, not 0). */
+/** A chart's y-axis ticks for `max`: 0, half-way, and the top — distinct, since
+ *  over a tiny range the half-way tick rounds onto the top (each_key_duplicate). */
+export function axisTicks(max: number): number[] {
+  return [...new Set([0, Math.round(max / 2), max])];
+}
+
+export interface TurnDay {
+  day: string;
+  label: string;
+  turns: number;
+  corrections: number;
+  /** Turns not followed by a correction ÷ turns; null on a day with no turns. */
+  ftr: number | null;
+  /** The day's dot: corrected turns → bad, all first-try → good, none → neutral. */
+  tone: QualityTone;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  tokens: number | null;
+}
+
+/** The hours summed per local day of the axis, so a session that ran for days counts
+ *  on each of them (Trend, Stream and Tokens; user, 2026-10-29). */
+export function turnsByDay(hours: HourActivity[], days: string[], now: Date = new Date()): TurnDay[] {
+  const byDay = new Map(days.map((d) => [d, { turns: 0, corrections: 0, tin: null as number | null, tout: null as number | null }]));
+  for (const [hour, turns, corrections, tin, tout] of hours) {
+    const slot = byDay.get(dayKey(new Date(hour * 3_600_000).toISOString()));
+    if (!slot) continue;
+    slot.turns += turns;
+    slot.corrections += corrections;
+    if (tin !== null) slot.tin = (slot.tin ?? 0) + tin;
+    if (tout !== null) slot.tout = (slot.tout ?? 0) + tout;
+  }
+  return days.map((day) => {
+    const { turns, corrections, tin, tout } = byDay.get(day)!;
+    const ftr = turns > 0 ? (turns - corrections) / turns : null;
+    const tone: QualityTone = turns === 0 ? 'neutral' : corrections > 0 ? 'bad' : 'good';
+    const tokens = tin === null && tout === null ? null : (tin ?? 0) + (tout ?? 0);
+    return { day, label: shortDayLabel(day, now), turns, corrections, ftr, tone, tokensIn: tin, tokensOut: tout, tokens };
+  });
+}
+
+/** A session active on more than one local day of the axis, and those days, in order. */
+export interface SessionSpan {
+  id: string;
+  days: string[];
+}
+
+/** The sessions that ran over several days of the axis — one piece of work across
+ *  several bars. From the same hours as the bars; a one-day session has no span. */
+export function sessionSpans(rows: Pick<SessionRow, 'id' | 'activeByHour'>[], days: string[]): SessionSpan[] {
+  const order = new Map(days.map((d, i) => [d, i]));
+  const spans: SessionSpan[] = [];
+  for (const r of rows) {
+    if (!r.activeByHour) continue;
+    const on = new Set<string>();
+    for (const [hour] of r.activeByHour) {
+      const day = dayKey(new Date(hour * 3_600_000).toISOString());
+      if (order.has(day)) on.add(day);
+    }
+    if (on.size > 1) spans.push({ id: r.id, days: [...on].sort((a, b) => order.get(a)! - order.get(b)!) });
+  }
+  return spans.sort((a, b) => order.get(a.days[0])! - order.get(b.days[0])!);
+}
+
+/** Says how many sessions the bands could not place, or null when it placed them all. */
+export function unmeasuredLine(n: number): string | null {
+  if (n <= 0) return null;
+  return `${n} ${n === 1 ? 'session' : 'sessions'} not analysed yet — not drawn`;
+}
+
+/** One stacked segment of a bands bar. */
+export interface BandSegment {
+  tone: 'agent' | 'user';
+  y: number;
+  h: number;
+}
+
+/** The bands chart laid out: a vertical bar per day, oldest left, the agent's minutes
+ *  stacked under yours; date labels at `labelStride`, the newest day always labelled. */
+export interface BandsView {
+  plot: { left: number; right: number; top: number; bottom: number };
+  bars: { day: string; label: string; x: number; w: number; segments: BandSegment[]; agentMins: number; userMins: number; mins: number }[];
+  ticks: { x: number; label: string }[];
+  yTicks: { y: number; label: string }[];
+  maxMins: number;
+  /** Multi-day sessions: a line over their first to last day, a dot on each active day. */
+  links: { id: string; x1: number; x2: number; y: number; dots: number[] }[];
+}
+
+/** Height of one lane of multi-day links above the bars. */
+const LINK_LANE = 8;
+
+/** Fill per segment: the agent's time and yours. */
+export const BAND_FILL: Record<BandSegment['tone'], string> = {
+  agent: 'var(--info)',
+  user: 'var(--accent)',
+};
+
+export function bandsView(days: ActivityDay[], width: number, height: number, spans: SessionSpan[] = []): BandsView {
+  // Spans that overlap take separate lanes: each lane ends before the next span starts.
+  const index = new Map(days.map((d, i) => [d.day, i]));
+  const laneEnds: number[] = [];
+  const laned = spans.map((span) => {
+    const first = index.get(span.days[0])!;
+    const last = index.get(span.days[span.days.length - 1])!;
+    let lane = laneEnds.findIndex((end) => end < first);
+    if (lane === -1) lane = laneEnds.length;
+    laneEnds[lane] = last;
+    return { span, lane };
+  });
+  const plot = { left: 44, right: width - 12, top: 12 + laneEnds.length * LINK_LANE, bottom: height - 26 };
+  const n = Math.max(days.length, 1);
+  const slot = (plot.right - plot.left) / n;
+  const w = Math.max(1, slot * 0.7);
+  // An hour at least, rounded up to half hours under four hours, whole hours above.
+  const busiest = Math.max(60, ...days.map((d) => d.agentMins + d.userMins));
+  const step = busiest <= 240 ? 30 : 60;
+  const maxMins = Math.ceil(busiest / step) * step;
+  const scale = (plot.bottom - plot.top) / maxMins;
+  const bars = days.map((d, i) => {
+    const x = plot.left + i * slot + (slot - w) / 2;
+    let base = plot.bottom;
+    const segments: BandSegment[] = [];
+    for (const [tone, mins] of [['agent', d.agentMins], ['user', d.userMins]] as const) {
+      if (mins <= 0) continue;
+      const h = mins * scale;
+      base -= h;
+      segments.push({ tone, y: base, h });
+    }
+    return { day: d.day, label: d.label, x, w, segments, agentMins: d.agentMins, userMins: d.userMins, mins: d.agentMins + d.userMins };
+  });
+  const stride = labelStride(days.length);
+  const last = days.length - 1;
+  // Counted back from the newest day, so "Today" is always labelled and the
+  // labels keep an even spacing behind it.
+  const ticks = bars
+    .filter((_, i) => (last - i) % stride === 0)
+    .map((b) => ({ x: b.x + b.w / 2, label: b.label }));
+  const yTicks = [0, maxMins / 2, maxMins].map((m) => ({ y: plot.bottom - m * scale, label: compactDuration(Math.round(m)) }));
+  const centre = (day: string) => {
+    const b = bars[index.get(day)!];
+    return b.x + b.w / 2;
+  };
+  const links = laned.map(({ span, lane }) => ({
+    id: span.id,
+    x1: centre(span.days[0]),
+    x2: centre(span.days[span.days.length - 1]),
+    y: 8 + lane * LINK_LANE,
+    dots: span.days.map(centre),
+  }));
+  return { plot, bars, ticks, yTicks, maxMins, links };
 }
