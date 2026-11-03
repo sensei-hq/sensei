@@ -45,7 +45,7 @@ Feature: Bootstrap — the six-gate health check that provisions the machine and
     Then the model inventory reports the missing set explicitly
 
   Scenario: an all-green run hands over to the first-run scan within a bounded delay
-    Given every gate in GET /api/bootstrap/status reports pass
+    Given every component in GET /api/health reports pass
     When the green state has rendered
     Then the splash transitions within 800ms
     And the Continue link is present in case the transition stalls

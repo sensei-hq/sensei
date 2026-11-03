@@ -208,8 +208,8 @@ when looking at a release (D18).
 
 ```bash
 curl -s "http://localhost:7744/api/graph/communities/info?repoId=$ID" | jq 'length'
-curl -s "http://localhost:7744/api/projects/$ID/diagrams/structure?level=module" | jq '.nodes|length'
-curl -s "http://localhost:7744/api/projects/$ID/diagrams/zones" | jq '.coverage'
+curl -s "http://localhost:7744/api/workspaces/$ID/diagrams/structure?level=module" | jq '.nodes|length'
+curl -s "http://localhost:7744/api/workspaces/$ID/diagrams/zones" | jq '.coverage'
 ```
 
 ## Wrong gate

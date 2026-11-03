@@ -24,11 +24,13 @@ the shared Dōjō, and the free tier isn't a trial.*
 
 > **Status honesty.** The pricing model and tier table are designed (features/07-pricing.md).
 > **Built:** the billing account and seat tables (`dojo.billing_accounts`,
-> `dojo.seats`, live usage from `dojo.tenant_seat_usage`), GET/POST
+> `dojo.seats`, the `dojo.tenant_seat_usage` count), GET/POST
 > `/v1/t/[origin]/[org]/billing` (admin-only: the account plus live per-seat usage;
 > POST refreshes the cached seat count), and the org's **Plan & billing** section at
-> `/org/[slug]/billing`, which reads that route. **Not built:** a payment provider,
-> invoices, plan changes. **There is no payment provider yet**: none is chosen and none is
+> `/org/[slug]/billing`, which reads that route. **Not built:** anything that opens or
+> closes a seat — `dojo.seats` has no writer outside `database/tests/dojo/*`, so the
+> count the route serves is 0 in production until a seat is written; also a payment
+> provider, invoices, plan changes. **There is no payment provider yet**: none is chosen and none is
 > in the code, so nothing below that mentions invoices or payment exists. The mockup
 > `dojo-billing.jsx` uses hardcoded example data.
 > The website has a live GitHub Sponsors link. The free tier intent exists but

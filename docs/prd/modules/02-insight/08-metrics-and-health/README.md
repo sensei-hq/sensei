@@ -23,13 +23,14 @@ as *numbers that don't lie, and say what they're for*.
   purpose, how_to_read, formula, task_name, cadence, capture_source, weight, target,
   rating_scale, derives_from, effective window); the value store
   (`sensei.repository_metrics`, repository-grained); the read-side view model
-  (`metric_facts`, `project_metric_daily` → weekly/monthly/quarterly,
-  `project_metric_trend`, `metric_ratings`/`metric_rating_facts`, `metric_status`);
-  the derived health score (`project_health_score` + `project_health_trend`);
+  (`metric_facts`, `workspace_metric_daily` → weekly/monthly/quarterly,
+  `workspace_metric_trend`, `metric_ratings`/`metric_rating_facts`, `metric_status`);
+  the derived health score (`workspace_health_score` + `workspace_health_trend`);
   the registry-driven scheduler + per-metric compute handlers; the metrics API family;
-  the **master-detail model + gating eligibility** (2026-10-13 decision 8,
-  reorg §9.6 — the spec this module authors) and the per-metric design/coverage record
-  (M-9); coverage-gated presentation (#155 generalised — M-8); the retired-feeds
+  the **master-detail model + target eligibility** (2026-10-13 decision 8,
+  reorg §9.6 — the spec this module authors; D47 renamed the vocabulary) and the
+  per-metric design/coverage record (M-9); coverage-aware presentation (#155
+  generalised — M-8); the retired-feeds
   accounting (D-6: #153 `churn_rate` and #154 `time_to_useful_result`, both fixed and closed
   2026-10-19).
 - Out: the analyzer that produces per-session `sessions.ftr` (M7 — this module rolls
@@ -45,19 +46,19 @@ as *numbers that don't lie, and say what they're for*.
 - **API** — `GET /api/metrics/registry` (self-describing catalog),
   `GET /api/metrics/status?repo=` + `GET /api/metrics/status/summary` (per-repo
   computation state and the whole estate — "never computed" judged by stored VALUES,
-  not by the registry), `GET /api/projects/{id}/metrics` (+ per-metric series and
-  day-stage sessions), `GET /api/projects/{id}/health` (score + rated_metrics +
+  not by the registry), `GET /api/workspaces/{id}/metrics` (+ per-metric series and
+  day-stage sessions), `GET /api/workspaces/{id}/health` (score + rated_metrics +
   components), `POST /api/metrics/backfill`. The legacy name-keyed
-  `GET /api/metrics/{project}` remains a landmine (it fabricated zeroes) — consumers
+  `GET /api/metrics/{workspace}` remains a landmine (it fabricated zeroes) — consumers
   repoint; see Wrong gate.
 - **Daemon** — `tasks/metrics_scheduler.rs` (compute-workspace wave per repository,
   watermark-frozen as_of) + `tasks/handlers/metrics/*.rs` (per-family compute:
   session_outcomes, autonomy, churn, coverage, quality, cost, usage, knowledge,
   architecture, session_process, planner).
 - **DB** — DDL under `database/ddl/` (table `sensei/repository_metrics.ddl`,
-  `sensei/metrics.ddl`; views `sensei/{project_metrics,metric_facts,
-  project_metric_{daily,weekly,monthly,quarterly,trend},metric_ratings,
-  metric_rating_facts,metric_status,project_health_score,project_health_trend}.ddl`).
+  `sensei/metrics.ddl`; views `sensei/{workspace_metrics,metric_facts,
+  workspace_metric_{daily,weekly,monthly,quarterly,trend},metric_ratings,
+  metric_rating_facts,metric_status,workspace_health_score,workspace_health_trend}.ddl`).
   Seeding via dbd staging imports (`metric_watermarks.ddl` + the staging
   `import_metrics` pattern), timestamp-guarded.
 
@@ -68,8 +69,9 @@ as *numbers that don't lie, and say what they're for*.
   `project_metrics`** — a misnomer, not a mismodel: the identity index keyed on
   `repository_id` since D1/D2 (measured pre-rename: repo_id NULL = 0, folder/session
   columns held nothing, and no row disagreed with the folders mapping). `repository_id`
-  is NOT NULL; `sensei.project_metrics` survives as a **read-compat VIEW** restoring
-  project_id so every dependent view and read path is unchanged.
+  is NOT NULL; `sensei.workspace_metrics` is the **read-compat VIEW** restoring
+  `workspace_id`, so every dependent view and read path is unchanged
+  (`database/ddl/view/sensei/workspace_metrics.ddl:157`).
 - **Identity.** Unique index `repository_metrics_identity
   (metric_id, repository_id, scope, identity, commit_sha, computed_on, grain)` with
   `nulls not distinct` — the upsert target compute tasks conflict on, which makes a
@@ -115,7 +117,7 @@ as *numbers that don't lie, and say what they're for*.
   history is kept. Standing retirements to keep honest: `project_health` (plain mean —
   not meaningful) and `unused_tools` (verdict rested on fragment-overlap, not outcome).
 - **FTR retirement is done.** The legacy `ftr_daily`/`project_ftr_metrics` views were
-  retired in Phase 8; FTR now reads `project_metric_daily` only — one number, one
+  retired in Phase 8; FTR now reads `workspace_metric_daily` only — one number, one
   source.
 
 ## Signals shown
@@ -126,7 +128,7 @@ as *numbers that don't lie, and say what they're for*.
 | Metric status | per-repo computation state — live / thin / never | `false_crash_rate`: "never computed" (0 values), not a chart | *never* or *thin* → connect the source, or run `POST /api/metrics/backfill` |
 | Latest value + series | per metric, grain-selectable | `ftr` daily: Σnum/Σden with session_count | open the datapoint drilldown to see the sessions behind a bad day |
 | Trend arrow | `lag()` prior + delta, direction-coloured | weekly ftr 0.75 → 0.82 (▲) | wrong way → take the metric's action item (open the file or lens, or propose a rule) |
-| Health dial + radar | `project_health_score`; radar plots **ratings**, never raw values | 82, from 18 of 21 metrics | start with the lowest-rated spoke |
+| Health dial + radar | `workspace_health_score`; radar plots **ratings**, never raw values | 82, from 18 of 21 metrics | start with the lowest-rated spoke |
 | Coverage readout | `rated_metrics`/`total_weight` + trend `coverage` | "65, from 18 of 21 metrics" — never a bare number | low coverage → compute the missing metrics before trusting the score |
 | Pareto / heatmap | churn concentration, module friction map | rework_density per module | refactor or add tests on the module carrying the most rework |
 | Architecture metric (layers, zones, cycles) | the number and its trend, plus a link into the Code map lens | layers `25 up` → Structure with *Colour by direction*; zone of pain → Zones; cycles → Cycles | open the linked lens and break the cycle or split the module |
@@ -136,7 +138,7 @@ as *numbers that don't lie, and say what they're for*.
 - Registry self-describes: `curl -s localhost:7744/api/metrics/registry | jq
   '[.[]|select(.purpose==null or .direction==null or .formula==null)]|length'` → `0`.
 - The sensei repo has a daily `ftr` with `props.numerator/denominator` (+ companion
-  `rework_ratio`) and `GET /api/projects/{id}/health` returns a score with
+  `rework_ratio`) and `GET /api/workspaces/{id}/health` returns a score with
   `rated_metrics` + `components` — all `source=measured`.
 - FTR reads one number everywhere — `/ftr`-family endpoints, `get_ftr_daily`, the
   MCP tool, and the store agree (pin `ftr_parity_store_vs_views`).
@@ -145,15 +147,15 @@ as *numbers that don't lie, and say what they're for*.
 - Setting `effective_until` to yesterday stops new rows next run; a retired metric
   never computes (pin `project_health_retired_compute_writes_no_row`) and never
   renders.
-- **Master-detail + gating (decision 8):** every advertised metric has a master-detail
-  record with explicit gating eligibility (M-7); a per-metric design/coverage record
-  ties it to its chart and LOD (M-9); thin metrics render behind a coverage gate, not
-  as strong numbers (M-8, #155 generalised).
+- **Master-detail + targets (decision 8, D47):** every advertised metric has a
+  master-detail record with explicit target eligibility (M-7); a per-metric
+  design/coverage record ties it to its chart and LOD (M-9); thin metrics render as
+  coverage-aware, not as strong numbers (M-8, #155 generalised).
 
 ```bash
 curl -s http://localhost:7744/api/metrics/status/summary \
   | jq '.by_status'   # live / thin / never — decided by stored VALUES
-curl -s http://localhost:7744/api/projects/sensei/health \
+curl -s http://localhost:7744/api/workspaces/sensei/health \
   | jq '{score: .health_score, rated: .rated_metrics, weight: .total_weight}'
 ```
 
@@ -162,7 +164,7 @@ curl -s http://localhost:7744/api/projects/sensei/health \
 - **FTR computed/served more than one way** — the three-way conflict this module
   exists to end.
 - **A weekly/monthly value that is the arithmetic mean of daily ratios.**
-- **A fabricated 0** where data is absent (the legacy `/api/metrics/{project}`
+- **A fabricated 0** where data is absent (the legacy `/api/metrics/{workspace}`
   handler surviving) or a health score for a repository with nothing rated.
 - **A handlerless `task_name` seeded/enqueued**, or a metric past `effective_until`
   still computed.
@@ -188,9 +190,9 @@ curl -s http://localhost:7744/api/projects/sensei/health \
 
 ## Open gaps
 
-- [M-7](../../../../roadmap/06-gaps.md) — no master-detail model + `gating` field;
-  gating eligibility undefined per metric (P1 — closed by decision 8's spec).
-- [M-8](../../../../roadmap/06-gaps.md) — coverage-gated presentation absent (#155
+- [M-7](../../../../roadmap/06-gaps.md) — no master-detail model, no target store or
+  mode; which target may block undefined per metric (P1 — closed by decision 8's spec).
+- [M-8](../../../../roadmap/06-gaps.md) — coverage-aware presentation absent (#155
   generalised; P1).
 - [M-9](../../../../roadmap/06-gaps.md) — no per-metric design/coverage record tying
   a metric to its chart and LOD (P1).
@@ -202,7 +204,8 @@ curl -s http://localhost:7744/api/projects/sensei/health \
 
 - [spec/pipeline/metrics](../../../../spec/pipeline/metrics.md) — registry, store,
   views, scheduler, FTR retirement (legacy depth, folds here; its `project_metrics`
-  storage must be read through the `repository_metrics` rename).
+  storage must be read through the `repository_metrics` rename and the
+  `workspace_metrics` compat view).
 - [features/metrics/catalog.md](../../../../features/metrics/catalog.md) ·
   [features/metrics/feature.md](../../../../features/metrics/feature.md) ·
   [features/metrics/architecture-metrics.md](../../../../features/metrics/architecture-metrics.md) —
@@ -212,7 +215,7 @@ curl -s http://localhost:7744/api/projects/sensei/health \
   prose catalog; coverage.json shows live coverage).
 - DDL: [`database/ddl/table/sensei/repository_metrics.ddl`](../../../../../database/ddl/table/sensei/repository_metrics.ddl) ·
   [`database/ddl/table/sensei/metrics.ddl`](../../../../../database/ddl/table/sensei/metrics.ddl) ·
-  [`database/ddl/view/sensei/project_health_score.ddl`](../../../../../database/ddl/view/sensei/project_health_score.ddl).
+  [`database/ddl/view/sensei/workspace_health_score.ddl`](../../../../../database/ddl/view/sensei/workspace_health_score.ddl).
 - [spec/pipeline/ftr](../../../../spec/pipeline/ftr.md) — FTR source lives here ·
   [spec/pipeline/analyzer](../../../../spec/pipeline/analyzer.md) — scheduler sibling.
 - [reorg.md §9.6](../../../../reorg.md) — the master-detail + gating decision.

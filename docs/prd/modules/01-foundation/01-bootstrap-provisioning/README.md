@@ -25,11 +25,13 @@ a repo the team has history on" (persona 2).
 
 ## Surfaces
 
-- **App splash** — `app/src/routes/bootstrap/+page.svelte` renders probing, remediating, and
-  all-green (`完`) states; a Continue link is the escape hatch if the auto-transition stalls.
-- **`GET /api/bootstrap/status`** — the daemon's bootstrap state machine: top-level
-  `state` (`probing|green|remediating|failed`) plus one row per gate
-  (`id, kanji, name, detail, status, why, ifMissing, started_at, resolved_at`).
+- **App splash** — the `(config)/setup` wizard stages (`welcome → scan → roots →
+  assistants → done`, `app/src/routes/(config)/setup/`); the all-green (`完`) state is the
+  last stage.
+- **`GET /api/health`** — the daemon's readiness: the six gates resolved ready plus the
+  hardware tier (`api/routes.rs:581`, `crates/bootstrap/src/health/resolvers/*.rs`). The
+  `GET /api/bootstrap/status` state machine (`state` + one row per gate) was designed and
+  **dropped** in favour of `/health`; it has no route.
 - **Resolvers** — `crates/bootstrap/src/resolvers/{homebrew,postgres,ollama,components,db,daemon}.rs`;
   one resolver per component; a resolver whose dependency failed is skipped in this pass.
 - **Hardware inspector** — `crates/bootstrap/src/hardware.rs`; model tier feeds M5's
@@ -74,8 +76,8 @@ a repo the team has history on" (persona 2).
 
 ```bash
 # green run — every gate is pass; probe cycle fast
-curl -s http://localhost:7744/api/bootstrap/status | jq '{state, gates: (.gates | map({id, status}))}'
-# timed form: any gate.id in {homebrew, postgres, ollama, sdk, db, daemon} shows a status
+curl -s http://localhost:7744/api/health | jq '{status, components: (.components | map({id, status}))}'
+# timed form: any component.id in {homebrew, postgres, ollama, sdk, db, daemon} shows its status
 ```
 
 ## Wrong gate

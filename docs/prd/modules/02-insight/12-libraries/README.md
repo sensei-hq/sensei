@@ -65,6 +65,17 @@ skills and agents are ingested and shown:
 >     `url`, and the docs path is hard-coded to `docs/llms`.
 >
 > Tracked in the roadmap (`08-issue-burndown.md`) as #341.
+>
+> **Update 2026-11-03 (#341 closed 2026-10-27).** The UI half is built: the app reads a
+> library's own docs, skills and agents through `/api/libs/{ref}/{docs,skills,agents}`
+> (`app/src/lib/api.ts:601-605`), so "no screen calls them" no longer holds. The list
+> now folds a manifest's claimed packages into the library that claims them, one row per
+> library (`pg_store/library.rs:1199-1211`), and `find_manifests` discovers sibling
+> manifest roots while skipping vendored copies (`libraries/mod.rs:63-81`, its test at
+> `:340`). What was "not built" above therefore reads as history: re-check the
+> registry/checkout/site probe, the parser's seven dropped fields (llms, site, repo,
+> ref, documents, install, url) and the `/api/libs` manifest-only rows before repeating
+> them.
 
 ## In scope / out of scope
 

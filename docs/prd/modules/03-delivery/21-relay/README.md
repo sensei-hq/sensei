@@ -20,8 +20,11 @@ this as *sensei is doing the work, and I'm in the loop.*
 > `run_limits.rs`, three relay drivers), the runs API (`/api/runs*`, register
 > plan, update task status, report outcome), the Dōjō gate (33 tests in
 > `dojo/gate.rs`) and the Dōjō protocol (`dojo-protocol/src/relay.rs`) are
-> built and tested. The flag `SENSEI_RUN_DRIVE` is **OFF by default** (not
-> merged to main) — the drive loop heartbeats only. **The mobile and desktop
+> built and tested — but of the three only Claude is reachable: `driver_for` returns
+> `ClaudeDriver` for every config (`relay_drivers/mod.rs:29-31`), so ACP and the
+> fallbacks are dead code behind a factory that never chooses them. The flag
+> `SENSEI_RUN_DRIVE` is **OFF by default**, so on a default daemon the drive loop
+> heartbeats only. **The mobile and desktop
 > relay screens are greenfield / unbuilt** (no test). There are no §12 gap IDs
 > named for M21; the nearest are D-1/D-2 → T1.
 
