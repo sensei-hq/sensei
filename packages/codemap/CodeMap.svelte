@@ -9,7 +9,7 @@
   import type { CodeMapState } from './state.svelte';
   import { inspect, LIBRARIES } from './inspector';
   import { listView } from './list';
-  import { budgetLine, drawnBands, legendFor } from './view';
+  import { budgetLine, drawnBands, legendFor, segmentLabel } from './view';
   import type { CodeMapPort } from './types';
   import ModuleMap from './ModuleMap.svelte';
   import MatrixLens from './MatrixLens.svelte';
@@ -27,7 +27,6 @@
   import ZoomFrame from './ZoomFrame.svelte';
   import CodeMapControls from './CodeMapControls.svelte';
   import { takeaways } from './takeaways';
-  import { focusComplexity, focusCoupling, focusSets, focusZones } from './focus';
   import Legend from './Legend.svelte';
 
   let {
@@ -55,11 +54,12 @@
   // An unmeasured width (0) is not a narrow screen.
   const narrow = $derived(width > 0 && width < 640);
   const l0 = $derived(map.l0);
-  // The daemon narrowed the module map to the focus; the other lenses' data is narrowed here.
-  const sets = $derived(focusSets(l0));
-  const cochange = $derived(focusCoupling(map.cochange, sets));
-  const complexity = $derived(focusComplexity(map.complexity, sets));
-  const zones = $derived(focusZones(map.zones, sets));
+  // The daemon narrowed the module map to the focus; the state narrows the rest.
+  const cochange = $derived(map.focusedCochange);
+  const complexity = $derived(map.focusedComplexity);
+  const zones = $derived(map.focusedZones);
+  /** The focus as the empty states name it. */
+  const focusLabel = $derived(map.focus ? (map.focus.kind === 'module' ? map.focus.id : segmentLabel(map.groupBy, map.focus.id)) : null);
   const bands = $derived(l0 ? drawnBands(map.lens, l0, cochange, { edgeMode: map.edgeMode, minWeight: map.minWeight }) : []);
   const toAct = $derived(l0 ? takeaways(map.lens, l0, cochange, zones, complexity) : []);
   // A focused module is what the side panel inspects when nothing else is selected.
@@ -124,11 +124,11 @@
               </p>
             {/if}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <CouplingLens data={cochange} zoom={map.zoom} onfocus={focusOn} />
+              <CouplingLens data={cochange} zoom={map.zoom} onfocus={focusOn} focus={focusLabel} />
             </ZoomFrame>
           {:else if map.lens === 'complexity'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ComplexityLens data={complexity} zoom={map.zoom} onfocus={focusOn} />
+              <ComplexityLens data={complexity} zoom={map.zoom} onfocus={focusOn} focus={focusLabel} />
             </ZoomFrame>
           {:else if map.lens === 'cycles'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>

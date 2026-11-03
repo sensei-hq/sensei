@@ -87,12 +87,18 @@ export interface ZonesView {
   byZone: Record<'main' | 'pain' | 'useless' | 'risk', number>;
 }
 
+/** Furthest from the main sequence first; a point that cannot be placed has no distance and sorts last. */
+export const byDistance = (a: ZonePoint, b: ZonePoint): number => (b.distance ?? -1) - (a.distance ?? -1);
+
+/** A point's distance as the lenses print it; a dash when it cannot be placed. */
+export const distanceText = (p: ZonePoint): string => (p.distance === null ? '—' : p.distance.toFixed(2));
+
 /** The Zones lens (M17): what can be placed, how many cannot, the furthest. */
 export function zonesView(z: Zones, top = 10): ZonesView {
   const placed = z.points.filter((p) => p.zone !== null);
   const byZone = { main: 0, pain: 0, useless: 0, risk: 0 };
   for (const p of placed) byZone[p.zone!] += 1;
-  const furthest = [...placed].sort((a, b) => b.distance - a.distance || a.component.localeCompare(b.component)).slice(0, top);
+  const furthest = [...placed].sort((a, b) => byDistance(a, b) || a.component.localeCompare(b.component)).slice(0, top);
   return { placed, unplaceable: z.points.length - placed.length, furthest, byZone };
 }
 

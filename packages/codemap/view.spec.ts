@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bandTone, budgetLine, complexityTier, legendFor, moduleChoices, shownFiles, visibleBands } from './view';
+import { bandTone, budgetLine, complexityTier, legendFor, moduleChoices, segmentLabel, shownFiles, visibleBands } from './view';
 import type { Band, Block, Level0 } from './types';
 
 const roles = { code: 4, test: 3, docs: 1, config: 0, generated: 2 };
@@ -106,5 +106,12 @@ describe('complexityTier reads the daemon’s tier', () => {
     const b = block('p/a', { complexity: { functions: 10, complex: 3, tier: 'warning' } });
     expect(complexityTier(b).tone).toBe('warning');
     expect(complexityTier(b).label).toBe('30% over cx 10');
+  });
+
+  // Review r1 F8: one segment label, not three copies.
+  describe('segmentLabel', () => {
+    it('names a group by what Group by made it', () => {
+      expect([segmentLabel('layers', 'L1'), segmentLabel('folders', 'senseid')]).toEqual(['Layer L1', 'Folder senseid']);
+    });
   });
 });

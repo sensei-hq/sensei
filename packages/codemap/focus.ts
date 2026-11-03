@@ -37,14 +37,16 @@ export function focusComplexity(data: ComplexityTree | null, sets: FocusSets | n
   return { modules, total, maintainability: null };
 }
 
-/** Zones: the focused modules and their neighbours, with the mean distance of those placed. */
+/** Zones: the focused modules and their neighbours, read as the daemon reads
+ *  them — the mean over the placed (none when nothing is placed: a mean over no
+ *  point is no reading), `points` every point, `unplaceable` those with no distance. */
 export function focusZones(data: Zones | null, sets: FocusSets | null): Zones | null {
   if (!data || !sets) return data;
   const points = data.points.filter((p) => sets.near.has(p.component));
-  const placed = points.filter((p) => p.zone !== null);
+  const distances = points.flatMap((p) => (p.distance === null ? [] : [p.distance]));
   return {
     points,
-    meanDistance: placed.length ? placed.reduce((a, p) => a + p.distance, 0) / placed.length : 0,
-    coverage: { points: placed.length, unplaceable: points.length - placed.length },
+    meanDistance: distances.length ? distances.reduce((a, d) => a + d, 0) / distances.length : null,
+    coverage: { points: points.length, unplaceable: points.length - distances.length },
   };
 }

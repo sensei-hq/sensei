@@ -142,7 +142,7 @@ describe('CodeMapState', () => {
     const p = port();
     await s.setFocus(p, { kind: 'module', id: 'p/a' });
     await s.setGroupBy(p, 'folders');
-    expect(p.level0).toHaveBeenLastCalledWith('folders', { kind: 'module', id: 'p/a' });
+    expect(p.level0).toHaveBeenCalledWith('folders', { kind: 'module', id: 'p/a' });
     await s.setFocus(p, { kind: 'segment', id: 'L1' });
     await s.setGroupBy(p, 'layers');
     expect([s.focus, (p.level0 as ReturnType<typeof vi.fn>).mock.lastCall]).toEqual([null, ['layers', null]]);
@@ -209,5 +209,46 @@ describe('CodeMapState', () => {
     expect(s.focus).toEqual({ kind: 'module', id: 'p/a' });
     await s.focusChoice(p, 'group:L1');
     expect(s.focus).toEqual({ kind: 'segment', id: 'L1' });
+  });
+
+  // Review r1 F1: the finder is built from `whole`; a regroup under a focus must
+  // re-read the unfocused map in the new grouping, or the finder offers the old
+  // grouping's segments and picking one 404s.
+  it('a regroup under a focus re-reads the whole map in the new grouping', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    await s.setGroupBy(p, 'folders');
+    expect(p.level0).toHaveBeenCalledWith('folders', null);
+    expect(s.whole?.groupBy).toBe('folders');
+  });
+
+  // Review r1 F2: each kind of read keeps its own error; a later success of
+  // another kind must not clear it, or the lens sits on "Reading…" for good.
+  it('a lens keeps its read’s failure when a different read succeeds after it', async () => {
+    const s = new CodeMapState();
+    const p = port({ cochange: vi.fn(() => Promise.resolve({ ok: false as const, error: 'Gateway Timeout' })) });
+    await s.load(p);
+    await s.showLens(p, 'coupling');
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    expect(s.lensError).toBe('Gateway Timeout');
+    await s.showLens(p, 'structure');
+    expect(s.lensError).toBeNull();
+  });
+
+  // Review r1 F7: the state, not the component, narrows the lenses' data to the
+  // focus, so any host reading the state gets the focused view.
+  it('exposes the lenses’ data narrowed to the focus the map was read with', async () => {
+    const s = new CodeMapState();
+    const focused = { ...L0(), focus: { kind: 'module' as const, id: 'p/a', members: ['p/a'], neighbours: [] } };
+    const p = port({
+      level0: vi.fn((g, f) => ok(f ? focused : L0(g))),
+      cochange: vi.fn(() => ok({ hidden: [{ a: 'p/a', b: 'p/x', together: 6, strength: 0.6 }, { a: 'p/y', b: 'p/x', together: 6, strength: 0.6 }], pairs: 2, commits: 9, minTogether: 5 })),
+    });
+    await s.showLens(p, 'coupling');
+    expect(s.focusedCochange?.hidden.length).toBe(2);
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    expect(s.focusedCochange?.hidden.map((c) => c.b)).toEqual(['p/x']);
+    expect(s.focusedCochange?.hidden.every((c) => c.a === 'p/a' || c.b === 'p/a')).toBe(true);
   });
 });

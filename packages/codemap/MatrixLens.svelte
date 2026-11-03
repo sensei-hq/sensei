@@ -36,14 +36,14 @@
     </span>
   {/each}
   <span class="inline-flex items-center gap-1.5">
-    <span class="inline-block w-3 h-3 rounded-sm opacity-40" style:background="var(--ink-faint)" aria-hidden="true"></span>healthy
+    <span class="inline-block w-3 h-3 rounded-sm opacity-40 bg-ink-faint" aria-hidden="true"></span>healthy
   </span>
 </div>
 <!-- A scrollable region must take focus for keyboard users (axe scrollable-region-focusable). -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div class="overflow-auto h-full" tabindex="0" role="region" aria-label="Dependency matrix, scrollable" data-testid="codemap-matrix">
   <!-- Gridlines: the edge colour showing through the spacing between cells. -->
-  <table class="border-separate border-spacing-px" style:background="var(--paper-edge)" aria-label="Dependency matrix: rows depend on columns">
+  <table class="border-separate border-spacing-px bg-paper-edge" aria-label="Dependency matrix: rows depend on columns">
     <thead>
       <tr>
         <th class="sticky top-0 left-0 z-20 bg-paper"></th>
