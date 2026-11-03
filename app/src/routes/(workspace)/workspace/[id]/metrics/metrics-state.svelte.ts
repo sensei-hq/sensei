@@ -79,6 +79,13 @@ export class WorkspaceMetrics {
     return { status: 'ready', data: { ...v.data!, registry: r.data! }, error: null };
   }
 
+  /** pending: d83-metrics — the correlations read as a section: loading, this
+   *  workspace's pairs, or why it failed (audit row 74: a failed read hid the
+   *  section, which read as "no correlated pairs"). */
+  get correlationsSection(): Section<MetricCorrelation[]> {
+    throw new Error('pending: d83-metrics');
+  }
+
   /** Only pairs whose both metrics this workspace has. */
   get correlations(): MetricCorrelation[] {
     const present = new Set((this.values.data?.rows ?? []).map((r) => r.metric));
