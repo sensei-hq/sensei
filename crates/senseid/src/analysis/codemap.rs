@@ -728,6 +728,34 @@ mod tests {
         );
         let file = serde_json::to_value(&t.modules[0].children[0]).unwrap();
         assert!(file["tier"].is_string(), "every row carries one: {file}");
+        // Review r2 L5: a row's tier is its own — a module at 15% (warning) holds a
+        // file at 30% (danger) and one at 0% (neutral).
+        let g = complexity_tree(&[
+            measured("pkg/gamma", "gamma/c1.rs", 10, 3, 18),
+            measured("pkg/gamma", "gamma/c2.rs", 10, 0, 4),
+        ]);
+        let row = |v: serde_json::Value, id: &str| -> serde_json::Value {
+            fn find(v: &serde_json::Value, id: &str) -> Option<serde_json::Value> {
+                if v["id"] == id {
+                    return Some(v["tier"].clone());
+                }
+                v["children"].as_array()?.iter().find_map(|c| find(c, id))
+            }
+            find(&v, id).unwrap_or_else(|| panic!("no row {id}"))
+        };
+        let gamma = serde_json::to_value(&g.modules[0]).unwrap();
+        assert_eq!(
+            (
+                row(gamma.clone(), "pkg/gamma"),
+                row(gamma.clone(), "gamma/c1.rs"),
+                row(gamma, "gamma/c2.rs")
+            ),
+            (
+                serde_json::json!("warning"),
+                serde_json::json!("danger"),
+                serde_json::json!("neutral")
+            )
+        );
     }
 
     #[test]

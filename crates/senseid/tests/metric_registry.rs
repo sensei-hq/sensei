@@ -102,7 +102,8 @@ fn the_catalog_documents_exactly_the_registered_metrics() {
     );
 }
 
-/// #156 (review G2): the architecture shape metrics are catalogued with the keys
+/// #156 (review G2; r2 H2: no summed "largest" — it is a prop of `dependency_cycles`):
+/// the architecture shape metrics are catalogued with the keys
 /// L3's gating import names, counted lower-better per repository, rated, and with
 /// a `how_to_read` that names the action — the narrative reads it as the next
 /// step. They are appended after `symbol_size_p95`; no existing row moves.
@@ -112,7 +113,6 @@ fn the_architecture_shape_metrics_are_catalogued() {
     // (key, a word the next step must use)
     let shape = [
         ("dependency_cycles", "cut"),
-        ("largest_cycle_modules", "cut"),
         ("layer_up_edges", "interface"),
         ("zone_of_pain_modules", "abstraction"),
         ("hidden_coupling_pairs", "explicit"),

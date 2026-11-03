@@ -70,6 +70,25 @@ pub struct ShapeReading {
     pub findings: ShapeFindings,
 }
 
+/// One stored metric row of a reading (review r2 H1): what the database keeps is
+/// the contract — TG4 reads base findings from these props. Repository-wide
+/// readings: scope `repo`, no identity, no commit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShapeRow {
+    pub key: &'static str,
+    pub value: f64,
+    pub props: serde_json::Value,
+    pub scope: &'static str,
+    pub identity: Option<String>,
+    pub commit_sha: Option<String>,
+}
+
+/// A reading's rows, one per catalogued key. Pending (#156 phase B).
+#[allow(dead_code)]
+pub fn shape_rows(_reading: &ShapeReading) -> Vec<ShapeRow> {
+    Vec::new()
+}
+
 /// Each complete repository that has modules, read. Pending (#156 phase B).
 #[allow(dead_code)]
 pub fn shape_by_repository(_input: &ShapeInput<'_>) -> Vec<ShapeReading> {
@@ -244,5 +263,80 @@ mod tests {
         let input = empty(&repos, &modules, &deps);
         let all = shape_by_repository(&input);
         assert_eq!(all.iter().map(|x| x.repository_id).collect::<Vec<_>>(), vec![r(1)]);
+    }
+
+    /// Review r2 H1: what is stored is the contract. Each key's value, its props
+    /// (TG4 reads base findings from them: cycles by member set, the Up-edge count,
+    /// the pain modules), and a repository-wide row — scope `repo`, no identity, no
+    /// commit. "Largest" is a prop of `dependency_cycles`, never a summed count (H2).
+    #[test]
+    #[ignore = "pending: #156"]
+    fn the_rows_store_each_key_its_value_and_findings() {
+        let reading = ShapeReading {
+            repository_id: r(1),
+            cycles: 2,
+            largest_cycle: 3,
+            up_edges: 3,
+            pain_modules: 1,
+            hidden_pairs: 4,
+            complexity_outliers: 2,
+            cross_repository_deps: 1,
+            findings: ShapeFindings {
+                cycles: vec![vec![s("a/x"), s("a/y"), s("a/z")], vec![s("a/p"), s("a/q")]],
+                up_edges: vec![s("a/q→a/p"), s("a/y→a/x"), s("a/z→a/y")],
+                pain: vec![s("a/x")],
+            },
+        };
+        let rows = shape_rows(&reading);
+        let got: Vec<(&str, f64, serde_json::Value)> =
+            rows.iter().map(|r| (r.key, r.value, r.props.clone())).collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "dependency_cycles",
+                    2.0,
+                    serde_json::json!({"cycles": [["a/x", "a/y", "a/z"], ["a/p", "a/q"]], "largest": 3, "cross_repository_deps": 1})
+                ),
+                (
+                    "layer_up_edges",
+                    3.0,
+                    serde_json::json!({"up_edges": ["a/q→a/p", "a/y→a/x", "a/z→a/y"], "cross_repository_deps": 1})
+                ),
+                ("zone_of_pain_modules", 1.0, serde_json::json!({"modules": ["a/x"]})),
+                ("hidden_coupling_pairs", 4.0, serde_json::json!({})),
+                ("complexity_outlier_modules", 2.0, serde_json::json!({})),
+            ]
+        );
+        assert!(
+            rows.iter()
+                .all(|r| r.scope == "repo" && r.identity.is_none() && r.commit_sha.is_none())
+        );
+    }
+
+    /// Review r2 H3: a component that needs two feedback arcs has more Up edges
+    /// than cycles. `a/x↔a/y` plus `a/y↔a/z` is one cycle of three with two Up
+    /// edges (worked through `feedback_order`: a/x, a/y, a/z, so the back edges are
+    /// a/y→a/x and a/z→a/y) — absolute numbers, beside the lens's own.
+    #[test]
+    #[ignore = "pending: #156"]
+    fn two_feedback_arcs_in_one_cycle_are_two_up_edges() {
+        let names = ["a/x", "a/y", "a/z"];
+        let modules: Vec<(String, uuid::Uuid)> = names.iter().map(|m| (s(m), r(1))).collect();
+        let deps = [
+            Dep::new("a/x", "a/y", 1),
+            Dep::new("a/y", "a/x", 1),
+            Dep::new("a/y", "a/z", 1),
+            Dep::new("a/z", "a/y", 1),
+        ];
+        let repos = [(r(1), true)];
+        let got = reading(&empty(&repos, &modules, &deps), r(1)).expect("r1 reads");
+        assert_eq!((got.cycles, got.largest_cycle, got.up_edges), (1, 3, 2));
+        assert_eq!(got.findings.up_edges, vec![s("a/y→a/x"), s("a/z→a/y")]);
+        let (cycles, largest, _, up) = lens(&names, &deps);
+        assert_eq!(
+            (got.cycles, got.largest_cycle, got.findings.up_edges.clone()),
+            (cycles, largest, up)
+        );
     }
 }
