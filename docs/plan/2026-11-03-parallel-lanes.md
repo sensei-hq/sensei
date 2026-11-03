@@ -3,6 +3,32 @@
 The coordinator (the reviewer session) owns this file. Each lane reads **its own section and §1–§3**.
 The goal and the reasons for the order are in `docs/review/2026-11-03-orientation.md`.
 
+## Queue v2 (user, 2026-11-03 afternoon): five sessions, built around the spine
+
+Sessions: **Claude Code A**, **Claude Code B**, **Cowork**, **Muse-1**, **Muse-2**. The order follows the spine
+(orientation §3): sync verified → targets end to end → no fabricated values. Off-spine work waits.
+Where this section and the lane sections below disagree, this section wins.
+
+| Session | Lane | Queue, in order |
+|---|---|---|
+| **Muse-1** | L1 · sync push and registration | F4 (finish) → `run.sh --apply` (R1) → WP8 (D46) → WP9A → D18 label on the plan wire → **#314 production verification** |
+| **Muse-2** | L9 · dōjō metric reads, then L8 batch B | `metric_readings` (R2) → WP5 round 2 (D82) → the pack-rule `[]` fix → **L8 batch B** (governance and identity, audit Appendix A) → seat model (D59) |
+| **Claude Code A** | L2 · metrics and analysis, then L8 batches A + C | S7 r3 → S4 2c → #156 (critical path for targets) → **L8 batch A** (data loss) → **L8 batch C** (misleading numbers; `pg_store/metrics.rs` is metrics) |
+| **Claude Code B** | L3 · targets | ActionItems → **targets TG1 → TG5** (TG2 after WP8 merges) → TG6 → the `generate.rs` duplicate flood |
+| **Cowork** | L4 · UI | Notice round 2 (incl. billing D75 fixes and its D83 rows) → rankOf → menu D70 + daemon reachable flag → sync screen → targets UI (mockup, then build on TG7's contract) → viewer shell |
+| **L0** | coordinator | D83 guard (building now) → reviews, merges, converges, install → release |
+
+**Moved:**
+- L5's remaining seven pages are **deferred** until a session frees up. Libraries is done (merges after
+  Notice).
+- **L9** is new. It owns the dōjō metric reads that L1 owned: `database/ddl/**/dojo/*_metric_series`,
+  `team_member_metrics`, `my_metric_series`, the new `metric_readings`, their tests, `workspaces-data.ts` (the
+  metrics read) and the WP5 files. It takes over from L1 **after F4 merges**, so the two Muse sessions never
+  share a file.
+- **L8 is split by batch:** A and C go to Claude Code A, B to Muse-2.
+- L6 (Freebuff) and L7 (integrations helper) keep their items if they are still running; neither is on
+  the spine's critical path.
+
 ## 0. Decisions in force (user, 2026-11-03)
 
 | # | Decision |
