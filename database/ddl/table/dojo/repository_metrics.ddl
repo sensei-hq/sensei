@@ -6,6 +6,13 @@ set search_path to dojo, extensions;
 -- is an aggregate the daemon computed locally and pushed as a number, so dōjō can
 -- show per-person metrics without ever holding a session, a prompt or a tool
 -- call. That is the whole privacy shape of the sync.
+--
+-- props.authored_at carries a commit's own time (F4), which the workspace
+-- rollup casts: ISO-8601 WITH an offset (so the cast never depends on the
+-- session TimeZone) AND calendar-valid per dojo.is_iso_instant (a regex alone
+-- admits Feb 30, which the cast refuses). Inline, not an ALTER: the file
+-- re-runs cleanly on every deploy. The write boundary refuses malformed values
+-- by name (metrics-ingest.ts, same rule); the CHECK stops every other writer.
 create table if not exists repository_metrics (
   id            uuid        primary key default gen_random_uuid()
 , tenant_id     uuid        not null references dojo.tenants(id)       on delete cascade
@@ -22,21 +29,14 @@ create table if not exists repository_metrics (
 , source        text        not null default 'measured'
 , pushed_at     timestamptz not null default now()
 , unique nulls not distinct (metric_id, repository_id, scope, principal_id, commit_sha, computed_on, grain)
+, constraint repository_metrics_authored_at_iso
+  check (props->>'authored_at' is null
+         or (props->>'authored_at' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$'
+             and dojo.is_iso_instant(props->>'authored_at')))
 );
 
 create index if not exists repository_metrics_lookup
     on repository_metrics(repository_id, metric_id, computed_on);
-
--- props.authored_at carries a commit's own time (F4), which the workspace
--- rollup casts: ISO-8601 WITH an offset, so the cast never depends on the
--- session TimeZone. The write boundary refuses malformed values by name
--- (metrics-ingest.ts, same rule); this CHECK stops every other writer. An
--- ADD CONSTRAINT, not inline: the table already exists, and dbd honours only
--- ADD CONSTRAINT here.
-alter table dojo.repository_metrics
-    add constraint repository_metrics_authored_at_iso
-    check (props->>'authored_at' is null
-           or props->>'authored_at' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$');
 
 comment on table repository_metrics is
 'Shared metric values, pushed by the daemon. Aggregates only — no session, turn

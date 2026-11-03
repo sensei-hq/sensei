@@ -63,10 +63,26 @@ export interface IngestResult {
  *  offset, the same rule as the CHECK on dojo.repository_metrics (which the
  *  read's cast relies on). The offset is required so the cast never depends
  *  on the session TimeZone. */
-const AUTHORED_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const AUTHORED_AT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
 function isAuthoredAt(v: unknown): boolean {
-	return typeof v === 'string' && AUTHORED_AT_RE.test(v) && !Number.isNaN(Date.parse(v));
+	if (typeof v !== 'string') return false;
+	const m = AUTHORED_AT_RE.exec(v);
+	if (!m) return false;
+	// Calendar round-trip: Date.parse rolls Feb 30 over to Mar 2 instead of
+	// refusing it, so rebuild the instant from the matched fields and require
+	// the same y-m-d hh:mm:ss back. (24:00 normalises to the next day, so it
+	// fails too — deliberately stricter than the cast, which accepts it.)
+	const [, y, mo, d, h, mi, s] = m.map(Number);
+	const r = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
+	return (
+		r.getUTCFullYear() === y &&
+		r.getUTCMonth() === mo - 1 &&
+		r.getUTCDate() === d &&
+		r.getUTCHours() === h &&
+		r.getUTCMinutes() === mi &&
+		r.getUTCSeconds() === s
+	);
 }
 
 /**

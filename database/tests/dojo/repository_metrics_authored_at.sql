@@ -13,13 +13,31 @@
 -- converges the shared DB; the run.sh --apply item will supersede this guard).
 begin;
 
+-- TEMPORARY duplication of ddl/table/dojo/repository_metrics.ddl's constraint
+-- plus ddl/function/dojo/is_iso_instant.ddl (the run.sh --apply item deletes
+-- this guard and applies the DDL files instead). Must match both files textually.
 do $$
 begin
+    create or replace function dojo.is_iso_instant(p_value text)
+        returns boolean
+        language plpgsql
+        immutable
+        set search_path = dojo, pg_temp
+    as $fn$
+    begin
+        perform p_value::timestamptz;
+        return true;
+    exception
+        when invalid_datetime_format or datetime_field_overflow then
+            return false;
+    end;
+    $fn$;
     if not exists (select 1 from pg_constraint where conname = 'repository_metrics_authored_at_iso') then
         alter table dojo.repository_metrics
             add constraint repository_metrics_authored_at_iso
             check (props->>'authored_at' is null
-                   or props->>'authored_at' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$');
+                   or (props->>'authored_at' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$'
+                       and dojo.is_iso_instant(props->>'authored_at')));
     end if;
 end $$;
 
@@ -38,13 +56,15 @@ declare
     v text;
     i int;
     vals text[] := array['2026-10-06T14:00:00Z', '2026-10-06T14:00:00+00:00',
-                         '2026-10-06T14:00:00.123456+00:00'];
+                         '2026-10-06T14:00:00.123456+00:00', '2026-10-06T24:00:00Z'];
 begin
     select id into m_id from sensei.metrics order by key limit 1;
 
-    -- Malformed values fail the CHECK: garbage, and a local time with no
-    -- offset (the cast must never depend on the session TimeZone).
-    foreach v in array array['not-a-time', '2026-10-06T14:00:00'] loop
+    -- Malformed values fail the CHECK: garbage, a local time with no offset
+    -- (the cast must never depend on the session TimeZone), and calendar
+    -- impossibilities the regex alone admits but the cast refuses.
+    foreach v in array array['not-a-time', '2026-10-06T14:00:00',
+                             '2026-02-30T00:00:00Z', '2026-13-01T00:00:00Z'] loop
         ok := false;
         begin
             insert into dojo.repository_metrics
@@ -60,8 +80,10 @@ begin
     end loop;
 
     -- Valid values insert, one day each (the unique key spans the day): Z, a
-    -- numeric offset, fractional seconds, and an absent key.
-    for i in 1..3 loop
+    -- numeric offset, fractional seconds, 24:00 (the cast accepts midnight
+    -- end-of-day, so the CHECK agrees with it — ingest stays stricter), and
+    -- an absent key.
+    for i in 1..4 loop
         insert into dojo.repository_metrics
             (tenant_id, repository_id, metric_id, scope, computed_on, value, props)
         values ('b0000000-0000-4000-8000-00000000006b', '90000000-0000-4000-8000-0000000000d1',
@@ -70,7 +92,7 @@ begin
     insert into dojo.repository_metrics
         (tenant_id, repository_id, metric_id, scope, computed_on, value, props)
     values ('b0000000-0000-4000-8000-00000000006b', '90000000-0000-4000-8000-0000000000d1',
-            m_id, 'repo', current_date - 4, 1, '{}');
+            m_id, 'repo', current_date - 5, 1, '{}');
 end $$;
 
 rollback;

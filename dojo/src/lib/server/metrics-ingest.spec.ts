@@ -131,17 +131,27 @@ describe('ingestMetrics', () => {
 	it('refuses a row whose props.authored_at is present but not an ISO-8601 instant with an offset, by name', async () => {
 		// One malformed authored_at would fail the whole workspace read for
 		// every viewer (the strict cast) without naming its row — so the write
-		// boundary refuses it, and the batch keeps its good rows.
+		// boundary refuses it, and the batch keeps its good rows. Calendar
+		// impossibilities count as malformed even where Date.parse rolls over.
 		const db = fakeDojoDb(tables());
 		const out = await ingestMetrics(db as never, [
 			row({ props: { authored_at: 'not-a-time' } }),
 			row({ props: { authored_at: '2026-10-06T14:00:00' } }),
+			row({ props: { authored_at: '2026-02-30T00:00:00Z' } }),
+			row({ props: { authored_at: '2026-13-01T00:00:00Z' } }),
+			row({ props: { authored_at: '2026-10-06T24:00:00Z' } }),
 			row({ props: { authored_at: '2026-10-06T14:00:00Z' } }),
 			row({ props: { authored_at: '2026-10-06T14:00:00+00:00' } }),
 			row({ props: {} })
 		]);
 		expect(out.accepted).toBe(3);
-		expect(out.rejected.map((r) => r.reason)).toEqual(['invalid_authored_at', 'invalid_authored_at']);
+		expect(out.rejected.map((r) => r.reason)).toEqual([
+			'invalid_authored_at',
+			'invalid_authored_at',
+			'invalid_authored_at',
+			'invalid_authored_at',
+			'invalid_authored_at'
+		]);
 		expect((sent(db)[0] as unknown[])).toHaveLength(3);
 	});
 
