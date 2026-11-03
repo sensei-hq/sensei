@@ -27,7 +27,7 @@ with its receipt* — not a dashboard to maintain.
 
 - In: **Today** (`/`) — one hero koan + ≤3 supporting insights + the adopted lane +
   FTR chip/trend + ≤5 recent sessions, with the early/mature mood switch; **Workspaces**
-  (`/projects`) — the index of workspaces with health, filter chips
+  (`/workspaces`) — the index of workspaces with health, filter chips
   (All/Active/Dormant/Archived), grid/list toggle, search, open → workspace window;
   **Insights** (`/insights`) — tri-column Now/Soon/Settled server bucketing with
   one-decision-one-default triage; **Memories** (`/memories`) — human curation of the
@@ -50,14 +50,14 @@ with its receipt* — not a dashboard to maintain.
 - **API — Today** — `GET /api/observatory/today` · `/ftr` · `/ftr-daily` ·
   `/tool-usage` · `/tool-signals` · `/tool-insights` · `/model-effectiveness`.
 - **API — Insights** — `GET /api/insights`; Apply → `POST
-  /api/projects/{project_id}/recommendations/{rec_id}/accept`; Dismiss → `…/reject`.
-- **API — Workspaces** — `GET /api/projects` (index) · `/{id}/ftr` · `/quality-signals`
+  /api/workspaces/{id}/recommendations/{rec_id}/accept`; Dismiss → `…/reject`.
+- **API — Workspaces** — `GET /api/workspaces` (index) · `/{id}/ftr` · `/quality-signals`
   · `/maturity` · `/ftr-daily` · `/teachings` · `/hotspots`.
 - **API — Sessions** — `GET /api/sessions` · `/{id}` · `/{id}/tool-timeline` ·
   `/{id}/replay`.
 - **API — Memories** — `GET|POST /api/knowledge/memories`; `/{id}` + `/promote`,
   `/generalise`, `/archive`, `/reinforce`, `/challenge`, `/dismiss`, `/merge`;
-  `GET /api/projects/{id}/memories`.
+  `GET /api/workspaces/{id}/memories`.
 - **API — Collective / Upgrades / Logs** — `GET|PUT /api/preferences/collective`;
   `GET|POST /api/dojo/memberships`; `GET /api/dojo/sync-state`; `GET /api/upgrades`
   (+ `/apply`, `/mute`, `/pin`); `GET|POST /api/logs`; `GET /api/tasks/scheduled` +
@@ -89,16 +89,16 @@ with its receipt* — not a dashboard to maintain.
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Hero koan | the day's one teaching (≤60-char title + 2–3 sentences) | `"The AI does not know your auth."` |
-| Koan source | clickable provenance | `from s-2891 · s-2889 · s-2886` |
-| Insight card (≤3) | a supporting observation | `繰 · Pattern recurring · Cache invalidation missed again` |
-| Adopted lane (≤5) | what sensei did on the user's behalf | `Canvas smoothing pattern → rule · lumen-studio` |
-| FTR chip | 14-day rolling first-turn resolution | `78%, up 6 pts` |
-| Triage stats | Now · Soon · Settled counts | `{now} · {soon} · {settled}` |
-| Workspace status dot | warning if `warn`; success if `!warn && ftr14d ≥ 0.8`; else ink-mute | `warning` |
-| Session row | time · workspace · duration · corrections · ftr · outcome | `09:14 · sensei · 42m · 0 corrections · ✓ FTR · completed` |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Hero koan | the day's one teaching (≤60-char title + 2–3 sentences) | `"The AI does not know your auth."` | take its one action (Apply / Review / Dismiss) |
+| Koan source | clickable provenance | `from s-2891 · s-2889 · s-2886` | open the source session to check the receipt |
+| Insight card (≤3) | a supporting observation | `繰 · Pattern recurring · Cache invalidation missed again` | Apply, Review or Dismiss |
+| Adopted lane (≤5) | what sensei did on the user's behalf | `Canvas smoothing pattern → rule · lumen-studio` | challenge or archive an adopted item that is wrong |
+| FTR chip | 14-day rolling first-turn resolution | `78%, up 6 pts` | falling → open Sessions and read the corrected ones |
+| Triage stats | Now · Soon · Settled counts | `{now} · {soon} · {settled}` | open Insights › Now |
+| Workspace status dot | warning if `warn`; success if `!warn && ftr14d ≥ 0.8`; else ink-mute | `warning` | open the workspace that warns |
+| Session row | time · workspace · duration · corrections · ftr · outcome | `09:14 · sensei · 42m · 0 corrections · ✓ FTR · completed` | open its replay in Instruments |
 
 ## Done gate
 
@@ -106,8 +106,8 @@ with its receipt* — not a dashboard to maintain.
   both); the koan is specific and the early action is absent.
 - Every `hero.source` id resolves via `GET /api/sessions/{id}`; the adopted lane shows
   real rows or the honest early string.
-- `/projects` chips sum to All; dormant/archived cards show repos/libs/last-session;
-  the grid/list preference persists (`localStorage` key `sensei:projects:view`).
+- `/workspaces` chips sum to All; dormant/archived cards show repos/libs/last-session;
+  the grid/list preference persists (`localStorage` key `STORAGE_KEYS.workspacesView`, `<namespace>:workspaces:view`).
 - `/insights` renders real Now/Soon/Settled bucketing; every card has one highlighted
   recommended verb; Accept schedules `MeasureVerdicts`.
 - `/sessions` range chips reduce the set; a row click calls

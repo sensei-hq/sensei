@@ -38,5 +38,5 @@ acceptance is platform-truthful: the reorg's platform matrix
 ## Legacy sources
 
 `architecture/{cli,app,website}`, `Makefile` (dev convenience, not the install
-path), `homebrew/` (Formula + tap), `.github/` + `.qlty/` (CI), the existing
-`website/` (SvelteKit marketing site).
+path), `homebrew/` (Formula + tap), `.github/` + `.qlty/` (CI), the SvelteKit
+marketing site (the sibling repository `sensei-hq/website`, #346).

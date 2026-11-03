@@ -21,8 +21,11 @@ would ship a regression stops and says why.*
 
 ## Decisions this module rests on (2026-10-21)
 
-- **External systems are read-only; the dōjō pulls.** CI and tracker APIs are read,
-  never written ([roadmap/09 D2–D3](../../../../roadmap/09-dojo-expansion.md#decisions-user-2026-10-21)).
+- **CI is read-only; the dōjō pulls.** CI and tracker APIs are read
+  ([roadmap/09 D2–D3](../../../../roadmap/09-dojo-expansion.md#decisions-user-2026-10-21)).
+  Org workspaces use dōjō-owned tracker connections (D49; needs the secret store, #310);
+  the daemon path stays for solo and personal use. Ticket writeback is opt-in per
+  workspace, off by default (D50); this module never writes to CI.
 - **Signals:** deployments from **GitHub Actions** and **Azure Pipelines** through the
   workspace's integrations, with **git tags** as the fallback (D4).
 - **Incidents:** a **production incident** is its own entity. (The confidentiality
@@ -143,7 +146,7 @@ in sensei:
 - A key computed per author, or shown on a person.
 - A gate that reads the whole workspace's absolute ratio instead of the release's
   change set.
-- Sensei writing to a CI system or tracker.
+- Sensei writing to a CI system, or to a tracker in a workspace that has not opted in to writeback (D50).
 - A confidentiality incident counted toward change failure rate or time to restore.
 - An empty or unconnected workspace reading as "0 deployments" or "gate passed".
 

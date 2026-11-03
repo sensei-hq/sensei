@@ -13,7 +13,7 @@
 | M17 | **Code Map** | The code graph is legible at every level — birds-eye to symbol | [`README`](17-code-map/README.md) · [`code-map`](17-code-map/scenarios/code-map.feature) · [`diagrams`](17-code-map/scenarios/diagrams.feature) |
 | M18 | Instruments | The user can see and replay what the assistant actually did | [`README`](18-instruments/README.md) · [`instruments`](18-instruments/scenarios/instruments.feature) · [`instruments-health`](18-instruments/scenarios/instruments-health.feature) |
 | M19 | Insights & Impact | A recommendation is applied, measured, and reinforced | [`README`](19-insights-and-impact/README.md) · [`insights`](19-insights-and-impact/scenarios/insights.feature) · [`impact`](19-insights-and-impact/scenarios/impact.feature) |
-| M20 | Planner & Baseline | A goal becomes phases → features → acceptance criteria + gates | [`README`](20-planner-and-baseline/README.md) · [`planner`](20-planner-and-baseline/scenarios/planner.feature) · [`baseline`](20-planner-and-baseline/scenarios/baseline.feature) |
+| M20 | Planner & Baseline | A goal becomes phases → features → acceptance criteria, measured against a baseline | [`README`](20-planner-and-baseline/README.md) · [`planner`](20-planner-and-baseline/scenarios/planner.feature) · [`baseline`](20-planner-and-baseline/scenarios/baseline.feature) |
 | M21 | Relay | A long run is supervised from anywhere, without leaking code | [`README`](21-relay/README.md) · [`relay`](21-relay/scenarios/relay.feature) · [`relay-drivers`](21-relay/scenarios/relay-drivers.feature) |
 | M22 | Agentic Execution | sensei drives a multi-model Planner→Builder→Judge run | [`README`](22-agentic-execution/README.md) · [`agentic-execution`](22-agentic-execution/scenarios/agentic-execution.feature) |
 
@@ -24,7 +24,7 @@ context delivery (M14), the Observatory's daily view and its module loops (M15),
 the per-workspace window (M16), **the Graph UI Surface — the Code map (M17)**
 rendering the core code graph built by M4 (Indexer) with L0/L1/L2 level-of-detail
 (reorg §9.7), instruments and replay (M18), insights and impact verdicts (M19),
-the planner and baseline gates (M20), Relay's away-from-keyboard supervision (M21),
+the planner and its baseline (M20), Relay's away-from-keyboard supervision (M21),
 and agentic execution (M22).
 
 ## Unified Graph Architecture
@@ -48,7 +48,7 @@ M14 first (the assistant channel) → M15/M16 (the human channels) → **M17 (th
 
 The humans in [`../../03-personas.md`](../../03-personas.md) — solo and team
 developers daily, and the **manager / delivery-lead** persona through M17's L0
-and M20's gates.
+and M20's baseline.
 
 ## Legacy sources
 

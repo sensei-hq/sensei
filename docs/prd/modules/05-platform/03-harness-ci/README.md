@@ -60,12 +60,12 @@ e2e**. The user feels this as *main is always shippable — I trust the gate.*
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Pre-commit status | all hooks passed | `✅ fmt · ✅ clippy · ✅ sql-layer · ✅ unit-tests` |
-| E2E status | passing / known-red / flaky | `T-3 known red · 47/51 passing` |
-| Release status | drafted / published / failed | `v0.12.0 · published` |
-| Qlty score | code quality grade | `A-` |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Pre-commit status | all hooks passed | `✅ fmt · ✅ clippy · ✅ sql-layer · ✅ unit-tests` | fix the failing hook before committing |
+| E2E status | passing / known-red / flaky | `T-3 known red · 47/51 passing` | fix the regression, or the flaky test |
+| Release status | drafted / published / failed | `v0.12.0 · published` | failed → fix the release job and run it again |
+| Qlty score | code quality grade | `A-` | fix the files pulling the grade down |
 
 ## Done gate
 

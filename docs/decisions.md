@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-10-28
+updated: 2026-11-03
 ---
 
 # Decisions
@@ -9,6 +9,45 @@ updated: 2026-10-28
 > The anti-rework memory — never re-derive a settled choice.
 > The **design journey** (approaches tried, what worked, what didn't) lives in
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
+
+---
+
+## 2026-11-03 — PRD alignment round: D47–D70 (user, answering the orientation review)
+
+Decided with the user over the 2026-11-03 orientation (`docs/review/2026-11-03-orientation.md`), in
+order to make the PRD, journeys and specs consistent before the parallel lanes start
+(`docs/plan/2026-11-03-parallel-lanes.md`). **F4 supersedes the entry below it** ("WP4 F4 needed no
+new decision"): the user revisited D10 for viewer pools and chose to withhold them; teams and sprints
+bring the cross-team comparison D10 named as its trigger. D57 was first stated wrongly by the
+reviewer ("mandatory final, else most specific") and corrected to the code before recording.
+
+| # | Decision |
+|---|---|
+| D47 | A **target** is a metric threshold. A target set to `block` *gates* work. The UI says "target missed (blocking)". "Gate" stays relay's human-approval word. |
+| D48 | Target ladder: **Dōjō → Workspace → Repository → Sprint → Task type → Task**, most specific wins. Teams report results and own no targets. No Epic level in v1. |
+| D49 | Tracker connections: **dōjō-owned for org workspaces** (Wave C, needs the #310 secret store); the daemon path stays for solo/personal use. New adapters (GitHub Issues, ADO) go on the dōjō path. |
+| D50 | Ticket writeback (ac7822d2b) is **opt-in per workspace, off by default**. This amends D3. |
+| D51 | The menu order in orientation §5 is approved: Cowork mocks it, then implements it. |
+| F4 | A viewer pool with fewer than 2 contributors is withheld (supersedes D10 for viewer pools). |
+| D52 | **A solo developer gets everything free**, blocking targets included, on their personal dōjō. **Paid targets are an org feature, and only for private repositories.** An org's public repositories get targets free. This follows D46's line (org private = subscribed) and narrows D24's "gating is paid" to org-private. |
+| D53 | **The dōjō is the client; there is no client separation** (reaffirms D34). A session in a repository is governed by **that repository's dōjō** alone: its rules and its targets. No employer floor carries into another dōjō. A person's own `user`-rung rules still apply locally, below the dōjō by the scope ladder. Remove T3:113/225 and T2:118 ("client binding", "client's tracker and gates", "employer floor") and the membership-contexts line at objectives:76–78. |
+| D54 | **Who sets targets:** Dōjō + Workspace levels = admin; Repository = maintainer+ on it; Sprint / Task type / Task = maintainer+ on any repository in the workspace. Leads read results per person (D38); viewers read aggregates only (D8). The manager persona splits: a member manager → maintainer or lead; an outside manager or client → viewer. |
+| D55 | **No pairing.** The relay acts only through the signed-in person's dōjō session, with explicit, revocable permissions. R6 is rewritten to say this; vision:115 stands. |
+| D56 | **The knowledge promotion path runs opposite to the governance ladder:** user → repository → workspace → dōjō → global shared. Each step outward is a promotion; it is never a precedence. Crossing out of a dōjō into global shared keeps k ≥ 3 contributors (D26/T1). `memory_scope` must gain the `user`, `repository` and `dojo` steps (today: global, workspace, stack, task_type, module). That is a schema item for the learnings lane. |
+| D57 | **Governance precedence = the code** (`pg_store/governance.rs:61,339`: enforcement desc, then scope desc): the **stronger enforcement wins** (mandatory > required > recommended > advisory, and mandatory is never overridden); between rules of equal enforcement, the **most specific scope wins** (general → user → dōjō → workspace → repository). A repository can tighten a dōjō rule but cannot weaken it. (Corrected 2026-11-03: L0 had first stated it as "mandatory final, else most specific".) |
+| D58 | **Lead** = the team lead (D38). `decisions.md:151` (Lead as the client-confidentiality role) is marked superseded. Add a Lead persona: sees teammates' metrics per person across the workspaces the lead can read; sets targets only if also a maintainer. |
+| D59 | **Pricing** (P1–P3): SSO and audit are **free** (audit is governance, D19). The subscription is **per org, priced by the seats who work on its private repositories**; contributors to public repositories and viewers are never counted. The relay's team on-call queue (R8) is **free**. |
+| D60 | **Vocabulary:** "solution" was the earlier name for a **workspace**, "org" in a ladder is the **dōjō**, "module" in a ladder is the **repository**. The multi-repository cascade is general → dōjō → workspace → repository. |
+| D61 | **A missed blocking target is information plus a handoff, not a hard stop** (F1). Sensei says which targets are missed and what to fix, and hands the fix to the assistant to clear them. On the dōjō side a **lead or admin accepts the deviation** with a note, and may open a follow-up ticket for the issues the miss identified. Opening a ticket writes to the tracker, so it follows D50: opt-in per workspace; otherwise Sensei drafts the ticket for the lead to file. |
+| D62 | **Targets reach the assistant through MCP** (F2), together with the ticket's own rules, at the start of work on a ticket. |
+| D63 | **A ticket is the unit of work handed to the assistant** (F3). The sync lists the tickets assigned to the user. The user hands the assistant a ticket key; the assistant fetches it through a **tracker-agnostic MCP tool served by the daemon**. That fetch **marks the start of work on the ticket** and links the session to it. Branch/commit/prompt key matching stays as the fallback, for an agent that fetched the ticket elsewhere (e.g. `gh issue view`). |
+| D64 | **A personal dōjō is created at sign-in** (F4). |
+| D65 | **Learning verbs:** one verb, **Share →**, along the D56 promotion path; **Reinforce / Retire**, driven by Impact's verdict; "skill" becomes a memory kind (F5). |
+| D66 | **Two misses of a blocking target on the same cause propose a memory** at the user step; it is offered for promotion up the D56 path once it helps (F6). |
+| D67 | **"What applies here"** on the desktop Dōjō screen: the resolved rules and targets for the current workspace, each with its source (F7). |
+| D68 | **A minimal viewer shell this week** (F8): the granted workspaces, **metrics first**, to judge whether the overall workflow is healthy; target results in aggregate; nothing else. |
+| D69 | **The dōjō Home is a "needs you" queue** (F9): missed targets awaiting acceptance, a sync that has stopped, approvals. No email or Slack this week. |
+| D70 | **Menus** (a, b, c): "Needs you" becomes **Act**; Constitution moves into the dōjō's **Govern** group; setup's "Join your dōjō" step is **skippable**. |
 
 ---
 

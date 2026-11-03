@@ -48,9 +48,10 @@ If two disagree, the higher row wins; the lower one is the bug.
 ## Who this is for
 
 The personas in [`03-personas.md`](03-personas.md) — the humans whose goals every
-module's "Serves:" line must name. Newly covered this pass: **management /
-delivery-lead** and **client / workspace stakeholder** viewpoints, for the
-multi-user, multi-team case.
+module's "Serves:" line must name. The multi-user, multi-team case adds the
+**manager** (a member manager is a maintainer or a lead; an outside manager or
+client is a viewer, D54), the **client / workspace stakeholder** (a viewer, D8) and
+the **team lead** (per-person metrics across the workspaces the lead can read, D58).
 
 ## The 30 modules, by plane
 

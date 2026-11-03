@@ -2,7 +2,7 @@
 
 **Plane:** insight · **Status:** [roadmap/02-insight.md](../../../../roadmap/02-insight.md) ·
 **Serves:** every persona — the read most teams care about; every other plane renders
-what this module derives (Delivery), and Team gates (T3) rely on its data not lying.
+what this module derives (Delivery), and Team targets (T3) rely on its data not lying.
 
 ## Purpose
 
@@ -35,7 +35,7 @@ as *numbers that don't lie, and say what they're for*.
 - Out: the analyzer that produces per-session `sessions.ftr` (M7 — this module rolls
   it up); surfacing in the apps (overview/impact chips, health dial, radar — Delivery
   plane); DORA delivery metrics and release gates (specified in [T5](../../04-team/05-releases-and-dora/README.md); the five keys land in this module's plumbing); the
-  architecture-metrics family (#156) is spec'd separately and unblocks T3's gates;
+  architecture-metrics family (#156) is spec'd separately and unblocks T3's targets;
   **diagrams of the architecture metrics** — the layers histogram, zones and cycles
   are drawn once, by the Code map ([M17](../../03-delivery/17-code-map/README.md)).
   Metrics keeps their numbers and trends and links into the lens that explains them.
@@ -120,16 +120,16 @@ as *numbers that don't lie, and say what they're for*.
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Registry row | what it computes, how to read it, what "good" is | `ftr`: pct, higher_better, purpose + how_to_read (#gotcha) |
-| Metric status | per-repo computation state — live / thin / never | `false_crash_rate`: "never computed" (0 values), not a chart |
-| Latest value + series | per metric, grain-selectable | `ftr` daily: Σnum/Σden with session_count |
-| Trend arrow | `lag()` prior + delta, direction-coloured | weekly ftr 0.75 → 0.82 (▲) |
-| Health dial + radar | `project_health_score`; radar plots **ratings**, never raw values | 82, from 18 of 21 metrics |
-| Coverage readout | `rated_metrics`/`total_weight` + trend `coverage` | "65, from 18 of 21 metrics" — never a bare number |
-| Pareto / heatmap | churn concentration, module friction map | rework_density per module |
-| Architecture metric (layers, zones, cycles) | the number and its trend, plus a link into the Code map lens | layers `25 up` → Structure with *Colour by direction*; zone of pain → Zones; cycles → Cycles |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Registry row | what it computes, how to read it, what "good" is | `ftr`: pct, higher_better, purpose + how_to_read (#gotcha) | read how to act on the metric; a gating-eligible metric can carry a target (D47) |
+| Metric status | per-repo computation state — live / thin / never | `false_crash_rate`: "never computed" (0 values), not a chart | *never* or *thin* → connect the source, or run `POST /api/metrics/backfill` |
+| Latest value + series | per metric, grain-selectable | `ftr` daily: Σnum/Σden with session_count | open the datapoint drilldown to see the sessions behind a bad day |
+| Trend arrow | `lag()` prior + delta, direction-coloured | weekly ftr 0.75 → 0.82 (▲) | wrong way → take the metric's action item (open the file or lens, or propose a rule) |
+| Health dial + radar | `project_health_score`; radar plots **ratings**, never raw values | 82, from 18 of 21 metrics | start with the lowest-rated spoke |
+| Coverage readout | `rated_metrics`/`total_weight` + trend `coverage` | "65, from 18 of 21 metrics" — never a bare number | low coverage → compute the missing metrics before trusting the score |
+| Pareto / heatmap | churn concentration, module friction map | rework_density per module | refactor or add tests on the module carrying the most rework |
+| Architecture metric (layers, zones, cycles) | the number and its trend, plus a link into the Code map lens | layers `25 up` → Structure with *Colour by direction*; zone of pain → Zones; cycles → Cycles | open the linked lens and break the cycle or split the module |
 
 ## Done gate
 
@@ -196,7 +196,7 @@ curl -s http://localhost:7744/api/projects/sensei/health \
   a metric to its chart and LOD (P1).
 - D-6 — metric doc defects: **closed** (#153 `churn_rate`, #154 `time_to_useful_result`,
   both 2026-10-19; see [02-insight.md](../../../../roadmap/02-insight.md)). The #156 architecture-metrics
-  family is WIP in a separate backlog session (decision 8) and unblocks T3's gates.
+  family is WIP in a separate backlog session (decision 8) and unblocks T3's targets.
 
 ## Related
 

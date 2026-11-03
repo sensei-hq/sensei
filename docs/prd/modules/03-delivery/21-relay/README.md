@@ -78,16 +78,16 @@ this as *sensei is doing the work, and I'm in the loop.*
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Run status | pending / running / paused / stalled / done / failed | `running` |
-| Drive tick | heartbeat + progress log | `tick 12 · phase 2/3 · task 5/7` |
-| Limit hit | daily / weekly / monthly cap | `daily cap · reset 02:00 UTC` |
-| Watchdog | healthy / stalled (recover N/3) / crashed | `stalled · recover 2/3` |
-| Gate decision | allow / deny (hard) / review (semantic) | `deny · destructive rm -rf` |
-| Nudge | user action required | `nudge: approve gate #g-4` |
-| Relay segment | phase / task / gate / tool-call | `task: add /login route` |
-| Dōjō inbox | pending / acknowledged | `pending · 3 unacked` |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Run status | pending / running / paused / stalled / done / failed | `running` | stalled or failed → open the run; resume or stop it |
+| Drive tick | heartbeat + progress log | `tick 12 · phase 2/3 · task 5/7` | none — candidate to cut (heartbeat) |
+| Limit hit | daily / weekly / monthly cap | `daily cap · reset 02:00 UTC` | wait for the reset, or raise the cap |
+| Watchdog | healthy / stalled (recover N/3) / crashed | `stalled · recover 2/3` | stalled at 3/3 → recover the run by hand |
+| Gate decision | allow / deny (hard) / review (semantic) | `deny · destructive rm -rf` | review → approve or deny it in the dōjō inbox |
+| Nudge | user action required | `nudge: approve gate #g-4` | approve or deny the gate it names |
+| Relay segment | phase / task / gate / tool-call | `task: add /login route` | none — candidate to cut |
+| Dōjō inbox | pending / acknowledged | `pending · 3 unacked` | acknowledge the pending items |
 
 ## Done gate
 

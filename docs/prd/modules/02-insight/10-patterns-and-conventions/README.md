@@ -84,14 +84,14 @@ knows how we do things here*.
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| `get_workspace_conventions()` | derived patterns + chosen options for this workspace | "SSR data-separation is the standard here" |
-| `match_pattern(task)` | ranked matches with tradeoffs | adapter task → `custom.assistant_adapter_trait` + instances |
-| Codebase custom pattern | named community cluster with shared shape | `custom.assistant_adapter_trait` |
-| Anti-pattern violation | duplication / spaghetti / broken layering above threshold | Insights Now violation card |
-| Optimization opportunity | n+1 / sync-on-hot-path / missing index | Insights Soon |
-| FTR conformance | `pattern_effectiveness.ftr_delta` | promotion suggestion when delta crosses min |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| `get_workspace_conventions()` | derived patterns + chosen options for this workspace | "SSR data-separation is the standard here" | follow the standard, or record a deliberate exception |
+| `match_pattern(task)` | ranked matches with tradeoffs | adapter task → `custom.assistant_adapter_trait` + instances | build the task on the top match |
+| Codebase custom pattern | named community cluster with shared shape | `custom.assistant_adapter_trait` | promote it to a convention, or leave it |
+| Anti-pattern violation | duplication / spaghetti / broken layering above threshold | Insights Now violation card | fix the violation, or dismiss it with a reason |
+| Optimization opportunity | n+1 / sync-on-hot-path / missing index | Insights Soon | schedule the fix (Soon) |
+| FTR conformance | `pattern_effectiveness.ftr_delta` | promotion suggestion when delta crosses min | accept the promotion to a rule |
 
 ## Done gate
 
