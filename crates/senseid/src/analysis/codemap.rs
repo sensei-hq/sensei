@@ -106,6 +106,27 @@ pub struct Complexity {
     pub complex: i64,
 }
 
+/// How a module's complexity reads — the one rule the Complexity lens, its
+/// takeaways and the architecture metrics (#156) all use.
+#[allow(dead_code)] // constructed by `tier` in #156 phase B
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComplexityTier {
+    /// More than a fifth of its functions over cyclomatic 10: an outlier.
+    Danger,
+    /// More than a tenth.
+    Warning,
+    Neutral,
+}
+
+impl Complexity {
+    /// Its tier; none when no function was measured. Pending (#156 phase B).
+    #[allow(dead_code)]
+    pub fn tier(&self) -> Option<ComplexityTier> {
+        None
+    }
+}
+
 /// One edge between two modules, of one kind, with the count behind it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleEdge {
@@ -683,6 +704,23 @@ mod tests {
         max_cyclo: i64,
     ) -> MeasuredFile {
         MeasuredFile { module: module.into(), path: path.into(), functions, complex, max_cyclo }
+    }
+
+    /// The complexity rule lives here, once (#156): the app reads the tier the
+    /// daemon sends instead of re-deriving the thresholds, and the metrics count
+    /// the same outliers the lens shows.
+    #[test]
+    #[ignore = "pending: #156"]
+    fn a_module_complexity_carries_its_tier() {
+        let c = |functions, complex| Complexity { functions, complex };
+        assert_eq!(c(10, 3).tier(), Some(ComplexityTier::Danger));
+        assert_eq!(c(10, 2).tier(), Some(ComplexityTier::Warning), "20% is not over a fifth");
+        assert_eq!(c(10, 1).tier(), Some(ComplexityTier::Neutral), "10% is not over a tenth");
+        assert_eq!(c(0, 0).tier(), None, "nothing measured has no tier");
+        assert_eq!(
+            serde_json::to_value(c(4, 1)).unwrap(),
+            serde_json::json!({"functions": 4, "complex": 1, "tier": "danger"})
+        );
     }
 
     fn ids(modules: &[Module]) -> Vec<&str> {
