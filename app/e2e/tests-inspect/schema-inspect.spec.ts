@@ -80,6 +80,7 @@ test('schema — sensei, dbd’s viewer over live data', async ({ tauriPage }) =
   expect(await card('Tables')).toBe(n(payload.tables.length));
   if (payload.enums?.length) expect(await card('Enums')).toBe(n(payload.enums.length));
   expect(await tauriPage.evaluate(`!!document.querySelector('[data-graph-section="counts"]')`)).toBe(false);
+  expect(await tauriPage.evaluate(`!!document.querySelector('[data-graph-design-header]')`), 'only the tabs head the design').toBe(false);
   expect(await tauriPage.evaluate(`!!document.querySelector('[data-testid="schema-sidebar"] [data-graph-design-home]')`)).toBe(false);
   const sideIsRight = (await tauriPage.evaluate(
     `document.querySelector('[data-testid="schema-layout"]')?.lastElementChild?.getAttribute('data-testid') === 'schema-sidebar'`,
@@ -89,7 +90,7 @@ test('schema — sensei, dbd’s viewer over live data', async ({ tauriPage }) =
 
   // The Diagram tab draws every table.
   await tauriPage.evaluate(`(() => {
-    const tab = [...document.querySelectorAll('[data-graph-design-header] [role="tab"], [data-graph-design-header] button')]
+    const tab = [...document.querySelectorAll('[data-testid="schema-tabs"] [role="tab"], [data-testid="schema-tabs"] button')]
       .find((t) => t.textContent.trim() === 'Diagram');
     tab?.click();
   })()`);

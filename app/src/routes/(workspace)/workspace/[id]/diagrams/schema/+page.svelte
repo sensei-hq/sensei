@@ -4,7 +4,7 @@
     // enum) when one is selected, beside the sidebar on the right. rokkit's
     // @rokkit/graph/schema views draw every part; this page places them.
     import {
-        ContentHeader,
+        designTabs,
         DiagramView,
         EntitiesView,
         EnumView,
@@ -14,6 +14,8 @@
         TableView,
         toGraphInput,
     } from '@rokkit/graph/schema';
+    import { Tabs } from '@rokkit/ui';
+    import { messages } from '@rokkit/states';
     import { Screen } from '$lib/components';
     import { senseiApi } from '$lib/api.js';
     import { appState } from '$lib/appstate.svelte.js';
@@ -35,6 +37,8 @@
         void view.load();
     });
 </script>
+
+{#snippet nothing()}{/snippet}
 
 <Screen fill>
     {#snippet header()}
@@ -79,8 +83,11 @@
                             {/if}
                         </div>
                     {:else}
-                        <ContentHeader {model} {name} value={view.tab}
-                            onchange={(v) => (view.tab = v as DesignTabId)} />
+                        <!-- Only the tabs: the design's name and counts are the page header's. -->
+                        <div data-testid="schema-tabs">
+                            <Tabs options={designTabs()} value={view.tab} name={messages.graph.designTabs}
+                                tabPanel={nothing} onchange={(v) => (view.tab = String(v) as DesignTabId)} />
+                        </div>
                         {#if view.tab === 'overview'}
                             <OverviewView {model} counts={false} />
                         {:else if view.tab === 'diagram'}

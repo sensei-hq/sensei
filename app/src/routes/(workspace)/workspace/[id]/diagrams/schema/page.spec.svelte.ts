@@ -41,14 +41,17 @@ function render(body: unknown = PAYLOAD, status = 200) {
 const q = (sel: string) => target.querySelector(sel);
 
 describe('Database · ER', () => {
-  it('opens on the design’s Overview, under dbd’s tabs, with the sidebar on the right', async () => {
+  it('opens on the design’s Overview, under dbd’s tabs alone, with the sidebar on the right', async () => {
     render();
     await settle();
-    expect(q('[data-graph-design-header]')?.textContent).toContain('sensei');
     expect(q('[data-graph-design-overview]')).not.toBeNull();
     const layout = q('[data-testid="schema-layout"]') as HTMLElement;
     const [main, side] = [...layout.children] as HTMLElement[];
-    expect(main.querySelector('[data-graph-design-header]')).not.toBeNull();
+    // Only the tabs head the design: its name and counts are the page header's already.
+    const tabs = [...main.querySelectorAll('[data-testid="schema-tabs"] [role="tab"]')].map((t) => t.textContent?.trim());
+    expect(tabs).toEqual(['Overview', 'Diagram', 'Entities']);
+    expect(main.querySelector('[data-graph-design-header]')).toBeNull();
+    expect(main.textContent).not.toContain('2 tables');
     expect(side.matches('[data-testid="schema-sidebar"]')).toBe(true);
     expect(side.querySelector('[data-graph-design-sidebar]')).not.toBeNull();
   });
@@ -80,7 +83,7 @@ describe('Database · ER', () => {
     (q('[data-testid="schema-back"]') as HTMLButtonElement).click();
     await settle();
     expect(q('[data-testid="schema-page"]')).toBeNull();
-    expect(q('[data-graph-design-header]')).not.toBeNull();
+    expect(q('[data-testid="schema-tabs"]')).not.toBeNull();
   });
 
   it('a read that failed says so, with the status, and can be retried', async () => {
