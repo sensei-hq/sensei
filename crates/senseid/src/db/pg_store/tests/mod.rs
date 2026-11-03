@@ -30,6 +30,7 @@ mod recommendation_actions_tests;
 mod repo_anchor_tests;
 mod scan_tests;
 mod stub_gc_tests;
+mod targets_tests;
 mod tasks_tests;
 mod turn_usage_tests;
 mod typed_rows_tests;
