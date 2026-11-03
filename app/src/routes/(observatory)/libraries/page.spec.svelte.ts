@@ -20,6 +20,49 @@ describe('Libraries /+page — a failed read', () => {
   });
 });
 
+const libraries = [
+  { id: 'r', name: 'rokkit', ecosystem: 'npm', repoCount: 2, repos: ['app'] },
+  { id: 'z', name: 'zod', ecosystem: 'npm', repoCount: 1, repos: ['app'] },
+];
+
+// L5: the list is the loader's (+page.ts) read; the page renders it and makes
+// no read of its own on mount. A failed read stays the error it was (#288).
+describe('Libraries /+page — the loader’s data', () => {
+  it.skip('pending: L5 libraries — the loader’s data: renders the libraries, without a read of its own', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 503, statusText: 'Service Unavailable' });
+    vi.stubGlobal('fetch', fetchSpy);
+    const m = mountComponent(Page, { data: { libs: libraries, error: null } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.querySelectorAll('.lib-card').length).toBe(2));
+    expect(m.container.textContent).toContain('rokkit');
+    expect(m.container.textContent).toContain('zod');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.skip('pending: L5 libraries — the loader’s data: a failed loader read is the error with retry, not "No libraries indexed."', async () => {
+    const m = mountComponent(Page, { data: { libs: [], error: 'Service Unavailable' } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() =>
+      expect(m.container.querySelector('[data-screen-state="error"]')?.textContent).toContain('Service Unavailable'),
+    );
+    expect(m.container.querySelector('[data-action="retry"]')).not.toBeNull();
+    expect(m.container.textContent).not.toContain('No libraries indexed.');
+  });
+
+  it('narrows the list to the search box, ignoring case', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ total: 2, libs: libraries }) }));
+    const m = mountComponent(Page, { data: { libs: libraries, error: null } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.querySelectorAll('.lib-card').length).toBe(2));
+    const search = m.container.querySelector('.lib-search') as HTMLInputElement;
+    search.value = 'ROKK';
+    search.dispatchEvent(new Event('input'));
+    await vi.waitFor(() => expect(m.container.querySelectorAll('.lib-card').length).toBe(1));
+    expect(m.container.textContent).toContain('rokkit');
+    expect(m.container.textContent).not.toContain('zod');
+  });
+});
+
 // #341: a selected library shows what it provides — its own docs, skills and
 // agents — read through the daemon.
 describe('Libraries /+page — what a library provides', () => {
