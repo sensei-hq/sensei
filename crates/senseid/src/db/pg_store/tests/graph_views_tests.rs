@@ -620,7 +620,11 @@ async fn an_interface_is_abstract_by_declaration() {
     let zones = s.component_zones(&pid).await.unwrap();
     s.delete_nodes_by_folder(&fid).await.unwrap();
     let shapes = zones.iter().find(|z| z.component == "pkg/shapes").expect("the module is placed");
-    assert_eq!((shapes.types, shapes.abstract_types), (2, 1), "the interface is abstract, the struct is not");
+    assert_eq!(
+        (shapes.types, shapes.abstract_types),
+        (2, 1),
+        "the interface is abstract, the struct is not"
+    );
     assert_eq!(shapes.abstractness, Some(0.5));
 }
 
