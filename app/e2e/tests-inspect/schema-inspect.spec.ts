@@ -67,11 +67,20 @@ test('schema — sensei, dbd’s viewer over live data', async ({ tauriPage }) =
   };
   const n = (v: number) => v.toLocaleString('en-US');
 
-  // The Overview: dbd's header and cards, the sidebar on the right.
-  const overview = await text(tauriPage, '[data-graph-design-overview]');
-  console.log(`[inspect] schema overview: ${overview?.slice(0, 300)}`);
-  expect(overview).toContain(n(payload.tables.length));
-  if (payload.enums?.length) expect(overview).toContain(n(payload.enums.length));
+  // The counts are the header's stat cards (user, 2026-11-03) — not the Overview's —
+  // and the sidebar has no design-name row: the page is already the workspace's.
+  const card = (label: string) => text(tauriPage, `[data-testid="diagram-stat-${label}"] [data-stat-card-value]`);
+  await tauriPage.evaluate(`(() => {
+    const t = document.querySelector('[data-testid="diagram-stats-toggle"]');
+    if (t?.getAttribute('aria-pressed') === 'false') t.click();
+  })()`);
+  await settle();
+  const cards = await text(tauriPage, '[data-testid="diagram-stats"]');
+  console.log(`[inspect] schema stats: ${cards?.replace(/\s+/g, ' ').slice(0, 300)}`);
+  expect(await card('Tables')).toBe(n(payload.tables.length));
+  if (payload.enums?.length) expect(await card('Enums')).toBe(n(payload.enums.length));
+  expect(await tauriPage.evaluate(`!!document.querySelector('[data-graph-section="counts"]')`)).toBe(false);
+  expect(await tauriPage.evaluate(`!!document.querySelector('[data-testid="schema-sidebar"] [data-graph-design-home]')`)).toBe(false);
   const sideIsRight = (await tauriPage.evaluate(
     `document.querySelector('[data-testid="schema-layout"]')?.lastElementChild?.getAttribute('data-testid') === 'schema-sidebar'`,
   )) as boolean;
