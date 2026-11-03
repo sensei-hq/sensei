@@ -671,6 +671,11 @@ export interface Recommendation {
   current_ftr?: number | null;
   acted_at?: string | null;
   measured_at?: string | null;
+  /** What the recommendation asks for (`revise_rule`, `write_skill`, `audit_stale`, …). */
+  actionType?: string | null;
+  /** The absolute path of the file a rework hotspot is about; null when it is not
+   *  about one file, or the file could not be resolved. */
+  file?: string | null;
 }
 
 // ── Observatory · Insights (Learnings triage) ──────────────────────────────

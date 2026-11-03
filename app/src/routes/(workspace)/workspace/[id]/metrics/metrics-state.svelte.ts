@@ -26,7 +26,7 @@ export type MetricsApi = Pick<
   | 'getWorkspaceMetricSeries'
   | 'tryGetWorkspaceRecommendations'
   | 'tryPreviewRecommendation'
-  | 'tryMaterializeRecommendation'
+  | 'tryMaterializeRecommendationWithReason'
   | 'trySnoozeWorkspaceRecommendation'
 >;
 

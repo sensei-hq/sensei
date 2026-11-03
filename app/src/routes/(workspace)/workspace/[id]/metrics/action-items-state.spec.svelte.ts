@@ -42,7 +42,7 @@ const FILE = item({ kind: 'open-file', label: 'Show lib.rs in Finder', path: '/r
 function setup(over: Partial<Record<keyof ActionItemsApi, unknown>> = {}) {
     const api = {
         tryPreviewRecommendation: vi.fn(() => Promise.resolve(ok(RULE_PREVIEW))),
-        tryMaterializeRecommendation: vi.fn(() => Promise.resolve(ok({ ok: true }))),
+        tryMaterializeRecommendationWithReason: vi.fn(() => Promise.resolve(ok({ ok: true }))),
         trySnoozeWorkspaceRecommendation: vi.fn(() =>
             Promise.resolve(ok({ ok: true, snoozed_until: '2026-11-10T09:00:00+00:00' }))),
         ...over,
@@ -69,7 +69,7 @@ describe('ActionItemsState', () => {
                 confirmLabel: 'Add the rule',
             },
         });
-        expect(api.tryMaterializeRecommendation).not.toHaveBeenCalled();
+        expect(api.tryMaterializeRecommendationWithReason).not.toHaveBeenCalled();
         expect(settle).not.toHaveBeenCalled();
     });
 
@@ -88,7 +88,7 @@ describe('ActionItemsState', () => {
         const { api, settle, state } = setup();
         await state.act(RULE);
         await state.confirm(RULE);
-        expect(api.tryMaterializeRecommendation).toHaveBeenCalledWith('w1', 'r1', {
+        expect(api.tryMaterializeRecommendationWithReason).toHaveBeenCalledWith('w1', 'r1', {
             gov_scope: 'workspace',
             enforcement: 'recommended',
         });
@@ -113,9 +113,9 @@ describe('ActionItemsState', () => {
                 confirmLabel: 'Write the file',
             },
         });
-        expect(api.tryMaterializeRecommendation).not.toHaveBeenCalled();
+        expect(api.tryMaterializeRecommendationWithReason).not.toHaveBeenCalled();
         await state.confirm(SKILL);
-        expect(api.tryMaterializeRecommendation).toHaveBeenCalledWith('w1', 'r1', {});
+        expect(api.tryMaterializeRecommendationWithReason).toHaveBeenCalledWith('w1', 'r1', {});
         expect(settle).toHaveBeenCalledWith('r1');
         expect(state.done).toBe('Wrote .claude/skills/retry-budget/SKILL.md');
     });
@@ -125,7 +125,7 @@ describe('ActionItemsState', () => {
         await state.act(RULE);
         state.cancel(RULE);
         expect(state.flow('r1')).toEqual({ status: 'idle' });
-        expect(api.tryMaterializeRecommendation).not.toHaveBeenCalled();
+        expect(api.tryMaterializeRecommendationWithReason).not.toHaveBeenCalled();
         expect(settle).not.toHaveBeenCalled();
     });
 
@@ -135,7 +135,7 @@ describe('ActionItemsState', () => {
         });
         await state.act(RULE);
         expect(state.flow('r1')).toEqual({ status: 'error', message: 'Internal Server Error' });
-        expect(api.tryMaterializeRecommendation).not.toHaveBeenCalled();
+        expect(api.tryMaterializeRecommendationWithReason).not.toHaveBeenCalled();
         expect(settle).not.toHaveBeenCalled();
     });
 
@@ -146,12 +146,12 @@ describe('ActionItemsState', () => {
         });
         await state.act(RULE);
         expect(state.flow('r1')).toEqual({ status: 'error', message: 'not a materializable action' });
-        expect(api.tryMaterializeRecommendation).not.toHaveBeenCalled();
+        expect(api.tryMaterializeRecommendationWithReason).not.toHaveBeenCalled();
     });
 
     it.skip('pending: actionitems — a failed materialize is the item’s error and the item stays', async () => {
         const { settle, state } = setup({
-            tryMaterializeRecommendation: vi.fn(() => Promise.resolve(fail(409, 'recommendation not found or already decided'))),
+            tryMaterializeRecommendationWithReason: vi.fn(() => Promise.resolve(fail(409, 'recommendation not found or already decided'))),
         });
         await state.act(RULE);
         await state.confirm(RULE);
@@ -215,5 +215,75 @@ describe('ActionItemsState', () => {
         await state.act(item({ kind: 'snooze', label: 'Snooze 7 days', days: 7 }, 'r2'));
         expect(state.flow('r1').status).toBe('confirm');
         expect(state.flow('r2')).toEqual({ status: 'error', message: 'boom' });
+    });
+
+    // ── Review r1 M4: the preview decides, never the item's guessed kind ──────
+
+    it.skip('pending: actionitems — a propose-rule item whose preview is file-class is confirmed and sent as a file', async () => {
+        const { api, state } = setup({
+            tryPreviewRecommendation: vi.fn(() => Promise.resolve(ok(SKILL_PREVIEW))),
+        });
+        await state.act(RULE);
+        const flow = state.flow('r1');
+        expect(flow.status === 'confirm' && flow.confirm).toMatchObject({
+            kind: 'skill',
+            path: '.claude/skills/retry-budget/SKILL.md',
+            confirmLabel: 'Write the file',
+        });
+        await state.confirm(RULE);
+        expect(api.tryMaterializeRecommendationWithReason).toHaveBeenCalledWith('w1', 'r1', {});
+    });
+
+    it.skip('pending: actionitems — a rule is added at the scope and tier its preview proposed', async () => {
+        const { api, state } = setup({
+            tryPreviewRecommendation: vi.fn(() =>
+                Promise.resolve(ok({ ...RULE_PREVIEW, gov_scope: 'repository', enforcement: 'advisory' }))),
+        });
+        await state.act(RULE);
+        const flow = state.flow('r1');
+        expect(flow.status === 'confirm' && flow.confirm.scope).toBe('repository · advisory');
+        await state.confirm(RULE);
+        expect(api.tryMaterializeRecommendationWithReason).toHaveBeenCalledWith('w1', 'r1', {
+            gov_scope: 'repository',
+            enforcement: 'advisory',
+        });
+    });
+
+    // ── Review r1 M1: a failed item can be retried, and the retry writes ──────
+
+    it.skip('pending: actionitems — after a failed snooze, acting again retries and settles', async () => {
+        const snooze = vi.fn()
+            .mockResolvedValueOnce(fail(500, 'boom'))
+            .mockResolvedValueOnce(ok({ ok: true, snoozed_until: '2026-11-10T09:00:00+00:00' }));
+        const { settle, state } = setup({ trySnoozeWorkspaceRecommendation: snooze });
+        await state.act(SNOOZE);
+        expect(state.flow('r1')).toEqual({ status: 'error', message: 'boom' });
+        await state.act(SNOOZE);
+        expect(snooze).toHaveBeenCalledTimes(2);
+        expect(settle).toHaveBeenCalledWith('r1');
+        expect(state.done).toBe('Snoozed until 2026-11-10');
+        expect(state.flow('r1').status).not.toBe('error');
+    });
+
+    it.skip('pending: actionitems — after a failed materialize, acting again previews afresh and the confirm writes', async () => {
+        const materialize = vi.fn()
+            .mockResolvedValueOnce(fail(409, "a skill named 'retry-budget' already exists in this repo; edit the title"))
+            .mockResolvedValueOnce(ok({ ok: true }));
+        const { api, settle, state } = setup({
+            tryPreviewRecommendation: vi.fn(() => Promise.resolve(ok(SKILL_PREVIEW))),
+            tryMaterializeRecommendationWithReason: materialize,
+        });
+        await state.act(SKILL);
+        await state.confirm(SKILL);
+        expect(state.flow('r1')).toEqual({
+            status: 'error',
+            message: "a skill named 'retry-budget' already exists in this repo; edit the title",
+        });
+        await state.act(SKILL);
+        expect(api.tryPreviewRecommendation).toHaveBeenCalledTimes(2);
+        expect(state.flow('r1').status).toBe('confirm');
+        await state.confirm(SKILL);
+        expect(materialize).toHaveBeenCalledTimes(2);
+        expect(settle).toHaveBeenCalledWith('r1');
     });
 });

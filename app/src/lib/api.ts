@@ -1258,10 +1258,18 @@ export function senseiApi(port: number) {
     tryStop: () => tryPost<Record<string, unknown>>('/stop', {}),
 
     // ── Metrics · action items (L3) ──────────────────────────────────────
-    /** Hide a pending recommendation for `days`; 409 when it is no longer pending. */
+    // Both read the daemon's `{ error }` on a refusal, so the person sees why
+    // ("already decided", "a skill named … already exists"), not "Conflict".
+    /** Hide a pending recommendation for `days`; 404 when it is not this
+     *  workspace's, 409 when it is no longer pending. */
     trySnoozeWorkspaceRecommendation: (id: string, recId: string, days: number) =>
-      tryPost<{ ok: boolean; snoozed_until: string }>(
-        `/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/snooze`, { days },
+      tryJson<{ ok: boolean; snoozed_until: string }>(
+        'POST', `/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/snooze`, { days },
+      ),
+    /** `tryMaterializeRecommendation`, with the daemon's reason on a refusal. */
+    tryMaterializeRecommendationWithReason: (id: string, recId: string, opts: { gov_scope?: string; enforcement?: string }) =>
+      tryJson<{ ok: boolean; materialized?: unknown }>(
+        'POST', `/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts,
       ),
   };
 }

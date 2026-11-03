@@ -137,6 +137,7 @@ async fn a_rework_recommendation_carries_its_file_resolved_through_its_pattern()
     let abs = pattern(&s, &ws, Some(&folder), "rework: /elsewhere/lib.rs").await;
     let other = pattern(&s, &ws, Some(&folder), "correction-prone").await;
     let no_folder = pattern(&s, &ws, None, "rework: src/orphan.rs").await;
+    let escapes = pattern(&s, &ws, Some(&folder), "rework: ../../etc/passwd").await;
 
     let r_rel =
         rec(&s, &ws, "_test:rel", "audit_stale", serde_json::json!({ "patterns": [rel] })).await;
@@ -162,6 +163,9 @@ async fn a_rework_recommendation_carries_its_file_resolved_through_its_pattern()
         serde_json::json!({ "patterns": [no_folder] }),
     )
     .await;
+    let r_escapes =
+        rec(&s, &ws, "_test:escapes", "audit_stale", serde_json::json!({ "patterns": [escapes] }))
+            .await;
 
     let recs = s.get_workspace_recommendations(&ws, Some("pending")).await.unwrap();
     let file = |id: &uuid::Uuid| {
@@ -169,10 +173,54 @@ async fn a_rework_recommendation_carries_its_file_resolved_through_its_pattern()
     };
     assert_eq!(file(&r_rel), serde_json::json!(format!("/_test/{suffix}/src/api/server.rs")));
     assert_eq!(file(&r_abs), serde_json::json!("/elsewhere/lib.rs"));
-    // Not about one file, no pattern, a pattern since replaced, or a relative file
-    // with no folder to resolve it against: no file, never a guessed path.
-    for id in [&r_other, &r_none, &r_gone, &r_nofolder] {
+    // Not about one file, no pattern, a pattern since replaced, a relative file
+    // with no folder to resolve it against, or one that climbs out of the
+    // repository with `..`: no file, never a guessed path.
+    for id in [&r_other, &r_none, &r_gone, &r_nofolder, &r_escapes] {
         assert_eq!(file(id), serde_json::Value::Null, "{id}");
     }
+    s.delete_workspace(&ws).await.unwrap();
+}
+
+/// A re-snooze replaces the wake time; it never keeps the later of the two.
+#[tokio::test]
+#[ignore = "pending: actionitems"]
+async fn a_re_snooze_replaces_the_wake_time() {
+    let s = pg_store().await;
+    let ws = s.create_workspace("_test:resnooze", None, None).await.unwrap();
+    let r = rec(&s, &ws, "_test:resnooze", "cross_workspace", serde_json::json!({})).await;
+    let week = s.snooze_recommendation(&ws, &r, 7).await.unwrap().expect("snoozed");
+    let two = s.snooze_recommendation(&ws, &r, 2).await.unwrap().expect("re-snoozed");
+    assert!(two < week, "the second snooze replaces the first: {two} vs {week}");
+    let hours = (two - chrono::Utc::now()).num_hours();
+    assert!((47..=48).contains(&hours), "wakes 2 days out, got {hours}h");
+    assert!(pending_ids(&s, &ws).await.is_empty(), "still hidden");
+    s.delete_workspace(&ws).await.unwrap();
+}
+
+/// The focal "do first" pick (Overview, the ranking pass) never lands on a rec the
+/// pending read hides: a snooze clears the rec's focal flag at once, and the
+/// ranking pass reads only recs that are awake.
+#[tokio::test]
+#[ignore = "pending: actionitems"]
+async fn a_snoozed_rec_is_never_the_focal_pick() {
+    let s = pg_store().await;
+    let ws = s.create_workspace("_test:snooze_focal", None, None).await.unwrap();
+    let top = rec(&s, &ws, "_test:top", "revise_rule", serde_json::json!({})).await;
+    let next = rec(&s, &ws, "_test:next", "cross_workspace", serde_json::json!({})).await;
+    s.set_recommendation_rank(&top, 90.0, true, &serde_json::json!({})).await.unwrap();
+    s.set_recommendation_rank(&next, 40.0, false, &serde_json::json!({})).await.unwrap();
+
+    s.snooze_recommendation(&ws, &top, 7).await.unwrap().expect("snoozed");
+    let (focal,): (bool,) = query_as("SELECT focal FROM inference.recommendations WHERE id = $1")
+        .bind(top)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+    assert!(!focal, "a snoozed rec stops being the focal pick at once");
+
+    let ranked: Vec<uuid::Uuid> =
+        s.get_pending_recs_for_ranking(&ws).await.unwrap().into_iter().map(|r| r.0).collect();
+    assert_eq!(ranked, vec![next], "the ranking pass never sees a snoozed rec");
     s.delete_workspace(&ws).await.unwrap();
 }

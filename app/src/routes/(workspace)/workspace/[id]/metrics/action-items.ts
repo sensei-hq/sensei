@@ -19,14 +19,6 @@ import type { Recommendation } from '$lib/types.js';
  *  absent/unrecognized level — never a fabricated one). */
 export type ActionUrgency = 'high' | 'medium' | 'low' | 'none';
 
-/** The recommendation as the daemon sends it: the shared wire type plus the
- *  fields the action is chosen from. `file` is the absolute path of a rework
- *  hotspot's file, null when the recommendation is not about one file. */
-export type ActionableRecommendation = Recommendation & {
-    actionType?: string | null;
-    file?: string | null;
-};
-
 /** How long a snooze hides an item. */
 export const SNOOZE_DAYS = 7;
 
@@ -39,7 +31,7 @@ export type ItemAction =
     | { kind: 'snooze'; label: string; days: number };
 
 /** pending: actionitems — the mapping lands in phase B. */
-export function actionFor(_rec: ActionableRecommendation, _workspaceId: string): ItemAction {
+export function actionFor(_rec: Recommendation, _workspaceId: string): ItemAction {
     return { kind: 'snooze', label: `Snooze ${SNOOZE_DAYS} days`, days: SNOOZE_DAYS };
 }
 
@@ -84,7 +76,7 @@ export function normalizeUrgency(urgency: string | null | undefined): ActionUrge
  * wire order (the daemon already score-ranks them — the client never re-ranks).
  * Rows with no title are dropped (nothing to act on), never a blank card.
  */
-export function buildActionItems(recs: ActionableRecommendation[], workspaceId: string): ActionItem[] {
+export function buildActionItems(recs: Recommendation[], workspaceId: string): ActionItem[] {
     return recs
         .filter((r) => r.title?.trim())
         .map((r) => {

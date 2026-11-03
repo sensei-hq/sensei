@@ -3,7 +3,8 @@
 // write goes through here.
 //
 // - propose-rule / review-file: preview first (nothing is written), then the
-//   person confirms and the recommendation is materialized.
+//   person confirms and the recommendation is materialized. The PREVIEW decides
+//   what is confirmed and what is sent (`materializeOptions`), not the item.
 // - snooze: the daemon hides the recommendation until it wakes.
 // - open-file: the file is shown in Finder.
 // A settled item leaves the list (`settle`) and `done` says what happened. A
@@ -13,7 +14,7 @@ import type { ActionItem } from './action-items.js';
 
 export type ActionItemsApi = Pick<
     SenseiApi,
-    'tryPreviewRecommendation' | 'tryMaterializeRecommendation' | 'trySnoozeWorkspaceRecommendation'
+    'tryPreviewRecommendation' | 'tryMaterializeRecommendationWithReason' | 'trySnoozeWorkspaceRecommendation'
 >;
 
 export interface ActionItemsDeps {

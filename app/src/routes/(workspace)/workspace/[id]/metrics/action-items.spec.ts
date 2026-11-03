@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { actionFor, buildActionItems, normalizeUrgency, SNOOZE_DAYS } from './action-items.js';
-import type { ActionableRecommendation } from './action-items.js';
+import type { Recommendation } from '$lib/types.js';
+import { SECTIONS } from '../workspace-sidebar-view.js';
 
 const W = 'w1';
 
-function rec(over: Partial<ActionableRecommendation> = {}): ActionableRecommendation {
+function rec(over: Partial<Recommendation> = {}): Recommendation {
     return { id: 'r1', title: 'tighten the retry budget', status: 'pending', ...over };
 }
 
@@ -91,6 +92,8 @@ describe('actionFor', () => {
             label: 'Open libraries',
             href: '/workspace/w1/libraries',
         });
+        // The lens is the workspace window's own `libraries` section, not a literal.
+        expect(SECTIONS.map((s) => s.id)).toContain('libraries');
         expect(actionFor(rec({ actionType: 'library_update' }), 'a b')).toMatchObject({
             href: '/workspace/a%20b/libraries',
         });

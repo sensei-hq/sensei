@@ -6791,105 +6791,153 @@ mod tests {
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
-    // ── L3 · ActionItems act: snooze a pending recommendation ──────────────
+    // ── L3 · ActionItems act: snooze, and acting only through the rec's own workspace ──
 
-    async fn snooze_fixture(state: &AppState) -> (uuid::Uuid, uuid::Uuid) {
-        let ws = state
-            .pg
-            .create_workspace(
-                &format!("_test:snooze_api_{}", uuid::Uuid::new_v4().simple()),
-                None,
-                None,
-            )
-            .await
-            .unwrap();
-        let rec = state
+    async fn rec_in(state: &AppState, ws: &uuid::Uuid, action_type: &str) -> uuid::Uuid {
+        state
             .pg
             .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
-                workspace_id: &ws,
-                title: "_test:snooze_api",
+                workspace_id: ws,
+                title: "_test:rec_actions_api",
                 why: "why",
                 impact: None,
-                action_type: "cross_workspace",
+                action_type,
                 urgency: "medium",
                 based_on: &serde_json::json!({}),
                 reasoning_trace_id: None,
                 prompt: None,
             })
             .await
-            .unwrap();
-        (ws, rec)
+            .unwrap()
+    }
+
+    async fn test_workspace(state: &AppState) -> uuid::Uuid {
+        let name = format!("_test:rec_actions_{}", uuid::Uuid::new_v4().simple());
+        state.pg.create_workspace(&name, None, None).await.unwrap()
+    }
+
+    async fn pending_ids(app: &Router, ws: &uuid::Uuid) -> Vec<String> {
+        let uri = format!("/api/workspaces/{ws}/recommendations?status=pending");
+        let (st, list) = req(app.clone(), "GET", &uri, None).await;
+        assert_eq!(st, StatusCode::OK, "{list}");
+        list.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap().to_string()).collect()
+    }
+
+    fn snooze_uri(ws: impl std::fmt::Display, rec: impl std::fmt::Display) -> String {
+        format!("/api/workspaces/{ws}/recommendations/{rec}/snooze")
     }
 
     /// A snooze hides the recommendation from the pending read and says when it
-    /// wakes; a second snooze of the same rec still answers (it is still pending).
+    /// wakes. A re-snooze replaces the wake time (coordinator ruling, r1 L1).
     #[tokio::test]
     #[ignore = "pending: actionitems"]
     async fn snoozing_a_recommendation_hides_it_from_the_pending_read() {
         let (app, state) = test_app().await;
-        let (ws, rec) = snooze_fixture(&state).await;
-        let uri = format!("/api/workspaces/{ws}/recommendations/{rec}/snooze");
+        let ws = test_workspace(&state).await;
+        let rec = rec_in(&state, &ws, "cross_workspace").await;
+        let wake = |body: &serde_json::Value| {
+            chrono::DateTime::parse_from_rfc3339(
+                body["snoozed_until"].as_str().expect("snoozed_until"),
+            )
+            .expect("rfc3339")
+        };
+
         let (st, body) =
-            req(app.clone(), "POST", &uri, Some(serde_json::json!({ "days": 7 }))).await;
+            req(app.clone(), "POST", &snooze_uri(ws, rec), Some(serde_json::json!({ "days": 7 })))
+                .await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(body["ok"], true, "{body}");
-        let until = chrono::DateTime::parse_from_rfc3339(
-            body["snoozed_until"].as_str().expect("snoozed_until"),
-        )
-        .expect("rfc3339");
-        assert!(until > chrono::Utc::now() + chrono::Duration::days(6), "{body}");
+        let week = wake(&body);
+        assert!(week > chrono::Utc::now() + chrono::Duration::days(6), "{body}");
+        assert!(pending_ids(&app, &ws).await.is_empty(), "the snoozed rec is not pending-shown");
 
-        let (st, list) = req(
-            app.clone(),
-            "GET",
-            &format!("/api/workspaces/{ws}/recommendations?status=pending"),
-            None,
-        )
-        .await;
-        assert_eq!(st, StatusCode::OK, "{list}");
-        assert_eq!(list, serde_json::json!([]), "the snoozed rec is not pending-shown");
+        let (st, body) =
+            req(app.clone(), "POST", &snooze_uri(ws, rec), Some(serde_json::json!({ "days": 2 })))
+                .await;
+        assert_eq!(st, StatusCode::OK, "a re-snooze answers: {body}");
+        let two = wake(&body);
+        assert!(two < week, "a re-snooze replaces the wake time: {two} vs {week}");
+        assert!(two > chrono::Utc::now() + chrono::Duration::days(1), "{body}");
         state.pg.delete_workspace(&ws).await.unwrap();
     }
 
     /// Refusals say what was wrong, never a 200 that did nothing: a snooze length
-    /// outside 1–90 days, a malformed id, a rec that is not pending in this
-    /// workspace, and a workspace the daemon does not know.
+    /// outside 1–90 days, a malformed id, a rec that is not this workspace's
+    /// (404, coordinator ruling r1 M2), a rec already decided (409), and a
+    /// workspace the daemon does not know (404).
     #[tokio::test]
     #[ignore = "pending: actionitems"]
     async fn a_snooze_it_cannot_make_is_refused() {
         let (app, state) = test_app().await;
-        let (ws, rec) = snooze_fixture(&state).await;
-        let snooze = |ws: String, rec: String, body: serde_json::Value| {
+        let ws = test_workspace(&state).await;
+        let rec = rec_in(&state, &ws, "cross_workspace").await;
+        let snooze = |uri: String, days: serde_json::Value| {
             let app = app.clone();
-            async move {
-                let uri = format!("/api/workspaces/{ws}/recommendations/{rec}/snooze");
-                req(app, "POST", &uri, Some(body)).await
-            }
+            async move { req(app, "POST", &uri, Some(serde_json::json!({ "days": days }))).await }
         };
-        let (w, r) = (ws.to_string(), rec.to_string());
         for days in [serde_json::json!(0), serde_json::json!(91), serde_json::json!(-1)] {
-            let (st, body) =
-                snooze(w.clone(), r.clone(), serde_json::json!({ "days": days })).await;
+            let (st, body) = snooze(snooze_uri(ws, rec), days.clone()).await;
             assert_eq!(st, StatusCode::BAD_REQUEST, "days={days}: {body}");
         }
-        let (st, body) =
-            snooze(w.clone(), "not-a-uuid".into(), serde_json::json!({ "days": 7 })).await;
+        let (st, body) = snooze(snooze_uri(ws, "not-a-uuid"), serde_json::json!(7)).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
-        let (st, body) =
-            snooze(w.clone(), uuid::Uuid::new_v4().to_string(), serde_json::json!({ "days": 7 }))
-                .await;
-        assert_eq!(st, StatusCode::CONFLICT, "unknown rec: {body}");
-        let (st, body) = snooze(
-            format!("no-such-{}", uuid::Uuid::new_v4().simple()),
-            r.clone(),
-            serde_json::json!({ "days": 7 }),
-        )
-        .await;
+        let (st, body) = snooze(snooze_uri(ws, uuid::Uuid::new_v4()), serde_json::json!(7)).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "unknown rec: {body}");
+        let no_ws = format!("no-such-{}", uuid::Uuid::new_v4().simple());
+        let (st, body) = snooze(snooze_uri(no_ws, rec), serde_json::json!(7)).await;
         assert_eq!(st, StatusCode::NOT_FOUND, "unknown workspace: {body}");
+        assert_eq!(pending_ids(&app, &ws).await, vec![rec.to_string()], "no refusal changed it");
 
         state.pg.reject_recommendation(&rec).await.unwrap();
-        let (st, body) = snooze(w.clone(), r.clone(), serde_json::json!({ "days": 7 })).await;
+        let (st, body) = snooze(snooze_uri(ws, rec), serde_json::json!(7)).await;
         assert_eq!(st, StatusCode::CONFLICT, "a decided rec: {body}");
+        assert_eq!(
+            body["error"].as_str().map(|e| e.contains("already decided")),
+            Some(true),
+            "the refusal says why: {body}"
+        );
         state.pg.delete_workspace(&ws).await.unwrap();
+    }
+
+    /// Every recommendation action acts only through the rec's own workspace
+    /// (coordinator ruling r1 M2): through another workspace's URL it is a 404 and
+    /// nothing changes; through its own it works. Accept, reject, preview,
+    /// materialize and snooze each ignored the path's workspace before.
+    #[tokio::test]
+    #[ignore = "pending: actionitems"]
+    async fn a_recommendation_is_acted_on_only_through_its_own_workspace() {
+        let (app, state) = test_app().await;
+        let a = test_workspace(&state).await;
+        let b = test_workspace(&state).await;
+        let rec_uri = |ws: &uuid::Uuid, rec: &uuid::Uuid, verb: &str| {
+            format!("/api/workspaces/{ws}/recommendations/{rec}/{verb}")
+        };
+        let cases: [(&str, &str, &str, Option<serde_json::Value>); 5] = [
+            ("accept", "POST", "cross_workspace", Some(serde_json::json!({}))),
+            ("reject", "POST", "cross_workspace", Some(serde_json::json!({}))),
+            ("preview", "GET", "revise_rule", None),
+            (
+                "materialize",
+                "POST",
+                "revise_rule",
+                Some(serde_json::json!({ "gov_scope": "general" })),
+            ),
+            ("snooze", "POST", "cross_workspace", Some(serde_json::json!({ "days": 7 }))),
+        ];
+        for (verb, method, action_type, body) in cases {
+            let rec = rec_in(&state, &a, action_type).await;
+
+            let (st, out) = req(app.clone(), method, &rec_uri(&b, &rec, verb), body.clone()).await;
+            assert_eq!(st, StatusCode::NOT_FOUND, "{verb} through another workspace: {out}");
+            assert!(
+                pending_ids(&app, &a).await.contains(&rec.to_string()),
+                "{verb} through another workspace changed nothing"
+            );
+
+            let (st, out) = req(app.clone(), method, &rec_uri(&a, &rec, verb), body).await;
+            assert_eq!(st, StatusCode::OK, "{verb} through its own workspace: {out}");
+        }
+        state.pg.delete_workspace(&a).await.unwrap();
+        state.pg.delete_workspace(&b).await.unwrap();
     }
 }
