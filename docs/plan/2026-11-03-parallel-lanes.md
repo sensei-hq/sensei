@@ -137,7 +137,7 @@ Owns: `crates/senseid/src/tasks/{dojo_sync,graph_push}.rs`, `crates/senseid/src/
 tests under `database/tests/dojo/**`; `docs/lanes/L1.md`;
 `dojo/src/lib/components/screens/ScrWorkspacePreview.svelte`; for WP5 round 2 also `kit/MetricCards.svelte` (new),
 `kit/Spark.svelte`, `components/Spark.svelte`, `my-metrics-view.ts`, `ScrMyMetrics.svelte`.
-1. **WP4:** apply review round 2 (F4 `having count(*) >= 2`, a shared `isUuid`, F8), unstage
+1. **WP4:** apply review round 2 (F4: `having count(distinct principal_id) >= 2` over one reading per person per day, see `coord/reviews/L1-wp4-f4-*`, a shared `isUuid`, F8), unstage
    `packages/codemap/focus.*`, commit in the main checkout, then move to the lane worktree.
 2. **WP8** (D46, `all_my_repositories`), then re-run the WP4 suite.
 3. **WP9 Part A** (set-based `register_repositories`).
