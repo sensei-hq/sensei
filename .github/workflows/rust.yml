@@ -78,6 +78,12 @@ jobs:
       - name: DDL comments
         run: make check-ddl-comments
 
+      # D83: no new failure-mask shapes (a failed read turned into a plausible
+      # value). A static read of crates/, app/src, dojo/src, packages/ and
+      # database/ddl with its own self-test; same entry point as test-fast.
+      - name: No fabrication ratchet
+        run: make check-no-fabrication
+
       - name: Homebrew tokens in the docs
         run: make check-brew-tokens
 

@@ -371,7 +371,7 @@ app-check:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard test-crates-fast test-app-unit test-plugin
+test-fast: check-sql-in-layer check-no-fabrication check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard test-crates-fast test-app-unit test-plugin
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -387,6 +387,16 @@ test-crates-fast:
 ## rides the pre-commit path — the enforcement a documented exception could not give.
 check-sql-in-layer:
 	@scripts/check-sql-in-layer.py
+
+## D83: a failed read must surface as an error, never a plausible value. A ratchet
+## over failure-mask shapes per (rule, file) — scripts/fabrication-baseline.json may
+## only go down; reviewed non-masks live in scripts/fabrication-allow.tsv. The guard
+## mutation-tests itself first (--test), the way check-leak-guard does. No build and
+## no database, so it rides the pre-commit path; CI calls this same target.
+.PHONY: check-no-fabrication
+check-no-fabrication:
+	@python3 scripts/check-no-fabrication.py --test >/dev/null || python3 scripts/check-no-fabrication.py --test
+	@python3 scripts/check-no-fabrication.py
 
 check-ddl-grants:
 	@python3 scripts/check-grant-targets.py
@@ -418,7 +428,7 @@ check-brew-tokens:
 check-leak-guard:
 	@bash .githooks/check-no-leaks.sh --test >/dev/null || bash .githooks/check-no-leaks.sh --test
 
-test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
+test: check-sql-in-layer check-no-fabrication check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
 
 test-crates:
 	cargo test --workspace

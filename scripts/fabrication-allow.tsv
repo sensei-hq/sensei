@@ -1,0 +1,456 @@
+file	rule	anchor	class	reason	reviewed	date
+app/src/lib/components/settings/workspaces-section-state.svelte.ts	T3	this.workspaces = res.data.map((p) => ({ ...p, folders: p.folders ?? [] }));	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/health-transport.ts	T3	for (const ev of this.opts.resolveEvents ?? []) onEvent(ev);	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/impact-load.ts	T3	const rows = (m.data ?? []).map((r) => toImpactRow(r, workspace));	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/impact-load.ts	T3	impactLog: l.data?.verdicts ?? [],	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/logger.ts	T3	cpu_cores: navigator.hardwareConcurrency ?? 0,	PARSE-DEFAULT	?? 0 — optional wire/display field	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/personas.svelte.ts	T1	const res = await this.#deps.fetchPersonas().catch(() => null);	GENUINE-EMPTY	.catch( — surfaced: catch sets error/rejects	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/personas.svelte.ts	T1	const url = await this.#deps.startSignIn(slot, id.githubLogin).catch(() => null);	GENUINE-EMPTY	.catch( — surfaced: catch sets error/rejects	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/scan-state.svelte.ts	T3	(b.lastUpdated ?? 0) - (a.lastUpdated ?? 0)	GENUINE-EMPTY	?? 0 — arithmetic/sort identity	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/scan-state.svelte.ts	T3	.filter((p) => (p.folders ?? []).length > 0)	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/scan-state.svelte.ts	T3	folders: (p.folders ?? []).map((f) => ({	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/scan-state.svelte.ts	T3	stack: f.stack ?? [],	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/sessions-digest.svelte.ts	T3	this.hours = initialHours ?? [];	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/sessions-digest.svelte.ts	T3	this.sessions = initialSessions ?? [];	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/setup/loaders.ts	T3	(parsed.disabled ?? []).forEach(n => disabled.add(n));	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/setup/loaders.ts	T3	(parsed.wrapped ?? []).forEach(n => wrapped.add(n));	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/setup/loaders.ts	T3	pageCount: l.pageCount ?? 0,	PARSE-DEFAULT	?? 0 — optional wire/display field	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/setup/loaders.ts	T3	parts: (f.parts ?? []).map(p => ({ id: p.id, label: p.label })),	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/setup/loaders.ts	T3	repoCount: l.repoCount ?? (l.repos?.length ?? 0),	PARSE-DEFAULT	?? 0 — optional wire/display field	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/setup/loaders.ts	T3	repos: l.repos ?? [],	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/state/mcp.svelte.ts	T3	const sumRegistered = probed.reduce((acc, s) => acc + (s.tools_registered ?? 0), 0);	GENUINE-EMPTY	?? 0 — arithmetic/sort identity	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/state/mcp.svelte.ts	T3	toolInsights = read.ok ? read.data.insights ?? [] : [];	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/state/mcp.svelte.ts	T3	toolSignals = signals.data.signals ?? [];	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/state/mcp.svelte.ts	T3	toolStats = stats.data.tools ?? [];	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/state/mcp.svelte.ts	T3	toolsHealth = read.ok ? read.data.sources ?? [] : [];	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/wizard-state.svelte.ts	T2	catch (e) {	PARSE-DEFAULT	catch — env/format fallback, not data	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/wizard-state.svelte.ts	T3	.filter(l => (l.repos ?? []).some((r: string) => scannedRepoNames.has(r)))	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/wizard-state.svelte.ts	T3	for (const f of p.folders ?? []) scannedRepoNames.add(f.name);	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/wizard-state.svelte.ts	T3	pageCount: l.pageCount ?? 0,	PARSE-DEFAULT	?? 0 — optional wire/display field	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/wizard-state.svelte.ts	T3	repoCount: l.repoCount ?? (l.repos?.length ?? 0),	PARSE-DEFAULT	?? 0 — optional wire/display field	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/wizard-state.svelte.ts	T3	repos: l.repos ?? [],	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/lib/wizard-state.svelte.ts	T3	workspaces: data.workspaces.map(p => ({ ...p, folders: p.folders ?? [] })),	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(observatory)/instruments/replay-sessions.ts	T3	const sessions = (data?.sessions ?? []).map((s) => ({ id: s.id, task: s.task, startedAt: s.startedAt, ftr: s.ftr }));	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(observatory)/share-review/share-review-state.svelte.ts	T3	return (destination ?? []).map((d) => d.trim()).filter((d) => d.length > 0);	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(observatory)/traceability/traceability-load.ts	T3	const indexedDocs = docs.every((n) => typeof n === 'number') ? docs.reduce<number>((a, n) => a + (n ?? 0), 0) : null;	GENUINE-EMPTY	?? 0 — arithmetic/sort identity	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(observatory)/upgrades/upgrades-load.ts	T3	const lane = { dojoUpgrades: dojo.data?.artifacts ?? [], dojoUnread: dojo.data?.unread_count ?? 0, dojoError: dojo.error };	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(preferences)/settings/settings-reads.ts	T3	const assistants = (data ?? []).map((a) => ({	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(preferences)/settings/settings-reads.ts	T3	const extensions = (data ?? []).map((i) => ({ name: i.name ?? '', kind: i.kind ?? 'unknown', enabled: i.enabled ?? true }));	PARSE-DEFAULT	?? [] — blank for absent string	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/about/+page.ts	T3	repos: repos.ok ? (repos.data.repos ?? []) : [],	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/diagrams/schema-state.svelte.ts	T3	if (!p || (p.tables.length === 0 && p.entities.length === 0 && (p.enums ?? []).length === 0)) return 'none';	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/instruments/instruments-load.ts	T3	mcpToolStats: m.data?.tools ?? [],	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/instruments/instruments-load.ts	T3	services: s.data?.services ?? [],	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/instruments/instruments-load.ts	T3	toolUsage: u.data?.tools ?? [],	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/instruments/instruments-load.ts	T3	tools: e.data?.tools ?? [],	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/libraries/+page.ts	T3	const conflicts = conflictsRes.data.conflicts ?? [];	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/libraries/+page.ts	T3	const libraries = libsRes.data.libraries ?? [];	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/memories/memories-load.ts	T3	memories: m.data?.active ?? [],	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/memories/memories-load.ts	T3	proposedBatches: b.data?.batches ?? [],	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/memories/memories-load.ts	T3	total: m.data?.total ?? 0,	GENUINE-EMPTY	?? 0 — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/metrics/datapoint-drilldown.svelte.ts	T3	const sessions = res.data.sessions ?? [];	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/metrics/metrics-state.svelte.ts	T3	const present = new Set((this.values.data?.rows ?? []).map((r) => r.metric));	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/metrics/metrics-state.svelte.ts	T3	this.values = settled(r, (d) => ({ rows: d.metrics ?? [], narrative: d.narrative ?? null }));	PARSE-DEFAULT	?? [] — absent kept as null	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/metrics/metrics-state.svelte.ts	T3	void this.api.getMetricsRegistry().then((r) => (this.registry = settled(r, (d) => d.metrics ?? [])));	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/overview/overview-view.svelte.ts	T3	.sort((a, b) => (b.instanceCount ?? 0) - (a.instanceCount ?? 0))	GENUINE-EMPTY	?? 0 — arithmetic/sort identity	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/tickets/tickets-state.svelte.ts	T3	const all = this.tasks ?? [];	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/traceability/drift-load.ts	T3	broken: data?.broken ?? 0,	GENUINE-EMPTY	?? 0 — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/traceability/drift-load.ts	T3	driftItems: data?.items ?? [],	GENUINE-EMPTY	?? [] — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/traceability/drift-load.ts	T3	drifted: data?.drifted ?? 0,	GENUINE-EMPTY	?? 0 — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+app/src/routes/(workspace)/workspace/[id]/traceability/drift-load.ts	T3	total: data?.total ?? 0,	GENUINE-EMPTY	?? 0 — error-gated: page renders the error	audit 2026-11-03 App. C	2026-11-03
+crates/bootstrap/src/startup_error.rs	R1	.ok()	GENUINE-EMPTY	.ok( — no recorded failure file = none	audit 2026-11-03 App. C	2026-11-03
+crates/bootstrap/src/tracing_init.rs	R2	std::fs::create_dir_all(dir.as_ref()).ok()?;	PARSE-DEFAULT	.ok( — logging optional, documented	audit 2026-11-03 App. C	2026-11-03
+crates/bootstrap/src/util.rs	R6	let Ok(entries) = std::fs::read_dir(prefix) else {	GENUINE-EMPTY	let Ok( — absent prefix dir skipped	audit 2026-11-03 App. C	2026-11-03
+crates/cli/src/main.rs	R1	.unwrap_or(false)	GENUINE-EMPTY	.unwrap_or( — health probe false = not available	audit 2026-11-03 App. C	2026-11-03
+crates/cli/src/main.rs	R1	let body: String = r.text().unwrap_or_default();	PARSE-DEFAULT	.unwrap_or_default( — error body text best-effort	audit 2026-11-03 App. C	2026-11-03
+crates/cli/src/main.rs	R3	Err(e) => {	GENUINE-EMPTY	Err( — arm prints error and returns	audit 2026-11-03 App. C	2026-11-03
+crates/cli/src/tracker.rs	R1	Err(describe_error(status, &resp.json().unwrap_or(Value::Null)))	PARSE-DEFAULT	.unwrap_or( — error body optional for message	audit 2026-11-03 App. C	2026-11-03
+crates/mcp/src/main.rs	R1	let body = resp.text().unwrap_or_default();	PARSE-DEFAULT	.unwrap_or_default( — error body text best-effort	audit 2026-11-03 App. C	2026-11-03
+crates/mcp/src/main.rs	R5	.ok()	PARSE-DEFAULT	.ok( — error detail extract, falls back to body	audit 2026-11-03 App. C	2026-11-03
+crates/mcp/src/main.rs	R5	.unwrap_or(body);	PARSE-DEFAULT	.unwrap_or( — error detail falls back to body	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/config/json.rs	R5	let val = serde_json::from_str::<serde_json::Value>(content).ok()?;	PARSE-DEFAULT	.ok() — unparseable → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/config/toml_adapter.rs	R5	let val = content.parse::<toml::Value>().ok()?;	PARSE-DEFAULT	.ok() — parse input default	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/config/yaml.rs	R5	let val = serde_yaml::from_str::<serde_json::Value>(content).ok()?;	PARSE-DEFAULT	.ok() — unparseable → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/manifest/cargo.rs	R5	content.parse::<toml::Value>().ok().and_then(|v| v.get("workspace").cloned()).is_some()	PARSE-DEFAULT	.ok() — optional JSON field	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/manifest/cargo.rs	R5	std::fs::read_to_string(&cargo_toml).ok().and_then(|c| c.parse::<toml::Value>().ok());	PARSE-DEFAULT	.ok() — parse input default	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/manifest/cargo.rs	R6	let Ok(entries) = std::fs::read_dir(&dir) else { continue };	GENUINE-EMPTY	let Ok( — member dir absent	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/manifest/go.rs	R1	.ok()	GENUINE-EMPTY	.ok() — no go.mod	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/manifest/go.rs	R6	let Ok(content) = std::fs::read_to_string(repo_root.join("go.work")) else {	GENUINE-EMPTY	let Ok( — no go.work	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/manifest/gradle.rs	R4	.filter_map(|name| std::fs::read_to_string(repo_root.join(name)).ok())	GENUINE-EMPTY	.ok() — settings.gradle absent	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/manifest/maven.rs	R6	let Ok(content) = std::fs::read_to_string(repo_root.join("pom.xml")) else {	GENUINE-EMPTY	let Ok( — no pom.xml	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/manifest/npm.rs	R1	.ok()	GENUINE-EMPTY	.ok() — member package.json absent	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/manifest/npm.rs	R5	.and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok());	PARSE-DEFAULT	.ok() — member name fallback	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/adapters/manifest/pyproject.rs	R5	.ok()	PARSE-DEFAULT	.ok() — workspace probe on bad toml → false	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/analysis/narration_cache.rs	R5	let v: serde_json::Value = serde_json::from_str(&content[start..=end]).ok()?;	PARSE-DEFAULT	.ok() — LLM output parse → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/analysis/workspace_icon.rs	R2	let bytes = std::fs::read(&path).ok()?;	GENUINE-EMPTY	.ok() — icon file unreadable → no icon	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/gateway_init.rs	R1	.unwrap_or(false)	GENUINE-EMPTY	.unwrap_or( — probe failure = not reachable	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/handlers/auth.rs	R1	let body = r.text().await.unwrap_or_default();	NOT-A-DEFAULT	.unwrap_or_default() — error already surfaced; detail best-effort	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/handlers/knowledge.rs	R3	Err(_) => {	NOT-A-DEFAULT	Err(_) => — gateway failure -> 503	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/handlers/knowledge.rs	R5	let v: serde_json::Value = serde_json::from_str(&content[start..=end]).ok()?;	PARSE-DEFAULT	.ok() — LLM text parse -> 503 upstream	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/handlers/observatory.rs	R3	Err(_) => None,	PARSE-DEFAULT	Err(_) => — non-uuid name -> None then 404	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/handlers/playbook.rs	R5	let v: serde_json::Value = serde_json::from_str(&content[start..=end]).ok()?;	PARSE-DEFAULT	.ok() — LLM output parse -> fallback	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/handlers/query.rs	R4	.filter_map(|h| h["id"].as_str().and_then(|s| s.parse::<uuid::Uuid>().ok()))	PARSE-DEFAULT	.ok() — uuid parse of id field	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/handlers/query.rs	R6	let Ok(content) = std::fs::read_to_string(path) else { continue };	GENUINE-EMPTY	let Ok( — binary/non-utf8 not greppable	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/handlers/trackers.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — error logged/surfaced as reason	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/resilience.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure surfaced/logged	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/api/server.rs	R3	Err(_) => false,	GENUINE-EMPTY	Err(_) => — poisoned watcher -> not watching	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/assistants/claude_code.rs	R1	let Some(content) = std::fs::read_to_string(manifest_path).ok() else { return false };	PARSE-DEFAULT	.ok() — fail-closed install verify	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/assistants/claude_code.rs	R2	.ok()?;	PARSE-DEFAULT	.ok() — ps probe → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/assistants/claude_code.rs	R2	let content = std::fs::read_to_string(manifest_path).ok()?;	GENUINE-EMPTY	.ok() — install path absent	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/assistants/claude_code.rs	R3	Err(e) => {	PARSE-DEFAULT	Err(e) => — spawn failure logged → false	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/assistants/claude_code.rs	R5	let Some(v) = json5::from_str::<serde_json::Value>(&content).ok() else {	PARSE-DEFAULT	.ok() — explicit Unknown check state	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/assistants/claude_code.rs	R5	let Some(value) = serde_json::from_str::<serde_json::Value>(&content).ok() else {	PARSE-DEFAULT	.ok() — fail-closed install verify	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/assistants/claude_code.rs	R5	let v = serde_json::from_str::<serde_json::Value>(&content).ok()?;	PARSE-DEFAULT	.ok() — unparseable → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/assistants/claude_code.rs	R6	let Ok(out) =	PARSE-DEFAULT	let Ok( — probe fail → not registered	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/classifiers.rs	R3	Err(e) => {	PARSE-DEFAULT	Err(e) => — documented config tolerance, warns	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/collective/anonymize.rs	R3	Err(_) => {	PARSE-DEFAULT	Err(_) => — timeout keeps deterministic text, documented	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/cost.rs	R5	let s: Subscription = serde_json::from_str(raw).ok()?;	PARSE-DEFAULT	.ok() — documented "not configured"	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/db/pg_store/mod.rs	R5	.ok()?	PARSE-DEFAULT	.ok() — documented: absent provenance -> None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/db/pg_store/schedules.rs	R4	.filter_map(|d| u8::try_from(d).ok())	PARSE-DEFAULT	.ok() — u8 conversion of CHECKed days	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/dojo/relay_project.rs	R5	.unwrap_or_default()	GENUINE-EMPTY	.unwrap_or_default() — no todos array	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/dojo_client/dojo_auth.rs	R5	.ok()	PARSE-DEFAULT	.ok() — parse fail still -> Err(no authorizeUrl)	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/dojo_client/dojo_auth.rs	R5	serde_json::from_str::<serde_json::Value>(body).ok()?["error_code"].as_str().map(String::from)	PARSE-DEFAULT	.ok() — error body parse -> None documented	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/dojo_client/glyph_sync.rs	R1	pg.set_config(GLYPHS_SET_AT_KEY, p.glyphs_set_at.as_deref().unwrap_or_default())	GENUINE-EMPTY	.unwrap_or_default() — None stamp written as empty, filtered on read	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/federation/mod.rs	R3	Err(e) => {	PARSE-DEFAULT	Err(e) => — aborts push, no fabricated value	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/indexer/community.rs	R3	Err(e) => {	GENUINE-EMPTY	Err(e) => — list fail logs and returns	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/indexer/community.rs	R4	.filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())	GENUINE-EMPTY	.ok() — DB ids are uuids; invariant	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/indexer/community.rs	R4	members.iter().filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok()).collect();	GENUINE-EMPTY	.ok() — DB ids are uuids; invariant	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/indexer/compiler_session.rs	R1	std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())	PARSE-DEFAULT	.unwrap_or_else( — canonicalize documented fallback	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/indexer/compiler_session.rs	R6	let Ok(meta) = std::fs::metadata(p) else { return false };	GENUINE-EMPTY	let Ok( — missing file not executable	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/indexer/index.rs	R4	files.iter().filter_map(|placed| read_one(placed, types).ok()).collect()	GENUINE-EMPTY	.ok() — counted drop by contract	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/indexer/lang/rust/walk.rs	R3	Err(_) => Vec::new(),	GENUINE-EMPTY	Err(_) => — unmintable ref -> no candidate; added	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/indexer/resolve.rs	R3	Err(_) => Vec::new(),	GENUINE-EMPTY	Err(_) => — unmintable ref -> no candidate; added	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/installer/removal.rs	R1	if fs::read_dir(dir).map(|mut d| d.next().is_none()).unwrap_or(true) {	GENUINE-EMPTY	.unwrap_or( — empty collection/iter	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/libraries/advisory.rs	R5	let v: serde_json::Value = serde_json::from_str(body).ok()?;	PARSE-DEFAULT	.ok() — unparseable → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/libraries/dependencies.rs	R1	.ok()	GENUINE-EMPTY	.ok() — dep not installed locally	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/libraries/dependencies.rs	R5	.and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())	PARSE-DEFAULT	.ok() — installed manifest unparseable → skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/libraries/mod.rs	R1	.ok()	PARSE-DEFAULT	.ok() — missing entry file logged, skipped	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/libraries/mod.rs	R2	let text = std::fs::read_to_string(root.join(manifest::MANIFEST_FILENAME)).ok()?;	GENUINE-EMPTY	.ok() — no manifest file	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/libraries/registry.rs	R5	let v: serde_json::Value = serde_json::from_str(body).ok()?;	PARSE-DEFAULT	.ok() — unparseable body → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/planner.rs	R5	let mut plan: Plan = serde_json::from_str(&content[start..=end]).ok()?;	PARSE-DEFAULT	.ok() — LLM output parse → None, retried	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/qlty.rs	R3	Err(e) => {	PARSE-DEFAULT	Err(e) => — qlty absent surfaced+logged	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/review.rs	R5	let m: RiskModels = serde_json::from_str(raw).ok()?;	PARSE-DEFAULT	.ok() — documented "not configured"	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/run_watchdog.rs	R3	Err(_) => false,	PARSE-DEFAULT	Err(_) => — bad window config, documented	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/advance_run_scheduler.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/executor.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/advance_run.rs	R1	.unwrap_or_else(|_| crate::stance::ResolvedStance::strict())	NOT-A-DEFAULT	.unwrap_or_else( — fail-closed strict stance	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/advance_run.rs	R1	ctx.pg().run_author(&run.id).await.ok().and_then(|(_, email)| email).unwrap_or_default();	NOT-A-DEFAULT	.ok() — fail-closed strict stance	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/consolidate.rs	R3	Ok(_) | Err(_) => {	NOT-A-DEFAULT	Err(_) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/consolidate.rs	R5	let json: serde_json::Value = serde_json::from_str(&output[start..=end]).ok()?;	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/corrections.rs	R3	Err(_) => {	NOT-A-DEFAULT	Err(_) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/corrections_llm.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/corrections_llm.rs	R5	let v: serde_json::Value = serde_json::from_str(&content[start..=end]).ok()?;	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/helpers.rs	R2	.ok()?	GENUINE-EMPTY	.ok() — pure Option/collection absence	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/helpers.rs	R2	let bytes = std::fs::read(path).ok()?;	GENUINE-EMPTY	.ok() — pure Option/collection absence	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/helpers.rs	R3	Err(_) => return false,	PARSE-DEFAULT	Err(_) => — optional input/field/env/parse default	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/helpers.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/libraries.rs	R1	.map_err(|e| tracing::warn!(error = %e, path = %task.folder_path, "resolve_libs: get_repo_by_path failed")).ok().flatten();	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/libraries.rs	R1	if let Some((latest, _)) = pg.get_library_latest_cache(lib_id).await.ok().flatten()	NOT-A-DEFAULT	.ok() — cache miss -> refetch (fail-safe)	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/libraries.rs	R3	Err(_) => continue,	NOT-A-DEFAULT	Err(_) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/libraries.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/libraries.rs	R6	let Ok(content) = std::fs::read_to_string(&path) else { continue };	NOT-A-DEFAULT	let Ok( — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/metrics/churn.rs	R1	let repo_key = pg.repo_key_for_repository(&repository_id).await.unwrap_or(None);	NOT-A-DEFAULT	.unwrap_or( — fail-safe compute all	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/metrics/churn.rs	R2	let out = std::process::Command::new("git").args(args).current_dir(root).output().ok()?;	PARSE-DEFAULT	.ok() — optional input/field/env/parse default	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/metrics/explainer.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/metrics/mod.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — fail-safe compute everything	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/metrics/quality.rs	R1	let repo_key = pg.repo_key_for_repository(&repository_id).await.unwrap_or(None);	NOT-A-DEFAULT	.unwrap_or( — fail-safe compute all	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/model_insight.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/process.rs	R1	.ok()	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/process.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/prompt_classify.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/prompt_classify.rs	R5	let labels: Vec<String> = serde_json::from_str(&content[start..=end]).ok()?;	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/publish_run.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/repo_scan.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/scan.rs	R1	.unwrap_or_default();	NOT-A-DEFAULT	.unwrap_or_default() — documented: not written when empty	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/scan.rs	R1	.unwrap_or_else(|_| abs_path.clone());	PARSE-DEFAULT	.unwrap_or_else( — optional input/field/env/parse default	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/scan.rs	R2	.ok()?;	PARSE-DEFAULT	.ok() — optional input/field/env/parse default	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/scan.rs	R6	let Ok(output) = std::process::Command::new("git")	NOT-A-DEFAULT	let Ok( — documented: not written when empty	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/scan_logic.rs	R1	let cargo = std::fs::read_to_string(path.join("Cargo.toml")).ok();	GENUINE-EMPTY	.ok() — pure Option/collection absence	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/scan_logic.rs	R1	let pkg = std::fs::read_to_string(path.join("package.json")).ok();	GENUINE-EMPTY	.ok() — pure Option/collection absence	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/scan_logic.rs	R6	let Ok(content) = std::fs::read_to_string(path.join(filename)) else { continue };	NOT-A-DEFAULT	let Ok( — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/scan_logic.rs	R6	let Ok(entries) = std::fs::read_dir(dir) else {	NOT-A-DEFAULT	let Ok( — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/scan_logic.rs	R6	let Ok(entries) = std::fs::read_dir(path) else {	NOT-A-DEFAULT	let Ok( — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/session_process.rs	R3	Ok(_) | Err(_) => {	NOT-A-DEFAULT	Err(_) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/handlers/session_process.rs	R5	let root: serde_json::Value = serde_json::from_str(&output[start..=end]).ok()?;	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/library_update_scheduler.rs	R1	let applied = pg.get_library_docs_applied(lib_id).await.ok().flatten();	NOT-A-DEFAULT	.ok() — fail-safe reindex	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/library_update_scheduler.rs	R1	let cached = pg.get_library_latest_cache(lib_id).await.ok().flatten();	NOT-A-DEFAULT	.ok() — fail-safe refetch	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/library_update_scheduler.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/processors/metadata/external_links.rs	R6	let Ok(content) = std::fs::read_to_string(&path) else { continue };	NOT-A-DEFAULT	let Ok( — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/processors/metadata/icons.rs	R2	let entries = std::fs::read_dir(&scan_dir).ok()?;	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/processors/metadata/summary.rs	R6	let Ok(content) = std::fs::read_to_string(repo_path.join(filename)) else { continue };	NOT-A-DEFAULT	let Ok( — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/progress_emitter.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/reconcile_scheduler.rs	R3	Err(_) => {	NOT-A-DEFAULT	Err(_) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/reconcile_scheduler.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/resume.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/ticker.rs	R1	let Some(stored) = pg.load_schedule(name).await.ok().flatten() else {	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/ticker.rs	R1	let initial = pg.load_schedule(name).await.ok().flatten();	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/verdict_classifier.rs	R6	let Ok(v) = serde_json::from_str::<serde_json::Value>(tool_input_json) else {	PARSE-DEFAULT	let Ok( — optional input/field/env/parse default	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/version_rescan.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/tasks/watchdog_scheduler.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/claude.rs	R1	.ok()	PARSE-DEFAULT	.ok() — clock skew	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/claude.rs	R2	.ok()?	GENUINE-EMPTY	.ok() — file mtime absent	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/claude.rs	R5	serde_json::from_str(line).ok().map(|v| (n, v))	PARSE-DEFAULT	.ok() — per-line parse, tolerated	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/copilot_cli.rs	R2	.ok()?	GENUINE-EMPTY	.ok() — file mtime absent	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/copilot_cli.rs	R6	if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed)	PARSE-DEFAULT	if let Ok( — scan lines for model	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/cursor.rs	R2	.ok()?	GENUINE-EMPTY	.ok() — file mtime absent	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/cursor.rs	R2	let meta = std::fs::metadata(path).ok()?;	GENUINE-EMPTY	.ok() — file gone → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/opencode.rs	R1	.ok()	GENUINE-EMPTY	.ok() — opencode db absent	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/opencode.rs	R5	let root: serde_json::Value = serde_json::from_str(content).ok()?;	PARSE-DEFAULT	.ok() — unparseable → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/opencode.rs	R5	row.7.map(|d| serde_json::from_str(&d).unwrap_or(serde_json::json!({})));	PARSE-DEFAULT	.unwrap_or( — malformed part data → {}	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/opencode.rs	R5	serde_json::from_str(&row.5).unwrap_or(serde_json::json!({}));	PARSE-DEFAULT	.unwrap_or( — malformed msg data → {}	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/vscode.rs	R2	let meta = std::fs::metadata(path).ok()?;	GENUINE-EMPTY	.ok() — file gone → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/vscode.rs	R3	Err(_) => return None,	PARSE-DEFAULT	Err(_) => — unparseable span → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/vscode.rs	R5	.unwrap_or(serde_json::json!({})),	PARSE-DEFAULT	.unwrap_or( — malformed attrs → {}	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/vscode.rs	R5	let root: serde_json::Value = serde_json::from_str(content).ok()?;	PARSE-DEFAULT	.ok() — unparseable → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/zed.rs	R5	.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())	PARSE-DEFAULT	.ok() — optional raw_input JSON	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/zed.rs	R5	let v: serde_json::Value = serde_json::from_str(content).ok()?;	PARSE-DEFAULT	.ok() — unparseable thread → None	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/watcher/root_watcher.rs	R2	let content = std::fs::read_to_string(head_path).ok()?;	GENUINE-EMPTY	.ok() — no HEAD file	audit 2026-11-03 App. C	2026-11-03
+crates/transcript-formats/src/paths.rs	R2	let content = std::fs::read_to_string(&ws).ok()?;	GENUINE-EMPTY	.ok( — absent workspace.json = no folder	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/ensure_personal_tenant.ddl	S1	if p_principal is null or coalesce(p_slug, '') = '' or p_auth is null or coalesce(p_url_base, '') = '' then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	coalesce((c ->> 'enum_typed')::boolean, false), c ->> 'default_expr', c ->> 'note'	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	coalesce((c ->> 'primary_key')::boolean, false), coalesce((c ->> 'not_null')::boolean, false),	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	coalesce((c ->> 'unique_key')::boolean, false), coalesce((c ->> 'foreign_key')::boolean, false),	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	coalesce((i ->> 'unique_index')::boolean, false)	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	coalesce((n ->> 'is_exported')::boolean, false), coalesce((n ->> 'is_test')::boolean, false),	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	coalesce(array(select jsonb_array_elements_text(n -> 'tags')), '{}'),	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	coalesce(e -> 'props', '{}'::jsonb)	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	coalesce(n -> 'props', '{}'::jsonb)	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	cross join lateral jsonb_array_elements(coalesce(n -> 'schema' -> 'columns', '[]'::jsonb)) c	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	cross join lateral jsonb_array_elements(coalesce(n -> 'schema' -> 'indexes', '[]'::jsonb)) i	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	cross join lateral jsonb_array_elements(coalesce(n -> 'schema' -> 'refs', '[]'::jsonb)) x	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	for v_slice in select e from jsonb_array_elements(coalesce(p_slices, '[]'::jsonb)) e loop	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	from jsonb_array_elements(coalesce(v_slice -> 'edges', '[]'::jsonb)) e	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	from jsonb_array_elements(coalesce(v_slice -> 'nodes', '[]'::jsonb)) n	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	from jsonb_array_elements(coalesce(v_slice -> 'nodes', '[]'::jsonb)) n;	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_graph_slices.ddl	S1	using jsonb_array_elements(coalesce(v_slice -> 'nodes', '[]'::jsonb)) n	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_metric_rows.ddl	S1	, coalesce(e -> 'props', '{}'::jsonb) as props	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_metric_rows.ddl	S1	, coalesce(e ->> 'grain', 'daily') as grain	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_metric_rows.ddl	S1	, coalesce(e ->> 'scope', 'repo') as scope	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_metric_rows.ddl	S1	where coalesce(e ->> 'scope', 'repo') not in ('repo', 'user')) then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/file_repository_workspace.ddl	S1	if btrim(coalesce(p_slug, '')) = '' or btrim(coalesce(p_name, '')) = '' then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/map_forge_unit.ddl	S1	'workspace_id', v_workspace, 'proven', coalesce(p_proven, false)));	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/map_forge_unit.ddl	S1	if btrim(coalesce(p_external_id, '')) = '' or btrim(coalesce(p_external_slug, '')) = '' then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/map_forge_unit.ddl	S1	if btrim(p_workspace_slug) = '' or btrim(coalesce(p_workspace_name, '')) = '' then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/map_forge_unit.ddl	S1	if coalesce(p_keep_elsewhere, false) and v_prev.tenant_id is not null and v_prev.tenant_id <> p_tenant then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/map_forge_unit.ddl	S1	if not coalesce(p_proven, false) and (v_own_claimed is not null or v_prev.proven_at is not null) then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/map_forge_unit.ddl	S1	if not coalesce(p_proven, false) then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/my_metric_series.ddl	S1	, case when bool_and(coalesce((rm.props->>'denominator')::numeric, 0) > 0)	GENUINE-EMPTY	coalesce( — guard: missing denominator yields NULL	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/percent_decode.ddl	S2	exception when others then	PARSE-DEFAULT	exception when others — undecodable -> NULL; callers reject	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/reconcile_org_memberships.ddl	S1	and m.tenant_id = any (coalesce(p_kept, '{}'));	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/reconcile_org_memberships.ddl	S1	and not (m.tenant_id = any (coalesce(p_kept, '{}')))	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/register_repository.ddl	S1	v_proj text := nullif(lower(btrim(coalesce(p_project, ''))), '');	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/repo_key_names.ddl	S1	if v_org = '' or length(coalesce(p_repo_key, '')) > 2048 or cardinality(v_p) < 3 then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/repo_key_names.ddl	S1	v_org text := lower(btrim(coalesce(p_org, '')));	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/repo_key_names.ddl	S1	v_p text[] := string_to_array(lower(btrim(coalesce(p_repo_key, ''))), '/');	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/repo_key_names.ddl	S1	v_proj text := nullif(lower(btrim(coalesce(p_project, ''))), '');	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/rotate_forge_token.ddl	S1	if btrim(coalesce(p_token, '')) = '' then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/set_forge_token.ddl	S1	if btrim(coalesce(p_token, '')) = '' then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/set_graph_branch.ddl	S1	coalesce((select b.is_default from dojo.repository_graph_branches b	GENUINE-EMPTY	coalesce( — untracked branch not default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/set_pack_adoption.ddl	S1	values ('user', v_user, coalesce(nullif(p_user_name, ''), 'Personal'))	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/take_attempt.ddl	S1	if p_principal is null or coalesce(p_limit, 0) < 1 or p_window is null or p_window <= interval '0' then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/team_member_metrics.ddl	S1	, case when bool_and(coalesce((rm.props->>'denominator')::numeric, 0) > 0)	GENUINE-EMPTY	coalesce( — guard: missing denominator yields NULL	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/team_metric_totals.ddl	S1	, case when bool_and(coalesce((rm.props->>'denominator')::numeric, 0) > 0)	GENUINE-EMPTY	coalesce( — guard: missing denominator yields NULL	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/workspace_metric_series.ddl	S1	'denominator', case when bool_and(coalesce((ws.props->>'denominator')::numeric, 0) > 0)	GENUINE-EMPTY	coalesce( — guard: missing denominator yields NULL	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/dojo/workspace_metric_series.ddl	S1	'numerator', case when bool_and(coalesce((ws.props->>'denominator')::numeric, 0) > 0)	GENUINE-EMPTY	coalesce( — guard: missing denominator yields NULL	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/component_zones.ddl	S1	, (coalesce(ef.ce, 0) + coalesce(x.ce_external, 0))::bigint as ce	GENUINE-EMPTY	coalesce( — left join to grouped edges: no edges=0	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/component_zones.ddl	S1	, case when coalesce(af.ca, 0) + coalesce(ef.ce, 0) + coalesce(x.ce_external, 0) > 0	GENUINE-EMPTY	coalesce( — left join to grouped edges: no edges=0	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/component_zones.ddl	S1	, coalesce(af.ca, 0)::bigint as ca	GENUINE-EMPTY	coalesce( — left join to grouped edges: no edges=0	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/component_zones.ddl	S1	/ (coalesce(af.ca, 0) + coalesce(ef.ce, 0) + coalesce(x.ce_external, 0))	GENUINE-EMPTY	coalesce( — left join to grouped edges: no edges=0	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/component_zones.ddl	S1	then (coalesce(ef.ce, 0) + coalesce(x.ce_external, 0))::double precision	GENUINE-EMPTY	coalesce( — left join to grouped edges: no edges=0	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/edge_verdict.ddl	S1	coalesce(occurrences, '{}'::jsonb),	GENUINE-EMPTY	coalesce( — lax jsonpath over absent props	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/historize_extensions.ddl	S1	new.revision := coalesce(old.revision, 0) + 1;	GENUINE-EMPTY	coalesce( — first revision counter	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/rank_bm25.ddl	S1	lower(coalesce(n.name, '')) like '%' || t.term || '%'	GENUINE-EMPTY	coalesce( — null text matches nothing	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/rank_bm25.ddl	S1	or lower(coalesce(n.docstring, '')) like '%' || t.term || '%'	GENUINE-EMPTY	coalesce( — null text matches nothing	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/rank_bm25.ddl	S1	or lower(coalesce(n.signature, '')) like '%' || t.term || '%'	GENUINE-EMPTY	coalesce( — null text matches nothing	audit 2026-11-03 App. C	2026-11-03
+database/ddl/function/sensei/stack_pack.ddl	S1	if coalesce(p_stack_slug, '') = '' then	PARSE-DEFAULT	coalesce( — optional function parameter / input	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_assistant_events.ddl	S1	, coalesce(stg.created_at, now()) as created_at	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_assistant_events.ddl	S1	, coalesce(stg.event_type, 'unknown') as event_type	GENUINE-EMPTY	coalesce( — unreachable: where event_type not null	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_assistant_events.ddl	S1	, coalesce(stg.payload, '{}'::jsonb) as payload	PARSE-DEFAULT	coalesce( — absent payload as empty object	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_benchmark_reports.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_benchmark_reports.ddl	S1	, coalesce(stg.promoted, false)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_fallback_chain_models.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_fallback_chains.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_fallback_chains.ddl	S1	, coalesce(stg.sequence, 0)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_intake_guide.ddl	S1	coalesce(source,'builtin'), coalesce(modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_libraries.ddl	S1	, coalesce(stg.icons, '{}')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_libraries.ddl	S1	, coalesce(stg.kind, 'detected')::sensei.library_kind	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_libraries.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_libraries.ddl	S1	, coalesce(stg.props, '{}')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_libraries.ddl	S1	, coalesce(stg.tags, '{}')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_memories.ddl	S1	, coalesce(stg.enforcement, 'recommended')::sensei.enforcement	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_memories.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_memories.ddl	S1	, coalesce(stg.origin, 'learned')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_memories.ddl	S1	, coalesce(stg.reinforced_count, 0)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_memories.ddl	S1	, coalesce(stg.scope, 'workspace')::sensei.memory_scope	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_memories.ddl	S1	, coalesce(stg.status, 'active')::sensei.memory_status	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_memories.ddl	S1	, coalesce(stg.tags, '{}')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_memories.ddl	S1	, coalesce(stg.violated_count, 0)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_metrics.ddl	S1	, coalesce(stg.cadence, 'day')::sensei.metric_cadence	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_metrics.ddl	S1	, coalesce(stg.capture_source, 'snapshot')::sensei.metric_capture	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_metrics.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_model_prices.ddl	S1	, coalesce(nullif(stg.speed, ''), 'standard')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_model_prices.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_model_prices.ddl	S1	, coalesce(stg.prompt_over, 0)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_models.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_models.ddl	S1	, coalesce(stg.props, '{}')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_models_in_router.ddl	S1	, coalesce(stg.is_default, false)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_models_in_router.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_models_in_router.ddl	S1	, coalesce(stg.props, '{}')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_playbook_rules.ddl	S1	coalesce(modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_playbook_rules.ddl	S1	playbook, rationale, priority, priority, coalesce(enabled,true), coalesce(source,'builtin')::sensei.source_kind,	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_playbooks.ddl	S1	coalesce(enabled, true), coalesce(source,'builtin')::sensei.source_kind,	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_playbooks.ddl	S1	coalesce(modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_providers.ddl	S1	, coalesce(stg.is_open_source, false)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_providers.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_providers.ddl	S1	, coalesce(stg.sequence, 0)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_reason_codes.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_routers.ddl	S1	, coalesce(stg.authentication_type, 'api_key')::sensei.auth_type	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_routers.ddl	S1	, coalesce(stg.config, '{}')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_routers.ddl	S1	, coalesce(stg.default_headers, '{}')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_routers.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_routers.ddl	S1	, coalesce(stg.rate_limits, '{}')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_routers.ddl	S1	, coalesce(stg.sequence, 0)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_pack_adoptions.ddl	S1	select p.id, n.id, p.version, coalesce(stg.adopted_by, 'sensei')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_pack_rules.ddl	S1	, coalesce(nullif(stg.enforcement, ''), 'recommended')::sensei.enforcement	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_pack_rules.ddl	S1	, coalesce(nullif(stg.verification, ''), 'manual')::sensei.rule_check	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_pack_rules.ddl	S1	, coalesce(stg.applies_to, '{}'::jsonb)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_pack_rules.ddl	S1	, coalesce(stg.body, '')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_pack_rules.ddl	S1	, coalesce(stg.evidence, '{}'::jsonb)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_pack_rules.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_pack_rules.ddl	S1	, coalesce(stg.ordinal, 0)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_packs.ddl	S1	, coalesce(nullif(stg.enforcement, ''), 'recommended')::sensei.enforcement	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_packs.ddl	S1	, coalesce(nullif(stg.published_by, ''), 'sensei')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_packs.ddl	S1	, coalesce(nullif(stg.status, ''), 'active')	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_rule_packs.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_schedules.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_scopes.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_scopes.ddl	S1	, coalesce(stg.shareable, false)	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_tenants.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — import time stamp	audit 2026-11-03 App. C	2026-11-03
+database/ddl/procedure/staging/import_tenants.ddl	S1	, coalesce(stg.scope, 'private')::dojo.tenant_scope	PARSE-DEFAULT	coalesce( — seed column default	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/activity/message_api_cost.ddl	S1	and mp.speed = coalesce(m.speed, 'standard')	PARSE-DEFAULT	coalesce( — absent speed = standard tier	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/activity/task_failures.ddl	S1	, coalesce(path, '') as path_key	GENUINE-EMPTY	coalesce( — null path as grouping key	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/activity/task_failures.ddl	S1	and h.path_key = coalesce(l.path, '')	GENUINE-EMPTY	coalesce( — null path as grouping key	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/activity/task_failures.ddl	S1	partition by te.task_kind, te.folder_path, coalesce(te.path, '')	GENUINE-EMPTY	coalesce( — null path as grouping key	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/activity/turn_usage.ddl	S1	, coalesce((e.payload -> 'usage' ->> 'cache_creation_input_tokens')::bigint, 0) as cache_write	PARSE-DEFAULT	coalesce( — absent cache field = 0 (API)	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/activity/turn_usage.ddl	S1	, coalesce((e.payload -> 'usage' ->> 'cache_read_input_tokens')::bigint, 0) as cache_read	PARSE-DEFAULT	coalesce( — absent cache field = 0 (API)	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/activity/turn_usage.ddl	S1	where not coalesce(t.is_sidechain, false)	PARSE-DEFAULT	coalesce( — null sidechain = main loop	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/dojo/all_my_repositories.ddl	S1	then coalesce(mr.org_elected, mr.private_repos_shared, false)	PARSE-DEFAULT	coalesce( — documented election default (#301)	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/dojo/rule_pack_library.ddl	S1	, coalesce(	GENUINE-EMPTY	coalesce( — pack with no rules: []	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/sensei/workspace_library_version_conflicts.ddl	S1	and coalesce(rl.props ? 'local_source', false) = false	GENUINE-EMPTY	coalesce( — null props: not local	audit 2026-11-03 App. C	2026-11-03
+database/ddl/view/sensei/workspace_metric_daily.ddl	S1	, coalesce(sum((pm.props->>'denominator')::numeric), 0))	GENUINE-EMPTY	coalesce( — unreachable: bool_or denominator	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/relay-offline.ts	T2	} catch {	PARSE-DEFAULT	catch {} — localStorage best-effort convenience	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/admin-data.ts	T3	const rows = (data ?? []) as unknown as Membership[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/admin-data.ts	T3	error_rate_1h: errors.count ?? 0	GENUINE-EMPTY	?? 0 — count after error checked	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/admin-data.ts	T3	publish_rate_1h: publish.count ?? 0,	GENUINE-EMPTY	?? 0 — count after error checked	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/admin-data.ts	T3	queue_depth: queue.count ?? 0,	GENUINE-EMPTY	?? 0 — count after error checked	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/admin-data.ts	T3	return (data ?? []) as unknown as AuditEvent[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/admin-data.ts	T3	return (data ?? []) as unknown as Identity[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/admin-data.ts	T3	return (data ?? []) as unknown as Policy[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/admin-data.ts	T3	return (data ?? []).map((m) => (m as { user_id: string }).user_id);	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/admin-data.ts	T3	return (data?.length ?? 0) > 0;	GENUINE-EMPTY	?? 0 — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/artifacts-data.ts	T3	const efficacy = Math.max(s.ftrDeltaObserved ?? 0, 0) / FTR_DELTA_FULL_CREDIT;	GENUINE-EMPTY	?? 0 — unobserved delta gives no credit	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/artifacts-data.ts	T3	return (data ?? []) as unknown as ClusterMember[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/artifacts-data.ts	T3	return shapeArtifactPullResponse((data ?? []) as unknown as ArtifactRow[], since);	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/azure-entra.ts	T1	const body = ((await res.json().catch(() => null)) ?? {}) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body; status checked	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/azure-import.ts	T1	return ((await request.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body -> empty, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/azure-import.ts	T3	const mapOf = new Map(((maps.data ?? []) as MapRow[]).map((m) => [m.external_id, m]));	GENUINE-EMPTY	?? [] — error checked first (fail())	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/azure-import.ts	T3	const workspaces = (spaces.data ?? []) as { id: string; slug: string; name: string }[];	GENUINE-EMPTY	?? [] — error checked first (fail())	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/azure-import.ts	T3	return ((data ?? []) as Record<string, unknown>[])	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/azure-member-sync.ts	T3	for (const c of (data ?? []) as ConnRow[]) {	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/azure-route.ts	T2	} catch {	PARSE-DEFAULT	catch {} — config absent = not configured	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/billing-data.ts	T3	((ns ?? []) as { id: string; name: string; slug: string; visibility: 'private' | 'public' }[]).map(	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/billing-data.ts	T3	const rows = (seats ?? []) as { user_id: string; role: string; namespace_id: string }[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/billing-data.ts	T3	const workspaces = byUser.get(r.user_id) ?? [];	GENUINE-EMPTY	?? [] — map accumulator	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/billing-data.ts	T3	return { closed: (data as unknown[] | null ?? []).length > 0 };	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/contributions-data.ts	T3	return (data ?? []).map((r) => (r as { id: string }).id);	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/contributions-data.ts	T3	return (data ?? []).map((r) => {	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/dojo-orgs.ts	T3	return (data ?? []).flatMap((row) => {	GENUINE-EMPTY	?? [] — error checked first (fail closed)	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/forge-azure.ts	T1	const body = (await res.json().catch(() => null)) as unknown;	GENUINE-EMPTY	.catch( — null then throws 502	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/forge-token-cookie.ts	T1	.catch(() => false);	GENUINE-EMPTY	.catch( — ownership check fails closed	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/forge-token-cookie.ts	T1	.catch(() => null)) as { session?: { user?: { id?: unknown } } | null } | null;	PARSE-DEFAULT	.catch( — unreadable sync response -> no cookie	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/forge-token-cookie.ts	T1	const sent = (await request.json().catch(() => ({}))) as {	PARSE-DEFAULT	.catch( — non-JSON body -> empty	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/graph-ingest.ts	T3	const ours = (read.data ?? []) as { repository_id: string; sync_enabled: boolean }[];	GENUINE-EMPTY	?? [] — error checked; empty -> 404	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/health-series.ts	T3	return bucketContribApprove((data ?? []) as { ts: string; action: string }[], now, weeks);	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/identity-resolve.ts	T3	...new Set(((members.data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id))	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/identity-resolve.ts	T3	for (const r of (data ?? []) as unknown as IdentityNameRow[]) {	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/identity-resolve.ts	T3	return namesOf(db, ((viewers.data ?? []) as Array<{ principal_id: string }>).map((v) => v.principal_id));	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/integrations-data.ts	T1	return ((await request.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body -> empty, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/integrations-data.ts	T3	return (data ?? []) as T[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/knowledge-data.ts	T3	(artifactsRes.data ?? []) as unknown as KnowledgeArtifact[],	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/knowledge-data.ts	T3	(policiesRes.data ?? []) as { retention_days: number | null }[]	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/metrics-ingest.ts	T3	byKey.set(r.repo_key, [...(byKey.get(r.repo_key) ?? []), r]);	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/metrics-ingest.ts	T3	const metricIds = new Map(((metricRows.data ?? []) as { id: string; key: string }[]).map((m) => [m.key, m.id]));	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/metrics-ingest.ts	T3	const ours = byKey.get(row.repo_key) ?? [];	GENUINE-EMPTY	?? [] — map miss -> rejected	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/metrics-ingest.ts	T3	for (const r of (mineRead.data ?? []) as { repository_id: string; repo_key: string; sync_enabled: boolean }[]) {	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/provisioning.ts	T3	const keyOf = new Map(((found.data ?? []) as { id: string; key: string }[]).map((t) => [t.id, t.key]));	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/provisioning.ts	T3	const units = (data ?? []) as { tenant_id: string; unit: string }[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/provisioning.ts	T3	for (const row of (found.data ?? []) as RepoVisibilityRow[]) {	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/provisioning.ts	T3	return (data ?? []) as Membership[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/relay-push-send.ts	T2	} catch {	PARSE-DEFAULT	catch {} — invalid tz -> no quiet hours	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/relay-push-send.ts	T3	const subs = dedupByEndpoint((subRows as StoredSubscription[]) ?? []);	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repo-mapping.ts	T2	} catch {	PARSE-DEFAULT	catch {} — bad URI segment -> undefined	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	((mData ?? []) as { id: string; key: string }[]).map((m) => [m.id, m.key])	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	...(branchesOf.get(b.repository_id) ?? []),	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	const rows = (data ?? []) as T[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	const rows = (data ?? []) as {	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	const rowsIn = (data ?? []) as { tenant_id: string; sync_enabled: boolean }[];	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	disabled_metrics: disabled.get(`${row.tenant_id}|${row.repository_id}`) ?? [],	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	for (const b of branchRows ?? []) {	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	for (const row of (data ?? []) as {	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	graph_branches: branchesOf.get(row.repository_id) ?? []	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	out.set(k, [...(out.get(k) ?? []), key]);	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	return repos.map((r) => ({ ...r, graph_branches: branchesOf.get(r.repository_id) ?? [] }));	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/rulepacks-data.ts	T3	return (data ?? []) as string[];	GENUINE-EMPTY	?? [] — error checked first / optional arg	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/rulepacks-data.ts	T3	return shapeLibraryPacks((data ?? []) as unknown as LibraryPackRow[]);	GENUINE-EMPTY	?? [] — error checked first / optional arg	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/rules-data.ts	T3	return ((data ?? []) as TenantPackRuleRow[]).map(({ attribution, ...r }) => ({ ...r, source: attribution }));	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/rules-data.ts	T3	return shapePullResponse((data ?? []) as RuleRow[], since);	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/sealed-value.ts	T2	} catch {	GENUINE-EMPTY	catch {} — bad seal = no token, 428	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/teams-data.ts	T3	const links = (members.data ?? []) as Array<{ team_id: string; principal_id: string }>;	GENUINE-EMPTY	?? [] — error checked first / names null	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/teams-data.ts	T3	const rows = ((teams.data ?? []) as Array<{ id: string; name: string }>).sort((a, b) => a.name.localeCompare(b.name));	GENUINE-EMPTY	?? [] — error checked first / names null	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/tenant-route.ts	T1	const body = (await request.json().catch(() => ({}))) as { name?: unknown };	PARSE-DEFAULT	.catch( — non-JSON body -> 400	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/triage-data.ts	T3	return shapeTriageRows((data ?? []) as unknown as TriageQueueRow[]);	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/viewers-data.ts	T3	((workspaces.data ?? []) as ViewerWorkspace[]).map((p) => [p.id, { id: p.id, name: p.name }])	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/viewers-data.ts	T3	const rows = (viewers.data ?? []) as Array<{ principal_id: string; joined_at: string; email: string | null }>;	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/viewers-data.ts	T3	for (const g of (grants.data ?? []) as Array<{ workspace_id: string; principal_id: string }>) {	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/viewers-data.ts	T3	granted.set(g.principal_id, [...(granted.get(g.principal_id) ?? []), workspace]);	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/viewers-data.ts	T3	workspaces: (granted.get(r.principal_id) ?? []).sort((a, b) => a.name.localeCompare(b.name))	PARSE-DEFAULT	?? [] — optional names null kept	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/workspaces-data.ts	T3	return (data ?? []) as unknown as WorkspaceRow[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/auth/cli/refresh/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body -> 400	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/auth/cli/token/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/artifacts/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/invites/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/members/[userId]/role/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/policies/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/policies/[id]/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/gates/+server.ts	T3	const inbox = rows ?? [];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/gates/+server.ts	T3	for (const s of sess ?? []) sessById.set(s.id as string, { run_id: s.run_id, title: s.title });	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/inbox/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/inbox/+server.ts	T1	push.catch(() => {});	PARSE-DEFAULT	.catch( — push fail-open, logged inside	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/inbox/+server.ts	T3	const rows = data ?? [];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/inbox/+server.ts	T3	const since = Number(url.searchParams.get('since') ?? '0') || 0;	PARSE-DEFAULT	|| 0 — absent/bad since -> 0	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/inbox/+server.ts	T3	for (const s of sess ?? []) runById.set(s.id as string, s.run_id as string);	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/nudge/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/push/prefs/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body / optional events	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/push/subscribe/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/reply/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/review/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/segments/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/segments/+server.ts	T3	const idBySeq = new Map((existing ?? []).map((e) => [e.seq as number, e.id as string]));	GENUINE-EMPTY	?? [] — error checked first (fail closed)	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/segments/+server.ts	T3	return Response.json({ segments: data ?? [] });	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/session/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/session/+server.ts	T1	push.catch(() => {});	PARSE-DEFAULT	.catch( — push fail-open, logged inside	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/session/+server.ts	T3	return Response.json({ sessions: data ?? [] });	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/relay/status/+server.ts	T3	return Response.json({ runs: data ?? [] });	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/rules/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/t/[origin]/[org]/triage/[signature]/decide/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/contributions/adopt/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body -> 400	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/graph/+server.ts	T1	const body = await request.json().catch(() => null);	PARSE-DEFAULT	.catch( — non-JSON body -> ingest validates	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/invites/accept/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body -> empty, then 400	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/metrics/+server.ts	T1	const body = (await request.json().catch(() => null)) as { metrics?: unknown } | null;	PARSE-DEFAULT	.catch( — non-JSON body -> 400	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/metrics/activation/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/preferences/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/provision/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, token optional	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/repositories/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/repositories/election/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/repositories/graph-branches/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
+dojo/src/routes/v1/you/rule-packs/[slug]/adopt/+server.ts	T1	const body = await request.json().catch(() => ({}));	PARSE-DEFAULT	.catch( — non-JSON body -> default adopt	audit 2026-11-03 App. C	2026-11-03
+dojo/src/service-worker.ts	T1	await windowClient.navigate(url).catch(() => {});	PARSE-DEFAULT	.catch( — best-effort navigate side effect	audit 2026-11-03 App. C	2026-11-03

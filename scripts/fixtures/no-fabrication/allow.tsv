@@ -1,0 +1,2 @@
+file	rule	anchor	class	reason	reviewed	date
+crates/demo/src/lib.rs	R1	let text = resp.text().await.unwrap_or_default(); // expect: R1 allowed	GENUINE-EMPTY	fixture: an allowlisted hit is not counted	self-test	2026-11-03
