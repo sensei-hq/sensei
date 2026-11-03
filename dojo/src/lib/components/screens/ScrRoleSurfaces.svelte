@@ -1,13 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import {
-		SectionHead,
-		Btn,
-		Chip,
-		Icon,
-		Avatar,
-		RoleTag,
-		KanjiToken, LoadError } from '$lib/components/kit';
+	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
+	import { SectionHead, Btn, Chip, Icon, Avatar, RoleTag, KanjiToken } from '$lib/components/kit';
 	import type { KitMember, KitRolePolicy, KitChatTurn } from '$lib/components/kit/types';
 	import { ROLE_SURFACE_TABS, resolveTab } from '$lib/role-surfaces-view';
 	import { MEMBER_ROLES } from '$lib/admin-view';
@@ -128,7 +121,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the members, policies and audit" {error} />
+			<Notice size="panel" {...loadFailedNotice("the members, policies and audit", error)} data-load-error />
 		{:else}
 			<!-- The three admin surfaces — a segmented tab strip. -->
 			<div class="flex flex-wrap gap-2" role="tablist">

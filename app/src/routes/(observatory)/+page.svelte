@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { StateView } from '@sensei/ui';
   import { invalidateAll } from '$app/navigation';
-  import { Eyebrow, FtrStrip, Kanji, Screen, ScreenState } from '$lib/components';
+  import { Eyebrow, FtrStrip, Kanji, Screen } from '$lib/components';
   import RecentSessions from './RecentSessions.svelte';
   import HeroKoan from './HeroKoan.svelte';
   import InsightCard from './InsightCard.svelte';
@@ -62,7 +63,7 @@
   {/snippet}
   {#if !home}
     <div class="max-w-[1060px] mx-auto px-7 py-6 pb-16">
-      <ScreenState status="error" error={data.todayError} onretry={() => invalidateAll()} />
+      <StateView status="error" error={data.todayError} onretry={() => invalidateAll()} />
     </div>
   {:else}
   <div class="max-w-[1060px] mx-auto px-7 pt-4 pb-16" data-mode={mode}>

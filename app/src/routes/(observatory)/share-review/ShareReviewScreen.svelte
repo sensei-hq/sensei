@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { Notice } from '@sensei/ui';
+  import { Notice, EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
-  import { PageHeader, Screen, EmptyState, ScreenState } from '$lib/components';
+  import { PageHeader, Screen } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import { typePill, attributionSummary, type ChipClasses } from '$lib/dojo-artifacts.js';
   import type { ShareReviewBatch, ShareReviewItem, PublishBatchOutcome } from '$lib/types.js';
@@ -152,7 +152,7 @@
 
     <div class="max-w-[1060px] mx-auto px-7 pb-10" data-share-review>
       {#if loadError}
-        <ScreenState status="error" error={loadError} {onretry} />
+        <StateView status="error" error={loadError} {onretry} />
       {:else}
       {#if actions.notice}
         <div class="mb-3"><Notice size="inline" expanded {...actions.notice} data-share-error /></div>
@@ -164,13 +164,13 @@
 
       {#if !batch}
         {#if actions.outcome}
-          <EmptyState
+          <EmptyState size="screen"
             kanji="送"
             title="batch sent"
             description="Your batch has left for the Dōjō. New lessons will queue here as they generalise cleanly enough to share."
           />
         {:else}
-          <EmptyState
+          <EmptyState size="screen"
             kanji="送"
             title="nothing queued to share"
             description="Nothing is shareable by default. Lessons appear here once they've generalised past the confidence bar and an upstream batch is approved."

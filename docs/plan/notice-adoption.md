@@ -109,6 +109,9 @@ failure blanks a whole section). In order of how often people hit them:
 - P5 guard in the dōjō: `dojo/src/lib/error-surfaces.spec.ts`.
 - Plan & billing is two plans (Free; Org at $12 per active contributor). Plan changes say they open once payments are connected (D-BILLING).
 
+- The family is one set in `@sensei/ui` (L4 item 1): `StateView`, `EmptyState`, `Banner` and `Loading` beside `Notice`. The app's `ScreenState`, `EmptyState` and `DaemonStatusBanner` and the dōjō kit's `EmptyState`, `LoadError` and `Banner` are deleted, and every caller uses the shared ones. A failed screen always names a next step (`setStateDefaults` at the app root names the daemon). 401/403/404 read as refusals. A relay run that could not be read is a fault with Retry, no longer an empty state.
+- Still open: the daemon-down case (the app cannot yet tell "down" from "not known yet"; `daemon-health.svelte.ts` needs a reachable flag), and remedies on the ~58 inline `failureNotice` calls.
+
 ## Done when
 
 `grep -rn 'text-danger' app/src dojo/src --include=*.svelte` returns only the

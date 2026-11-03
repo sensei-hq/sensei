@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { EmptyState, StateView } from '@sensei/ui';
   // Sessions — the digest (Slot 6), Observatory-wide or one workspace's window:
   // a retro hero, one quiet chart the user flips between four treatments, then
   // the captured sessions. The page owns the scope (its loader and fetcher); this
@@ -7,7 +8,6 @@
   // Spec:   docs/spec/screen/observatory-sessions.md, docs/spec/screen/workspace-sessions.md
   // Mockup: docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
   import { goto } from '$app/navigation';
-  import EmptyState from '$lib/components/EmptyState.svelte';
   import Kanji from '$lib/components/Kanji.svelte';
   import { Screen } from '$lib/components';
   import TrendChart from './TrendChart.svelte';
@@ -17,7 +17,6 @@
   import MiniChart from './MiniChart.svelte';
   import SessionRow from './SessionRow.svelte';
   import type { SessionsDigestState } from '$lib/sessions-digest.svelte.js';
-  import ScreenState from '$lib/components/ScreenState.svelte';
   import {
     CHART_VARIANTS,
     SESSION_RANGES,
@@ -149,7 +148,7 @@
       <!-- The sessions could not be read (#288) — not a quiet week. Retry
            re-reads the active range through the state. -->
       <div class="p-6">
-        <ScreenState status="error" error={digest.error} onretry={() => void digest.retry()} />
+        <StateView status="error" error={digest.error} onretry={() => void digest.retry()} />
       </div>
     {:else}
     <!-- Totals strip + quality tally -->
@@ -234,7 +233,7 @@
         <span class="font-mono text-xs text-ink-faint">{enriched.length} shown</span>
       </div>
       {#if enriched.length === 0}
-        <EmptyState
+        <EmptyState size="screen"
           kanji={copy.kanji}
           title="No sessions in this window."
           description={copy.emptyDescription}

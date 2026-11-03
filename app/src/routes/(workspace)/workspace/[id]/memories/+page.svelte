@@ -1,7 +1,7 @@
 <script lang="ts">
-    import { Notice } from '@sensei/ui';
+    import { Notice, EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
-    import { PageHeader, Screen, EmptyState, Eyebrow, ScreenState } from '$lib/components';
+    import { PageHeader, Screen, Eyebrow } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
     import { invalidateAll } from '$app/navigation';
@@ -46,7 +46,7 @@
     {/snippet}
     <div class="px-6 py-6">
         {#if data.error}
-            <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+            <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
         {:else}
         <!-- Ready-to-share hero — counts the generalised memories and offers to
              stage them for the next share batch. Success-toned, quiet voice. -->
@@ -343,7 +343,7 @@
                 {/if}
             </div>
         {:else}
-            <EmptyState
+            <EmptyState size="screen"
                 kanji="覚"
                 title="Nothing to remember yet."
                 description="As you work in this workspace, sensei watches for corrections and patterns. Memories appear here once there's enough evidence to teach — and the ones that generalise cleanly become ready to share."

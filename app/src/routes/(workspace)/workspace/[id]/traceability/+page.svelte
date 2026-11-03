@@ -1,6 +1,6 @@
 <script lang="ts">
-    import { Notice } from '@sensei/ui';
-    import { PageHeader, Screen, ScreenState, StatusDot } from '$lib/components';
+    import { Notice, StateView } from '@sensei/ui';
+    import { PageHeader, Screen, StatusDot } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
     import { DriftScan, driftDotStatus } from '$lib/traceability.svelte.js';
@@ -47,7 +47,7 @@
             <div class="mb-4"><Notice size="inline" expanded {...drift.notice} data-testid="drift-scan-error" /></div>
         {/if}
         {#if data.error}
-            <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+            <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
         {:else}
         {#if drift.summaryText}
             <div class="mb-4 text-xs text-ink-mute" data-testid="drift-scan-summary">{drift.summaryText}</div>

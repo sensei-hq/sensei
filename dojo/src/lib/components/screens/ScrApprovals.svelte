@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Btn, Chip, KanjiToken, EmptyState, LoadError } from '$lib/components/kit';
+	import { Screen, EmptyState, Notice, loadFailedNotice } from '@sensei/ui';
+	import { SectionHead, Btn, Chip, KanjiToken } from '$lib/components/kit';
 	import type { KitApproval } from '$lib/components/kit/types';
 	import { impactTone } from '$lib/triage/candidates-view';
 
@@ -37,7 +37,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the approvals queue" {error} />
+			<Notice size="panel" {...loadFailedNotice("the approvals queue", error)} data-load-error />
 		{:else}
 			{#if approvals.length}
 				<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">

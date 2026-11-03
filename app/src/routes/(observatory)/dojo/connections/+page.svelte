@@ -1,7 +1,8 @@
 <script lang="ts">
+    import { EmptyState, StateView } from '@sensei/ui';
     import { railIcon } from "../../observatory-nav";
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen, EmptyState, Kanji, ScreenState } from '$lib/components';
+  import { PageHeader, Screen, Kanji } from '$lib/components';
   import type { DojoMembership } from '$lib/types.js';
   import {
     boundWorkspacesSummary,
@@ -84,9 +85,9 @@
 
     <div class="max-w-[1060px] mx-auto px-7 pb-10" data-connections-total={data.connections.length}>
       {#if data.error}
-        <ScreenState status="error" error={data.error} onretry={invalidateAll} />
+        <StateView status="error" error={data.error} onretry={invalidateAll} />
       {:else if data.connections.length === 0}
-        <EmptyState
+        <EmptyState size="screen"
           kanji="連"
           title="no dōjō yet"
           description="Sign in under Settings → Dōjō: each Dōjō you belong to joins here on the next sync. Employer, client, and community Dōjōs each keep their own scopes."

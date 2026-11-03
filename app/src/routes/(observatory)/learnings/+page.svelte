@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { StateView } from '@sensei/ui';
     import { onMount } from 'svelte';
     import { memoryState } from '$lib/memoryState.svelte.js';
     import { appState } from '$lib/appstate.svelte.js';
@@ -6,7 +7,7 @@
     import ActiveList  from './ActiveList.svelte';
     import ArchiveList from './ArchiveList.svelte';
     import MemoryDetail from './MemoryDetail.svelte';
-    import { PageHeader, Screen, ScreenState } from '$lib/components';
+    import { PageHeader, Screen } from '$lib/components';
     import { railIcon } from '../observatory-nav';
 
     type Tab = 'triage' | 'active' | 'archive';
@@ -57,7 +58,7 @@
             {#if memoryState.listError}
                 <!-- The lists could not be read or refreshed (#288) — not an empty tab.
                      After a failed refresh the last lists still show below it. -->
-                <ScreenState
+                <StateView
                     status="error"
                     error={memoryState.listError}
                     onretry={() => void memoryState.load(appState.activeWorkspaceId ?? undefined)}

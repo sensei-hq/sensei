@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Btn, Chip, Icon, ListSection, LoadError } from '$lib/components/kit';
+	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
+	import { SectionHead, Btn, Chip, Icon, ListSection } from '$lib/components/kit';
 	import type { KitIdentity } from '$lib/components/kit/types';
 
 	// The admin Identity & SSO screen (mockup ScrIdentity) — how org identity
@@ -34,7 +34,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the identity mappings" {error} />
+			<Notice size="panel" {...loadFailedNotice("the identity mappings", error)} data-load-error />
 		{:else}
 			<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
 				<!-- Identity provider — protocol + connection status + domain. -->

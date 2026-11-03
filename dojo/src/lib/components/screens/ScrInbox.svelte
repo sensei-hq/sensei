@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Screen, Notice } from '@sensei/ui';
-	import { SectionHead, SubTabs, InboxRow, EmptyState } from '$lib/components/kit';
+	import { Screen, Notice, EmptyState } from '@sensei/ui';
+	import { SectionHead, SubTabs, InboxRow } from '$lib/components/kit';
 	import { inboxUnreachableNotice } from '$lib/dojo-notices';
 	import type { KitInbox, KitRun, KitNavItem } from '$lib/components/kit/types';
 	import { filterInbox } from '$lib/relay-map';

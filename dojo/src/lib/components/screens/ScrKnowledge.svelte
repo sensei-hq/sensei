@@ -9,8 +9,8 @@
 </script>
 
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Btn, Chip, Icon, ListSection, KanjiToken, LoadError } from '$lib/components/kit';
+	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
+	import { SectionHead, Btn, Chip, Icon, ListSection, KanjiToken } from '$lib/components/kit';
 	import type { KitKnowledge } from '$lib/components/kit/types';
 
 	// The maintainer knowledge library (mockup ScrKnowledge) — the published
@@ -51,7 +51,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the knowledge library" {error} />
+			<Notice size="panel" {...loadFailedNotice("the knowledge library", error)} data-load-error />
 		{:else}
 			<ListSection
 				icon="check-circle"

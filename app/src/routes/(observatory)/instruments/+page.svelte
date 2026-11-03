@@ -6,14 +6,12 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import { ftrReadLabel } from "$lib/ftr.js";
-    import EmptyState from "$lib/components/EmptyState.svelte";
-    import ScreenState from "$lib/components/ScreenState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
     import { Eyebrow, Kanji, Screen } from "$lib/components";
     import { Button, Select } from "@rokkit/ui";
     import { mcp, toolHealthView, toolUsageTotals } from "$lib/state/mcp.svelte.js";
     import { buildPlaygroundGroups, groupNotice, serversByFamily, type PlaygroundTool } from "./playground-groups.js";
-    import { Notice } from "@sensei/ui";
+    import { Notice, EmptyState, StateView } from '@sensei/ui';
     import { INSTRUMENT_TABS, kindMark } from "./instrument-marks";
     import { glyphMode } from "$lib/glyphs";
     import ToolHealthCard from "./ToolHealthCard.svelte";
@@ -529,14 +527,14 @@
                 <p class="text-sm text-ink-mute px-7 py-5">Loading sessions…</p>
             {:else if ins.replayError}
                 <div class="px-7 py-5">
-                    <ScreenState
+                    <StateView
                         status="error"
                         error={ins.replayError}
                         onretry={() => void ins.retryReplaySessions(api)}
                     />
                 </div>
             {:else if ins.replaySessions.length === 0}
-                <EmptyState
+                <EmptyState size="screen"
                     kanji="録"
                     title="No sessions recorded yet"
                     description="Tool calls from your assistant sessions appear here once sensei has captured at least one session."
@@ -743,9 +741,9 @@
     {#if mcp.toolsHealthStatus === 'loading' || mcp.toolsHealthStatus === 'idle'}
         <p class="text-sm text-ink-mute" data-testid="tool-health-loading">Loading tool sources…</p>
     {:else if mcp.toolsHealthError}
-        <ScreenState status="error" error={mcp.toolsHealthError} onretry={() => void mcp.loadToolsHealth(true)} />
+        <StateView status="error" error={mcp.toolsHealthError} onretry={() => void mcp.loadToolsHealth(true)} />
     {:else if toolsHealth.length === 0}
-        <EmptyState
+        <EmptyState size="screen"
             kanji="健"
             title="No tool sources discovered yet"
             description="Sources appear once sensei has scanned your assistant configs and probed each MCP. Built-in tools and every installed MCP show up here with the share of registered tools actually in use."
@@ -806,13 +804,13 @@
          row (4 cards) on top, then Signals grid, then per-tool usage
          table. Verdict split bar layers into each expanded row (Slice D). -->
     {#if mcp.catalogError || mcp.insightsError}
-        <ScreenState
+        <StateView
             status="error"
             error={mcp.catalogError ?? mcp.insightsError}
             onretry={() => { void mcp.loadCatalog(true); void mcp.loadInsights(true); }}
         />
     {:else if toolStats.length === 0}
-        <EmptyState
+        <EmptyState size="screen"
             kanji="健"
             title="No tool usage data yet"
             description="Tool usage statistics appear after your assistant sessions call sensei tools. Start a session to begin tracking."

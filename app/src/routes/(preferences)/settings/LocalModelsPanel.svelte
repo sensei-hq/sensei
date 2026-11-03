@@ -1,11 +1,9 @@
 <script lang="ts">
-  import { Notice } from '@sensei/ui';
+  import { Notice, StateView } from '@sensei/ui';
   import { onMount, onDestroy } from 'svelte';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import { LocalModels, phaseDisplay, phaseError, type PhaseTone } from './local-models.svelte.js';
-  import ScreenState from '$lib/components/ScreenState.svelte';
-
   // The controller is injectable so tests drive the panel with fixture phases
   // (a real pull is blocked upstream). Default: a live controller over the
   // daemon api, loaded on mount.
@@ -39,7 +37,7 @@
   {:else if controller.loading}
     <p class="text-sm text-ink-mute">Loading models…</p>
   {:else if controller.models.length === 0 && controller.error}
-    <ScreenState status="error" error={controller.error} onretry={() => void controller.load()} />
+    <StateView status="error" error={controller.error} onretry={() => void controller.load()} />
   {:else if controller.models.length === 0}
     <p class="text-sm text-ink-mute" data-testid="local-models-empty">No local models configured.</p>
   {:else}

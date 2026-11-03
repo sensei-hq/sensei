@@ -1,14 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import {
-		SectionHead,
-		Btn,
-		Chip,
-		ListSection,
-		KanjiToken,
-		ConfidenceBar,
-		Enso,
-		EmptyState, LoadError } from '$lib/components/kit';
+	import { Screen, EmptyState, Notice, loadFailedNotice } from '@sensei/ui';
+	import { SectionHead, Btn, Chip, ListSection, KanjiToken, ConfidenceBar, Enso } from '$lib/components/kit';
 	import type { KitTriageGroup, KitCandidateDetail } from '$lib/components/kit/types';
 	import { impactTone, needsSecondApproval } from '$lib/triage/candidates-view';
 	import { createTriage } from '$lib/triage-state.svelte';
@@ -67,7 +59,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the triage queue" {error} />
+			<Notice size="panel" {...loadFailedNotice("the triage queue", error)} data-load-error />
 		{:else}
 			{#if triage.all.length}
 				<div class="grid gap-4 items-start grid-cols-1 md:grid-cols-[1.1fr_1fr]">

@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
-import Harness from './ScreenState.harness.svelte';
+import Harness from './StateView.harness.svelte';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 
-describe('ScreenState', () => {
+// The shared StateView (packages/ui) — the one switch every data screen in sensei
+// and the dōjō renders its four states through (it replaced the app's ScreenState).
+describe('StateView', () => {
   it('renders children when ready', () => {
     const m = mountComponent(Harness, { status: 'ready' });
     cleanup.push(m.destroy);
@@ -16,8 +18,17 @@ describe('ScreenState', () => {
   it('shows a loading skeleton (not the children) when loading', () => {
     const m = mountComponent(Harness, { status: 'loading' });
     cleanup.push(m.destroy);
-    expect(m.container.querySelector('[data-screen-state="loading"]')).toBeTruthy();
+    expect(m.container.querySelector('[data-screen-state="loading"][data-component="loading"]')).toBeTruthy();
+    expect(m.container.textContent).toContain('Loading…');
     expect(m.container.querySelector('[data-testid="ready-content"]')).toBeFalsy();
+  });
+
+  it('the empty state can name its next step', () => {
+    const onclick = vi.fn();
+    const m = mountComponent(Harness, { status: 'empty', title: 'No workspaces yet', action: { label: 'Add a folder', onclick, name: 'add' } });
+    cleanup.push(m.destroy);
+    (m.container.querySelector('[data-component="empty-state"] [data-action="add"]') as HTMLButtonElement).click();
+    expect(onclick).toHaveBeenCalledOnce();
   });
 
   it('shows the empty state with kanji/title/description', () => {
@@ -103,10 +114,12 @@ describe('ScreenState', () => {
       expect(n.querySelector('[data-part="code"]')!.textContent).toBe('unreachable');
     });
 
-    it('with no message, says what to check rather than showing nothing', () => {
-      const m = mountComponent(Harness, { status: 'error' });
-      cleanup.push(m.destroy);
-      expect(notice(m).querySelector('[data-part="remedy"]')!.textContent).toMatch(/daemon/);
+    it("names the next step from the app's default, with or without a message", () => {
+      for (const error of [null, 'daemon unreachable']) {
+        const m = mountComponent(Harness, { status: 'error', error, remedy: 'Check that the sensei daemon is running.' });
+        cleanup.push(m.destroy);
+        expect(notice(m).querySelector('[data-part="remedy"]')!.textContent).toMatch(/daemon is running/);
+      }
     });
   });
 });

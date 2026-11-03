@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection, LoadError } from '$lib/components/kit';
+	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
+	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection } from '$lib/components/kit';
 	import type { KitHealth } from '$lib/components/kit/types';
 	import { signalToneClass, alertToneClass, barMax, barPct } from '$lib/health-view';
 
@@ -36,7 +36,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the health rollup" {error} />
+			<Notice size="panel" {...loadFailedNotice("the health rollup", error)} data-load-error />
 		{:else}
 			<!-- Signal cards — two-up on phone, four-up on desktop. -->
 			<div class="grid grid-cols-2 gap-4 md:grid-cols-4">

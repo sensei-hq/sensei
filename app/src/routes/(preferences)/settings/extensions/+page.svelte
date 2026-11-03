@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { Notice } from '@sensei/ui';
+  import { Notice, StateView } from '@sensei/ui';
     import { railIcon } from "../settings-nav";
     import { untrack } from "svelte";
     import { invalidateAll } from "$app/navigation";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
-    import { PageHeader, Screen, ScreenState } from "$lib/components";
+    import { PageHeader, Screen } from "$lib/components";
     import type { ExtensionRow } from "../settings-reads";
     import { ExtensionsState } from "./extensions-state.svelte.js";
 
@@ -34,7 +34,7 @@
     {/snippet}
     <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16" data-testid="settings-extensions">
         {#if ex.loadError}
-            <ScreenState status="error" error={ex.loadError} onretry={() => void invalidateAll()} />
+            <StateView status="error" error={ex.loadError} onretry={() => void invalidateAll()} />
         {:else}
             <div
                 class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"

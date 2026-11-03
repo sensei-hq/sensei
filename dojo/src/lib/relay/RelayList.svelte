@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { SectionHead, EmptyState } from '$lib/components/kit';
-	import { Screen, Notice } from '@sensei/ui';
+	import { SectionHead } from '$lib/components/kit';
+	import { Screen, Notice, EmptyState } from '@sensei/ui';
 	import { invalidateAll } from '$app/navigation';
 	import { Toggle } from '@rokkit/ui';
 	import RelayCard from './RelayCard.svelte';

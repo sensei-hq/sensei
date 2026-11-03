@@ -1,9 +1,9 @@
 <script lang="ts">
-    import { Notice } from '@sensei/ui';
+    import { Notice, StateView } from '@sensei/ui';
     import { ftrBandView, ftrPctLabel } from '$lib/ftr';
     import { fmtCount, fmtMs } from '$lib/format';
     import { toolHealthView } from '$lib/state/mcp.svelte.js';
-    import { PageHeader, Screen, ScreenState } from '$lib/components';
+    import { PageHeader, Screen } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
     import { invalidateAll } from '$app/navigation';
@@ -56,7 +56,7 @@
 
     <div class="px-6 py-6">
         {#if data.error}
-            <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+            <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
         {:else}
         <!-- Services (MCP servers, inference providers) — per-workspace toggle. -->
         {#if services.length > 0}

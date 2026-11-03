@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { Notice } from '@sensei/ui';
+  import { Notice, EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, Screen, EmptyState, ScreenState, UnreadWorkspacesNotice } from '$lib/components';
+  import { PageHeader, Screen, UnreadWorkspacesNotice } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import type { DojoUpgrade } from '$lib/types.js';
   import { KIND_META, type Upgrade, type UpgradeKind } from './buckets.js';
@@ -208,9 +208,9 @@
         {/if}
 
         {#if data.dojoError}
-          <ScreenState status="error" error={data.dojoError} onretry={() => invalidateAll()} />
+          <StateView status="error" error={data.dojoError} onretry={() => invalidateAll()} />
         {:else if orderedUpgrades.length === 0}
-          <EmptyState
+          <EmptyState size="screen"
             kanji="贈"
             title="no dōjō upgrades yet"
             description="Connect a Dōjō to receive shared learnings. Approved principles, patterns, skills and guards land here for you to apply."
@@ -236,11 +236,11 @@
         </p>
 
         {#if data.localError}
-          <ScreenState status="error" error={data.localError} onretry={() => invalidateAll()} />
+          <StateView status="error" error={data.localError} onretry={() => invalidateAll()} />
         {:else}
         <UnreadWorkspacesNotice unread={data.unread} />
         {#if data.total === 0}
-          <EmptyState
+          <EmptyState size="screen"
             kanji="贈"
             title="no upgrades waiting"
             description="Recommended skills, agents, rules and lints will appear here once the analyzer has enough evidence — typically after 20+ sessions across a workspace."

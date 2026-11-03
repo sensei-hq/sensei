@@ -99,10 +99,18 @@ export function noticeFromReason(row) {
   };
 }
 
+/** A refusal names its own next step: nothing broke, the reader may not, or the
+ *  thing is not there. */
+const REFUSAL_REMEDY = {
+  401: 'Sign in again, then retry.',
+  403: 'Ask an admin for access.',
+  404: 'It may have moved or been removed. Go back and pick it again.',
+};
+
 /**
  * Pure: a failed API read → Notice props. `title` names WHAT failed ("Couldn't
  * load tickets") because only the screen knows; the error supplies why and what
- * to do. Status 0 is "never reached the server" — the daemon or the network,
+ * to do. 401/403/404 are refusals (nothing broke). Status 0 is "never reached the server" — the daemon or the network,
  * which is what the reader can check; a 5xx is the server's fault and a retry
  * may clear it; anything else is shown as the server said it.
  * @param {{ status: number, message: string }} error
@@ -111,14 +119,16 @@ export function noticeFromReason(row) {
  */
 export function noticeFromApiError(error, what) {
   const service = what.service ?? 'the server';
+  const refused = REFUSAL_REMEDY[/** @type {keyof typeof REFUSAL_REMEDY} */ (error.status)];
   const remedy =
-    error.status === 0
+    refused ??
+    (error.status === 0
       ? `Check that ${service} is running and reachable, then retry.`
       : error.status >= 500
         ? 'This is on the server side. Retry in a moment; if it keeps failing, the logs will say why.'
-        : undefined;
+        : undefined);
   return {
-    tone: /** @type {NoticeTone} */ ('fault'),
+    tone: /** @type {NoticeTone} */ (refused ? 'refusal' : 'fault'),
     title: what.title,
     detail: error.message || undefined,
     remedy,
@@ -179,3 +189,54 @@ export function failureNotice(title, error, extra = {}) {
   if (!error) return null;
   return { tone: /** @type {NoticeTone} */ ('fault'), title, detail: error, ...extra };
 }
+
+/** What every failed read says to do when the screen has nothing better. */
+export const DEFAULT_REMEDY = 'Retry. If it keeps failing, reload the page.';
+
+/**
+ * Pure: a read that failed, named by what it was ("the triage queue") → Notice
+ * props. Always a next step: the screen's remedy, or the default.
+ * @param {string} what
+ * @param {string | null | undefined} error
+ * @param {{ remedy?: string, code?: string }} [extra]
+ */
+export function loadFailedNotice(what, error, extra = {}) {
+  return {
+    tone: /** @type {NoticeTone} */ ('fault'),
+    title: `Couldn't load ${what}`,
+    detail: error || 'No answer came back.',
+    remedy: DEFAULT_REMEDY,
+    ...extra,
+  };
+}
+
+/**
+ * Pure: what StateView's error branch says. A screen's own notice (from its
+ * state module) wins; otherwise the generic title with the reason. Either way it
+ * names the next step — the app's default remedy (`setStateDefaults`), else
+ * DEFAULT_REMEDY.
+ * @param {string | null | undefined} error
+ * @param {{ notice?: { tone?: NoticeTone, eyebrow?: string, title: string, detail?: string, remedy?: string, code?: string }, remedy?: string }} [opts]
+ */
+export function stateErrorNotice(error, opts = {}) {
+  const remedy = opts.remedy ?? DEFAULT_REMEDY;
+  if (opts.notice) {
+    return { tone: /** @type {NoticeTone} */ ('fault'), eyebrow: "couldn't load", ...opts.notice, remedy: opts.notice.remedy ?? remedy };
+  }
+  return {
+    tone: /** @type {NoticeTone} */ ('fault'),
+    eyebrow: "couldn't load",
+    title: "Couldn't load this",
+    ...(error ? { detail: error } : {}),
+    remedy,
+  };
+}
+
+/** A strip (Banner) per Notice tone: its tint, its edge, and its mark's colour.
+ *  Text on a tint is `text-on-{role}-soft` (rokkit-defaults). */
+export const BANNER_TONES = {
+  fault: { bg: 'bg-danger-soft', edge: 'border-danger-soft', mark: 'text-on-danger-soft' },
+  refusal: { bg: 'bg-warning-soft', edge: 'border-warning-soft', mark: 'text-on-warning-soft' },
+  action: { bg: 'bg-accent-soft', edge: 'border-accent-soft', mark: 'text-on-accent-soft' },
+  normal: { bg: 'bg-paper-soft', edge: 'border-paper-edge', mark: 'text-ink-soft' },
+};

@@ -1,15 +1,7 @@
 <script lang="ts">
-	import { Screen, Notice } from '@sensei/ui';
+	import { Screen, Notice, EmptyState } from '@sensei/ui';
 	import { needsUnreadNotice } from '$lib/dojo-notices';
-	import {
-		SectionHead,
-		StatBadge,
-		NeedsYouBand,
-		ListSection,
-		Btn,
-		WorkspaceRow,
-		EmptyState
-	} from '$lib/components/kit';
+	import { SectionHead, StatBadge, NeedsYouBand, ListSection, Btn, WorkspaceRow } from '$lib/components/kit';
 	import type { KitWorkspace, KitNeed, KitOrgStats } from '$lib/components/kit/types';
 	import { type NeedsAction } from '$lib/components/kit/needs';
 

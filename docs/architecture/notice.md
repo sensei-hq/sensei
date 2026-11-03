@@ -74,3 +74,25 @@ Never typed into a screen (guidelines §4: copy lives in the state module).
 - Say whether anything was saved or lost when the reader would wonder.
 - One solid primary, at most one outline secondary. Never a bare "OK".
 - The code is small and last. It is for support and logs.
+
+## The family around Notice
+
+All in `packages/ui`, exported from `@sensei/ui`, used by the app and the dōjō
+alike. The per-app copies (app `ScreenState`, `EmptyState`,
+`DaemonStatusBanner`; dōjō kit `EmptyState`, `LoadError`, `Banner`) are gone.
+
+| Component | For | Notes |
+|---|---|---|
+| `StateView` | a data screen's four states | `status: loading \| empty \| error \| ready`. Error is a screen-size Notice: the screen's `notice` if it has one, else "Couldn't load this" with the reason. Retry when `onretry` is set. |
+| `EmptyState` | an honest empty | `kanji`, `title`, `description` or children, `action` (a `NoticeAction`), `size: panel \| screen`. `role=status`. Never for a failure. |
+| `Banner` | a strip | the Notice tones on their tints (`BANNER_TONES`, text on a tint is `text-on-*-soft`), `mark`, `title`, `detail` or children, `action`, `right`, `bleed` (full width across the app). |
+| `Loading` | the wait | skeleton rows, `aria-busy`, screen-reader `label`. |
+
+**Every failure names a next step.** `stateErrorNotice` and `loadFailedNotice`
+always carry a remedy: the screen's own, else the app's default from
+`setStateDefaults({ remedy })` at the root layout (the desktop app names the
+daemon), else `DEFAULT_REMEDY`. A dōjō read that failed is
+`<Notice size="panel" {...loadFailedNotice('the triage queue', error)} />`.
+
+**Refusal is not fault.** `noticeFromApiError` maps 401, 403 and 404 to the
+refusal tone, each with its next step (sign in, ask an admin, go back).

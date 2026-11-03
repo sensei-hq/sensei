@@ -1,10 +1,10 @@
 <script lang="ts">
+    import { EmptyState, StateView } from '@sensei/ui';
     import { railIcon } from "../observatory-nav";
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
-    import EmptyState from "$lib/components/EmptyState.svelte";
-    import { Eyebrow, PageHeader, Screen, ScreenState } from "$lib/components";
+    import { Eyebrow, PageHeader, Screen } from "$lib/components";
     import { LibrariesState } from "./libraries-state.svelte.js";
 
     const api = senseiApi(appState.port);
@@ -37,9 +37,9 @@
         {#if lib.loading}
             <p class="text-sm text-ink-mute">Loading libraries...</p>
         {:else if lib.error}
-            <ScreenState status="error" error={lib.error} onretry={() => void lib.load(api)} />
+            <StateView status="error" error={lib.error} onretry={() => void lib.load(api)} />
         {:else if filtered.length === 0}
-            <EmptyState
+            <EmptyState size="screen"
                 kanji="書"
                 title="No libraries indexed."
                 description="Libraries appear once sensei scans your workspace dependencies. Add folders in the setup wizard, and sensei will detect libraries from your manifests."

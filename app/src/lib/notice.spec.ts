@@ -9,6 +9,9 @@ import {
   noticeFromApiError,
   noticeForRouteError,
   failureNotice,
+  loadFailedNotice,
+  stateErrorNotice,
+  BANNER_TONES,
 } from '@sensei/ui';
 
 // packages/ui/notice.js — what a Notice says and how it looks, decided once so
@@ -118,9 +121,23 @@ describe('noticeFromApiError', () => {
     expect(n.remedy).toMatch(/Retry in a moment/);
   });
 
-  it("4xx: the server's message is the whole story — no invented remedy", () => {
-    const n = noticeFromApiError({ status: 404, message: 'No such workspace' }, { title: "Couldn't open it" });
-    expect(n).toMatchObject({ detail: 'No such workspace', code: 'http_404' });
+  it('401/403/404 are refusals, not faults: nothing broke, and each names the next step', () => {
+    const missing = noticeFromApiError({ status: 404, message: 'No such workspace' }, { title: "Couldn't open it" });
+    expect(missing).toMatchObject({ tone: 'refusal', detail: 'No such workspace', code: 'http_404' });
+    expect(missing.remedy).toBe('It may have moved or been removed. Go back and pick it again.');
+    expect(noticeFromApiError({ status: 403, message: 'admins only' }, { title: 'x' })).toMatchObject({
+      tone: 'refusal',
+      remedy: 'Ask an admin for access.',
+    });
+    expect(noticeFromApiError({ status: 401, message: '' }, { title: 'x' })).toMatchObject({
+      tone: 'refusal',
+      remedy: 'Sign in again, then retry.',
+    });
+  });
+
+  it("another 4xx: the server's message is the whole story — no invented remedy", () => {
+    const n = noticeFromApiError({ status: 409, message: 'Already exists' }, { title: "Couldn't save" });
+    expect(n).toMatchObject({ tone: 'fault', detail: 'Already exists', code: 'http_409' });
     expect(n.remedy).toBeUndefined();
   });
 
@@ -181,5 +198,62 @@ describe('failureNotice — a state module\'s failure, said the one way', () => 
     expect(failureNotice('x', 'y', { remedy: 'Retry.', code: 'http_503' })).toEqual({
       tone: 'fault', title: 'x', detail: 'y', remedy: 'Retry.', code: 'http_503',
     });
+  });
+});
+
+describe('loadFailedNotice — a read that failed, named by what it was', () => {
+  it('names what failed, then why, and always says what to do', () => {
+    expect(loadFailedNotice('the triage queue', 'forbidden')).toEqual({
+      tone: 'fault',
+      title: "Couldn't load the triage queue",
+      detail: 'forbidden',
+      remedy: 'Retry. If it keeps failing, reload the page.',
+    });
+  });
+
+  it('with no reason given, still says something', () => {
+    expect(loadFailedNotice('your metrics', '').detail).toBe('No answer came back.');
+  });
+
+  it('takes the screen\'s own remedy when it has a better one', () => {
+    expect(loadFailedNotice('x', 'y', { remedy: 'Check the daemon.' }).remedy).toBe('Check the daemon.');
+  });
+});
+
+describe('stateErrorNotice — what a failed screen says', () => {
+  it('names the failure generically, with the reason and a remedy — even when there is a reason', () => {
+    expect(stateErrorNotice('daemon unreachable', { remedy: 'Check the daemon.' })).toEqual({
+      tone: 'fault',
+      eyebrow: "couldn't load",
+      title: "Couldn't load this",
+      detail: 'daemon unreachable',
+      remedy: 'Check the daemon.',
+    });
+  });
+
+  it("a screen's own notice wins, keeping the eyebrow and the default remedy when it has none", () => {
+    expect(stateErrorNotice(null, { notice: { title: "Couldn't load tickets", tone: 'refusal' }, remedy: 'Retry.' })).toEqual({
+      tone: 'refusal',
+      eyebrow: "couldn't load",
+      title: "Couldn't load tickets",
+      remedy: 'Retry.',
+    });
+  });
+
+  it('with no remedy anywhere, still names the next step', () => {
+    expect(stateErrorNotice('x').remedy).toBe('Retry. If it keeps failing, reload the page.');
+  });
+});
+
+describe('BANNER_TONES — a strip per Notice tone, text on its tint from text-on-*-soft', () => {
+  it('has the Notice tones, each on named tokens', () => {
+    expect(Object.keys(BANNER_TONES)).toEqual(['fault', 'refusal', 'action', 'normal']);
+    for (const t of Object.values(BANNER_TONES)) {
+      expect(t.bg).toMatch(/^bg-[a-z-]+$/);
+      expect(t.edge).toMatch(/^border-[a-z-]+$/);
+      expect(t.mark).toMatch(/^text-[a-z-]+$/);
+    }
+    expect(BANNER_TONES.fault).toEqual({ bg: 'bg-danger-soft', edge: 'border-danger-soft', mark: 'text-on-danger-soft' });
+    expect(BANNER_TONES.normal).toEqual({ bg: 'bg-paper-soft', edge: 'border-paper-edge', mark: 'text-ink-soft' });
   });
 });

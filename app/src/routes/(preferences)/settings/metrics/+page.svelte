@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { Notice } from '@sensei/ui';
+  import { Notice, StateView } from '@sensei/ui';
     import { railIcon } from "../settings-nav";
   import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, Screen, ScreenState, Switch } from '$lib/components';
+  import { PageHeader, Screen, Switch } from '$lib/components';
   import { personaList } from '$lib/personas.svelte.js';
   import { MetricSettings, reasonKindClass } from './metric-status-state.svelte.js';
 
@@ -49,7 +49,7 @@
 
     {#if data.error || !state}
       <div class="max-w-[1060px] mx-auto px-7 pb-10">
-        <ScreenState
+        <StateView
           status="error"
           error={data.error ?? 'Failed to load metric status'}
           onretry={invalidateAll}
@@ -101,9 +101,9 @@
 
           <section>
             {#if state.loading}
-              <ScreenState status="loading" />
+              <StateView status="loading" />
             {:else if state.error && state.rows.length === 0}
-              <ScreenState
+              <StateView
                 status="error"
                 error={state.error}
                 onretry={() => state.selected && state.select(state.selected)}

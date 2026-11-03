@@ -4,9 +4,9 @@
   import { senseiApi } from '$lib/api.js';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
-  import { Kanji, Eyebrow, Screen, ScreenState } from '$lib/components';
+  import { Kanji, Eyebrow, Screen } from '$lib/components';
   import { Button } from '@rokkit/ui';
-  import { Notice } from '@sensei/ui';
+  import { Notice, StateView } from '@sensei/ui';
   import WorkspacePill from '../../../../(observatory)/workspaces/WorkspacePill.svelte';
   import {
     ftrDisplay,
@@ -92,7 +92,7 @@
   {/snippet}
   <div class="px-10 pb-12 max-w-[900px]" class:pt-8={!data.overview}>
     {#if !data.overview}
-      <ScreenState status="error" error={data.overviewError} onretry={() => invalidateAll()} />
+      <StateView status="error" error={data.overviewError} onretry={() => invalidateAll()} />
     {:else}
 
     <!-- Hero — top recommendation, or the all-quiet listening state -->

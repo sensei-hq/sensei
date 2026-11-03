@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { Notice } from '@sensei/ui';
+  import { Notice, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
-  import { PageHeader, Screen, ScreenState } from '$lib/components';
+  import { PageHeader, Screen } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
@@ -187,7 +187,7 @@
     <!-- The board could not be read (#288) — not three quiet columns. Retry
          re-reads the current scope through the state, which owns the board. -->
     <div class="p-8">
-      <ScreenState status="error" error={board.loadError} onretry={() => void board.retry(api)} />
+      <StateView status="error" error={board.loadError} onretry={() => void board.retry(api)} />
     </div>
   {:else}
   <div class="grid grid-cols-3 flex-1 min-h-0" data-triage-grid>

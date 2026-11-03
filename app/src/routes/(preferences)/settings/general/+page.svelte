@@ -1,8 +1,9 @@
 <script lang="ts">
+    import { StateView } from '@sensei/ui';
     import { railIcon } from "../settings-nav";
     import { onMount, untrack } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
-    import { PageHeader, Screen, ScreenState, Switch } from "$lib/components";
+    import { PageHeader, Screen, Switch } from "$lib/components";
     import { Toggle } from "@rokkit/ui";
     import { invalidateAll } from "$app/navigation";
     import { PreferencesState, type SaveConfig } from "./general-state.svelte.js";
@@ -51,7 +52,7 @@
     {/snippet}
     <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16">
         {#if st.loadError}
-            <ScreenState status="error" error={st.loadError} onretry={() => void invalidateAll()} />
+            <StateView status="error" error={st.loadError} onretry={() => void invalidateAll()} />
         {:else}
             <div
                 class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"

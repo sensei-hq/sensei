@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { Notice } from '@sensei/ui';
+  import { Notice, EmptyState } from '@sensei/ui';
   import { clock } from '$lib/clock.svelte.js';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { EmptyState, PageHeader, Screen } from '$lib/components';
+  import { PageHeader, Screen } from '$lib/components';
   import { railIcon } from '../observatory-nav';
   import { Select } from '@rokkit/ui';
   import {
@@ -227,7 +227,7 @@
     <div class="px-6 py-6"><Notice size="panel" {...data.rowsNotice} data-logs-error /></div>
   {:else if data.rows.length === 0}
     <div class="p-6">
-      <EmptyState
+      <EmptyState size="screen"
         kanji="診"
         title="no logs for these filters"
         description="Nothing matched the current level, source, module and time range. Widen the range or clear a filter."

@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { KanjiToken, PlanBar, PlanOutline, ListSection, EmptyState, Icon, RunActivity } from '$lib/components/kit';
+	import { Screen, EmptyState } from '@sensei/ui';
+	import { KanjiToken, PlanBar, PlanOutline, ListSection, Icon, RunActivity } from '$lib/components/kit';
 	import { Toggle } from '@rokkit/ui';
 	import type { KitTask } from '$lib/components/kit/types';
 	import type { RelaySession } from './types';

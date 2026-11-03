@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Btn, WorkspaceRow, EmptyState, LoadError } from '$lib/components/kit';
+	import { Screen, EmptyState, Notice, loadFailedNotice } from '@sensei/ui';
+	import { SectionHead, Btn, WorkspaceRow } from '$lib/components/kit';
 	import type { KitWorkspace } from '$lib/components/kit/types';
 
 	// The full personal workspace list (mockup ScrWorkspaces) — a flush card of
@@ -40,7 +40,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the workspaces" {error} />
+			<Notice size="panel" {...loadFailedNotice("the workspaces", error)} data-load-error />
 		{:else if workspaces.length}
 			<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 				{#each workspaces as p (p.id)}

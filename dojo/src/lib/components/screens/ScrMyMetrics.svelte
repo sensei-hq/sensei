@@ -1,6 +1,5 @@
 <script lang="ts">
-	import LoadError from '../kit/LoadError.svelte';
-	import { Screen } from '@sensei/ui';
+	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
 	import { SectionHead } from '$lib/components/kit';
 	import Spark from '$lib/components/kit/Spark.svelte';
 	import type { MyMetricsView } from '$lib/my-metrics-view';
@@ -31,7 +30,7 @@
 	{/snippet}
 	<section class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error || !view}
-			<LoadError what="your metrics" {error} />
+			<Notice size="panel" {...loadFailedNotice("your metrics", error)} data-load-error />
 		{:else}
 			<p class="text-xs text-ink-mute">The last {view.days} days, across the repositories you share.</p>
 			<ul class="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">

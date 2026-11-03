@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { Screen, Notice } from '@sensei/ui';
+	import { Screen, Notice, EmptyState } from '@sensei/ui';
 	import type { MicrosoftNotice } from '$lib/azure-view';
 	import { Button } from '@rokkit/ui';
-	import { SectionHead, ListSection, MyDojoRow, EmptyState, AzureConnect } from '$lib/components/kit';
+	import { SectionHead, ListSection, MyDojoRow, AzureConnect } from '$lib/components/kit';
 	import type { AzureConnectState } from '$lib/azure-connect-state.svelte';
 	import type { KitDojo } from '$lib/components/kit/types';
 	import { groupDojos } from '$lib/personal-view';

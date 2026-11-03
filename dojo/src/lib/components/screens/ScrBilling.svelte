@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Card, Button } from '@rokkit/ui';
-	import { Screen, Notice, Eyebrow } from '@sensei/ui';
-	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection, LoadError } from '$lib/components/kit';
+	import { Screen, Notice, Eyebrow, loadFailedNotice } from '@sensei/ui';
+	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection } from '$lib/components/kit';
 	import type { KitBilling } from '$lib/components/kit/types';
 	import { monthlyTotal, tierAction, attachNotice } from '$lib/billing-view';
 
@@ -49,7 +49,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="billing" {error} />
+			<Notice size="panel" {...loadFailedNotice("billing", error)} data-load-error />
 		{:else}
 			<!-- Summary — current plan · billable seats · what Org costs. -->
 			<div class="grid grid-cols-1 gap-4 md:grid-cols-3">

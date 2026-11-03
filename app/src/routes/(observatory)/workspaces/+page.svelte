@@ -1,11 +1,12 @@
 <script lang="ts">
+    import { StateView } from '@sensei/ui';
     import { KIND_ICONS } from '$lib/glyph-vocabulary';
     import Kanji from '$lib/components/Kanji.svelte';
   import { Toggle } from '@rokkit/ui';
   import type { ProxyItem } from '@rokkit/states';
   import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen, ScreenState } from '$lib/components';
+  import { PageHeader, Screen } from '$lib/components';
   import { railIcon } from '../observatory-nav';
   import { workspaceStatus, type EnrichedWorkspace } from './buckets.js';
   import { workspacesView, type WorkspaceFilter, type WorkspaceView } from './workspaces-view.svelte.js';
@@ -135,7 +136,7 @@
   {/snippet}
   <div class="bg-paper min-h-full pt-5 pb-6 px-7">
     {#if data.error}
-      <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+      <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
     {:else if counts.all === 0}
       <p class="text-sm text-ink-mute opacity-70 py-6 text-center">
         No workspaces yet. Set up a workspace to get started.

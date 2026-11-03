@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
+	import { Screen, EmptyState, Notice } from '@sensei/ui';
+	import { runUnreadNotice, RUN_NOT_FOUND } from '$lib/dojo-notices';
 	import { onMount } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
-	import { EmptyState } from '$lib/components/kit';
 	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
 	import RelayDetail from '$lib/relay/RelayDetail.svelte';
 	import { toRelaySession } from '$lib/relay/relay-inbox-map';
@@ -23,6 +23,7 @@
 			? toRelaySession(data.run, data.gates, data.segments, data.tenantKey)
 			: null
 	);
+	const unread = $derived(runUnreadNotice(data.error, () => invalidateAll()));
 	const send: SendReply = (tenantKey, inboxId, reply) =>
 		replyToGate(tenantKey, inboxId, reply, { fetch, accessToken: data.accessToken ?? null });
 
@@ -55,9 +56,11 @@
 {:else}
 	<Screen>
 		<div class="p-6">
-			<EmptyState kanji="観" title={data.error ? 'Live relay is unavailable.' : 'This run is not in your dōjōs.'}>
-				{data.error ?? 'It may have finished long ago, or belong to a dōjō you are not in.'}
-			</EmptyState>
+			{#if unread}
+				<Notice size="panel" {...unread} />
+			{:else}
+				<EmptyState {...RUN_NOT_FOUND} />
+			{/if}
 		</div>
 	</Screen>
 {/if}

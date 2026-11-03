@@ -31,8 +31,7 @@
 </script>
 
 <script lang="ts">
-	import LoadError from '../kit/LoadError.svelte';
-	import { Screen, Notice } from '@sensei/ui';
+	import { Screen, Notice, loadFailedNotice } from '@sensei/ui';
 	import { actionFailedNotice } from '$lib/dojo-notices';
 	import { SectionHead, StatBadge, ListSection, KanjiToken, Chip, Btn } from '$lib/components/kit';
 	import type { KitContribution, KitDownstream, KitContribStat } from '$lib/components/kit/types';
@@ -93,7 +92,7 @@
 			<Notice size="inline" expanded {...errorNotice} />
 		{/if}
 		{#if loadError}
-			<LoadError what="your contributions" error={loadError} />
+			<Notice size="panel" {...loadFailedNotice("your contributions", loadError)} data-load-error />
 		{:else}
 		<ListSection icon="upload-square" title="What you've shared" count={mine.length}>
 			{#each mine as c, i (i)}

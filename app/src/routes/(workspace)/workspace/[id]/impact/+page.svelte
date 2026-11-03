@@ -1,11 +1,11 @@
 <script lang="ts">
-    import { Notice } from '@sensei/ui';
+    import { Notice, EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
-  import { EmptyState, MoeReasoningPanel, PageHeader, Screen, ScreenState } from '$lib/components';
+  import { MoeReasoningPanel, PageHeader, Screen } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import {
     deltaView,
@@ -46,7 +46,7 @@
   {/snippet}
   <div class="px-6 py-6">
     {#if data.error}
-      <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+      <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
     {:else}
 
     <!-- Verdict counts — measured impact at a glance -->
@@ -70,7 +70,7 @@
     </div>
 
     {#if data.total === 0 || !selected}
-      <EmptyState
+      <EmptyState size="screen"
         kanji="果"
         title="no measurements yet"
         description="Accepted recommendations show up here once the analyzer's MeasureVerdicts pass has enough post-acceptance sessions to compare FTR before and after."
