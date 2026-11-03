@@ -66,6 +66,7 @@ item only.
 | D83 | **No fabricated values, anywhere** (user, 2026-11-03): showing a made-up number, list, plan or status when the real data is unavailable is misinformation. Every layer (SQL, daemon, MCP, both apps, shared packages) surfaces a failed read as an error state and never as a plausible value. The system-wide audit (`coord/audits/fabrication-2026-11-03.md`) assigns each failure-mask to its owning lane, and a ratchet guard in `make test-fast` stops new ones. Honest-empty is correct only when the data truly is empty. |
 | D84 | **S6 (diagram history) waits until every sync works** (user): after #314's production verification, not this week. S6's Q1–Q6 stay open until then. |
 | D85 | **The billing screen is Cowork's new mockup work of 2026-11-03** (user). The earlier mockups in `docs/mockups/Sensei/` are its reference. The decision-driven fixes (Pro, "to be announced", nothing free listed as paid) apply. |
+| D86 | **What the paid tier sells, in words** (clarifies D24 and D20 after D47/D52): the paid benefit is **blocking targets on an organisation's private repositories**, plus integrations and consolidated metrics. "Gating" in D20/D24 means exactly that. A target that only warns, and any target on public or personal repositories, is free. |
 
 The coordinator writes these into `docs/decisions.md` after Muse's WP4 commit lands. That file is in
 Muse's index right now.
