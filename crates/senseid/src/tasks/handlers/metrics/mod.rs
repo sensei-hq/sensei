@@ -58,6 +58,7 @@ use crate::db::pg_store::PgStore;
 /// groups; `quality` (Phase 8) is the git-worktree + `qlty` code-quality group that
 /// superseded the former own-graph `duplication` snapshot.
 mod architecture;
+mod architecture_shape;
 mod autonomy;
 pub(crate) mod churn;
 mod cost;
