@@ -92,7 +92,7 @@ describe('metrics landing', () => {
   };
   const noPairs = ok({ cells: 0, min_pairs: 20, min_rho: 0.5, correlations: [] });
 
-  it.skip('pending: d83-metrics — a health read in flight claims no "no rated metrics"', async () => {
+  it('a health read in flight claims no "no rated metrics"', async () => {
     const { held } = render();
     gridLanded(held);
     await tick();
@@ -103,7 +103,7 @@ describe('metrics landing', () => {
     expect(q('[data-component="metrics-radar-error"]')).toBeNull();
   });
 
-  it.skip('pending: d83-metrics — a failed health read is the radar’s error, never "no rated metrics"', async () => {
+  it('a failed health read is the radar’s error, never "no rated metrics"', async () => {
     const { held } = render();
     gridLanded(held);
     held.health.resolve({ ok: false, error: { message: 'health down', status: 500 } });
@@ -152,14 +152,17 @@ describe('metrics landing', () => {
     gridLanded(held);
     held.correlations.resolve(ok({ cells: 1, min_pairs: 20, min_rho: 0.5, correlations: [
       { a: 'ftr', b: 'churn_rate', rho: -0.7, n: 30 },
+      { a: 'ftr', b: 'not_here', rho: 0.6, n: 30 },
     ] }));
     await tick();
     expect(q('[data-component="metrics-correlations"]')).not.toBeNull();
+    // Only this workspace's pair is drawn (review r2 N1): not the portfolio-wide list.
+    expect(target.querySelectorAll('[data-component="metrics-correlations"] [data-component="correlation-card"]').length).toBe(1);
     expect(q('[data-component="metrics-correlations-error"]')).toBeNull();
   });
 
   // D83 audit row 74: a failed correlations read hid the section.
-  it.skip('pending: d83-metrics — a failed correlations read says so instead of hiding the section', async () => {
+  it('a failed correlations read says so instead of hiding the section', async () => {
     const { held } = render();
     gridLanded(held);
     held.correlations.resolve({ ok: false, error: { message: 'correlations down', status: 500 } });

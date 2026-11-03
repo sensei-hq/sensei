@@ -138,7 +138,7 @@ describe('WorkspaceMetrics', () => {
       { a: 'ftr', b: 'elsewhere', rho: 0.7, n: 40 },
     ] }));
     await tick();
-    expect(m.correlations.map((c) => c.b)).toEqual(['churn_rate']);
+    expect(m.correlationsSection.data?.map((c) => c.b)).toEqual(['churn_rate']);
   });
 
   it('reopening reuses what was read: no read is made twice while it is fresh', async () => {
@@ -234,7 +234,7 @@ describe('WorkspaceMetrics', () => {
 
   // D83 audit row 74: a failed correlations read is the section's error, never
   // an absent section that reads as "nothing moves together".
-  it.skip('pending: d83-metrics — the correlations section is loading, this workspace’s pairs, or why the read failed', async () => {
+  it('the correlations section is loading, this workspace’s pairs, or why the read failed', async () => {
     const { api, held } = daemon();
     const m = new WorkspaceMetrics(api, 'w1');
     m.open();
@@ -258,7 +258,7 @@ describe('WorkspaceMetrics', () => {
       .toEqual(['error', null, 'correlations down']);
   });
 
-  it.skip('pending: d83-metrics — a correlations read with no pairs is ready and empty, not an error', async () => {
+  it('a correlations read with no pairs is ready and empty, not an error', async () => {
     const { api, held } = daemon();
     const m = new WorkspaceMetrics(api, 'w1');
     m.open();

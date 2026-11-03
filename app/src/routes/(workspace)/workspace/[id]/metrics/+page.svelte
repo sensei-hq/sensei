@@ -30,7 +30,8 @@
     const grid = $derived(metrics.grid);
     const narrative = $derived(grid.data?.narrative ?? null);
     const signals = $derived(grid.data ? buildSignals(grid.data.rows, familyLookup(grid.data.registry), narrative) : []);
-    const health = $derived(metrics.health.data);
+    const healthRead = $derived(metrics.health);
+    const health = $derived(healthRead.data);
     const hero = $derived(healthHeroReadout(health));
     const movers = $derived(pickMovers(signals));
     const groups = $derived(groupSignals(signals));
@@ -38,7 +39,8 @@
     // Display name by key, so a card never shows a raw registry key.
     const nameOf = $derived((key: string) => signals.find((s) => s.key === key)?.name ?? key);
     // Cap the list: past a handful this stops being a reading and becomes a table.
-    const correlations = $derived(metrics.correlations.slice(0, 6));
+    const correlationsRead = $derived(metrics.correlationsSection);
+    const correlations = $derived(correlationsRead.status === 'ready' ? correlationsRead.data!.slice(0, 6) : []);
     const sparks = $derived(metrics.sparks);
 </script>
 
@@ -139,15 +141,31 @@
 
             <!-- All signals at once, on the one scale they share (0-5 ratings).
                  Sits above the per-metric grid: shape first, then the detail. -->
+            <!-- The radar draws only what was read: a failed read says so, and one in
+                 flight says it is reading, never "no rated metrics" (D83). -->
             <section data-component="metrics-radar" class="mb-10">
-                <HealthRadar
-                    components={health?.components ?? {}}
-                    score={health?.health_score ?? null}
-                    ratedMetrics={health?.rated_metrics ?? 0}
-                />
+                {#if healthRead.status === 'error'}
+                    <p data-component="metrics-radar-error" class="text-sm text-ink-soft py-6">
+                        Couldn’t load the health score — {healthRead.error}
+                    </p>
+                {:else if healthRead.status === 'loading' || !health}
+                    <div aria-busy="true" class="h-40 rounded-lg bg-paper-soft animate-pulse">
+                        <span class="sr-only">Reading the health score</span>
+                    </div>
+                {:else}
+                    <HealthRadar
+                        components={health.components}
+                        score={health.health_score}
+                        ratedMetrics={health.rated_metrics}
+                    />
+                {/if}
             </section>
 
-            {#if correlations.length}
+            {#if correlationsRead.status === 'error'}
+                <p data-component="metrics-correlations-error" class="mb-10 text-sm text-ink-soft">
+                    Couldn’t load what moves together — {correlationsRead.error}
+                </p>
+            {:else if correlations.length}
                 <!-- What moves with what. The daemon already drops pairs related by
                      CONSTRUCTION (tokens_in ⊂ tokens_per_day correlates 1.00 and says
                      nothing), so everything here is a relationship worth reading. -->
