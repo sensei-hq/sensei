@@ -14,7 +14,7 @@ Status legend: [`README.md`](README.md).
 | ID | Module | One-line "done" | Status | Evidenced by |
 |---|---|---|---|---|
 | M14 | MCP & Context Delivery | The assistant gets the right context on the first turn | 🟡 **Partial** | 56 tools in `crates/mcp/src/lib.rs`, `query.rs context_pack`, and `search` fuses ILIKE with embeddings by RRF; the L0–L3 resolution levels and the per-session dedup log are unbuilt, and `search` still has no full text (D-8) |
-| M15 | Observatory | The daily user sees *today's one thing*, with its receipt | 🟡 **Partial** | `GET /api/observatory/today` and the consolidation routes/screen are built (the M15 README calling consolidation mock-only is stale), but the hero's receipt is empty live (`source:""`, `impact:null`), there is no `/insights/{id}/reasoning`, and `GET /api/sessions` hard-codes `toolUsage: []` and `benchmarkPairs: []` (`handlers/sessions.rs:57`) |
+| M15 | Observatory | The daily user sees *today's one thing*, with its receipt | 🟡 **Partial** | `GET /api/observatory/today` and the consolidation routes/screen are built (the M15 README calling consolidation mock-only is stale), but the hero's receipt is empty live (`source:""`, `impact:null`), there is no `/insights/{id}/reasoning`, and `GET /api/sessions` hard-codes `toolUsage: []` and `benchmarkPairs: []` (`handlers/sessions.rs:65`, `get_sessions_stub`) |
 | M16 | Workspace Window | A user trusts what sensei learned about one workspace | 🟡 **Partial** | Every screen under `(workspace)/workspace/[id]/` is built (Overview, Intake, Metrics, Tickets, Integrations, Memories, Impact, Traceability, Patterns, Diagrams, About); the Tasks section and the multi-repository roll-up wait on M20's plan tables, and the dōjō binding is a POST with no GET and no audit |
 | M17 | Code map | The code graph is legible at every level — birds-eye to symbol | 🟡 **Partial** | `…/diagrams/codemap`, `/codemap/{module,file,cochange}` and `/diagrams/zones` have route tests, `packages/codemap/` renders seven lenses, and an e2e test draws each lens against the real daemon — the readiness table puts local diagrams at ~85%; the dōjō embed and the daemon-pushed map are 0%, the S4 2c pooling double count is open, S6 history is a proposal, and Layers still freezes the page |
 | M18 | Instruments | The user can see and replay what the assistant actually did | ✅ **Built** | Playground lists every discovered MCP server and calls `tools/call` through it (`POST /api/instruments/mcp-servers/{id}/call`, hand-registered servers included), Replay is `/api/sessions/{id}/replay`, verdicts carry `unknown` (#278), the tools-health grid runs (84 registered, 20 invoked in 14 days) and 31 of 32 read-only tools match an independent oracle; the benchmark runner is deferred, not dropped (#279), and the 24 write/spend tools are unverified |
@@ -27,7 +27,7 @@ Status legend: [`README.md`](README.md).
 
 | Gap | What | Priority |
 |---|---|---|
-| G-1 | graph/layered view is unreadable at granular scale — no L0/L1/L2 level of detail (M17) | P1 |
+| ~~G-1~~ | ~~graph/layered view is unreadable at granular scale — no L0/L1/L2 level of detail~~ — **closed 2026-11-03:** `packages/codemap/` renders L0 (`ModuleMap.svelte`), L1 (`FileColumns.svelte`) and L2 (`SymbolView.svelte`) over `…/diagrams/codemap`; what is still missing is the dōjō embed, not the map (M17) | — |
 | C-12 | inference-pipeline review not scoped as a task (M5/M14 - M14 consumed by delivery) | P1 |
 | D-8 | MCP `search` tool is symbol-only (lexical + no FTS), `node_fts`/`hybrid.rs` absent | P2 |
 

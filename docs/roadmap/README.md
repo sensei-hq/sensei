@@ -68,7 +68,8 @@ analyze → learn → deliver → measure FTR**. Each plane file lists its own g
 the cross-plane ones that matter now:
 
 - **M17 (Code map L0/L1/L2) is a prerequisite for reading architecture metrics at
-  any scale** — reorg §9.7; the current layered render is unreadable (G-1).
+  any scale** — reorg §9.7. The desktop map is built and G-1 is closed (M17);
+  what is missing is the dōjō embed and the daemon-pushed map.
 - **M8 (master-detail + gating eligibility) must land before T3 promises gates** —
   1 of T3's 7 gating targets is buildable today, 2 need scoped reads, 4 are
   blocked on #156 (reorg §9.2).

@@ -131,10 +131,10 @@ and file what is still true as an issue.
   deferred (needs new capture, contradicting T3 §2.5's "no new capture"), enum
   value reserved; (3) no assignee synced/stored (no per-person figure);
   (4) T3 §5.1 `sensei.tracker_links` dropped — repo binding is the existing
-  `sensei.repositories_in_projects` junction, sync status lives on
+  `sensei.repositories_in_workspaces` junction, sync status lives on
   `sensei.trackers`; (5) per-repo key pattern and per-source toggles deferred to
   T-1c — keys match against synced issue keys instead; (6) API-token auth only —
-  OAuth (integrations §2.3) deferred; (7) one tracker per project in v1 — T3
+  OAuth (integrations §2.3) deferred; (7) one tracker per workspace in v1 — T3
   §2.2's secondary issue-only trackers deferred (#318 tracks the decision drift).
 - **Daemon routes reachable from any web page** (found by the Jira-spec security
   review 2026-10-15) — `api/server.rs` sets `CorsLayer::allow_origin(Any)` with all
