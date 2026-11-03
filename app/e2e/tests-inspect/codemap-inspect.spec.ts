@@ -84,6 +84,15 @@ test('violations & cycles draws exactly the violating bands', async ({ tauriPage
     .poll(() => tauriPage.evaluate(`document.querySelectorAll('g[data-testid^="block-"]').length`), { timeout: 60_000 })
     .toBeGreaterThan(0);
   const all = (await tauriPage.evaluate(`document.querySelectorAll('path[data-testid^="band-"]').length`)) as number;
+  // The filter sits in the header's controls band, which a reader may have closed
+  // (the harness shares the app's remembered toggles): open it before reaching in.
+  await tauriPage.evaluate(`(() => {
+    const band = document.querySelector('[data-testid="diagram-controls-toggle"]');
+    if (band?.getAttribute('aria-pressed') === 'false') band.click();
+  })()`);
+  await expect
+    .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-testid="codemap-edges"] [aria-label="Violations & cycles"]')`), { timeout: 10_000 })
+    .toBe(true);
   await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-edges"] [aria-label="Violations & cycles"]')?.click()`);
   await expect
     .poll(() => tauriPage.evaluate(`document.querySelectorAll('path[data-testid^="band-"]').length`), { timeout: 10_000 })
@@ -106,11 +115,16 @@ test('each lens draws against the real daemon', async ({ tauriPage }) => {
     .poll(() => tauriPage.evaluate(`document.querySelectorAll('g[data-testid^="block-"]').length`), { timeout: 60_000 })
     .toBeGreaterThan(0);
   const seen: Record<string, number> = {};
+  let summary = '';
   for (const [lens, sel] of [
     ['wheel', '[data-testid^="wheel-node-"]'],
     ['matrix', '[data-testid="codemap-matrix"] td[data-cell]'],
     ['zones', '[data-testid^="zone-"]'],
-    ['coupling', '[data-testid^="band-"]'],
+    // Each facet draws its own picture now (user, 2026-11-02): a ring per cycle,
+    // the coupled pairs, the complexity tree — not the block map tinted.
+    ['cycles', '[data-testid="codemap-cycles"] [data-cycle]'],
+    ['coupling', '[data-testid="codemap-coupling"] [data-pair]'],
+    ['complexity', '[data-testid="codemap-complexity"] [data-complexity-row]'],
   ] as const) {
     const started = Date.now();
     await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/${lens}`);
@@ -119,8 +133,10 @@ test('each lens draws against the real daemon', async ({ tauriPage }) => {
       .toBeGreaterThan(0);
     seen[lens] = (await tauriPage.evaluate(`document.querySelectorAll('${sel}').length`)) as number;
     console.log(`[inspect] lens ${lens}: ${seen[lens]} drawn in ${Date.now() - started} ms`);
+    if (lens === 'coupling') {
+      summary = (await tauriPage.evaluate(`document.querySelector('[data-testid="coupling-summary"]')?.textContent ?? ''`)) as string;
+    }
   }
-  const summary = (await tauriPage.evaluate(`document.querySelector('[data-testid="coupling-summary"]')?.textContent ?? ''`)) as string;
   const errors = (await tauriPage.evaluate(`document.querySelectorAll('[data-testid="codemap-error"]').length`)) as number;
   console.log(`\n[inspect] codemap lenses ${JSON.stringify(seen)}; coupling: ${summary.trim()}; errors ${errors}`);
   expect(summary).toContain(`from ${cochange.commits} commits`);
