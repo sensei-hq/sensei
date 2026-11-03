@@ -289,4 +289,35 @@ describe('CodeMapState', () => {
     await s.setGroupBy(p, 'folders');
     expect(s.whole).toBeNull();
   });
+
+  // Review r3 L1: focusing, clearing the focus or regrouping also leaves a failed open behind.
+  it('a failed module open does not outlive a focus, a cleared focus or a regroup', async () => {
+    for (const next of ['focus', 'clear', 'regroup'] as const) {
+      const s = new CodeMapState();
+      const p = port({ module: vi.fn(() => Promise.resolve({ ok: false as const, error: 'Not Found' })) });
+      await s.load(p);
+      await s.openModule(p, 'p/a');
+      expect(s.mapError, next).toBe('Not Found');
+      if (next === 'focus') await s.setFocus(p, { kind: 'module', id: 'p/b' });
+      if (next === 'clear') await s.clearFocus(p);
+      if (next === 'regroup') await s.setGroupBy(p, 'folders');
+      expect(s.mapError, next).toBeNull();
+    }
+  });
+
+  // Review r3 L2: while a retried read is in flight the lens reads, not the old failure.
+  it('a retried read clears its old failure while it reads', async () => {
+    const s = new CodeMapState();
+    let release: (v: { ok: true; data: { hidden: []; pairs: number; commits: number; minTogether: number } }) => void = () => {};
+    const cochange = vi.fn()
+      .mockReturnValueOnce(Promise.resolve({ ok: false as const, error: 'Gateway Timeout' }))
+      .mockReturnValueOnce(new Promise((r) => (release = r)));
+    const p = port({ cochange });
+    await s.showLens(p, 'coupling');
+    expect(s.dataError).toBe('Gateway Timeout');
+    const retrying = s.showLens(p, 'coupling');
+    expect(s.dataError).toBeNull();
+    release({ ok: true, data: { hidden: [], pairs: 0, commits: 3, minTogether: 5 } });
+    await retrying;
+  });
 });

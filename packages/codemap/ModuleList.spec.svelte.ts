@@ -32,4 +32,22 @@ describe('ModuleList', () => {
     (target.querySelector('[data-testid="list-row-L0 → L1"]') as HTMLElement).click();
     expect(onfocus.mock.calls).toEqual([['p/a']]);
   });
+
+  // Review r3 N4: on a narrow screen the list stands in for the lens — a failed
+  // read says why with Retry, a read in flight says so, and neither is an empty list.
+  it('a failed read says why with Retry, and a pending one says it is reading — never an empty list', () => {
+    const onretry = vi.fn();
+    target = document.body.appendChild(document.createElement('div'));
+    app = mount(ModuleList, { target, props: { view: { groups: [] }, onfocus: vi.fn(), failed: 'Gateway Timeout', onretry } });
+    flushSync();
+    expect(target.textContent).toContain('Gateway Timeout');
+    ([...target.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Retry') as HTMLButtonElement).click();
+    expect(onretry).toHaveBeenCalledOnce();
+    unmount(app);
+    target.remove();
+    target = document.body.appendChild(document.createElement('div'));
+    app = mount(ModuleList, { target, props: { view: { groups: [] }, onfocus: vi.fn(), pending: true } });
+    flushSync();
+    expect(target.textContent).toContain('Reading');
+  });
 });
