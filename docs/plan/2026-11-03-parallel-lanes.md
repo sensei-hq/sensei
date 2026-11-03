@@ -80,7 +80,7 @@ the dead `Spark.svelte`.
 5. **Never run these** (the coordinator's job): `make install*`, `make bump/release`, `dbd` against the
    live daemon DB (`localhost:5432/sensei`), `git push` to develop or main, edits to `docs/CHECKPOINT.md`
    or `docs/decisions.md`.
-6. **Local Supabase (`:54322`) is shared.** Reconcile it only while holding the lock:
+6. **Local Supabase (`:54322`) is shared. Lanes never converge it** (`reviews/L1-lane-deploy-and-readings-rulings.md` R1): test DDL inside the test's transaction with `run.sh --apply`; L0 converges from develop at merge. Until `--apply` lands, the old lock rule applies:
    `mkdir ~/.sensei/locks/supabase && dbd reconcile … ; rmdir ~/.sensei/locks/supabase`. If `mkdir`
    fails, someone else holds it, so wait. Use dbd reconcile/import, never hand-applied psql.
 7. **Your checkpoint lives in `docs/lanes/<lane>.md`:** one current entry, under 40 lines, with slice,
@@ -182,7 +182,7 @@ the billing and sync-status screens (`ScrBilling*`, `ScrSharing*`) and `dojo/src
    so do not pretend there is one).
 6. If time: the **viewer shell** (granted workspaces → metrics/reports only).
 
-### L5 · OpenCode: presentation | state | load refactors (no behaviour change)
+### L5 · Muse (from OpenCode, 2026-11-03: quota): presentation | state | load refactors (no behaviour change)
 Owns exactly: `app/src/routes/(observatory)/{instruments,libraries,knowledge-sources,activity-logs}/**`,
 `app/src/routes/(preferences)/settings/{workspaces,extensions}/**`,
 `app/src/routes/(workspace)/workspace/[id]/{about,overview}/**`, the state modules beside them, and (L0 ruling)
@@ -231,7 +231,7 @@ and, for Wave C, new `dojo` tracker DDL/routes under `tracker*`.
 3. L3 reads `sensei.sprints`, `tracker_tasks` and `tracker_task_sprints` read-only. Announce any change to
    their columns in the handoff.
 
-### L8 · D83 cleanup: the unowned failure-masks (agent: to be assigned)
+### L8 · D83 cleanup: the unowned failure-masks (Muse after L1, per the user; item 0, the guard, is built by L0 now)
 Source: `~/Developer/sensei-hq/coord/audits/fabrication-2026-11-03.md` (Appendix A, all 69 HIGH with read,
 misinformation, fix). Owns the files of each HIGH row marked UNOWNED, one batch at a time, taking a file
 only while no other lane holds it (L0 confirms each batch's file list before it starts).
