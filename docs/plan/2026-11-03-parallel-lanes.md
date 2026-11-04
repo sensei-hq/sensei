@@ -3,6 +3,20 @@
 The coordinator (the reviewer session) owns this file. Each lane reads **its own section and §1–§3**.
 The goal and the reasons for the order are in `docs/review/2026-11-03-orientation.md`.
 
+## Lane names (user, 2026-11-04): one vocabulary, and it wins over every older label below
+
+| Lane | Session | Was (older sections of this plan) |
+|---|---|---|
+| **L1** | Claude Code A | L2 (+ L8 batches A, C) |
+| **L2** | Claude Code B | L3 |
+| **L3** | Muse-1 | L1 |
+| **L4** | Muse-2 | L9 (+ L8 batch B) |
+| **L5** | Freebuff | L6, then L5 (page refactors) |
+| **Design** | Cowork | L4 |
+
+Sections below still use the old numbers. Read them through this table. The current queue per lane is in
+`~/Developer/sensei-hq/coord/TRACKER.md`; folders and branches are in `coord/README.md` "Who you are".
+
 ## Rust budget (user, 2026-11-04): at most three Rust build trees at any time
 
 A Rust `target/` is 20–27 GB, so five sessions building Rust fill the disk. From now on only these
