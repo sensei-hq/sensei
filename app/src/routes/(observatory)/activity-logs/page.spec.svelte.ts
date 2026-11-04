@@ -256,6 +256,129 @@ describe('Observatory · Logs — a failed log read can be retried', () => {
   });
 });
 
+// Phase B (R4): the retry's own answer decides what is drawn. A re-read that
+// fails again is the new error, not "no logs for these filters" and not the
+// stale reason — a failed retry that reads as an empty log is the same D83
+// claim as the count strip (settings/extensions tests r1, M2).
+describe('Observatory · Logs — a log retry that fails again', () => {
+  it.skip('pending: L5 activity-logs — a failed log retry is the new reason, not an empty log', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 502, statusText: 'Bad Gateway' });
+    vi.stubGlobal('fetch', fetchSpy);
+    const c = await mount({
+      rows: [],
+      rowsNotice: notice("Couldn't read the log", 'daemon unreachable'),
+      rowsError: 'Could not read the log: daemon unreachable',
+    });
+
+    const retry = c.querySelector('[data-logs-error] [data-action="retry"]') as HTMLButtonElement;
+    expect(retry).not.toBeNull();
+    retry.click();
+
+    await vi.waitFor(() =>
+      expect(c.querySelector('[data-logs-error]')?.textContent).toContain('Bad Gateway'),
+    );
+    expect(c.querySelector('[data-logs-error]')?.textContent).not.toContain('daemon unreachable');
+    expect(c.textContent).not.toContain('no logs for these filters');
+    expect(c.querySelector('[data-log-count]')).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Phase B (R5): the same for the tasks — a panel that quietly disappears on a
+// failed retry hides the failure just as an empty log does.
+describe('Observatory · Logs — a tasks retry that fails again', () => {
+  it.skip('pending: L5 activity-logs — a failed tasks retry is the new reason, not a missing panel', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 502, statusText: 'Bad Gateway' });
+    vi.stubGlobal('fetch', fetchSpy);
+    const c = await mount({
+      rows: [logRow({ message: 'still here' })],
+      tasks: [],
+      tasksNotice: notice("Couldn't read the background tasks", 'daemon unreachable'),
+      tasksError: 'Could not read the background tasks: daemon unreachable',
+    });
+
+    const retry = c.querySelector('[data-tasks-error] [data-action="retry"]') as HTMLButtonElement;
+    expect(retry).not.toBeNull();
+    retry.click();
+
+    await vi.waitFor(() =>
+      expect(c.querySelector('[data-tasks-error]')?.textContent).toContain('Bad Gateway'),
+    );
+    expect(c.querySelector('[data-tasks-error]')?.textContent).not.toContain('daemon unreachable');
+    expect(c.querySelector('[data-testid="scheduled-tasks"]')).toBeNull();
+    expect(c.textContent).toContain('still here');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Phase B (R6): a retry in flight is not a stampede — the second press during
+// the read joins it instead of starting another (the `reading` guard).
+describe('Observatory · Logs — a retry pressed twice', () => {
+  it.skip('pending: L5 activity-logs — two presses of the log retry are one GET', async () => {
+    let answer: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      answer = resolve;
+    });
+    const fetchSpy = vi.fn().mockReturnValue(pending);
+    vi.stubGlobal('fetch', fetchSpy);
+    const c = await mount({
+      rows: [],
+      rowsNotice: notice("Couldn't read the log", 'daemon unreachable'),
+      rowsError: 'Could not read the log: daemon unreachable',
+    });
+
+    const retry = c.querySelector('[data-logs-error] [data-action="retry"]') as HTMLButtonElement;
+    expect(retry).not.toBeNull();
+    retry.click();
+    retry.click();
+
+    answer({ ok: true, status: 200, json: async () => [logRow({ message: 'back again' })] });
+    await vi.waitFor(() => expect(rowHeaders(c).length).toBe(1));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Phase B (R7, D87): the page adopts the shell — the title bar, the filter band
+// (with the search), and a body and a sidebar under `main` that scroll on their
+// own. The workers sit in the sidebar so the rows can scroll without them
+// (#293): "the header, the workers, the filters and the column headings stay in
+// place; the rows scroll".
+describe('Observatory · Logs — the shell (D87)', () => {
+  it.skip('pending: L5 activity-logs — the shell draws the header, the band and the two scrollers', async () => {
+    const c = await mount({
+      rows: [logRow({ message: 'still here' })],
+      tasks: [task({ name: 'scanner' })],
+    });
+
+    const shell = c.querySelector('[data-screen-shell]');
+    expect(shell).not.toBeNull();
+    expect(shell?.getAttribute('data-view')).toBe('observatory.logs');
+    expect(c.querySelector('[data-screen-title]')?.textContent?.trim()).toBe('Activity logs');
+    expect(c.querySelector('[data-screen-context]')?.textContent).toContain('Observatory · Logs');
+    expect(c.querySelector('[data-screen-mark]')).not.toBeNull();
+    expect(c.querySelector('[data-screen-description]')?.textContent).toContain(
+      'Daemon, cli, mcp and app activity',
+    );
+
+    // The band: the server-side controls, and the search beside them.
+    const band = c.querySelector('[data-screen-filters]') as HTMLElement;
+    expect(band).not.toBeNull();
+    expect(band.querySelector('[data-log-filter-level]')).not.toBeNull();
+    expect(band.querySelector('[data-log-search]')).not.toBeNull();
+
+    // Two scrollers: the body (the rows) and the sidebar (the workers).
+    const main = c.querySelector('[data-screen-main]') as HTMLElement;
+    expect(main).not.toBeNull();
+    const body = main.querySelector('[data-screen-body]') as HTMLElement;
+    const side = main.querySelector('[data-screen-sidebar]') as HTMLElement;
+    expect(body?.parentElement).toBe(main);
+    expect(side?.parentElement).toBe(main);
+    expect(side?.getAttribute('data-side')).toBe('right');
+    expect(body.querySelector('[data-log-row-header]')).not.toBeNull();
+    expect(side.querySelector('[data-testid="scheduled-tasks"]')).not.toBeNull();
+  });
+});
+
 // Phase B (R2): a tasks read that failed is retryable where it failed — the
 // log rows stay, one request goes out, and the answer replaces the notice.
 describe('Observatory · Logs — a failed tasks read can be retried', () => {
