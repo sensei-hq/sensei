@@ -45,7 +45,6 @@
  },
  "R2": {
   "crates/bootstrap/src/hardware.rs": 2,
-  "crates/senseid/src/api/handlers/knowledge.rs": 4,
   "crates/senseid/src/api/handlers/workspace_detail.rs": 2,
   "crates/senseid/src/git_identity.rs": 2,
   "crates/senseid/src/indexer/pipeline.rs": 2,
@@ -62,7 +61,6 @@
   "crates/mcp/src/main.rs": 2,
   "crates/senseid/src/agent_spawn.rs": 1,
   "crates/senseid/src/api/handlers/identity.rs": 1,
-  "crates/senseid/src/api/handlers/knowledge.rs": 1,
   "crates/senseid/src/api/handlers/playbook.rs": 1,
   "crates/senseid/src/api/handlers/query.rs": 3,
   "crates/senseid/src/api/handlers/runs.rs": 1,
