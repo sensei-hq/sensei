@@ -32,7 +32,7 @@
 	{#if !online}
 		<!-- Offline — a soft warning; guidance is held locally until reconnect. -->
 		<div
-			class="bg-warning-soft border-warning-edge text-ink-mute flex items-center gap-2 rounded-xl border text-sm"
+			class="bg-warning-soft border-warning-edge text-on-warning-soft flex items-center gap-2 rounded-xl border text-sm"
 			style="padding: 12px 16px; margin-top: 16px"
 		>
 			<KanjiToken char="検" size="inherit" toneClass="" class="text-warning" />
@@ -49,7 +49,7 @@
 	{:else}
 		<!-- Online with work waiting — offer to send it. -->
 		<div
-			class="bg-warning-soft border-warning-edge text-ink-mute flex flex-wrap items-center gap-2 rounded-xl border text-sm"
+			class="bg-warning-soft border-warning-edge text-on-warning-soft flex flex-wrap items-center gap-2 rounded-xl border text-sm"
 			style="padding: 12px 16px; margin-top: 16px"
 		>
 			<KanjiToken char="検" size="inherit" toneClass="" class="text-warning" />

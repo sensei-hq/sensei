@@ -88,14 +88,14 @@
 						<span class="mono border-accent-soft text-accent rounded-full border text-xs" style="padding: 0 7px; line-height: 16px">{m.ask_blocking()}</span>
 					{/if}
 					<span class="flex-1"></span>
-					<span class="mono text-ink-faint text-xs">{relativeAge(ask.createdAt)}</span>
+					<span class="mono text-on-accent-soft text-xs">{relativeAge(ask.createdAt)}</span>
 				</div>
-				<div class="text-ink text-sm font-medium" style="margin-top: 3px; line-height: 1.4">{ask.prompt}</div>
+				<div class="text-on-accent-soft text-sm font-medium" style="margin-top: 3px; line-height: 1.4">{ask.prompt}</div>
 				{#if ask.context}
-					<div class="text-ink-mute text-sm" style="margin-top: 2px; line-height: 1.5">{ask.context}</div>
+					<div class="text-on-accent-soft text-sm" style="margin-top: 2px; line-height: 1.5">{ask.context}</div>
 				{/if}
 				{#if holds}
-					<div class="mono text-ink-soft text-xs" style="margin-top: 4px">{m.ask_holds({ task: holds })}</div>
+					<div class="mono text-on-accent-soft text-xs" style="margin-top: 4px">{m.ask_holds({ task: holds })}</div>
 				{/if}
 			</div>
 		</div>

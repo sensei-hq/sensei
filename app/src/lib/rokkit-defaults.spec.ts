@@ -101,4 +101,25 @@ describe("text on a soft tint", () => {
     });
     expect(found).toEqual([]);
   });
+
+  // `ink` is near-white by night and a -soft tint stays light, so ink text on a tint reads ~1:1 in dark
+  // mode (Settings · Dōjō's "Dōjō to sensei" tile, 2026-11-04). An element on a tint, and everything
+  // nested inside it, writes `text-on-{role}-soft`, never `text-ink*`.
+  it("never draws ink on a soft tint, nor inside one", () => {
+    const indent = (l: string) => l.length - l.trimStart().length;
+    const found = files.filter((f) => f.endsWith(".svelte")).flatMap((f) => {
+      const lines = readFileSync(f, "utf8").split("\n");
+      return lines.flatMap((line, i) =>
+        ROLES.filter((r) => new RegExp(`(?<![\\w-])bg-${r}-soft(?![\\w-])`).test(line)).flatMap((r) => {
+          const block = [line];
+          for (let j = i + 1; j < lines.length && (lines[j].trim() === "" || indent(lines[j]) > indent(line)); j++)
+            block.push(lines[j]);
+          return block.some((b) => /(?<![\w-])text-ink(-soft|-mute|-faint)?(?![\w-])/.test(b))
+            ? [`${relative(root, f)}:${i + 1} text-ink* on or inside bg-${r}-soft`]
+            : [];
+        }),
+      );
+    });
+    expect(found).toEqual([]);
+  });
 });

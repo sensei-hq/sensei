@@ -16,13 +16,13 @@
     <div class="grid gap-3 md:grid-cols-3">
       {#each travels as t (t.direction)}
         <div data-direction={t.direction} class={['flex flex-col gap-1.5 rounded-md p-3', t.direction === 'in' ? 'bg-accent-soft' : 'bg-paper']}>
-          <div class="flex items-center gap-1.5 text-xs font-medium text-ink">
+          <div class="flex items-center gap-1.5 text-xs font-medium text-on-accent-soft">
             <span aria-hidden="true">{ARROW[t.direction]}</span>{t.label}
           </div>
-          <ul class="m-0 pl-4 flex flex-col gap-0.5 text-sm text-ink">
+          <ul class="m-0 pl-4 flex flex-col gap-0.5 text-sm text-on-accent-soft">
             {#each t.items as item (item)}<li>{item}</li>{/each}
           </ul>
-          {#if t.note}<p class="m-0 text-xs text-ink-mute">{t.note}</p>{/if}
+          {#if t.note}<p class="m-0 text-xs text-on-accent-soft">{t.note}</p>{/if}
         </div>
       {/each}
     </div>

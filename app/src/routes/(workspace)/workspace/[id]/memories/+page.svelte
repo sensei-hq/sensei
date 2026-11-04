@@ -295,7 +295,7 @@
 
                                             {#if memState.pendingScope}
                                                 <div class="mt-3 rounded-md border border-warning-soft bg-warning-soft p-3" data-testid="governance-note">
-                                                    <p class="text-xs text-ink-soft leading-normal m-0 mb-2">
+                                                    <p class="text-xs text-on-warning-soft leading-normal m-0 mb-2">
                                                         {memState.governanceNote(memState.pendingScope)}
                                                     </p>
                                                     <div class="flex items-center gap-2">
