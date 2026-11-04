@@ -1,8 +1,7 @@
 {
  "R1": {
   "crates/bootstrap/src/config.rs": 1,
-  "crates/cli/src/main.rs": 21,
-  "crates/cli/src/managed.rs": 1,
+  "crates/cli/src/main.rs": 20,
   "crates/cli/src/tracker.rs": 3,
   "crates/senseid/src/adapters/manifest/dotnet.rs": 1,
   "crates/senseid/src/adapters/manifest/gradle.rs": 1,
@@ -12,7 +11,7 @@
   "crates/senseid/src/api/handlers/query.rs": 4,
   "crates/senseid/src/api/handlers/runs.rs": 2,
   "crates/senseid/src/api/handlers/stance.rs": 3,
-  "crates/senseid/src/api/handlers/workspace.rs": 3,
+  "crates/senseid/src/api/handlers/workspace.rs": 2,
   "crates/senseid/src/api/handlers/workspace_detail.rs": 2,
   "crates/senseid/src/assistants/claude_code.rs": 3,
   "crates/senseid/src/assistants/helpers.rs": 2,
@@ -21,8 +20,6 @@
   "crates/senseid/src/dojo_client/user_plane.rs": 1,
   "crates/senseid/src/indexer/community.rs": 1,
   "crates/senseid/src/indexer/index.rs": 1,
-  "crates/senseid/src/tasks/activity_pruner.rs": 4,
-  "crates/senseid/src/tasks/git_history_pruner.rs": 1,
   "crates/senseid/src/tasks/handlers/advance_run.rs": 1,
   "crates/senseid/src/tasks/handlers/consolidate.rs": 1,
   "crates/senseid/src/tasks/handlers/corrections.rs": 4,
@@ -35,7 +32,6 @@
   "crates/senseid/src/tasks/handlers/session_process.rs": 1,
   "crates/senseid/src/tasks/handlers/warm_narration_cache.rs": 1,
   "crates/senseid/src/tasks/library_update_scheduler.rs": 2,
-  "crates/senseid/src/tasks/log_pruner.rs": 1,
   "crates/senseid/src/tasks/reconcile_scheduler.rs": 1,
   "crates/senseid/src/tool_discovery.rs": 4,
   "crates/senseid/src/transcript/claude.rs": 1,
@@ -101,17 +97,16 @@
  },
  "R5": {
   "crates/bootstrap/src/config.rs": 2,
-  "crates/cli/src/main.rs": 2,
   "crates/mcp/src/lib.rs": 3,
   "crates/senseid/src/api/gateway_config_loader.rs": 2,
   "crates/senseid/src/api/handlers/workspace.rs": 2,
-  "crates/senseid/src/assistants/helpers.rs": 3,
+  "crates/senseid/src/assistants/helpers.rs": 2,
   "crates/senseid/src/db/pg_store/mod.rs": 1,
   "crates/senseid/src/dojo/gate.rs": 1,
   "crates/senseid/src/indexer/doc_indexer.rs": 1,
   "crates/senseid/src/tasks/handlers/generate.rs": 1,
   "crates/senseid/src/tasks/mcp_discovery.rs": 1,
-  "crates/senseid/src/tasks/processors/metadata/frontmatter.rs": 3,
+  "crates/senseid/src/tasks/processors/metadata/frontmatter.rs": 1,
   "crates/transcript-formats/src/paths.rs": 1
  },
  "R6": {
@@ -152,8 +147,7 @@
  },
  "T2": {
   "app/src/lib/appstate.svelte.ts": 2,
-  "app/src/lib/wizard-state.svelte.ts": 1,
-  "app/src/routes/(preferences)/settings/preferences-form.ts": 1
+  "app/src/lib/wizard-state.svelte.ts": 1
  },
  "T3": {
   "app/src/routes/(workspace)/workspace/[id]/tickets/tickets-state.svelte.ts": 1
