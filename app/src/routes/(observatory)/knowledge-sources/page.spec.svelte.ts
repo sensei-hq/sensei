@@ -45,9 +45,12 @@ describe('Knowledge sources /+page — no sources', () => {
     const m = mountComponent(Page, { data: { sources: [], error: null } } as never);
     cleanup.push(m.destroy);
     await vi.waitFor(() => expect(m.container.textContent).toContain('No knowledge sources.'));
-    // Not the error state — checked by the state marker, not a style class —
-    // and no cards invented for an empty read.
+    // Not the error state — checked by the state marker and, until d83 moves
+    // the error into a ScreenState, the error paragraph's class too (a marker
+    // assertion alone is vacuous on a page that renders no ScreenState) — and
+    // no cards invented for an empty read.
     expect(m.container.querySelector('[data-screen-state="error"]')).toBeNull();
+    expect(m.container.querySelector('.text-error')).toBeNull();
     expect(m.container.querySelectorAll('[data-testid="source-card"]').length).toBe(0);
   });
 });

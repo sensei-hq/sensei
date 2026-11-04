@@ -12,7 +12,7 @@
  * testable with a hand-rolled mock and never reaches for a global.
  */
 
-import { failureReason, type SenseiApi } from './api.js';
+import type { SenseiApi } from './api.js';
 import type { KnowledgeSource } from './types.js';
 import {
   readKnowledgeSources,
