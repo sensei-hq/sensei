@@ -57,4 +57,13 @@ describe('readExtensions', () => {
   it('a failed read is an error, not "none installed"', async () => {
     expect(await readExtensions({ tryGetInstalledItems: async () => down })).toEqual({ extensions: [], error: 'Service Unavailable' });
   });
+
+  // D83, L0 ruling on L5 settings/extensions tests r1: `enabled ?? true` draws
+  // a row the daemon never reported as on, and the toggle would then write that
+  // invented state back. Unknown is not a state to guess.
+  it.skip('pending: L5 settings/extensions — a row with no `enabled` is unknown, never on', async () => {
+    const d = await readExtensions({ tryGetInstalledItems: async () => ok([{ name: 'tdd', kind: 'skill', path: '/x' }]) });
+    expect(d.extensions[0]?.name).toBe('tdd');
+    expect(d.extensions[0]?.enabled ?? null).toBeNull();
+  });
 });

@@ -92,8 +92,14 @@ describe('Settings · Extensions — a refused toggle leaves its neighbour usabl
     );
     expect(toggleBox(m.container, 'skill', 'tdd').checked).toBe(true);
 
+    // Wait for the daemon's answer, not the click: a checkbox flips `checked`
+    // on its own, and a row still saving hides any error behind "saving…", so
+    // asserting there would pass even if the error leaked to every row.
+    const planRow = () => m.container.querySelector('[data-testid="ext-row-command-plan"]')!;
     toggleBox(m.container, 'command', 'plan').click();
-    await vi.waitFor(() => expect(toggleBox(m.container, 'command', 'plan').checked).toBe(true));
+    await vi.waitFor(() => expect(planRow().querySelector('.extension-enabled')?.textContent).toBe('on'));
+    expect(planRow().textContent).not.toContain('saving…');
+    expect(toggleBox(m.container, 'command', 'plan').checked).toBe(true);
     expect(m.container.querySelector('[data-testid="ext-error-command-plan"]')).toBeNull();
     expect(m.container.querySelector('[data-testid="ext-error-skill-tdd"]')?.textContent).toContain('Conflict');
   });
@@ -140,5 +146,43 @@ describe('Settings · Extensions — Retry after a failed read', () => {
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
     expect(urls).toHaveLength(1);
     expect(urls[0]).toContain('/api/install/installed');
+  });
+});
+
+// Phase B: a re-read that fails again is the new reason, not the empty one —
+// the same #288 hazard as the first read.
+describe('Settings · Extensions — Retry that fails again', () => {
+  it.skip('pending: L5 settings/extensions — a failed re-read stays the error, never the empty', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 502, statusText: 'Bad Gateway' });
+    vi.stubGlobal('fetch', fetchSpy);
+    const m = mountComponent(Page, { data: { extensions: [], error: 'Service Unavailable' } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.querySelector('[data-action="retry"]')).not.toBeNull());
+
+    (m.container.querySelector('[data-action="retry"]') as HTMLButtonElement).click();
+
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(m.container.querySelector('[data-screen-state="error"]')?.textContent).toContain('Bad Gateway'),
+    );
+    expect(m.container.querySelector('[data-action="retry"]')).not.toBeNull();
+    expect(m.container.textContent).not.toContain('No extensions installed yet.');
+  });
+});
+
+// L0 ruling on tests r1 (L1): `enabled ?? true` in readExtensions invents a
+// state the daemon did not send (D83). A row that did not say is unknown, and
+// the screen says so instead of drawing it as on.
+describe('Settings · Extensions — an item that did not say whether it is on', () => {
+  it.skip('pending: L5 settings/extensions — an item with no `enabled` reads as unknown, never on', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okList([])));
+    const m = mountComponent(Page, {
+      data: { extensions: [{ name: 'tdd', kind: 'skill', enabled: null }], error: null },
+    } as never);
+    cleanup.push(m.destroy);
+    const label = () =>
+      m.container.querySelector('[data-testid="ext-row-skill-tdd"] .extension-enabled')!;
+    await vi.waitFor(() => expect(label().textContent).toBe('unknown'));
+    expect(toggleBox(m.container, 'skill', 'tdd').checked).toBe(false);
   });
 });
