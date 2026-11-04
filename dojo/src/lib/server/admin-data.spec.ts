@@ -142,6 +142,36 @@ describe('listMembers (principals fallback)', () => {
 		);
 		await expect(listMembers(db, 't1')).rejects.toThrow(AdminError);
 	});
+	it.skip('pending: L4 member-names — a nameless identity row still falls back to principals, keeping its email', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [{ principal_id: 'u1', display_name: null, email: 'a@x.co' }], error: null },
+			{ data: [{ id: 'u1', display_name: 'Ada' }], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: 'Ada', email: 'a@x.co' });
+	});
+	it('the identity name wins over the principals name (refreshed beats written-once)', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [{ principal_id: 'u1', display_name: 'Ida', email: 'i@x.co' }], error: null },
+			{ data: [{ id: 'u1', display_name: 'Ada' }], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: 'Ida', email: 'i@x.co' });
+	});
+	it('a whitespace-only principals name counts as absent', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [], error: null },
+			{ data: [{ id: 'u1', display_name: '   ' }], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: null, email: null });
+	});
 });
 
 describe('listAudit', () => {

@@ -48,8 +48,11 @@ describe('toKitMember / toKitMembers', () => {
 	});
 	it.skip('pending: L4 member-names — an unnamed member reads as words, never an id fragment', () => {
 		const k = toKitMember(member(), { now: NOW });
-		expect(k.name).toBe('Unknown member (named at sign-in)');
+		expect(k.name).toBe('Name not shared yet');
 		expect(k.name).not.toContain('aaaaaaaa');
+	});
+	it.skip('pending: L4 member-names — email shows when the name is missing', () => {
+		expect(toKitMember(member({ display_name: null, email: 'a@x.co' }), { now: NOW }).name).toBe('a@x.co');
 	});
 	it('marks the viewer row with you', () => {
 		const k = toKitMember(member(), { self: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', now: NOW });

@@ -46,11 +46,10 @@ describe('listOrgWorkspaces', () => {
 		expect(await listOrgWorkspaces(db, 't1')).toEqual(rows);
 		expect(captured.tenantEq).toBe('t1');
 	});
-	it('keeps API order when no workspace has any reading', async () => {
+	it('keeps API order when no workspace has any activity', async () => {
 		const db = makeActivityDb({
 			workspaces: { data: [{ id: 'w1' }, { id: 'w2' }], error: null },
-			repositories_in_workspaces: { data: [], error: null },
-			repository_metrics: { data: [], error: null }
+			workspace_activity: { data: [], error: null }
 		});
 		expect((await listOrgWorkspaces(db, 't1')).map((w) => w.id)).toEqual(['w1', 'w2']);
 	});
@@ -64,26 +63,25 @@ describe('listOrgWorkspaces', () => {
 				],
 				error: null
 			},
-			repositories_in_workspaces: {
+			// The max lives in the DB (F3): one read, per-workspace activity.
+			workspace_activity: {
 				data: [
-					{ workspace_id: 'w1', repository_id: 'r1' },
-					{ workspace_id: 'w2', repository_id: 'r2' }
-				],
-				error: null
-			},
-			// Crossed dates pin the column: r2's reading is OLDER data received
-			// NEWER — activity is max(pushed_at), not max(computed_on).
-			repository_metrics: {
-				data: [
-					{ repository_id: 'r1', computed_on: '2026-11-01', pushed_at: '2026-11-02T10:00:00Z' },
-					{ repository_id: 'r2', computed_on: '2026-10-01', pushed_at: '2026-11-03T10:00:00Z' }
+					{ workspace_id: 'w1', last_activity_at: '2026-11-02T10:00:00Z' },
+					{ workspace_id: 'w2', last_activity_at: '2026-11-03T10:00:00Z' }
 				],
 				error: null
 			}
 		});
 		const out = await listOrgWorkspaces(db, 't1');
 		expect(out.map((w) => w.id)).toEqual(['w2', 'w1', 'w3']);
-		expect(out[2].last_run_at).toBeNull();
+		expect(out[2]).toEqual({ id: 'w3', last_run_at: null });
+	});
+	it.skip('pending: L4 workspace-sort — an activity-read error fails closed, never API order', async () => {
+		const db = makeActivityDb({
+			workspaces: { data: [{ id: 'w1' }], error: null },
+			workspace_activity: { data: null, error: { message: 'act boom' } }
+		});
+		await expect(listOrgWorkspaces(db, 't1')).rejects.toThrow(AdminError);
 	});
 	it('honest-empty [] when data is null', async () => {
 		const { db } = makeListDb({ data: null, error: null });
@@ -121,15 +119,21 @@ describe('listUserWorkspaces — every workspace the caller may read (RLS), acro
 				],
 				error: null
 			},
-			repositories_in_workspaces: { data: [{ workspace_id: 'w2', repository_id: 'r2' }], error: null },
-			repository_metrics: {
-				data: [{ repository_id: 'r2', computed_on: '2026-10-01', pushed_at: '2026-11-03T10:00:00Z' }],
+			workspace_activity: {
+				data: [{ workspace_id: 'w2', last_activity_at: '2026-11-03T10:00:00Z' }],
 				error: null
 			}
 		});
 		const out = await listUserWorkspaces(db);
 		expect(out.map((w) => w.id)).toEqual(['w2', 'w1']);
-		expect(out[1].last_run_at).toBeNull();
+		expect(out[1]).toEqual({ id: 'w1', last_run_at: null });
+	});
+	it.skip('pending: L4 workspace-sort — the personal list fails closed when the activity read errors', async () => {
+		const db = makeActivityDb({
+			workspaces: { data: [{ id: 'w1' }], error: null },
+			workspace_activity: { data: null, error: { message: 'act boom' } }
+		});
+		await expect(listUserWorkspaces(db)).rejects.toThrow(AdminError);
 	});
 	it('returns the readable rows with their dōjō, with no owner filter', async () => {
 		const rows = [{ id: 'p1', tenant_id: 't1' }, { id: 'p2', tenant_id: 't2' }];
