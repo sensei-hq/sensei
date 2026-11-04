@@ -110,7 +110,13 @@ describe("text on a soft tint", () => {
     const found = files.filter((f) => f.endsWith(".svelte")).flatMap((f) => {
       const lines = readFileSync(f, "utf8").split("\n");
       return lines.flatMap((line, i) =>
-        ROLES.filter((r) => new RegExp(`(?<![\\w-])bg-${r}-soft(?![\\w-])`).test(line)).flatMap((r) => {
+        // A tint chosen by a condition (`tint ? 'bg-accent-soft' : 'bg-paper'`) pairs its text by the same
+        // condition, which a line scan cannot see: the component's own spec pins each surface's pair.
+        ROLES.filter(
+          (r) =>
+            new RegExp(`(?<![\\w-])bg-${r}-soft(?![\\w-])`).test(line) &&
+            !new RegExp(`[?:]\\s*['"]bg-${r}-soft`).test(line),
+        ).flatMap((r) => {
           const block = [line];
           for (let j = i + 1; j < lines.length && (lines[j].trim() === "" || indent(lines[j]) > indent(line)); j++)
             block.push(lines[j]);

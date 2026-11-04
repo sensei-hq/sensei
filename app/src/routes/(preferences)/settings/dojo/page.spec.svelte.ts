@@ -79,6 +79,21 @@ describe('Settings · Dōjō connection', () => {
     expect(all(m, '[data-travels] [data-direction]').map((d) => d.dataset.direction)).toEqual(['out', 'both', 'in']);
   });
 
+  // Text takes its surface's pair: ink on paper, on-accent-soft on the tint. One pair for every
+  // tile read ~1:1 on whichever surface it was not made for (dark mode, 2026-11-04).
+  it("each travels tile's text is the pair for its own surface", async () => {
+    const m = await mount();
+    for (const tile of all(m, '[data-travels] [data-direction]')) {
+      const onTint = tile.classList.contains('bg-accent-soft');
+      const texts = [...tile.querySelectorAll('[class*="text-"]')].map((e) => e.className);
+      expect(onTint).toBe(tile.dataset.direction === 'in');
+      for (const c of texts) {
+        if (onTint) expect(c, tile.dataset.direction).toMatch(/text-on-accent-soft/);
+        else expect(c, tile.dataset.direction).not.toMatch(/text-on-accent-soft/);
+      }
+    }
+  });
+
   it('the filter narrows the repositories', async () => {
     const m = await mount();
     (q(m, '[data-filter="off"]') as HTMLButtonElement).click();

@@ -15,14 +15,15 @@
     {/snippet}
     <div class="grid gap-3 md:grid-cols-3">
       {#each travels as t (t.direction)}
-        <div data-direction={t.direction} class={['flex flex-col gap-1.5 rounded-md p-3', t.direction === 'in' ? 'bg-accent-soft' : 'bg-paper']}>
-          <div class="flex items-center gap-1.5 text-xs font-medium text-on-accent-soft">
+        {@const tint = t.direction === 'in'}
+        <div data-direction={t.direction} class={['flex flex-col gap-1.5 rounded-md p-3', tint ? 'bg-accent-soft' : 'bg-paper']}>
+          <div class={['flex items-center gap-1.5 text-xs font-medium', tint ? 'text-on-accent-soft' : 'text-ink']}>
             <span aria-hidden="true">{ARROW[t.direction]}</span>{t.label}
           </div>
-          <ul class="m-0 pl-4 flex flex-col gap-0.5 text-sm text-on-accent-soft">
+          <ul class={['m-0 pl-4 flex flex-col gap-0.5 text-sm', tint ? 'text-on-accent-soft' : 'text-ink']}>
             {#each t.items as item (item)}<li>{item}</li>{/each}
           </ul>
-          {#if t.note}<p class="m-0 text-xs text-on-accent-soft">{t.note}</p>{/if}
+          {#if t.note}<p class={['m-0 text-xs', tint ? 'text-on-accent-soft' : 'text-ink-mute']}>{t.note}</p>{/if}
         </div>
       {/each}
     </div>
