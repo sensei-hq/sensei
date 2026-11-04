@@ -138,7 +138,7 @@ describe('WorkspaceMetrics', () => {
       { a: 'ftr', b: 'elsewhere', rho: 0.7, n: 40 },
     ] }));
     await tick();
-    expect(m.correlations.map((c) => c.b)).toEqual(['churn_rate']);
+    expect(m.correlationsSection.data?.map((c) => c.b)).toEqual(['churn_rate']);
   });
 
   it('reopening reuses what was read: no read is made twice while it is fresh', async () => {
@@ -230,5 +230,42 @@ describe('WorkspaceMetrics', () => {
     await tick();
     m.settleRecommendation('a');
     expect([m.recommendations.status, m.recommendations.error]).toEqual(['error', 'boom']);
+  });
+
+  // D83 audit row 74: a failed correlations read is the section's error, never
+  // an absent section that reads as "nothing moves together".
+  it('the correlations section is loading, this workspace’s pairs, or why the read failed', async () => {
+    const { api, held } = daemon();
+    const m = new WorkspaceMetrics(api, 'w1');
+    m.open();
+    expect(m.correlationsSection.status).toBe('loading');
+    held.values.resolve(ok({ metrics: [row('ftr'), row('churn_rate')], count: 2, narrative: null }));
+    held.correlations.resolve(ok({ cells: 3, min_pairs: 20, min_rho: 0.5, correlations: [
+      { a: 'ftr', b: 'churn_rate', rho: -0.7, n: 30 },
+      { a: 'ftr', b: 'not_here', rho: 0.6, n: 30 },
+    ] }));
+    await tick();
+    expect(m.correlationsSection.status).toBe('ready');
+    expect(m.correlationsSection.data?.map((c) => c.b)).toEqual(['churn_rate']);
+
+    const failing = daemon();
+    const f = new WorkspaceMetrics(failing.api, 'w1');
+    f.open();
+    failing.held.values.resolve(ok({ metrics: [row('ftr')], count: 1, narrative: null }));
+    failing.held.correlations.resolve(fail('correlations down'));
+    await tick();
+    expect([f.correlationsSection.status, f.correlationsSection.data, f.correlationsSection.error])
+      .toEqual(['error', null, 'correlations down']);
+  });
+
+  it('a correlations read with no pairs is ready and empty, not an error', async () => {
+    const { api, held } = daemon();
+    const m = new WorkspaceMetrics(api, 'w1');
+    m.open();
+    held.values.resolve(ok({ metrics: [row('ftr')], count: 1, narrative: null }));
+    held.correlations.resolve(ok({ cells: 0, min_pairs: 20, min_rho: 0.5, correlations: [] }));
+    await tick();
+    expect([m.correlationsSection.status, m.correlationsSection.data, m.correlationsSection.error])
+      .toEqual(['ready', [], null]);
   });
 });

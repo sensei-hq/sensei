@@ -158,7 +158,6 @@
   "app/src/routes/(preferences)/settings/preferences-form.ts": 1
  },
  "T3": {
-  "app/src/routes/(workspace)/workspace/[id]/metrics/metrics-state.svelte.ts": 1,
   "app/src/routes/(workspace)/workspace/[id]/tickets/tickets-state.svelte.ts": 1
  },
  "T4": {
