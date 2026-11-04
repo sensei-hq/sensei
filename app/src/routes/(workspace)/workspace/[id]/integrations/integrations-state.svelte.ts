@@ -8,8 +8,14 @@
 // has. And the token lives only in `token`, only until its request returns: it
 // is never stored, logged, or read back.
 import type { ApiResult } from '$lib/api.js';
-import type { TrackerConnection, TrackerLevel, TrackerSyncCounts } from '$lib/types.js';
-import { errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
+import type {
+  TrackerConnection,
+  TrackerFieldMapping,
+  TrackerLevel,
+  TrackerMetric,
+  TrackerSyncCounts,
+} from '$lib/types.js';
+import { FIELD_MAPPING_ERRORS, WRITEBACK_STOPPED, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
 
 export { CREATE_TOKEN_URL, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
 
@@ -26,6 +32,72 @@ export interface TrackerApi {
     trackerId: string,
   ) => Promise<ApiResult<{ counts: TrackerSyncCounts }>>;
   tryDisconnectTracker: (workspaceId: string, trackerId: string) => Promise<ApiResult<void>>;
+  trySetTrackerWriteback: (
+    workspaceId: string,
+    trackerId: string,
+    enabled: boolean,
+  ) => Promise<ApiResult<TrackerConnection>>;
+  tryGetTrackerFields: (
+    workspaceId: string,
+    trackerId: string,
+  ) => Promise<ApiResult<{ fields: TrackerFieldMapping[] }>>;
+  tryPutTrackerFields: (
+    workspaceId: string,
+    trackerId: string,
+    fields: TrackerFieldMapping[],
+  ) => Promise<ApiResult<{ fields: TrackerFieldMapping[] }>>;
+}
+
+/** The metrics a field can carry, in the order the daemon writes them (usage W3, then
+ *  SDLC S9), with labels. */
+export const METRICS: ReadonlyArray<{ metric: TrackerMetric; label: string }> = [
+  { metric: 'sessions', label: 'Sessions' },
+  { metric: 'active_hours', label: 'Active hours' },
+  { metric: 'claude_hours', label: 'Claude hours' },
+  { metric: 'user_hours', label: 'Your hours' },
+  { metric: 'wall_hours', label: 'Wall-clock hours' },
+  { metric: 'cycle_hours', label: 'Cycle hours' },
+  { metric: 'tokens_fresh', label: 'Fresh tokens' },
+  { metric: 'cache_read', label: 'Cache-read tokens' },
+  { metric: 'cache_write', label: 'Cache-write tokens' },
+  { metric: 'tokens_out', label: 'Output tokens' },
+  { metric: 'tokens_reasoning', label: 'Reasoning tokens' },
+  { metric: 'metered_cost', label: 'Metered cost' },
+  { metric: 'api_cost', label: 'API cost (USD)' },
+  // SDLC figures (tracker-sdlc-metrics S9), appended in the daemon's order.
+  { metric: 'compile_defects', label: 'Compile defects' },
+  { metric: 'test_defects', label: 'Test defects' },
+  { metric: 'review_fixes', label: 'Review fixes' },
+  { metric: 'escaped_task_defects', label: 'Escaped task defects' },
+  { metric: 'review_defects', label: 'Review defects' },
+  { metric: 'total_defects', label: 'Total defects' },
+  { metric: 'build_runs', label: 'Build runs' },
+  { metric: 'rework_cycles', label: 'Rework cycles' },
+  { metric: 'prompts', label: 'Prompts' },
+  { metric: 'testing_efficiency', label: 'Testing efficiency (%)' },
+  { metric: 'review_efficiency', label: 'Review efficiency (%)' },
+  { metric: 'build_failure_rate', label: 'Build failure rate (%)' },
+  { metric: 'on_hold_ratio', label: 'On-hold ratio (%)' },
+  { metric: 'post_review_rework_ratio', label: 'Post-review rework (%)' },
+  { metric: 'mean_build_recovery_minutes', label: 'Build recovery (minutes)' },
+  { metric: 'on_hold_minutes', label: 'On hold (minutes)' },
+  { metric: 'rework_minutes', label: 'Rework (minutes)' },
+  { metric: 'worked_minutes', label: 'Worked (minutes)' },
+  { metric: 'execution_hours', label: 'Execution hours' },
+  { metric: 'lead_hours', label: 'Lead hours' },
+  { metric: 'cost_per_prompt_cycle', label: 'Cost per prompt cycle (USD)' },
+];
+
+/** The row a refused save names (a duplicate names its second row), or `null`. */
+export function refusedRow(rows: TrackerFieldMapping[], body: Record<string, unknown> | undefined): number | null {
+  const ref = typeof body?.field_ref === 'string' ? body.field_ref : null;
+  const metric = typeof body?.metric === 'string' ? body.metric : null;
+  const hits = rows
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => (ref !== null && r.field_ref === ref) || (ref === null && metric !== null && r.metric === metric));
+  if (hits.length === 0) return null;
+  // The daemon refuses a duplicate at its second occurrence.
+  return body?.error === 'duplicate_mapping' && hits.length > 1 ? hits[1].i : hits[0].i;
 }
 
 /** The levels a board can serve, in the order the screen lists them (D40). */
@@ -52,6 +124,31 @@ export function elapsedLabel(iso: string, now: Date): string {
 
 const lastErrorText = (code: string | null) => (code ? errorFor(502, { error: code }).text : '');
 
+/** A board's write-back state as the card says it (W-UI). */
+export function writebackText(w: TrackerConnection['writeback']): string {
+  const tickets = (n: number) => `${n} ${n === 1 ? 'ticket' : 'tickets'}`;
+  switch (w.state) {
+    case 'active': {
+      const failing = w.failing > 0 ? ` ${w.failing} couldn’t be written.` : '';
+      return `Writing to ${tickets(w.assigned)} assigned to you.${failing}`;
+    }
+    case 'disabled':
+      return 'Write-back is off.';
+    case 'pass_failed':
+      return (w.error && WRITEBACK_STOPPED[w.error]) || `Write-back stopped (${w.error ?? 'unknown'}).`;
+    case 'owner_not_a_person':
+      return 'This token belongs to an app account, so sensei can’t tell which tickets are yours. Nothing is written.';
+    case 'owner_lookup_failed':
+      return w.error
+        ? `Couldn’t check which tickets are yours: ${lastErrorText(w.error).replace(/\.$/, '')}. Retrying on each sync.`
+        : 'Couldn’t check which tickets are yours. Retrying on each sync.';
+    case 'owner_unknown':
+      return 'Checking which tickets are yours on the next sync.';
+    case 'nothing_assigned':
+      return 'No tickets on this board are assigned to you.';
+  }
+}
+
 export type View = 'loading' | 'daemon_error' | 'not_connected' | 'connected';
 
 export class TrackerIntegration {
@@ -76,7 +173,13 @@ export class TrackerIntegration {
   siteUrl = $state('');
   boardId = $state('');
 
-  busy = $state<null | 'connect' | 'sync' | 'disconnect'>(null);
+  busy = $state<null | 'connect' | 'sync' | 'disconnect' | 'writeback' | 'fields'>(null);
+  /** The board whose Fields editor is open. */
+  editingFields = $state<string | null>(null);
+  /** The editor's rows: the whole mapping, saved as one set. */
+  fieldRows = $state<TrackerFieldMapping[]>([]);
+  /** A refused save's reason, on the row it names. */
+  fieldError = $state<{ row: number; text: string } | null>(null);
   /** The board a sync or disconnect is running for. */
   busyTracker = $state<string | null>(null);
   /** The live `role="status"` line. */
@@ -131,6 +234,84 @@ export class TrackerIntegration {
     const site = t.base_url.replace(/^https:\/\//, '');
     const board = t.board_name ? `board "${t.board_name}" (#${t.board_ref})` : `board #${t.board_ref}`;
     return `Jira · ${site} · project ${t.external_scope} · ${board}`;
+  }
+
+  /** Open (or close) the board's Fields editor with its saved mapping. */
+  async openFields(t: TrackerConnection) {
+    if (this.editingFields === t.id) {
+      this.editingFields = null;
+      return;
+    }
+    this.fieldError = null;
+    this.alert = null;
+    const res = await this.#api.tryGetTrackerFields(this.#workspaceId, t.id);
+    if (!res.ok) {
+      this.#fail(res.error);
+      return;
+    }
+    this.fieldRows = res.data.fields.map((f) => ({ ...f }));
+    this.editingFields = t.id;
+  }
+
+  addFieldRow() {
+    this.fieldRows = [...this.fieldRows, { metric: 'sessions', field_ref: '' }];
+  }
+
+  removeFieldRow(i: number) {
+    this.fieldRows = this.fieldRows.filter((_, j) => j !== i);
+    this.fieldError = null;
+  }
+
+  /** Save the editor's rows as the board's whole mapping. */
+  async saveFields() {
+    const id = this.editingFields;
+    if (!id || this.busy) return;
+    const rows = this.fieldRows.map((r) => ({ metric: r.metric, field_ref: r.field_ref.trim() }));
+    this.busy = 'fields';
+    this.busyTracker = id;
+    this.fieldError = null;
+    this.alert = null;
+    const res = await this.#api.tryPutTrackerFields(this.#workspaceId, id, rows);
+    this.busy = null;
+    this.busyTracker = null;
+    if (!res.ok) {
+      const body = 'body' in res.error ? res.error.body : undefined;
+      const code = typeof body?.error === 'string' ? body.error : res.error.message;
+      const row = refusedRow(rows, body);
+      if (row !== null && FIELD_MAPPING_ERRORS[code]) {
+        this.fieldError = { row, text: FIELD_MAPPING_ERRORS[code] };
+      } else if ((res.error.status === 422 || code === 'busy') && FIELD_MAPPING_ERRORS[code]) {
+        this.alert = { code, text: FIELD_MAPPING_ERRORS[code], field: null, link: null };
+        this.alertSeq += 1;
+      } else {
+        this.#fail(res.error);
+      }
+      return;
+    }
+    this.fieldRows = res.data.fields.map((f) => ({ ...f }));
+    this.statusText = 'Fields saved.';
+    await this.load();
+  }
+
+  /** The board's write-back state as text (W-UI). */
+  writebackLine(t: TrackerConnection): string {
+    return writebackText(t.writeback);
+  }
+
+  /** Switch write-back on or off; the card shows what the daemon returns, or stays as it was. */
+  async toggleWriteback(t: TrackerConnection) {
+    if (this.busy) return;
+    this.busy = 'writeback';
+    this.busyTracker = t.id;
+    this.alert = null;
+    const res = await this.#api.trySetTrackerWriteback(this.#workspaceId, t.id, !t.writeback.enabled);
+    this.busy = null;
+    this.busyTracker = null;
+    if (!res.ok) {
+      this.#fail(res.error);
+      return;
+    }
+    this.trackers = this.trackers.map((x) => (x.id === res.data.id ? res.data : x));
   }
 
   /** The status as text (R9); the dot beside it is decoration. */

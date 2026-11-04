@@ -1827,7 +1827,173 @@ export interface TrackerConnection {
   /** A fixed `tracker_error` code, never a raw message. */
   last_error: string | null;
   counts: { tasks: number; sprints: number };
+  /** Usage and SDLC write-back (tracker-metrics-writeback W8, tracker-sdlc-metrics S9). */
+  writeback: TrackerWriteback;
+  /** The board's project figures (tracker-sdlc-metrics S6). */
+  sdlc_project: ProjectSdlc;
 }
+
+/** Each null figure's reason code, by figure key (tracker-sdlc-metrics S6). */
+export type SdlcReasons = Record<string, string>;
+
+/** A ticket's SDLC figures (S6). Every `null` has a `reasons` entry. Percents are
+ *  0–100, times are minutes or hours as named, instants are ISO. */
+export interface TicketSdlc {
+  worked_minutes: number | null;
+  prompts: number | null;
+  ai_token_cost: number | null;
+  cost_per_prompt_cycle: number | null;
+  escaped_task_defects: number | null;
+  compile_defects: number | null;
+  test_defects: number | null;
+  review_fixes: number | null;
+  review_defects: number | null;
+  total_defects: number | null;
+  testing_efficiency: number | null;
+  review_efficiency: number | null;
+  build_runs: number | null;
+  runs_unknown: number | null;
+  unclassified_failures: number | null;
+  build_failure_rate: number | null;
+  mean_build_recovery_minutes: number | null;
+  build_unrecovered: number | null;
+  work_started_at: string | null;
+  submitted_at: string | null;
+  submitted_via: string | null;
+  execution_hours: number | null;
+  lead_hours: number | null;
+  on_hold_minutes: number | null;
+  on_hold_count: number | null;
+  on_hold_by_reason: Record<string, number> | null;
+  on_hold_ratio: number | null;
+  rework_minutes: number | null;
+  rework_cycles: number | null;
+  post_review_rework_ratio: number | null;
+  estimated_points: number | null;
+  expected_minutes: number | null;
+  time_variance_minutes: number | null;
+  effort_cost: number | null;
+  rework_cost: number | null;
+  reasons: SdlcReasons;
+}
+
+/** A sprint's replayed sets (S5), as counts. */
+export interface SprintFacts {
+  committed: number;
+  added: number;
+  removed: number;
+  completed_committed: number;
+  completed_added: number;
+  carried_over: number;
+}
+
+/** A sprint's SDLC figures (S6); `facts` is `null` when the sprint has no replay. */
+export interface SprintSdlc {
+  commitment_reliability: number | null;
+  total_completion: number | null;
+  scope_change: number | null;
+  carry_over_rate: number | null;
+  unplanned_work_ratio: number | null;
+  velocity: number | null;
+  points_commitment_reliability: number | null;
+  facts: SprintFacts | null;
+  reasons: SdlcReasons;
+}
+
+/** A board's project figures (S6). */
+export interface ProjectSdlc {
+  predictability: number | null;
+  tokens_per_ticket: number | null;
+  prompts_per_ticket: number | null;
+  tickets_with_sessions: number;
+  sessions_without_tokens: number;
+  reasons: SdlcReasons;
+}
+
+/** A workspace's SDLC metric settings (S1): project-level, never per person. */
+export interface MetricSettings {
+  hourly_rate: number | null;
+  minutes_per_point: number | null;
+  idle_threshold_minutes: number;
+}
+
+/** A board's write-back state, first that applies (W8). */
+export type TrackerWritebackState =
+  | 'disabled'
+  | 'pass_failed'
+  | 'owner_not_a_person'
+  | 'owner_lookup_failed'
+  | 'owner_unknown'
+  | 'nothing_assigned'
+  | 'active';
+
+export interface TrackerWriteback {
+  enabled: boolean;
+  state: TrackerWritebackState;
+  surface: 'comment' | 'fields';
+  /** Mapped custom fields; `fields` surface when > 0. */
+  mapped: number;
+  /** Live tickets assigned to the token owner. */
+  assigned: number;
+  /** The assigned tickets whose last write failed. */
+  failing: number;
+  /** A fixed `tracker_error` code for `pass_failed` / `owner_lookup_failed`, else null. */
+  error: string | null;
+}
+
+/** A metric a tracker field can be mapped to: the `sensei.tracker_metric` enum
+ *  (usage W3, then SDLC S9, in the daemon's write order). */
+export type TrackerMetric =
+  | 'sessions'
+  | 'active_hours'
+  | 'claude_hours'
+  | 'user_hours'
+  | 'wall_hours'
+  | 'cycle_hours'
+  | 'tokens_fresh'
+  | 'cache_read'
+  | 'cache_write'
+  | 'tokens_out'
+  | 'tokens_reasoning'
+  | 'metered_cost'
+  | 'api_cost'
+  | 'compile_defects'
+  | 'test_defects'
+  | 'review_fixes'
+  | 'escaped_task_defects'
+  | 'review_defects'
+  | 'total_defects'
+  | 'build_runs'
+  | 'rework_cycles'
+  | 'prompts'
+  | 'testing_efficiency'
+  | 'review_efficiency'
+  | 'build_failure_rate'
+  | 'on_hold_ratio'
+  | 'post_review_rework_ratio'
+  | 'mean_build_recovery_minutes'
+  | 'on_hold_minutes'
+  | 'rework_minutes'
+  | 'worked_minutes'
+  | 'execution_hours'
+  | 'lead_hours'
+  | 'cost_per_prompt_cycle';
+
+/** One mapped field (W7): `metric` is written into the tracker field `field_ref`. */
+export interface TrackerFieldMapping {
+  metric: TrackerMetric;
+  field_ref: string;
+}
+
+/** A ticket's last write-back outcome: the `sensei.tracker_writeback_status` enum. */
+export type TrackerWritebackStatus =
+  | 'ok'
+  | 'forbidden'
+  | 'field_invalid'
+  | 'comment_removed'
+  | 'not_found'
+  | 'rate_limited'
+  | 'error';
 
 /** What `POST …/trackers/sync` counted. */
 export interface TrackerSyncCounts {
@@ -1893,6 +2059,8 @@ export interface SprintUsageRow {
   linked_other: TrackerUsage | null;
   unlinked: TrackerUsage | null;
   reason: 'not_started' | 'no_dates' | null;
+  /** The sprint's replayed figures (S5, S6). */
+  sdlc: SprintSdlc;
 }
 
 export interface NamedRef {
@@ -1909,7 +2077,14 @@ export interface TrackerTaskRow {
   current_sprint: NamedRef | null;
   sprints: NamedRef[];
   removed: boolean;
+  /** Whether the token owner is the assignee; `null` while the owner is unknown. */
+  assigned_to_me: boolean | null;
+  /** The last write-back outcome; `null` when never attempted. */
+  writeback_status: TrackerWritebackStatus | null;
+  /** When a write-back last landed. */
+  writeback_at: string | null;
   usage: TrackerUsage;
+  sdlc: TicketSdlc;
 }
 
 /** `GET …/tracker-tasks/{key}`. */
@@ -1920,8 +2095,13 @@ export interface TrackerTaskDetail {
     issue_type: string | null;
     status: string | null;
     removed: boolean;
+    /** Whether the token owner is the assignee; `null` while the owner is unknown. */
+    assigned_to_me: boolean | null;
+    writeback_status: TrackerWritebackStatus | null;
+    writeback_at: string | null;
   };
   usage: TrackerUsage;
+  sdlc: TicketSdlc;
   by_repo: Array<{ repository_id: string; name: string; usage: TrackerUsage }>;
   sessions: Array<{
     id: string;

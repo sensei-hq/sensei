@@ -44,8 +44,8 @@ list of what to fix, and a workspace that inherited a mess is measured against i
 > tracker path (D49, needs #310), the MCP ticket fetch and start-of-work link (D63, designed in
 > [M14](../../03-delivery/14-mcp-context-delivery/README.md)), the list of tickets assigned to the user,
 > the Azure Boards and GitHub Issues adapters (T-1), the dōjō Home "needs you" queue (D69) and the
-> viewer's target view (D68). Ticket writeback (ac7822d2b) exists only on the branch
-> `feature/tracker_metrics_writeback`, not on develop. Of the seven targets, 1 has its reading today
+> viewer's target view (D68). Ticket writeback is built: usage and SDLC metrics, opt-in per workspace (D50;
+> `spec/daemon/tracker-metrics-writeback.md`). Of the seven targets, 1 has its reading today
 > (hard-rule violations), 2 need a scoped read (coverage, changed-function complexity), 1 has its
 > placement computed but no per-sprint read (zone of pain), and 3 are blocked on the
 > architecture-metrics family (#156). The workspace window Tasks tab (M16) stays unbuilt until planner
@@ -56,7 +56,7 @@ list of what to fix, and a workspace that inherited a mess is measured against i
 - In: **repository grouping** (a workspace groups many repositories, from any provider or a local path
   via the CLI); **tracker sync** (Jira / ADO / GitHub Issues) → `PlanGraph` fields, with **one tracker
   owning sprints**; **tracker ownership** — dōjō-owned for org workspaces, the daemon path for solo and
-  personal use (D49); **ticket writeback, opt-in per workspace** (D50); the **ticket as the unit of
+  personal use (D49); **ticket writeback, opt-in per workspace** (D50; `spec/daemon/tracker-metrics-writeback.md`); the **ticket as the unit of
   work** — the assigned-tickets list, the assistant's ticket fetch that marks start of work, key
   matching as the fallback (D63); the **seven targets**, all code-derived and fair (delta-scoped or
   ratcheted); the **ladder** (Dōjō → Workspace → Repository → Sprint → Task type → Task, most specific
@@ -126,7 +126,7 @@ list of what to fix, and a workspace that inherited a mess is measured against i
   merge, a sprint or the tracker. **A lead or admin accepts the deviation with a note**, and may open a
   follow-up ticket for what the miss identified.
 - **Lead.** **The tracker is read-only unless the workspace turns writeback on** (D3, D50; off by
-  default). Opening a follow-up ticket is a tracker write: with writeback off, Sensei drafts the
+  default; `spec/daemon/tracker-metrics-writeback.md`). Opening a follow-up ticket is a tracker write: with writeback off, Sensei drafts the
   ticket for the lead to file.
 - **Lead.** **One tracker owns sprints.** Issues and task types may come from several trackers; the
   sprint calendar has exactly one owner.
@@ -225,7 +225,7 @@ scorecard for context.
   daemon pulls at that person's cadence (D22, PR #274, built for Jira) — stays for solo and personal
   use. New adapters (GitHub Issues, ADO) go on the dōjō path.
 - **Writeback (D50).** Off by default; a workspace opts in. It is the only way Sensei writes to a
-  tracker (usage comments, ac7822d2b; a follow-up ticket, D61). Not on develop.
+  tracker (usage and SDLC metrics, `spec/daemon/tracker-metrics-writeback.md`; a follow-up ticket, D61).
 - **Providers** — repositories from GitHub, GitLab, Azure Repos, Bitbucket, or a local path.
 - **What is pulled** — issues/work items, sprints/iterations, task types and **milestones** (Jira
   versions / epics, ADO milestones — V11) into the `PlanGraph`. The Jira mirror today holds key,

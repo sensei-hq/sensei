@@ -50,6 +50,7 @@ mod rework_hotspots;
 pub mod run_limits;
 pub mod run_watchdog;
 pub mod runs;
+mod sdlc;
 mod secret_scan;
 pub mod shutdown;
 pub mod stance;

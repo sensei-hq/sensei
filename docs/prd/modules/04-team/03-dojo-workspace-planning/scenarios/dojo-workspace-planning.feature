@@ -11,7 +11,8 @@ Feature: Dōjō Workspace Planning — the target/insight split, targets, the la
 
   # gap: T-1
   NO TEST
-  Scenario: a workspace connects to ADO read-only and imports the plan
+  # Usage and SDLC metrics write-back is the one write: spec/daemon/tracker-metrics-writeback.md
+  Scenario: a workspace connects to ADO and imports the plan
     Given an ADO workspace and a sensei workspace
     When the tracker is connected
     Then the plan imports from ADO

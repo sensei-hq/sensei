@@ -3,6 +3,7 @@
 {"name":"analyzer","enabled":true,"interval_secs":3600,"modified_at":"2026-08-27"}
 {"name":"capture_drain","enabled":true,"interval_secs":300,"modified_at":"2026-08-27"}
 {"name":"contribute","enabled":true,"interval_secs":3600,"modified_at":"2026-08-27"}
+{"name":"derive_session_signals","enabled":true,"interval_secs":600,"modified_at":"2026-10-29"}
 {"name":"dojo_sync","enabled":true,"interval_secs":3600,"modified_at":"2026-08-28"}
 {"name":"forge_token","enabled":true,"interval_secs":1800,"modified_at":"2026-08-30"}
 {"name":"index_audit","enabled":true,"interval_secs":86400,"modified_at":"2026-08-27"}

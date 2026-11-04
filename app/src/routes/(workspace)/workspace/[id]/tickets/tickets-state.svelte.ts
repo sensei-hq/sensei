@@ -5,7 +5,12 @@ import type { ApiResult } from '$lib/api.js';
 import { activeMinutes, compactDuration, compactTokens, durationMinutes } from '$lib/sessions-digest.js';
 import { errorFor } from '$lib/tracker-errors.js';
 import type {
+  MetricReason,
+  ProjectSdlc,
+  SdlcReasons,
+  SprintSdlc,
   SprintUsageRow,
+  TicketSdlc,
   TrackerConnection,
   TrackerTaskDetail,
   TrackerTaskRow,
@@ -30,6 +35,131 @@ export interface SprintsApi {
   ) => Promise<ApiResult<UnlinkedSession[]>>;
   tryGetBacklog: (workspaceId: string, trackerId: string) => Promise<ApiResult<BacklogUsage>>;
   tryListBacklogTasks: (workspaceId: string, trackerId: string) => Promise<ApiResult<TrackerTaskRow[]>>;
+  tryGetReasonCodes: (domain: string) => Promise<ApiResult<{ domain: string; reasons: Record<string, MetricReason> }>>;
+}
+
+/** The reason domain the SDLC figures' codes live in (tracker-sdlc-metrics S6). */
+export const SDLC_REASONS = 'sdlc_metrics';
+
+/** Reason codes' words, by code. */
+export type Words = Record<string, MetricReason>;
+
+/** One SDLC figure as shown: its value, or (when null) its reason's summary. */
+export interface SdlcFigure {
+  key: string;
+  label: string;
+  text: string;
+  /** The text is a reason's summary, not a value. */
+  reason: boolean;
+}
+
+export interface SdlcRow {
+  id: 'cost' | 'defects' | 'timing' | 'rework';
+  label: string;
+  figures: SdlcFigure[];
+  note: string | null;
+}
+
+const pct = (x: number) => `${Math.round(x)}%`;
+const money = (x: number) => `$${x.toFixed(2)}`;
+const count = (x: number) => String(x);
+const points = (x: number) => `${Number(x.toFixed(1))} pts`;
+const hoursText = (h: number) => compactDuration(Math.round(h * 60));
+const minutesText = (m: number) => compactDuration(Math.round(m));
+
+/** A figure's value, or its reason's summary. A code the vocabulary has no words for
+ *  is a fault and says so, never passing for "no data". */
+function figure(
+  key: string,
+  label: string,
+  value: number | null,
+  format: (x: number) => string,
+  reasons: SdlcReasons,
+  words: Words,
+): SdlcFigure {
+  if (value != null) return { key, label, text: format(value), reason: false };
+  const code = reasons[key];
+  if (code == null) return { key, label, text: '—', reason: false };
+  return { key, label, text: words[code]?.summary ?? 'Reason not recognised', reason: true };
+}
+
+/** A ticket's SDLC group (S8): cost, defects, timing, rework. */
+export function ticketSdlcRows(s: TicketSdlc, words: Words): SdlcRow[] {
+  const f = (key: keyof TicketSdlc & string, label: string, format: (x: number) => string) =>
+    figure(key, label, s[key] as number | null, format, s.reasons, words);
+  const unknown = s.runs_unknown ?? 0;
+  // While runs are unknown every defect count is a lower bound (S6): an unknown run can
+  // hide a build or test failure, an escape needs one, and review defects include escapes.
+  const atLeast = (x: number) => (unknown > 0 ? `≥ ${x}` : String(x));
+  const holds = (m: number) => minutesText(m) + (s.on_hold_count ? ` ×${s.on_hold_count}` : '');
+  return [
+    {
+      id: 'cost',
+      label: 'Cost',
+      figures: [
+        f('ai_token_cost', 'AI token cost', money),
+        f('cost_per_prompt_cycle', 'per prompt cycle', money),
+        f('effort_cost', 'effort cost', money),
+      ],
+      note: null,
+    },
+    {
+      id: 'defects',
+      label: 'Defects',
+      figures: [
+        f('compile_defects', 'compile', atLeast),
+        f('test_defects', 'test', atLeast),
+        f('review_defects', 'review', atLeast),
+        f('escaped_task_defects', 'escaped task', atLeast),
+      ],
+      note: unknown > 0 ? `${unknown} run${unknown === 1 ? '' : 's'} with unknown outcome` : null,
+    },
+    {
+      id: 'timing',
+      label: 'Timing',
+      figures: [
+        f('execution_hours', 'execution time', hoursText),
+        f('lead_hours', 'lead time', hoursText),
+        f('on_hold_minutes', 'on hold', holds),
+        f('on_hold_ratio', 'on-hold ratio', pct),
+      ],
+      note: null,
+    },
+    {
+      id: 'rework',
+      label: 'Rework',
+      figures: [
+        f('rework_minutes', 'rework time', minutesText),
+        f('rework_cycles', 'rework cycles', count),
+        f('post_review_rework_ratio', 'post-review rework', pct),
+      ],
+      note: null,
+    },
+  ];
+}
+
+/** A sprint's row in its lane header (S8). */
+export function sprintSdlcFigures(s: SprintSdlc, words: Words): SdlcFigure[] {
+  const f = (key: keyof SprintSdlc & string, label: string, format: (x: number) => string) =>
+    figure(key, label, s[key] as number | null, format, s.reasons, words);
+  return [
+    f('commitment_reliability', 'commitment reliability', pct),
+    f('scope_change', 'scope change', pct),
+    f('carry_over_rate', 'carry-over', pct),
+    f('unplanned_work_ratio', 'unplanned work', pct),
+    f('velocity', 'velocity', points),
+  ];
+}
+
+/** A board's project row in its lane header (S8). */
+export function projectSdlcFigures(p: ProjectSdlc, words: Words): SdlcFigure[] {
+  const f = (key: keyof ProjectSdlc & string, label: string, format: (x: number) => string) =>
+    figure(key, label, p[key] as number | null, format, p.reasons, words);
+  return [
+    f('predictability', 'predictability', points),
+    f('tokens_per_ticket', 'tokens per ticket', compactTokens),
+    f('prompts_per_ticket', 'prompts per ticket', (x) => x.toFixed(1)),
+  ];
 }
 
 const boardName = (t: TrackerConnection) => t.board_name ?? `board #${t.board_ref}`;
@@ -112,6 +242,7 @@ export class TicketLane {
   readonly sprints: SprintUsageRow[];
   /** The board's tickets in no sprint and their total. */
   readonly backlog: BacklogUsage;
+  readonly #words: Words;
   /** All tickets, one sprint's (its id), or the Backlog. */
   filter = $state<string>(ALL);
   /** Narrow the list to tickets with AI sessions. */
@@ -127,12 +258,23 @@ export class TicketLane {
     tracker: TrackerConnection,
     sprints: SprintUsageRow[],
     backlog: BacklogUsage,
+    words: Words,
   ) {
     this.#api = api;
     this.#workspaceId = workspaceId;
     this.tracker = tracker;
     this.sprints = sprints;
     this.backlog = backlog;
+    this.#words = words;
+  }
+
+  /** The lane header's SDLC row: the chosen sprint's own figures, else the board's
+   *  project figures (All tickets, Backlog). Never built from the tickets. */
+  get sdlcRow(): { kind: 'sprint' | 'project'; figures: SdlcFigure[] } {
+    const s = this.selected;
+    return s
+      ? { kind: 'sprint', figures: sprintSdlcFigures(s.sdlc, this.#words) }
+      : { kind: 'project', figures: projectSdlcFigures(this.tracker.sdlc_project, this.#words) };
   }
 
   get id(): string {
@@ -275,6 +417,8 @@ export class TicketsState {
   ticketError = $state<string | null>(null);
   /** The lane a ticket was opened from: where "Back" returns. */
   ticketLane = $state<TicketLane | null>(null);
+  /** The SDLC reason vocabulary, read with the boards. */
+  words = $state<Words>({});
 
   constructor(api: SprintsApi, workspaceId: string) {
     this.#api = api;
@@ -301,10 +445,21 @@ export class TicketsState {
     return [...parts, ...old.map((k) => `as ${k}`)].join(' · ');
   }
 
+  /** The open ticket's SDLC group. */
+  get ticketSdlc(): SdlcRow[] {
+    return this.ticket ? ticketSdlcRows(this.ticket.sdlc, this.words) : [];
+  }
+
   async load() {
     this.view = 'loading';
-    const trackers = await this.#api.tryListTrackers(this.#workspaceId);
+    const [trackers, reasons] = await Promise.all([
+      this.#api.tryListTrackers(this.#workspaceId),
+      this.#api.tryGetReasonCodes(SDLC_REASONS),
+    ]);
     if (!trackers.ok) return this.#failed(trackers.error);
+    // Without the words a null figure could only show its bare code (A10).
+    if (!reasons.ok) return this.#failed(reasons.error);
+    this.words = reasons.data.reasons;
     const boards = trackers.data.filter((t) => t.level === 'sprint');
     if (boards.length === 0) {
       this.view = 'not_connected';
@@ -324,7 +479,7 @@ export class TicketsState {
       // and a failed backlog read is never "0 tickets".
       if (!sprints.ok) return this.#failed(sprints.error);
       if (!backlog.ok) return this.#failed(backlog.error);
-      lanes.push(new TicketLane(this.#api, this.#workspaceId, boards[i], sprints.data, backlog.data));
+      lanes.push(new TicketLane(this.#api, this.#workspaceId, boards[i], sprints.data, backlog.data, this.words));
     }
     this.loadError = null;
     this.lanes = lanes;

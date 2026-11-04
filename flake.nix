@@ -74,6 +74,7 @@
               go-task
               process-compose
               git
+              gh
 
               # Rust workspace (crates/ + app/src-tauri)
               rustc

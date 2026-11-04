@@ -10,6 +10,7 @@ use crate::db::pg_store::trackers::{ApplyCounts, ApplyError};
 use crate::tracker::link::known_tasks;
 use crate::tracker::{
     BoardScope, GetTransport, KnownTask, Link, SessionText, Snapshot, TrackerAdapter, TrackerError,
+    needs_owner_backfill,
 };
 
 /// Candidate sessions read per chunk when computing links.
@@ -102,13 +103,18 @@ async fn run(
     }
     pg.mark_tracker_attempt(tracker_id).await.map_err(SyncError::Db)?;
     let prev = pg.tracker_prev_state(tracker_id).await.map_err(SyncError::Db)?;
+    // The whole-sync deadline covers the owner lookup and steps 2-3.
+    let until = tokio::time::Instant::now() + deadline;
+    if needs_owner_backfill(row.owner_ref.as_ref().map(|o| o.as_str()), row.owner_state.as_deref())
+    {
+        backfill_owner(pg, tracker_id, adapter, transport, &row.secret_service, until).await;
+    }
 
     // 2. Fetch, with no connection checked out, under the whole-sync deadline
     // (shared with step 3). Every write below is conditional on this credential
     // still being current.
     let secret_service = row.secret_service;
     let board = BoardScope { base_url: row.base_url, board_ref: row.board_ref };
-    let until = tokio::time::Instant::now() + deadline;
     let snapshot = match tokio::time::timeout_at(
         until,
         adapter.fetch_snapshot(transport, &board, &prev),
@@ -162,6 +168,32 @@ async fn run(
         Err(ApplyError::Gone) => Err(SyncError::Gone),
         Err(ApplyError::Superseded) => Err(SyncError::Superseded),
         Err(ApplyError::Db(e)) => Err(record_db(pg, tracker_id, &secret_service, e).await),
+    }
+}
+
+/// Who the token belongs to, for a tracker with no owner on record (spec W1). Never
+/// fails the sync: a failed lookup is recorded as `owner_error`, and a failed store
+/// is only logged, leaving `assigned_to_me` NULL for this sync.
+async fn backfill_owner(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    adapter: &dyn TrackerAdapter,
+    transport: &dyn GetTransport,
+    secret_service: &str,
+    until: tokio::time::Instant,
+) {
+    let looked = tokio::time::timeout_at(until, adapter.owner(transport))
+        .await
+        .unwrap_or(Err(TrackerError::Transport));
+    let stored = match &looked {
+        Ok(owner) => pg.set_tracker_owner(tracker_id, secret_service, owner).await,
+        Err(e) => pg.set_tracker_owner_error(tracker_id, secret_service, e.code()).await,
+    };
+    if let Err(e) = looked {
+        tracing::warn!(tracker_id = %tracker_id, code = e.code(), "tracker sync: owner lookup failed");
+    }
+    if let Err(db) = stored {
+        tracing::warn!(tracker_id = %tracker_id, "tracker sync: could not record the owner lookup: {db}");
     }
 }
 
@@ -614,6 +646,70 @@ mod tests {
         ) -> crate::tracker::AuthScheme {
             crate::tracker::AuthScheme::Basic { user: account.into(), token: token.clone() }
         }
+        async fn owner(
+            &self,
+            _t: &dyn GetTransport,
+        ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
+            Ok(crate::tracker::OwnerLookup::Unknown)
+        }
+        async fn find_comment(
+            &self,
+            _t: &dyn GetTransport,
+            _task: &str,
+            _owner: &crate::tracker::AccountRef,
+        ) -> Result<Option<String>, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn create_comment(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _report: &crate::tracker::writeback::Report,
+        ) -> Result<String, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn update_comment(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _comment: &str,
+            _report: &crate::tracker::writeback::Report,
+        ) -> Result<(), TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn issue_exists(
+            &self,
+            _t: &dyn GetTransport,
+            _task: &str,
+        ) -> Result<bool, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        fn field_ref_shape(&self, _f: &str) -> bool {
+            false
+        }
+        async fn check_fields(
+            &self,
+            _t: &dyn GetTransport,
+            _f: &[String],
+        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn field_in_use(
+            &self,
+            _t: &dyn GetTransport,
+            _b: &BoardScope,
+            _f: &str,
+        ) -> Result<bool, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn write_fields(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _f: &[(String, crate::tracker::FieldValue)],
+        ) -> Result<(), TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
         async fn validate(
             &self,
             _t: &dyn GetTransport,
@@ -636,6 +732,8 @@ mod tests {
                 summary: None,
                 issue_type: None,
                 status: Some("opened".into()),
+                assignee: None,
+                ..Default::default()
             };
             let iteration = |id: &str, seq: i64, state| SprintRow {
                 external_id: id.into(),
@@ -654,6 +752,7 @@ mod tests {
                     task("gid://issue/2", "#12", &self.scopes[1]),
                 ],
                 members: vec![("gid://iteration/7".into(), Some(vec!["gid://issue/1".into()]))],
+                points_field: None,
             })
         }
         /// `#N` in a prompt, for the task of that key whose scope is the session's repo.
@@ -799,6 +898,161 @@ mod tests {
         let _ = sync(&pg, t, &board).await;
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
         assert_eq!(row.last_error, None, "the old token's 401 must not land on the new connection");
+    }
+
+    // ── Owner and assignee (write-back spec W1) ──────────────────────────────
+
+    use crate::tracker::test_support::{assigned, forget_owner, owner_of, rows_containing};
+
+    #[tokio::test]
+    async fn a_tracker_without_an_owner_looks_it_up_once_and_an_app_token_is_not_asked_again() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        let board = FakeBoard::standard().with_myself(json!({"accountType": "app"}));
+        sync(&pg, t, &board).await.unwrap();
+        sync(&pg, t, &board).await.unwrap();
+        assert_eq!(board.myself_calls(), 1, "not_a_person is final");
+        assert_eq!(owner_of(&pg, t).await, (None, Some("not_a_person".into()), None));
+    }
+
+    #[tokio::test]
+    async fn a_tracker_without_an_owner_stores_the_person_and_the_same_sync_assigns_with_it() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        let board = FakeBoard::standard().with_assignees([Some("A1"), None, Some("B9")]);
+        sync(&pg, t, &board).await.unwrap();
+        assert_eq!(owner_of(&pg, t).await, (Some("A1".into()), None, None));
+        assert_eq!(
+            assigned(&pg, t).await,
+            vec![
+                ("10001".into(), Some(true)),
+                ("10002".into(), Some(false)),
+                ("10003".into(), Some(false))
+            ]
+        );
+        sync(&pg, t, &board).await.unwrap();
+        assert_eq!(board.myself_calls(), 1, "an owner on record is never re-asked");
+    }
+
+    #[tokio::test]
+    async fn a_failing_owner_lookup_is_recorded_apart_and_never_fails_the_sync() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        let denied = FakeBoard::standard().fail("/rest/api/3/myself", TrackerError::Forbidden);
+        for _ in 0..2 {
+            assert!(sync(&pg, t, &denied).await.is_ok());
+            let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+            assert_eq!(row.last_error, None, "the read sync succeeded");
+            assert_eq!(owner_of(&pg, t).await, (None, None, Some("forbidden".into())));
+        }
+        assert_eq!(denied.myself_calls(), 2, "a failed lookup is retried, once per sync");
+        assert!(assigned(&pg, t).await.iter().all(|(_, a)| a.is_none()), "no owner, no answer");
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        assert_eq!(
+            owner_of(&pg, t).await,
+            (Some("A1".into()), None, None),
+            "a success clears the error"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_owner_looked_up_on_a_token_replaced_mid_call_is_not_stored() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        // The first call of the sync is the owner lookup; the hook re-keys during it.
+        let board = FakeBoard::standard().on_call(reconnect_mid_sync(&pg, t));
+        let _ = sync(&pg, t, &board).await;
+        assert_eq!(board.calls().first().map(String::as_str), Some("/rest/api/3/myself"));
+        assert_eq!(owner_of(&pg, t).await.0, None, "the old token's owner never lands");
+    }
+
+    #[tokio::test]
+    async fn the_owner_lookup_spends_the_sync_deadline() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        let slow: crate::tracker::test_support::Hook = Box::new(|path| {
+            Box::pin(async move {
+                if path == "/rest/api/3/myself" {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                }
+            })
+        });
+        let board = FakeBoard::standard().on_call(slow);
+        let started = std::time::Instant::now();
+        let r = sync_tracker(
+            &pg,
+            &TrackerLocks::default(),
+            t,
+            &JiraAdapter,
+            &board,
+            Duration::from_millis(300),
+        )
+        .await;
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+        assert_eq!(
+            r,
+            Err(SyncError::Failed(TrackerError::Transport)),
+            "the fetch had no time left"
+        );
+        assert_eq!(owner_of(&pg, t).await.2.as_deref(), Some("transport"));
+    }
+
+    #[tokio::test]
+    async fn a_failing_owner_store_never_fails_the_sync() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        // This test's own database: make any owner write fail.
+        sqlx_core::query::query(
+            "CREATE FUNCTION pg_temp_fail_owner() RETURNS trigger LANGUAGE plpgsql AS
+               $$ BEGIN RAISE EXCEPTION 'owner store refused'; END $$",
+        )
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query(
+            "CREATE TRIGGER fail_owner BEFORE UPDATE OF owner_ref, owner_state, owner_error
+               ON sensei.trackers FOR EACH ROW EXECUTE FUNCTION pg_temp_fail_owner()",
+        )
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let board = FakeBoard::standard().with_assignees([Some("A1"), None, None]);
+        assert!(sync(&pg, t, &board).await.is_ok());
+        assert!(
+            assigned(&pg, t).await.iter().all(|(_, a)| a.is_none()),
+            "no owner stored, no answer"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_ticket_is_mine_only_while_the_owner_is_its_assignee_and_no_assignee_is_stored() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        let board =
+            FakeBoard::standard().with_assignees([Some("A1"), Some("zz-sentinel-b2"), None]);
+        sync(&pg, t, &board).await.unwrap();
+        assert_eq!(
+            assigned(&pg, t).await,
+            vec![
+                ("10001".into(), Some(true)),
+                ("10002".into(), Some(false)),
+                ("10003".into(), Some(false))
+            ]
+        );
+        let reassigned = FakeBoard::standard().with_assignees([
+            Some("zz-sentinel-b2"),
+            Some("zz-sentinel-b2"),
+            None,
+        ]);
+        sync(&pg, t, &reassigned).await.unwrap();
+        assert_eq!(assigned(&pg, t).await[0], ("10001".into(), Some(false)), "reassigned away");
+        assert_eq!(rows_containing(&pg, "zz-sentinel-b2").await, Vec::<String>::new());
     }
 
     // ── Linking (F3, spec R5 step 3 + R6) ───────────────────────────────────
@@ -997,6 +1251,70 @@ mod tests {
             token: &crate::tracker::ApiToken,
         ) -> crate::tracker::AuthScheme {
             JiraAdapter.auth(account, token)
+        }
+        async fn owner(
+            &self,
+            t: &dyn GetTransport,
+        ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
+            JiraAdapter.owner(t).await
+        }
+        async fn find_comment(
+            &self,
+            t: &dyn GetTransport,
+            task: &str,
+            owner: &crate::tracker::AccountRef,
+        ) -> Result<Option<String>, TrackerError> {
+            JiraAdapter.find_comment(t, task, owner).await
+        }
+        async fn create_comment(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &str,
+            report: &crate::tracker::writeback::Report,
+        ) -> Result<String, TrackerError> {
+            JiraAdapter.create_comment(w, task, report).await
+        }
+        async fn update_comment(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &str,
+            comment: &str,
+            report: &crate::tracker::writeback::Report,
+        ) -> Result<(), TrackerError> {
+            JiraAdapter.update_comment(w, task, comment, report).await
+        }
+        async fn issue_exists(
+            &self,
+            t: &dyn GetTransport,
+            task: &str,
+        ) -> Result<bool, TrackerError> {
+            JiraAdapter.issue_exists(t, task).await
+        }
+        fn field_ref_shape(&self, f: &str) -> bool {
+            JiraAdapter.field_ref_shape(f)
+        }
+        async fn check_fields(
+            &self,
+            t: &dyn GetTransport,
+            f: &[String],
+        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
+            JiraAdapter.check_fields(t, f).await
+        }
+        async fn field_in_use(
+            &self,
+            t: &dyn GetTransport,
+            b: &BoardScope,
+            f: &str,
+        ) -> Result<bool, TrackerError> {
+            JiraAdapter.field_in_use(t, b, f).await
+        }
+        async fn write_fields(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &str,
+            f: &[(String, crate::tracker::FieldValue)],
+        ) -> Result<(), TrackerError> {
+            JiraAdapter.write_fields(w, task, f).await
         }
         async fn validate(
             &self,

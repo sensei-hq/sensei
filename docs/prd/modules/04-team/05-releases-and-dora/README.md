@@ -25,7 +25,7 @@ would ship a regression stops and says why.*
   ([roadmap/09 D2–D3](../../../../roadmap/09-dojo-expansion.md#decisions-user-2026-10-21)).
   Org workspaces use dōjō-owned tracker connections (D49; needs the secret store, #310);
   the daemon path stays for solo and personal use. Ticket writeback is opt-in per
-  workspace, off by default (D50); this module never writes to CI.
+  workspace, off by default (D50; `spec/daemon/tracker-metrics-writeback.md`); this module never writes to CI.
 - **Signals:** deployments from **GitHub Actions** and **Azure Pipelines** through the
   workspace's integrations, with **git tags** as the fallback (D4).
 - **Incidents:** a **production incident** is its own entity. (The confidentiality
@@ -43,7 +43,7 @@ would ship a regression stops and says why.*
   change set + release-readiness checks + the stability guardrail); a **release
   scorecard**; the **DORA view** in the dōjō and in sensei.
 - Out: **deploying anything** — sensei never triggers, approves or blocks a pipeline
-  run inside the CI system (read-only); **per-author DORA** (never); incident
+  run inside the CI system (CI is read only; trackers: `spec/daemon/tracker-metrics-writeback.md`); **per-author DORA** (never); incident
   management (paging, on-call) — incidents are read from a tracker label or recorded
   by hand; generative culture — a survey measure, not a signal, and not one of the five
   keys (D9: the fifth key is rework rate).
@@ -115,8 +115,8 @@ in sensei:
 
 ## Data invariants
 
-- **Lead.** **External systems are read-only.** A pipeline adapter reads runs and
-  deployments; sensei never triggers, cancels or approves a CI run.
+- **Lead.** **CI is read-only.** A pipeline adapter reads runs and deployments; sensei
+  never triggers, cancels or approves a CI run. (Trackers: `spec/daemon/tracker-metrics-writeback.md`.)
 - **Lead.** **A gate reads the release's change set** — delta-scoped as in T3 — never
   an absolute workspace-level ratio.
 - **Lead.** **The five keys are delivery insights, never per-author.** They roll up by

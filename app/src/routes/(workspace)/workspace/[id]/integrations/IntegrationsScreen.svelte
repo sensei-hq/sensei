@@ -5,7 +5,7 @@
   import { PageHeader, Screen } from '$lib/components';
   import ModalShell from '$lib/components/ModalShell.svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { CREATE_TOKEN_URL, LEVELS, type TrackerIntegration } from './integrations-state.svelte.js';
+  import { CREATE_TOKEN_URL, LEVELS, METRICS, type TrackerIntegration } from './integrations-state.svelte.js';
 
   let { screen }: { screen: TrackerIntegration } = $props();
 
@@ -68,7 +68,7 @@
       icon="i-solar-link-bold-duotone"
       eyebrow="Integrations"
       title="Issue trackers"
-      description="Connect this workspace’s Jira boards, each at a level, so sensei can link AI sessions to tickets and report time and tokens per ticket. Read-only: sensei never changes anything in Jira."
+      description="Connect this workspace’s Jira boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map."
     />
   {/snippet}
 <section data-screen="integrations" class="flex flex-col">
@@ -125,6 +125,86 @@
                 ></span>
                 {screen.cardStatus(tracker)}
               </p>
+              <div class="flex flex-wrap items-center gap-3">
+                <label class="flex items-center gap-2 text-sm text-ink">
+                  <input
+                    type="checkbox"
+                    data-action="writeback"
+                    checked={tracker.writeback.enabled}
+                    disabled={screen.busy !== null}
+                    onclick={(e) => {
+                      // The daemon's answer decides the state; never the click alone.
+                      e.preventDefault();
+                      void screen.toggleWriteback(tracker);
+                    }}
+                  />
+                  Write back to Jira
+                </label>
+                <p class="m-0 text-xs text-ink-mute" data-writeback-state={tracker.writeback.state}>
+                  {screen.writebackLine(tracker)}
+                </p>
+              </div>
+              <div class="flex flex-col gap-2">
+                <button
+                  type="button"
+                  class="{button} self-start"
+                  data-action="fields"
+                  aria-expanded={screen.editingFields === tracker.id}
+                  disabled={screen.busy !== null}
+                  onclick={() => screen.openFields(tracker)}
+                  >Fields ({tracker.writeback.mapped} mapped)</button
+                >
+                {#if screen.editingFields === tracker.id}
+                  <div data-section="fields" class="flex flex-col gap-2 rounded-md border border-paper-edge p-3">
+                    {#each screen.fieldRows as row, i (i)}
+                      <div data-field-row={i} class="flex flex-col gap-1">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <label class="flex items-center gap-1 text-xs text-ink">
+                            Metric
+                            <select data-field-metric bind:value={row.metric} class="rounded border border-paper-edge bg-paper p-1 text-sm">
+                              {#each METRICS as m (m.metric)}
+                                <option value={m.metric}>{m.label}</option>
+                              {/each}
+                            </select>
+                          </label>
+                          <label class="flex items-center gap-1 text-xs text-ink">
+                            Jira field id
+                            <input
+                              data-field-ref
+                              bind:value={row.field_ref}
+                              placeholder="customfield_10050"
+                              aria-invalid={screen.fieldError?.row === i}
+                              class="rounded border border-paper-edge bg-paper p-1 text-sm"
+                            />
+                          </label>
+                          <button type="button" class={button} data-action="remove-field" onclick={() => screen.removeFieldRow(i)}
+                            >Remove</button
+                          >
+                        </div>
+                        {#if screen.fieldError?.row === i}
+                          <p data-field-error role="alert" class="m-0 text-xs text-danger">{screen.fieldError.text}</p>
+                        {/if}
+                      </div>
+                    {/each}
+                    <p class="m-0 text-xs text-ink-mute">
+                      Each ticket counts its own sessions in full; don’t sum these fields across tickets.
+                    </p>
+                    <div class="flex flex-wrap gap-2">
+                      <button type="button" class={button} data-action="add-field" onclick={() => screen.addFieldRow()}
+                        >Add a field</button
+                      >
+                      <button
+                        type="button"
+                        class={button}
+                        data-action="save-fields"
+                        disabled={screen.busy !== null}
+                        onclick={() => screen.saveFields()}
+                        >{screen.busy === 'fields' ? 'Saving…' : 'Save fields'}</button
+                      >
+                    </div>
+                  </div>
+                {/if}
+              </div>
               <div class="flex flex-wrap gap-2">
                 <button
                   type="button"

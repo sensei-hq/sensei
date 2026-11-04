@@ -28,6 +28,8 @@ import type {
   TranscriptSourceConsent,
   TrackerConnection, TrackerLevel, TrackerSyncCounts,
   SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession, BacklogUsage,
+  MetricSettings, MetricReason,
+  TrackerFieldMapping,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -728,6 +730,20 @@ export function senseiApi(port: number) {
       ),
     tryDisconnectTracker: (workspaceId: string, trackerId: string) =>
       tryJson<void>('DELETE', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}`),
+    // The board's mapped fields (W7): read, and replaced as a whole set.
+    tryGetTrackerFields: (workspaceId: string, trackerId: string) =>
+      tryJson<{ fields: TrackerFieldMapping[] }>(
+        'GET', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/fields`,
+      ),
+    tryPutTrackerFields: (workspaceId: string, trackerId: string, fields: TrackerFieldMapping[]) =>
+      tryJson<{ fields: TrackerFieldMapping[] }>(
+        'PUT', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/fields`, { fields },
+      ),
+    // Switch usage and SDLC write-back on or off (tracker-metrics-writeback W8): the tracker, as listed.
+    trySetTrackerWriteback: (workspaceId: string, trackerId: string, enabled: boolean) =>
+      tryJson<TrackerConnection>(
+        'PATCH', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}`, { writeback_enabled: enabled },
+      ),
     // Usage reads (spec R7/R8), one board each (D40). Result-based: a failed read
     // must never pass for "no tracker" or an empty sprint.
     tryListSprints: (workspaceId: string, trackerId: string) =>
@@ -754,6 +770,19 @@ export function senseiApi(port: number) {
         'GET',
         `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/sessions/unlinked?sprint=${enc(sprintId)}`,
       ),
+    // A reason domain's words (tracker-sdlc-metrics A10): a figure's code is shown
+    // by its summary, so a failed read is an error, never a bare slug.
+    tryGetReasonCodes: (domain: string) =>
+      tryJson<{ domain: string; reasons: Record<string, MetricReason> }>(
+        'GET', `/api/reason-codes/${enc(domain)}`,
+      ),
+    // The workspace's SDLC metric settings (S1): a PUT names any subset; a 400
+    // `invalid_setting` names the bad key in its body.
+    tryGetMetricSettings: (workspaceId: string) =>
+      tryJson<MetricSettings>('GET', `/api/workspaces/${enc(workspaceId)}/metric-settings`),
+    // A value that does not parse travels as typed, so the daemon's 400 names it.
+    tryPutMetricSettings: (workspaceId: string, patch: Record<string, number | string | null>) =>
+      tryJson<MetricSettings>('PUT', `/api/workspaces/${enc(workspaceId)}/metric-settings`, patch),
 
     /** What stops syncing if this root is removed. */
     tryGetRootRepositories: (id: string) =>

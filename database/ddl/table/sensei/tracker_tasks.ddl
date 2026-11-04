@@ -1,6 +1,6 @@
 set search_path to sensei, extensions;
 
--- A tracker's tickets, mirrored read-only. Spec: tracker-jira-linkage.md R2, R5.
+-- A tracker's tickets, mirrored from the tracker. Spec: tracker-jira-linkage.md R2, R5.
 create table if not exists tracker_tasks (
   id                 uuid         primary key default gen_random_uuid()
 , tracker_id         uuid         not null references sensei.trackers(id) on delete cascade
@@ -13,6 +13,17 @@ create table if not exists tracker_tasks (
 , current_sprint_id  uuid         references sensei.sprints(id) on delete set null
 , removed_at         timestamptz
 , last_seen_at       timestamptz  not null default now()
+, assigned_to_me     boolean
+, writeback_hash     text
+, writeback_comment_ref text
+, writeback_status   tracker_writeback_status
+, writeback_at       timestamptz
+, writeback_tried_at timestamptz
+, issue_created_at   timestamptz
+, issue_updated_at   timestamptz
+, points             numeric
+, status_category    text         check (status_category in ('new', 'indeterminate', 'done', 'undefined'))
+, history_through    timestamptz
 , unique (tracker_id, external_id)
 );
 
@@ -20,7 +31,7 @@ create index if not exists tracker_tasks_tracker_id_key_idx
     on tracker_tasks(tracker_id, key);
 
 comment on table tracker_tasks is
-'Tickets (issues) of a tracker board, mirrored read-only. Keyed on the provider''s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee or other person data, by design.';
+'Tickets (issues) of a tracker board, mirrored from the tracker; usage and SDLC metrics are written back to the token owner''s (spec tracker-metrics-writeback). Keyed on the provider''s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).';
 
 comment on column tracker_tasks.tracker_id
      is 'The board this ticket belongs to.';
@@ -42,3 +53,26 @@ comment on column tracker_tasks.removed_at
      is 'When a full sync stopped seeing it. Set once.';
 comment on column tracker_tasks.last_seen_at
      is 'When a sync last saw it.';
+comment on column tracker_tasks.assigned_to_me
+     is 'Whether the ticket''s assignee is the tracker''s owner (trackers.owner_ref), set on every upsert; false when unassigned or someone else''s, NULL while the owner is unknown. The assignee itself is compared, never stored. Spec tracker-metrics-writeback W1.';
+comment on column tracker_tasks.writeback_hash
+     is 'SHA-256 of what write-back last wrote (the comment lines, or the mapped field values), so an unchanged ticket sends nothing (W4). NULL until a write lands.';
+comment on column tracker_tasks.writeback_comment_ref
+     is 'The provider id of the comment sensei writes this ticket''s usage into (W5). Kept with comment_removed; cleared by a re-connect or by switching write-back back on.';
+comment on column tracker_tasks.writeback_status
+     is 'The last write-back outcome (W9); NULL when never attempted.';
+comment on column tracker_tasks.writeback_at
+     is 'When a write-back last landed on this ticket.';
+comment on column tracker_tasks.writeback_tried_at
+     is 'When write-back last tried this ticket, landed or not: the pass order (oldest first, never-tried first), so a ticket that keeps failing never starves the others (W2).';
+
+comment on column tracker_tasks.issue_created_at
+     is 'When the issue was created in the tracker (spec tracker-sdlc-metrics S4); the start of lead time.';
+comment on column tracker_tasks.issue_updated_at
+     is 'When the tracker last changed the issue; history is re-read when this passes history_through.';
+comment on column tracker_tasks.points
+     is 'Story points: the board''s estimation field (trackers.estimation_field), NULL when unset or not a number. Kept as it was while the field is unknown.';
+comment on column tracker_tasks.status_category
+     is 'The status''s category (new, indeterminate, done), from the tracker''s status.statusCategory.key.';
+comment on column tracker_tasks.history_through
+     is 'The issue_updated_at the changelog was last read through (S4); NULL until first read.';

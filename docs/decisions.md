@@ -48,7 +48,7 @@ reviewer ("mandatory final, else most specific") and corrected to the code befor
 | D68 | **A minimal viewer shell this week** (F8): the granted workspaces, **metrics first**, to judge whether the overall workflow is healthy; target results in aggregate; nothing else. |
 | D69 | **The dōjō Home is a "needs you" queue** (F9): missed targets awaiting acceptance, a sync that has stopped, approvals. No email or Slack this week. |
 | D70 | **Menus** (a, b, c): "Needs you" becomes **Act**; Constitution moves into the dōjō's **Govern** group; setup's "Join your dōjō" step is **skippable**. |
-| D71 | **Ticket data is read live** (Q1): `get_ticket` and "assigned to me" are live tracker reads made with the person's own access. No person data is stored; the `tracker_tasks` mirror is unchanged. For GitHub Issues the daemon uses the person's own forge sign-in, read-only, until dōjō-owned connections (D49) exist. |
+| D71 | **Ticket data is read live** (Q1): `get_ticket` and "assigned to me" are live tracker reads made with the person's own access. No person data is stored; the `tracker_tasks` mirror is unchanged. For GitHub Issues the daemon uses the person's own forge sign-in, read-only, until dōjō-owned connections (D49) exist; write-back is `spec/daemon/tracker-metrics-writeback.md`. |
 | D72 | **warn vs block** (Q2): a `warn` miss is shown and needs no acceptance. A `block` miss is handed to the assistant, enters the "needs you" queue (D69), and needs a lead's or admin's acceptance (D61). |
 | D73 | **"The ticket's rules"** (Q3) = the repository's resolved rules (D57) plus the ticket's own acceptance criteria. There is no ticket level in governance. |
 | D74 | **Neutral Impact verdict** (Q4): the memory is kept by default, and Retire is offered. |
@@ -89,6 +89,26 @@ teams) does not cover it — a future call if it matters.
 
 ---
 
+## 2026-10-29 — SDLC metrics from AI sessions and tracker history, written back like usage
+
+The daemon derives ticket, sprint and project SDLC figures:
+- defects, build runs, timing, rework and holds, from the hook events of a ticket's linked
+  AI sessions;
+- commitment, scope change, carry-over and velocity, replayed from Jira changelogs;
+- predictability, and tokens and prompts per ticket.
+
+The Tickets screen shows them. The 21 S9 keys can be mapped into write-back fields beside
+the 13 usage keys (`spec/daemon/tracker-sdlc-metrics.md`, analysis D1–D11, amendments A1–A10).
+
+| Decision | Why | Alternatives |
+|---|---|---|
+| **A null always carries a reason code** (`reason_codes` domain `sdlc_metrics`, served by `GET /api/reason-codes/{domain}`) | Never fabricate: an unknown figure must not pass for zero, and the screen shows the reason in words | Zeros or "—" for unknowns (indistinguishable from real values) |
+| **Only a derivation lag holds write-back back** (A9) | A failed derivation is permanent until its inputs change, so waiting on it froze a ticket's fields for ever | Skip any ticket with an underived figure |
+| **Rate- and calibration-derived figures are never written** (S9) | `effort_cost`, `rework_cost`, `expected_minutes` and `time_variance_minutes` depend on settings, not measurement; `estimated_points` is Jira's own field (`spec/daemon/tracker-metrics-writeback.md`) | Write them all |
+| **The hourly rate is project-level only** (D3) | No per-person cost | A rate per person |
+
+---
+
 ## 2026-10-28 — A slash command is a prompt
 
 The transcript parser listed `<command-name` and `<command-message` among the injected
@@ -103,6 +123,25 @@ which reads prompts, never saw the key.
 
 Effect: more transcript turns per session where commands were used. Rejected: keeping only
 commands with arguments (a bare `/compact` is still the person's turn).
+
+---
+
+## 2026-10-26 — Usage metrics are written back to the tracker (superseded 2026-10-29 (tracker-sdlc-metrics): SDLC metrics too)
+
+Each ticket's usage (sessions, active time, tokens, cost) was visible only in sensei. The user
+reversed the read-only rule for that one thing: the local daemon writes it back after every
+successful sync, on by default for every board, existing ones included
+(`spec/daemon/tracker-metrics-writeback.md`). Supersedes, for usage metrics only (superseded 2026-10-29 (tracker-sdlc-metrics)), the 2026-10-14
+"Read-only means read-only" row and roadmap/09 D3.
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **One write path: metrics** | Sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The local daemon writes usage metrics, nothing else (`spec/daemon/tracker-metrics-writeback.md`; superseded 2026-10-29 (tracker-sdlc-metrics)). | The rest of the read-only rule still holds; only the figures people asked to see in Jira move. |
+| **Only the assignee's daemon writes** | A ticket is written only by the daemon whose token owner is its assignee. The assignee is compared, never stored. | Two teammates who both mention a ticket would otherwise overwrite each other with partial figures. |
+| **Mapped fields, else one comment** | A board with custom fields mapped (`sensei.tracker_fields`) gets those fields; otherwise one sensei comment per ticket, edited in place. | Users who set up a field want it there; a comment works with no Jira admin. |
+| **Every sync, on by default** (superseded 2026-11-03, D50: off by default, a workspace opts in) | Written after each successful sync; a per-board switch turns it off. | Asked for by the user; a figure that lags the sync is a wrong figure. |
+
+Rejected: a manual export action; writing from the dōjō; storing the assignee.
 
 ---
 
@@ -179,13 +218,14 @@ The T3 spec (Dōjō Project Planning) had drifted from its design source. Its se
 "gating targets" were a different set from the mockup's, one of them gated on FTR —
 which reorg §9.3 lists as **improvement-only** — and its Done gate said the
 adapters "export status back" while its own wrong-gate said read-only. Reconciled
-to the mockup (`dojo2-project.jsx`) and reorg §9 as the single source.
+to the mockup (`dojo2-project.jsx`) and reorg §9 as the single source. (Its read-only
+row is superseded 2026-10-26 for metrics write-back: `spec/daemon/tracker-metrics-writeback.md`.)
 
 | Decision | Locked answer | Why |
 |---|---|---|
 | **Targets gate on the code; insights never gate** | Every gated reading is code-derived. Behavioural readings — **FTR, corrections/session, AI-assisted share, gate wait time** — are insights only and can never block a merge or sprint close. The old "FTR ≥ baseline + δ" gate is **removed**. | reorg §9.1/§9.3 and the mockup both state it; an inherited codebase would otherwise fail every sprint on behaviour it did not cause. |
 | **The seven targets are the mockup's seven** | 1 hard-rule violations `=0` · 2 coverage on guarded paths `≥75/80%` · 3 new layer violations `=0` · 4 new dependency cycles `=0` · 5 modules in the zone of pain `≤2/1` (warn) · 6 changed functions over complexity 10 `≤3/2` · 7 new high-severity anti-patterns `=0` (warn). Coupling/cohesion are **not** gates — they are absolute project-level ratios (improvement-only). | Matches `PJ_TARGETS` in the mockup and reorg §9.2's buildable map (1 ✅, 2 🟡 scoped reads, 4 ⛔ #156). |
-| **Read-only means read-only** | Tracker adapters **never write back**. There is no export-back path; the Done-gate line is removed and the gaps feature's export scenarios are replaced by one read-only scenario. | The mockup is unambiguous (*"synced read-only"*); the spec contradicted its own wrong-gate. |
+| **Read-only means read-only** — *superseded 2026-10-26 (tracker-metrics-writeback) for usage metrics* | Tracker adapters **never write back**. There is no export-back path; the Done-gate line is removed and the gaps feature's export scenarios are replaced by one read-only scenario. | The mockup is unambiguous (*"synced read-only"*); the spec contradicted its own wrong-gate. |
 | **Inheritance is most-specific-wins** | Dōjō → Project → Sprint → Task type → Task; a target with no value at a scope **inherits** the nearest ancestor's. Overrides narrow, never widen. | `PJ_CHAIN` in the mockup; reorg §9.1. |
 | **Modes are `block` / `warn` / `off`** | Only `block` prevents a sprint close; `warn` surfaces; `off` disables the check. | `TargetEditor` in the mockup offers all three. |
 | **A blocking miss needs a note; unlinked sessions don't count** | A sprint missing a blocking target cannot close without a note (maintainer+). A session counts toward a task only when its branch, commit or prompt carries the ticket key; the rest are unlinked and count toward nothing. | Mockup sprint-close rule + key-linkage row. |

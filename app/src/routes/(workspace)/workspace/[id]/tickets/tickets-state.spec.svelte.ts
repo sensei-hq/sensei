@@ -4,49 +4,18 @@
 // 0 where the daemon said null, or a sprint total built by adding its tickets.
 import { describe, it, expect } from 'vitest';
 import { ALL, BACKLOG, TicketsState, usageCells, type SprintsApi } from './tickets-state.svelte.js';
+import { WORDS, projectSdlc, sprintSdlc, ticketSdlc, usage } from '$lib/tracker-fixtures.js';
 import type { ApiResult } from '$lib/api.js';
 import type {
   SprintUsageRow,
   TrackerConnection,
   TrackerTaskDetail,
   TrackerTaskRow,
-  TrackerUsage,
   UnlinkedSession,
 } from '$lib/types.js';
 
 const P = 'p-1';
 
-const usage = (over: Partial<TrackerUsage> = {}): TrackerUsage => ({
-  sessions: 0,
-  by_source: { branch: 0, prompt: 0 },
-  shared: 0,
-  active_secs: null,
-  active_n: 0,
-  tokens_fresh: null,
-  tokens_fresh_n: 0,
-  cache_read: null,
-  cache_read_n: 0,
-  cache_write: null,
-  cache_write_n: 0,
-  tokens_out: null,
-  tokens_out_n: 0,
-  tokens_reasoning: null,
-  tokens_reasoning_n: 0,
-  metered_cost: null,
-  metered_cost_n: 0,
-  api_cost: null,
-  api_cost_n: 0,
-  api_cost_partial: 0,
-  claude_secs: null,
-  claude_n: 0,
-  user_secs: null,
-  user_n: 0,
-  wall_secs: null,
-  wall_n: 0,
-  first_at: null,
-  last_at: null,
-  ...over,
-});
 
 const sprint = (over: Partial<SprintUsageRow> = {}): SprintUsageRow => ({
   id: 's12',
@@ -61,6 +30,7 @@ const sprint = (over: Partial<SprintUsageRow> = {}): SprintUsageRow => ({
   linked_other: usage({ sessions: 1 }),
   unlinked: usage(),
   reason: null,
+  sdlc: sprintSdlc(),
   ...over,
 });
 
@@ -72,7 +42,11 @@ const task = (over: Partial<TrackerTaskRow> = {}): TrackerTaskRow => ({
   current_sprint: { id: 's12', name: 'Sprint 12' },
   sprints: [{ id: 's12', name: 'Sprint 12' }],
   removed: false,
+  assigned_to_me: null,
+  writeback_status: null,
+  writeback_at: null,
   usage: usage({ sessions: 3, by_source: { branch: 3, prompt: 1 }, active_secs: 3840, active_n: 2, tokens_fresh: 7700, tokens_fresh_n: 2 }),
+  sdlc: ticketSdlc(),
   ...over,
 });
 
@@ -89,6 +63,8 @@ const tracker: TrackerConnection = {
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
   counts: { tasks: 3, sprints: 2 },
+  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+  sdlc_project: projectSdlc(),
 };
 
 const ok = <T,>(data: T): ApiResult<T> => ({ ok: true, data });
@@ -102,6 +78,10 @@ function daemon(over: Partial<SprintsApi> = {}) {
   const calls: string[] = [];
   const api: SprintsApi = {
     tryListTrackers: async () => ok([tracker]),
+    tryGetReasonCodes: async (domain) => {
+      calls.push(`reasons:${domain}`);
+      return ok({ domain, reasons: WORDS });
+    },
     tryListSprints: async (_p, t) => {
       calls.push(`sprints:${t}`);
       return ok([sprint({ id: 's13', name: 'Sprint 13', state: 'active' }), sprint()]);
@@ -113,8 +93,21 @@ function daemon(over: Partial<SprintsApi> = {}) {
     tryGetTrackerTask: async (_p, key) => {
       calls.push(`task:${key}`);
       return ok<TrackerTaskDetail>({
-        task: { key: 'IAM-5', summary: 'Login', issue_type: 'Story', status: 'Done', removed: false },
+        task: { key: 'IAM-5', summary: 'Login', issue_type: 'Story', status: 'Done', removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null },
         usage: usage({ sessions: 2 }),
+        sdlc: ticketSdlc({
+          compile_defects: 1,
+          test_defects: 0,
+          runs_unknown: 2,
+          review_defects: 3,
+          escaped_task_defects: 2,
+          execution_hours: 1.5,
+          on_hold_minutes: 30,
+          on_hold_count: 2,
+          on_hold_ratio: 33.333,
+          ai_token_cost: 1.5,
+          reasons: { effort_cost: 'no_sessions', rework_cycles: 'not_derived', lead_hours: 'unregistered_code' },
+        }),
         by_repo: [{ repository_id: 'r1', name: 'backend', usage: usage({ sessions: 2 }) }],
         sessions: [
           {
@@ -447,5 +440,78 @@ describe('unlinked sessions', () => {
     await l.toggleUnlinked();
     expect(l.unlinked).toBe(null);
     expect(l.unlinkedError).toBe('The sensei daemon didn’t respond.');
+  });
+});
+
+describe('SDLC figures (tracker-sdlc-metrics S8)', () => {
+  it('reads the sdlc_metrics words with the boards; their failure is the daemon error', async () => {
+    const { calls } = await ready();
+    expect(calls).toContain('reasons:sdlc_metrics');
+    const s = (await ready({ tryGetReasonCodes: async () => fail(500, 'internal') })).s;
+    expect(s.view).toBe('daemon_error');
+  });
+
+  it("a ticket's group shows values, and each null its reason's summary, never a code or 0", async () => {
+    const { s, l } = await ready();
+    await s.openTicket(l, 'IAM-5');
+    const rows = Object.fromEntries(s.ticketSdlc.map((r) => [r.id, r]));
+    const fig = (row: string, key: string) => rows[row].figures.find((f) => f.key === key)!;
+    expect(fig('cost', 'ai_token_cost')).toMatchObject({ text: '$1.50', reason: false });
+    expect(fig('cost', 'effort_cost')).toMatchObject({ text: 'No AI sessions linked', reason: true });
+    expect(fig('rework', 'rework_cycles')).toMatchObject({ text: 'Signals not derived yet', reason: true });
+    expect(fig('timing', 'execution_hours').text).toBe('1h 30m');
+    expect(fig('timing', 'on_hold_minutes').text).toBe('30m ×2');
+    expect(fig('timing', 'on_hold_ratio').text).toBe('33%');
+    // A code with no words is a vocabulary fault: said so, never passed off as "—".
+    expect(fig('timing', 'lead_hours')).toMatchObject({ text: 'Reason not recognised', reason: true });
+  });
+
+  it('marks every defect count "≥ n" only while runs have unknown outcomes (S6 lower bounds)', async () => {
+    const { s, l } = await ready();
+    await s.openTicket(l, 'IAM-5');
+    const defects = s.ticketSdlc.find((r) => r.id === 'defects')!;
+    const text = (k: string) => defects.figures.find((f) => f.key === k)!.text;
+    // An unknown run can hide the build or test failure an escape needs, and review
+    // defects include escapes, so all four are lower bounds.
+    expect(['compile_defects', 'test_defects', 'review_defects', 'escaped_task_defects'].map(text)).toEqual([
+      '≥ 1',
+      '≥ 0',
+      '≥ 3',
+      '≥ 2',
+    ]);
+    expect(defects.note).toBe('2 runs with unknown outcome');
+
+    s.ticket = { ...s.ticket!, sdlc: { ...s.ticket!.sdlc, runs_unknown: 0 } };
+    const known = s.ticketSdlc.find((r) => r.id === 'defects')!;
+    expect(known.figures.map((f) => f.text)).toEqual(['1', '0', '3', '2']);
+    expect(known.note).toBe(null);
+  });
+
+  it("a lane shows the chosen sprint's own row, else the board's project row", async () => {
+    const { l } = await ready({
+      tryListTrackers: async () =>
+        ok([{ ...tracker, sdlc_project: projectSdlc({ predictability: 12.5, tokens_per_ticket: 1500, prompts_per_ticket: 0, reasons: {} }) }]),
+      tryListSprints: async () =>
+        ok([
+          sprint({ id: 's13', name: 'Sprint 13', state: 'active' }),
+          sprint({ sdlc: sprintSdlc({ commitment_reliability: 50, scope_change: 0, velocity: 8, reasons: { carry_over_rate: 'history_pending', unplanned_work_ratio: 'history_pending' } }) }),
+        ]),
+    });
+    expect(l.sdlcRow.kind).toBe('project');
+    expect(l.sdlcRow.figures.map((f) => f.text)).toEqual(['12.5 pts', '1.5k', '0.0']);
+
+    await l.setFilter('s12');
+    expect(l.sdlcRow.kind).toBe('sprint');
+    expect(l.sdlcRow.figures.map((f) => f.text)).toEqual([
+      '50%',
+      '0%',
+      'Ticket history not read yet',
+      'Ticket history not read yet',
+      '8 pts',
+    ]);
+    await l.setFilter('s13');
+    expect(l.sdlcRow.figures[0]).toMatchObject({ text: 'Ticket history not read yet', reason: true });
+    await l.setFilter(BACKLOG);
+    expect(l.sdlcRow.kind).toBe('project');
   });
 });

@@ -135,6 +135,42 @@ and file what is still true as an issue.
   T-1c — keys match against synced issue keys instead; (6) API-token auth only —
   OAuth (integrations §2.3) deferred; (7) one tracker per workspace in v1 — T3
   §2.2's secondary issue-only trackers deferred (#318 tracks the decision drift).
+- **Tracker metrics write-back** (2026-10-26). Analysis
+  [`analysis/2026-10-26-tracker-metrics-writeback.md`](analysis/2026-10-26-tracker-metrics-writeback.md),
+  spec [`spec/daemon/tracker-metrics-writeback.md`](spec/daemon/tracker-metrics-writeback.md),
+  plan [`plans/2026-10-26-tracker-metrics-writeback.md`](plans/2026-10-26-tracker-metrics-writeback.md).
+  **It reverses, with the user's approval (2026-10-26),** the read-only rule (PRD T3,
+  `decisions.md` "Read-only means read-only", design §2.6) for usage metrics (superseded 2026-10-29 (tracker-sdlc-metrics)), and
+  deviation (3) above: the assignee is compared, never stored. Write-back was on by default
+  for existing boards too, which the user confirmed after being shown the "Read-only" copy
+  and that clients may see comments. The docs are narrowed in F5.
+  **Since 2026-11-03 (D50) it is off by default:** a workspace opts in; boards that
+  already had it keep their setting (the default applies to new rows).
+- **Tracker SDLC metrics** (2026-10-29 → 2026-10-31, branch `feature/sdlc_metrics`, F1–F8
+  committed, F9 docs in this commit). Analysis
+  [`analysis/2026-10-29-sdlc-metrics-extension.md`](analysis/2026-10-29-sdlc-metrics-extension.md),
+  spec [`spec/daemon/tracker-sdlc-metrics.md`](spec/daemon/tracker-sdlc-metrics.md) (amendments A1–A10),
+  plan [`plans/2026-10-29-tracker-sdlc-metrics.md`](plans/2026-10-29-tracker-sdlc-metrics.md).
+  - **What it adds:** ticket, sprint and project SDLC figures, derived from AI sessions'
+    hook events plus the tracker's history. They are shown on Tickets and can be mapped into
+    write-back fields.
+  - **Still open:**
+    - the write-back field set to recommend (D9: the user decides);
+    - live done gate 9 against a running daemon;
+    - the figures stay sparse on Linux until **P0** (session synthesis) lands;
+    - the indexer's dangling-reference ratchet: 1,065 of develop's 1,075 ceiling after the 2026-11-03 merge.
+- **Dev builds never deploy their branch's schema** (found 2026-11-02, SDLC metrics complete, C40).
+  - **What happens:** the boot deploy (`tasks/schema_deploy.rs`, #260) runs only when
+    `schema_deployed_version` differs from the binary's `CARGO_PKG_VERSION`. A branch that
+    changes DDL without bumping `VERSION` therefore runs its new code on the old schema, even
+    with `SENSEI_DDL_DIR` set. Tracker sync failed with `column "estimation_field" does not
+    exist`.
+  - **Second gap:** `task db:setup` runs plain `dbd deploy`, which never alters an existing
+    table, so it fails the same way. The fix that worked was `dbd reconcile --scope default`,
+    then `dbd deploy`, the daemon's own order.
+  - **Candidates:**
+    - key the boot check on a hash of the DDL source when `SENSEI_DDL_DIR` is set;
+    - add the reconcile step to `task db:setup`.
 - **Daemon routes reachable from any web page** (found by the Jira-spec security
   review 2026-10-15) — `api/server.rs` sets `CorsLayer::allow_origin(Any)` with all
   methods and no auth middleware (loopback bind by default), so any page the user

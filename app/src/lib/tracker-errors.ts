@@ -47,6 +47,30 @@ const WORDS: Record<string, string> = {
   superseded: 'The board’s token changed while it synced. Sync again.',
   task_not_found: 'No ticket with that key in sensei.',
   bad_request: 'Jira rejected the request.',
+  invalid_body: 'sensei refused that change.',
+};
+
+/** Why a write-back pass could not run or stopped (tracker-metrics-writeback W-UI), by its
+ *  `writeback_error` code. Apart from `WORDS`: the same codes mean something else for a sync. */
+export const WRITEBACK_STOPPED: Record<string, string> = {
+  token_missing: 'Couldn’t read the Jira token to write back. Replace the token.',
+  credential_store: 'Couldn’t read the Jira token to write back. Replace the token.',
+  db: 'Couldn’t record what was written. Write-back retries on each sync.',
+  rate_limited: 'Jira is rate-limiting writes. Write-back resumes on the next sync.',
+  transport: 'Writing didn’t finish in time. Write-back resumes on the next sync.',
+};
+
+/** Why the Fields editor's save was refused (W7), shown on the row it names (W-UI). Apart
+ *  from `WORDS`: there `invalid_body` is the write-back switch's text. */
+export const FIELD_MAPPING_ERRORS: Record<string, string> = {
+  unknown_metric: 'Unknown metric.',
+  duplicate_mapping: 'Already mapped.',
+  invalid_field_ref: 'Use a custom field id like customfield_10050.',
+  field_not_found: 'No such field on this Jira site.',
+  field_not_number: 'That field isn’t a number field.',
+  field_in_use: 'That field already has values on this board. Pick an empty field.',
+  invalid_body: 'Couldn’t save the mapping.',
+  busy: 'The board is syncing or writing back. Save again in a moment.',
 };
 
 const FIELD: Record<string, TrackerAlert['field']> = {

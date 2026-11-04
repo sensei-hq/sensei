@@ -38,6 +38,10 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("capture_drain", "Capture-spool drain — re-imports hook events dead-lettered to disk"),
     ("contribute", "Dōjō upstream contribute cadence"),
     (
+        "derive_session_signals",
+        "SDLC signals — derives each changed session's builds, tests, reviews and work slices from its hook events",
+    ),
+    (
         "dojo_sync",
         "Dōjō sync — maps shared repositories to tenants, fetches the sync plan, and pushes allowed metric rows",
     ),
@@ -60,7 +64,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("reconcile", "Folder/index reconcile — self-healing scan-drift repair"),
     (
         "tracker_sync",
-        "Tracker sync — mirrors each connected Jira board's sprints and tickets (read-only) and drains removed credentials",
+        "Tracker sync — mirrors each connected Jira board's sprints and tickets, writes usage and SDLC metrics back to tickets assigned to you, and drains removed credentials",
     ),
     ("watchdog", "Run watchdog — stalled-run detection and recovery"),
 ];

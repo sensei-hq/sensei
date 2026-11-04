@@ -30,7 +30,7 @@ Feature: Dōjō Workspace Planning — the unbuilt tracker adapters, the ticket 
     Given a tracker on a workspace whose writeback is off (the default, D50)
     When it syncs
     Then it only reads
-    Writeback (ac7822d2b) is only on branch feature/tracker_metrics_writeback, not on develop.
+    Writeback is opt-in per workspace: spec/daemon/tracker-metrics-writeback.md.
 
   # gap: #310
   NO TEST

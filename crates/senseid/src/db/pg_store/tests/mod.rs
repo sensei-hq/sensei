@@ -14,6 +14,7 @@ use sqlx_core::query_as::query_as;
 
 mod activity_tests;
 mod api_cost_tests;
+mod command_catalogue_tests;
 mod config_tests;
 mod dojo_tests;
 mod gateway_tests;
@@ -29,6 +30,7 @@ mod receivers_tests;
 mod recommendation_actions_tests;
 mod repo_anchor_tests;
 mod scan_tests;
+mod session_signals_tests;
 mod stub_gc_tests;
 mod targets_tests;
 mod tasks_tests;

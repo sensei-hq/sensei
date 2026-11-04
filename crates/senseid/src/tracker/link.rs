@@ -81,6 +81,8 @@ mod tests {
             summary: None,
             issue_type: None,
             status: None,
+            assignee: None,
+            ..Default::default()
         }
     }
 

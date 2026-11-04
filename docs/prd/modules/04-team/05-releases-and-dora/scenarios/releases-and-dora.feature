@@ -2,6 +2,7 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
 
   # gap: D-1
   NO TEST
+  # CI stays read-only; trackers: spec/daemon/tracker-metrics-writeback.md
   Scenario: a workspace reads its deployments from GitHub Actions, read-only
     Given a workspace with a GitHub Actions connection
     When the dōjō syncs the connection
@@ -11,6 +12,7 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
 
   # gap: D-1
   NO TEST
+  # CI stays read-only; trackers: spec/daemon/tracker-metrics-writeback.md
   Scenario: a workspace reads its deployments from Azure Pipelines, read-only
     Given a workspace with an Azure Pipelines connection
     When the dōjō syncs the connection

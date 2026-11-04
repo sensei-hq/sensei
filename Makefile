@@ -371,7 +371,7 @@ app-check:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard test-crates-fast test-app-unit test-plugin
+test-fast: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -427,6 +427,23 @@ check-ddl-comments:
 check-brew-tokens:
 	@python3 scripts/check-brew-tokens.py
 
+# Docs that still call trackers read-only (spec/daemon/tracker-metrics-writeback.md
+# gate 26): since 2026-10-26 the daemon writes usage metrics back, so every such
+# statement is narrowed and names the spec. The self-test runs first, so a broken
+# check can't pass clean. Instant and needs no network.
+.PHONY: check-tracker-docs
+check-tracker-docs:
+	@bash scripts/check-tracker-readonly-docs.sh --test >/dev/null || bash scripts/check-tracker-readonly-docs.sh --test
+	@bash scripts/check-tracker-readonly-docs.sh
+
+# The Jira admin script that creates and maps sensei's write-back fields
+# (spec/daemon/tracker-metrics-writeback.md W7): its self-test runs against an
+# in-memory Jira, and reads the metrics from the enum and the app, so a metric
+# added to one and not the other fails here. Instant and needs no network.
+.PHONY: check-jira-fields-script
+check-jira-fields-script:
+	@python3 -I scripts/jira-create-sensei-fields.py --self-test >/dev/null || python3 -I scripts/jira-create-sensei-fields.py --self-test
+
 # app and the dōjō are two bun installs with two lockfiles, so nothing made a
 # dependency they share agree: jsdom ^29 vs ^25, vitest ^4.1.5 vs ^4, and the
 # Libraries screen listed every spread as a version conflict (audit 2026-11-03).
@@ -445,7 +462,7 @@ check-shared-js-specs:
 check-leak-guard:
 	@bash .githooks/check-no-leaks.sh --test >/dev/null || bash .githooks/check-no-leaks.sh --test
 
-test: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
+test: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
 
 test-crates:
 	cargo test --workspace

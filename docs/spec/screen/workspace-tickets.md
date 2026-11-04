@@ -10,7 +10,8 @@
 - the sidebar entry `{ id: 'tickets', kanji: '札', label: 'Tickets' }` in
   `workspace-sidebar-view.ts` `SECTIONS`, after `impact` and before `integrations`
 - `app/src/lib/api.ts` wrappers: `tryListTrackers`, `tryListSprints`, `tryListTrackerTasks`,
-  `tryGetBacklog`, `tryListBacklogTasks`, `tryGetTrackerTask`, `tryListUnlinkedSessions`
+  `tryGetBacklog`, `tryListBacklogTasks`, `tryGetTrackerTask`, `tryListUnlinkedSessions`,
+  `tryGetReasonCodes` (SDLC figures, below)
 
 **Daemon contract:** [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md)
 R7 (usage), R8 (per board: `GET …/trackers/{tracker}/sprints`, `…/tasks[?sprint=|?backlog=true]`,
@@ -34,6 +35,36 @@ This section overrides the single-board text below (spec `docs/spec/tracker-leve
   no sprint board connected." with the link to Integrations. **Any lane's read failing** (its sprints
   or its backlog) is the daemon-error state; a lane is never silently missing.
 
+## SDLC figures (spec `docs/spec/daemon/tracker-sdlc-metrics.md` S6, S8; 2026-10-31)
+
+The daemon puts `sdlc` on each ticket and sprint and `sdlc_project` on each board. Every
+`null` figure carries a reason code in `sdlc.reasons`. The screen shows the code's
+`summary` from `GET /api/reason-codes/sdlc_metrics`, read with the boards in `load()`.
+**A failed vocabulary read is the daemon-error state**, so a bare code is never shown. A
+code the vocabulary lacks is a vocabulary fault and shows "Reason not recognised", never "—"
+or the code. "—" is only for a null with no reason at all.
+
+- **Ticket detail → "SDLC"** (`data-section="sdlc"`), after the Time line, in four rows
+  (`data-sdlc-row=cost|defects|timing|rework`). Each figure is a label and a value
+  (`data-sdlc=<key>`), or the reason's summary when the value is null:
+  - **Cost:** AI token cost (`ai_token_cost`), cost per prompt cycle, effort cost; `$1.50`.
+  - **Defects:** compile, test, review, escaped task. With `runs_unknown > 0`, all four show
+    "≥ n", because they are lower bounds (S6). An unknown run can hide a build or test
+    failure, an escaped task defect needs one, and review defects include escapes. The row
+    then ends with "n runs with unknown outcome".
+  - **Timing:** execution time and lead time (hours as `compactDuration`); on hold (minutes,
+    with "×n" holds); on-hold ratio (`33%`).
+  - **Rework:** rework time, rework cycles, post-review rework (`12%`).
+- **Lane header row** (`data-sdlc-lane`), under the toolbar:
+  - With the filter on one sprint, that sprint's row: commitment reliability, scope change,
+    carry-over, unplanned work (percents) and velocity ("8 pts").
+  - With All tickets or the Backlog, the board's row: predictability ("12.5 pts", the spread
+    of commitment reliability), tokens per ticket (`compactTokens`) and prompts per ticket
+    (one decimal).
+  - Each null shows its reason's summary, as in the ticket's group.
+- Percents round to a whole number and points to one decimal. A real `0` shows as `0%`,
+  `0 pts` or `0`; it is never confused with a null.
+
 ## Purpose
 
 The day-to-day view of the project's tracker: **which sprint, which tickets, and how
@@ -42,9 +73,10 @@ tickets by key (R6). Connecting the board is the Integrations screen's job; this
 only reads.
 
 **Eyebrow:** `札 · TICKETS`. **Header:** the board name (`board_name`, else
-`board #<board_ref>`). **Sub-line:** "Active AI time and tokens per sprint and ticket,
-from AI sessions whose branch or prompt names the ticket. Read from Jira; nothing is
-changed there."
+`board #<board_ref>`). **Sub-line:** "Active AI time and tokens per ticket and sprint,
+from AI sessions whose branch or prompt names the ticket. Read from Jira. On tickets
+assigned to you, sensei writes these numbers back, as set on Integrations." (Superseded
+2026-10-26 by tracker-metrics-writeback W-UI; the screen itself still calls no write route.)
 
 ## States
 
@@ -122,6 +154,16 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 8. A ticket row shows its cycle time; its detail shows Claude / you adding up to the
    active AI time, the session time, and the cycle time with its first and last dates.
    A ticket whose sessions have no hook events shows "—" for each, never `0m`.
+9. **SDLC.**
+   - A ticket's detail shows the four SDLC rows. A null figure shows its reason's summary
+     (e.g. `no_sessions` → its summary text), never `0`, a bare code or "null".
+   - With `runs_unknown = 2`, each of the four defect counts shows "≥ n" (`compile_defects = 1`
+     shows "≥ 1") and the row says "2 runs with unknown outcome". With `runs_unknown = 0`,
+     there is no "≥" and no note.
+   - A lane on one sprint shows that sprint's row; on All tickets or the Backlog, the board's
+     project row. A `history_pending` sprint shows that reason's summary.
+   - The reason vocabulary failing to load is the daemon-error state with Retry.
+   - Tests: state spec and component spec.
 
 ## Wrong gate
 
@@ -130,8 +172,11 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 - A sprint total computed by adding its tickets.
 - "hours" or "time spent" without "active AI time".
 - A cycle time computed by adding session times, or session time by adding active times.
-- Any assignee, author or other person attribute shown.
+- Any assignee, author or other person attribute shown. (`assigned_to_me` and the write-back state are not person data; showing them is allowed.)
 - Any request that changes Jira, or any write route called from this screen.
+- An SDLC figure shown as `0`, `0%` or "—" when the daemon gave a reason. A reason shown
+  as its raw code. A defect count without "≥" while runs are unknown. A sprint row built from its tickets' figures. A project row when a
+  sprint is chosen.
 
 ## Related
 

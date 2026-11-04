@@ -599,6 +599,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // activity.assistant_events so analysis isn't missing them; runs on boot +
     // every tick of the `capture_drain` schedule (seeded 300s).
     crate::tasks::capture_drain::spawn(Arc::new(state.pg.clone()), crate::paths::sensei_dir());
+    crate::tasks::session_signals::spawn(Arc::new(state.pg.clone()));
 
     // Transcript ingestion: a boot pass, then the `ingest_captures` cadence.
     // Beside capture_drain because the two are halves of one story — that one

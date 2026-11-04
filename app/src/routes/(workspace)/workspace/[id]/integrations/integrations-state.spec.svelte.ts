@@ -3,12 +3,15 @@
 // What must never happen here: a failed read shown as "not connected", a token
 // that outlives its request, a code shown raw where the screen promises words.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
+  METRICS,
   TrackerIntegration,
   errorFor,
   elapsedLabel,
   type TrackerApi,
 } from './integrations-state.svelte.js';
+import { projectSdlc } from '$lib/tracker-fixtures.js';
 import type { ApiResult } from '$lib/api.js';
 import type { TrackerConnection } from '$lib/types.js';
 
@@ -28,6 +31,8 @@ const row = (over: Partial<TrackerConnection> = {}): TrackerConnection => ({
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
   counts: { tasks: 142, sprints: 6 },
+  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+  sdlc_project: projectSdlc(),
   ...over,
 });
 
@@ -55,6 +60,12 @@ function daemon(lists: Array<ApiResult<TrackerConnection[]>>, over: Partial<Trac
       calls.push(['disconnect', { p, t }]);
       return { ok: true, data: undefined };
     },
+    trySetTrackerWriteback: async (p, t, enabled) => {
+      calls.push(['writeback', { p, t, enabled }]);
+      return { ok: true, data: row({ writeback: { ...row().writeback, enabled } }) };
+    },
+    tryGetTrackerFields: async () => ({ ok: true, data: { fields: [] } }),
+    tryPutTrackerFields: async (_p, _t, fields) => ({ ok: true, data: { fields } }),
     ...over,
   };
   return { api, calls };
@@ -485,5 +496,209 @@ describe('elapsedLabel', () => {
     expect(ago(2 * 60_000)).toBe('2 min ago');
     expect(ago(3 * 3_600_000)).toBe('3 h ago');
     expect(ago(50 * 3_600_000)).toBe('2 days ago');
+  });
+});
+
+describe('write-back (tracker-metrics-writeback W8, W-UI)', () => {
+  const wb = (over: Partial<TrackerConnection['writeback']> = {}): TrackerConnection['writeback'] => ({
+    enabled: true,
+    state: 'active',
+    surface: 'comment',
+    mapped: 0,
+    assigned: 2,
+    failing: 0,
+    error: null,
+    ...over,
+  });
+
+  it('says what write-back is doing, in words, for every state', () => {
+    const s = new TrackerIntegration(daemon([{ ok: true, data: [] }]).api, P);
+    const line = (w: Partial<TrackerConnection['writeback']>) => s.writebackLine(row({ writeback: wb(w) }));
+    expect(line({})).toBe('Writing to 2 tickets assigned to you.');
+    expect(line({ assigned: 1 })).toBe('Writing to 1 ticket assigned to you.');
+    expect(line({ failing: 1 })).toBe('Writing to 2 tickets assigned to you. 1 couldn’t be written.');
+    expect(line({ enabled: false, state: 'disabled' })).toBe('Write-back is off.');
+    expect(line({ state: 'owner_not_a_person' })).toBe(
+      'This token belongs to an app account, so sensei can’t tell which tickets are yours. Nothing is written.',
+    );
+    expect(line({ state: 'owner_unknown' })).toBe('Checking which tickets are yours on the next sync.');
+    expect(line({ state: 'nothing_assigned', assigned: 0 })).toBe('No tickets on this board are assigned to you.');
+    expect(line({ state: 'owner_lookup_failed', error: 'forbidden' })).toBe(
+      'Couldn’t check which tickets are yours: This account can’t read that board. Retrying on each sync.',
+    );
+    const passFailed = (error: string) => line({ state: 'pass_failed', error });
+    expect(passFailed('token_missing')).toBe('Couldn’t read the Jira token to write back. Replace the token.');
+    expect(passFailed('credential_store')).toBe('Couldn’t read the Jira token to write back. Replace the token.');
+    expect(passFailed('db')).toBe('Couldn’t record what was written. Write-back retries on each sync.');
+    expect(passFailed('rate_limited')).toBe('Jira is rate-limiting writes. Write-back resumes on the next sync.');
+    expect(passFailed('transport')).toBe('Writing didn’t finish in time. Write-back resumes on the next sync.');
+    expect(passFailed('decode')).toBe('Write-back stopped (decode).');
+    expect(line({ state: 'pass_failed', error: null })).toBe('Write-back stopped (unknown).');
+    expect(line({ state: 'owner_lookup_failed', error: null })).toBe(
+      'Couldn’t check which tickets are yours. Retrying on each sync.',
+    );
+  });
+
+  it('the board stays as it was until the daemon answers, and a second click sends nothing', async () => {
+    let answer: (r: ApiResult<TrackerConnection>) => void = () => {};
+    let requests = 0;
+    const { api } = daemon([{ ok: true, data: [row()] }], {
+      trySetTrackerWriteback: () => {
+        requests += 1;
+        return new Promise((r) => (answer = r));
+      },
+    });
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    const first = s.toggleWriteback(s.trackers[0]);
+    expect(s.busy).toBe('writeback');
+    expect(s.trackers[0].writeback.enabled).toBe(true);
+    await s.toggleWriteback(s.trackers[0]);
+    expect(requests).toBe(1);
+    answer({ ok: true, data: row({ writeback: wb({ enabled: false, state: 'disabled' }) }) });
+    await first;
+    expect(s.trackers[0].writeback.enabled).toBe(false);
+  });
+
+  it('switches write-back with one request and shows the tracker the daemon returns', async () => {
+    const off = row({ writeback: wb({ enabled: false, state: 'disabled' }) });
+    const seen: Array<[string, string, boolean]> = [];
+    const { api } = daemon([{ ok: true, data: [row()] }], {
+      trySetTrackerWriteback: async (p, t, enabled) => {
+        seen.push([p, t, enabled]);
+        return { ok: true, data: off };
+      },
+    });
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    const pending = s.toggleWriteback(s.trackers[0]);
+    expect(s.busy).toBe('writeback');
+    await pending;
+    expect(seen).toEqual([[P, 't-1', false]]);
+    expect(s.busy).toBe(null);
+    expect(s.trackers[0].writeback.enabled).toBe(false);
+  });
+
+  it('a refused switch leaves the board as it was and says why', async () => {
+    const { api } = daemon([{ ok: true, data: [row()] }], {
+      trySetTrackerWriteback: async () => fail(403, 'forbidden_caller', { error: 'forbidden_caller' }),
+    });
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    await s.toggleWriteback(s.trackers[0]);
+    expect(s.trackers[0].writeback.enabled).toBe(true);
+    expect(s.alert?.code).toBe('forbidden_caller');
+  });
+});
+
+describe('field mapping (tracker-metrics-writeback W7, W-UI)', () => {
+  type Rows = Array<{ metric: string; field_ref: string }>;
+  const fieldsApi = (put: (rows: Rows) => ApiResult<{ fields: Rows }>) => {
+    const sent: Rows[] = [];
+    const { api } = daemon([{ ok: true, data: [row()] }], {
+      tryGetTrackerFields: async () => ({
+        ok: true,
+        data: { fields: [{ metric: 'active_hours', field_ref: 'customfield_10050' }] },
+      }),
+      tryPutTrackerFields: async (_p, _t, rows) => {
+        sent.push(rows);
+        return put(rows) as never;
+      },
+    } as Partial<TrackerApi>);
+    return { api, sent };
+  };
+
+  it('opens the board’s mapping, edits it and saves the whole set', async () => {
+    const { api, sent } = fieldsApi((rows) => ({ ok: true, data: { fields: rows } }));
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    await s.openFields(s.trackers[0]);
+    expect(s.editingFields).toBe('t-1');
+    expect(s.fieldRows).toEqual([{ metric: 'active_hours', field_ref: 'customfield_10050' }]);
+    s.addFieldRow();
+    s.fieldRows[1] = { metric: 'api_cost', field_ref: ' customfield_10051 ' };
+    await s.saveFields();
+    expect(sent).toEqual([
+      [
+        { metric: 'active_hours', field_ref: 'customfield_10050' },
+        { metric: 'api_cost', field_ref: 'customfield_10051' },
+      ],
+    ]);
+    expect(s.fieldError).toBe(null);
+    s.removeFieldRow(0);
+    expect(s.fieldRows).toEqual([{ metric: 'api_cost', field_ref: 'customfield_10051' }]);
+  });
+
+  it('a refused field is named on its row, a duplicate on the second one', async () => {
+    const refusal = (body: Record<string, unknown>) => () => fail(422, String(body.error), body);
+    const { api } = fieldsApi(refusal({ error: 'field_in_use', field_ref: 'customfield_10051' }));
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    await s.openFields(s.trackers[0]);
+    s.fieldRows = [
+      { metric: 'active_hours', field_ref: 'customfield_10050' },
+      { metric: 'api_cost', field_ref: 'customfield_10051' },
+    ];
+    await s.saveFields();
+    expect(s.fieldError).toEqual({
+      row: 1,
+      text: 'That field already has values on this board. Pick an empty field.',
+    });
+    expect(s.alert).toBe(null);
+
+    const dup = fieldsApi(refusal({ error: 'duplicate_mapping', metric: 'sessions' }));
+    const d = new TrackerIntegration(dup.api, P);
+    await d.load();
+    await d.openFields(d.trackers[0]);
+    d.fieldRows = [
+      { metric: 'sessions', field_ref: 'customfield_1' },
+      { metric: 'sessions', field_ref: 'customfield_2' },
+    ];
+    await d.saveFields();
+    expect(d.fieldError).toEqual({ row: 1, text: 'Already mapped.' });
+  });
+
+  it('a failure that names no row is the card alert', async () => {
+    const { api } = fieldsApi(() => fail(502, 'rate_limited', { error: 'rate_limited' }));
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    await s.openFields(s.trackers[0]);
+    await s.saveFields();
+    expect(s.fieldError).toBe(null);
+    expect(s.alert?.code).toBe('rate_limited');
+  });
+
+  it('a save while the board is busy says so and keeps the rows', async () => {
+    const { api } = fieldsApi(() => fail(409, 'busy', { error: 'busy' }));
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    await s.openFields(s.trackers[0]);
+    await s.saveFields();
+    expect(s.alert?.text).toBe('The board is syncing or writing back. Save again in a moment.');
+    expect(s.editingFields).toBe(s.trackers[0].id);
+  });
+});
+
+describe('METRICS (the Fields editor list)', () => {
+  it('is the daemon enum, in its write order: usage W3, then SDLC S9', () => {
+    // Paths in app tests are relative to app/ (vitest's root).
+    const ddl = readFileSync('../database/ddl/enum/sensei/tracker_metric.ddl', 'utf8');
+    const body = ddl.slice(ddl.indexOf('as enum ('), ddl.indexOf(');'));
+    const labels = [...body.replace(/--.*$/gm, '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    expect(labels.length).toBe(34);
+    expect(METRICS.map((m) => m.metric)).toEqual(labels);
+    expect(new Set(METRICS.map((m) => m.label)).size).toBe(34);
+  });
+});
+
+describe('refusedRow', () => {
+  it('a duplicate names the second of its rows, whatever comes after', async () => {
+    const { refusedRow } = await import('./integrations-state.svelte.js');
+    const rows = [1, 2, 3].map((n) => ({ metric: 'sessions' as const, field_ref: `customfield_${n}` }));
+    expect(refusedRow(rows, { error: 'duplicate_mapping', metric: 'sessions' })).toBe(1);
+    const sameRef = [1, 2, 3].map(() => ({ metric: 'sessions' as const, field_ref: 'customfield_9' }));
+    expect(refusedRow(sameRef, { error: 'duplicate_mapping', field_ref: 'customfield_9' })).toBe(1);
+    expect(refusedRow(rows, { error: 'field_in_use', field_ref: 'customfield_3' })).toBe(2);
+    expect(refusedRow(rows, { error: 'rate_limited' })).toBe(null);
   });
 });

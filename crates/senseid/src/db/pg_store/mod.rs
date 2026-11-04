@@ -540,6 +540,7 @@ pub struct MetricMeaning {
     pub how_to_read: String,
 }
 
+mod command_catalogue;
 mod commands;
 mod config;
 mod dojo;
@@ -549,7 +550,10 @@ mod git_history;
 mod governance;
 mod graph;
 mod graph_push;
+mod metric_settings;
+pub mod session_signals;
 mod test_db;
+pub mod tracker_history;
 pub use graph_push::GraphCheckout;
 mod indexer;
 /// Named outside this module because the MCP handler picks the direction and

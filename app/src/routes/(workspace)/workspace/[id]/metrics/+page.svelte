@@ -16,6 +16,10 @@
     import SignalGridCell from './SignalGridCell.svelte';
     import SignalLegend from './SignalLegend.svelte';
     import { metricsHost } from './metrics-host.svelte.js';
+    import MetricSettingsPanel from './MetricSettingsPanel.svelte';
+    import { MetricSettingsState } from './metric-settings-state.svelte.js';
+    import { senseiApi } from '$lib/api.js';
+    import { appState } from '$lib/appstate.svelte.js';
 
     let { data } = $props();
 
@@ -27,6 +31,11 @@
     $effect(() => metrics.open());
 
     const workspaceId = $derived(data.workspaceId);
+    // The SDLC settings (spec workspace-metrics-settings): read at runtime, one per workspace.
+    const settings = $derived(new MetricSettingsState(senseiApi(appState.port), workspaceId));
+    $effect(() => {
+        void settings.load();
+    });
     const grid = $derived(metrics.grid);
     const narrative = $derived(grid.data?.narrative ?? null);
     const signals = $derived(grid.data ? buildSignals(grid.data.rows, familyLookup(grid.data.registry), narrative) : []);
@@ -222,5 +231,6 @@
                 </p>
             </section>
         {/if}
+        <MetricSettingsPanel panel={settings} />
     </div>
 </Screen>

@@ -38,7 +38,7 @@ for everyone below. That half of the console is specified in
 - In: the four role definitions and their additive grants:
   - **Contributor** (default) — read-mostly: see workspaces in jurisdiction, preview
     a workspace's effective constitution, view members. A device-code sign-in maps to
-    contributor; there is no "read-only" role.
+    contributor; there is no view-only role.
   - **Maintainer** — **manage governance at org level**: author rules/stance on
     the ladder, triage/approve findings, manage knowledge.
   - **Lead** — a rung between maintainer and admin, never derived from the forge.

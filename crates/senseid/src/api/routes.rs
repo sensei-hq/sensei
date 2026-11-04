@@ -51,8 +51,15 @@ fn tracker_routes() -> Router<AppState> {
             "/api/workspaces/{id}/trackers",
             get(trackers::list_trackers).post(trackers::connect_tracker),
         )
-        .route("/api/workspaces/{id}/trackers/{tracker}", delete(trackers::disconnect_tracker))
+        .route(
+            "/api/workspaces/{id}/trackers/{tracker}",
+            delete(trackers::disconnect_tracker).patch(trackers::patch_tracker),
+        )
         .route("/api/workspaces/{id}/trackers/{tracker}/sync", post(trackers::sync_tracker))
+        .route(
+            "/api/workspaces/{id}/trackers/{tracker}/fields",
+            get(trackers::get_tracker_fields).put(trackers::put_tracker_fields),
+        )
         .route("/api/workspaces/{id}/trackers/{tracker}/sprints", get(trackers::list_sprints))
         .route("/api/workspaces/{id}/trackers/{tracker}/tasks", get(trackers::list_tracker_tasks))
         .route(
@@ -61,6 +68,18 @@ fn tracker_routes() -> Router<AppState> {
         )
         .route("/api/workspaces/{id}/trackers/{tracker}/backlog", get(trackers::get_backlog))
         .route("/api/workspaces/{id}/tracker-tasks/{key}", get(trackers::get_tracker_task))
+        .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
+}
+
+/// A workspace's SDLC metric settings (spec tracker-sdlc-metrics S1), guarded like
+/// the tracker routes: the hourly rate is not for other origins to read.
+fn metric_settings_routes() -> Router<AppState> {
+    use crate::api::handlers::metric_settings;
+    Router::new()
+        .route(
+            "/api/workspaces/{id}/metric-settings",
+            get(metric_settings::get_metric_settings).put(metric_settings::put_metric_settings),
+        )
         .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
 }
 
@@ -469,6 +488,7 @@ pub fn create_router(state: AppState) -> Router {
         // the whole estate is unbounded; `/summary` is the aggregated shape.
         .route("/api/metrics/status", get(metrics::get_metric_status))
         .route("/api/metrics/status/summary", get(metrics::get_metric_status_summary))
+        .route("/api/reason-codes/{domain}", get(metrics::get_reason_codes))
         .route("/api/metrics/{workspace}", get(observatory::get_metrics))
         // Workflow state
         .route(
@@ -554,6 +574,7 @@ pub fn create_router(state: AppState) -> Router {
         // Tracker integrations (spec docs/spec/daemon/tracker-jira-linkage.md R8):
         // a route group behind the local-caller guard (foreign Origin / rebound Host → 403).
         .merge(tracker_routes())
+        .merge(metric_settings_routes())
         .with_state(state)
         .layer(axum::middleware::from_fn(crate::api::origin_guard::caller_guard))
 }
@@ -2141,6 +2162,27 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
+    }
+
+    /// `GET /api/reason-codes/{domain}`: a domain's vocabulary, for screens whose
+    /// figures carry codes in lists (tracker-sdlc-metrics A10). Every SDLC reason
+    /// resolves to a summary; a domain with no codes is a 404, never `{}`.
+    #[tokio::test]
+    async fn a_reason_domain_is_served_whole_and_an_unknown_one_is_not_found() {
+        let (app, _state) = test_app().await;
+        let (st, body) = req(app.clone(), "GET", "/api/reason-codes/sdlc_metrics", None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let reasons = body["reasons"].as_object().expect("keyed by code");
+        let codes = crate::sdlc::registered_reasons();
+        assert!(!codes.is_empty(), "the datafile registers sdlc_metrics codes");
+        for code in codes {
+            assert!(
+                reasons[&code]["summary"].as_str().is_some_and(|s| !s.is_empty()),
+                "{code} has a summary"
+            );
+        }
+        let (st, _) = req(app, "GET", "/api/reason-codes/no_such_domain", None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
     }
 
     /// `GET /api/metrics/status?repo=` — one repository's per-metric computation
