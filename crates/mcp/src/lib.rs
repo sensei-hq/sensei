@@ -1864,6 +1864,8 @@ mod tests {
         assert!(t["inputSchema"]["properties"]["session_id"].is_object());
         let d = t["description"].as_str().unwrap();
         assert!(d.contains("start work"), "{d}");
+        // Targets reach the ticket with TG2–TG4; until then it promises none.
+        assert!(!d.to_lowercase().contains("target"), "{d}");
     }
 
     #[test]

@@ -560,6 +560,39 @@ mod tests {
         assert!(!all.contains_key(&task_id(&pg, t, "10003").await), "no sessions: no usage row");
     }
 
+    /// TG5 (L0 ruling, 2026-11-04): fetching a ticket is usage — the start of work
+    /// on it (F3). A session linked only by `fetch` is counted in a `fetch` bucket,
+    /// so no session is counted outside every bucket: with one source per session,
+    /// the buckets sum to `sessions`. (A session found by two sources is in both
+    /// buckets, as before — buckets are "sessions with a link of this source".)
+    #[tokio::test]
+    #[ignore = "pending: tg5a"]
+    async fn a_fetch_only_session_counts_in_its_own_bucket() {
+        let pg = PgStore::test_store().await;
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        session_with(&pg, Some(r), &[], &["looking at AUTH-2"]).await;
+        let fetched = session_with(&pg, Some(r), &[], &[]).await;
+        sync(&pg, t, &FakeBoard::standard()).await;
+        let auth2 = task_id(&pg, t, "10002").await;
+        sqlx_core::query::query(
+            "INSERT INTO sensei.session_task_links (session_id, task_id, source, matched_key, mentions)
+             VALUES ($1, $2, 'fetch', 'AUTH-2', 1)",
+        )
+        .bind(fetched)
+        .bind(auth2)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let u = ticket_usages(&pg, t, Some(&[auth2])).await.unwrap().remove(&auth2).unwrap();
+        let by = serde_json::to_value(&u.by_source).unwrap();
+        assert_eq!(by, serde_json::json!({"branch": 1, "prompt": 1, "fetch": 1}));
+        let sum: i64 = ["branch", "prompt", "fetch"].iter().map(|k| by[k].as_i64().unwrap()).sum();
+        assert_eq!((u.sessions, sum), (3, 3), "every session is in a bucket");
+    }
+
     #[tokio::test]
     async fn a_ticket_counts_every_workspace_repo_and_drops_a_removed_repo_at_once() {
         let pg = PgStore::test_store().await;
