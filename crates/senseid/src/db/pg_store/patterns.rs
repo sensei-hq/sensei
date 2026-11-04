@@ -1551,7 +1551,7 @@ mod rework_file_path_tests {
         assert_eq!(rework_file_path("rework: ", Some("/r")), None);
         assert_eq!(rework_file_path("rework: src/a.rs", None), None);
         assert_eq!(rework_file_path("rework: ../../etc/passwd", Some("/r")), None);
-        assert_eq!(rework_file_path("rework: /r/../etc/passwd", None), None);
+        assert_eq!(rework_file_path("rework: /r/../etc/passwd", Some("/r")), None);
     }
 
     /// ActionItems review r1 LOW-1: a session can edit a file outside its
@@ -1575,5 +1575,10 @@ mod rework_file_path_tests {
             "a sibling, not a child"
         );
         assert_eq!(rework_file_path("rework: /x/b.rs", None), None, "no folder to confine it to");
+        assert_eq!(
+            rework_file_path("rework: /r/../etc/passwd", Some("/r")),
+            None,
+            "`..` climbs out of the folder"
+        );
     }
 }

@@ -245,7 +245,11 @@ async fn a_snoozed_rec_is_never_the_focal_pick() {
 
 /// ActionItems review r1 LOW-1: a hotspot file outside the repository (the
 /// session edited `~/.zshrc`, or another repository's file) is not offered, even
-/// though it exists; one inside the repository by its absolute path is.
+/// though it exists; one inside the repository by its absolute path is. A
+/// symlink inside the repository that points out of it does not count as inside
+/// (lanes review r1 LOW-1, L0: canonicalise both the file and the root). On macOS
+/// the tempdirs live under `/var` → `/private/var`, so canonicalising only one
+/// side would also fail the inside case.
 #[tokio::test]
 #[ignore = "pending: actionitems-lows"]
 async fn a_rework_file_outside_its_repository_is_not_offered() {
@@ -276,11 +280,23 @@ async fn a_rework_file_outside_its_repository_is_not_offered() {
     let r_out =
         rec(&s, &ws, "_test:out", "audit_stale", serde_json::json!({ "patterns": [outside] }))
             .await;
+    std::os::unix::fs::symlink(elsewhere.path(), repo.path().join("link")).unwrap();
+    let via_link_path = repo.path().join("link").join("outside.rs");
+    let via_link =
+        pattern(&s, &ws, Some(&folder), &format!("rework: {}", via_link_path.display())).await;
+    let r_link =
+        rec(&s, &ws, "_test:link", "audit_stale", serde_json::json!({ "patterns": [via_link] }))
+            .await;
 
     let recs = s.get_workspace_recommendations(&ws, Some("pending")).await.unwrap();
     let file =
         |id: &uuid::Uuid| recs.iter().find(|r| r["id"] == id.to_string()).unwrap()["file"].clone();
     assert_eq!(file(&r_in), serde_json::json!(inside_path.to_string_lossy()));
     assert_eq!(file(&r_out), serde_json::Value::Null, "outside the repository: not offered");
+    assert_eq!(
+        file(&r_link),
+        serde_json::Value::Null,
+        "a symlink out of the repository: not offered"
+    );
     s.delete_workspace(&ws).await.unwrap();
 }

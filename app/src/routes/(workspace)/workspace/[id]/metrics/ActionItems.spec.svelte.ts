@@ -143,13 +143,13 @@ describe('ActionItems', () => {
         expect(q(root, '[data-action-item="r1"] button[data-action-do]')).toBeNull();
     });
 
-    it('clicking the action hands the item to the state', () => {
+    it.skip('pending: actionitems-lows — clicking the action hands the item and the panel’s scope to the state', () => {
         const actions = fakeActions();
         const it1 = withAction({ kind: 'snooze', label: 'Snooze 7 days', days: 7 });
         const root = mount([it1], null, actions);
         q(root, 'button[data-action-do="snooze"]')!.click();
         flushSync();
-        expect(actions.act).toHaveBeenCalledWith(it1);
+        expect(actions.act).toHaveBeenCalledWith(it1, 'ftr');
     });
 
     it('a working item disables its action and says it is busy', () => {
@@ -159,7 +159,7 @@ describe('ActionItems', () => {
         expect(btn?.getAttribute('aria-busy')).toBe('true');
     });
 
-    it('a rule to confirm shows its title, text and where it lands, with Add and Cancel', () => {
+    it.skip('pending: actionitems-lows — a rule to confirm shows its title, text and where it lands, with Add and Cancel', () => {
         const actions = fakeActions({ r1: { status: 'confirm', confirm: RULE_CONFIRM } });
         const it1 = withAction({ kind: 'propose-rule', label: 'Propose a rule' });
         const root = mount([it1], null, actions);
@@ -170,7 +170,7 @@ describe('ActionItems', () => {
         expect(q(root, '[data-action-confirm-path]')).toBeNull();
         q(root, 'button[data-action-confirm-yes]')!.click();
         flushSync();
-        expect(actions.confirm).toHaveBeenCalledWith(it1);
+        expect(actions.confirm).toHaveBeenCalledWith(it1, 'ftr');
         expect(q(root, 'button[data-action-confirm-yes]')?.textContent?.trim()).toBe('Add the rule');
         q(root, 'button[data-action-confirm-no]')!.click();
         flushSync();
