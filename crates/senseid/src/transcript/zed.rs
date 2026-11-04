@@ -195,17 +195,12 @@ pub fn extract_tokens(content: &str) -> Option<SessionTokens> {
         // Sum each part independently. `Option` is preserved: a cache field stays
         // None until at least one request reports it, so "no thread reported
         // caching" never collapses into "cached nothing".
-        let add = |slot: &mut Option<i64>, v: Option<i64>| {
-            if let Some(v) = v {
-                *slot = Some(slot.unwrap_or(0) + v);
-            }
-        };
         for u in reqs.values() {
             let t = usage(u);
             acc.input += t.input;
             acc.output += t.output;
-            add(&mut acc.cache_read, t.cache_read);
-            add(&mut acc.cache_write, t.cache_write);
+            super::add_reported(&mut acc.cache_read, t.cache_read);
+            super::add_reported(&mut acc.cache_write, t.cache_write);
         }
         if acc.total_input() > 0 || acc.output > 0 {
             return Some(acc);
