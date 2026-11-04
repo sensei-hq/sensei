@@ -542,9 +542,19 @@ mod tests {
 
     #[test]
     fn a_signed_out_or_unbound_membership_has_no_slot() {
-        let signed_out = crate::db::pg_store::MembershipPersona { persona_id: uuid::Uuid::nil(), session_slot: None };
-        assert_eq!(ConnectionView::from_row(membership_with(Some(signed_out)), vec![]).persona_slot, None);
+        let signed_out = crate::db::pg_store::MembershipPersona {
+            persona_id: uuid::Uuid::nil(),
+            session_slot: None,
+        };
+        assert_eq!(
+            ConnectionView::from_row(membership_with(Some(signed_out)), vec![]).persona_slot,
+            None
+        );
         assert_eq!(ConnectionView::from_row(membership_with(None), vec![]).persona_slot, None);
-        assert!(serde_json::to_value(ConnectionView::from_row(membership_with(None), vec![])).unwrap()["persona_slot"].is_null());
+        assert!(
+            serde_json::to_value(ConnectionView::from_row(membership_with(None), vec![])).unwrap()
+                ["persona_slot"]
+                .is_null()
+        );
     }
 }

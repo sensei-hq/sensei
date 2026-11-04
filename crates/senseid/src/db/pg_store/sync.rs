@@ -147,10 +147,10 @@ fn pushable(row: PushableRow) -> PushableMetric {
     ) = row;
     // The join yields a time only for a row whose sha resolves in
     // sensei.commits, so `authored_at` present already implies per-commit.
-    if let Some(at) = authored_at {
-        if let Some(obj) = props.as_object_mut() {
-            obj.insert("authored_at".to_string(), serde_json::Value::String(at.to_rfc3339()));
-        }
+    if let Some(at) = authored_at
+        && let Some(obj) = props.as_object_mut()
+    {
+        obj.insert("authored_at".to_string(), serde_json::Value::String(at.to_rfc3339()));
     }
     PushableMetric {
         id,
