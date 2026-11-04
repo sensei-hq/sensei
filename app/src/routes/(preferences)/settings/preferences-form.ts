@@ -21,19 +21,6 @@ export function toPreferencesForm(config: Record<string, string>): PreferencesDa
   return merged;
 }
 
-/** The stored preferences as the settings screen may edit them (D83 batch A,
- *  audit row 73): the form, or — when the stored JSON is corrupt — a failure with
- *  its reason, so the screen shows a fault and blocks saving instead of showing
- *  the defaults a save would write over the real values. */
-export type PreferencesRead =
-  | { ok: true; form: PreferencesData }
-  | { ok: false; reason: string };
-
-/** Pending (D83 batch A phase B): today's behaviour reads corrupt JSON as the defaults. */
-export function readPreferencesForm(config: Record<string, string>): PreferencesRead {
-  return { ok: true, form: toPreferencesForm(config) };
-}
-
 /** Pure: serialize a preferences form back into the config-key/value shape
  *  `appState.setConfigs` expects. Mirrors the wizard's `preferences` commit handler
  *  so both call sites write the same keys — the greeting still reads from

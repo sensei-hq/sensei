@@ -307,6 +307,18 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
+    /// The handler's create path (review F2): a repository with no README gets
+    /// one — the frontmatter and an empty body. Absent is not a failed read.
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn a_missing_readme_is_created_with_the_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("README.md");
+        let fm = fm_workspace("sensei");
+        write_frontmatter(&path, &fm).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), merge_frontmatter("", &fm));
+    }
+
     #[test]
     fn a_valid_readme_keeps_the_users_own_keys_and_body() {
         let dir = tempfile::tempdir().unwrap();

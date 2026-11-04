@@ -435,7 +435,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending: D83 batch A"]
     fn update_keeps_what_it_did_not_change() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("config.json"), "{ \"dojo_url\": \"https://dojo\" }")

@@ -694,7 +694,7 @@ fn init_project_scope(_recommended: bool) {
     let mcp_file = repo_root.join(".mcp.json");
     match upsert_mcp_json(&mcp_file) {
         Ok(()) => println!("\n  [ok] .mcp.json"),
-        Err(e) => println!("\n  [skipped] .mcp.json — {e}"),
+        Err(e) => eprintln!("\n  [failed]  .mcp.json — {e}"),
     }
 
     // 3. Clean up stale per-project hooks from .claude/settings.local.json
@@ -1421,6 +1421,31 @@ mod tests {
             before,
             "and the user's servers left byte for byte"
         );
+    }
+
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn an_unreadable_mcp_json_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".mcp.json");
+        std::fs::write(&path, [b'{', 0xff, 0xfe, b'}']).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(super::upsert_mcp_json(&path).is_err(), "not UTF-8: refused");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    /// Valid JSON of the wrong shape: today nothing is inserted, the file is
+    /// written back, and `init` says `[ok]`.
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn an_mcp_json_that_is_not_an_object_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        for body in ["[]", r#"{ "mcpServers": [] }"#] {
+            let path = dir.path().join(".mcp.json");
+            std::fs::write(&path, body).unwrap();
+            assert!(super::upsert_mcp_json(&path).is_err(), "{body}: refused");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+        }
     }
 
     #[test]
