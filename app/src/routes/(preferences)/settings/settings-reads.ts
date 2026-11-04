@@ -9,7 +9,10 @@ import type { PreferencesData } from '$lib/setup/contracts.js';
 import { toPreferencesForm } from './preferences-form';
 
 export type AssistantRow = { family: string; name: string; version?: string; configured: boolean };
-export type ExtensionRow = { name: string; kind: string; enabled: boolean };
+export type ExtensionRow = { name: string; kind: string; enabled: boolean | null };
+/** A row the daemon sent that cannot be listed: an item needs a name and a
+ *  kind to be drawn and toggled, and neither is invented (D83). */
+export type SkippedExtension = { name: string; reason: string };
 
 /** The saved preferences, with an empty display name filled from the system
  *  user name (`guess`) — the default the setup wizard already applies.
@@ -39,10 +42,30 @@ export async function readAssistants(api: {
   return { assistants, error };
 }
 
+/** The installed items, each as the daemon described it. Three fields stay
+ *  unknown rather than defaulted (D83): a row with no name or no kind is not
+ *  listed (it cannot be drawn or toggled, and `kind ?? 'unknown'` would build
+ *  a toggle URL for a kind that does not exist), and `enabled` is `null` when
+ *  the daemon did not say — never `true`, which would draw an extension as on.
+ *  The input stays `Partial<>`: the guard is the runtime behaviour, and an
+ *  older daemon is exactly the case it covers. */
 export async function readExtensions(api: {
   tryGetInstalledItems: () => Promise<ApiResult<Array<Partial<InstalledItem>>>>;
-}): Promise<{ extensions: ExtensionRow[]; error: string | null }> {
+}): Promise<{ extensions: ExtensionRow[]; skipped?: SkippedExtension[]; error: string | null }> {
   const { data, error } = readOutcome(await api.tryGetInstalledItems());
-  const extensions = (data ?? []).map((i) => ({ name: i.name ?? '', kind: i.kind ?? 'unknown', enabled: i.enabled ?? true }));
-  return { extensions, error };
+  const extensions: ExtensionRow[] = [];
+  const skipped: SkippedExtension[] = [];
+  if (!data) return { extensions, error };
+  for (const i of data) {
+    const name = i.name ?? '';
+    const kind = i.kind ?? '';
+    if (!name || !kind) {
+      skipped.push({ name, reason: `${!name ? 'name' : ''}${!name && !kind ? ' and ' : ''}${!kind ? 'kind' : ''} not reported` });
+      continue;
+    }
+    extensions.push({ name, kind, enabled: i.enabled ?? null });
+  }
+  // `skipped` is present only when something was skipped: a read that listed
+  // every row says nothing about rows it never had.
+  return skipped.length > 0 ? { extensions, skipped, error } : { extensions, error };
 }

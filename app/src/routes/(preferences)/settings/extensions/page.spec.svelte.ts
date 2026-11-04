@@ -132,7 +132,7 @@ describe('Settings · Extensions — a slow toggle', () => {
 // invalidateAll() — which re-runs every load on the settings route, the
 // libraries/knowledge-sources ruling.
 describe('Settings · Extensions — Retry after a failed read', () => {
-  it.skip('pending: L5 settings/extensions — the Retry re-reads the list through its read', async () => {
+  it('the Retry re-reads the list through its read', async () => {
     const fetchSpy = vi.fn().mockResolvedValue(okList(installed));
     vi.stubGlobal('fetch', fetchSpy);
     const m = mountComponent(Page, { data: { extensions: [], error: 'Service Unavailable' } } as never);
@@ -152,7 +152,7 @@ describe('Settings · Extensions — Retry after a failed read', () => {
 // Phase B: a re-read that fails again is the new reason, not the empty one —
 // the same #288 hazard as the first read.
 describe('Settings · Extensions — Retry that fails again', () => {
-  it.skip('pending: L5 settings/extensions — a failed re-read stays the error, never the empty', async () => {
+  it('a failed re-read stays the error, never the empty', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 502, statusText: 'Bad Gateway' });
     vi.stubGlobal('fetch', fetchSpy);
     const m = mountComponent(Page, { data: { extensions: [], error: 'Service Unavailable' } } as never);
@@ -174,7 +174,7 @@ describe('Settings · Extensions — Retry that fails again', () => {
 // state the daemon did not send (D83). A row that did not say is unknown, and
 // the screen says so instead of drawing it as on.
 describe('Settings · Extensions — an item that did not say whether it is on', () => {
-  it.skip('pending: L5 settings/extensions — an item with no `enabled` reads as unknown, never on', async () => {
+  it('an item with no `enabled` reads as unknown, never on', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okList([])));
     const m = mountComponent(Page, {
       data: { extensions: [{ name: 'tdd', kind: 'skill', enabled: null }], error: null },
@@ -184,5 +184,38 @@ describe('Settings · Extensions — an item that did not say whether it is on',
       m.container.querySelector('[data-testid="ext-row-skill-tdd"] .extension-enabled')!;
     await vi.waitFor(() => expect(label().textContent).toBe('unknown'));
     expect(toggleBox(m.container, 'skill', 'tdd').checked).toBe(false);
+  });
+});
+
+// The empty state's next step (L0 ruling on tests r1): nothing in the app
+// installs an extension, so it is the marketplace's Installation page, as a
+// link, not a button.
+describe('Settings · Extensions — nothing installed offers the install path', () => {
+  it('links the marketplace’s installation section', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okList([])));
+    const m = mountComponent(Page, { data: { extensions: [], skipped: [], error: null } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() =>
+      expect(m.container.querySelector('[data-component="empty-state"]')).not.toBeNull(),
+    );
+    const link = m.container.querySelector('[data-action="install-docs"]');
+    expect(link?.getAttribute('href')).toContain('github.com/sensei-hq/marketplace');
+  });
+});
+
+// L0 ruling on tests r1 (L2): a row with no kind or name is not a row — say
+// which one was not listed, and why, instead of drawing it as `unknown`.
+describe('Settings · Extensions — items it could not list', () => {
+  it('names them and the reason, and lists none of them', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okList([])));
+    const m = mountComponent(Page, {
+      data: { extensions: [], skipped: [{ name: 'ghost', reason: 'kind not reported' }], error: null },
+    } as never);
+    cleanup.push(m.destroy);
+    const note = () => m.container.querySelector('[data-testid="ext-skipped"]');
+    await vi.waitFor(() => expect(note()?.textContent).toContain('ghost'));
+    expect(note()?.textContent).toContain('kind not reported');
+    expect(rows(m.container).length).toBe(0);
+    expect(m.container.textContent).not.toContain('No extensions installed yet.');
   });
 });
