@@ -1,29 +1,25 @@
-# Checkpoint — 2026-11-04 evening (coordinator; lanes in ~/Developer/sensei-hq/coord/TRACKER.md)
+# Checkpoint — 2026-11-04 night (coordinator; lanes in ~/Developer/sensei-hq/coord/TRACKER.md)
 
-**Slice:** the week's spine: sync verified → targets end to end → a miss becomes a fix and a learning. Five lanes
-(L1–L5) + Design; reviews through `~/Developer/sensei-hq/coord`.
+**Slice:** the week's spine: sync verified → targets end to end → a miss becomes a fix and a learning.
+Lanes L1–L5 + Design; reviews through `~/Developer/sensei-hq/coord`.
 
-**Merged today:** `lane/L6` docs §3.3 (doc-links allowlist now empty), `lane/L4` Notice family (Design r3),
-`lane/L1` F4 viewer pools ≥2 people (also fixes develop's CI: fresh-DB `permission denied for schema sensei`).
-Merged tree: full `cargo test -p senseid` 4270 passed / 0 failed / 60 ignored (own template `sensei_test_l0`);
-dōjō SQL 63/64 (the one failure is noted under Known broken).
+**Merged today (11-04):** L6 docs §3.3; Notice family; F4 viewer pools; Libraries + Knowledge sources; Copilot backlog
+line; action items confined to the repository; pack-rule pull (local rules + dōjō state); Settings › Extensions; #156
+architecture metrics. Fixes by L0: staging.metric_gating RLS, fmt/clippy, text on tints, travels tiles.
+Rokkit 1.14.1 (switch contrast) and 1.15.1 (ScreenShell D87, StatCard, search in the filter band) are on develop.
+Last full gate: 4304 senseid passed / 0 failed; test-fast; 67/67 SQL.
 
-**Decided today:** D87 the screen shell (chrome only, in `@rokkit/app`; panels remembered per view in `appState`;
-stats filter the screen; free-form search; migrations lose nothing); D88 past due hides private repos, payment
-reinstates them. Module tree brief for L1 (kind → language → crate/package; Svelte files are components).
+**Decided today:** D87 (+ info band look), D88 past due = hidden until paid, D89 sync targets (env list, per-target marks).
 
 **Remaining, in order:**
-1. L3 `run.sh --apply` → WP8 → WP9A → D18 label → #314 production sync (critical path; TG2 waits on WP8).
-2. L1 #156 r2 + D83 batch A tests (review running) → module-tree analysis → diagrams onto the shell.
-3. L2 actionitems-lows tests r3 → TG2–TG5 → targets UI. L4 pack-rule tests r2 → metric_readings.
-4. L5 rebase onto Notice → libraries + knowledge-sources merge. Design: billing r3, screen-shell r2 + contract →
-   L0 builds the rokkit shell.
-5. **Install** with the user: converge the live DB twice (ActionItems, TG1 both planes incl. `staging.metric_gating`,
-   F4 CHECK, SDLC tables), `make install` (Keychain), live checks, F4 re-push.
+1. L3: run.sh --apply phase B → sync hardening (token only to its own registry, per-row stored confirmation,
+   dojo_url per cycle) → WP8 → D89 analysis r2.
+2. L2: TG5a tests r2 → TG2 after WP8. L1: D83a phase B, module-tree analysis, diagrams onto ScreenShell.
+3. L4: dōjō workspaces feedback → org repositories read → metric_readings. L5: next page. Design: billing build r2.
+4. Install #2 with the user (daemon + DB converge twice: #156 view, pack-rule; app).
 
-**Next command:** review/merge as lanes report; then the install checklist in coord/TRACKER.md.
+**Next command:** review/merge as lanes report; install #2 when the user has a few minutes.
 
-**Open:** #350's allowlist vs TG1 `coalesce(modified_at, now())`; does `staging.metric_gating` need RLS (asked L2).
+**Open:** this Mac's dōjō target (production now; local for tests); production landing check needs prod access.
 
-**Known broken:** `database/tests/dojo/target_metric_gating.sql` fails until `staging.metric_gating` is converged into
-the local dōjō DB (install step). The installed daemon (28 Oct) predates S3 (e2e schema test).
+**Known broken:** none on develop. The 220 F4 rows are marked shared against production (D89 migration re-offers).
