@@ -1811,4 +1811,178 @@ mod tests {
         let (_, changed2) = upsert_pointer_in_claude_md(&claude_md, &rules_path).unwrap().unwrap();
         assert!(!changed2, "second upsert reports change=false");
     }
+
+    // ── adopted-pack remote fold-in (D83: a failed pull is an error) ────────
+
+    /// Minimal [`AppState`] for the DB-backed ruleset tests (the util.rs
+    /// `make_state` shape); `None` when the test database is unreachable.
+    async fn pack_state() -> Option<AppState> {
+        let pg = crate::db::pg_store::PgStore::connect_test().await.ok()?;
+        Some(std::sync::Arc::new(crate::api::state::SharedState {
+            task_queue: std::sync::Arc::new(crate::tasks::queue::TaskQueue::new()),
+            pg,
+            gateway: crate::api::gateway_init::init_gateway_test().await,
+            event_tx: {
+                let (tx, _) = tokio::sync::broadcast::channel(16);
+                tx
+            },
+            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            provisioning: None,
+            diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+                crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+            )),
+            trackers: Default::default(),
+        }))
+    }
+
+    /// Seed workspace + folder + repository + junction + the workspace-scope
+    /// namespace the folder resolves, returning `(workspace_id, folder_id)`.
+    /// The metric-fixture shape (`test_support::seed_metrics_workspace_folder`
+    /// plus the namespace row), local so this module stays self-contained.
+    async fn seed_pack_folder(
+        pg: &crate::db::pg_store::PgStore,
+        uniq: &uuid::Uuid,
+        workspace_name: &str,
+    ) -> (uuid::Uuid, uuid::Uuid) {
+        let pid = pg.create_workspace(workspace_name, None, None).await.unwrap();
+        pg.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) \
+             VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) \
+             ON CONFLICT DO NOTHING",
+        )
+        .await
+        .unwrap();
+        let name = format!("pack-{uniq}");
+        let abs_path = format!("/_test/pack-{uniq}");
+        let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) \
+             VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) \
+             ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+        )
+        .bind(&name)
+        .bind(&abs_path)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, $2) \
+             ON CONFLICT(repo_key) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+        )
+        .bind(format!("test/pack-{uniq}"))
+        .bind(&name)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $2 WHERE id = $1")
+            .bind(fid)
+            .bind(rid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        pg.link_workspace_repository(&pid, &rid).await.unwrap();
+        // The workspace axis of `namespaces_for_folder`: the `workspace`-scope
+        // namespace OF THE WORKSPACE'S NAME.
+        pg.upsert_namespace("workspace", workspace_name, &format!("pack-{uniq}"))
+            .await
+            .unwrap();
+        (pid, fid)
+    }
+
+    /// Bind the workspace to a membership whose Worker lives at
+    /// `registry_url`, and register this test's fixed bearer for it (no
+    /// Keychain). Returns the membership id.
+    async fn bind_pack_membership(
+        pg: &crate::db::pg_store::PgStore,
+        workspace_id: &uuid::Uuid,
+        registry_url: &str,
+    ) -> uuid::Uuid {
+        use crate::db::pg_store::NewDojoMembership;
+        let mid = uuid::Uuid::new_v4();
+        pg.create_dojo_membership(&NewDojoMembership {
+            id: mid,
+            registry_url: registry_url.to_string(),
+            tenant_key: "github/acme".to_string(),
+            dojo_url: "http://localhost:7755/github/acme".to_string(),
+            kind: "client".to_string(),
+            org_slugs: vec!["acme".to_string()],
+            role: "contributor".to_string(),
+            authenticated_via: "device_code".to_string(),
+            attribution_default: "anonymous".to_string(),
+            sync_status: "healthy".to_string(),
+        })
+        .await
+        .unwrap();
+        sqlx_core::query::query("UPDATE sensei.workspaces SET dojo_id = $2 WHERE id = $1")
+            .bind(workspace_id)
+            .bind(mid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        crate::dojo::client::test_bearers::set(mid, "pack-test-bearer");
+        mid
+    }
+
+    /// D83: an unreachable Dōjō must fail the ruleset — it must never read as
+    /// "no remote rules". Today `resolve_adopted_pack_raws` folds the fault
+    /// into `[]`, so this resolves `Ok` and the test fails.
+    #[tokio::test]
+    #[ignore = "pending: L9 pack-rule-pull"]
+    async fn resolve_repo_ruleset_errors_when_the_dojo_pack_pull_fails() {
+        let Some(state) = pack_state().await else { return };
+        let uniq = uuid::Uuid::new_v4();
+        let name = format!("_test:pack:{uniq}");
+        let (pid, fid) = seed_pack_folder(&state.pg, &uniq, &name).await;
+        // Port 1 is never bound: the pull faults on connect, fast.
+        bind_pack_membership(&state.pg, &pid, "http://127.0.0.1:1").await;
+        let err = resolve_repo_ruleset(&state, &fid).await.unwrap_err();
+        assert!(!err.is_empty(), "the failure carries a reason");
+    }
+
+    /// No binding, no membership → no remote leg: the honest empty stays `Ok`.
+    /// Green today and after the fix.
+    #[tokio::test]
+    async fn resolve_repo_ruleset_ok_without_a_bound_dojo() {
+        let Some(state) = pack_state().await else { return };
+        let uniq = uuid::Uuid::new_v4();
+        let name = format!("_test:pack:{uniq}");
+        let (_pid, fid) = seed_pack_folder(&state.pg, &uniq, &name).await;
+        resolve_repo_ruleset(&state, &fid).await.unwrap();
+    }
+
+    /// A reachable Worker folds its adopted-pack rules into the ruleset.
+    /// Green today; phase B must keep the merge.
+    #[tokio::test]
+    async fn resolve_repo_ruleset_folds_in_remote_pack_rules() {
+        use axum::{Router, routing::get};
+        async fn resolved() -> axum::Json<serde_json::Value> {
+            axum::Json(serde_json::json!({"rules": [{
+                "rule_id": "remote-1",
+                "statement": "Never log tokens",
+                "body": "Applies at any log level.",
+                "rationale": "leaks",
+                "enforcement": "mandatory",
+                "source": "OWASP",
+                "scope_key": "organization",
+            }]}))
+        }
+        let app = Router::new().route("/v1/t/{origin}/{org}/rules/resolved", get(resolved));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let Some(state) = pack_state().await else { return };
+        let uniq = uuid::Uuid::new_v4();
+        let name = format!("_test:pack:{uniq}");
+        let (pid, fid) = seed_pack_folder(&state.pg, &uniq, &name).await;
+        bind_pack_membership(&state.pg, &pid, &format!("http://{addr}")).await;
+        let ruleset = resolve_repo_ruleset(&state, &fid).await.unwrap();
+        assert!(
+            ruleset.rules.iter().any(|r| r.title == "Never log tokens"),
+            "the Worker's adopted-pack rule lands in the ruleset: {:?}",
+            ruleset.rules.iter().map(|r| &r.title).collect::<Vec<_>>()
+        );
+    }
 }
