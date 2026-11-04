@@ -1617,14 +1617,19 @@ mod pass_tests {
     }
 
     /// A hook that runs `sql` (bound to the tracker id) once, on the first send.
-    fn once(pg: &PgStore, t: uuid::Uuid, sql: &'static str) -> crate::tracker::test_support::Hook {
+    /// Runs `sql` (one statement per item, each binding the tracker as `$1`) on the first send.
+    fn once(
+        pg: &PgStore,
+        t: uuid::Uuid,
+        sql: &'static [&'static str],
+    ) -> crate::tracker::test_support::Hook {
         let pool = pg.pool().clone();
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
         Box::new(move |_path| {
             let (pool, done) = (pool.clone(), done.clone());
             Box::pin(async move {
                 if !done.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                    for q in sql.split(';').filter(|q| !q.trim().is_empty()) {
+                    for q in sql {
                         sqlx_core::query::query(q).bind(t).execute(&pool).await.unwrap();
                     }
                 }
@@ -1635,13 +1640,13 @@ mod pass_tests {
     #[tokio::test]
     async fn switching_off_or_disconnecting_mid_pass_stops_the_next_write() {
         for sql in [
-            "UPDATE sensei.trackers SET writeback_enabled = false WHERE id = $1",
-            "DELETE FROM sensei.trackers WHERE id = $1",
+            &["UPDATE sensei.trackers SET writeback_enabled = false WHERE id = $1"],
+            &["DELETE FROM sensei.trackers WHERE id = $1"],
         ] {
             let f = fixture([Some("A1"), Some("A1"), Some("A1")]).await;
             let w = f.writes(RecordingWrites::default().on_send(once(&f.pg, f.t, sql)));
             f.pass().await;
-            assert_eq!(w.sent().len(), 1, "{sql}");
+            assert_eq!(w.sent().len(), 1, "{sql:?}");
         }
     }
 
@@ -1651,9 +1656,11 @@ mod pass_tests {
         let w = f.writes(RecordingWrites::default().on_send(once(
             &f.pg,
             f.t,
-            "UPDATE sensei.trackers SET secret_service = secret_service || '.new', writeback_error = NULL WHERE id = $1;
-             UPDATE sensei.tracker_tasks SET writeback_comment_ref = NULL, writeback_hash = NULL,
-                    writeback_status = NULL, assigned_to_me = NULL WHERE tracker_id = $1",
+            &[
+                "UPDATE sensei.trackers SET secret_service = secret_service || '.new', writeback_error = NULL WHERE id = $1",
+                "UPDATE sensei.tracker_tasks SET writeback_comment_ref = NULL, writeback_hash = NULL,
+                        writeback_status = NULL, assigned_to_me = NULL WHERE tracker_id = $1",
+            ],
         )));
         assert_eq!(f.pass().await, PassOutcome::Superseded);
         assert_eq!(w.sent().len(), 1);
@@ -2389,8 +2396,10 @@ mod pass_tests {
                 .on_send(once(
                     &f.pg,
                     f.t,
-                    "UPDATE sensei.trackers SET secret_service = secret_service || '.new' WHERE id = $1;
-                     UPDATE sensei.tracker_tasks SET writeback_status = NULL WHERE tracker_id = $1",
+                    &[
+                        "UPDATE sensei.trackers SET secret_service = secret_service || '.new' WHERE id = $1",
+                        "UPDATE sensei.tracker_tasks SET writeback_status = NULL WHERE tracker_id = $1",
+                    ],
                 )),
         );
         assert_eq!(f.pass().await, PassOutcome::Superseded);
@@ -2456,7 +2465,7 @@ mod pass_tests {
         let w = f.writes(RecordingWrites::default().on_send(once(
             &f.pg,
             f.t,
-            "UPDATE sensei.tracker_tasks SET assigned_to_me = false WHERE tracker_id = $1 AND external_id = '10002'",
+            &["UPDATE sensei.tracker_tasks SET assigned_to_me = false WHERE tracker_id = $1 AND external_id = '10002'"],
         )));
         assert_eq!(f.pass().await, PassOutcome::Done { written: 2, unchanged: 0, failed: 0 });
         let paths: Vec<_> = w.sent().into_iter().map(|s| s.path).collect();
