@@ -1,9 +1,14 @@
-// Observatory · Libraries — the screen's state: every detected library, and the
-// selected one's usage. Each read is the daemon's answer or why it failed
-// (#288): a list that could not be read is not "No libraries indexed.", and a
-// usage read that failed is not a library that looks unused.
+// Observatory · Libraries — the screen's state: every detected library, the
+// search, the selected library and its usage. Each read is the daemon's answer
+// or why it failed (#288): a list that could not be read is not "No libraries
+// indexed.", and a usage read that failed is not a library that looks unused.
+//
+// The list itself is the loader's read (+page.ts → readLibraries); this class
+// owns what follows it, including Retry, which re-reads through that same read
+// rather than invalidating every load on the route.
 import { failureReason, type ApiResult } from '$lib/api.js';
 import type { LibCapability, LibEntry, LibPage } from '$lib/types.js';
+import { readLibraries, type LibrariesRead } from './libraries-load.js';
 
 export type UsageEntry = { library_name: string; folder: string; version_used: string | null; import_count: number };
 
@@ -30,22 +35,40 @@ const NONE: Provided = { docs: [], skills: [], agents: [], loading: false, error
 
 export class LibrariesState {
   libs = $state<LibEntry[]>([]);
-  loading = $state(true);
+  /** True only while a Retry re-reads; the loader's read has already landed. */
+  loading = $state(false);
   error = $state<string | null>(null);
+  /** The search box's value — a write, so it lives here, not in the template. */
+  search = $state('');
   selected = $state<LibEntry | null>(null);
   usage = $state<UsageEntry[]>([]);
   usageLoading = $state(false);
   usageError = $state<string | null>(null);
   provided = $state<Provided>({ ...NONE });
 
-  /** Every detected library with its usage count (repoCount) — not just those
-   *  shared across ≥2 repos: `shared: true` hid single-repo libs entirely, which
-   *  is why most @rokkit/* packages never appeared (#63). */
+  /** Seeded from the loader's read, so the page draws the list on first paint. */
+  constructor(read: LibrariesRead = { libs: [], error: null }) {
+    this.setRead(read);
+  }
+
+  setRead(read: LibrariesRead): void {
+    this.libs = read.libs;
+    this.error = read.error;
+  }
+
+  /** The rows the search leaves. Every library when it is empty (#63: not only
+   *  those shared across ≥2 repos). Same rule as before the move: a
+   *  case-insensitive substring of the name, whitespace included. */
+  get visible(): LibEntry[] {
+    const q = this.search.toLowerCase();
+    return q ? this.libs.filter((l) => l.name.toLowerCase().includes(q)) : this.libs;
+  }
+
+  /** Re-read every detected library, for Retry — not a full route invalidate. */
   async load(api: LibrariesApi): Promise<void> {
     this.loading = true;
-    const read = await api.tryGetLibs({});
-    this.libs = read.ok ? read.data.libs : [];
-    this.error = read.ok ? null : failureReason(read.error);
+    const read = await readLibraries(api);
+    this.setRead(read);
     this.loading = false;
   }
 
