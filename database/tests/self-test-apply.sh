@@ -69,6 +69,7 @@ expect_refuse "DDL with commit work; refused" "txn-commit-work.ddl" ./run.sh --a
 # Test files get a commit-only guard (F5): begin;/rollback; stay allowed, and
 # noop.ddl persists nothing even if the guard is missing and it commits.
 expect_refuse "test file with commit; refused" "commits.probe" ./run.sh --apply dojo "$FX/noop.ddl" "$FX/commits.probe"
+expect_refuse "test file with COMMIT WORK; refused" "commits-work.probe" ./run.sh --apply dojo "$FX/noop.ddl" "$FX/commits-work.probe"
 
 # A broken argument check exits 1, never "skipped": 69/127 mean only that the
 # database or psql is absent and every CLI case passed (F4).
@@ -151,6 +152,7 @@ expect_refuse "DDL with commit; refused (no-trace re-run)" "txn-commit.ddl" ./ru
 expect_refuse "DDL with ROLLBACK; refused (no-trace re-run)" "txn-rollback.ddl" ./run.sh --apply dojo "$FX/txn-rollback.ddl" "$FX/ok.probe"
 expect_refuse "DDL with commit work; refused (no-trace re-run)" "txn-commit-work.ddl" ./run.sh --apply dojo "$FX/txn-commit-work.ddl" "$FX/ok.probe"
 expect_refuse "test file with commit; refused (no-trace re-run)" "commits.probe" ./run.sh --apply dojo "$FX/noop.ddl" "$FX/commits.probe"
+expect_refuse "test file with COMMIT WORK; refused (no-trace re-run)" "commits-work.probe" ./run.sh --apply dojo "$FX/noop.ddl" "$FX/commits-work.probe"
 fp_guards=$(fingerprint "$DOJO_URL")
 if [ "$fp_guards" != "$fp_before" ]; then
     fail "catalogue changed across the guard cases ($fp_before / $fp_guards)"
@@ -226,6 +228,36 @@ case "$code:$out" in
     0:*) fail "midline transaction-end exited 0" ;;
     *midline.ddl*) pass "midline transaction-end detected and named" ;;
     *) fail "midline transaction-end (exit $code, want nonzero naming the file) -- $out" ;;
+esac
+
+# --- L-a: top-level END (= COMMIT) in a test aborts the wrapper. ---
+# The deferred commit trap turns the commit into an abort; the refusal names
+# itself, and psql names the file that issued the END.
+out=$(./run.sh --apply dojo "$FX/noop.ddl" "$FX/end.probe" 2>&1); code=$?
+if [ "$code" -eq 0 ]; then
+    fail "END-in-test exited 0"
+else
+    case "$out" in
+        *"wrapper transaction was committed"*)
+            case "$out" in
+                *end.probe*) pass "END-in-test aborts naming the refusal and the file" ;;
+                *) fail "END-in-test aborts without naming the file -- $out" ;;
+            esac ;;
+        *) fail "END-in-test (exit $code, want the commit-trap refusal) -- $out" ;;
+    esac
+fi
+
+# --- L-b: the marker is checked after EACH DDL file, not once at the end. ---
+# after-midline.ddl persists nothing but announces itself; it must never run.
+out=$(./run.sh --apply dojo "$FX/midline.ddl" "$FX/after-midline.ddl" "$FX/ok.probe" 2>&1); code=$?
+case "$code:$out" in
+    0:*) fail "post-midline DDL ran to exit 0" ;;
+    *midline.ddl*)
+        case "$out" in
+            *apply-after-midline-ran*) fail "post-midline DDL ran after the transaction ended" ;;
+            *) pass "post-midline DDL never ran, midline named" ;;
+        esac ;;
+    *) fail "post-midline case (exit $code, want nonzero naming midline.ddl) -- $out" ;;
 esac
 
 # --- Outside the allowed roots (database/ddl, database/tests/fixtures). ---
