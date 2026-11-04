@@ -26,12 +26,64 @@ function makeListDb(result: { data: unknown; error: unknown }) {
 	return { db: b as unknown as DojoClient, captured };
 }
 
+// Table-keyed mock for the activity sort: each `.from(table)` chain resolves
+// that table's canned result at its `.order()` / `.in()` terminal.
+function makeActivityDb(tables: Record<string, { data?: unknown; error: unknown }>) {
+	let table = '';
+	const b: Record<string, unknown> = {};
+	b.from = (t: string) => ((table = t), b);
+	b.select = () => b;
+	b.eq = () => b;
+	b.order = () => Promise.resolve(tables[table] ?? { data: [], error: null });
+	b.in = () => Promise.resolve(tables[table] ?? { data: [], error: null });
+	return b as unknown as DojoClient;
+}
+
 describe('listOrgWorkspaces', () => {
 	it('returns the tenant rows', async () => {
 		const rows = [{ id: 'p1' }, { id: 'p2' }];
 		const { db, captured } = makeListDb({ data: rows, error: null });
 		expect(await listOrgWorkspaces(db, 't1')).toEqual(rows);
 		expect(captured.tenantEq).toBe('t1');
+	});
+	it('keeps API order when no workspace has any reading', async () => {
+		const db = makeActivityDb({
+			workspaces: { data: [{ id: 'w1' }, { id: 'w2' }], error: null },
+			repositories_in_workspaces: { data: [], error: null },
+			repository_metrics: { data: [], error: null }
+		});
+		expect((await listOrgWorkspaces(db, 't1')).map((w) => w.id)).toEqual(['w1', 'w2']);
+	});
+	it.skip('pending: L4 workspace-sort — most recently active first, quiet workspaces last, no invented date', async () => {
+		const db = makeActivityDb({
+			workspaces: {
+				data: [
+					{ id: 'w1', last_run_at: null },
+					{ id: 'w2', last_run_at: null },
+					{ id: 'w3', last_run_at: null }
+				],
+				error: null
+			},
+			repositories_in_workspaces: {
+				data: [
+					{ workspace_id: 'w1', repository_id: 'r1' },
+					{ workspace_id: 'w2', repository_id: 'r2' }
+				],
+				error: null
+			},
+			// Crossed dates pin the column: r2's reading is OLDER data received
+			// NEWER — activity is max(pushed_at), not max(computed_on).
+			repository_metrics: {
+				data: [
+					{ repository_id: 'r1', computed_on: '2026-11-01', pushed_at: '2026-11-02T10:00:00Z' },
+					{ repository_id: 'r2', computed_on: '2026-10-01', pushed_at: '2026-11-03T10:00:00Z' }
+				],
+				error: null
+			}
+		});
+		const out = await listOrgWorkspaces(db, 't1');
+		expect(out.map((w) => w.id)).toEqual(['w2', 'w1', 'w3']);
+		expect(out[2].last_run_at).toBeNull();
 	});
 	it('honest-empty [] when data is null', async () => {
 		const { db } = makeListDb({ data: null, error: null });
@@ -60,6 +112,25 @@ function makeUserDb(result: { data: unknown; error: unknown }) {
 }
 
 describe('listUserWorkspaces — every workspace the caller may read (RLS), across dōjōs', () => {
+	it.skip('pending: L4 workspace-sort — the personal list sorts by activity too, quiet last', async () => {
+		const db = makeActivityDb({
+			workspaces: {
+				data: [
+					{ id: 'w1', last_run_at: null },
+					{ id: 'w2', last_run_at: null }
+				],
+				error: null
+			},
+			repositories_in_workspaces: { data: [{ workspace_id: 'w2', repository_id: 'r2' }], error: null },
+			repository_metrics: {
+				data: [{ repository_id: 'r2', computed_on: '2026-10-01', pushed_at: '2026-11-03T10:00:00Z' }],
+				error: null
+			}
+		});
+		const out = await listUserWorkspaces(db);
+		expect(out.map((w) => w.id)).toEqual(['w2', 'w1']);
+		expect(out[1].last_run_at).toBeNull();
+	});
 	it('returns the readable rows with their dōjō, with no owner filter', async () => {
 		const rows = [{ id: 'p1', tenant_id: 't1' }, { id: 'p2', tenant_id: 't2' }];
 		const { db, captured } = makeUserDb({ data: rows, error: null });
