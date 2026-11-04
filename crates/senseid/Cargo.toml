@@ -68,9 +68,6 @@ oxc_ast_visit = "0.124"
 oxc_span = "0.124"
 oxc_allocator = "0.124"
 
-# SQL parsing
-sqlparser = { version = "0.57", features = ["visitor"] }
-
 # Zed transcript adapter: read its threads.db (SQLite) + zstd-compressed thread blobs.
 # `bundled` compiles SQLite from source (no system-sqlite linkage risk); ruzstd is
 # a pure-Rust zstd decompressor (no C toolchain).
