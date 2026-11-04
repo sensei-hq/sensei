@@ -115,6 +115,12 @@ select v.id::uuid, 'b0000000-0000-4000-8000-00000000004a', v.repo::uuid, m.id, v
   ) as v(id, repo, scope, who, day, value, props)
  cross join (select id from sensei.metrics order by key limit 1) m;
 
+-- The catalogue key every series must resolve, captured as the owner: nothing
+-- below may name sensei.* as authenticated (fresh databases grant no USAGE on
+-- the schema — reads through functions/views resolve to OIDs and don't need
+-- it, direct reads fail). Tests that need catalogue facts stash them here.
+select set_config('test.expected_metric_key', key, true) from sensei.metrics order by key limit 1;
+
 set local role authenticated;
 
 do $$
@@ -134,7 +140,7 @@ declare
     pden numeric;
     contrib int;
 begin
-    select key into k from sensei.metrics order by key limit 1;
+    select current_setting('test.expected_metric_key') into k;
 
     -- ── role_holder_reads_repo_rows ──────────────────────────────────────────
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000041"}', true);
@@ -143,7 +149,7 @@ begin
     if n <> 1 or v <> 10 then
         raise exception 'role_holder_reads_repo_rows: alice should read R''s one repo row worth 10, got % rows worth %', n, v;
     end if;
-    if k <> (select key from sensei.metrics order by key limit 1) then
+    if k <> current_setting('test.expected_metric_key') then
         raise exception 'role_holder_reads_repo_rows: the series should resolve the metric key, got %', k;
     end if;
 
