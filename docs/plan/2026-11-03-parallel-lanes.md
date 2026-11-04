@@ -166,7 +166,7 @@ Owns: `crates/senseid/src/tasks/{dojo_sync,graph_push}.rs`, `crates/senseid/src/
 `crates/senseid/src/dojo_client/**`, `dojo/src/routes/v1/you/**`,
 `dojo/src/routes/v1/t/[origin]/[org]/workspaces/**`, `dojo/src/lib/server/{workspaces-data,repositories,graph-ingest,metrics-ingest}.ts`,
 `dojo/src/lib/workspace-metrics-*`, `dojo/src/routes/(app)/org/[slug]/workspaces/[id]/**`, DDL
-`database/ddl/**/dojo/{all_my_repositories,register_repositor*,*_metric_series,repository_*,is_iso_instant}` and their
+`database/ddl/**/dojo/{all_my_repositories,register_repositor*,*_metric_series,repository_*,is_iso_instant,set_repository_election}` and their
 tests under `database/tests/dojo/**`; `docs/lanes/L1.md`;
 `dojo/src/lib/components/screens/ScrWorkspacePreview.svelte`; for WP5 round 2 also `kit/MetricCards.svelte` (new),
 `kit/Spark.svelte`, `components/Spark.svelte`, `my-metrics-view.ts`, `ScrMyMetrics.svelte`.
