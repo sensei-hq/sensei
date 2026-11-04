@@ -26,6 +26,7 @@ import type { Grain } from '../metrics-state.svelte.js';
 /** What the detail reads: the workspace's values and registry (for the rail), the
  *  selected metric and grain, its series, formula and the pending recommendations. */
 export interface MetricDetailData {
+  workspaceId: string;
   rows: WorkspaceMetricRow[];
   registry: RegistryMetric[];
   narrative: MetricsNarrative | null;
@@ -132,5 +133,5 @@ export class MetricDetailState {
       return terms.some((t) => hay.includes(t));
     });
   });
-  readonly actionItems = $derived(buildActionItems(this.relevantRecs));
+  readonly actionItems = $derived.by(() => buildActionItems(this.relevantRecs, this.read().workspaceId));
 }

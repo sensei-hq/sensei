@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildActionItems, normalizeUrgency } from './action-items.js';
+import { actionFor, buildActionItems, normalizeUrgency, SNOOZE_DAYS } from './action-items.js';
 import type { Recommendation } from '$lib/types.js';
+import { SECTIONS } from '../workspace-sidebar-view.js';
+
+const W = 'w1';
 
 function rec(over: Partial<Recommendation> = {}): Recommendation {
     return { id: 'r1', title: 'tighten the retry budget', status: 'pending', ...over };
@@ -23,36 +26,97 @@ describe('normalizeUrgency', () => {
 
 describe('buildActionItems', () => {
     it('maps recommendations to action items, preserving wire order', () => {
-        const items = buildActionItems([rec({ id: 'a' }), rec({ id: 'b' }), rec({ id: 'c' })]);
+        const items = buildActionItems([rec({ id: 'a' }), rec({ id: 'b' }), rec({ id: 'c' })], W);
         expect(items.map((i) => i.id)).toEqual(['a', 'b', 'c']);
     });
 
     it('carries title/why/impact and trims them; absent copy stays empty', () => {
         const [i] = buildActionItems([
             rec({ title: '  tighten retries  ', why: '  churny  ', impact: undefined }),
-        ]);
+        ], W);
         expect(i.title).toBe('tighten retries');
         expect(i.why).toBe('churny');
         expect(i.impact).toBe('');
     });
 
     it('derives the urgency and its label from the wire urgency', () => {
-        expect(buildActionItems([rec({ urgency: 'high' })])[0]).toMatchObject({
+        expect(buildActionItems([rec({ urgency: 'high' })], W)[0]).toMatchObject({
             urgency: 'high',
             urgencyLabel: 'high',
         });
-        expect(buildActionItems([rec({ urgency: undefined })])[0]).toMatchObject({
+        expect(buildActionItems([rec({ urgency: undefined })], W)[0]).toMatchObject({
             urgency: 'none',
             urgencyLabel: '',
         });
     });
 
     it('drops rows with no title (nothing to act on), never a blank card', () => {
-        const items = buildActionItems([rec({ id: 'keep' }), rec({ id: 'drop', title: '   ' })]);
+        const items = buildActionItems([rec({ id: 'keep' }), rec({ id: 'drop', title: '   ' })], W);
         expect(items.map((i) => i.id)).toEqual(['keep']);
     });
 
     it('returns [] for no recommendations (honest-empty)', () => {
-        expect(buildActionItems([])).toEqual([]);
+        expect(buildActionItems([], W)).toEqual([]);
+    });
+});
+
+// L3 · ActionItems act: each item gets the one action its recommendation implies
+// (plan 2026-11-03 §L3.1). The action is chosen from the wire `actionType`; the
+// rule/skill/agent ones reuse the existing preview → materialize path.
+describe('actionFor', () => {
+    const kindOf = (actionType: string | null, file: string | null = null) =>
+        actionFor(rec({ actionType, file }), W).kind;
+
+    it('a rule-class recommendation proposes a rule', () => {
+        for (const t of ['revise_rule', 'promote_pattern', 'enrich_memory']) {
+            expect(actionFor(rec({ actionType: t }), W)).toEqual({ kind: 'propose-rule', label: 'Propose a rule' });
+        }
+    });
+
+    it('a skill or agent recommendation is reviewed before its file is written', () => {
+        expect(actionFor(rec({ actionType: 'write_skill' }), W)).toEqual({ kind: 'review-file', label: 'Review the skill' });
+        expect(actionFor(rec({ actionType: 'create_agent' }), W)).toEqual({ kind: 'review-file', label: 'Review the agent' });
+    });
+
+    it('a rework hotspot opens its file, named by its base name', () => {
+        expect(actionFor(rec({ actionType: 'audit_stale', file: '/repo/crates/x/src/lib.rs' }), W)).toEqual({
+            kind: 'open-file',
+            label: 'Show lib.rs in Finder',
+            path: '/repo/crates/x/src/lib.rs',
+        });
+    });
+
+    it('a library update opens the workspace’s Libraries lens', () => {
+        expect(actionFor(rec({ actionType: 'library_update' }), W)).toEqual({
+            kind: 'open-lens',
+            label: 'Open libraries',
+            href: '/workspace/w1/libraries',
+        });
+        // The lens is the workspace window's own `libraries` section, not a literal.
+        expect(SECTIONS.map((s) => s.id)).toContain('libraries');
+        expect(actionFor(rec({ actionType: 'library_update' }), 'a b')).toMatchObject({
+            href: '/workspace/a%20b/libraries',
+        });
+    });
+
+    it('a rework hotspot whose file the daemon could not resolve is snoozed, never opened at a guessed path', () => {
+        // The title names the file ("High rework: …"), but parsing copy is not a path.
+        const a = actionFor(rec({ actionType: 'audit_stale', file: null, title: 'High rework: src/a.rs' }), W);
+        expect(a).toEqual({ kind: 'snooze', label: `Snooze ${SNOOZE_DAYS} days`, days: SNOOZE_DAYS });
+        expect(kindOf('audit_stale', '   ')).toBe('snooze');
+    });
+
+    it('anything without a sharper action is snoozed (cross_workspace, unknown, absent)', () => {
+        expect(kindOf('cross_workspace')).toBe('snooze');
+        expect(kindOf('something_new')).toBe('snooze');
+        expect(kindOf(null)).toBe('snooze');
+    });
+
+    it('buildActionItems carries each item’s action', () => {
+        const items = buildActionItems(
+            [rec({ id: 'a', actionType: 'revise_rule' }), rec({ id: 'b', actionType: 'cross_workspace' })],
+            W,
+        );
+        expect(items.map((i) => i.action.kind)).toEqual(['propose-rule', 'snooze']);
     });
 });

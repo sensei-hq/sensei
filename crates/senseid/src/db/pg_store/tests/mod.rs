@@ -26,6 +26,7 @@ mod misc_tests;
 mod patterns_tests;
 mod personas_tests;
 mod receivers_tests;
+mod recommendation_actions_tests;
 mod repo_anchor_tests;
 mod scan_tests;
 mod stub_gc_tests;

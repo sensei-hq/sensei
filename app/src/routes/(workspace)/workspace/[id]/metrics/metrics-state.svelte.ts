@@ -25,6 +25,9 @@ export type MetricsApi = Pick<
   | 'tryGetTranscriptConsent'
   | 'getWorkspaceMetricSeries'
   | 'tryGetWorkspaceRecommendations'
+  | 'tryPreviewRecommendation'
+  | 'tryMaterializeRecommendationWithReason'
+  | 'trySnoozeWorkspaceRecommendation'
 >;
 
 export type Grain = 'daily' | 'weekly' | 'monthly';
@@ -134,5 +137,13 @@ export class WorkspaceMetrics {
         .then((r) => (this.#recommendations = settled(r)));
     }
     return this.#recommendations;
+  }
+
+  /** Drop a decided recommendation from what was read, so neither the landing
+   *  nor any detail offers it again. A failed or unfinished read is left as is. */
+  settleRecommendation(id: string): void {
+    const r = this.#recommendations;
+    if (r.status !== 'ready' || !r.data) return;
+    this.#recommendations = { ...r, data: r.data.filter((rec) => rec.id !== id) };
   }
 }
