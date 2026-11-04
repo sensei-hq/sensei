@@ -143,7 +143,7 @@ describe('ActionItems', () => {
         expect(q(root, '[data-action-item="r1"] button[data-action-do]')).toBeNull();
     });
 
-    it.skip('pending: actionitems-lows — clicking the action hands the item and the panel’s scope to the state', () => {
+    it('clicking the action hands the item and the panel’s scope to the state', () => {
         const actions = fakeActions();
         const it1 = withAction({ kind: 'snooze', label: 'Snooze 7 days', days: 7 });
         const root = mount([it1], null, actions);
@@ -159,7 +159,7 @@ describe('ActionItems', () => {
         expect(btn?.getAttribute('aria-busy')).toBe('true');
     });
 
-    it.skip('pending: actionitems-lows — a rule to confirm shows its title, text and where it lands, with Add and Cancel', () => {
+    it('a rule to confirm shows its title, text and where it lands, with Add and Cancel', () => {
         const actions = fakeActions({ r1: { status: 'confirm', confirm: RULE_CONFIRM } });
         const it1 = withAction({ kind: 'propose-rule', label: 'Propose a rule' });
         const root = mount([it1], null, actions);
@@ -211,7 +211,7 @@ describe('ActionItems', () => {
 
     // ActionItems review r1 LOW-2: the panel acts and reads its outcome in its own
     // scope (the metric key), so another metric's detail never shows it.
-    it.skip('pending: actionitems-lows — the panel acts in its scope and shows only that scope’s outcome', () => {
+    it('the panel acts in its scope and shows only that scope’s outcome', () => {
         const actions = fakeActions({}, null);
         actions.doneIn.mockImplementation((s: string) => (s === 'ftr' ? 'Snoozed until 2026-11-10' : null));
         const it1 = item();

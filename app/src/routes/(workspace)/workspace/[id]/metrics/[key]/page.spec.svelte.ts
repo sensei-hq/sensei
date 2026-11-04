@@ -99,7 +99,7 @@ describe('metric detail', () => {
 
   // ActionItems review r1 LOW-2: the outcome of a snooze on one metric's detail
   // does not follow the person to another metric's detail.
-  it.skip('pending: actionitems-lows — a snooze on one metric is not said on another metric’s detail', async () => {
+  it('a snooze on one metric is not said on another metric’s detail', async () => {
     const { api, host } = setup();
     const CHURN = { ...ROW, metric: 'churn_rate', direction: 'lower_better' };
     (api.getWorkspaceMetrics as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>

@@ -191,7 +191,8 @@ async fn a_rework_recommendation_carries_its_file_resolved_through_its_pattern()
         recs.iter().find(|r| r["id"] == id.to_string()).unwrap_or_else(|| panic!("{id} read"))["file"].clone()
     };
     assert_eq!(file(&r_rel), serde_json::json!(format!("{root}/src/api/server.rs")));
-    assert_eq!(file(&r_abs), serde_json::json!(abs_file.to_string_lossy()));
+    // An absolute file outside the repository is not offered (actionitems-lows LOW-1).
+    assert_eq!(file(&r_abs), serde_json::Value::Null, "an absolute file elsewhere: not offered");
     // Not about one file, no pattern, a pattern since replaced, a relative file
     // with no folder to resolve it against, one that climbs out of the
     // repository with `..`, or one no longer on disk: no file, never a guessed
@@ -288,7 +289,6 @@ async fn offered_file(
 /// though it exists; one inside the repository by its absolute path is, as
 /// written (not its canonical `/private/var/…` form on macOS).
 #[tokio::test]
-#[ignore = "pending: actionitems-lows"]
 async fn a_rework_file_outside_its_repository_is_not_offered() {
     let s = pg_store().await;
     let (ws, folder, repo, elsewhere) = confinement_fixture(&s, "rework_outside").await;
@@ -308,7 +308,6 @@ async fn a_rework_file_outside_its_repository_is_not_offered() {
 /// root; on macOS the tempdirs live under `/var` → `/private/var`, so
 /// canonicalising one side only would also fail the inside case above).
 #[tokio::test]
-#[ignore = "pending: actionitems-lows"]
 async fn an_absolute_path_through_an_in_repository_symlink_out_is_not_offered() {
     let s = pg_store().await;
     let (ws, folder, repo, _elsewhere) = confinement_fixture(&s, "rework_link_abs").await;
@@ -325,7 +324,6 @@ async fn an_absolute_path_through_an_in_repository_symlink_out_is_not_offered() 
 /// required) — the common shape, and lexically inside, so a confinement check
 /// made only on absolute paths would offer it.
 #[tokio::test]
-#[ignore = "pending: actionitems-lows"]
 async fn a_relative_path_through_an_in_repository_symlink_out_is_not_offered() {
     let s = pg_store().await;
     let (ws, folder, _repo, _elsewhere) = confinement_fixture(&s, "rework_link_rel").await;

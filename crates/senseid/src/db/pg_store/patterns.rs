@@ -1496,12 +1496,13 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
 
         Ok(rows.into_iter().map(|(id, title, urgency, status, verdict, why, impact, baseline, current, acted, measured, score, focal, action_type, pattern, folder)| {
-            // Only a file still on disk: a hotspot whose file was since moved or
-            // deleted offers nothing to open.
-            let file = pattern
-                .as_deref()
-                .and_then(|p| rework_file_path(p, folder.as_deref()))
-                .filter(|f| std::path::Path::new(f).is_file());
+            // Only a file still on disk and still inside the repository: a hotspot
+            // whose file was since moved or deleted, or that a symlink carries out
+            // of the repository, offers nothing to open.
+            let file = pattern.as_deref().and_then(|p| {
+                let root = folder.as_deref()?;
+                rework_file_path(p, Some(root)).filter(|f| rework_file_on_disk(f, root))
+            });
             serde_json::json!({
                 "id": id, "title": title, "urgency": urgency, "status": status, "verdict": verdict,
                 "why": why, "impact": impact, "actionType": action_type,
@@ -1518,18 +1519,35 @@ impl PgStore {
 /// The absolute path of the file a rework-hotspot pattern is about, from the
 /// pattern's name (`rework: <file>`, as the session saw the file) and its folder's
 /// absolute path. `None` when the pattern is not a rework hotspot, names no file,
-/// names a relative file with no folder to resolve it against, or climbs out
-/// with a `..` segment: a path the action opens is never guessed.
+/// has no folder to place it in, climbs out with a `..` segment, or names an
+/// absolute path outside the folder (a session can edit `~/.zshrc` or another
+/// repository's file; that is not this repository's to offer): a path the action
+/// opens is never guessed. Lexical only: the read also confines it on disk,
+/// through symlinks (see `rework_file_on_disk`).
 fn rework_file_path(pattern_name: &str, folder_abs_path: Option<&str>) -> Option<String> {
     let file = crate::rework_hotspots::rework_file(pattern_name).filter(|f| !f.is_empty())?;
     if std::path::Path::new(file).components().any(|c| c == std::path::Component::ParentDir) {
         return None;
     }
-    if file.starts_with('/') {
-        return Some(file.to_string());
-    }
     let root = folder_abs_path?.trim_end_matches('/');
+    if file.starts_with('/') {
+        // Components, not a string prefix: `/rx/a.rs` is not inside `/r`.
+        return std::path::Path::new(file)
+            .starts_with(if root.is_empty() { "/" } else { root })
+            .then(|| file.to_string());
+    }
     Some(format!("{root}/{file}"))
+}
+
+/// Whether `file` is a file on disk inside `root` once symlinks are followed.
+/// Both sides are canonicalised: a symlink inside the repository can point out
+/// of it, and on macOS a temp or home path can itself sit behind one (`/var` →
+/// `/private/var`). A path that cannot be resolved is not offered.
+fn rework_file_on_disk(file: &str, root: &str) -> bool {
+    let (Ok(file), Ok(root)) = (std::fs::canonicalize(file), std::fs::canonicalize(root)) else {
+        return false;
+    };
+    file.is_file() && file.starts_with(root)
 }
 
 #[cfg(test)]
@@ -1537,12 +1555,14 @@ mod rework_file_path_tests {
     use super::rework_file_path;
 
     #[test]
-    fn resolves_relative_against_the_folder_and_keeps_absolute() {
+    fn resolves_relative_against_the_folder_and_keeps_absolute_inside_it() {
         assert_eq!(
             rework_file_path("rework: src/a.rs", Some("/r/")).as_deref(),
             Some("/r/src/a.rs")
         );
-        assert_eq!(rework_file_path("rework: /x/b.rs", None).as_deref(), Some("/x/b.rs"));
+        // An absolute path is kept only inside its folder (actionitems-lows LOW-1).
+        assert_eq!(rework_file_path("rework: /r/b.rs", Some("/r")).as_deref(), Some("/r/b.rs"));
+        assert_eq!(rework_file_path("rework: /x/b.rs", None), None);
     }
 
     #[test]
@@ -1558,7 +1578,6 @@ mod rework_file_path_tests {
     /// repository (`~/.zshrc`, another repository); that path is not this
     /// repository's to offer. An absolute path counts only under the folder.
     #[test]
-    #[ignore = "pending: actionitems-lows"]
     fn an_absolute_path_is_offered_only_inside_its_folder() {
         assert_eq!(
             rework_file_path("rework: /r/src/a.rs", Some("/r")).as_deref(),
