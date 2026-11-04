@@ -10,6 +10,28 @@ members = [
 ]
 resolver = "2"
 
+# A dependency two or more members use is declared once, here; members inherit it
+# with `{ workspace = true }` and add only their own features. The version (or git
+# tag) then moves in one place: `dbd-core` was pinned twice, and a bump that
+# touched one member would have split the build onto two dbd revisions.
+# Base features are the ones every user needs; a member's extra features are additive.
+[workspace.dependencies]
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.27.8" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sensei-bootstrap = { path = "crates/bootstrap" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx-core = { version = "0.8", features = ["_rt-tokio", "json"] }
+sqlx-postgres = { version = "0.8", features = ["json"] }
+tempfile = "3"
+tokio = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

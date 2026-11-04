@@ -443,13 +443,13 @@ jobs:
         # that deploys prod is not the one anybody tested against.
         #
         # The package is `dbd-cli` (the binary it installs is `dbd`). Keep this in
-        # step with the dbd-core tag in crates/bootstrap/Cargo.toml — the daemon
+        # step with the dbd-core tag in the root Cargo.toml — the daemon
         # embeds the same library to deploy its own schema, and a skew means the
         # CLI accepts DDL the daemon cannot parse.
         #
         # That invariant was VIOLATED by this very line until #197: it pinned
         # v0.12.0 against bootstrap's v0.14.0, and this is the pin that deploys
-        # the dōjō's production schema. It now matches both `dbd-core` pins and
+        # the dōjō's production schema. It now matches the `dbd-core` pin and
         # `rust.yml`, held by `crates/bootstrap/tests/dbd_pins.rs`.
         run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.27.8 dbd-cli
 

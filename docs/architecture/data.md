@@ -73,7 +73,8 @@ flowchart TD
   be dropped. Whole tables are never pruned on an install.
   Enum variants deploy **alphabetically** — never rely on declaration order;
   rank with a CASE.
-- **One dbd version** — `dbd-core` in `crates/bootstrap` and `crates/senseid`
+- **One dbd version** — `dbd-core` (declared once in the root `Cargo.toml`'s
+  `[workspace.dependencies]`, inherited by `crates/bootstrap` and `crates/senseid`)
   and the `dbd-cli` CI and the release install are pinned to the same tag
   (`crates/bootstrap/tests/dbd_pins.rs`).
 - **Full-DDL, no ALTERs** in source — a table's `.ddl` is its whole definition;
