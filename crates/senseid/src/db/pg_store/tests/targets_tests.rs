@@ -3,7 +3,6 @@
 use super::*;
 
 #[tokio::test]
-#[ignore = "pending: tg1"]
 async fn gating_reads_eligible_metrics_with_their_comparator() {
     let s = pg_store().await;
     let rows = s.metric_gating().await.unwrap();
@@ -25,7 +24,6 @@ async fn gating_reads_eligible_metrics_with_their_comparator() {
 /// The comparator follows the catalogue's direction, not a copy of it: a
 /// lower-is-better metric reads `<=`, and a neutral one has none.
 #[tokio::test]
-#[ignore = "pending: tg1"]
 async fn the_comparator_is_derived_from_the_metrics_direction() {
     let s = pg_store().await;
     s.execute_raw(
@@ -53,7 +51,6 @@ async fn the_comparator_is_derived_from_the_metrics_direction() {
 
 /// A metric with no gating row is not eligible, and is not given a default row.
 #[tokio::test]
-#[ignore = "pending: tg1"]
 async fn an_absent_gating_row_is_not_eligible() {
     let s = pg_store().await;
     let (ungated,): (String,) = query_as(
@@ -77,7 +74,6 @@ async fn an_absent_gating_row_is_not_eligible() {
 /// a failure would read as "no target can miss". The read is first shown to work,
 /// so this cannot pass on a read that always fails.
 #[tokio::test]
-#[ignore = "pending: tg1"]
 async fn a_failed_gating_read_is_an_error_not_an_empty_list() {
     let s = pg_store().await;
     assert!(!s.metric_gating().await.unwrap().is_empty(), "the seeded read works first");

@@ -79,6 +79,41 @@ begin
   raise exception 'an_unknown_metric_key_fails_the_import: the import accepted an unknown key';
 end $$;
 
+-- a_row_with_no_metric_key_fails_the_import (review r2 L1): a misspelled field
+-- (`"metricKey"`, `"key"`) loads as a null `metric_key`; dropping that row silently
+-- would leave a target that never exists.
+do $$
+begin
+  truncate staging.metric_gating;
+  insert into staging.metric_gating(metric_key, eligible, delta_scoped, min_coverage, note, modified_at)
+  values (null, true, false, 1.0, 'a seed row whose key field was misspelled', now());
+  begin
+    call staging.import_metric_gating();
+  exception when others then
+    return; -- raised: the expected outcome
+  end;
+  raise exception 'a_row_with_no_metric_key_fails_the_import: the import dropped a keyless row silently';
+end $$;
+
+-- a_row_with_no_modified_at_fails_the_import: the guard compares edit times, so a
+-- row without one cannot be ordered against the live row; it is refused, never
+-- given the import's own clock as a plausible edit time (D83).
+do $$
+begin
+  truncate staging.metric_gating;
+  insert into staging.metric_gating(metric_key, eligible, delta_scoped, min_coverage, note, modified_at)
+  values ('coverage', true, false, 0.5, 'a seed row with no edit time', null);
+  begin
+    call staging.import_metric_gating();
+  exception when others then
+    if sqlerrm not like '%coverage%' then
+      raise exception 'a_row_with_no_modified_at_fails_the_import: the error does not name the key: %', sqlerrm;
+    end if;
+    return;
+  end;
+  raise exception 'a_row_with_no_modified_at_fails_the_import: the import stamped a row with no edit time';
+end $$;
+
 -- a_neutral_metric_cannot_be_eligible
 do $$
 begin
