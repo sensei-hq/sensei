@@ -1264,6 +1264,13 @@ mod pass_tests {
     }
 
     async fn fixture_with(board: FakeBoard, served: FakeBoard) -> Fixture {
+        let f = fixture_switched(board, served).await;
+        f.pg.set_writeback_enabled(f.t, true).await.unwrap();
+        f
+    }
+
+    /// A connected, synced board left as connecting leaves it: write-back off (D50).
+    async fn fixture_switched(board: FakeBoard, served: FakeBoard) -> Fixture {
         let pg = PgStore::test_store().await;
         let (rt, store, factory) = fake_runtime();
         let site = format!("https://t{}.atlassian.net", uuid::Uuid::new_v4().simple());
@@ -1849,8 +1856,9 @@ mod pass_tests {
     }
 
     #[tokio::test]
-    async fn write_back_is_on_unless_switched_off_and_no_owner_id_reaches_a_debug_print() {
-        let f = fixture([Some("A1"), None, None]).await;
+    async fn write_back_is_off_until_switched_on_and_no_owner_id_reaches_a_debug_print() {
+        let assignees = [Some("A1"), None, None];
+        let f = fixture_switched(standard(assignees), standard(assignees)).await;
         let (on,): (bool,) = sqlx_core::query_as::query_as(
             "SELECT writeback_enabled FROM sensei.trackers WHERE id = $1",
         )
@@ -1858,7 +1866,13 @@ mod pass_tests {
         .fetch_one(f.pg.pool())
         .await
         .unwrap();
-        assert!(on, "on by default (W8)");
+        assert!(!on, "off by default (D50)");
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        assert!(w.sent().is_empty(), "nothing is written while off: {:?}", w.sent());
+        f.pg.set_writeback_enabled(f.t, true).await.unwrap();
+        f.pass().await;
+        assert!(!w.sent().is_empty(), "switched on, the pass writes");
         let row = f.pg.tracker_by_id(f.t).await.unwrap().unwrap();
         assert!(
             row.owner_ref.is_some(),

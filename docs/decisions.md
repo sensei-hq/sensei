@@ -139,7 +139,7 @@ successful sync, on by default for every board, existing ones included
 | **One write path: metrics** | Sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The local daemon writes usage metrics, nothing else (`spec/daemon/tracker-metrics-writeback.md`; superseded 2026-10-29 (tracker-sdlc-metrics)). | The rest of the read-only rule still holds; only the figures people asked to see in Jira move. |
 | **Only the assignee's daemon writes** | A ticket is written only by the daemon whose token owner is its assignee. The assignee is compared, never stored. | Two teammates who both mention a ticket would otherwise overwrite each other with partial figures. |
 | **Mapped fields, else one comment** | A board with custom fields mapped (`sensei.tracker_fields`) gets those fields; otherwise one sensei comment per ticket, edited in place. | Users who set up a field want it there; a comment works with no Jira admin. |
-| **Every sync, on by default** | Written after each successful sync; a per-board switch turns it off. | Asked for by the user; a figure that lags the sync is a wrong figure. |
+| **Every sync, on by default** (superseded 2026-11-03, D50: off by default, a workspace opts in) | Written after each successful sync; a per-board switch turns it off. | Asked for by the user; a figure that lags the sync is a wrong figure. |
 
 Rejected: a manual export action; writing from the dōjō; storing the assignee.
 

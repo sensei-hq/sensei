@@ -59,7 +59,7 @@ in the tracker, into mapped custom fields or else one sensei-owned comment.
 | W3 | **Cadence:** every sync tick, writing only when the payload changed (W8). |
 | W4 | **Content:** all R7 metrics, including tokens and metered cost. |
 | W5 | **Mapping model:** one-to-many, tracker → `sensei.tracker_fields` (one row per metric → field). The daemon calls an integration a *tracker*, hence the name. |
-| W6 | **On by default:** `trackers.writeback_enabled default true`. |
+| W6 | **On by default:** `trackers.writeback_enabled default true` (superseded 2026-11-03, D50: off by default, a workspace opts in). |
 | W7 | Only a boolean `assigned_to_me` is stored per task, never the assignee's identity, so no other person's identity lands in the DB. |
 | W8 | Change detection: store a hash of the last written payload per task; skip when equal. |
 | W9 | With mappings present, **unmapped metrics are not written** (no fallback comment), so a ticket never has two places holding sensei data. |
@@ -159,7 +159,7 @@ writing to epic-level aggregates.
 ## 5 · Risks
 
 - **Per-person exposure.** The number is the assignee's own AI time and cost,
-  visible to everyone who can see the ticket. It's on by default (W6), so the connect
+  visible to everyone who can see the ticket. It's on by default (W6 (superseded 2026-11-03, D50: off by default, a workspace opts in)), so the connect
   screen must say this plainly.
 - **Undercount read as truth.** Teammates' sessions are invisible (W11 mitigates).
 - **Rate limits.** Every tick across many owned tickets. W8 bounds writes to

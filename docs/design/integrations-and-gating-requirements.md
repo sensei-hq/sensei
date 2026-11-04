@@ -143,8 +143,8 @@ Story → feature     Bug → bug     Task → chore     label: migration → mi
   **Sync now**.
 - **Sprints/tasks are never written back by sync.** Closing a sprint
   *"Closes in Sensei; Jira's sprint is untouched."*
-- **Usage and SDLC metrics write-back is a side effect of every successful sync**, on by default
-  (user, 2026-10-26): the local daemon writes each ticket's own usage and SDLC metrics to tickets assigned
+- **Usage and SDLC metrics write-back is a side effect of every successful sync** once the
+  workspace opts in (D50, 2026-11-03; off by default): the local daemon writes each ticket's own usage and SDLC metrics to tickets assigned
   to the token owner (`spec/daemon/tracker-metrics-writeback.md`). Exporting status or
   anything else to the tracker stays out of scope.
 - Staleness is a first-class state: `connected` / `stale` / `error`, with the

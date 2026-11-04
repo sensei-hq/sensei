@@ -141,9 +141,11 @@ and file what is still true as an issue.
   plan [`plans/2026-10-26-tracker-metrics-writeback.md`](plans/2026-10-26-tracker-metrics-writeback.md).
   **It reverses, with the user's approval (2026-10-26),** the read-only rule (PRD T3,
   `decisions.md` "Read-only means read-only", design §2.6) for usage metrics (superseded 2026-10-29 (tracker-sdlc-metrics)), and
-  deviation (3) above: the assignee is compared, never stored. Write-back is on by default
+  deviation (3) above: the assignee is compared, never stored. Write-back was on by default
   for existing boards too, which the user confirmed after being shown the "Read-only" copy
   and that clients may see comments. The docs are narrowed in F5.
+  **Since 2026-11-03 (D50) it is off by default:** a workspace opts in; boards that
+  already had it keep their setting (the default applies to new rows).
 - **Tracker SDLC metrics** (2026-10-29 → 2026-10-31, branch `feature/sdlc_metrics`, F1–F8
   committed, F9 docs in this commit). Analysis
   [`analysis/2026-10-29-sdlc-metrics-extension.md`](analysis/2026-10-29-sdlc-metrics-extension.md),

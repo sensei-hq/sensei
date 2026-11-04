@@ -1327,7 +1327,18 @@ mod tests {
             );
             connect(&h, p, &s).await;
             let card = settled(&h, p).await;
-            let wb = &card[0]["writeback"];
+            assert_eq!(
+                (card[0]["writeback"]["enabled"].clone(), card[0]["writeback"]["state"].clone()),
+                (json!(false), json!("disabled")),
+                "off by default (D50): {card}"
+            );
+            let t = tracker(&h, p).await;
+            let on = Some(json!({"writeback_enabled": true}));
+            let (st, b) =
+                call(&h, "PATCH", &format!("/api/workspaces/{p}/trackers/{t}"), on, None).await;
+            assert_eq!(st, StatusCode::OK, "{b}");
+            let card = json(&b);
+            let wb = &card["writeback"];
             assert_eq!(wb["state"], json!(want), "{myself}: {card}");
             assert_eq!(wb["enabled"], json!(true));
             assert_eq!(wb["surface"], json!("comment"));
@@ -1348,7 +1359,8 @@ mod tests {
         settled(&h, p).await;
         let t = tracker(&h, p).await;
         sqlx_core::query::query(
-            "UPDATE sensei.trackers SET owner_ref = NULL, owner_error = 'forbidden' WHERE id = $1::uuid",
+            "UPDATE sensei.trackers SET owner_ref = NULL, owner_error = 'forbidden',
+                    writeback_enabled = true WHERE id = $1::uuid",
         )
         .bind(&t)
         .execute(h.state.pg.pool())
@@ -1407,7 +1419,15 @@ mod tests {
                 writes.sent().len()
             }
         };
-        assert_eq!(wrote(1).await, 1, "with write-back on, the first sync's pass writes AUTH-1");
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(writes.sent().len(), 0, "off by default (D50): the first sync writes nothing");
+        let on = Some(json!({"writeback_enabled": true}));
+        let (st, b) = call(&h, "PATCH", &uri, on, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let (st, _) = call(&h, "POST", &format!("{uri}/sync"), None, None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(wrote(1).await, 1, "switched on, a sync's pass writes AUTH-1");
+        settled(&h, p).await;
         for bad in [
             json!({"foo": 1}),
             json!({}),

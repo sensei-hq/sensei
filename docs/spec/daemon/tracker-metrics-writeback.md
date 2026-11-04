@@ -24,7 +24,7 @@ edited in place. Jira is the first adapter. The engine is provider-neutral.
 
 The user was shown the PRD, `decisions.md` and design §2.6 wording and chose to
 **reverse** the read-only rule for metrics, automatically after every sync, on by default
-for every board including existing ones. Every document in the W-DOCS file set is updated
+for every board including existing ones (superseded 2026-11-03, D50: off by default, a workspace opts in). Every document in the W-DOCS file set is updated
 **in this slice** by one rule, so no document keeps contradicting the code. The table lists the
 load-bearing statements, and W-DOCS covers the rest.
 
@@ -40,7 +40,7 @@ never written, or that sync never writes):
 |---|---|---|
 | `prd/modules/04-team/03-dojo-workspace-planning/README.md` :36 (resolved 2026-10-21), :58 (Out), :105 (Lead rule), :221-222 (wrong gate) | "adapters are strictly read-only"; "An adapter never writes to the tracker"; "a tracker adapter writes back" is a regression | The canonical sentence. The wrong gate becomes "a tracker adapter writes anything other than usage metrics, or to a ticket not assigned to the token owner". |
 | `decisions.md` :69, :76 "Read-only means read-only"; `roadmap/09-dojo-expansion.md` D3 (:14) | "Tracker adapters never write back. There is no export-back path."; "Jira / ADO / GitHub stay read-only" | A new `decisions.md` row dated 2026-10-26 supersedes both for metrics write-back. The old rows stay, marked "superseded 2026-10-26 (tracker-metrics-writeback)". |
-| `design/integrations-and-gating-requirements.md` :23-24, §2.6 :136-144, :401-403 (2026-10-14 decision), §6.2, §8 :457 ("Sync never writes; after a sync, the tracker is unchanged") | sync never writes; an export would be an explicit action | Metrics write-back **is** a side effect of every successful sync, on by default (user, 2026-10-26); otherwise the canonical sentence. The §8 row becomes "Sync never writes sprints, statuses or memberships; after a sync the only tracker change is metrics write-back". |
+| `design/integrations-and-gating-requirements.md` :23-24, §2.6 :136-144, :401-403 (2026-10-14 decision), §6.2, §8 :457 ("Sync never writes; after a sync, the tracker is unchanged") | sync never writes; an export would be an explicit action | Metrics write-back **is** a side effect of every successful sync once a workspace opts in (D50, 2026-11-03; on by default from 2026-10-26 until then); otherwise the canonical sentence. The §8 row becomes "Sync never writes sprints, statuses or memberships; after a sync the only tracker change is metrics write-back". |
 | `prd/modules/04-team/03-dojo-workspace-planning/scenarios/dojo-workspace-planning-gaps.feature` :29-32; `…/dojo-workspace-planning.feature` :5, :14 | "no export action and no write path" | the scenarios are narrowed to "sync never writes sprints, statuses or memberships" |
 | `spec/dojo/daemon-sync.md` :20 | "the dōjō reads; nothing writes back" | the dōjō still never writes to a tracker; the local daemon writes metrics (this spec) |
 | linkage spec Purpose :17-21 ("read-only", "never keyed by person"), Overrides row T3/D9 (:95 "no assignee"), "Out of scope" :657-659 ("write-back to any tracker", "assignee or any per-person figure"), Wrong gate :753 | read-only; no assignee; no per-person figure | The assignee is **compared, never stored**. The figure written is the assignee's own; usage **API output** still carries no person attribute. `assigned_to_me` is a property of the ticket relative to this machine's token, not a person attribute (W1). |
@@ -420,9 +420,9 @@ from the edit screen is refused with a 400, which is `field_invalid` (W4).
 
 ### W8 · Toggle, status, API
 
-- `trackers.writeback_enabled boolean not null default true` applies to every row,
-  including trackers connected before this slice. The user confirmed this on 2026-10-26
-  after being shown that existing boards were connected under the "Read-only" copy.
+- `trackers.writeback_enabled boolean not null default false`: a newly connected board
+  writes nothing until its workspace opts in (D50, 2026-11-03, amending the 2026-10-26
+  default of on). A board's existing setting is kept; the default applies to new rows only.
 - `PATCH /api/workspaces/{id}/trackers/{tracker}`: the body must be exactly
   `{"writeback_enabled": <bool>}`. Anything else (missing, non-bool, extra key) → 422
   `invalid_body`. It returns 200 with the tracker in the `GET …/trackers` element shape.
@@ -553,7 +553,7 @@ pub enum WriteMethod { Post, Put }
   - `tracker_owner_state` (`unknown, not_a_person`)
 - New table `tracker_fields` (W6).
 - `trackers` gains `owner_ref text`, `owner_state tracker_owner_state`,
-  `owner_error tracker_error` (F1), plus `writeback_enabled boolean not null default true`
+  `owner_error tracker_error` (F1), plus `writeback_enabled boolean not null default false` (D50)
   and `writeback_error tracker_error` (F2). `TrackerRow` is read through a
   struct with a by-name `FromRow` impl (no `sqlx` derive crate is a dependency), not the positional `TrackerTuple`. With these five columns
   the tuple would reach 19 fields, past sqlx 0.8's 16-field `FromRow` tuple limit (C38). The comment's "Read-only mirror source
@@ -705,7 +705,7 @@ and the test DB unless marked *(tenant)*.
 
 1. **DDL**: `information_schema.columns` shows the W11 columns and none named `*assignee*`.
    `tracker_fields` has both unique constraints. Each of the three enums equals its Rust
-   `ALL` (unit test). A `trackers` row inserted without `writeback_enabled` has `true`.
+   `ALL` (unit test). A `trackers` row inserted without `writeback_enabled` has `false` (D50).
 2. **Owner, three ways.**
    - Unit table over the W1 rules:
      - `{accountType:"atlassian",accountId:"A1"}` → `Person("A1")`
