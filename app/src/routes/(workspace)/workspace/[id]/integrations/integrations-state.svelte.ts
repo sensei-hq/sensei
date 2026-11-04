@@ -187,6 +187,12 @@ export class TrackerIntegration {
   fieldRows = $state<TrackerFieldMapping[]>([]);
   /** A refused save's reason, on the row it names. */
   fieldError = $state<{ row: number; text: string } | null>(null);
+  /** The refused row as a Notice, with its next step (the shared family). */
+  get fieldNotice() {
+    return this.fieldError
+      ? { tone: 'fault' as const, title: this.fieldError.text, remedy: 'Fix this row, then save the fields again.' }
+      : null;
+  }
   /** The board a sync or disconnect is running for. */
   busyTracker = $state<string | null>(null);
   /** The live `role="status"` line. */

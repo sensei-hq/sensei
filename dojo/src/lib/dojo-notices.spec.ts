@@ -57,7 +57,14 @@ describe('dōjō notices', () => {
 			remedy: 'Check that the dōjō is running and reachable, then retry.'
 		});
 		expect(dojoLoadNotice('billing', 'boom')).toMatchObject({ tone: 'fault', detail: 'boom', remedy: 'Retry. If it keeps failing, reload the page.' });
-		expect(dojoLoadNotice('billing', null)).toBeNull();
+		// B1 (r2): never null — it is only rendered where something failed, and an
+		// unanswered read still says what happened and what to do.
+		expect(dojoLoadNotice('billing', null)).toEqual({
+			tone: 'fault',
+			title: "Couldn't load billing",
+			detail: 'No answer came back.',
+			remedy: 'Retry. If it keeps failing, reload the page.'
+		});
 	});
 
 	// M4 (r1): every notice the dōjō shows names its next step.

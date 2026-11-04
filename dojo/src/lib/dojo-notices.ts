@@ -47,11 +47,11 @@ export const RUN_NOT_FOUND = {
 };
 
 /** A section read that failed, named by what it was. With its status (a
- *  ReadError from the loader) a 401/403 reads as a refusal that says who to ask;
- *  `null` when nothing failed. */
+ *  ReadError from the loader) a 401/403 reads as a refusal that says who to ask.
+ *  Never null: the screen renders it only where a read failed, and one that gave
+ *  no answer still says so, with a next step (B1, r2). */
 export function dojoLoadNotice(what: string, error: ReadError | string | null | undefined) {
-	if (!error) return null;
-	return loadFailedNotice(what, error, { service: 'the dōjō' });
+	return loadFailedNotice(what, error ?? null, { service: 'the dōjō' });
 }
 
 /** A route error's way forward: a 401 signs in; anything else goes home. */

@@ -37,7 +37,7 @@
 		<div class="px-4 pt-4 md:px-8 md:pt-8">
 			<SectionHead
 				kanji="円" eyebrow={orgName + ' · plan & billing'} title="Plan & billing"
-				description="Public repositories and personal dōjōs are free, with targets. An organization's private repositories sync, with targets, on Pro — billed by the seats who work on them. SSO, SCIM, audit, viewers and the relay's team queue are free on every plan."
+				description="Public repositories and personal dōjōs are free, and targets that warn are free everywhere. An organization's private repositories sync on Pro, with blocking targets — billed by the seats who work on them. SSO, SCIM, audit, viewers and the relay's team queue are free on every plan."
 			>
 				{#snippet right()}
 					{#if billing.plan}

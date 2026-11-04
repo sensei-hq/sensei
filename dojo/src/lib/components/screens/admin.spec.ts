@@ -241,7 +241,7 @@ describe('ScrBilling — Free and Pro, no price, an honest attach', () => {
 	it('says what is always free, and that Pro is what targets on private repositories need', () => {
 		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
 		expect(container.textContent).toMatch(/SSO, SCIM, audit/);
-		expect(container.textContent).toContain("Targets on an organization's private repositories");
+		expect(container.textContent).toContain("Blocking targets on an organization's private repositories");
 	});
 
 	it('the seat card says what it counts (L2)', () => {

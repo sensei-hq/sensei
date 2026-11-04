@@ -136,15 +136,17 @@
                 </p>
               </div>
               <div class="flex flex-col gap-2">
-                <button
-                  type="button"
-                  class="{button} self-start"
-                  data-action="fields"
-                  aria-expanded={screen.editingFields === tracker.id}
-                  disabled={screen.busy !== null}
-                  onclick={() => screen.openFields(tracker)}
-                  >Fields ({tracker.writeback.mapped} mapped)</button
-                >
+                <div class="self-start">
+                  <Button
+                    style="outline"
+                    size="sm"
+                    data-action="fields"
+                    aria-expanded={screen.editingFields === tracker.id}
+                    disabled={screen.busy !== null}
+                    onclick={() => screen.openFields(tracker)}
+                    label="Fields ({tracker.writeback.mapped} mapped)"
+                  />
+                </div>
                 {#if screen.editingFields === tracker.id}
                   <div data-section="fields" class="flex flex-col gap-2 rounded-md border border-paper-edge p-3">
                     {#each screen.fieldRows as row, i (i)}
@@ -168,12 +170,10 @@
                               class="rounded border border-paper-edge bg-paper p-1 text-sm"
                             />
                           </label>
-                          <button type="button" class={button} data-action="remove-field" onclick={() => screen.removeFieldRow(i)}
-                            >Remove</button
-                          >
+                          <Button style="outline" size="sm" data-action="remove-field" onclick={() => screen.removeFieldRow(i)} label="Remove" />
                         </div>
                         {#if screen.fieldError?.row === i}
-                          <p data-field-error role="alert" class="m-0 text-xs text-danger">{screen.fieldError.text}</p>
+                          <div data-field-error><Notice size="inline" bare expanded {...screen.fieldNotice!} /></div>
                         {/if}
                       </div>
                     {/each}
@@ -181,17 +181,15 @@
                       Each ticket counts its own sessions in full; don’t sum these fields across tickets.
                     </p>
                     <div class="flex flex-wrap gap-2">
-                      <button type="button" class={button} data-action="add-field" onclick={() => screen.addFieldRow()}
-                        >Add a field</button
-                      >
-                      <button
-                        type="button"
-                        class={button}
+                      <Button style="outline" size="sm" data-action="add-field" onclick={() => screen.addFieldRow()} label="Add a field" />
+                      <Button
+                        variant="primary"
+                        size="sm"
                         data-action="save-fields"
                         disabled={screen.busy !== null}
                         onclick={() => screen.saveFields()}
-                        >{screen.busy === 'fields' ? 'Saving…' : 'Save fields'}</button
-                      >
+                        label={screen.busy === 'fields' ? 'Saving…' : 'Save fields'}
+                      />
                     </div>
                   </div>
                 {/if}

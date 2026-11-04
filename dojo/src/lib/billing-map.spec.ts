@@ -105,8 +105,10 @@ describe('the catalog (D52, D59, D75)', () => {
 		for (const t of BILLING_TIERS) expect(`${t.price} ${t.sub} ${t.lines.join(' ')}`).not.toMatch(/\$\s?\d/);
 	});
 
-	it('Pro lists what it unlocks: targets on private repositories (D52)', () => {
-		expect(pro.lines).toContain("Targets on an organization's private repositories");
+	it('Pro lists what it unlocks: blocking targets on private repositories (D52, D86)', () => {
+		expect(pro.lines).toContain("Blocking targets on an organization's private repositories");
+		// A target that only warns is free everywhere (D86).
+		expect(BILLING_TIERS.find((t) => t.id === 'free')!.lines).toContain('Targets that warn, on every repository');
 	});
 
 	it('Pro never lists what is free: SSO, SCIM, audit, the relay queue (D59, D77)', () => {

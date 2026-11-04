@@ -1,6 +1,6 @@
 // The product catalog on the Plan & billing screen: two plans (D46, D52, D59,
 // D75). Free — every public repository and a personal dōjō's private ones, with
-// targets. Pro — an organization's private repositories too, with targets, billed
+// targets. Pro — an organization's private repositories too, with blocking targets (D86), billed
 // by the seats who work on them. The price is to be announced until a payment
 // provider exists (D75); no amount is shown. SSO, SCIM, audit, viewers and the
 // relay's team on-call queue are free on every plan (D59, D77). Product copy, the
@@ -16,8 +16,9 @@ export const BILLING_TIERS: KitBillingTier[] = [
 		price: 'Free',
 		sub: 'every organization',
 		lines: [
-			'Every public repository syncs, with targets',
-			"A personal dōjō's private repositories sync too, with targets",
+			'Every public repository syncs',
+			"A personal dōjō's private repositories sync too, blocking targets included",
+			'Targets that warn, on every repository',
 			'SSO, SCIM, audit, viewers and the relay’s team queue',
 			"An organization's private repositories stay hidden"
 		]
@@ -29,7 +30,7 @@ export const BILLING_TIERS: KitBillingTier[] = [
 		price: 'To be announced',
 		sub: 'per seat on private repositories',
 		lines: [
-			"Targets on an organization's private repositories",
+			"Blocking targets on an organization's private repositories",
 			'Every private repository syncs, on by default',
 			"Only the organization's admins can turn a repository's sync off",
 			'Contributors to public repositories and viewers are never counted'
