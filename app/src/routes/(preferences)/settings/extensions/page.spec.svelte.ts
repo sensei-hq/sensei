@@ -203,6 +203,57 @@ describe('Settings · Extensions — nothing installed offers the install path',
   });
 });
 
+// Review impl r1 (L2): a refused toggle on an unknown row puts the box back and
+// keeps the label "unknown" — the refusal is not an answer about its state.
+describe('Settings · Extensions — a refused toggle on an unknown row', () => {
+  it('puts the box back and still says unknown, with the reason on the row', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 409, statusText: 'Conflict' }));
+    const m = mountComponent(Page, {
+      data: { extensions: [{ name: 'tdd', kind: 'skill', enabled: null }], error: null },
+    } as never);
+    cleanup.push(m.destroy);
+    const label = () =>
+      m.container.querySelector('[data-testid="ext-row-skill-tdd"] .extension-enabled')!;
+    await vi.waitFor(() => expect(label().textContent).toBe('unknown'));
+
+    toggleBox(m.container, 'skill', 'tdd').click();
+
+    await vi.waitFor(() =>
+      expect(m.container.querySelector('[data-testid="ext-error-skill-tdd"]')?.textContent).toContain('Conflict'),
+    );
+    expect(toggleBox(m.container, 'skill', 'tdd').checked).toBe(false);
+    expect(label().textContent).toBe('unknown');
+    // The wording follows the click's intent, so it asks for "on".
+    expect(m.container.querySelector('[data-testid="ext-error-skill-tdd"]')?.textContent).toContain(
+      "Couldn't switch tdd on",
+    );
+  });
+});
+
+// Review impl r1 (L1): the read in flight is a guard, not decoration — a second
+// press while it is in flight must not start a second read.
+describe('Settings · Extensions — Retry pressed twice', () => {
+  it.skip('pending: L5 settings-extensions — two presses in one read are one GET', async () => {
+    let answer: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      answer = resolve;
+    });
+    const fetchSpy = vi.fn().mockReturnValue(pending);
+    vi.stubGlobal('fetch', fetchSpy);
+    const m = mountComponent(Page, { data: { extensions: [], error: 'Service Unavailable' } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.querySelector('[data-action="retry"]')).not.toBeNull());
+
+    const retry = m.container.querySelector('[data-action="retry"]') as HTMLButtonElement;
+    retry.click();
+    retry.click();
+
+    answer(okList(installed));
+    await vi.waitFor(() => expect(rows(m.container).length).toBe(2));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 // L0 ruling on tests r1 (L2): a row with no kind or name is not a row — say
 // which one was not listed, and why, instead of drawing it as `unknown`.
 describe('Settings · Extensions — items it could not list', () => {
