@@ -89,6 +89,18 @@ async fn run(pg: Arc<PgStore>) {
     .await;
 }
 
+/// A retention setting as a prune may use it (D83 batch A, audit rows 148-151):
+/// a stored value parsed, no value the default — and a failed read an error, so
+/// the pass deletes nothing rather than deleting under a default nobody chose.
+/// Pending (phase B): today's behaviour swallows the error into the default.
+#[allow(dead_code)] // used by prune_once in D83 batch A phase B
+fn retention_setting(
+    read: Result<Option<String>, String>,
+    parse: impl FnOnce(Option<String>) -> i32,
+) -> Result<i32, String> {
+    Ok(parse(read.ok().flatten()))
+}
+
 /// One prune pass. Extracted from the old loop unchanged so the schedule owns
 /// only WHEN it happens.
 ///
@@ -164,6 +176,20 @@ async fn prune_once(pg: &PgStore) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D83 batch A: a retention setting that cannot be read stops the pass —
+    /// the prune never deletes under the default instead.
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn a_retention_setting_that_cannot_be_read_stops_the_prune() {
+        assert!(retention_setting(Err("pool timed out".into()), parse_retention).is_err());
+        assert_eq!(retention_setting(Ok(Some("45".into())), parse_retention).unwrap(), 45);
+        assert_eq!(
+            retention_setting(Ok(None), parse_retention).unwrap(),
+            parse_retention(None),
+            "unset: the default"
+        );
+    }
 
     #[test]
     fn parse_retention_falls_back_on_missing_invalid_or_nonpositive() {

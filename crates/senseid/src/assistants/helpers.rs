@@ -160,6 +160,19 @@ pub(crate) fn upsert_sensei_in_json(
 mod tests {
     use super::*;
 
+    /// D83 batch A, audit row 45: an assistant config that does not parse was
+    /// replaced by `{}` plus sensei's entry and written back — the user's settings gone.
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn an_unparseable_assistant_config_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "// mine\n{ \"theme\": \"dark\", \"mcp\": { oops").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(upsert_sensei_in_json(&path, "mcp", serde_json::json!({"command": "x"})).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
     #[test]
     fn leading_prefix_captures_line_comments_and_ws() {
         let s = "// Zed settings\n// second line\n\n{\"a\":1}";

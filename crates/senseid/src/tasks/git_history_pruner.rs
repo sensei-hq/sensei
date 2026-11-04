@@ -64,6 +64,13 @@ pub fn spawn(pg: Arc<PgStore>) {
     });
 }
 
+/// The retention a prune may use (D83 batch A, audit row 155): a failed read is
+/// an error, never the default retention driving a delete. Pending (phase B).
+#[allow(dead_code)] // used by prune_once in D83 batch A phase B
+pub fn retention_days(configured: Result<Option<String>, String>) -> Result<i32, String> {
+    Ok(effective_retention_days(configured.ok().flatten()))
+}
+
 /// One prune pass. Non-fatal: a failure is logged and retried next tick.
 pub async fn prune_once(pg: &PgStore) -> Result<(), String> {
     let configured = pg.get_config(RETENTION_KEY).await.ok().flatten();
@@ -82,6 +89,14 @@ pub async fn prune_once(pg: &PgStore) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D83 batch A: a retention that cannot be read stops the prune.
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn a_retention_that_cannot_be_read_stops_the_prune() {
+        assert!(retention_days(Err("pool timed out".into())).is_err());
+        assert_eq!(retention_days(Ok(None)).unwrap(), effective_retention_days(None));
+    }
 
     /// The default is used when nothing is configured.
     ///

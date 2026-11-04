@@ -86,6 +86,19 @@ pub fn write_directive(path: &Path) -> std::io::Result<Change> {
 mod tests {
     use super::*;
 
+    /// D83 batch A, audit row 25: a CLAUDE.md that exists but cannot be read (here,
+    /// not UTF-8) was treated as absent and overwritten with the managed block only.
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn an_unreadable_claude_md_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CLAUDE.md");
+        std::fs::write(&path, [0x23u8, 0x20, 0xff, 0xfe, 0x0a]).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(write_directive(&path).is_err(), "unreadable: an error, not absent");
+        assert_eq!(std::fs::read(&path).unwrap(), before, "and left byte for byte");
+    }
+
     #[test]
     fn creates_block_for_a_new_file() {
         let out = upsert(None, &directive_block());

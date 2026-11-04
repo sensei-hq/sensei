@@ -189,6 +189,18 @@ pub fn merge_frontmatter(existing: &str, fm: &Frontmatter) -> String {
     format!("---\n# sensei:frontmatter\n{yaml}---\n{body}")
 }
 
+/// Merge `fm` into the README at `readme` and write it back (D83 batch A, audit
+/// rows 44, 61-62): a README that exists but cannot be read, or whose frontmatter
+/// is not valid YAML, is refused and left as it is — never rewritten without the
+/// user's content. Pending (phase B): malformed frontmatter is still merged over.
+#[allow(dead_code)] // used by the workspace handler in D83 batch A phase B
+pub fn write_frontmatter(readme: &Path, fm: &Frontmatter) -> Result<(), String> {
+    let existing =
+        std::fs::read_to_string(readme).map_err(|e| format!("read {}: {e}", readme.display()))?;
+    let merged = merge_frontmatter(&existing, fm);
+    std::fs::write(readme, merged).map_err(|e| format!("write {}: {e}", readme.display()))
+}
+
 /// A repo's root README, if it has one — the file every frontmatter read and
 /// write resolves to.
 pub fn find_readme(repo_path: &Path) -> Option<PathBuf> {
@@ -265,6 +277,50 @@ pub fn migrate_readme_workspace_key(repo_path: &Path) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fm_workspace(w: &str) -> Frontmatter {
+        Frontmatter { workspace: Some(w.into()), ..Default::default() }
+    }
+
+    /// D83 batch A, rows 61-62: malformed frontmatter YAML read as an empty map,
+    /// and the write-back dropped every key the user had.
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn a_readme_with_malformed_frontmatter_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("README.md");
+        std::fs::write(&path, "---\ncustom: [unclosed\nowner: me\n---\n# Body\n").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(write_frontmatter(&path, &fm_workspace("sensei")).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    /// D83 batch A, row 44: an existing README that cannot be read was treated as
+    /// empty and overwritten with frontmatter only.
+    #[test]
+    fn an_unreadable_readme_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("README.md");
+        std::fs::write(&path, [0x23u8, 0x20, 0xff, 0xfe, 0x0a]).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(write_frontmatter(&path, &fm_workspace("sensei")).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn a_valid_readme_keeps_the_users_own_keys_and_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("README.md");
+        std::fs::write(&path, "---\ncustom: kept\n---\n# Body\n").unwrap();
+        write_frontmatter(&path, &fm_workspace("sensei")).unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            out.contains("custom: kept")
+                && out.contains("workspace: sensei")
+                && out.contains("# Body"),
+            "{out}"
+        );
+    }
 
     #[test]
     fn parses_full_frontmatter() {

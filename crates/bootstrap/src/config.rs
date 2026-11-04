@@ -320,6 +320,15 @@ pub struct SenseiLocalConfig {
     pub dojo_url: Option<String>,
 }
 
+/// Read a file the caller is about to rewrite (D83 batch A): `None` when it does
+/// not exist, its content when it reads, and the error otherwise — a file that
+/// exists but cannot be read is never treated as absent and overwritten.
+/// Pending (D83 batch A phase B).
+pub fn read_existing(path: &Path) -> std::io::Result<Option<String>> {
+    let _ = path;
+    todo!("D83 batch A phase B")
+}
+
 impl SenseiLocalConfig {
     /// Load from `<sensei_dir>/config.json`. Returns `Default` if the file is
     /// missing or cannot be parsed — config errors are non-fatal.
@@ -329,6 +338,22 @@ impl SenseiLocalConfig {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default()
+    }
+
+    /// Load for a write (D83 batch A): a missing file is the defaults, but one
+    /// that cannot be read or parsed is an error — never defaults that a save
+    /// would write back over the user's settings. Pending (D83 batch A phase B).
+    pub fn try_load(sensei_dir: &Path) -> Result<Self, String> {
+        Ok(Self::load(sensei_dir))
+    }
+
+    /// Load, change and save in one step, refusing — and leaving the file as it
+    /// is — when the existing file cannot be read or parsed (D83 batch A).
+    /// Pending (D83 batch A phase B): today's lenient load.
+    pub fn update(sensei_dir: &Path, change: impl FnOnce(&mut Self)) -> Result<(), String> {
+        let mut cfg = Self::load(sensei_dir);
+        change(&mut cfg);
+        cfg.save(sensei_dir)
     }
 
     /// Save to `<sensei_dir>/config.json`, creating the directory if needed.
@@ -361,6 +386,74 @@ pub fn positive_or(value: Option<String>, default: i32) -> i32 {
 
 #[cfg(test)]
 mod tests {
+
+    // ── D83 batch A: a failed read never becomes defaults written back ──────
+
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn read_existing_tells_missing_from_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_existing(&dir.path().join("absent.json")).unwrap(), None);
+        std::fs::write(dir.path().join("here.json"), "{}").unwrap();
+        assert_eq!(read_existing(&dir.path().join("here.json")).unwrap().as_deref(), Some("{}"));
+        // A directory where the file should be: it exists and cannot be read.
+        std::fs::create_dir(dir.path().join("dir.json")).unwrap();
+        assert!(
+            read_existing(&dir.path().join("dir.json")).is_err(),
+            "unreadable is an error, not absent"
+        );
+    }
+
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn try_load_refuses_a_corrupt_config() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            SenseiLocalConfig::try_load(dir.path()).unwrap().dojo_url,
+            None,
+            "missing: the defaults"
+        );
+        std::fs::write(dir.path().join("config.json"), "{ not json").unwrap();
+        assert!(
+            SenseiLocalConfig::try_load(dir.path()).is_err(),
+            "corrupt: an error, not the defaults"
+        );
+    }
+
+    /// Audit rows 9-11: a corrupt config.json was loaded as the defaults and the
+    /// writers saved them back, erasing dojo_url and configured_assistants.
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn update_leaves_a_corrupt_config_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, "{ \"dojo_url\": \"https://dojo\", oops").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let r = SenseiLocalConfig::update(dir.path(), |c| c.user_scope_configured = true);
+        assert!(r.is_err(), "a corrupt file is refused");
+        assert_eq!(std::fs::read(&path).unwrap(), before, "and left byte for byte");
+    }
+
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn update_keeps_what_it_did_not_change() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.json"), "{ \"dojo_url\": \"https://dojo\" }")
+            .unwrap();
+        SenseiLocalConfig::update(dir.path(), |c| c.user_scope_configured = true).unwrap();
+        let after = SenseiLocalConfig::try_load(dir.path()).unwrap();
+        assert_eq!(
+            (after.dojo_url.as_deref(), after.user_scope_configured),
+            (Some("https://dojo"), true)
+        );
+        let fresh = tempfile::tempdir().unwrap();
+        SenseiLocalConfig::update(fresh.path(), |c| c.user_scope_configured = true).unwrap();
+        assert!(
+            SenseiLocalConfig::try_load(fresh.path()).unwrap().user_scope_configured,
+            "missing: created"
+        );
+    }
+
     /// A retention setting must never be able to mean "keep nothing".
     ///
     /// Zero and negative take the default rather than being honoured: an absent

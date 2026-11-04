@@ -465,6 +465,26 @@ fn mark_user_scope_configured() {
     }
 }
 
+/// Add sensei's server to a project's `.mcp.json`, keeping every other server
+/// (D83 batch A, audit rows 17-19). Pending (phase B): today's behaviour reads
+/// an unreadable or unparsable file as empty and writes it back.
+fn upsert_mcp_json(mcp_file: &std::path::Path) -> Result<(), String> {
+    let mut mcp_config: serde_json::Value = mcp_file
+        .exists()
+        .then(|| fs::read_to_string(mcp_file).ok())
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::json!({"mcpServers": {}}));
+    mcp_config
+        .as_object_mut()
+        .and_then(|o| o.entry("mcpServers").or_insert(serde_json::json!({})).as_object_mut())
+        .map(|servers| {
+            servers.insert(MCP_REGISTRY_KEY.into(), serde_json::json!({"command": SENSEI_MCP_BIN}))
+        });
+    fs::write(mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap())
+        .map_err(|e| e.to_string())
+}
+
 // ── Init ────────────────────────────────────────────────────────────────────
 
 fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool) {
@@ -672,22 +692,10 @@ fn init_project_scope(_recommended: bool) {
 
     // 2. .mcp.json — upsert sensei entry (for non-plugin ACPs)
     let mcp_file = repo_root.join(".mcp.json");
-    let mut mcp_config: serde_json::Value = mcp_file
-        .exists()
-        .then(|| fs::read_to_string(&mcp_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({"mcpServers": {}}));
-
-    mcp_config
-        .as_object_mut()
-        .and_then(|o| o.entry("mcpServers").or_insert(serde_json::json!({})).as_object_mut())
-        .map(|servers| {
-            servers.insert(MCP_REGISTRY_KEY.into(), serde_json::json!({"command": SENSEI_MCP_BIN}))
-        });
-
-    fs::write(&mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap()).ok();
-    println!("\n  [ok] .mcp.json");
+    match upsert_mcp_json(&mcp_file) {
+        Ok(()) => println!("\n  [ok] .mcp.json"),
+        Err(e) => println!("\n  [skipped] .mcp.json — {e}"),
+    }
 
     // 3. Clean up stale per-project hooks from .claude/settings.local.json
     //    Global plugin hooks handle all hook events — per-project hooks are redundant.
@@ -1397,6 +1405,41 @@ fn format_phase(phase: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    // ── D83 batch A: .mcp.json is never rewritten from a failed read ─────────
+
+    #[test]
+    #[ignore = "pending: D83 batch A"]
+    fn a_corrupt_mcp_json_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".mcp.json");
+        std::fs::write(&path, "{ \"mcpServers\": { \"other\": {} }, oops").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(super::upsert_mcp_json(&path).is_err(), "unparsable: refused");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "and the user's servers left byte for byte"
+        );
+    }
+
+    #[test]
+    fn the_mcp_upsert_keeps_every_other_server_and_creates_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".mcp.json");
+        std::fs::write(&path, r#"{ "mcpServers": { "other": { "command": "x" } } }"#).unwrap();
+        super::upsert_mcp_json(&path).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(
+            v["mcpServers"]["other"].is_object() && v["mcpServers"][MCP_REGISTRY_KEY].is_object(),
+            "{v}"
+        );
+        let fresh = dir.path().join("fresh.json");
+        super::upsert_mcp_json(&fresh).unwrap();
+        assert!(std::fs::read_to_string(&fresh).unwrap().contains(MCP_REGISTRY_KEY));
+    }
+
     use super::*;
 
     #[test]

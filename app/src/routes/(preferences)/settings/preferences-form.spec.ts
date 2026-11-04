@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_PREFERENCES, fromPreferencesForm, toPreferencesForm } from './preferences-form.js';
+import { DEFAULT_PREFERENCES, fromPreferencesForm, readPreferencesForm, toPreferencesForm } from './preferences-form.js';
 
 describe('toPreferencesForm', () => {
   it('yields defaults when the daemon has no prefs stored', () => {
@@ -62,5 +62,21 @@ describe('glyphs preference', () => {
     expect(toPreferencesForm({}).glyphs).toBe('kanji');
     expect(toPreferencesForm({ 'ui.glyphs': 'icon' }).glyphs).toBe('icon');
     expect(fromPreferencesForm({ ...DEFAULT_PREFERENCES, glyphs: 'icon' })['ui.glyphs']).toBe('icon');
+  });
+});
+
+// D83 batch A, audit row 73: corrupt stored preferences read as the defaults, and
+// the next save wrote them over the real values. The read says it failed instead.
+describe('readPreferencesForm', () => {
+  it.skip('pending: D83 batch A — corrupt stored preferences are a failure with its reason, never the defaults', () => {
+    const r = readPreferencesForm({ 'setup.preferences': '{not json' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/preferences/i);
+  });
+
+  it('nothing stored is the defaults, and stored JSON is the form', () => {
+    expect(readPreferencesForm({})).toEqual({ ok: true, form: DEFAULT_PREFERENCES });
+    const r = readPreferencesForm({ 'setup.preferences': JSON.stringify({ digestCadence: 'weekly' }) });
+    expect(r.ok && r.form.digestCadence).toBe('weekly');
   });
 });
