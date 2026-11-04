@@ -216,9 +216,10 @@ pub(crate) async fn get_rules(
     use axum::response::IntoResponse;
     let (folder_path, folder_id) =
         resolve_folder(&state, q.folder.as_deref(), q.workspace.as_deref()).await?;
-    let ruleset = resolve_repo_ruleset(&state, &folder_id)
+    let (ruleset, dojo_state) = resolve_repo_ruleset(&state, &folder_id)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let rules_incomplete = dojo_state.rules_incomplete();
 
     // Markdown push shape (D-INJECT): the hooks fetch rendered, tier-filtered
     // Markdown as PLAIN TEXT (no client-side jq — macOS ships without it) and
@@ -233,6 +234,15 @@ pub(crate) async fn get_rules(
             None => crate::governance::ALL_TIERS.to_vec(),
         };
         let markdown = crate::governance::render_rules_tiers(&ruleset, &tiers);
+        // The hooks skip a `{` body, so the unavailable state rides a leading
+        // banner whatever `tiers` says — without it an outage silently drops
+        // every adopted rule from the injection.
+        let markdown = match &dojo_state {
+            DojoRulesState::Unavailable { reason } => format!(
+                "> ⚠ Dōjō rules unavailable ({reason}): adopted organization rules, including mandatory ones, are NOT included below.\n\n{markdown}"
+            ),
+            _ => markdown,
+        };
         return Ok((
             [(axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
             markdown,
@@ -245,6 +255,8 @@ pub(crate) async fn get_rules(
         "total": ruleset.total,
         "mandatory_count": ruleset.mandatory_count,
         "rules": ruleset.rules,
+        "dojo_rules": dojo_state,
+        "rules_incomplete": rules_incomplete,
     }))
     .into_response())
 }
@@ -1280,33 +1292,76 @@ fn pack_rule_to_raw(w: crate::dojo::client::PackRuleWire) -> crate::governance::
     }
 }
 
+/// The remote Dōjō leg's outcome for one ruleset resolution (D83): the caller
+/// always sees it alongside the local rules, so a failed pull can never read
+/// as "no remote rules". Serde-tagged `status` for the JSON `dojo_rules` marker.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum DojoRulesState {
+    /// No binding / membership / adopted namespaces: no remote leg exists.
+    NotBound,
+    /// The pull succeeded (possibly with zero rules — the honest empty).
+    Ok { count: usize },
+    /// The pull failed: the local rules served alongside are incomplete.
+    Unavailable { reason: String },
+}
+
+impl DojoRulesState {
+    /// Counts and lists on the wire must not read as complete.
+    fn rules_incomplete(&self) -> bool {
+        matches!(self, DojoRulesState::Unavailable { .. })
+    }
+}
+
 /// Resolve the rules of packs adopted at a folder's namespaces, via the folder's
-/// workspace → bound Dōjō membership → the Worker `rules/resolved` leg. Best-effort:
-/// no binding / membership / namespaces, or any call fault → `[]` (logged, never
-/// silent). The daemon can't query the Dōjō DB directly (Fork 1).
+/// workspace → bound Dōjō membership → the Worker `rules/resolved` leg. Never
+/// silent: no binding / membership is `NotBound`, a fault in the local lookups
+/// propagates (`?`, fail closed like the local plane), and a failed pull returns
+/// `Unavailable` with the reason — alongside whatever the local planes resolved.
+/// The daemon can't query the Dōjō DB directly (Fork 1).
 async fn resolve_adopted_pack_raws(
     state: &AppState,
     folder_id: &uuid::Uuid,
-) -> Vec<crate::governance::RawRule> {
-    let resolved = async {
-        let workspace_id = state.pg.folder_workspace_id(folder_id).await.ok()??;
-        let membership_id = state.pg.workspace_bound_membership(&workspace_id).await.ok()??;
-        let membership = state.pg.get_dojo_membership(&membership_id).await.ok()??;
-        let pairs = state.pg.folder_namespace_pairs(folder_id).await.ok()?;
-        if pairs.is_empty() {
-            return None;
+) -> Result<(Vec<crate::governance::RawRule>, DojoRulesState), String> {
+    let not_bound = || Ok((Vec::new(), DojoRulesState::NotBound));
+    let workspace_id = match state.pg.folder_workspace_id(folder_id).await? {
+        Some(id) => id,
+        None => return not_bound(),
+    };
+    let membership_id = match state.pg.workspace_bound_membership(&workspace_id).await? {
+        Some(id) => id,
+        None => return not_bound(),
+    };
+    let membership = match state.pg.get_dojo_membership(&membership_id).await? {
+        Some(m) => m,
+        None => return not_bound(),
+    };
+    let pairs = state.pg.folder_namespace_pairs(folder_id).await?;
+    if pairs.is_empty() {
+        // Bound, but nothing adopted: the honest empty is `ok`, not a fault
+        // and not "not bound".
+        return Ok((Vec::new(), DojoRulesState::Ok { count: 0 }));
+    }
+    let client = crate::dojo::client::DojoClient::for_membership(&membership);
+    match client.resolved_pack_rules(&pairs).await {
+        Ok(wires) => {
+            let raws: Vec<crate::governance::RawRule> =
+                wires.into_iter().map(pack_rule_to_raw).collect();
+            let count = raws.len();
+            Ok((raws, DojoRulesState::Ok { count }))
         }
-        let client = crate::dojo::client::DojoClient::for_membership(&membership);
-        match client.resolved_pack_rules(&pairs).await {
-            Ok(wires) => Some(wires.into_iter().map(pack_rule_to_raw).collect::<Vec<_>>()),
-            Err(e) => {
-                tracing::warn!(error = %e, "get_rules: adopted-pack resolve failed");
-                None
-            }
+        Err(e) => {
+            // Logged AND marked: a remote hiccup can't fail local governance
+            // (no 500 — the hooks skip error bodies and would drop the local
+            // mandatory rules too), but it must never read as "no remote rules".
+            tracing::warn!(error = %e, "get_rules: adopted-pack resolve failed");
+            let reason = match &e {
+                crate::dojo::client::DojoClientError::SignedOut => "signed_out".to_string(),
+                _ => format!("{e} [{}]", membership.registry_url),
+            };
+            Ok((Vec::new(), DojoRulesState::Unavailable { reason }))
         }
     }
-    .await;
-    resolved.unwrap_or_default()
 }
 
 /// Resolve `folder=<abs_path>` OR `workspace=<name|uuid>` → `(folder_path,
@@ -1350,11 +1405,12 @@ pub(crate) async fn resolve_folder(
 }
 
 /// A repo's full governing ruleset: local memories + every adopted pack's rules
-/// (P2 fold-in), structured strongest-first. Shared by get_rules + constitution.
+/// (P2 fold-in), structured strongest-first, plus the remote Dōjō leg's state.
+/// Shared by get_rules + constitution.
 async fn resolve_repo_ruleset(
     state: &AppState,
     folder_id: &uuid::Uuid,
-) -> Result<crate::governance::ResolvedRuleset, String> {
+) -> Result<(crate::governance::ResolvedRuleset, DojoRulesState), String> {
     let mut raw = state.pg.resolve_rules_raw(folder_id).await?;
     // Rule packs resolve from TWO planes, in tandem (D-LOCAL-PACKS): the LOCAL
     // sensei.rule_packs replica (offline — bundled/adopted/synced packs) and the
@@ -1362,10 +1418,12 @@ async fn resolve_repo_ruleset(
     // content, so a pack present in both planes surfaces once.
     // Fail closed on the LOCAL plane (offline DB): a read error must not silently
     // weaken governance by dropping adopted pack rules. (The remote Dōjō fold-in
-    // below stays best-effort — a remote hiccup can't fail local governance.)
+    // returns its own state instead: a remote hiccup marks the ruleset incomplete
+    // rather than failing local governance.)
     raw.extend(state.pg.resolve_local_pack_raws(Some(folder_id)).await?);
-    raw.extend(resolve_adopted_pack_raws(state, folder_id).await);
-    Ok(crate::governance::structure_ruleset(raw))
+    let (remote, dojo_state) = resolve_adopted_pack_raws(state, folder_id).await?;
+    raw.extend(remote);
+    Ok((crate::governance::structure_ruleset(raw), dojo_state))
 }
 
 /// Group a resolved ruleset into the CONSTITUTION LADDER: one rung per scope,
@@ -1411,9 +1469,10 @@ pub(crate) async fn get_constitution(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let (folder_path, folder_id) =
         resolve_folder(&state, q.folder.as_deref(), q.workspace.as_deref()).await?;
-    let ruleset = resolve_repo_ruleset(&state, &folder_id)
+    let (ruleset, dojo_state) = resolve_repo_ruleset(&state, &folder_id)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let rules_incomplete = dojo_state.rules_incomplete();
     let scopes =
         state.pg.list_scopes().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({
@@ -1421,6 +1480,8 @@ pub(crate) async fn get_constitution(
         "total": ruleset.total,
         "mandatory_count": ruleset.mandatory_count,
         "rungs": group_into_ladder(&ruleset, &scopes),
+        "dojo_rules": dojo_state,
+        "rules_incomplete": rules_incomplete,
     })))
 }
 
@@ -1845,21 +1906,21 @@ mod tests {
         fid: uuid::Uuid,
     }
 
-    /// Seed via the shared metric fixture, then the `workspace`-scope
-    /// namespace OF THE WORKSPACE'S NAME (the `namespaces_for_folder`
-    /// workspace axis). The workspace name is the helper's `_test:metrics:`
-    /// contract.
-    async fn seed_pack_folder(
-        pg: &crate::db::pg_store::PgStore,
-        uniq: &uuid::Uuid,
-    ) -> PackFolder {
-        let (pid, fid) =
-            crate::tasks::test_support::seed_metrics_workspace_folder(pg, uniq).await;
-        let name = format!("_test:metrics:{uniq}");
-        pg.upsert_namespace("workspace", &name, &format!("pack-{uniq}"))
-            .await
-            .unwrap();
-        PackFolder { abs_path: format!("/_test/metrics-{uniq}"), pid, fid }
+    /// Seed via the shared metric fixture at a locally owned path, then the
+    /// `workspace`-scope namespace OF THE WORKSPACE'S NAME (the
+    /// `namespaces_for_folder` workspace axis). The name is read back, never
+    /// re-derived from the helper's format (F11).
+    async fn seed_pack_folder(pg: &crate::db::pg_store::PgStore, uniq: &uuid::Uuid) -> PackFolder {
+        let abs = format!("/_test/pack-{uniq}");
+        let (pid, fid) = crate::tasks::test_support::seed_workspace_folder_at(pg, uniq, &abs).await;
+        let (name,): (String,) =
+            sqlx_core::query_as::query_as("SELECT name FROM sensei.workspaces WHERE id = $1")
+                .bind(pid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        pg.upsert_namespace("workspace", &name, &format!("pack-{uniq}")).await.unwrap();
+        PackFolder { abs_path: abs, pid, fid }
     }
 
     /// Bind the workspace to a membership whose Worker lives at
@@ -1905,10 +1966,7 @@ mod tests {
     async fn stub_worker(status: u16, body: serde_json::Value) -> String {
         use axum::{Router, routing::get};
         async fn resolved(
-            axum::extract::State((status, body)): axum::extract::State<(
-                u16,
-                serde_json::Value,
-            )>,
+            axum::extract::State((status, body)): axum::extract::State<(u16, serde_json::Value)>,
         ) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
             (axum::http::StatusCode::from_u16(status).unwrap(), axum::Json(body))
         }
@@ -1983,7 +2041,7 @@ mod tests {
         let state = pack_state().await;
         let uniq = uuid::Uuid::new_v4();
         let folder = seed_pack_folder(&state.pg, &uniq).await;
-        let ruleset = resolve_repo_ruleset(&state, &folder.fid).await.unwrap();
+        let (ruleset, _) = resolve_repo_ruleset(&state, &folder.fid).await.unwrap();
         assert!(
             ruleset.rules.iter().any(|r| r.title == LOCAL_MANDATORY && r.mandatory),
             "the local mandatory tier survives with no remote leg"
@@ -2012,7 +2070,7 @@ mod tests {
         let uniq = uuid::Uuid::new_v4();
         let folder = seed_pack_folder(&state.pg, &uniq).await;
         bind_pack_membership(&state.pg, &folder.pid, &stub, true).await;
-        let ruleset = resolve_repo_ruleset(&state, &folder.fid).await.unwrap();
+        let (ruleset, _) = resolve_repo_ruleset(&state, &folder.fid).await.unwrap();
         let remote = ruleset.rules.iter().find(|r| r.title == "Never log tokens");
         assert!(remote.is_some(), "the Worker's rule lands in the ruleset");
         assert!(remote.unwrap().mandatory, "mandatory on the wire stays mandatory");
@@ -2023,7 +2081,6 @@ mod tests {
     /// hooks would skip it and drop the local mandatory rules too) and
     /// never a silent `[]`. Red today: no marker fields exist.
     #[tokio::test]
-    #[ignore = "pending: L4 pack-rule-pull"]
     async fn rules_json_marks_unreachable_dojo_unavailable() {
         let state = pack_state().await;
         let uniq = uuid::Uuid::new_v4();
@@ -2043,7 +2100,6 @@ mod tests {
 
     /// A 503 Worker is unavailable, not empty. Red today (M3).
     #[tokio::test]
-    #[ignore = "pending: L4 pack-rule-pull"]
     async fn rules_json_marks_503_dojo_unavailable() {
         let stub = stub_worker(503, serde_json::json!({"error": "down"})).await;
         let state = pack_state().await;
@@ -2059,7 +2115,6 @@ mod tests {
 
     /// A 401 (expired login) is unavailable, not empty. Red today (M4).
     #[tokio::test]
-    #[ignore = "pending: L4 pack-rule-pull"]
     async fn rules_json_marks_401_dojo_unavailable() {
         let stub = stub_worker(401, serde_json::json!({"error": "expired"})).await;
         let state = pack_state().await;
@@ -2075,7 +2130,6 @@ mod tests {
 
     /// A 200 with an undecodable body is unavailable, not empty. Red today (M4).
     #[tokio::test]
-    #[ignore = "pending: L4 pack-rule-pull"]
     async fn rules_json_marks_undecodable_dojo_body_unavailable() {
         let stub = stub_worker(200, serde_json::json!({"rules": 7})).await;
         let state = pack_state().await;
@@ -2093,7 +2147,6 @@ mod tests {
     /// adopted rules we cannot read: unavailable with reason `signed_out`
     /// (L0 ruling), never honest-empty. Red today (M4).
     #[tokio::test]
-    #[ignore = "pending: L4 pack-rule-pull"]
     async fn rules_json_marks_signed_out_dojo_unavailable() {
         let state = pack_state().await;
         let uniq = uuid::Uuid::new_v4();
@@ -2110,7 +2163,6 @@ mod tests {
     /// Bound, reachable, and the Worker answers zero rules: the honest-empty
     /// stays `ok`, distinct from `unavailable`. The state half is red today (M5).
     #[tokio::test]
-    #[ignore = "pending: L4 pack-rule-pull"]
     async fn rules_json_marks_empty_pull_ok() {
         let stub = stub_worker(200, serde_json::json!({"rules": []})).await;
         let state = pack_state().await;
@@ -2127,7 +2179,6 @@ mod tests {
     /// No binding at all reads `not_bound` — distinct from `ok, zero` and
     /// from `unavailable`. Red today: no marker fields exist.
     #[tokio::test]
-    #[ignore = "pending: L4 pack-rule-pull"]
     async fn rules_json_marks_unbound_dojo_not_bound() {
         let state = pack_state().await;
         let uniq = uuid::Uuid::new_v4();
@@ -2143,7 +2194,6 @@ mod tests {
     /// says — the hooks skip a `{` body, so without it an outage silently
     /// drops every pushed rule. Red today.
     #[tokio::test]
-    #[ignore = "pending: L4 pack-rule-pull"]
     async fn rules_md_banners_unavailable_dojo() {
         let state = pack_state().await;
         let uniq = uuid::Uuid::new_v4();
@@ -2153,11 +2203,15 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(md.contains("unavailable"), "banner names the state:\n{md}");
         assert!(md.contains("NOT included"), "banner says the rules are missing:\n{md}");
+        assert!(md.contains(LOCAL_MANDATORY), "local rules still reach the hook:\n{md}");
+        assert!(
+            md.find("NOT included") < md.find(LOCAL_MANDATORY),
+            "the banner leads, the rules follow"
+        );
     }
 
     /// The constitution carries the same dōjō state as `get_rules`. Red today.
     #[tokio::test]
-    #[ignore = "pending: L4 pack-rule-pull"]
     async fn constitution_carries_dojo_unavailable_state() {
         let state = pack_state().await;
         let uniq = uuid::Uuid::new_v4();
@@ -2172,5 +2226,43 @@ mod tests {
         let json = get_constitution(State(state.clone()), Query(q)).await.unwrap().0;
         assert_eq!(json["dojo_rules"]["status"], "unavailable");
         assert_eq!(json["rules_incomplete"], true);
+        let carries = json["rungs"].as_array().map(|rungs| {
+            rungs.iter().any(|r| {
+                r["rules"]
+                    .as_array()
+                    .map(|rs| rs.iter().any(|r| r["title"] == LOCAL_MANDATORY))
+                    .unwrap_or(false)
+            })
+        });
+        assert_eq!(carries, Some(true), "a rung carries the local mandatory rule");
+    }
+
+    /// A bound, reachable Worker answering one rule: `ok` with the count,
+    /// complete, remote and local rules both present. Red today (F10).
+    #[tokio::test]
+    async fn rules_json_marks_folded_pull_ok() {
+        let stub = stub_worker(
+            200,
+            serde_json::json!({"rules": [{
+                "rule_id": "remote-1",
+                "statement": "Never log tokens",
+                "body": "Applies at any log level.",
+                "rationale": "leaks",
+                "enforcement": "mandatory",
+                "source": "OWASP",
+                "scope_key": "organization",
+            }]}),
+        )
+        .await;
+        let state = pack_state().await;
+        let uniq = uuid::Uuid::new_v4();
+        let folder = seed_pack_folder(&state.pg, &uniq).await;
+        bind_pack_membership(&state.pg, &folder.pid, &stub, true).await;
+        let (status, json) = rules_json(&state, &folder.abs_path).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["dojo_rules"], serde_json::json!({"status": "ok", "count": 1}));
+        assert_ne!(json["rules_incomplete"], true);
+        assert!(has_title(&json["rules"], "Never log tokens"));
+        assert!(has_title(&json["rules"], LOCAL_MANDATORY));
     }
 }
