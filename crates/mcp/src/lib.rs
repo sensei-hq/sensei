@@ -1831,6 +1831,41 @@ mod tests {
         assert!(fbody.get("workspace").is_none());
     }
 
+    /// TG5 (D63): `get_ticket` fetches the ticket through the daemon and starts work
+    /// on it — a POST carrying the caller's cwd (the repository the work is in) and,
+    /// when given, the session to link. A key is a path segment, so `#12` is encoded.
+    #[test]
+    #[ignore = "pending: tg5a"]
+    fn get_ticket_shapes_a_post_with_the_cwd() {
+        let req = daemon_request_for(
+            "get_ticket",
+            &json!({ "key": "AUTH-7", "session_id": "s-1" }),
+            "/repo/cwd",
+            None,
+        )
+        .expect("a daemon call");
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/tickets/AUTH-7/fetch");
+        assert_eq!(req.body, Some(json!({ "folder": "/repo/cwd", "session_id": "s-1" })));
+
+        let bare = daemon_request_for("get_ticket", &json!({ "key": "#12" }), "/repo/cwd", None)
+            .expect("a daemon call");
+        assert_eq!(bare.path, "/api/tickets/%2312/fetch");
+        assert_eq!(bare.body, Some(json!({ "folder": "/repo/cwd" })), "no session: none sent");
+    }
+
+    /// TG5: `get_ticket` is advertised, needs its key, and says it starts the work.
+    #[test]
+    #[ignore = "pending: tg5a"]
+    fn get_ticket_is_advertised_with_its_key() {
+        let ts = tools();
+        let t = tool_named(&ts, "get_ticket");
+        assert_eq!(t["inputSchema"]["required"], json!(["key"]));
+        assert!(t["inputSchema"]["properties"]["session_id"].is_object());
+        let d = t["description"].as_str().unwrap();
+        assert!(d.contains("start work"), "{d}");
+    }
+
     #[test]
     fn commands_request_targets_workspace_path_with_optional_category() {
         let req = daemon_request_for("get_commands", &json!({}), "/cwd", Some("sensei")).unwrap();
