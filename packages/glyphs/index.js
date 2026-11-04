@@ -111,6 +111,7 @@ export const KANJI_ICONS = {
   '情': 'i-solar-heart-bold-duotone',
   '繋': 'i-solar-link-bold-duotone',
   '札': 'i-solar-ticket-bold-duotone',
+  '納': 'i-solar-delivery-bold-duotone',
   '為': 'i-solar-checklist-bold-duotone',
   '証': 'i-solar-verified-check-bold-duotone',
   '式': 'i-solar-code-square-bold-duotone',

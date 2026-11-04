@@ -138,19 +138,43 @@ Dōjō view says so in the figure's explainer.
   nearest Solar icon), so `glyph-vocabulary.spec.ts` passes.
 - **Route:** `(workspace)/workspace/[id]/delivery/+page.svelte`, state in
   `delivery-state.svelte.ts`.
-- **Data:** the existing `GET /api/workspaces/{id}/trackers` (`sdlc_project`) and
-  `GET …/trackers/{t}/sprints` (`sdlc` and the three usage partitions). **No new daemon
-  endpoint, no new storage.** It shows the same values those endpoints return; it never
-  re-applies D1's #240 filter (that is the push's, D3).
-- **Layout, per board:** project row (predictability, tokens per ticket, prompts per ticket);
-  sprint table newest first (name, state, dates, the seven `SprintSdlc` ratios, then the
-  sprint's `linked_sprint` active time, tokens and metered cost); a selected sprint in full
-  with its `SprintFacts` counts and its tickets by key and title, each linking to the ticket on
-  Tickets. No ticket SDLC figure appears here (B2).
-- **Labelling:** effort columns are headed "Your sessions"; board facts carry no label.
-- **States:** no board (the Tickets empty text); a failed read is the daemon-error state, never
-  an empty table; a `null` shows its reason's `summary` (`GET /api/reason-codes/sdlc_metrics`).
-- **Tickets:** `[data-sdlc-lane]` and `sdlcRow` are removed (B3).
+- **Data:** exactly four daemon reads, and the screen's API type has only these:
+  `GET /api/workspaces/{id}/trackers` (`sdlc_project`), `GET …/trackers/{t}/sprints` (`sdlc`
+  and the usage partitions), `GET …/trackers/{t}/tasks?sprint=` (the selected sprint's
+  tickets) and `GET /api/reason-codes/sdlc_metrics`. Never `/api/dojo/*` (B5): the app
+  reaches the Dōjō only through those daemon proxy routes. **No new daemon endpoint, no new
+  storage.** It shows the values those endpoints return and never re-applies D1's #240 filter
+  (that is the push's, D3).
+- **Layout, per board:**
+  - Project row, in two parts: "This board" with predictability ("12.5 pts", a board fact);
+    "Your sessions" with tokens per ticket and prompts per ticket (project effort, D1).
+  - Sprint table in `/sprints`' own order, never re-sorted (start date newest first, undated
+    last, then `seq` desc; `tracker_usage.rs:194`): name, state, dates; the seven `SprintSdlc`
+    figures (six percents, and velocity in points); then "Your sessions": `linked_sprint`'s
+    active AI time, fresh tokens and API cost (`usageCells`: `api_cost`, "+" when partial,
+    the app's established cost cell, not `metered_cost`).
+  - A sprint with no window (`linked_sprint` null, `reason` `not_started` or `no_dates`) shows
+    Tickets' words for that reason in its effort cells, never zeros. Those words move to the
+    shared module with the formatters.
+  - A selected sprint in full: its `SprintFacts` counts (committed, added, removed, completed
+    committed, completed added, carried over; plus "n tickets with an unknown status" when
+    `unknown_status > 0`, widening the app's `SprintFacts` type), and its tickets by key and
+    title. Each links to `/workspace/{id}/tickets?board={tracker}&ticket={key}`.
+  - No ticket SDLC figure appears here (B2).
+- **Labelling:** every figure from your sessions is headed "Your sessions": the sprint
+  effort columns and the project row's tokens and prompts per ticket. Board facts are not.
+- **States:** no board: "This workspace has no sprint board connected." with the Integrations
+  link. A failed read is the daemon-error state with Retry, never an empty table. A `null`
+  shows its reason's `summary`. A real `0` shows as `0%`, `0 pts` or `0`, never a reason or
+  "—".
+- **Tickets:** `[data-sdlc-lane]` and `sdlcRow` are removed (B3). Tickets gains the deep link
+  above: after load it opens that ticket, and Back names the board's lane. An unknown key
+  shows the ticket error; an unknown board opens it from the first lane.
+- **Surfaces that list sections** change with the nav: the sidebar spec
+  (tickets → delivery → integrations), `app/e2e/tests/multi-window.spec.ts`'s nav list,
+  `app/e2e/tests-inspect/console-errors-inspect.spec.ts`'s screen list,
+  `workspace-tickets.md`'s ordering lines, and the route list in
+  `docs/prd/modules/03-delivery/16-workspace-window/README.md`.
 
 ### D3 · The push
 
@@ -253,8 +277,9 @@ when it is false, as `getWorkspaceMetrics` does):
 
 - `workspace_delivery_boards(p_workspace)` — boards with predictability and the merged project
   row.
-- `workspace_delivery_sprints(p_workspace, p_board, p_limit, p_offset)` — newest first by
-  `seq`; one-copy facts plus merged sprint effort.
+- `workspace_delivery_sprints(p_workspace, p_board, p_limit, p_offset)` — in the daemon's
+  order (start date desc, undated last, then `seq` desc), as D2; one-copy facts plus merged
+  sprint effort.
 - `workspace_delivery_tickets(p_workspace, p_board, p_sprint null|external_id, p_backlog bool,
   p_limit, p_offset)` — all, one sprint, or backlog; title, merged effort.
 
@@ -285,10 +310,11 @@ summary. A failed read is an error state, never an empty table.
 | Commitment reliability | `SprintSdlc.commitment_reliability` | committed tickets done ÷ committed, % | 8 of 10 → 80% |
 | Scope change | `scope_change` | (added + removed) ÷ committed, % | 3 added, 1 removed of 10 → 40% |
 | Carry-over rate | `carry_over_rate` | committed not done and moved to the next sprint ÷ committed | 2 of 10 → 20% |
-| Velocity | `velocity` | points completed | 21 |
-| AI time (app) | `linked_sprint.active_secs` | **your** active time in the sprint on its tickets | 6 h 10 m |
-| AI time (Dōjō) | Σ sprint effort `active_secs` | the team's, from N contributors | 31 h · from 4 |
-| Cost (Dōjō) | Σ `metered_cost` / `effort_cost` | each at the contributor's own rate (B14) | $412 · partial, 1 without a rate |
+| Velocity | `velocity` | points completed | 21 pts |
+| AI time (app) | `linked_sprint.active_secs` | **your** active time in the sprint on its tickets | 6h 10m |
+| AI time (Dōjō) | Σ sprint effort `active_secs` | the team's, from N contributors | 31h · from 4 |
+| API cost (app and Dōjō) | `api_cost` (Σ in the Dōjō), "+" when partial | list-price cost of the AI work | $41.20+ |
+| Effort cost (Dōjō) | Σ `effort_cost` | each at the contributor's own rate (B14) | $412 · partial, 1 without a rate |
 | Contributors | count of effort rows | who reported, never who didn't | from 3 · last report 2 h ago |
 
 ## Done gate
@@ -297,17 +323,21 @@ Layers: **app** = vitest spec in `app/` (root test script); **daemon** = `cargo 
 with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei_test`;
 **dojo** = vitest in `dojo/`.
 
-1. **Section (app).** `buildWorkspaceNav` lists `delivery` right after `tickets` with `納`;
-   `glyph-vocabulary.spec.ts` passes; every existing `metrics` spec passes unchanged.
+1. **Section (app).** `buildWorkspaceNav` lists `delivery` right after `tickets` and before
+   `integrations`, with `納`; `glyph-vocabulary.spec.ts` passes; every existing `metrics` spec
+   passes unchanged; the e2e nav list includes Delivery Metrics.
 2. **App figures (app).** Given a mocked `/sprints` with two sprints, the page renders each
-   sprint's seven ratios and `linked_sprint` active time equal to the response; a `null` with
-   `history_pending` renders that reason's summary, not "0" or blank; no `TicketSdlc` field
-   renders.
+   sprint's seven figures (velocity as "N pts") and `linked_sprint` active time and API cost
+   equal to the response (`api_cost` 1.24 with `metered_cost` 9 shows "$1.24"); a `null` with
+   `history_pending` renders that reason's summary, not "0" or blank; a real `0` renders `0%` /
+   `0 pts`; a `not_started` sprint's effort cells show "Not started…" and no "0"; no
+   `TicketSdlc` field renders.
 3. **Tickets (app).** No `[data-sdlc-lane]`; the sprint filter, usage strip and ticket SDLC
-   group render.
-4. **Failure (app).** A 500 from `/sprints` renders the daemon-error state.
-5. **No Dōjō call (app).** Loading Delivery Metrics makes no request to a Dōjō origin
-   (fetch spy).
+   group render. `?board=t-1&ticket=AUTH-2` opens AUTH-2 with "Back to …"; a Delivery ticket
+   row's href is exactly that URL.
+4. **Failure (app).** A 500 from `/sprints` renders the daemon-error state; Retry recovers.
+5. **Only four reads (app).** Loading Delivery Metrics and selecting a sprint calls only the
+   four D2 paths (recorded through the injected API); none starts with `/api/dojo/`.
 6. **Not shared (daemon).** A workspace with no repository in `plan.allowed` posts nothing and
    logs `tracker_not_shared`.
 7. **Ambiguous (daemon).** Allowed repositories with two tenant ids post nothing and log
@@ -343,7 +373,9 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
 
 ## Wrong gate
 
-- The Metrics section changes, or Delivery Metrics reads `workspace_metrics` or the Dōjō.
+- The Metrics section changes, or Delivery Metrics reads `workspace_metrics` or any
+  `/api/dojo/*` route.
+- The app and the Dōjō list one board's sprints in different orders.
 - App effort columns are not labelled as yours.
 - A sprint's AI usage in the Dōjō is the sum of its tickets' usage.
 - A board fact is summed, or a ratio is averaged instead of recomputed.

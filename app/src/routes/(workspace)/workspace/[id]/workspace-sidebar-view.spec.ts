@@ -84,10 +84,16 @@ describe('workspace-sidebar-view', () => {
             expect(ids).toContain('metrics');
             expect(ids.indexOf('metrics')).toBe(ids.indexOf('overview') + 1);
         });
-        it('places Tickets (札) then Integrations (繋) between Impact and About', () => {
+        it('places Tickets (札), Delivery Metrics (納) then Integrations (繋) between Impact and About', () => {
             const ids = SECTIONS.map((s) => s.id);
             expect(ids.indexOf('tickets')).toBe(ids.indexOf('impact') + 1);
-            expect(ids.indexOf('integrations')).toBe(ids.indexOf('tickets') + 1);
+            expect(ids.indexOf('delivery')).toBe(ids.indexOf('tickets') + 1);
+            expect(ids.indexOf('integrations')).toBe(ids.indexOf('delivery') + 1);
+            expect(SECTIONS.find((s) => s.id === 'delivery')).toEqual({
+                id: 'delivery',
+                kanji: '納',
+                label: 'Delivery Metrics',
+            });
             expect(ids.indexOf('about')).toBe(ids.indexOf('integrations') + 1);
             expect(SECTIONS.find((s) => s.id === 'tickets')).toEqual({
                 id: 'tickets',

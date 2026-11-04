@@ -12,7 +12,7 @@ const OBSERVATORY = ['/', '/workspaces', '/instruments', '/instruments?tab=repla
 const WORKSPACE = ['overview', 'metrics', 'sessions', 'memories', 'traceability', 
   'diagrams/structure', 'diagrams/wheel', 'diagrams/zones', 'diagrams/matrix', 'diagrams/cycles',
   'diagrams/coupling', 'diagrams/complexity', 'diagrams/schema',
-  'libraries', 'instruments', 'patterns', 'impact', 'tickets', 'integrations', 'about', 'intake'];
+  'libraries', 'instruments', 'patterns', 'impact', 'tickets', 'delivery', 'integrations', 'about', 'intake'];
 
 test('no screen logs a console error', async ({ tauriPage }) => {
   const workspaces = await (await fetch(`${DAEMON_URL}/api/workspaces`)).json();

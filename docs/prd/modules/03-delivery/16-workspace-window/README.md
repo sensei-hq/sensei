@@ -44,7 +44,7 @@ sections, the **Diagrams** list opens the Code map (M17) and Database · ER.
   `/sessions` · `/ftr` · `/icon` · `/health`; `/api/patterns/{workspace}`.
   **No `/api/dojo-binding` endpoint** (gap `G-DOJO-AUDIT`).
 - **App** — `app/src/routes/(workspace)/workspace/[id]/{intake,overview,metrics,sessions,
-  memories,traceability,libraries,instruments,patterns,impact,tickets,integrations,about}/+page.svelte`
+  memories,traceability,libraries,instruments,patterns,impact,tickets,delivery,integrations,about}/+page.svelte`
   and `diagrams/`; shell `WorkspaceSidebar.svelte` (sections in `workspace-sidebar-view.ts`,
   diagram entries in `diagrams/diagrams-nav.ts`).
 - **Data** — `sensei.workspaces`, `sensei.project_ftr_metrics` (view `project_metrics`),

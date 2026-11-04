@@ -2,7 +2,7 @@
 //
 // What must never happen here: "no tracker connected" because a read failed, a
 // 0 where the daemon said null, or a sprint total built by adding its tickets.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ALL, BACKLOG, TicketsState, usageCells, type SprintsApi } from './tickets-state.svelte.js';
 import { WORDS, projectSdlc, sprintSdlc, ticketSdlc, usage } from '$lib/tracker-fixtures.js';
 import type { ApiResult } from '$lib/api.js';
@@ -415,6 +415,95 @@ describe('a ticket', () => {
   });
 });
 
+describe('a link from Delivery Metrics (tracker-delivery-metrics D2)', () => {
+  it("opens the ticket from its board's lane, and Back names that lane", async () => {
+    const mobile = { ...tracker, id: 't-2', board_ref: '44', board_name: 'Mobile Scrum' };
+    const { s, calls } = await ready({ tryListTrackers: async () => ok([tracker, mobile]) });
+    await s.openLinked('t-2', 'AUTH-420');
+    expect(calls).toContain('task:AUTH-420');
+    expect(s.ticketLane?.id).toBe('t-2');
+    expect(s.backLabel).toBe('Back to Mobile Scrum · All tickets');
+  });
+
+  it('an unknown board opens it from the first lane', async () => {
+    const { s } = await ready();
+    await s.openLinked('nope', 'AUTH-420');
+    expect(s.ticket?.task.key).toBe('IAM-5');
+    expect(s.ticketLane?.id).toBe('t-1');
+  });
+
+  it('an unknown key shows the ticket error', async () => {
+    const { s } = await ready({ tryGetTrackerTask: async () => fail(404, 'task_not_found') });
+    await s.openLinked('t-1', 'NOPE-1');
+    expect(s.ticket).toBe(null);
+    expect(s.ticketError).toBe('No ticket with that key in sensei.');
+  });
+
+  it('opens the link as soon as the lanes exist, so a ticket chosen while lists load is not replaced', async () => {
+    let releaseList!: () => void;
+    const slowList = new Promise<void>((r) => (releaseList = r));
+    let releaseLinked!: () => void;
+    const slowLinked = new Promise<void>((r) => (releaseLinked = r));
+    const { api } = daemon({
+      tryListTrackerTasks: async () => {
+        await slowList;
+        return ok([task()]);
+      },
+      tryGetTrackerTask: async (_p, key) => {
+        if (key === 'LINKED-1') await slowLinked;
+        return ok({ ...(await daemon().api.tryGetTrackerTask(P, key).then((r) => (r.ok ? r.data : null)))!, task: { ...task(), key } as never });
+      },
+    });
+    const s = new TicketsState(api, P);
+    s.followLink('t-1', 'LINKED-1');
+    const loading = s.load();
+    await vi.waitFor(() => expect(s.view).toBe('ready'));
+    await s.openTicket(s.lanes[0], 'CHOSEN-2');
+    releaseLinked();
+    releaseList();
+    await loading;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(s.ticket?.task.key).toBe('CHOSEN-2');
+  });
+
+  it('a ticket read that answers after Back is dropped', async () => {
+    let release!: () => void;
+    const slow = new Promise<void>((r) => (release = r));
+    const { s, l } = await ready({
+      tryGetTrackerTask: async (_p, key) => {
+        await slow;
+        return ok({ ...(await daemon().api.tryGetTrackerTask(P, key).then((r) => (r.ok ? r.data : null)))! });
+      },
+    });
+    const opening = s.openTicket(l, 'AUTH-420');
+    s.closeTicket();
+    release();
+    await opening;
+    expect(s.ticket).toBe(null);
+  });
+
+  it('a link survives a failed first load and opens after Retry', async () => {
+    let n = 0;
+    const { api, calls } = daemon({ tryListTrackers: async () => (++n === 1 ? fail(500) : ok([tracker])) });
+    const s = new TicketsState(api, P);
+    s.followLink('t-1', 'AUTH-420');
+    await s.load();
+    expect(s.view).toBe('daemon_error');
+    await s.load();
+    expect(calls).toContain('task:AUTH-420');
+    expect(s.ticket?.task.key).toBe('IAM-5');
+  });
+
+  it('does nothing before the lanes are ready', async () => {
+    const { api, calls } = daemon({ tryListTrackers: async () => fail(500) });
+    const s = new TicketsState(api, P);
+    await s.load();
+    await s.openLinked('t-1', 'AUTH-420');
+    expect(calls).not.toContain('task:AUTH-420');
+    expect(s.ticket).toBe(null);
+  });
+});
+
 describe('unlinked sessions', () => {
   it('reads them for the chosen sprint on demand', async () => {
     const { s, l, calls } = await ready();
@@ -485,33 +574,5 @@ describe('SDLC figures (tracker-sdlc-metrics S8)', () => {
     const known = s.ticketSdlc.find((r) => r.id === 'defects')!;
     expect(known.figures.map((f) => f.text)).toEqual(['1', '0', '3', '2']);
     expect(known.note).toBe(null);
-  });
-
-  it("a lane shows the chosen sprint's own row, else the board's project row", async () => {
-    const { l } = await ready({
-      tryListTrackers: async () =>
-        ok([{ ...tracker, sdlc_project: projectSdlc({ predictability: 12.5, tokens_per_ticket: 1500, prompts_per_ticket: 0, reasons: {} }) }]),
-      tryListSprints: async () =>
-        ok([
-          sprint({ id: 's13', name: 'Sprint 13', state: 'active' }),
-          sprint({ sdlc: sprintSdlc({ commitment_reliability: 50, scope_change: 0, velocity: 8, reasons: { carry_over_rate: 'history_pending', unplanned_work_ratio: 'history_pending' } }) }),
-        ]),
-    });
-    expect(l.sdlcRow.kind).toBe('project');
-    expect(l.sdlcRow.figures.map((f) => f.text)).toEqual(['12.5 pts', '1.5k', '0.0']);
-
-    await l.setFilter('s12');
-    expect(l.sdlcRow.kind).toBe('sprint');
-    expect(l.sdlcRow.figures.map((f) => f.text)).toEqual([
-      '50%',
-      '0%',
-      'Ticket history not read yet',
-      'Ticket history not read yet',
-      '8 pts',
-    ]);
-    await l.setFilter('s13');
-    expect(l.sdlcRow.figures[0]).toMatchObject({ text: 'Ticket history not read yet', reason: true });
-    await l.setFilter(BACKLOG);
-    expect(l.sdlcRow.kind).toBe('project');
   });
 });
