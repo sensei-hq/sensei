@@ -140,19 +140,24 @@ describe('ingestMetrics', () => {
 			row({ props: { authored_at: '2026-02-30T00:00:00Z' } }),
 			row({ props: { authored_at: '2026-13-01T00:00:00Z' } }),
 			row({ props: { authored_at: '2026-10-06T24:00:00Z' } }),
+			row({ props: { authored_at: '2026-10-06T14:00:00+16:00' } }),
+			row({ props: { authored_at: '2026-10-06T14:00:00+14:60' } }),
 			row({ props: { authored_at: '2026-10-06T14:00:00Z' } }),
 			row({ props: { authored_at: '2026-10-06T14:00:00+00:00' } }),
+			row({ props: { authored_at: '2026-10-06T14:00:00+15:59' } }),
 			row({ props: {} })
 		]);
-		expect(out.accepted).toBe(3);
+		expect(out.accepted).toBe(4);
 		expect(out.rejected.map((r) => r.reason)).toEqual([
+			'invalid_authored_at',
+			'invalid_authored_at',
 			'invalid_authored_at',
 			'invalid_authored_at',
 			'invalid_authored_at',
 			'invalid_authored_at',
 			'invalid_authored_at'
 		]);
-		expect((sent(db)[0] as unknown[])).toHaveLength(3);
+		expect((sent(db)[0] as unknown[])).toHaveLength(4);
 	});
 
 	it('accepts the good rows of a mixed batch in ONE write and reports only the bad', async () => {

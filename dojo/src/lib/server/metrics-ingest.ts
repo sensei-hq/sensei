@@ -75,14 +75,24 @@ function isAuthoredAt(v: unknown): boolean {
 	// fails too — deliberately stricter than the cast, which accepts it.)
 	const [, y, mo, d, h, mi, s] = m.map(Number);
 	const r = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
-	return (
-		r.getUTCFullYear() === y &&
-		r.getUTCMonth() === mo - 1 &&
-		r.getUTCDate() === d &&
-		r.getUTCHours() === h &&
-		r.getUTCMinutes() === mi &&
-		r.getUTCSeconds() === s
-	);
+	if (
+		r.getUTCFullYear() !== y ||
+		r.getUTCMonth() !== mo - 1 ||
+		r.getUTCDate() !== d ||
+		r.getUTCHours() !== h ||
+		r.getUTCMinutes() !== mi ||
+		r.getUTCSeconds() !== s
+	) {
+		return false;
+	}
+	// The displacement itself must exist: Postgres refuses anything past
+	// ±15:59 (22009), so +16:00 and +14:60 are refused here by name instead
+	// of failing the whole batch at the write.
+	const off = m[8];
+	if (off === 'Z') return true;
+	const oh = Number(off.slice(1, 3));
+	const om = Number(off.slice(4, 6));
+	return oh <= 15 && om <= 59;
 }
 
 /**

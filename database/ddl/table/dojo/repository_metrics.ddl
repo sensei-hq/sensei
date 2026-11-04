@@ -8,11 +8,11 @@ set search_path to dojo, extensions;
 -- call. That is the whole privacy shape of the sync.
 --
 -- props.authored_at carries a commit's own time (F4), which the workspace
--- rollup casts: ISO-8601 WITH an offset (so the cast never depends on the
--- session TimeZone) AND calendar-valid per dojo.is_iso_instant (a regex alone
--- admits Feb 30, which the cast refuses). Inline, not an ALTER: the file
--- re-runs cleanly on every deploy. The write boundary refuses malformed values
--- by name (metrics-ingest.ts, same rule); the CHECK stops every other writer.
+-- rollup casts: absent, or an ISO-8601 instant with an offset that the cast
+-- accepts, per dojo.is_iso_instant (one copy of the rule). Inline, not an
+-- ALTER: the file re-runs cleanly on every deploy. The write boundary refuses
+-- malformed values by name (metrics-ingest.ts, same rule); the CHECK stops
+-- every other writer.
 create table if not exists repository_metrics (
   id            uuid        primary key default gen_random_uuid()
 , tenant_id     uuid        not null references dojo.tenants(id)       on delete cascade
@@ -31,8 +31,7 @@ create table if not exists repository_metrics (
 , unique nulls not distinct (metric_id, repository_id, scope, principal_id, commit_sha, computed_on, grain)
 , constraint repository_metrics_authored_at_iso
   check (props->>'authored_at' is null
-         or (props->>'authored_at' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$'
-             and dojo.is_iso_instant(props->>'authored_at')))
+         or dojo.is_iso_instant(props->>'authored_at'))
 );
 
 create index if not exists repository_metrics_lookup
