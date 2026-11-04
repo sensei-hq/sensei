@@ -24,11 +24,18 @@ the shared Dōjō, and the free tier isn't a trial.*
 
 > **Status honesty.** The pricing model and tier table are designed (features/07-pricing.md).
 > **Built:** the billing account and seat tables (`dojo.billing_accounts`,
-> `dojo.seats`, live usage from `dojo.tenant_seat_usage`), GET/POST
+> `dojo.seats`, the `dojo.tenant_seat_usage` count), GET/POST
 > `/v1/t/[origin]/[org]/billing` (admin-only: the account plus live per-seat usage;
-> POST refreshes the cached seat count), and the org's **Plan & billing** section at
-> `/org/[slug]/billing`, which reads that route. **Not built:** a payment provider,
-> invoices, plan changes. **There is no payment provider yet**: none is chosen and none is
+> POST refreshes the cached seat count), the org's **Plan & billing** section at
+> `/org/[slug]/billing`, which reads that route, and seat opening on relay activity —
+> `openOrRefreshSeat` (`dojo/src/lib/server/billing-data.ts:153`) inserts into `seats`
+> and the relay session route calls it
+> (`dojo/src/routes/v1/t/[origin]/[org]/relay/session/+server.ts:98`) when the update
+> names a workspace. **Not built:** the daemon never sends `workspace_slug` — every
+> call site passes `None` (`crates/senseid/src/dojo/client.rs:869,1033,1136`,
+> `relay_project.rs:121`, `relay_run_project.rs:110`) — so no seat opens in practice;
+> nothing calls `closeSeat` (`billing-data.ts:189`) when a member is removed; and there
+> is no payment provider, invoices or plan changes. **There is no payment provider yet**: none is chosen and none is
 > in the code, so nothing below that mentions invoices or payment exists. The mockup
 > `dojo-billing.jsx` uses hardcoded example data.
 > The website has a live GitHub Sponsors link. The free tier intent exists but
@@ -153,9 +160,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   feature doc (mock tier table, flows, status table).
 - [design/dojo-web.md](../../../../design/dojo-web.md) — org context billing
   surface (admin).
-- [mockups/Sensei/lib/dojo/dojo-billing.jsx](../../../../mockups/Sensei/lib/dojo/dojo-billing.jsx)
+- `mockups/Sensei/lib/dojo/dojo-billing.jsx`
   — visual source (tier table + per-seat example, hardcoded data).
-- [mockups/Sensei/lib/dojo/dojo-saas.jsx](../../../../mockups/Sensei/lib/dojo/dojo-saas.jsx)
+- `mockups/Sensei/lib/dojo/dojo-saas.jsx`
   — SaaS entry: sign-in · orgs · create Dōjō (plan choice). Superseded: a dōjō comes
   from a git integration on the free tier and the plan is chosen in billing (D20).
 - [prd/01-vision.md §Business model](../../../01-vision.md) · [prd/03-personas.md §4,5](../../../03-personas.md).

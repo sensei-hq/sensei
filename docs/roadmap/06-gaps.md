@@ -21,7 +21,7 @@ plan gap analysis's G1–G10 numbering and the `production-readiness.md` A–H
 | `P-*` | performance / scale |
 | `T-*` | tests / gates / e2e |
 | `D-*` | docs / claims / website truth |
-| `M-*` | metrics / health / gating |
+| `M-*` | metrics / health / targets |
 | `C-*` | capture / conventions / adapters / personas |
 | `G-*` | graph / visualisation |
 | `ACP-*` | relay / ACP agent runtime |
@@ -38,8 +38,8 @@ evidence is a suspicion, and gets labelled so.
 | A-2 | M2 | the personal-preference surface is narrower than the config the app already supports | decision 10 | P3 |
 | ~~G-1~~ | M17 | ~~graph/layered view unreadable at granular scale — no L0/L1/L2 level of detail~~ — **closed 2026-11-03:** `packages/codemap/` renders L0 (`ModuleMap.svelte:2`), L1 (`FileColumns.svelte`) and L2 (`SymbolView.svelte`) over `…/diagrams/codemap` (`api/routes.rs:139-145`), and an inspect test draws each lens (`app/e2e/tests-inspect/codemap-inspect.spec.ts:109`). Residual, tracked as M17: the dōjō embed and the daemon-pushed map | reorg §9.7 | — |
 | G-2 | M4 · M2 · M3 | the indexer honours `.gitignore` inside a repo scan (`indexer/repo.rs:290`, test `a_repo_scan_honours_gitignore` at `:926`), so "no ignore mechanism" was wrong; **what is missing** is the stored repo config synced via the Dōjō, **seeded from the repo's own ignore sources** (`.gitignore`, qlty `.qlty/qlty.toml` `exclude_patterns`) — not a dotfile — and the config/generated file classes | decision 2026-10-13 | P2 |
-| M-7 | M8 | no master-detail metric model, no `gating` field, gating eligibility undefined | reorg §9.6 | P1 |
-| M-8 | M8 | coverage-gated presentation absent; thin metrics read as strong (#155 generalised) | reorg §9.6 | P1 |
+| M-7 | M8 | no master-detail metric model, no `gating` field; gating eligibility is undefined per metric (`metric_gating`, TG1; D47) | reorg §9.6 | P1 |
+| M-8 | M8 | coverage-aware presentation absent; thin metrics read as strong (#155 generalised) | reorg §9.6 | P1 |
 | M-9 | M8 | no per-metric design/coverage record tying a metric to its chart and LOD | reorg §9.6 | P1 |
 | C-11 | M3 | transcript-scanning review not scoped as a task | decision 10 | P1 |
 | C-12 | M5 · M14 | inference-pipeline review not scoped as a task | decision 10 | P1 |
@@ -62,7 +62,7 @@ evidence is a suspicion, and gets labelled so.
 | ACP-4 | M21 | No streaming response handling in relay | streaming not parsed in transcript or relay | P2 |
 | ACP-5 | M21 | Permission/gate flow not implemented for ACP | only Claude hooks have gate logic | P2 |
 | ACP-6 | M21 | Model selection via ACP not wired | ACP supports; not used | P3 |
-| T-1 | T3 | tracker adapters: the daemon-side Jira adapter is built (PR #274); Azure Boards and GitHub Issues are not, and a workspace has one tracker, not several (D23). Gates: 1 of 7 buildable now, 2 need scoped reads, 4 on #156 | reorg §9.2 | P1 |
+| T-1 | T3 | tracker adapters: the daemon-side Jira adapter is built (PR #274); Azure Boards and GitHub Issues are not, and a workspace has one tracker, not several (D23). Targets: 1 of 7 buildable now, 2 need scoped reads, 4 on #156 | reorg §9.2 | P1 |
 | ~~T-2~~ | T2 | ~~join/membership flow dead~~ — resolved by #307 A3 invites (7e547a19) | plan gap analysis | — |
 | F-3 | T1 | Dōjō sync works against the local dōjō; production unverified (needs an enrolled daemon); #184 open | production-readiness → `07-quality.md` | P1 |
 | D-11 | P2 | website presents unbuilt as shipped (one claim already dropped) | site↔product audit | P2 |

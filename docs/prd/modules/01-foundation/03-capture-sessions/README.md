@@ -30,7 +30,7 @@ The user's experience: *point sensei at a folder once and it just keeps knowing*
 
 ## Surfaces
 
-- **API** — `POST /api/scan/roots`, `GET /api/projects/suggestions`, `POST /api/projects/merge`
+- **API** — `POST /api/scan/roots`, `GET /api/scan/suggestions`, `POST /api/workspaces/merge`
   (+ split), `crates/senseid/src/api/handlers/sessions.rs::materialise_session`,
   `crates/senseid/src/api/handlers/sessions.rs` (`ingest_hook_event`, `hook_gate`,
   `hook_nudge` — the `/hook/*` event ingest), MCP `log_event`.
@@ -169,7 +169,7 @@ Closing a dash is adapter work against this contract, not a new design ([C-25](.
 - A fresh scan of `~/Developer` + `~/Work` turns every discovered repo into a
   `sensei.folders` row within the incremental scan window; nested roots do not get
   double-indexed (outer subsumes).
-- Multi-repo groups appear as proposal cards; accept merges via `POST /api/projects/merge`;
+- Multi-repo groups appear as proposal cards; accept merges via `POST /api/workspaces/merge`;
   dismiss is remembered for the 7-day staleness window.
 - Every Claude Code session with the plugin installed produces `assistant_events` rows
   continuously (not batched at session end).
@@ -187,7 +187,7 @@ Closing a dash is adapter work against this contract, not a new design ([C-25](.
 psql -A -t -c "select count(*) from activity.assistant_events
                where ts_ms > (extract(epoch from now()) - 60) * 1000" -d sensei
 # suggestions pending?
-curl -s http://localhost:7744/api/projects/suggestions | jq '.suggestions'
+curl -s http://localhost:7744/api/scan/suggestions | jq '.suggestions'
 # usage captured at the source? (list cost per Claude Code session, last day)
 psql -A -c "select client_session_id, list_cost_usd, metered_cost from activity.sessions
             where started_at > now() - interval '1 day' and acp_id = 'claude'" -d sensei

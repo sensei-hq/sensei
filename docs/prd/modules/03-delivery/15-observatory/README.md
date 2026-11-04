@@ -15,10 +15,13 @@ Early on it says *"Still listening…"* and offers **no action at all**; once th
 enough signal it switches to a mature mood. The user feels this as *one thing today,
 with its receipt* — not a dashboard to maintain.
 
-> **Status honesty.** Today, the workspaces index, insights, sessions, memories and
-> logs are real. Two surfaces are **mock-only / roadmap**: **Consolidation**
-> (`/consolidation`) and **Insights Reasoning** (`/insights/{id}/reasoning`) — neither
-> has a route in `routes.rs`. And the doc-declared `sensei.ftr_daily` table is absent
+> **Status honesty** (checked against the code 2026-11-03). Today, the workspaces index,
+> insights, sessions, memories, logs and **Consolidation** (`/consolidation`) are real —
+> Consolidation is not mock-only: the screen calls
+> `POST /api/knowledge/rules/consolidate`, `GET …/consolidated` and
+> `POST …/consolidate/{id}/approve` (`api/routes.rs:511-515`). One surface is
+> **mock-only / roadmap**: **Insights Reasoning** (`/insights/{id}/reasoning`) has no
+> route in `routes.rs`. And the doc-declared `sensei.ftr_daily` table is absent
 > (FTR rolls up from `sensei.metrics`); the doc's `sensei.reasoning_traces` is really
 > `inference.reasoning_traces`, and `sensei.dojo_downstream_inbox` is really
 > `sensei.dojo_inbox`.
@@ -37,9 +40,9 @@ with its receipt* — not a dashboard to maintain.
   **Collective/Sharing** (`/dojo/sharing`), **Dōjō connections** (`/dojo/connections`),
   **Upgrades** (`/upgrades`) — opt-in give-back and downstream accept; **Logs**
   (`/logs`) — operator diagnostics.
-- Out: **Consolidation** (`/consolidation`) and **Insights Reasoning**
-  (`/insights/{id}/reasoning`) — routes are not in `routes.rs`; roadmap/mockup only
-  (see gaps). Any knowledge-base browsing UX — Insights is action-first, not a KB.
+- Out: **Insights Reasoning** (`/insights/{id}/reasoning`) — no route in `routes.rs`;
+  roadmap/mockup only (see gaps). Any knowledge-base browsing UX — Insights is
+  action-first, not a KB. (Consolidation is in scope and built, above.)
   The **Diagrams sub-tree** (`structure`, `layers`, `cycles`, `neighbourhood`, `schema`,
   `world`) is **part of the Code map (M17)**, not Observatory — they share the same core graph
   API and data invariants. The deep workspace window (M16), Code map (M17), Instruments (M18)

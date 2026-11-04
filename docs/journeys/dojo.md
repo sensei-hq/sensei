@@ -1,11 +1,11 @@
 # The Dōjō journey
 
 > The team's shared brain — and the surface for supervising it from anywhere.
-> Distilled from [`../mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html).
+> Distilled from `../mockups/Sensei/Sensei Dōjō Journey Map.html`.
 > Traces to [objectives DJ1–DJ5](../prd/02-objectives.md#dōjō--the-cross-cutting-team-layer);
 > the layer design is [architecture/dojo](../architecture/dojo.md). The org lead's
 > end-to-end path — Keiko, creating the company Dōjō — is in
-> [`../mockups/Sensei/Sensei End-to-End Journey.html`](../mockups/Sensei/Sensei%20End-to-End%20Journey.html)
+> `../mockups/Sensei/Sensei End-to-End Journey.html`
 > (see [journeys → the whole loop](README.md#the-whole-loop--machine--dōjō--beyond)).
 > The path every role below must serve is
 > [the spine](README.md#the-spine--one-path-that-must-work-end-to-end).

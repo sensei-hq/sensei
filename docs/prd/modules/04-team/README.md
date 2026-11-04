@@ -38,7 +38,7 @@ ladder is `contributor < maintainer < lead < admin`.
 ## Reading order
 
 T1 → T2 → T3 → T4 → T5 → T6 (T5 builds on T3's targets and integrations; T6, the viewer, reads T3 and T5). T3 is the newest surface; read [`../../../reorg.md`](../../../reorg.md) §9
-first — 1 of its 7 gating targets is buildable today, 2 need scoped reads, 4
+first — 1 of its 7 targets is buildable today, 2 need scoped reads, 4
 are blocked on the architecture-metrics family (#156). The T3 spec folds the
 tracker/target requirements in
 [`design/integrations-and-gating-requirements.md`](../../../design/integrations-and-gating-requirements.md).

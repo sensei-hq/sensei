@@ -113,7 +113,7 @@ list of what to fix, and a workspace that inherited a mess is measured against i
 - **Lead.** **A reading from an incomplete index is not evaluated** — it reads *not measured* and is
   neither met nor missed (V12).
 - **Lead.** **Sprint targets read the development environment's branch** (falling back to
-  production's — D18); release targets read development → testing → production in order (T5, M4).
+  production's — D18); release gates read development → testing → production in order (T5, M4).
 - **Lead.** **The ladder is Dōjō → Workspace → Repository → Sprint → Task type → Task, most specific
   wins** (D48); a rung with no value inherits the nearest broader rung's. Teams own no targets (D13).
 - **Lead.** **Who sets a rung** (D54): Dōjō and Workspace — admin; Repository — maintainer and up on

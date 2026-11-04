@@ -3,7 +3,7 @@
 > **The visual perspective.** The flows a human walks through sensei — drawn as
 > diagrams so the shape is obvious at a glance. Journeys sit between the
 > [requirements](../prd/README.md) (what/why) and the
-> [mockups](../mockups/) (pixel-level screens): they show *how the segments
+> mockups (`mockups/`, pixel-level screens): they show *how the segments
 > connect into a path*.
 
 ## The whole loop — machine → Dōjō → beyond
@@ -14,7 +14,7 @@ travels **outward** (you share a lesson, D56), governed practice comes back **in
 (the rules and targets that apply where you work), and a **live** line lets you
 approve/decide/steer a running session from anywhere — all through the same Dōjō.
 Full narrative:
-[`../mockups/Sensei/Sensei End-to-End Journey.html`](../mockups/Sensei/Sensei%20End-to-End%20Journey.html).
+`../mockups/Sensei/Sensei End-to-End Journey.html`.
 
 ```mermaid
 flowchart LR
@@ -129,10 +129,10 @@ narrative. Where a mockup and these journeys disagree, the decisions D47–D70
 (`docs/plan/2026-11-03-parallel-lanes.md` §0) win: the mockups still say
 "project" in places and still show client engagements (retired, D34/D53).
 
-- [`../mockups/Sensei/Sensei Journey Map.html`](../mockups/Sensei/Sensei%20Journey%20Map.html) — the personal journey + module lifecycles.
-- [`../mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html) — the Dōjō role journeys, workspace delivery and the viewer track.
-- [`../mockups/Sensei/Sensei Flow Walkthrough.html`](../mockups/Sensei/Sensei%20Flow%20Walkthrough.html) — a step-by-step click-through of the app.
-- [`../mockups/Sensei/Sensei End-to-End Journey.html`](../mockups/Sensei/Sensei%20End-to-End%20Journey.html) — the whole loop (machine → Dōjō → beyond), Rin's + Keiko's journeys, and the "is it worth building?" case.
+- `../mockups/Sensei/Sensei Journey Map.html` — the personal journey + module lifecycles.
+- `../mockups/Sensei/Sensei Dōjō Journey Map.html` — the Dōjō role journeys, workspace delivery and the viewer track.
+- `../mockups/Sensei/Sensei Flow Walkthrough.html` — a step-by-step click-through of the app.
+- `../mockups/Sensei/Sensei End-to-End Journey.html` — the whole loop (machine → Dōjō → beyond), Rin's + Keiko's journeys, and the "is it worth building?" case.
 
 ## Reading position
 

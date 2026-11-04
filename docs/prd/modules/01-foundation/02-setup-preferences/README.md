@@ -27,17 +27,24 @@ workspaces appear live.
 
 ## Surfaces
 
-- **App** — `app/src/routes/preferences/+page.svelte` + pane routes
-  (`/preferences/<pane>`); `app/src/routes/first-run/scan/+page.svelte`.
-- **API** — `GET/PUT /api/preferences` (one section per pane), `GET /api/preferences/cues`,
+- **App** — `app/src/routes/(preferences)/settings/` (the pane; its panels live beside
+  it); the setup wizard's `(config)/setup/scan` stage.
+- **API** — `GET/PUT /api/config` (a flat key→value map), `GET/DELETE
+  /api/config/{key}` for one key (writes go through `PUT /api/config`),
+  `GET/PUT /api/preferences/collective`,
   `POST /api/scan/roots` (persist + start scanning immediately), `GET /api/assistants/health`.
+  The designed `GET/PUT /api/preferences` (one object per pane) and
+  `GET /api/preferences/cues` were **never built** — there is no `/api/preferences`
+  route, only the `collective` and `commands` children.
 - **Daemon** — assisted preferences bindings (`crates/senseid` collective_preferences
   surface for team defaults).
 
 ## Data invariants
 
-- `GET /api/preferences` returns exactly the eight sections:
-  `[assistants, assignments, folders, inference, instruments, libraries, profile, projects]`.
+- `GET /api/config` returns a flat key→value map; one key is read or deleted
+  at `/api/config/{key}`, and writes go through `PUT /api/config`. The eight-section wire shape
+  (`[assistants, assignments, folders, inference, instruments, libraries, profile,
+  projects]`) was designed and dropped, so no client may expect it.
 - Settings apply live: editing a value writes immediately; no value requires a restart to
   take effect.
 - Root entry is validated (`must exist`, `must be a directory`, `must be readable`) before it
@@ -74,8 +81,8 @@ workspaces appear live.
 - Team defaults merge sanely: assisted preferences round-trip and reject invalid destinations.
 
 ```bash
-curl -s http://localhost:7744/api/preferences | jq '. | keys'   # the 8 sections
-curl -s http://localhost:7744/api/preferences/cues | jq 'length' # non-negative; 0 is allowed when no cue fires
+curl -s http://localhost:7744/api/config | jq '. | keys'   # the keys the settings panes write
+curl -s http://localhost:7744/api/assistants/health | jq 'length' # one row per detected assistant
 ```
 
 ## Wrong gate

@@ -65,6 +65,22 @@ skills and agents are ingested and shown:
 >     `url`, and the docs path is hard-coded to `docs/llms`.
 >
 > Tracked in the roadmap (`08-issue-burndown.md`) as #341.
+>
+> **Update 2026-11-03 (#341 closed 2026-10-27).** The UI half is built: the app reads a
+> library's own docs, skills and agents through `/api/libs/{ref}/{docs,skills,agents}`
+> (`app/src/lib/api.ts:601-605`), so "no screen calls them" no longer holds. The list
+> now folds a manifest's claimed packages into the library that claims them, one row per
+> library (`pg_store/library.rs:1199-1214`), and `find_manifests` discovers sibling
+> manifest roots while skipping vendored copies (`libraries/mod.rs:63-81`, its test at
+> `:340`). Two of the three remaining items are closed as well: the manifest parser keeps
+> all seven fields — `llms`, `documents`, `site`, `repo`, `ref` (as `git_ref`) and
+> `install` on `LibraryManifest`, `url` on each skill and agent
+> (`libraries/manifest.rs:71-111`) — and `GET /api/libs` shows a library known from its
+> manifest alone when the list is unscoped and `min_repos <= 1` (`pg_store/library.rs:1204`).
+> **Still missing:** the site probe (`/.well-known/sensei.library.json`) — dependency
+> discovery goes from an installed package's `repository` field or a `Cargo.lock` git
+> source to the GitHub repo (`libraries/dependencies.rs:1-21`), never to the library's
+> site. The rest of "not built" above reads as history.
 
 ## In scope / out of scope
 
