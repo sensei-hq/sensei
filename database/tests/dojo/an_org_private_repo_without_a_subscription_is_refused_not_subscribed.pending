@@ -1,0 +1,62 @@
+-- WP8: an organisation's private repository without a subscription keeps every
+-- billing term — refused `not_subscribed` (D46 changes personal only).
+--
+-- Green before and after: this pins that WP8's entitlement rewrite preserves
+-- the org-private terms. The org is CLAIMED (an unclaimed org refuses
+-- `unclaimed` above billing — a different, already-tested path); what is
+-- missing is the billing row.
+--
+-- Interim pattern until --apply merges: \ir the view DDL under test, seed,
+-- assert, rollback. Nothing persists.
+begin;
+
+\ir ../../ddl/view/dojo/all_my_repositories.ddl
+
+insert into dojo.principals (id, auth_user_id, display_name) values
+  ('a2222222-2222-2222-2222-222222222222', 'aa222222-2222-2222-2222-222222222222', 'Alice');
+
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url, claimed_at) values
+  ('b2222222-2222-2222-2222-222222222222', 'organization/ztest-wp8-acme', 'organization', 'ztest-wp8-acme',
+   'Acme', 'dojo.sensei-hq.org/organization/ztest-wp8-acme', now());
+
+insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role, disabled_at) values
+  ('b2222222-2222-2222-2222-222222222222', 'a2222222-2222-2222-2222-222222222222',
+   'employer', 'github_oauth', 'admin', null);
+
+insert into dojo.repositories (tenant_id, repo_key, remote_url, name, provider, visibility, visibility_captured_at) values
+  ('b2222222-2222-2222-2222-222222222222', 'github.com/ztest-wp8-acme/api',
+   'git@github.com:ztest-wp8-acme/api.git', 'api', 'github', 'private', now());
+
+-- No billing_accounts row: the organisation has no subscription.
+
+do $$
+declare
+    r record;
+begin
+    select may_share, sync_enabled, entitlement_refusal, reason_code, refused_by
+      into r
+      from dojo.all_my_repositories
+     where principal_id = 'a2222222-2222-2222-2222-222222222222'
+       and repo_key = 'github.com/ztest-wp8-acme/api';
+    if r is null then
+        raise exception 'org private row missing entirely.';
+    end if;
+    if r.entitlement_refusal is distinct from 'not_subscribed' then
+        raise exception 'org private row without a subscription refused as: %.',
+            coalesce(r.entitlement_refusal, 'ENTITLED');
+    end if;
+    if r.may_share is not false then
+        raise exception 'org private row without a subscription is entitled.';
+    end if;
+    if r.sync_enabled is not false then
+        raise exception 'org private row without a subscription syncs.';
+    end if;
+    if r.reason_code is distinct from 'not_subscribed' then
+        raise exception 'org private row reports reason: %.', coalesce(r.reason_code, 'NONE');
+    end if;
+    if r.refused_by is distinct from 'entitlement' then
+        raise exception 'org private row refused by: %.', coalesce(r.refused_by, 'NONE');
+    end if;
+end $$;
+
+rollback;
