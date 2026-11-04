@@ -45,7 +45,10 @@ describe('Knowledge sources /+page — no sources', () => {
     const m = mountComponent(Page, { data: { sources: [], error: null } } as never);
     cleanup.push(m.destroy);
     await vi.waitFor(() => expect(m.container.textContent).toContain('No knowledge sources.'));
-    expect(m.container.querySelector('.text-error')).toBeNull();
+    // Not the error state — checked by the state marker, not a style class —
+    // and no cards invented for an empty read.
+    expect(m.container.querySelector('[data-screen-state="error"]')).toBeNull();
+    expect(m.container.querySelectorAll('[data-testid="source-card"]').length).toBe(0);
   });
 });
 
@@ -62,8 +65,11 @@ describe('Knowledge sources /+page — sources', () => {
     expect(m.container.textContent).toContain('Hive s1');
     expect(m.container.textContent).toContain('https://s1.example.com');
     // L2: the card falls back to the URL for a title, and shows an absent
-    // sequence and a switched-off source as absent and off.
-    expect(m.container.textContent).toContain('https://s3.example.com');
+    // sequence and a switched-off source as absent and off. Scoped to the bare
+    // card and counted: every card prints its URL in the mono line, so a plain
+    // textContent check would pass even with no title fallback at all.
+    const bareCard = m.container.querySelectorAll('[data-testid="source-card"]')[2]!;
+    expect(bareCard.textContent!.split('https://s3.example.com').length - 1).toBe(2);
     expect(m.container.textContent).toContain('seq —');
     expect(m.container.textContent).toContain('disabled');
   });
@@ -240,7 +246,7 @@ describe('Knowledge sources /+page — add a source that fails', () => {
 // L5: the list is the loader's (+page.ts) read; the page renders it and makes
 // no read of its own on mount. A failed read stays the error it was (#288).
 describe('Knowledge sources /+page — the loader’s data', () => {
-  it.skip('pending: L5 knowledge-sources — the loader’s data: renders the sources, without a read of its own', async () => {
+  it('renders the sources, without a read of its own', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 503, statusText: 'Service Unavailable' });
     vi.stubGlobal('fetch', fetchSpy);
     const m = mountComponent(Page, { data: { sources, error: null } } as never);
@@ -249,7 +255,7 @@ describe('Knowledge sources /+page — the loader’s data', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it.skip('pending: L5 knowledge-sources — the loader’s data: a failed loader read is the error, not a silent list', async () => {
+  it('a failed loader read is the error, not a silent list', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okSources([])));
     const m = mountComponent(Page, { data: { sources: [], error: 'Service Unavailable' } } as never);
     cleanup.push(m.destroy);
