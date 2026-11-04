@@ -286,4 +286,19 @@ describe('ActionItemsState', () => {
         expect(materialize).toHaveBeenCalledTimes(2);
         expect(settle).toHaveBeenCalledWith('r1');
     });
+
+    // ActionItems review r1 LOW-2: the outcome line belongs to the panel it was
+    // acted in, so opening another metric never shows "Snoozed until …" for an
+    // item that was never in its list.
+    it('what was done is said only in the scope it was done in', async () => {
+        const { state } = setup();
+        await state.act(SNOOZE, 'ftr');
+        expect(state.doneIn('ftr')).toBe('Snoozed until 2026-11-10');
+        expect(state.doneIn('churn_rate')).toBeNull();
+
+        await state.act(RULE, 'churn_rate');
+        await state.confirm(RULE, 'churn_rate');
+        expect(state.doneIn('churn_rate')).toBe('Rule added: Guard the auth branches');
+        expect(state.doneIn('ftr')).toBeNull();
+    });
 });

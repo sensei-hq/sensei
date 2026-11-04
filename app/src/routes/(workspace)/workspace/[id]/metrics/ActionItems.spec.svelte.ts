@@ -29,6 +29,7 @@ function item(over: Partial<ActionItem> = {}): ActionItem {
 function fakeActions(flows: Record<string, ItemFlow> = {}, done: string | null = null) {
     return {
         done,
+        doneIn: vi.fn((_scope: string) => done),
         flow: vi.fn((id: string): ItemFlow => flows[id] ?? { status: 'idle' }),
         act: vi.fn(async () => {}),
         confirm: vi.fn(async () => {}),
@@ -142,13 +143,13 @@ describe('ActionItems', () => {
         expect(q(root, '[data-action-item="r1"] button[data-action-do]')).toBeNull();
     });
 
-    it('clicking the action hands the item to the state', () => {
+    it('clicking the action hands the item and the panel’s scope to the state', () => {
         const actions = fakeActions();
         const it1 = withAction({ kind: 'snooze', label: 'Snooze 7 days', days: 7 });
         const root = mount([it1], null, actions);
         q(root, 'button[data-action-do="snooze"]')!.click();
         flushSync();
-        expect(actions.act).toHaveBeenCalledWith(it1);
+        expect(actions.act).toHaveBeenCalledWith(it1, 'ftr');
     });
 
     it('a working item disables its action and says it is busy', () => {
@@ -169,7 +170,7 @@ describe('ActionItems', () => {
         expect(q(root, '[data-action-confirm-path]')).toBeNull();
         q(root, 'button[data-action-confirm-yes]')!.click();
         flushSync();
-        expect(actions.confirm).toHaveBeenCalledWith(it1);
+        expect(actions.confirm).toHaveBeenCalledWith(it1, 'ftr');
         expect(q(root, 'button[data-action-confirm-yes]')?.textContent?.trim()).toBe('Add the rule');
         q(root, 'button[data-action-confirm-no]')!.click();
         flushSync();
@@ -206,5 +207,19 @@ describe('ActionItems', () => {
         const emptied = mount([], null, fakeActions({}, 'Rule added: Guard the auth branches'));
         expect(q(emptied, '[data-action-done]')?.textContent).toContain('Rule added');
         expect(q(emptied, '[data-action-items-empty]')).not.toBeNull();
+    });
+
+    // ActionItems review r1 LOW-2: the panel acts and reads its outcome in its own
+    // scope (the metric key), so another metric's detail never shows it.
+    it('the panel acts in its scope and shows only that scope’s outcome', () => {
+        const actions = fakeActions({}, null);
+        actions.doneIn.mockImplementation((s: string) => (s === 'ftr' ? 'Snoozed until 2026-11-10' : null));
+        const it1 = item();
+        const root = mount([it1], null, actions);
+        expect(q(root, '[data-action-done]')?.textContent).toContain('Snoozed until 2026-11-10');
+        expect(actions.doneIn).toHaveBeenCalledWith('ftr');
+        q(root, 'button[data-action-do]')!.click();
+        flushSync();
+        expect(actions.act).toHaveBeenCalledWith(it1, 'ftr');
     });
 });

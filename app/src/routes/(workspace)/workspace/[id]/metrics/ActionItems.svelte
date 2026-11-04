@@ -14,7 +14,15 @@
         items,
         error = null,
         actions,
-    }: { items: ActionItem[]; error?: string | null; actions: ItemActions } = $props();
+        scope,
+    }: {
+        items: ActionItem[];
+        error?: string | null;
+        actions: ItemActions;
+        /** The panel's owner (the metric key): what it does, and says it did, belongs to it. */
+        scope: string;
+    } = $props();
+    const done = $derived(actions.doneIn(scope));
 
     // Urgency → chip utility classes. This lookup IS the rendering rule (the one
     // kind of map the guidelines allow inside a component): high → danger,
@@ -33,8 +41,8 @@
         <Eyebrow>Action items</Eyebrow>
     </div>
 
-    {#if actions.done}
-        <p data-action-done class="text-sm text-ink-mute">{actions.done}</p>
+    {#if done}
+        <p data-action-done class="text-sm text-ink-mute">{done}</p>
     {/if}
 
     {#if error}
@@ -95,7 +103,7 @@
                                     variant="primary"
                                     size="sm"
                                     data-action-confirm-yes
-                                    onclick={() => actions.confirm(item)}
+                                    onclick={() => actions.confirm(item, scope)}
                                 >{c.confirmLabel}</Button>
                                 <Button
                                     variant="secondary"
@@ -124,7 +132,7 @@
                                     data-action-do={item.action.kind}
                                     disabled={flow.status === 'working'}
                                     aria-busy={flow.status === 'working'}
-                                    onclick={() => actions.act(item)}
+                                    onclick={() => actions.act(item, scope)}
                                 >{item.action.label}</Button>
                             {/if}
                         </div>
