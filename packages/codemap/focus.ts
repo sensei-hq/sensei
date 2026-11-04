@@ -2,7 +2,7 @@
 // daemon narrows the module map itself — before it folds — and names the focus
 // it applied; the lenses it does not narrow (Hidden coupling, Complexity, Zones)
 // are narrowed here, from those names. Pure, so each is checked against its input.
-import type { CoChange, ComplexityTree, Level0, Zones } from './types';
+import type { CoChange, ComplexityTree, Level0, Tier, Zones } from './types';
 
 export interface FocusSets {
   /** The focused modules. */
@@ -31,8 +31,9 @@ export function focusComplexity(data: ComplexityTree | null, sets: FocusSets | n
   if (!data || !sets) return data;
   const modules = data.modules.filter((m) => sets.members.has(m.id));
   const total = modules.reduce(
-    (t, m) => ({ functions: t.functions + m.functions, complex: t.complex + m.complex, maxCyclo: Math.max(t.maxCyclo, m.maxCyclo), files: t.files + m.files }),
-    { functions: 0, complex: 0, maxCyclo: 0, files: 0 },
+    (t, m) => ({ ...t, functions: t.functions + m.functions, complex: t.complex + m.complex, maxCyclo: Math.max(t.maxCyclo, m.maxCyclo), files: t.files + m.files }),
+    // A sum made here has no tier: the rule is the daemon's, not re-derived.
+    { functions: 0, complex: 0, maxCyclo: 0, files: 0, tier: null as Tier | null },
   );
   return { modules, total, maintainability: null };
 }

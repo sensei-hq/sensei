@@ -100,7 +100,8 @@ pub fn libraries_summary(rows: &[serde_json::Value], top: usize) -> serde_json::
 }
 
 /// A module's functions and how many are over cyclomatic 10 (local qlty).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+/// Serialised with its tier, so the app reads the rule rather than re-deriving it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Complexity {
     pub functions: i64,
     pub complex: i64,
@@ -108,7 +109,6 @@ pub struct Complexity {
 
 /// How a module's complexity reads — the one rule the Complexity lens, its
 /// takeaways and the architecture metrics (#156) all use.
-#[allow(dead_code)] // constructed by `tier` in #156 phase B
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ComplexityTier {
@@ -120,10 +120,31 @@ pub enum ComplexityTier {
 }
 
 impl Complexity {
-    /// Its tier; none when no function was measured. Pending (#156 phase B).
-    #[allow(dead_code)]
+    /// Its tier: over a fifth of its functions above cyclomatic 10 is an outlier,
+    /// over a tenth a warning; none when no function was measured.
     pub fn tier(&self) -> Option<ComplexityTier> {
-        None
+        if self.functions <= 0 {
+            return None;
+        }
+        let share = self.complex as f64 / self.functions as f64;
+        Some(if share > 0.2 {
+            ComplexityTier::Danger
+        } else if share > 0.1 {
+            ComplexityTier::Warning
+        } else {
+            ComplexityTier::Neutral
+        })
+    }
+}
+
+impl serde::Serialize for Complexity {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = s.serialize_struct("Complexity", 3)?;
+        st.serialize_field("functions", &self.functions)?;
+        st.serialize_field("complex", &self.complex)?;
+        st.serialize_field("tier", &self.tier())?;
+        st.end()
     }
 }
 
@@ -547,6 +568,8 @@ pub struct ComplexityNode {
     pub max_cyclo: i64,
     /// Files measured under this row.
     pub files: i64,
+    /// This row's own tier — the rule `Complexity::tier` applies (#156).
+    pub tier: Option<ComplexityTier>,
     pub children: Vec<ComplexityNode>,
 }
 
@@ -557,6 +580,8 @@ pub struct ComplexityTotal {
     pub complex: i64,
     pub max_cyclo: i64,
     pub files: i64,
+    /// The total's tier, by the same rule as every row's (#156).
+    pub tier: Option<ComplexityTier>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -590,12 +615,14 @@ pub fn complexity_tree(files: &[MeasuredFile]) -> ComplexityTree {
         })
         .collect();
     sort_nodes(&mut modules);
-    let total = modules.iter().fold(ComplexityTotal::default(), |t, m| ComplexityTotal {
+    let mut total = modules.iter().fold(ComplexityTotal::default(), |t, m| ComplexityTotal {
         functions: t.functions + m.functions,
         complex: t.complex + m.complex,
         max_cyclo: t.max_cyclo.max(m.max_cyclo),
         files: t.files + m.files,
+        tier: None,
     });
+    total.tier = Complexity { functions: total.functions, complex: total.complex }.tier();
     ComplexityTree { total, modules }
 }
 
@@ -655,16 +682,19 @@ impl<'a> Dir<'a> {
             complex: f.complex,
             max_cyclo: f.max_cyclo,
             files: 1,
+            tier: Complexity { functions: f.functions, complex: f.complex }.tier(),
             children: vec![],
         }));
         sort_nodes(&mut children);
         let sum = |g: fn(&ComplexityNode) -> i64| children.iter().map(g).sum::<i64>();
+        let (functions, complex) = (sum(|c| c.functions), sum(|c| c.complex));
         ComplexityNode {
             id,
             label,
             kind,
-            functions: sum(|c| c.functions),
-            complex: sum(|c| c.complex),
+            functions,
+            complex,
+            tier: Complexity { functions, complex }.tier(),
             max_cyclo: children.iter().map(|c| c.max_cyclo).max().unwrap_or(0),
             files: sum(|c| c.files),
             children,
@@ -677,6 +707,58 @@ fn sort_nodes(nodes: &mut [ComplexityNode]) {
     nodes.sort_by(|a, b| {
         b.complex.cmp(&a.complex).then(b.functions.cmp(&a.functions)).then(a.label.cmp(&b.label))
     });
+}
+
+/// The dependency kinds the code map draws between modules — one list, read by
+/// the diagrams and by the architecture metrics (#156), so the two cannot drift.
+pub const CODEMAP_KINDS: [&str; 2] = ["calls", "imports"];
+/// A pair changed together at least this many times to count (M17).
+pub const COCHANGE_MIN: i64 = 5;
+/// A commit touching more modules than this is a sweep, not a coupling.
+pub const COCHANGE_MAX_MODULES: i64 = 20;
+
+/// The module dependencies the code map analyses — the lens's and the metric's one read.
+pub async fn module_dependencies(
+    pg: &crate::db::pg_store::PgStore,
+    workspace_id: &uuid::Uuid,
+) -> Result<Vec<crate::analysis::layering::Dep>, String> {
+    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
+    pg.dependency_graph(workspace_id, "module", &kinds).await
+}
+
+/// Hidden coupling at the code map's threshold, the strongest `limit` of it:
+/// the pairs, how many pairs changed together at all, and the commits read. The
+/// lens draws the first 40; the metric counts every one (`usize::MAX`).
+pub async fn hidden_pairs(
+    pg: &crate::db::pg_store::PgStore,
+    workspace_id: &uuid::Uuid,
+    limit: usize,
+) -> Result<(Vec<Coupling>, usize, i64), String> {
+    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
+    let ((pairs, commits), edges) = tokio::try_join!(
+        pg.codemap_cochange(workspace_id, COCHANGE_MAX_MODULES, COCHANGE_MIN),
+        pg.structure_edges(workspace_id, "module", &kinds),
+    )?;
+    let pairs: Vec<CoChange> = pairs
+        .into_iter()
+        .map(|(a, b, together, a_changes, b_changes)| CoChange {
+            a,
+            b,
+            together,
+            a_changes,
+            b_changes,
+        })
+        .collect();
+    let edges: Vec<ModuleEdge> = edges
+        .into_iter()
+        .map(|e| ModuleEdge {
+            source: e.source,
+            target: e.target,
+            kind: e.kind,
+            count: e.occurrences,
+        })
+        .collect();
+    Ok((hidden_coupling(&pairs, &edges, limit), pairs.len(), commits))
 }
 
 #[cfg(test)]
@@ -712,7 +794,6 @@ mod tests {
     /// Review G6: the Complexity lens's rows carry the same tier, so the lens's red
     /// rows are the metric's outliers — one rule, read in two places.
     #[test]
-    #[ignore = "pending: #156"]
     fn the_complexity_tree_carries_each_rows_tier() {
         let t = complexity_tree(&[
             measured("pkg/alpha", "alpha/a.rs", 4, 1, 14),
@@ -725,6 +806,13 @@ mod tests {
         assert_eq!(
             (tier("pkg/alpha"), tier("pkg/beta")),
             (serde_json::json!("danger"), serde_json::json!("neutral"))
+        );
+        // The workspace total carries its tier too — the lens does not re-derive it.
+        assert_eq!(
+            serde_json::to_value(t.total).unwrap()["tier"],
+            serde_json::json!("warning"),
+            "2 of 14 (14%): {:?}",
+            t.total
         );
         let file = serde_json::to_value(&t.modules[0].children[0]).unwrap();
         assert!(file["tier"].is_string(), "every row carries one: {file}");
@@ -759,7 +847,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending: #156"]
     fn a_module_complexity_carries_its_tier() {
         let c = |functions, complex| Complexity { functions, complex };
         assert_eq!(c(10, 3).tier(), Some(ComplexityTier::Danger));
