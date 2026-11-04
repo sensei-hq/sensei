@@ -21,12 +21,12 @@ sensei-transcript-formats = { path = "../transcript-formats" }
 axum = { version = "0.8", features = ["json"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 # PostgreSQL
-sqlx-core = { version = "0.8", features = ["_rt-tokio", "chrono", "uuid", "json"] }
-sqlx-postgres = { version = "0.8", features = ["chrono", "uuid", "json"] }
+sqlx-core = { workspace = true, features = ["chrono", "uuid"] }
+sqlx-postgres = { workspace = true, features = ["chrono", "uuid"] }
 
 # Tree-sitter (for Python, Rust, Java)
 tree-sitter = "0.24"
@@ -49,7 +49,7 @@ encoding_rs = "0.8"
 # extraction — its `parse_sql` is path-free and its `Entity` carries a
 # read/write split no other language's parser produces — so this indexer calls
 # it rather than growing a second implementation.
-dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.27.8" }
+dbd-core = { workspace = true }
 tree-sitter-c-sharp = "=0.23.1"
 tree-sitter-kotlin-ng = "1.1"
 tree-sitter-php = "=0.23.11"
@@ -78,8 +78,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 ruzstd = "0.9"
 
 # Serialization
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
 json5 = "0.4"
 toml = "0.8"
 serde_yaml = "0.9"
@@ -95,18 +95,18 @@ notify-debouncer-mini = "0.6"
 notify-rust = "4"
 
 # CLI
-clap = { version = "4", features = ["derive"] }
+clap = { workspace = true }
 
 # Utilities
-sha2 = "0.10"
+sha2 = { workspace = true }
 hex = "0.4"
 base64 = "0.22"
 globset = "0.4"
 walkdir = "2"
 ignore = "0.4"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["v4", "serde"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, default-features = true }
+uuid = { workspace = true }
 thiserror = "2"
 # OS credential store: Keychain (macOS), Credential Manager (Windows), Secret
 # Service over pure-Rust zbus (Linux/BSD). See `gateway_keys`.
@@ -114,9 +114,9 @@ keyring = "4.2"
 # Implementing the gateway's `kernel::ReadinessProbe` (an async trait) for the
 # sensei-owned ModelProvisioning service. Same version the gateway kernel uses.
 async-trait = "0.1"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { workspace = true, features = ["serde"] }
 dirs = "6"
-reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "stream"] }
+reqwest = { workspace = true, features = ["blocking", "stream"] }
 # v0.4.0 split the old gateway/gateway-embedded monolith five ways. sensei
 # consumes three of them; shared model/type vocabulary lives in sensei-kernel,
 # re-exported through these, so we don't depend on kernel directly.
@@ -143,7 +143,7 @@ dojo-protocol = { path = "../dojo-protocol" }
 # release ≥7 days old (1.2.0 published 2026-07-07). Default features only — no
 # `unstable_*` features enabled.
 agent-client-protocol = "=1.2.0"
-sensei-bootstrap = { path = "../bootstrap" }
+sensei-bootstrap = { workspace = true }
 sensei-logger = { path = "../logger" }
 scip = "0.10"
 protobuf = "3.7"
@@ -152,7 +152,7 @@ protobuf = "3.7"
 cc = "1"
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }
 tokio-test = "0.4"
 # Contract test only — cross the MCP↔daemon seam by shaping requests with the
 # real proxy code and issuing them against the in-process router. senseid has no

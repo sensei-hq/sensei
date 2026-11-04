@@ -6,9 +6,10 @@
 
 use std::path::Path;
 
-const PINNED_IN: [&str; 5] = [
-    "crates/bootstrap/Cargo.toml",
-    "crates/senseid/Cargo.toml",
+/// The crates (bootstrap, senseid) inherit `dbd-core` from the root's
+/// `[workspace.dependencies]`, so the root manifest holds the one cargo pin.
+const PINNED_IN: [&str; 4] = [
+    "Cargo.toml",
     ".github/workflows/rust.yml",
     ".github/workflows/release.yml",
     ".github/workflows/dojo-db.yml",
