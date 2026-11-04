@@ -32,7 +32,7 @@ only its own sessions; the Dōjō is the one place work on a shared board comes 
 | B4 | Ticket and sprint figures **sync to the Dōjō**, which merges them across developers. |
 | B5 | **Merged figures show in the Dōjō only.** The app never pulls team figures back. |
 | B6 | The Dōjō receives **ticket titles** and every non-removed ticket of the board, not only totals. |
-| B7 | Branch `feature/delivery_metrics`, cut from `feature/sdlc_metrics` (unmerged): this builds on S5, S6 and S8. |
+| B7 | Branch `feature/delivery_metrics`, first cut from `feature/sdlc_metrics` (it builds on S5, S6 and S8), rebased onto `develop` once that branch merged (#350, 2026-11-04). |
 | B8 | A local workspace whose **allowed** repositories (`plan.allowed`) resolve to more than one Dōjō workspace sends its boards nowhere and logs `tracker_workspace_ambiguous` (fail closed). |
 | B9 | Titles travel for **every** classification, `client` included. A title is the only ticket free text that travels: never a description, comment, assignee, attachment or issue URL. |
 | B10 | `effort_cost` and `rework_cost` travel. The hourly rate itself never does. Jira write-back is unchanged (S9). |

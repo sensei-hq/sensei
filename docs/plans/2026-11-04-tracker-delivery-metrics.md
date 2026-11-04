@@ -18,8 +18,8 @@ milestone:
 ## Objective
 
 Implement `docs/spec/daemon/tracker-delivery-metrics.md`. B, D, C and gate numbers refer to
-that spec. Work goes on `feature/delivery_metrics` (cut from `feature/sdlc_metrics`, B7);
-rebase onto develop when the SDLC PR lands.
+that spec. Work goes on `feature/delivery_metrics`, on `develop` since the SDLC PR (#350)
+merged (B7).
 
 Layers, bottom-up: **DDL (sensei + dojo) → daemon (`sdlc/`, `tracker/`, `tasks/dojo_sync`,
 `db::pg_store`) → Dōjō API (`dojo/src/routes/v1/you/delivery`) → Dōjō reads and view → app.**
