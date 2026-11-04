@@ -1,0 +1,7 @@
+-- Failing probe: always raises with a distinctive message, so the self-test
+-- can tell "the probe ran and failed" apart from "--apply itself failed".
+-- No transaction statements of its own: --apply owns the transaction.
+do $$
+begin
+    raise exception 'apply-probe-canary-failure-42';
+end $$;

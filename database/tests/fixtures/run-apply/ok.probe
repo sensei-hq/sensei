@@ -1,0 +1,11 @@
+-- Positive probe: passes only if the applied DDL is visible. No transaction
+-- statements of its own: --apply owns the transaction.
+do $$
+declare
+    v integer;
+begin
+    select dojo.__apply_b() into v;
+    if v <> 8 then
+        raise exception 'expected __apply_b() = 8, got %', v;
+    end if;
+end $$;

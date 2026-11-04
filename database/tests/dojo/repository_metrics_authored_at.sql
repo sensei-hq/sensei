@@ -16,11 +16,42 @@
 -- (R1 lane rule).
 begin;
 
+-- A fourth index, standing in for index drift: the rename-aside below must
+-- carry every index, not just the three named ones. Rolled back with all else.
+create index repository_metrics_zextra on dojo.repository_metrics(scope);
+
 alter table dojo.repository_metrics rename to repository_metrics__live;
-alter index dojo.repository_metrics_pkey rename to repository_metrics__live_pkey;
-alter index dojo.repository_metrics_metric_id_repository_id_scope_principal__key
-    rename to repository_metrics__live_key;
-alter index dojo.repository_metrics_lookup rename to repository_metrics__live_lookup;
+-- Every live index rides aside, whatever indexes exist when this runs: a
+-- hand-named list silently skips any index added later.
+do $$
+declare
+    ix text;
+    live text;
+begin
+    for ix in select i.relname from pg_index x
+                join pg_class i on i.oid = x.indexrelid
+               where x.indrelid = 'dojo.repository_metrics__live'::regclass loop
+        live := replace(ix, 'repository_metrics', 'repository_metrics__live');
+        if live = ix then
+            live := ix || '__live';
+        end if;
+        execute format('alter index dojo.%I rename to %I', ix, live);
+    end loop;
+end $$;
+
+-- No live index may keep a name the fresh DDL could collide with: a missed
+-- rename lets the fresh file's same-named create silently skip, testing stale objects.
+do $$
+begin
+    if exists (select 1 from pg_indexes
+                where schemaname = 'dojo' and tablename = 'repository_metrics__live'
+                  and position('__live' in indexname) = 0) then
+        raise exception 'rename-aside missed an index: %',
+            (select string_agg(indexname, ', ') from pg_indexes
+              where schemaname = 'dojo' and tablename = 'repository_metrics__live'
+                and position('__live' in indexname) = 0);
+    end if;
+end $$;
 
 \ir ../../ddl/function/dojo/is_iso_instant.ddl
 \ir ../../ddl/table/dojo/repository_metrics.ddl
