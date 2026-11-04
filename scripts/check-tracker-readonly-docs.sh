@@ -120,7 +120,7 @@ EOF
   expect 0 "para.md:4:" "a paragraph with the reference is not reported"
   expect 1 "scenario.feature:1:" ".feature files are read"
   expect 0 "ignored.txt" "other files are not read"
-  if [ "$(printf '%s\n' "$out" | wc -l)" != 3 ]; then
+  if [ "$(printf '%s\n' "$out" | wc -l)" -ne 3 ]; then
     printf 'FAIL: one line per stale unit (got: %s)\n' "$out" >&2; fail=1
   fi
   run_check "$dir/members.md" >/dev/null || { printf 'FAIL: a clean file exits 0\n' >&2; fail=1; }
