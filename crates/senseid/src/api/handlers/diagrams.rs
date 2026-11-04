@@ -4,6 +4,7 @@
 //! shape its view already produces, so the screen and any other consumer cannot
 //! disagree about what a span or a level means.
 
+use crate::analysis::codemap::{COCHANGE_MIN, CODEMAP_KINDS};
 use crate::analysis::neighbourhood::Side;
 use crate::api::state::AppState;
 use axum::{
@@ -495,24 +496,6 @@ pub(crate) async fn layering(
     .await
 }
 
-/// GET /api/workspaces/{id}/diagrams/zones
-///
-/// Martin's abstractness against instability, one point per module. The main
-/// sequence is `A + I = 1`; `distance` is how far off it a module sits, and
-/// `zone` names where — `pain` (concrete and depended upon), `useless`
-/// (abstract and depended upon by nothing), `risk`, or `main`.
-///
-/// No parameters. The grain is the module, which is the grain the mockup uses
-/// and the only one with enough points to read a sequence off — a workspace here
-/// is single digits of packages.
-///
-/// `abstractness`, `instability`, `distance` and `zone` can be NULL, and the
-/// screen MUST omit those points rather than drawing them at an axis origin.
-/// `coverage.unplaceable` counts them, so an omitted point is distinguishable
-/// from one that genuinely sits at zero.
-/// What a Code map band counts: calls and imports (M17).
-use crate::analysis::codemap::{COCHANGE_MIN, CODEMAP_KINDS};
-
 #[derive(Deserialize)]
 pub(crate) struct CodemapQuery {
     #[serde(rename = "groupBy")]
@@ -883,6 +866,21 @@ pub(crate) async fn codemap_complexity(
     .await
 }
 
+/// GET /api/workspaces/{id}/diagrams/zones
+///
+/// Martin's abstractness against instability, one point per module. The main
+/// sequence is `A + I = 1`; `distance` is how far off it a module sits, and
+/// `zone` names where — `pain` (concrete and depended upon), `useless`
+/// (abstract and depended upon by nothing), `risk`, or `main`.
+///
+/// No parameters. The grain is the module, which is the grain the mockup uses
+/// and the only one with enough points to read a sequence off — a workspace here
+/// is single digits of packages.
+///
+/// `abstractness`, `instability`, `distance` and `zone` can be NULL, and the
+/// screen MUST omit those points rather than drawing them at an axis origin.
+/// `coverage.unplaceable` counts them, so an omitted point is distinguishable
+/// from one that genuinely sits at zero.
 pub(crate) async fn zones(
     State(state): State<AppState>,
     Path(id): Path<String>,

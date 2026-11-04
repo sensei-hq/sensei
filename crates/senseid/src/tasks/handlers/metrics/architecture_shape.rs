@@ -188,6 +188,10 @@ pub fn shape_by_repository(input: &ShapeInput<'_>) -> Vec<ShapeReading> {
     readings
 }
 
+/// The metric counts every hidden pair at the code map's threshold — never the
+/// lens's display cap of 40 (review G7, L-3).
+pub const EVERY_PAIR: usize = usize::MAX;
+
 /// Each module's one repository, deduplicated; a module in two is an error (G9).
 pub fn module_homes(rows: Vec<(String, uuid::Uuid)>) -> Result<Vec<(String, uuid::Uuid)>, String> {
     let mut home: std::collections::BTreeMap<String, uuid::Uuid> =
@@ -250,7 +254,7 @@ pub async fn write_shape(
         pg.architecture_module_repositories(workspace_id),
         module_dependencies(pg, workspace_id),
         pg.component_zones(workspace_id),
-        hidden_pairs(pg, workspace_id, usize::MAX),
+        hidden_pairs(pg, workspace_id, EVERY_PAIR),
         pg.codemap_module_complexity(workspace_id),
         pg.repository_index_complete(workspace_id),
     )?;
@@ -610,17 +614,15 @@ mod tests {
             .unwrap();
     }
 
-    /// End to end (#156): a fully indexed repository whose two modules depend on
-    /// each other stores all five rows — the cycle with its members, the one Up
-    /// edge, and zeros for the rest — for that repository, scope repo, read
-    /// through the same reads the lenses make.
-    #[tokio::test]
-    async fn the_shape_of_an_indexed_repository_is_stored_as_its_five_rows() {
+    /// Two modules that depend on each other, in one repository — fully indexed
+    /// (every file decided against its expected count) or left mid-walk.
+    async fn seed_cycle_repository(
+        pg: &crate::db::pg_store::PgStore,
+        complete: bool,
+    ) -> (uuid::Uuid, uuid::Uuid, String) {
         use crate::db::pg_store::graph_seed::SeedGraph;
-        let pg = crate::db::pg_store::PgStore::test_store().await;
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) =
-            crate::tasks::test_support::seed_metrics_workspace_folder(&pg, &uniq).await;
+        let (pid, fid) = crate::tasks::test_support::seed_metrics_workspace_folder(pg, &uniq).await;
         let pkg = format!("sh{}", uniq.simple());
         let def = |file: &'static str| crate::db::pg_store::FqnDef {
             file_path: file,
@@ -657,24 +659,37 @@ mod tests {
                 .await
                 .unwrap();
         }
-        // Fully indexed: every expected file decided.
         let run = |sql: &'static str| sqlx_core::query::query(sql);
-        run("UPDATE sensei.files SET parsed_at = now() WHERE folder_id = $1")
+        if complete {
+            run("UPDATE sensei.files SET parsed_at = now() WHERE folder_id = $1")
+                .bind(fid)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            run("UPDATE sensei.folders SET props = props || jsonb_build_object('expected_files', (SELECT count(*) FROM sensei.files WHERE folder_id = $1)) WHERE id = $1")
             .bind(fid)
             .execute(pg.pool())
             .await
             .unwrap();
-        run("UPDATE sensei.folders SET props = props || jsonb_build_object('expected_files', (SELECT count(*) FROM sensei.files WHERE folder_id = $1)) WHERE id = $1")
-            .bind(fid)
-            .execute(pg.pool())
-            .await
-            .unwrap();
+        }
         let (rid,): (uuid::Uuid,) =
             sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
                 .bind(fid)
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
+        (pid, rid, pkg)
+    }
+
+    /// End to end (#156): a fully indexed repository whose two modules depend on
+    /// each other stores all five rows — the cycle with its members, the one Up
+    /// edge, and zeros for the rest — for that repository, scope repo, read
+    /// through the same reads the lenses make.
+    #[tokio::test]
+    async fn the_shape_of_an_indexed_repository_is_stored_as_its_five_rows() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let (pid, rid, pkg) = seed_cycle_repository(&pg, true).await;
+        let run = |sql: &'static str| sqlx_core::query::query(sql);
         let ids = pg.active_metric_ids("architecture").await.unwrap();
         let day = chrono::NaiveDate::from_ymd_opt(2020, 7, 1).unwrap();
         write_shape(&pg, &pid, day, &ids).await.unwrap();
@@ -713,5 +728,177 @@ mod tests {
             (get("hidden_coupling_pairs").1, get("complexity_outlier_modules").1),
             (0.0, 0.0)
         );
+    }
+
+    /// Review L-1: an index still being walked is not measured — `write_shape`
+    /// stores no row for that repository, not a row of zeros.
+    #[tokio::test]
+    async fn an_index_still_being_walked_stores_no_shape_row() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let (pid, rid, _) = seed_cycle_repository(&pg, false).await;
+        let ids = pg.active_metric_ids("architecture").await.unwrap();
+        let day = chrono::NaiveDate::from_ymd_opt(2020, 7, 2).unwrap();
+        write_shape(&pg, &pid, day, &ids).await.unwrap();
+        let (n,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.repository_metrics rm JOIN sensei.metrics m ON m.id = rm.metric_id
+              WHERE rm.repository_id = $1 AND rm.computed_on = $2
+                AND m.key IN ('dependency_cycles','layer_up_edges','zone_of_pain_modules','hidden_coupling_pairs','complexity_outlier_modules')",
+        )
+        .bind(rid)
+        .bind(day)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    /// The real shape (review H-1): the walk counts every file on the repository's
+    /// root folder, which owns them all; its subfolders own no file and carry no
+    /// count. Such a subfolder is complete by definition — before the fix every
+    /// live repository read incomplete and #156 never wrote a row.
+    async fn seed_walked_repository(
+        pg: &crate::db::pg_store::PgStore,
+    ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+        let pid = pg
+            .create_workspace(&format!("_test:walked:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let rid =
+            crate::tasks::test_support::seed_bare_repository(pg, &pid, &uuid::Uuid::new_v4()).await;
+        let (root, root_id): (uuid::Uuid, uuid::Uuid) = sqlx_core::query_as::query_as(
+            "SELECT id, root_id FROM sensei.folders WHERE repository_id = $1",
+        )
+        .bind(rid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        for f in ["a.rs", "b.rs"] {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.files (folder_id, file_path, mtime, content_hash, parsed_at) VALUES ($1, $2, 0, 'h', now())",
+            )
+            .bind(root)
+            .bind(f)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        sqlx_core::query::query("UPDATE sensei.folders SET props = props || '{\"expected_files\": 2}'::jsonb WHERE id = $1")
+            .bind(root)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        for sub in ["src", "src/inner"] {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.folders (root_id, parent_id, kind, name, path, abs_path, repository_id)
+                 VALUES ($1, $2, 'folder'::sensei.folder_kind, $3, $3, $4, $5)",
+            )
+            .bind(root_id)
+            .bind(root)
+            .bind(sub)
+            .bind(format!("/_test/walked-{}/{sub}", uuid::Uuid::new_v4()))
+            .bind(rid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        (pid, rid, root)
+    }
+
+    #[tokio::test]
+    async fn readiness_reads_a_walked_root_with_empty_subfolders_as_complete() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let (pid, rid, root) = seed_walked_repository(&pg).await;
+        assert_eq!(
+            pg.repository_index_complete(&pid).await.unwrap(),
+            vec![(rid, true)],
+            "walked root, empty subfolders"
+        );
+
+        // Still incomplete: a root walked short of its count.
+        sqlx_core::query::query("UPDATE sensei.folders SET props = props || '{\"expected_files\": 3}'::jsonb WHERE id = $1")
+            .bind(root)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            pg.repository_index_complete(&pid).await.unwrap(),
+            vec![(rid, false)],
+            "short of its count"
+        );
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// Still incomplete: a subfolder that owns a file nobody counted.
+    #[tokio::test]
+    async fn readiness_keeps_a_subfolder_owning_uncounted_files_incomplete() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let (pid, rid, root) = seed_walked_repository(&pg).await;
+        let (sub,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.folders WHERE parent_id = $1 LIMIT 1",
+        )
+        .bind(root)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query("INSERT INTO sensei.files (folder_id, file_path, mtime, content_hash) VALUES ($1, 'x.rs', 0, 'h')")
+            .bind(sub)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(pg.repository_index_complete(&pid).await.unwrap(), vec![(rid, false)]);
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// Review L-2: a repository is complete only when EVERY root of it is — a
+    /// second root never walked keeps it incomplete (`bool_and`, not `bool_or`).
+    #[tokio::test]
+    async fn readiness_needs_every_root_of_the_repository() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let (pid, rid, root) = seed_walked_repository(&pg).await;
+        let (root_id,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT root_id FROM sensei.folders WHERE id = $1")
+                .bind(root)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.folders (root_id, kind, name, path, abs_path, repository_id)
+             VALUES ($1, 'git'::sensei.folder_kind, 'second', 'second', $2, $3)",
+        )
+        .bind(root_id)
+        .bind(format!("/_test/second-{}", uuid::Uuid::new_v4()))
+        .bind(rid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            pg.repository_index_complete(&pid).await.unwrap(),
+            vec![(rid, false)],
+            "a second root never walked"
+        );
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// Review L-3: the metric counts every hidden pair — never the lens's cap.
+    #[test]
+    fn the_metric_reads_every_hidden_pair() {
+        assert_eq!(EVERY_PAIR, usize::MAX);
     }
 }

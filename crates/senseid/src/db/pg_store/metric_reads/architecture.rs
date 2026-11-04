@@ -134,7 +134,8 @@ impl PgStore {
     }
 
     /// Whether each repository of the workspace is fully indexed: every one of
-    /// its root folders in the workspace has `folder_completeness.subtree_complete`.
+    /// its ROOT folders (no parent) in the workspace has
+    /// `folder_completeness.subtree_complete` — a root's subtree covers its subfolders.
     /// A root folder with no completeness row is NOT complete — never assumed.
     /// The readiness read targets (TG4) share.
     pub async fn repository_index_complete(
@@ -148,6 +149,7 @@ impl PgStore {
                LEFT JOIN sensei.folder_completeness fc ON fc.id = f.id
               WHERE fw.workspace_id = $1
                 AND f.repository_id IS NOT NULL
+                AND f.parent_id IS NULL
               GROUP BY f.repository_id
               ORDER BY f.repository_id",
         )

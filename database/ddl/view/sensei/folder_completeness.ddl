@@ -21,6 +21,7 @@ with recursive local as (
     -- `parsed_at` is null until a parse actually records an outcome.
     select f.id
          , f.parent_id
+         , f.kind
          , f.status
          , (f.props->>'expected_files')::bigint as expected
          , count(s.*) filter (
@@ -38,19 +39,27 @@ with recursive local as (
                where s.parsed_at is not null and s.skip_reason is null
            ) as parsed
          , count(s.*) filter (where s.skip_reason is not null) as skipped
+         , count(s.*)                                                as owned
       from folders f
       left join files s on s.folder_id = f.id
-     group by f.id, f.parent_id, f.status, (f.props->>'expected_files')::bigint
+     group by f.id, f.parent_id, f.kind, f.status, (f.props->>'expected_files')::bigint
 ),
 incomplete as (
     -- Seed: a folder short of its own denominator. `expected is null` means
     -- NEVER WALKED, which is incomplete — and is deliberately distinct from
     -- expected = 0 (walked, holds no indexable files), which is complete.
     -- Collapsing the two would declare every unvisited folder finished.
+    -- Except a plain subfolder (`folder`, `module`) that owns no file: the walk
+    -- counts a repository's files on its repository folder, which owns them all,
+    -- so such a folder is never a walk target and is complete by definition
+    -- (#156 H-1 — before this, every live repository read incomplete through its
+    -- empty subfolders). A repository folder (git, standalone, subtree) never
+    -- walked — at any depth — and any folder holding files nobody counted, stay
+    -- incomplete.
     select id, parent_id
       from local
-     where expected is null
-        or decided < expected
+     where decided < expected
+        or (expected is null and (owned > 0 or kind not in ('folder', 'module')))
     union
     -- Propagate UPWARD: a folder containing an incomplete descendant is itself
     -- incomplete. The recursion is over TREE STRUCTURE (parent_id), never over
