@@ -29,6 +29,7 @@ function item(over: Partial<ActionItem> = {}): ActionItem {
 function fakeActions(flows: Record<string, ItemFlow> = {}, done: string | null = null) {
     return {
         done,
+        doneIn: vi.fn((_scope: string) => done),
         flow: vi.fn((id: string): ItemFlow => flows[id] ?? { status: 'idle' }),
         act: vi.fn(async () => {}),
         confirm: vi.fn(async () => {}),
@@ -206,5 +207,19 @@ describe('ActionItems', () => {
         const emptied = mount([], null, fakeActions({}, 'Rule added: Guard the auth branches'));
         expect(q(emptied, '[data-action-done]')?.textContent).toContain('Rule added');
         expect(q(emptied, '[data-action-items-empty]')).not.toBeNull();
+    });
+
+    // ActionItems review r1 LOW-2: the panel acts and reads its outcome in its own
+    // scope (the metric key), so another metric's detail never shows it.
+    it.skip('pending: actionitems-lows — the panel acts in its scope and shows only that scope’s outcome', () => {
+        const actions = fakeActions({}, null);
+        actions.doneIn.mockImplementation((s: string) => (s === 'ftr' ? 'Snoozed until 2026-11-10' : null));
+        const it1 = item();
+        const root = mount([it1], null, actions);
+        expect(q(root, '[data-action-done]')?.textContent).toContain('Snoozed until 2026-11-10');
+        expect(actions.doneIn).toHaveBeenCalledWith('ftr');
+        q(root, 'button[data-action-do]')!.click();
+        flushSync();
+        expect(actions.act).toHaveBeenCalledWith(it1, 'ftr');
     });
 });

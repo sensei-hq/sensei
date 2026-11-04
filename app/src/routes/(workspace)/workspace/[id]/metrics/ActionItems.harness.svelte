@@ -7,7 +7,8 @@
         items,
         error = null,
         actions,
-    }: { items: ActionItem[]; error?: string | null; actions: ItemActions } = $props();
+        scope = 'ftr',
+    }: { items: ActionItem[]; error?: string | null; actions: ItemActions; scope?: string } = $props();
 </script>
 
-<ActionItems {items} {error} {actions} />
+<ActionItems {items} {error} {actions} {scope} />

@@ -14,7 +14,14 @@
         items,
         error = null,
         actions,
-    }: { items: ActionItem[]; error?: string | null; actions: ItemActions } = $props();
+        scope: _scope,
+    }: {
+        items: ActionItem[];
+        error?: string | null;
+        actions: ItemActions;
+        /** pending: actionitems-lows — the panel's owner (the metric key). */
+        scope?: string;
+    } = $props();
 
     // Urgency → chip utility classes. This lookup IS the rendering rule (the one
     // kind of map the guidelines allow inside a component): high → danger,

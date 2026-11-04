@@ -96,4 +96,31 @@ describe('metric detail', () => {
     await tick();
     expect(reveal).toHaveBeenCalledWith('/repo/src/ftr.rs');
   });
+
+  // ActionItems review r1 LOW-2: the outcome of a snooze on one metric's detail
+  // does not follow the person to another metric's detail.
+  it.skip('pending: actionitems-lows — a snooze on one metric is not said on another metric’s detail', async () => {
+    const { api, host } = setup();
+    const CHURN = { ...ROW, metric: 'churn_rate', direction: 'lower_better' };
+    (api.getWorkspaceMetrics as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      ok({ metrics: [ROW, CHURN], count: 2, narrative: null }));
+    (api.getMetricsRegistry as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ok({ metrics: [
+      { key: 'ftr', family: 'outcome', name: 'First-try rate', formula: 'x' },
+      { key: 'churn_rate', family: 'quality', name: 'Churn rate', formula: 'y' },
+    ], count: 2 }));
+    (api.tryGetWorkspaceRecommendations as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      ok([{ id: 'r1', title: 'ftr fell across the torii repositories', status: 'pending', actionType: 'cross_workspace' }]));
+    (api as Record<string, unknown>).trySnoozeWorkspaceRecommendation = vi.fn(() =>
+      ok({ ok: true, snoozed_until: '2026-11-10T09:00:00+00:00' }));
+    const data = render(host);
+    await tick();
+    (target.querySelector('[data-action-item="r1"] button[data-action-do="snooze"]') as HTMLButtonElement).click();
+    await tick();
+    expect(target.querySelector('[data-action-done]')?.textContent).toContain('Snoozed until 2026-11-10');
+
+    data.selectedKey = 'churn_rate';
+    await tick();
+    expect(target.querySelector('[data-component="action-items"]')).not.toBeNull();
+    expect(target.querySelector('[data-action-done]')).toBeNull();
+  });
 });

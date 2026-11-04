@@ -242,3 +242,45 @@ async fn a_snoozed_rec_is_never_the_focal_pick() {
     assert_eq!(ranked, vec![next], "the ranking pass never sees a snoozed rec");
     s.delete_workspace(&ws).await.unwrap();
 }
+
+/// ActionItems review r1 LOW-1: a hotspot file outside the repository (the
+/// session edited `~/.zshrc`, or another repository's file) is not offered, even
+/// though it exists; one inside the repository by its absolute path is.
+#[tokio::test]
+#[ignore = "pending: actionitems-lows"]
+async fn a_rework_file_outside_its_repository_is_not_offered() {
+    let s = pg_store().await;
+    let ws = s.create_workspace("_test:rework_outside", None, None).await.unwrap();
+    let folder =
+        create_test_folder(&s, &format!("rework_out_{}", uuid::Uuid::new_v4().simple())).await;
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::write(repo.path().join("inside.rs"), "").unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::write(elsewhere.path().join("outside.rs"), "").unwrap();
+    query_as::<_, (uuid::Uuid,)>(
+        "UPDATE sensei.folders SET abs_path = $2 WHERE id = $1 RETURNING id",
+    )
+    .bind(folder)
+    .bind(repo.path().to_string_lossy().to_string())
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    let inside_path = repo.path().join("inside.rs");
+    let outside_path = elsewhere.path().join("outside.rs");
+    let inside =
+        pattern(&s, &ws, Some(&folder), &format!("rework: {}", inside_path.display())).await;
+    let outside =
+        pattern(&s, &ws, Some(&folder), &format!("rework: {}", outside_path.display())).await;
+    let r_in =
+        rec(&s, &ws, "_test:in", "audit_stale", serde_json::json!({ "patterns": [inside] })).await;
+    let r_out =
+        rec(&s, &ws, "_test:out", "audit_stale", serde_json::json!({ "patterns": [outside] }))
+            .await;
+
+    let recs = s.get_workspace_recommendations(&ws, Some("pending")).await.unwrap();
+    let file =
+        |id: &uuid::Uuid| recs.iter().find(|r| r["id"] == id.to_string()).unwrap()["file"].clone();
+    assert_eq!(file(&r_in), serde_json::json!(inside_path.to_string_lossy()));
+    assert_eq!(file(&r_out), serde_json::Value::Null, "outside the repository: not offered");
+    s.delete_workspace(&ws).await.unwrap();
+}

@@ -1553,4 +1553,27 @@ mod rework_file_path_tests {
         assert_eq!(rework_file_path("rework: ../../etc/passwd", Some("/r")), None);
         assert_eq!(rework_file_path("rework: /r/../etc/passwd", None), None);
     }
+
+    /// ActionItems review r1 LOW-1: a session can edit a file outside its
+    /// repository (`~/.zshrc`, another repository); that path is not this
+    /// repository's to offer. An absolute path counts only under the folder.
+    #[test]
+    #[ignore = "pending: actionitems-lows"]
+    fn an_absolute_path_is_offered_only_inside_its_folder() {
+        assert_eq!(
+            rework_file_path("rework: /r/src/a.rs", Some("/r")).as_deref(),
+            Some("/r/src/a.rs")
+        );
+        assert_eq!(
+            rework_file_path("rework: /r/src/a.rs", Some("/r/")).as_deref(),
+            Some("/r/src/a.rs")
+        );
+        assert_eq!(rework_file_path("rework: /etc/hosts", Some("/r")), None);
+        assert_eq!(
+            rework_file_path("rework: /rx/a.rs", Some("/r")),
+            None,
+            "a sibling, not a child"
+        );
+        assert_eq!(rework_file_path("rework: /x/b.rs", None), None, "no folder to confine it to");
+    }
 }

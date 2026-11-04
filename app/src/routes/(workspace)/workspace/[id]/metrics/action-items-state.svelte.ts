@@ -52,7 +52,7 @@ const IDLE: ItemFlow = Object.freeze({ status: 'idle' });
 const WORKING: ItemFlow = Object.freeze({ status: 'working' });
 
 /** What the panel renders from and calls: the state's surface, nothing else. */
-export type ItemActions = Pick<ActionItemsState, 'done' | 'flow' | 'act' | 'confirm' | 'cancel'>;
+export type ItemActions = Pick<ActionItemsState, 'done' | 'doneIn' | 'flow' | 'act' | 'confirm' | 'cancel'>;
 
 /** The confirm view a preview implies. A consent-required preview is a file,
  *  whatever the item guessed; anything else is a rule. */
@@ -91,13 +91,19 @@ export class ActionItemsState {
 
     constructor(private readonly deps: ActionItemsDeps) {}
 
+    /** pending: actionitems-lows — what the last settled action did, for the
+     *  panel it was acted in (`scope`, the metric's detail) only. */
+    doneIn(_scope: string): string | null {
+        throw new Error('pending: actionitems-lows');
+    }
+
     flow(id: string): ItemFlow {
         return this.#flows.get(id) ?? IDLE;
     }
 
     /** Do the item's action. A second call while one is in flight is ignored;
      *  after a failure (or a cancel) it starts again from the top. */
-    async act(item: ActionItem): Promise<void> {
+    async act(item: ActionItem, _scope?: string): Promise<void> {
         if (this.flow(item.id).status === 'working') return;
         const { api, workspaceId } = this.deps;
         const action = item.action;
@@ -139,7 +145,7 @@ export class ActionItemsState {
     }
 
     /** Write what the person was shown. Only from a confirm. */
-    async confirm(item: ActionItem): Promise<void> {
+    async confirm(item: ActionItem, _scope?: string): Promise<void> {
         const flow = this.flow(item.id);
         const preview = this.#previews.get(item.id);
         if (flow.status !== 'confirm' || !preview) return;
