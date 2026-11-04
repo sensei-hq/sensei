@@ -57,4 +57,30 @@ describe('readExtensions', () => {
   it('a failed read is an error, not "none installed"', async () => {
     expect(await readExtensions({ tryGetInstalledItems: async () => down })).toEqual({ extensions: [], error: 'Service Unavailable' });
   });
+
+  // D83, L0 ruling on L5 settings/extensions tests r1: `enabled ?? true` draws
+  // a row the daemon never reported as on, and the toggle would then write that
+  // invented state back. Unknown is not a state to guess.
+  it('a row with no `enabled` is unknown, never on', async () => {
+    const d = await readExtensions({ tryGetInstalledItems: async () => ok([{ name: 'tdd', kind: 'skill', path: '/x' }]) });
+    expect(d.extensions[0]?.name).toBe('tdd');
+    expect(d.extensions[0]?.enabled ?? null).toBeNull();
+  });
+
+  // L0 ruling on tests r1 (L2): a row can be neither drawn nor toggled without
+  // a kind and a name — the URL would say `…/unknown/enabled`. Skipped with the
+  // reason, never invented.
+  it('skips a row that reports no kind, with the reason', async () => {
+    const d = await readExtensions({
+      tryGetInstalledItems: async () => ok([{ name: 'ghost', path: '/x', enabled: true }, { name: 'tdd', kind: 'skill', path: '/y', enabled: true }]),
+    });
+    expect(d.extensions.map((e) => e.name)).toEqual(['tdd']);
+    expect(d.skipped).toEqual([{ name: 'ghost', reason: 'kind not reported' }]);
+  });
+
+  it('skips a row that reports no name, with the reason', async () => {
+    const d = await readExtensions({ tryGetInstalledItems: async () => ok([{ kind: 'skill', path: '/x', enabled: false }]) });
+    expect(d.extensions).toEqual([]);
+    expect(d.skipped).toEqual([{ name: '', reason: 'name not reported' }]);
+  });
 });
