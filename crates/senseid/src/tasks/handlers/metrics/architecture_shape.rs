@@ -21,11 +21,12 @@
 //! compares what is found at HEAD with what was found at base, by identity — so
 //! each reading carries its cycles' member sets, its Up edges and its pain modules.
 
-use crate::analysis::codemap::Complexity;
-use crate::analysis::layering::Dep;
+use std::collections::HashSet;
+
+use crate::analysis::codemap::{Complexity, ComplexityTier};
+use crate::analysis::layering::{Conformance, Dep, analyse};
 
 /// What the shape is read from, for one workspace.
-#[allow(dead_code)] // read by `shape_by_repository` in #156 phase B
 pub struct ShapeInput<'a> {
     /// Every repository of the workspace, and whether its index is complete
     /// (`folder_completeness.subtree_complete` of its root folder).
@@ -75,24 +76,213 @@ pub struct ShapeReading {
 /// readings: scope `repo`, no identity, no commit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShapeRow {
+    /// The repository the reading is of — the only thing that tells two
+    /// repositories' rows apart (no identity, no commit).
+    pub repository_id: uuid::Uuid,
     pub key: &'static str,
     pub value: f64,
     pub props: serde_json::Value,
     pub scope: &'static str,
     pub identity: Option<String>,
     pub commit_sha: Option<String>,
+    pub source: &'static str,
+    pub grain: &'static str,
 }
 
-/// A reading's rows, one per catalogued key. Pending (#156 phase B).
-#[allow(dead_code)]
-pub fn shape_rows(_reading: &ShapeReading) -> Vec<ShapeRow> {
-    Vec::new()
+/// A reading's rows, one per catalogued key — all five always, a clean
+/// repository's at 0, so a target can be met on it.
+pub fn shape_rows(reading: &ShapeReading) -> Vec<ShapeRow> {
+    let f = &reading.findings;
+    let row = |key: &'static str, value: i64, props: serde_json::Value| ShapeRow {
+        repository_id: reading.repository_id,
+        key,
+        value: value as f64,
+        props,
+        scope: "repo",
+        identity: None,
+        commit_sha: None,
+        source: "measured",
+        grain: "daily",
+    };
+    vec![
+        row(
+            "dependency_cycles",
+            reading.cycles,
+            serde_json::json!({
+                "cycles": f.cycles,
+                "largest": reading.largest_cycle,
+                "cross_repository_deps": reading.cross_repository_deps,
+            }),
+        ),
+        row(
+            "layer_up_edges",
+            reading.up_edges,
+            serde_json::json!({ "up_edges": f.up_edges, "cross_repository_deps": reading.cross_repository_deps }),
+        ),
+        row("zone_of_pain_modules", reading.pain_modules, serde_json::json!({ "modules": f.pain })),
+        row("hidden_coupling_pairs", reading.hidden_pairs, serde_json::json!({})),
+        row("complexity_outlier_modules", reading.complexity_outliers, serde_json::json!({})),
+    ]
 }
 
-/// Each complete repository that has modules, read. Pending (#156 phase B).
-#[allow(dead_code)]
-pub fn shape_by_repository(_input: &ShapeInput<'_>) -> Vec<ShapeReading> {
-    Vec::new()
+/// Each complete repository that has modules, read on its own subgraph.
+pub fn shape_by_repository(input: &ShapeInput<'_>) -> Vec<ShapeReading> {
+    let home: std::collections::HashMap<&str, uuid::Uuid> =
+        input.modules.iter().map(|(m, r)| (m.as_str(), *r)).collect();
+    let mut readings = Vec::new();
+    for (repo, complete) in input.repositories {
+        if !complete {
+            continue; // an incomplete index is not measured
+        }
+        let mut units: Vec<String> =
+            input.modules.iter().filter(|(_, r)| r == repo).map(|(m, _)| m.clone()).collect();
+        if units.is_empty() {
+            continue; // nothing indexed here to read
+        }
+        units.sort();
+        let mine: HashSet<&str> = units.iter().map(String::as_str).collect();
+        // Its own subgraph: a dependency on another repository's module is not
+        // followed, and counted; one on no known module is left to `analyse`.
+        let mut cross = 0i64;
+        let mut deps: Vec<Dep> = Vec::new();
+        for d in input.deps.iter().filter(|d| mine.contains(d.source.as_str())) {
+            match home.get(d.target.as_str()) {
+                Some(r) if r != repo => cross += 1,
+                _ => deps.push(d.clone()),
+            }
+        }
+        let layering = analyse(&units, &deps);
+        let cycles: Vec<Vec<String>> = layering.cycles.iter().map(|c| c.members.clone()).collect();
+        let mut up: Vec<String> = layering
+            .deps
+            .iter()
+            .filter(|d| d.conformance == Conformance::Up)
+            .map(|d| format!("{}→{}", d.source, d.target))
+            .collect();
+        up.sort();
+        let mut pain: Vec<String> =
+            input.pain.iter().filter(|m| mine.contains(m.as_str())).cloned().collect();
+        pain.sort();
+        let hidden = input
+            .hidden
+            .iter()
+            .filter(|(a, b)| mine.contains(a.as_str()) && mine.contains(b.as_str()))
+            .count() as i64;
+        let outliers = input
+            .complexity
+            .iter()
+            .filter(|(m, c)| mine.contains(m.as_str()) && c.tier() == Some(ComplexityTier::Danger))
+            .count() as i64;
+        readings.push(ShapeReading {
+            repository_id: *repo,
+            cycles: cycles.len() as i64,
+            largest_cycle: cycles.first().map_or(0, |c| c.len() as i64),
+            up_edges: up.len() as i64,
+            pain_modules: pain.len() as i64,
+            hidden_pairs: hidden,
+            complexity_outliers: outliers,
+            cross_repository_deps: cross,
+            findings: ShapeFindings { cycles, up_edges: up, pain },
+        });
+    }
+    readings
+}
+
+/// Each module's one repository, deduplicated; a module in two is an error (G9).
+pub fn module_homes(rows: Vec<(String, uuid::Uuid)>) -> Result<Vec<(String, uuid::Uuid)>, String> {
+    let mut home: std::collections::BTreeMap<String, uuid::Uuid> =
+        std::collections::BTreeMap::new();
+    for (module, repo) in rows {
+        match home.get(&module) {
+            Some(r) if *r != repo => {
+                return Err(format!("module {module} is in two repositories ({r} and {repo})"));
+            }
+            _ => {
+                home.insert(module, repo);
+            }
+        }
+    }
+    Ok(home.into_iter().collect())
+}
+
+/// A stored row as the store takes it — the one conversion (review r3 R3-2).
+fn metric_row<'a>(
+    row: &'a ShapeRow,
+    metric_id: &'a uuid::Uuid,
+    day: chrono::NaiveDate,
+) -> crate::db::pg_store::MetricRow<'a> {
+    crate::db::pg_store::MetricRow {
+        metric_id,
+        repository_id: &row.repository_id,
+        scope: row.scope,
+        identity: row.identity.as_deref(),
+        commit_sha: row.commit_sha.as_deref(),
+        computed_on: day,
+        grain: row.grain,
+        value: row.value,
+        props: &row.props,
+        source: row.source,
+    }
+}
+
+/// Read the workspace's shape and write its rows (#156): the same reads the
+/// lenses make — the module graph, the Zones lens's pain, hidden coupling at its
+/// threshold (every pair, not the lens's 40), the module complexity — and each
+/// repository's index readiness. Any failed read fails the task (D83).
+pub async fn write_shape(
+    pg: &crate::db::pg_store::PgStore,
+    workspace_id: &uuid::Uuid,
+    day: chrono::NaiveDate,
+    ids: &std::collections::HashMap<String, uuid::Uuid>,
+) -> Result<u32, String> {
+    use crate::analysis::codemap::{hidden_pairs, module_dependencies};
+    const KEYS: [&str; 5] = [
+        "dependency_cycles",
+        "layer_up_edges",
+        "zone_of_pain_modules",
+        "hidden_coupling_pairs",
+        "complexity_outlier_modules",
+    ];
+    if !KEYS.iter().any(|k| ids.contains_key(*k)) {
+        return Ok(0); // none of them active: nothing to read
+    }
+    let (homes, deps, zones, (hidden, _, _), complexity, ready) = tokio::try_join!(
+        pg.architecture_module_repositories(workspace_id),
+        module_dependencies(pg, workspace_id),
+        pg.component_zones(workspace_id),
+        hidden_pairs(pg, workspace_id, usize::MAX),
+        pg.codemap_module_complexity(workspace_id),
+        pg.repository_index_complete(workspace_id),
+    )?;
+    let modules = module_homes(homes)?;
+    let pain: Vec<String> = zones
+        .into_iter()
+        .filter(|z| z.zone.as_deref() == Some("pain"))
+        .map(|z| z.component)
+        .collect();
+    let hidden: Vec<(String, String)> = hidden.into_iter().map(|c| (c.a, c.b)).collect();
+    let complexity: Vec<(String, Complexity)> = complexity
+        .into_iter()
+        .map(|(m, (functions, complex))| (m, Complexity { functions, complex }))
+        .collect();
+    let input = ShapeInput {
+        repositories: &ready,
+        modules: &modules,
+        deps: &deps,
+        pain: &pain,
+        hidden: &hidden,
+        complexity: &complexity,
+    };
+    let mut written = 0u32;
+    for reading in shape_by_repository(&input) {
+        for row in shape_rows(&reading) {
+            if let Some(mid) = ids.get(row.key) {
+                pg.upsert_workspace_metric_repo(&metric_row(&row, mid, day)).await?;
+                written += 1;
+            }
+        }
+    }
+    Ok(written)
 }
 
 #[cfg(test)]
@@ -137,7 +327,6 @@ mod tests {
     /// self-dependency is no cycle and a dependency on an unknown module is
     /// dropped, so a hand-rolled count that sees either fails.
     #[test]
-    #[ignore = "pending: #156"]
     fn a_single_repository_reads_exactly_what_the_lens_analyses() {
         let names = ["a/x", "a/y", "a/z", "a/p", "a/q", "a/w"];
         let modules: Vec<(String, uuid::Uuid)> = names.iter().map(|m| (s(m), r(1))).collect();
@@ -166,7 +355,6 @@ mod tests {
     /// 2-cycle. A loop through r1 and r2 is neither's, and both count the link
     /// they did not follow (G1, G4).
     #[test]
-    #[ignore = "pending: #156"]
     fn each_repository_reads_its_own_subgraph_and_counts_what_it_left_out() {
         let modules = [
             (s("a/x"), r(1)),
@@ -214,7 +402,6 @@ mod tests {
     /// repository with the pain modules named; a coupled pair across
     /// repositories counts in neither; every hidden pair counts — not the lens's 40.
     #[test]
-    #[ignore = "pending: #156"]
     fn pain_hidden_pairs_and_outliers_are_counted_per_repository() {
         let mut modules = vec![(s("a/x"), r(1)), (s("a/y"), r(1)), (s("b/m"), r(2))];
         // 41 more modules in r1, each hidden-coupled with a/x: more than the lens's 40.
@@ -255,7 +442,6 @@ mod tests {
     /// r3 has modules but its index is incomplete (G3: "0 cycles" there would read
     /// as a pass). Only r1 reads.
     #[test]
-    #[ignore = "pending: #156"]
     fn an_incomplete_index_or_no_module_reads_nothing() {
         let modules = [(s("a/x"), r(1)), (s("c/x"), r(3)), (s("c/y"), r(3))];
         let deps = [Dep::new("c/x", "c/y", 1), Dep::new("c/y", "c/x", 1)];
@@ -270,10 +456,9 @@ mod tests {
     /// the pain modules), and a repository-wide row — scope `repo`, no identity, no
     /// commit. "Largest" is a prop of `dependency_cycles`, never a summed count (H2).
     #[test]
-    #[ignore = "pending: #156"]
     fn the_rows_store_each_key_its_value_and_findings() {
         let reading = ShapeReading {
-            repository_id: r(1),
+            repository_id: r(2),
             cycles: 2,
             largest_cycle: 3,
             up_edges: 3,
@@ -312,6 +497,48 @@ mod tests {
             rows.iter()
                 .all(|r| r.scope == "repo" && r.identity.is_none() && r.commit_sha.is_none())
         );
+        // Review r3 R3-2: each row is its repository's — and a measured daily reading.
+        assert!(rows.iter().all(|row| row.repository_id == r(2)
+            && row.source == "measured"
+            && row.grain == "daily"));
+    }
+
+    /// Review r3 R3-1: a complete, clean repository is a reading of zero, not a
+    /// missing one — all five rows are stored, each 0, with empty findings, so a
+    /// target can be met (a missing row reads "not measured" forever).
+    #[test]
+    fn a_clean_reading_still_stores_all_five_rows_at_zero() {
+        let reading = ShapeReading {
+            repository_id: r(3),
+            cycles: 0,
+            largest_cycle: 0,
+            up_edges: 0,
+            pain_modules: 0,
+            hidden_pairs: 0,
+            complexity_outliers: 0,
+            cross_repository_deps: 0,
+            findings: ShapeFindings::default(),
+        };
+        let got: Vec<(&str, f64, serde_json::Value)> =
+            shape_rows(&reading).iter().map(|r| (r.key, r.value, r.props.clone())).collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "dependency_cycles",
+                    0.0,
+                    serde_json::json!({"cycles": [], "largest": 0, "cross_repository_deps": 0})
+                ),
+                (
+                    "layer_up_edges",
+                    0.0,
+                    serde_json::json!({"up_edges": [], "cross_repository_deps": 0})
+                ),
+                ("zone_of_pain_modules", 0.0, serde_json::json!({"modules": []})),
+                ("hidden_coupling_pairs", 0.0, serde_json::json!({})),
+                ("complexity_outlier_modules", 0.0, serde_json::json!({})),
+            ]
+        );
     }
 
     /// Review r2 H3: a component that needs two feedback arcs has more Up edges
@@ -319,7 +546,6 @@ mod tests {
     /// edges (worked through `feedback_order`: a/x, a/y, a/z, so the back edges are
     /// a/y→a/x and a/z→a/y) — absolute numbers, beside the lens's own.
     #[test]
-    #[ignore = "pending: #156"]
     fn two_feedback_arcs_in_one_cycle_are_two_up_edges() {
         let names = ["a/x", "a/y", "a/z"];
         let modules: Vec<(String, uuid::Uuid)> = names.iter().map(|m| (s(m), r(1))).collect();
@@ -337,6 +563,155 @@ mod tests {
         assert_eq!(
             (got.cycles, got.largest_cycle, got.findings.up_edges.clone()),
             (cycles, largest, up)
+        );
+    }
+
+    /// Review G9: a module the read places in two repositories is an error, not
+    /// whichever came first — its numbers would be counted in one of them by chance.
+    #[test]
+    fn a_module_in_two_repositories_is_refused() {
+        let ok = module_homes(vec![(s("a/x"), r(1)), (s("b/y"), r(2)), (s("a/x"), r(1))]).unwrap();
+        assert_eq!(ok, vec![(s("a/x"), r(1)), (s("b/y"), r(2))]);
+        let err = module_homes(vec![(s("a/x"), r(1)), (s("a/x"), r(2))]).unwrap_err();
+        assert!(err.contains("a/x"), "{err}");
+    }
+
+    /// Review L4: readiness is the repository's root folders' `subtree_complete`.
+    /// A folder whose expected file count is unknown is not complete — "0 cycles"
+    /// there would be a reading of nothing — and it is complete once every expected
+    /// file is decided.
+    #[tokio::test]
+    async fn readiness_is_incomplete_until_the_index_has_decided_every_file() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let pid = pg
+            .create_workspace(&format!("_test:ready:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let rid =
+            crate::tasks::test_support::seed_bare_repository(&pg, &pid, &uuid::Uuid::new_v4())
+                .await;
+        let read = |pg: &crate::db::pg_store::PgStore| {
+            let pg = pg.clone();
+            async move { pg.repository_index_complete(&pid).await.unwrap() }
+        };
+        assert_eq!(read(&pg).await, vec![(rid, false)], "no expected file count: not complete");
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET props = props || '{\"expected_files\": 0}'::jsonb WHERE repository_id = $1",
+        )
+        .bind(rid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(read(&pg).await, vec![(rid, true)], "every expected file decided: complete");
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// End to end (#156): a fully indexed repository whose two modules depend on
+    /// each other stores all five rows — the cycle with its members, the one Up
+    /// edge, and zeros for the rest — for that repository, scope repo, read
+    /// through the same reads the lenses make.
+    #[tokio::test]
+    async fn the_shape_of_an_indexed_repository_is_stored_as_its_five_rows() {
+        use crate::db::pg_store::graph_seed::SeedGraph;
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&pg, &uniq).await;
+        let pkg = format!("sh{}", uniq.simple());
+        let def = |file: &'static str| crate::db::pg_store::FqnDef {
+            file_path: file,
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: None,
+        };
+        let a = pg
+            .seed_node_by_fqn(
+                &fid,
+                &format!("rust·{pkg}·alpha·a"),
+                "function",
+                "a",
+                Some("rust"),
+                Some(def("alpha/a.rs")),
+            )
+            .await
+            .unwrap();
+        let b = pg
+            .seed_node_by_fqn(
+                &fid,
+                &format!("rust·{pkg}·beta·b"),
+                "function",
+                "b",
+                Some("rust"),
+                Some(def("beta/b.rs")),
+            )
+            .await
+            .unwrap();
+        for (from, to) in [(&a, &b), (&b, &a)] {
+            pg.insert_edge(&fid, from, crate::db::pg_store::EdgeTarget::Node(to), "calls")
+                .await
+                .unwrap();
+        }
+        // Fully indexed: every expected file decided.
+        let run = |sql: &'static str| sqlx_core::query::query(sql);
+        run("UPDATE sensei.files SET parsed_at = now() WHERE folder_id = $1")
+            .bind(fid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        run("UPDATE sensei.folders SET props = props || jsonb_build_object('expected_files', (SELECT count(*) FROM sensei.files WHERE folder_id = $1)) WHERE id = $1")
+            .bind(fid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let (rid,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+                .bind(fid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        let ids = pg.active_metric_ids("architecture").await.unwrap();
+        let day = chrono::NaiveDate::from_ymd_opt(2020, 7, 1).unwrap();
+        write_shape(&pg, &pid, day, &ids).await.unwrap();
+
+        let rows: Vec<(String, f64, serde_json::Value, String)> = sqlx_core::query_as::query_as(
+            "SELECT m.key, rm.value::float8, rm.props, rm.scope::text
+               FROM sensei.repository_metrics rm JOIN sensei.metrics m ON m.id = rm.metric_id
+              WHERE rm.repository_id = $1 AND rm.computed_on = $2 AND m.task_name = 'architecture'
+                AND m.key IN ('dependency_cycles','layer_up_edges','zone_of_pain_modules','hidden_coupling_pairs','complexity_outlier_modules')
+              ORDER BY m.key",
+        )
+        .bind(rid)
+        .bind(day)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        run("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+
+        let (alpha, beta) = (format!("{pkg}/alpha"), format!("{pkg}/beta"));
+        let get = |k: &str| {
+            rows.iter().find(|r| r.0 == k).unwrap_or_else(|| panic!("no {k} row: {rows:?}")).clone()
+        };
+        assert_eq!(rows.len(), 5, "{rows:?}");
+        assert!(rows.iter().all(|r| r.3 == "repo"), "{rows:?}");
+        let cycles = get("dependency_cycles");
+        assert_eq!(
+            (cycles.1, cycles.2["cycles"].clone(), cycles.2["largest"].clone()),
+            (1.0, serde_json::json!([[alpha, beta]]), serde_json::json!(2))
+        );
+        assert_eq!(get("layer_up_edges").1, 1.0);
+        assert_eq!(
+            (get("hidden_coupling_pairs").1, get("complexity_outlier_modules").1),
+            (0.0, 0.0)
         );
     }
 }

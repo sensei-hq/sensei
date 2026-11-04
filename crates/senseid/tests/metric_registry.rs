@@ -108,7 +108,6 @@ fn the_catalog_documents_exactly_the_registered_metrics() {
 /// a `how_to_read` that names the action — the narrative reads it as the next
 /// step. They are appended after `symbol_size_p95`; no existing row moves.
 #[test]
-#[ignore = "pending: #156"]
 fn the_architecture_shape_metrics_are_catalogued() {
     // (key, a word the next step must use)
     let shape = [

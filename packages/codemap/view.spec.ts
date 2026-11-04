@@ -49,10 +49,9 @@ describe('legendFor', () => {
 });
 
 describe('complexityTier', () => {
-  it('is amber over 10%, red over 20%, and says when a block was not measured', () => {
-    expect(complexityTier(block('a', { complexity: { functions: 10, complex: 3 } }))).toMatchObject({ tone: 'danger', label: '30% over cx 10' });
-    expect(complexityTier(block('a', { complexity: { functions: 10, complex: 1.5 } }))).toMatchObject({ tone: 'warning' });
-    expect(complexityTier(block('a', { complexity: { functions: 10, complex: 1 } }))).toMatchObject({ tone: 'neutral', label: '10% over cx 10' });
+  it('reads the tier the daemon sent, labels the share, and says when a block was not measured', () => {
+    expect(complexityTier(block('a', { complexity: { functions: 10, complex: 3, tier: 'danger' } }))).toMatchObject({ tone: 'danger', label: '30% over cx 10' });
+    expect(complexityTier(block('a', { complexity: { functions: 10, complex: 1, tier: 'neutral' } }))).toMatchObject({ tone: 'neutral', label: '10% over cx 10' });
     expect(complexityTier(block('a', { complexity: null }))).toMatchObject({ tone: 'unmeasured', label: 'not measured' });
   });
 });
@@ -109,14 +108,14 @@ describe('segmentLabel', () => {
 // The complexity rule lives in the daemon, once (#156): the lens reads the tier
 // the daemon sends, so its outliers are the ones the architecture metrics count.
 describe('complexityTier reads the daemon’s tier', () => {
-  it.skip('pending: #156 — takes the tier the daemon sent, not its own reading of the share', () => {
+  it('takes the tier the daemon sent, not its own reading of the share', () => {
     const b = block('p/a', { complexity: { functions: 10, complex: 3, tier: 'warning' } });
     expect(complexityTier(b).tone).toBe('warning');
     expect(complexityTier(b).label).toBe('30% over cx 10');
   });
 
   // Review r2 L5: no tier from the daemon is not measured — never the share rule as a fallback.
-  it.skip('pending: #156 — a module the daemon gives no tier is not measured, whatever its share', () => {
+  it('a module the daemon gives no tier is not measured, whatever its share', () => {
     const b = block('p/a', { complexity: { functions: 10, complex: 9, tier: null } });
     expect(complexityTier(b).tone).toBe('unmeasured');
   });

@@ -36,13 +36,13 @@ describe('focus', () => {
 
   it('Complexity keeps the focused modules’ branches, totals them, and drops the workspace’s maintainability', () => {
     const tree: ComplexityTree = {
-      total: { functions: 30, complex: 7, maxCyclo: 40, files: 9 },
+      total: { functions: 30, complex: 7, maxCyclo: 40, files: 9, tier: 'danger' },
       modules: [node('p/a', 10, 3, 24, 4), node('p/b', 15, 4, 40, 4), node('p/c', 5, 0, 6, 1)],
       maintainability: { value: 3, grade: 'B', label: '3.0', date: '2026-11-03' },
     };
     const got = focusComplexity(tree, focusSets(l0(FOCUS)));
     expect(got?.modules.map((m) => m.id)).toEqual(['p/a']);
-    expect(got?.total).toEqual({ functions: 10, complex: 3, maxCyclo: 24, files: 4 });
+    expect(got?.total).toEqual({ functions: 10, complex: 3, maxCyclo: 24, files: 4, tier: null });
     expect(got?.maintainability).toBeNull();
     expect(focusComplexity(tree, null)).toBe(tree);
   });

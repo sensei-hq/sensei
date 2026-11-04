@@ -80,13 +80,13 @@ export interface ComplexityTier {
   share: number | null;
 }
 
-/** Complexity lens: amber over 10% of functions over cyclomatic 10, red over 20%;
- *  a block never measured says so rather than reading as 0%. */
+/** Complexity lens: the tier the daemon sent (#156) — its one rule, never
+ *  re-derived here; no tier is not measured, whatever the share. */
 export function complexityTier(b: Block): ComplexityTier {
+  const tier = b.complexity?.tier ?? null;
   const share = complexityShare(b);
-  if (share === null) return { tone: 'unmeasured', label: 'not measured', share: null };
-  const label = `${Math.round(share * 100)}% over cx 10`;
-  return { tone: share > 0.2 ? 'danger' : share > 0.1 ? 'warning' : 'neutral', label, share };
+  if (tier === null || share === null) return { tone: 'unmeasured', label: 'not measured', share: null };
+  return { tone: tier, label: `${Math.round(share * 100)}% over cx 10`, share };
 }
 
 /** A block's file count under the roles shown. */

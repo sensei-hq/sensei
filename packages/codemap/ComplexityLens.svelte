@@ -21,11 +21,8 @@
   } = $props();
 
   const pct = (complex: number, functions: number) => (functions ? Math.round((complex / functions) * 100) : 0);
-  /** The share's tone: over 20% red, over 10% amber — the lens's tiers. */
-  const tone = (n: { complex: number; functions: number }) => {
-    const share = n.functions ? n.complex / n.functions : 0;
-    return share > 0.2 ? 'text-danger' : share > 0.1 ? 'text-warning' : 'text-ink-mute';
-  };
+  /** A row's colour is the tier the daemon sent (#156): the rule is not re-derived here. */
+  const TONE = { danger: 'text-danger', warning: 'text-warning', neutral: 'text-ink-mute' } as const;
   const items = $derived(
     (data?.modules ?? []).map(function toItem(n: ComplexityNode, i: number): Record<string, unknown> {
       return {
@@ -48,7 +45,11 @@
   {@const n = (proxy.original as { node: ComplexityNode }).node}
   <span class="flex items-baseline gap-3 w-full min-w-0" data-complexity-row={n.id}>
     <span class="truncate" class:font-mono={n.kind !== 'module'} class:font-medium={n.kind === 'module'} title={n.id}>{n.label}</span>
-    <span class="ml-auto shrink-0 tabular-nums text-xs {tone(n)}">{n.complex} of {n.functions} · {pct(n.complex, n.functions)}%</span>
+    {#if n.tier}
+      <span class="ml-auto shrink-0 tabular-nums text-xs {TONE[n.tier]}">{n.complex} of {n.functions} · {pct(n.complex, n.functions)}%</span>
+    {:else}
+      <span class="ml-auto shrink-0 text-xs text-ink-faint">not measured</span>
+    {/if}
     <span class="shrink-0 tabular-nums text-xs text-ink-faint w-16 text-right">max {n.maxCyclo}</span>
     {#if n.kind === 'module'}
       <button class="shrink-0 p-0 bg-transparent border-none cursor-pointer text-ink-mute hover:text-ink"
@@ -74,7 +75,7 @@
   {:else}
     <div class="flex flex-wrap items-center gap-x-6 gap-y-2 p-4 rounded-lg border border-paper-edge bg-paper-soft" data-testid="complexity-overall">
       <span class="text-sm">
-        <span class="tabular-nums {tone(data.total)}">{data.total.complex} of {data.total.functions} functions over cyclomatic 10</span>
+        <span class="tabular-nums {data.total.tier ? TONE[data.total.tier] : 'text-ink'}">{data.total.complex} of {data.total.functions} functions over cyclomatic 10</span>
         <span class="text-ink-mute"> · {pct(data.total.complex, data.total.functions)}%</span>
       </span>
       <span class="text-sm text-ink-mute">highest <span class="tabular-nums text-ink">{data.total.maxCyclo}</span></span>

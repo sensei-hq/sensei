@@ -11,7 +11,7 @@ const block = (id: string, extra = {}) => ({
 });
 const L0: Level0 = {
   level: 'module', groupBy: 'layers', cycles: [], coverage: { unplaced: 4 },
-  blocks: [block('p/a', { complexity: { functions: 10, complex: 3 } }), block('p/b', { group: 'L1', complexity: null }), block('fold:L1', { group: 'L1', label: '+2 more', folded: ['p/c', 'p/d'] })],
+  blocks: [block('p/a', { complexity: { functions: 10, complex: 3, tier: 'danger' } }), block('p/b', { group: 'L1', complexity: null }), block('fold:L1', { group: 'L1', label: '+2 more', folded: ['p/c', 'p/d'] })],
   bands: [
     { source: 'p/a', target: 'p/b', weight: 5, kinds: { calls: 5 }, direction: 'up' },
     { source: 'p/b', target: 'fold:L1', weight: 12, kinds: { calls: 12 }, direction: 'down' },
@@ -42,10 +42,10 @@ const port = (): CodeMapPort => ({
   level0: vi.fn(() => ok(L0)), module: vi.fn(() => ok(L1)), file: vi.fn(() => ok(L2)), zones: vi.fn(() => ok(ZONES)),
   cochange: vi.fn(() => ok({ hidden: [{ a: 'p/a', b: 'p/c', together: 7, strength: 0.7 }], pairs: 3, commits: 40, minTogether: 5 })),
   complexity: vi.fn(() => ok({
-    total: { functions: 10, complex: 3, maxCyclo: 24, files: 1 },
+    total: { functions: 10, complex: 3, maxCyclo: 24, files: 1, tier: 'danger' },
     maintainability: null,
-    modules: [{ id: 'p/a', label: 'p/a', kind: 'module', functions: 10, complex: 3, maxCyclo: 24, files: 1,
-      children: [{ id: 'a/x.rs', label: 'x.rs', kind: 'file', functions: 10, complex: 3, maxCyclo: 24, files: 1, children: [] }] }],
+    modules: [{ id: 'p/a', label: 'p/a', kind: 'module', functions: 10, complex: 3, maxCyclo: 24, files: 1, tier: 'danger',
+      children: [{ id: 'a/x.rs', label: 'x.rs', kind: 'file', functions: 10, complex: 3, maxCyclo: 24, files: 1, tier: 'danger', children: [] }] }],
   })),
 });
 
@@ -304,10 +304,10 @@ describe('CodeMap', () => {
     p.level0 = vi.fn((_g, f) => ok(f ? focusedL0 : L0));
     p.cochange = vi.fn(() => ok({ hidden: [{ a: 'p/a', b: 'p/c', together: 7, strength: 0.7 }, { a: 'p/b', b: 'p/c', together: 6, strength: 0.6 }], pairs: 3, commits: 40, minTogether: 5 }));
     p.complexity = vi.fn(() => ok({
-      total: { functions: 15, complex: 4, maxCyclo: 24, files: 2 }, maintainability: null,
+      total: { functions: 15, complex: 4, maxCyclo: 24, files: 2, tier: 'danger' }, maintainability: null,
       modules: [
-        { id: 'p/a', label: 'p/a', kind: 'module' as const, functions: 10, complex: 3, maxCyclo: 24, files: 1, children: [] },
-        { id: 'p/c', label: 'p/c', kind: 'module' as const, functions: 5, complex: 1, maxCyclo: 12, files: 1, children: [] },
+        { id: 'p/a', label: 'p/a', kind: 'module' as const, functions: 10, complex: 3, maxCyclo: 24, files: 1, tier: 'danger', children: [] },
+        { id: 'p/c', label: 'p/c', kind: 'module' as const, functions: 5, complex: 1, maxCyclo: 12, files: 1, tier: 'warning', children: [] },
       ],
     }));
     const map = render(p);
