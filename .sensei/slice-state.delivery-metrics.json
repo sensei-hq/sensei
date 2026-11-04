@@ -1,8 +1,8 @@
 {
-  "slice_id": "delivery-metrics-F1",
+  "slice_id": "delivery-metrics-F2",
   "spec_path": "docs/spec/daemon/tracker-delivery-metrics.md",
   "plan_path": "docs/plans/2026-11-04-tracker-delivery-metrics.md",
-  "issue": 351,
+  "issue": 352,
   "branch": "feature/delivery_metrics",
   "mode": "unattended",
   "phases": [
@@ -15,20 +15,19 @@
     "review",
     "commit"
   ],
-  "current_phase": "commit",
+  "current_phase": "F2b dojo endpoints",
   "completed": [
-    "claims",
-    "locate",
-    "spec-audit",
-    "tests-red",
-    "implement",
-    "verify",
-    "review"
+    "F1 (#351) committed",
+    "F2 claims",
+    "F2 locate",
+    "F2 spec-audit (A1)",
+    "F2a dojo DDL + SQL tests"
   ],
   "gate_status": "pass",
   "open_questions": [],
   "known_broken": [
-    "app src/lib/sessions-digest.spec.ts: activityByDay + turnsByDay 'local day' tests fail on clean HEAD 5503b7587 too (pre-existing, not this slice)"
+    "app sessions-digest 'local day' tests fail in IST (pre-existing, #357)",
+    "dojo SQL advisor_guards (staging.metric_gating no RLS) and repository_metric_series (permission denied for schema sensei) fail on develop's schema too (pre-existing)"
   ],
   "amendments": [
     "Gate 5 is an allow-list of four daemon reads, never /api/dojo/* (audit HIGH)",
@@ -38,7 +37,9 @@
     "Sprint order = daemon's (start_at desc nulls last, seq desc) in app and Dojo",
     "Real-0 rule and its tests move from Tickets to Delivery",
     "Section-list surfaces named: sidebar spec, e2e multi-window, inspect list, workspace-tickets.md, PRD 16 README",
-    "SprintFacts app type widened with unknown_status; sprintSdlcFigures shows all 7"
+    "SprintFacts app type widened with unknown_status; sprintSdlcFigures shows all 7",
+    "F2 A1: D3/D4 rewritten after the pre-build audit (21 findings): plan tenant, facts once per tick, canonical hash without history_at, attempted marks + 6 h expiry + failure backoff + sync-state record, lock skip, consistency token, removed sprints sdlc null, removed tickets not sent, membership sprints, FOR UPDATE ordering, workspace from verified repository ids, app ticket order",
+    "F2a: delivery_tickets.title nullable (Jira can return no summary; D83), no column defaults on removed/sprints"
   ],
-  "next_command": "/sensei:commit for #351 (user decision), then /sensei:build #352"
+  "next_command": "/sensei:build #352 (unattended) \u2014 resume at F2b: POST /v1/you/delivery + read routes in dojo/"
 }

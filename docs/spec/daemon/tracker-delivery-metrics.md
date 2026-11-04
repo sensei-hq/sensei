@@ -178,63 +178,97 @@ Dōjō view says so in the figure's explainer.
 
 ### D3 · The push
 
-**Where it runs.** A new step in the `dojo_sync` tick, inside the per-persona push loop, after
-the graph push (`push_planned`). It skips a tracker while that tracker's sync or history guard
-is held, and runs nothing when the Dōjō is unreachable (the tick's existing transport
-handling).
+*Amendment A1 (F2 pre-build audit, 2026-11-04): eligibility reads the plan's tenant; facts are
+built once per tick; removed sprints carry no figures and removed tickets do not travel; the
+hash is canonical and leaves `history_at` out; marks are written before sending, keyed by
+persona id, expire, and record failures; the push skips a tracker whose guard is held.*
 
-**Eligibility, per persona and tracker.** Take the local workspace's repositories that are in
-the persona's `plan.allowed`. None → the board is ineligible (`tracker_not_shared`). Their
-Dōjō tenants (`sensei.repositories.tenant_id`) differ → ineligible
-(`tracker_workspace_ambiguous`, B8). Otherwise the request names the tenant and those
-repositories' `repo_key`s; **the Dōjō resolves the workspace** from them
-(`dojo.repositories_in_workspaces`), so a forge-unit mapping (`map_forge_unit`) is honoured.
-Becoming ineligible after having pushed queues a withdrawal (below).
+**Where it runs.** A new step in the `dojo_sync` tick, after the graph push (`push_planned`).
+The tick receives the tracker runtime (as `tracker_sync` does) and skips a tracker for this
+tick when `locks.try_lock(tracker)` is taken (a sync or history run is writing it). An
+unreachable Dōjō is the tick's existing transport handling.
+
+**Facts are built once per tick, per tracker**, before the persona loop: they do not depend on
+the persona. Predictability comes from the same replay as the sprint figures (one
+`replay_inputs` read per tracker), never from a second `project_sdlc` load.
+
+**Eligibility, per persona and tracker.** Take the local workspace's repositories
+(`sensei.repositories_in_workspaces`) whose `repo_key` is in the persona's `plan.allowed`.
+None → ineligible (`tracker_not_shared`). Their plan tenants (`MappedRepo.tenant_id`, the value
+the Dōjō's own consent check compares) differ → ineligible (`tracker_workspace_ambiguous`,
+B8). Otherwise the request names that tenant and those `repo_key`s; **the Dōjō resolves the
+workspace** from the consent-checked repositories (`dojo.repositories_in_workspaces`), so a
+forge-unit mapping (`map_forge_unit`) is honoured. A Dōjō 409 is logged as
+`tracker_workspace_ambiguous` too.
 
 **The person** is stamped by the Dōjō from the caller's token, never from the body (as
 `/v1/you/metrics`). Effort is computed over **provable sessions only** (Data invariants).
 Held-back sessions are counted and logged per pass, as held-back metric rows are.
 
-**Board identity.** `board_key = hex(sha256(kind + "\n" + base_url + "\n" + board_ref))`, with
-`base_url` already canonical (`normalize_base_url`: `https://` + lowercase host). It is a
-stable pseudonym, not anonymisation: names travel anyway (B15). Its purpose is that no URL or
-account reaches the Dōjō.
+**Board identity.** `board_key = hex(sha256(kind + "\n" + base_url + "\n" + board_ref))`.
+`base_url` is canonical (`normalize_base_url`: `https://` + lowercase host) and `board_ref`
+is the canonical board id (`canonical_board_id`: digits, no leading zeros), so two installs
+on one board produce one key. It is a stable pseudonym, not anonymisation: names travel anyway
+(B15). Its purpose is that no URL or account reaches the Dōjō.
 
 **One request per board.** `POST /v1/you/delivery`, see D4 for the contract. Payload:
 
 ```text
 { v: 1, tenant_id, repo_keys: [text], board_key, kind, board_name,
   facts: {                                   // one-copy part
-    history_at, pending_tickets: int,        // tickets whose history is unread
+    history_at,                              // trackers.history_at; sent, not hashed
+    pending_tickets: int,                    // tickets the history task would still read
     predictability, predictability_reason,
     sprints: [{ external_id, seq, name, state, start_at, end_at, complete_at,
-                removed: bool, facts: SprintFacts|null, sdlc: SprintSdlc }],
+                removed: bool, sdlc: SprintSdlc|null }],   // null for a removed sprint
     tickets: [{ key, title, status_category, points, sprints: [external_id],
-                issue_created_at, removed: bool }] },
-  effort: {                                  // this person's part
-    held_back_sessions: int,
-    project: { tokens, tokens_n, prompts, sessions_without_tokens },
-    sprints: [{ external_id, usage }],
-    tickets: [{ key, ...D1 ticket wire fields }] } }
+                issue_created_at }] },        // non-removed tickets only
+  effort: { … } | null }                     // this person's part (F3); null until then
 ```
 
-A ticket object has exactly those keys (B9). Limits: at most 5 000 tickets and 4 MB per
-request; a bigger board is skipped and logged `delivery_board_too_large`.
+- `pending_tickets` counts with the history task's own candidate predicate (non-removed, with
+  an `issue_updated_at`, whose `history_through` is null or older), one shared SQL fragment.
+- A sprint's `sdlc` is its `SprintSdlc` (whose `facts` carries the counts); a removed sprint
+  has no replay and sends `null`, never a made-up figure.
+- A ticket's `sprints` is its membership (`sensei.tracker_task_sprints`, non-removed sprints),
+  not only its current sprint. Removed tickets do not travel.
+- A ticket object has exactly those keys (B9).
 
-**Re-push watermark.** `sensei.tracker_push_marks (tracker_id, persona_id, tenant_id,
-part ∈ {facts, effort}, hash, pushed_at)`, primary key `(tracker_id, persona_id, tenant_id,
-part)`, cascading on tracker and persona delete. `hash` is sha256 of the part's canonical
-JSON (keys sorted), **excluding** any timestamp of the pass itself. A part is sent when its
-hash differs; it is marked when the Dōjō answers `accepted` **or** `stale` for it. A rejected
-part is not marked and is retried next pass, without blocking the other part or other boards
-(the per-item marking `push_allowed` does today). A changed tenant changes the key, so nothing
-is suppressed after re-filing.
+Limits: at most 5 000 tickets, and a serialized body of at most 3.5 MB on the daemon (the
+Dōjō refuses over 4 MB). A bigger board is skipped and recorded `delivery_board_too_large`.
+
+**Consistency.** The facts are read with a token taken before and after
+(`last_success_at`, the pending count, `max(history_through)`, `max(issue_updated_at)`): if it
+moved, the board is skipped this tick rather than sent half-updated.
+
+**Re-push watermark.** `sensei.tracker_push_marks (tracker_id → trackers, persona_id →
+personas, tenant_id, part ∈ {facts, effort}, attempted_at, hash, pushed_at, failed_hash,
+failed_at, error)`, primary key `(tracker_id, persona_id, tenant_id, part)`, cascading on
+tracker and persona delete.
+
+- `hash` is sha256 of the part's **canonical** JSON: object keys sorted recursively, sprints
+  ordered by `(seq, external_id)`, tickets by key, each ticket's `sprints` sorted;
+  `history_at` is left out (it moves on every history run, even one that read nothing).
+- The row is written (`attempted_at`) **before** sending, so a push that commits in the Dōjō
+  but times out on the way back still leaves a trace a withdrawal can find (F5).
+- Sent when the hash differs from `hash`, or `pushed_at` is older than **6 hours** (so a copy
+  withdrawn or replaced in the Dōjō is restored by a contributor whose data did not change).
+- `accepted` or `stale` → `hash`, `pushed_at` set, failure cleared. A refusal (4xx) →
+  `failed_hash`, `failed_at`, `error` set; the same hash is not re-sent for 1 hour. A
+  transport error → nothing but `attempted_at`; re-sent next tick.
+- Each board's outcome is also recorded in the sync state (`mark_synced` / `mark_sync_error` /
+  `mark_sync_skipped`, entity `tracker_board`, key `board_key`), so a failing board is visible
+  outside the log. One board's failure, including a database error writing its mark, never
+  stops the others.
+- A changed tenant changes the key, so nothing is suppressed after re-filing.
 
 **Withdrawal (B13).** `DELETE /v1/you/delivery/{board_key}?tenant_id=` removes everything the
 caller reported for that board. Queued in `sensei.delivery_withdrawals (board_key, tenant_id,
-persona_id, queued_at)`, written when a tracker is deleted (in the same transaction, before
-the cascade), or when a pushed board becomes ineligible; sent next tick; deleted on 2xx or 404.
-Signing out queues nothing.
+persona_id, queued_at)` for **every** mark row of the tracker (attempted or acknowledged),
+written when a tracker is deleted (in the same transaction, before the cascade), or when a
+board with a mark becomes ineligible; sent next tick; deleted on 2xx or 404. Signing out
+queues nothing. When the withdrawn copy was the board's one copy, the next contributor whose
+mark expires (6 h) restores it.
 
 ### D4 · Dōjō: contract, storage and reads
 
@@ -242,54 +276,63 @@ Signing out queues nothing.
 
 | Case | Status |
 |---|---|
-| Both parts applied or stale | 200 `{ facts: "accepted"|"stale", effort: "accepted" }` |
-| Malformed body, unknown `v`, over a limit | 400 / 413 |
+| Applied or stale | 200 `{ facts: "accepted"|"stale" }`, plus `effort: "accepted"` when sent |
+| Malformed body, unknown `v`, a ticket or sprint with other keys | 400 |
+| Over 4 MB or 5 000 tickets | 413 |
 | No or bad token | 401 |
-| A `repo_key` is not the caller's shared and elected repository (`my_repositories`) | 403 — the Dōjō re-checks consent, never trusts the daemon's |
-| The repositories are in no workspace | 404 `workspace_not_filed` (nothing is created) |
+| A `repo_key` is not the caller's shared and elected repository in `tenant_id` (`dojo.all_my_repositories.sync_enabled`) | 403 — the Dōjō re-checks consent, never trusts the daemon's |
+| The repositories are in no workspace of that tenant | 404 `workspace_not_filed` (nothing is created) |
 | The repositories span workspaces | 409 `workspace_ambiguous` |
 
 One request is one transaction: either both parts' outcomes hold or nothing changed.
 `DELETE` answers 204, or 404 when there is nothing of the caller's.
 
-**Tables** (schema `dojo`, written only by security-definer functions):
+**Tables** (schema `dojo`, row-level security on, no grants: written and read only through
+security-definer functions):
 
 | Table | Key | Holds |
 |---|---|---|
-| `delivery_boards` | `id` uuid; unique `(workspace_id, board_key)` | `tenant_id`, kind, name, and the one copy's `reported_by`, `reported_at`, `history_at`, `pending_tickets`, `predictability` — **nothing else (B11)** |
-| `delivery_sprints` | `(board_id, external_id)` | details, `removed`, `facts`, `sdlc` |
-| `delivery_tickets` | `(board_id, key)` | title, status category, points, sprint ids, `issue_created_at`, `removed` |
+| `delivery_boards` | `id` uuid; unique `(workspace_id, board_key)` | `tenant_id`, kind, name, and the one copy's `reported_by` (a principal), `reported_at`, `history_at`, `pending_tickets`, `predictability`, `predictability_reason` — **nothing else (B11)** |
+| `delivery_sprints` | `(board_id, external_id)` | details, `removed`, `sdlc` (null for a removed sprint) |
+| `delivery_tickets` | `(board_id, key)` | title, status category, points, sprint ids, `issue_created_at` |
 | `delivery_effort` | `(board_id, item_kind, item_ref, principal_id)`; `item_kind ∈ {project, sprint, ticket}`, `item_ref` = `''` / sprint `external_id` / ticket key | `repository_ids uuid[]` (whose sessions), `values` jsonb (D1 wire fields), `reported_at` |
 
 All cascade from `delivery_boards`, which cascades from `dojo.workspaces`.
 
-**Which copy wins (facts).** The stored copy is replaced **whole** (board row, all its sprints
-and tickets) by an incoming one that is greater in this order:
-`(pending_tickets = 0, history_at, reported_at, principal_id)`. `reported_at` is the Dōjō's
-clock. So a daemon mid-backfill never replaces a complete copy, and a copy's sprints and
-tickets always come from the same report. A lesser copy answers `stale`.
+**Which copy wins (facts).** The function inserts the board row if missing (`on conflict do
+nothing`), then locks it (`select … for update`), then compares, so two concurrent pushes are
+ordered. The stored copy is replaced **whole** (board row, all its sprints and tickets) unless
+it is greater: complete (`pending_tickets = 0`) beats incomplete, then the later `history_at`
+wins (null sorts lowest); on a tie the later arrival wins. So a daemon mid-backfill never
+replaces a complete copy, and a copy's sprints and tickets always come from the same report.
+A lesser copy answers `stale` and changes nothing.
+
+**Workspace.** Resolved from the `repository_id`s of the caller's verified
+`all_my_repositories` rows for `tenant_id`, through `dojo.repositories_in_workspaces` — never
+by matching `repo_key` across tenants. No workspace → 404; more than one → 409.
 
 **Effort.** The caller's rows for the board are replaced by the request's: rows absent from it
 are deleted (B13).
 
-**Reads** (security definer, each first checking `can_read_workspace`; the route answers 403
-when it is false, as `getWorkspaceMetrics` does):
+**Reads** (security definer, each answering nothing unless `can_read_workspace`; the route
+answers 403 when it is false, as `getWorkspaceMetrics` does):
 
-- `workspace_delivery_boards(p_workspace)` — boards with predictability and the merged project
-  row.
-- `workspace_delivery_sprints(p_workspace, p_board, p_limit, p_offset)` — in the daemon's
-  order (start date desc, undated last, then `seq` desc), as D2; one-copy facts plus merged
-  sprint effort.
+- `workspace_delivery_boards(p_workspace)` — boards with predictability (and, from F3, the
+  merged project row).
+- `workspace_delivery_sprints(p_workspace, p_board, p_limit, p_offset)` — non-removed sprints
+  in the daemon's order (start date desc, undated last, then `seq` desc, then
+  `external_id`), as D2; the route reads every page (`readAllPages`).
 - `workspace_delivery_tickets(p_workspace, p_board, p_sprint null|external_id, p_backlog bool,
-  p_limit, p_offset)` — all, one sprint, or backlog; title, merged effort.
+  p_limit, p_offset)` — all, one sprint, or the backlog (in no non-removed sprint), in the
+  app's order (key prefix, then its number, then key).
 
 **Who sees a person's numbers.** An effort row is shown per person only to a caller for whom
 `can_read_repository_metric(r, 'user', principal, tenant)` holds for **every** `r` in its
 `repository_ids` (called, not copied): the person themself, a tenant admin, a maintainer on
 those repositories, or the person's team lead. Every other reader of the workspace, viewers
-included, gets the merged value only, with `contributors` (a count) and the latest
-`reported_at` across them, never a per-contributor time. Removed members' rows still count in
-merged values until withdrawn.
+included (`can_read_workspace` admits them), gets the merged value only, with `contributors`
+(a count) and the latest `reported_at` across them, never a per-contributor time. Removed
+members' rows still count in merged values until withdrawn.
 
 **Staleness.** A contributor whose last report is older than 7 days is shown as stale to those
 who see per-person rows; others see "includes stale data" when any is.
@@ -345,19 +388,28 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
 8. **Shape (daemon).** For a fixture tracker (`jira`, `https://acme.atlassian.net`, board
    `42`), `board_key` equals the sha256 of `"jira\nhttps://acme.atlassian.net\n42"`; the body
    contains neither `acme.atlassian.net` nor any hourly rate nor `minutes_per_point`; each
-   ticket object's keys are exactly D3's.
+   ticket object's keys are exactly D3's; a removed ticket is absent; a removed sprint has
+   `sdlc: null`; a ticket in two sprints lists both.
 9. **#240 (daemon).** Sessions from a repository another persona also elected, and sessions
    with no repository, are absent from effort and counted in `held_back_sessions`.
-10. **Watermark (daemon).** A second pass with nothing changed posts nothing. A 400 on one
-    board leaves that board unmarked and the other boards marked; the next pass re-sends only
-    it.
+10. **Watermark (daemon).** A second pass with nothing changed posts nothing, including after
+    a history run that read nothing new (`history_at` moved). Two payloads equal but for key
+    insertion and sprint order hash equal. A mark older than 6 h re-sends. A 400 on one board
+    records its failed hash and sync-state error and leaves the other boards marked; the same
+    hash is not re-sent within the hour, a changed one is. A mark-write failure on one board
+    does not stop the next. The mark row exists before the stub plane is called.
+10a. **Guard (daemon).** With the tracker's lock held, the pass posts nothing for it; facts
+    are built once per tracker per tick whatever the number of personas.
 11. **Withdrawal (daemon).** Deleting a pushed tracker queues and then sends one `DELETE`; so
     does the workspace losing its allowed repository.
 12. **Contract (dojo).** Each row of D4's contract table has a test returning that status;
     a 403 for a `repo_key` not in the caller's shared and elected set.
 13. **One copy (sql).** A copy with `pending_tickets > 0` never replaces one with 0, whatever
     `history_at`; between complete copies the later `history_at` wins, in either arrival order;
-    a replaced copy's tickets absent from the winner are gone.
+    equal `history_at` → the later arrival wins; a null `history_at` loses to any; a replaced
+    copy's tickets absent from the winner are gone; repositories filed in another tenant's
+    workspace under the same `repo_key` are not used; the four functions are in
+    `definer_functions_gate_the_caller.sql`, called by a non-member with alice's ids.
 14. **Merge (sql).** Fixture: A and B on `T-1`, A alone on `T-2`.
     `workspace_delivery_tickets` returns for `T-1` `worked_minutes` = A+B, `work_started_at` =
     min, `build_failure_rate` = (fA+fB)÷(runsA+runsB)×100, `mean_build_recovery_minutes` from
