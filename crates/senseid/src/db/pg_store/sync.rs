@@ -166,6 +166,39 @@ fn pushable(row: PushableRow) -> PushableMetric {
     }
 }
 
+/// Consecutive stored-confirmation shortfalls per (repo, metric): H2's
+/// quiet-then-loud rule. In-memory on purpose: a restart resets to N quiet
+/// retries, which bounds silence to N cycles per process lifetime without
+/// schema churn (D89 may persist it). Owned by [`PgStore`] so it outlives
+/// cycles; fresh per test store so tests never share counts. Phase A declares
+/// it with its counting rules; phase B records into it from `push_allowed`.
+#[derive(Debug, Default)]
+pub struct ShortfallTracker {
+    #[allow(dead_code)] // phase A: counted in phase B
+    strikes: std::collections::HashMap<(String, String), u32>,
+}
+
+#[allow(dead_code)] // phase A: called from push_allowed in phase B
+impl ShortfallTracker {
+    /// Shortfalls before a row goes loud.
+    pub const LOUD_AFTER: u32 = 3;
+
+    /// One cycle pushed (repo, metric) rows with a shortfall. Returns the new
+    /// consecutive count.
+    pub fn record_shortfall(&mut self, repo_key: &str, metric: &str) -> u32 {
+        let n = self.strikes.entry((repo_key.to_string(), metric.to_string())).or_insert(0);
+        *n += 1;
+        *n
+    }
+
+    /// A cycle pushed (repo, metric) rows with no shortfall: the streak ends.
+    /// Keys with nothing pushed keep their count (nothing was tried, nothing
+    /// was learned).
+    pub fn record_clean(&mut self, repo_key: &str, metric: &str) {
+        self.strikes.remove(&(repo_key.to_string(), metric.to_string()));
+    }
+}
+
 impl PgStore {
     /// Record which dōjō tenant a repository is enrolled with (D2).
     ///

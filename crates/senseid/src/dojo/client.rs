@@ -49,6 +49,11 @@ pub enum TenantCredential {
     /// No signed-in persona has claimed this membership. Presents nothing: it
     /// joins a persona when that persona's sync lists it.
     Unbound,
+    /// Bound to a signed-in persona, but the membership's registry is not the
+    /// dōjō the session was minted for: presents nothing (sync-hardening M1).
+    /// Phase A declares it; phase B wires `of()` to return it.
+    #[allow(dead_code)] // phase A: constructed by of() in phase B
+    ForeignRegistry { membership_registry: String, session_registry: String },
     /// A test's fixed bearer — see [`test_bearers`].
     #[cfg(test)]
     Fixed { bearer: String },
@@ -87,6 +92,12 @@ impl TenantCredential {
             TenantCredential::SignedOut { .. } | TenantCredential::Unbound => {
                 Err(DojoClientError::SignedOut)
             }
+            TenantCredential::ForeignRegistry { membership_registry, session_registry } => {
+                Err(DojoClientError::ForeignRegistry {
+                    membership_registry: membership_registry.clone(),
+                    session_registry: session_registry.clone(),
+                })
+            }
             #[cfg(test)]
             TenantCredential::Fixed { bearer } => Ok(bearer.clone()),
         }
@@ -124,6 +135,9 @@ pub enum DojoClientError {
     /// The membership has no live session — its persona must sign in (again),
     /// or no signed-in persona has claimed it. Nothing was sent.
     SignedOut,
+    /// The membership's registry is not the dōjō the persona's session was
+    /// minted for — the token is never presented there. Nothing was sent.
+    ForeignRegistry { membership_registry: String, session_registry: String },
 }
 
 impl DojoClientError {
@@ -135,7 +149,9 @@ impl DojoClientError {
         match self {
             DojoClientError::Network(_) => true,
             DojoClientError::Status(code) => (500..=599).contains(code),
-            DojoClientError::Decode(_) | DojoClientError::SignedOut => false,
+            DojoClientError::Decode(_)
+            | DojoClientError::SignedOut
+            | DojoClientError::ForeignRegistry { .. } => false,
         }
     }
 }
@@ -148,6 +164,12 @@ impl std::fmt::Display for DojoClientError {
             DojoClientError::Decode(m) => write!(f, "dojo response decode error: {m}"),
             DojoClientError::SignedOut => {
                 write!(f, "no signed-in session for this dōjō membership — sign in")
+            }
+            DojoClientError::ForeignRegistry { membership_registry, session_registry } => {
+                write!(
+                    f,
+                    "membership's dōjō {membership_registry} is not the signed-in dōjō {session_registry} — token never presented"
+                )
             }
         }
     }
@@ -697,6 +719,65 @@ mod tests {
         ))));
         let err = c.bearer_async().await.unwrap_err();
         assert!(matches!(err, DojoClientError::SignedOut), "got {err:?}");
+    }
+
+    fn foreign_bound() -> DojoMembership {
+        let mut m = bound(Some("acme-slot"));
+        // RFC 2606: never a real registry, so independent of ambient settings.
+        m.registry_url = "https://foreign.invalid/".into();
+        m.dojo_url = "https://foreign.invalid/organization/acme".into();
+        m
+    }
+
+    // M1: a session token is presented only to the registry that minted it.
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn a_membership_on_another_registry_presents_no_session() {
+        assert!(
+            matches!(
+                TenantCredential::of(&foreign_bound()),
+                TenantCredential::ForeignRegistry { .. }
+            ),
+            "a foreign membership must not resolve to a session"
+        );
+    }
+
+    // (The matching-registry positive is the existing
+    // `a_bound_membership_presents_its_persona_session`, which phase B re-points
+    // at the signed-in registry when `of()` learns the check — not duplicated
+    // here.)
+
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn a_trailing_slash_does_not_make_a_registry_foreign() {
+        let url = format!("{}/", crate::dojo_client::settings::dojo_url());
+        let mut m = bound(Some("acme-slot"));
+        m.registry_url = url.clone();
+        m.dojo_url = format!("{url}organization/acme");
+        assert_eq!(
+            TenantCredential::of(&m),
+            TenantCredential::Session { slot: "acme-slot".into() }
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "pending: sync-hardening"]
+    async fn a_foreign_membership_fails_before_any_call_without_a_token() {
+        // Port 9 (discard) is never answered: a Network error here would mean
+        // the call went out. SignedOut would mean it tried the session first.
+        // Only ForeignRegistry proves the token was never minted for this
+        // registry.
+        let mut m = bound(Some("acme-slot"));
+        m.registry_url = "http://127.0.0.1:9/".into();
+        m.dojo_url = "http://127.0.0.1:9/organization/acme".into();
+        let c = DojoClient::for_membership(&m);
+        let err = c.poll_inbox(0).await.unwrap_err();
+        assert!(matches!(err, DojoClientError::ForeignRegistry { .. }), "got {err:?}");
+        assert!(
+            err.to_string().contains("127.0.0.1:9"),
+            "the refusal must name the registry, got: {err}"
+        );
+        assert!(!err.is_retryable(), "no retry can mint a session for another dōjō");
     }
 
     #[test]

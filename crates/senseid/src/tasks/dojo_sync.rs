@@ -1301,7 +1301,7 @@ mod tests {
     use crate::dojo_client::user_plane::{
         ActivationOutcome, DeniedRepo, GraphHashes, GraphPush, GraphPushResult, IngestResult,
         MappedRepo, MetricPush, MyMembership, ProvisionOutcome, RegisterResult, RejectedMetric,
-        SyncPlan, UnmappedRepo, VisibilityCounts,
+        StoredMetricKey, SyncPlan, UnmappedRepo, VisibilityCounts,
     };
     use std::sync::Mutex;
 
@@ -1315,6 +1315,10 @@ mod tests {
         register: Option<RegisterResult>,
         plan: Option<SyncPlan>,
         push: Option<Result<IngestResult, String>>,
+        /// The URL this double answers for — what `dojo_url()` reports (the (a)
+        /// log test pins the value end to end). Set per test; meaningless default.
+        #[allow(dead_code)] // phase A: set by tests, read in phase B
+        url: String,
         /// Every `repo_key` the daemon DISCLOSED — the offer set, as it reached the
         /// wire. Recorded because B1 is invisible from the outcome: a cycle that
         /// never asks looks exactly like a cycle the dōjō answered "nothing".
@@ -1446,9 +1450,11 @@ mod tests {
                 .lock()
                 .unwrap()
                 .extend(m.iter().map(|x| (x.repo_key.to_string(), x.metric.to_string())));
-            self.push
-                .clone()
-                .unwrap_or(Ok(IngestResult { accepted: m.len() as u32, rejected: vec![] }))
+            self.push.clone().unwrap_or(Ok(IngestResult {
+                accepted: m.len() as u32,
+                rejected: vec![],
+                stored: None,
+            }))
         }
         async fn graph_hashes(
             &self,
@@ -1938,6 +1944,7 @@ mod tests {
                     metric: metric_key.clone(),
                     reason: "unknown_metric".into(),
                 }],
+                stored: None,
             })),
             ..Default::default()
         };
@@ -1979,6 +1986,7 @@ mod tests {
                     metric: metric_a.clone(),
                     reason: "unknown_metric".into(),
                 }],
+                stored: None,
             })),
             ..Default::default()
         };
@@ -1999,6 +2007,409 @@ mod tests {
         let (state_b, why_b) = b.expect("the accepted repository is recorded too");
         assert_eq!(state_b, "synced", "a repository nothing was refused for is not skipped");
         assert_eq!(why_b, None, "and it is not annotated with another repository's refusal");
+    }
+
+    /// Capture everything `f` logs (lib-test twin of main.rs's helper). Tests
+    /// that assert on logs run a current-thread runtime INSIDE the capture: a
+    /// multi-threaded runtime would hop threads and escape the thread-local
+    /// subscriber.
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Capture;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    fn captured_logs(f: impl FnOnce()) -> String {
+        use tracing_subscriber::layer::SubscriberExt as _;
+        let cap = Capture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(cap.clone()).with_ansi(false));
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = cap.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        String::from_utf8(bytes).expect("utf8 logs")
+    }
+
+    fn current_thread_rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+    }
+
+    // (a): every cycle complete names the dōjō it pushed to.
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn cycle_complete_names_the_dojob_it_pushed_to() {
+        let logs = captured_logs(|| {
+            current_thread_rt().block_on(async {
+                let pg = PgStore::connect_test().await.unwrap();
+                let (pid, key, _) = seed(&pg).await;
+                let plane = StubPlane {
+                    url: "http://stub.invalid".into(),
+                    plan: Some(SyncPlan {
+                        allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                        denied: vec![],
+                    }),
+                    push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: None })),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+                crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            })
+        });
+        assert!(logs.contains("dojo_sync: cycle complete"), "no complete line; logs:\n{logs}");
+        assert!(
+            logs.contains("dojo_url=http://stub.invalid"),
+            "complete line names no dōjō; logs:\n{logs}"
+        );
+    }
+
+    // (c): 0 accepted with a non-empty batch and no rejections marks nothing.
+    #[tokio::test]
+    #[ignore = "pending: sync-hardening"]
+    async fn zero_accepted_with_an_empty_rejection_marks_nothing() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 0, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared = shared_count(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert_eq!(shared, 0, "0 accepted must mark nothing, not the complement");
+    }
+
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn zero_accepted_warns_that_it_marked_nothing() {
+        let logs = captured_logs(|| {
+            current_thread_rt().block_on(async {
+                let pg = PgStore::connect_test().await.unwrap();
+                let (pid, key, _) = seed(&pg).await;
+                let plane = StubPlane {
+                    plan: Some(SyncPlan {
+                        allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                        denied: vec![],
+                    }),
+                    push: Some(Ok(IngestResult { accepted: 0, rejected: vec![], stored: None })),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+                crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            })
+        });
+        assert!(logs.contains("marking nothing"), "0 accepted must say so loudly; logs:\n{logs}");
+    }
+
+    // H2: with per-row confirmation, only stored rows are marked.
+    #[tokio::test]
+    #[ignore = "pending: sync-hardening"]
+    async fn only_stored_rows_are_marked_when_the_dojo_confirms_per_row() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid_a, key_a, metric_a) = seed(&pg).await;
+        let (pid_b, key_b, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 2,
+                rejected: vec![],
+                stored: Some(vec![StoredMetricKey {
+                    // The seed's fixed row identity (seed_at): repo scope,
+                    // 2026-08-27, daily, no commit.
+                    repo_key: key_a.clone(),
+                    metric: metric_a.clone(),
+                    scope: "repo".into(),
+                    computed_on: "2026-08-27".into(),
+                    grain: "daily".into(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared_a = shared_count(&pg, &key_a).await;
+        let shared_b = shared_count(&pg, &key_b).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        assert_eq!(shared_a, 1, "the confirmed row is marked");
+        assert_eq!(shared_b, 0, "the unconfirmed row stays queued");
+    }
+
+    // H2: a row neither confirmed nor rejected is quiet twice, then loud —
+    // while staying queued throughout. The verdict is honest from cycle 1
+    // (skipped: rows outstanding); only the error waits for N.
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn a_row_neither_confirmed_nor_rejected_is_loud_after_three_cycles() {
+        let rt = current_thread_rt();
+        let (pg, pid, key) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, _) = seed(&pg).await;
+            (pg, pid, key)
+        });
+        let shortfall_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        let mut first_verdict = None;
+        for i in 0..3 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", "tok", &shortfall_plane()).await.unwrap();
+                })
+            });
+            loud.push(logs.contains("stored confirmation missing"));
+            if i == 0 {
+                first_verdict = rt.block_on(async { push_state(&pg, &key).await });
+            }
+        }
+        let (shared, state) = rt.block_on(async {
+            let s = shared_count(&pg, &key).await;
+            let st = push_state(&pg, &key).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            (s, st)
+        });
+        assert_eq!(shared, 0, "unconfirmed rows stay queued");
+        assert_eq!(loud, vec![false, false, true], "quiet twice, then loud");
+        let (st1, why1) = first_verdict.expect("a verdict is recorded from cycle 1");
+        assert_eq!(st1, "skipped", "the dashboard is honest while the log stays quiet");
+        assert!(why1.unwrap_or_default().contains("stored confirmation"));
+        let (st, why) = state.expect("a verdict is recorded");
+        assert_eq!(st, "skipped");
+        assert!(
+            why.unwrap_or_default().contains("stored confirmation"),
+            "the verdict must carry the cause"
+        );
+    }
+
+    // H2: a confirming cycle resets the shortfall count (consecutive means
+    // consecutive).
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn a_confirming_cycle_resets_the_shortfall_count() {
+        let rt = current_thread_rt();
+        let (pg, pid, key, metric) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, metric) = seed(&pg).await;
+            (pg, pid, key, metric)
+        });
+        let plan_for = || {
+            Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            })
+        };
+        let short_plane = || StubPlane {
+            plan: plan_for(),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        // Cycles 1-2: shortfall.
+        for _ in 0..2 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", "tok", &short_plane()).await.unwrap();
+                })
+            });
+            loud.push(logs.contains("stored confirmation missing"));
+        }
+        // Cycle 3: clean — the row is confirmed and marked.
+        let logs = captured_logs(|| {
+            rt.block_on(async {
+                let plane = StubPlane {
+                    plan: plan_for(),
+                    push: Some(Ok(IngestResult {
+                        accepted: 1,
+                        rejected: vec![],
+                        stored: Some(vec![StoredMetricKey {
+                            repo_key: key.clone(),
+                            metric: metric.clone(),
+                            scope: "repo".into(),
+                            computed_on: "2026-08-27".into(),
+                            grain: "daily".into(),
+                            commit_sha: None,
+                        }]),
+                    })),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+                // Recompute re-queues the same (repo, metric): the mark is
+                // older than the row again.
+                sqlx_core::query::query(
+                    "UPDATE sensei.repository_metrics rm SET modified_at = now() \
+                       FROM sensei.repositories r \
+                      WHERE r.id = rm.repository_id AND r.repo_key = $1",
+                )
+                .bind(&key)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            })
+        });
+        loud.push(logs.contains("stored confirmation missing"));
+        // Cycles 4-6: shortfall again — the count restarted.
+        for _ in 0..3 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", "tok", &short_plane()).await.unwrap();
+                })
+            });
+            loud.push(logs.contains("stored confirmation missing"));
+        }
+        let shared = rt.block_on(async {
+            let s = shared_count(&pg, &key).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            s
+        });
+        assert_eq!(shared, 0, "the re-queued row is never confirmed");
+        assert_eq!(
+            loud,
+            vec![false, false, false, false, false, true],
+            "reset, then loud at 3 again"
+        );
+    }
+
+    // H2: a cycle that pushes nothing for a key keeps its count (nothing was
+    // tried, nothing was learned) — only a pushed-clean cycle resets.
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn a_cycle_that_pushes_nothing_keeps_the_shortfall_count() {
+        let rt = current_thread_rt();
+        let (pg, pid, key) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, _) = seed(&pg).await;
+            (pg, pid, key)
+        });
+        let short_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        for _ in 0..2 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", "tok", &short_plane()).await.unwrap();
+                })
+            });
+            loud.push(logs.contains("stored confirmation missing"));
+        }
+        // Gap cycle: the plan allows nothing, so nothing is pushed.
+        let logs = captured_logs(|| {
+            rt.block_on(async {
+                let plane = StubPlane {
+                    plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+            })
+        });
+        loud.push(logs.contains("stored confirmation missing"));
+        // Third shortfall: loud, because the gap did not reset.
+        let logs = captured_logs(|| {
+            rt.block_on(async {
+                sync_persona(&pg, "ztest-slot", "tok", &short_plane()).await.unwrap();
+            })
+        });
+        loud.push(logs.contains("stored confirmation missing"));
+        let shared = rt.block_on(async {
+            let s = shared_count(&pg, &key).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            s
+        });
+        assert_eq!(shared, 0, "unconfirmed rows stay queued");
+        assert_eq!(loud, vec![false, false, false, true], "the gap keeps the count");
+    }
+
+    // H2 version gate: a dōjō that predates per-row confirmation keeps the
+    // complement marks. Green before and after — it pins that phase B must
+    // not break old dōjōs.
+    #[tokio::test]
+    #[ignore = "pending: sync-hardening"]
+    async fn a_dojo_without_stored_keeps_complement_marks() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared = shared_count(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert_eq!(shared, 1, "legacy shape still marks the complement");
+    }
+
+    // H2 edge: rejected wins over confirmed (a row in both lists stays queued).
+    // Green before and after — it pins the new path's priority.
+    #[tokio::test]
+    #[ignore = "pending: sync-hardening"]
+    async fn a_rejected_row_is_not_marked_even_when_also_confirmed() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, metric) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 1,
+                rejected: vec![RejectedMetric {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    reason: "unknown_metric".into(),
+                }],
+                stored: Some(vec![StoredMetricKey {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    scope: "repo".into(),
+                    computed_on: "2026-08-27".into(),
+                    grain: "daily".into(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared = shared_count(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert_eq!(shared, 0, "rejected wins");
     }
 
     #[tokio::test]
