@@ -12,6 +12,7 @@
 // so an unrecognised value degrades to a neutral chip rather than being dropped
 // -- mirroring the dojo-connections state module's discipline.
 
+import { failureNotice } from '@sensei/ui';
 import type { ApiResult, SenseiApi } from '$lib/api.js';
 import type { DojoUpgrade, DojoUpgradeScope } from '$lib/types.js';
 
@@ -101,6 +102,11 @@ export class UpgradeActions {
   busyId = $state<string | null>(null);
   /** The last action error, or null. Cleared at the start of each action. */
   error = $state<string | null>(null);
+
+  /** Notice props for an action that did not land (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice("Couldn't apply that upgrade", this.error);
+  }
 
   #api: SenseiApi;
   #reload: () => Promise<void> | void;

@@ -2,6 +2,8 @@
     import Kanji from '$lib/components/Kanji.svelte';
     import { onMount } from "svelte";
     import { scanState } from "$lib/scan-state.svelte.js";
+    import { Button } from "@rokkit/ui";
+    import { Notice } from "@sensei/ui";
 
     const workspaces = scanState.workspaces;
     const activities = scanState.activities;
@@ -35,24 +37,12 @@
                 The daemon will recurse your folders, identify folders, and
                 extract the code graph.
             </p>
-            <button class="btn-solid" onclick={() => scanState.start()}>Begin scan →</button>
+            <Button variant="primary" onclick={() => scanState.start()} label="Begin scan →" />
         </div>
     {:else}
-        {#if scanState.error}
-            <div
-                class="mb-6 p-4 rounded-md border border-danger bg-paper-mute flex items-start justify-between gap-4"
-            >
-                <div>
-                    <div class="text-sm font-semibold text-danger">
-                        Scan failed
-                    </div>
-                    <div class="text-xs text-ink-soft mt-1 font-mono">
-                        {scanState.error}
-                    </div>
-                </div>
-                <button class="btn-outline shrink-0" onclick={() => scanState.start()}>
-                    Retry
-                </button>
+        {#if scanState.notice}
+            <div class="mb-6">
+                <Notice size="panel" {...scanState.notice} primary={{ label: 'Retry', onclick: () => scanState.start(), name: 'retry' }} />
             </div>
         {:else if !scanState.daemonReachable}
             <div
@@ -183,13 +173,15 @@
                             <span class="text-ink-soft">Time elapsed</span>
                             <span class="font-mono">{activities.totalElapsed.toFixed(1)}s</span>
                         </div>
-                        <button
-                            class="btn-outline mt-3"
-                            data-testid="scan-rescan"
-                            onclick={() => { scanState.reset(); void scanState.start(); }}
-                        >
-                            Re-scan
-                        </button>
+                        <div class="mt-3">
+                            <Button
+                                style="outline"
+                                size="sm"
+                                data-testid="scan-rescan"
+                                onclick={() => { scanState.reset(); void scanState.start(); }}
+                                label="Re-scan"
+                            />
+                        </div>
                     </div>
                 {:else}
                     <div

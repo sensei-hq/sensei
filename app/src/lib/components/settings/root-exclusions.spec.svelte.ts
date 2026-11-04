@@ -135,6 +135,9 @@ describe('RootExclusions', () => {
     expect(ok).toBe(false);
     expect(a.updateWatchRoot).not.toHaveBeenCalled();
     expect(s.error).toContain('/Users/dev/Work');
+    // …through the shared Notice: what failed, then why.
+    expect(s.notice).toMatchObject({ tone: 'fault', title: "Couldn't use that exclusion" });
+    expect(s.notice!.detail).toContain('/Users/dev/Work');
   });
 
   it('leaves the list untouched when the write fails', async () => {

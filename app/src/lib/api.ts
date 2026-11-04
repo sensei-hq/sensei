@@ -1300,6 +1300,12 @@ export function senseiApi(port: number) {
       tryJson<{ ok: boolean; materialized?: unknown }>(
         'POST', `/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts,
       ),
+
+    // ── Identities (L4, Settings · Dōjō) ─────────────────────────────────
+    /** Sign one identity out on this machine — its Keychain credential and its
+     *  registry slot. `ok` is false, with `errors`, when either half failed. */
+    trySignOut: (persona: string) =>
+      tryPost<{ ok: boolean; errors?: string[] }>(`/api/auth/signout?persona=${encodeURIComponent(persona)}`, {}),
   };
 }
 

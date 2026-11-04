@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
   import { onMount } from 'svelte';
   import { Select } from '@rokkit/ui';
@@ -24,8 +25,8 @@
 
   {#if roles.loading}
     <p class="text-sm text-ink-mute">Loading chains…</p>
-  {:else if roles.loadError}
-    <p class="text-sm text-danger" data-testid="settings-inference-error">Could not load chains: {roles.loadError}</p>
+  {:else if roles.loadNotice}
+    <Notice size="panel" {...roles.loadNotice} primary={{ label: 'Retry', onclick: () => roles.load(), name: 'retry' }} data-testid="settings-inference-error" />
   {:else}
     <div class="flex flex-col divide-y divide-paper-edge">
       {#each SENSEI_ROLES as role (role)}
@@ -88,10 +89,8 @@
                 {/each}
               </div>
             {/if}
-            {#if status === 'error' && roles.saveError[role]}
-              <div class="text-xs text-danger mt-1" data-testid={`inference-role-error-${role}`}>
-                {roles.saveError[role]}
-              </div>
+            {#if status === 'error' && roles.saveNotice(role)}
+              <div class="mt-1"><Notice size="inline" bare expanded {...roles.saveNotice(role)!} data-testid={`inference-role-error-${role}`} /></div>
             {/if}
           </div>
           <div class="flex items-center gap-2">

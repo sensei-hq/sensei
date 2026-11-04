@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Icon } from '$lib/components/kit';
 	import { Button } from '@rokkit/ui';
+	import { Notice } from '@sensei/ui';
+	import { askSendNotice } from '$lib/dojo-notices';
 	import { relativeAge } from '$lib/triage/view';
 	import type { RelayAsk, AskAction } from './types';
 	import * as m from '$lib/paraglide/messages';
@@ -25,6 +27,7 @@
 		/** The answer, and for an approval the typed line as its note. */
 		onanswer?: (askId: string, answer: string, note?: string) => void;
 	} = $props();
+	const errorNotice = $derived(askSendNotice(error));
 
 	// action → Solar icon + verb label (status ≠ action: a stalled run takes "resume").
 	const KIND: Record<AskAction, { icon: string; label: string }> = {
@@ -139,8 +142,8 @@
 					{m.ask_send()}
 				</Button>
 			</div>
-			{#if error}
-				<span role="alert" class="text-danger text-xs">{error}</span>
+			{#if errorNotice}
+				<Notice size="inline" expanded bare {...errorNotice} />
 			{/if}
 			<span class="mono text-ink-faint text-xs">{m.ask_hold_note()}</span>
 		</div>

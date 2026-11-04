@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, ListSection, Avatar, EmptyState, Banner, LoadError } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Banner, EmptyState, Notice } from '@sensei/ui';
+	import { SectionHead, ListSection, Avatar } from '$lib/components/kit';
 	import type { TeamMetricsView, TeamMetricCell } from '$lib/team-metrics-view';
 
 	// The Teams view (#307 R8, D38; mockup dojo2 ScrTeams / TeamDetail "By
@@ -17,7 +19,7 @@
 	}: {
 		orgName: string;
 		view: TeamMetricsView | null;
-		error: string | null;
+		error: ReadError | string | null;
 	} = $props();
 
 	const COLS = 'grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1.6fr)_repeat(4,minmax(0,1fr))_minmax(0,0.8fr)]';
@@ -45,13 +47,13 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="your teams" {error} />
+			<Notice size="panel" {...dojoLoadNotice("your teams", error)} data-load-error />
 		{:else if view && view.teams.length === 0}
 			<EmptyState kanji="組" title="You are on no team yet.">
 				An admin puts people on teams under Members &amp; Roles → Teams.
 			</EmptyState>
 		{:else if view}
-			<Banner kanji="観" tone="neutral" title="These are counts, not transcripts.">
+			<Banner mark="観" tone="normal" title="These are counts, not transcripts.">
 				Each number is what someone's sensei sent up — never their code, prompts or sessions. {view.window}.
 				{view.totalsNote}
 			</Banner>

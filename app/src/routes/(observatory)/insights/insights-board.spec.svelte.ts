@@ -131,6 +131,8 @@ describe('InsightsBoardState — actions', () => {
     expect(s.actionError).toContain('Now rec');
     // The daemon's reason, not a guess that it "may already be decided" (#288).
     expect(s.actionError).toContain('Service Unavailable');
+    // …through the shared Notice: what failed, then the daemon's reason.
+    expect(s.actionNotice).toEqual({ tone: 'fault', title: 'Couldn\'t apply "Now rec"', detail: 'Service Unavailable', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 
   it('dismiss() optimistically removes the rec and calls reject', async () => {

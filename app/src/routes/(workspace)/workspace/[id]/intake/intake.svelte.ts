@@ -5,6 +5,7 @@
  * with an injected fake — no network, no appState. Mirrors the state-owns-the-
  * flow pattern of insights-board.svelte.ts.
  */
+import { failureNotice } from '@sensei/ui';
 import type { ApiResult } from '$lib/api.js';
 import type { IntakeGuide, PlaybookRecommendation } from '$lib/types.js';
 
@@ -21,6 +22,13 @@ export class IntakeState {
   phase = $state<IntakePhase>('describe');
   rec = $state<PlaybookRecommendation | null>(null);
   error = $state('');
+  /** Which step failed, for its Notice. */
+  #failedStep = $state('');
+
+  /** Notice props for a step that failed (packages/ui/notice.js). */
+  get notice() {
+    return this.phase === 'error' ? failureNotice(this.#failedStep || "That step didn't go through", this.error) : null;
+  }
   /** The workspace this intake runs in. A playbook run always happens in a workspace
    *  (no global run) — carried on every recommend/confirm so the daemon scopes
    *  trust to this workspace and records the run against it. */
@@ -46,7 +54,8 @@ export class IntakeState {
     const res = await api.recommendPlaybook({ chunk, preview: true, workspace_id: this.workspaceId });
     if (!res.ok) {
       this.phase = 'error';
-      this.error = res.error.message || 'Could not classify the chunk.';
+      this.error = res.error.message || 'The daemon did not say why.';
+      this.#failedStep = "Couldn't classify the chunk";
       return;
     }
     this.rec = res.data;
@@ -68,7 +77,8 @@ export class IntakeState {
     });
     if (!res.ok) {
       this.phase = 'error';
-      this.error = res.error.message || 'Could not record the playbook.';
+      this.error = res.error.message || 'The daemon did not say why.';
+      this.#failedStep = "Couldn't record the playbook";
       return;
     }
     this.phase = 'recorded';

@@ -1,7 +1,8 @@
 <script lang="ts">
+    import { StateView } from '@sensei/ui';
     import { railIcon } from "../settings-nav";
     import { invalidateAll } from "$app/navigation";
-    import { PageHeader, Screen, ScreenState, StatusDot } from "$lib/components";
+    import { PageHeader, Screen, StatusDot } from "$lib/components";
     import TranscriptConsentCard from "$lib/components/settings/TranscriptConsentCard.svelte";
 
     // The detected assistants, or why they could not be detected (#288) —
@@ -17,7 +18,7 @@
     {/snippet}
     <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16" data-testid="settings-assistants">
         {#if loadError}
-            <ScreenState status="error" error={loadError} onretry={() => void invalidateAll()} />
+            <StateView status="error" error={loadError} onretry={() => void invalidateAll()} />
         {:else}
             <div
                 class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"

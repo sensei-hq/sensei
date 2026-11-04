@@ -381,7 +381,7 @@ describe('the Fields section (W-UI)', () => {
     expect(q<HTMLSelectElement>('[data-section="fields"] select[data-field-metric]')?.value).toBe('active_hours');
     q<HTMLButtonElement>('[data-section="fields"] [data-action="save-fields"]')!.click();
     await settle();
-    expect(q('[data-section="fields"] [data-field-row="0"] [data-field-error]')?.textContent?.trim()).toBe(
+    expect(q('[data-section="fields"] [data-field-row="0"] [data-field-error] [data-part="title"]')?.textContent?.trim()).toBe(
       'That field already has values on this board. Pick an empty field.',
     );
     expect(state.alert).toBe(null);

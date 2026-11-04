@@ -17,6 +17,7 @@ import {
   requiresConfirm,
   shareStateChip,
   shippableCount,
+  itemNotice,
 } from './share-review-state.svelte.js';
 
 const item = (over: Partial<ShareReviewItem> = {}): ShareReviewItem => ({
@@ -235,5 +236,26 @@ describe('PublishBatchAction', () => {
     resolveCall({ ok: true, data: outcome() });
     await pending;
     expect(actions.busy).toBe(false);
+  });
+});
+
+describe('itemNotice — one item\'s publish message, through the shared Notice', () => {
+  it('an error is a fault; a hold is a refusal (a decision); anything else a note', () => {
+    expect(itemNotice({ result: 'error', message: 'dōjō refused' })).toEqual({ tone: 'fault', title: 'dōjō refused', code: 'error', remedy: 'Retry. If it keeps failing, reload the page.' });
+    expect(itemNotice({ result: 'held_residual_risk', message: 'residual risk' })!.tone).toBe('refusal');
+    expect(itemNotice({ result: 'no_destination', message: 'no dōjō' })!.tone).toBe('refusal');
+    expect(itemNotice({ result: 'staged', message: 'later' })!.tone).toBe('normal');
+  });
+
+  it('no message, no notice', () => {
+    expect(itemNotice({ result: 'published', message: null })).toBeNull();
+  });
+});
+
+describe('PublishBatchAction.notice', () => {
+  it('a publish that did not go through names what failed', () => {
+    const a = new PublishBatchAction(mockApi({}), async () => {});
+    a.error = 'Bad Gateway';
+    expect(a.notice).toEqual({ tone: 'fault', title: "Couldn't publish the batch", detail: 'Bad Gateway', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 });

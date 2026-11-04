@@ -25,6 +25,7 @@
 //   - the row's own `deactivated` (the local mirror) lags until the next sync,
 //     which the screen says rather than papering over.
 
+import { failureNotice } from '@sensei/ui';
 import type {
   MetricReason,
   MetricStatusResponse,
@@ -252,6 +253,13 @@ export class MetricSettings {
   saving = $state(false);
   /** The last read or write error, or null. Cleared at the start of each. */
   error = $state<string | null>(null);
+
+  /** Notice props for a change that did not happen. A local refusal (no remote
+   *  key, no signed-in identity) is a refusal, not a fault: nothing broke. */
+  get notice() {
+    const n = failureNotice("That metric didn't change", this.error);
+    return n && this.error === this.blockedReason ? { ...n, tone: 'refusal' as const } : n;
+  }
   /**
    * Bumped whenever a write is REFUSED. The template keys each switch on it.
    *

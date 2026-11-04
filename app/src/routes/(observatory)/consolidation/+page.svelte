@@ -1,7 +1,8 @@
 <script lang="ts">
+    import { EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
   import { invalidateAll } from '$app/navigation';
-  import { EmptyState, PageHeader, Screen, ScreenState } from '$lib/components';
+  import { PageHeader, Screen } from '$lib/components';
   import { railIcon } from '../observatory-nav';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
@@ -60,10 +61,10 @@
     </PageHeader>
   {/snippet}
   {#if data.error}
-    <ScreenState status="error" error={data.error} onretry={invalidateAll} />
+    <StateView status="error" error={data.error} failure={data.failure} onretry={invalidateAll} />
   {:else if !ruleset}
     <div class="p-6 flex flex-col items-center gap-5">
-      <EmptyState
+      <EmptyState size="screen"
         kanji="結"
         title="nothing consolidated yet"
         description="When rules start to overlap, sensei can merge them into one coherent ruleset here. Run a consolidation to propose a merge, then approve it to keep."

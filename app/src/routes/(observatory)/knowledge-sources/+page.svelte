@@ -1,9 +1,9 @@
 <script lang="ts">
+    import { EmptyState } from '@sensei/ui';
     import { railIcon } from "../observatory-nav";
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
-    import EmptyState from "$lib/components/EmptyState.svelte";
     import { PageHeader, Screen } from "$lib/components";
     import { Button } from "@rokkit/ui";
     import { KnowledgeSourcesState } from "$lib/knowledge-sources.svelte.js";
@@ -55,7 +55,7 @@
         {#if state.loading}
             <p class="text-sm text-ink-mute">Loading sources...</p>
         {:else if state.sources.length === 0}
-            <EmptyState
+            <EmptyState size="screen"
                 kanji="連"
                 title="No knowledge sources."
                 description="Register a hive-mind endpoint to federate rules and memories across machines."

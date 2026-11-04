@@ -1,14 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import {
-		SectionHead,
-		Banner,
-		Icon,
-		ClassChip,
-		PhasePill,
-		LadderRung,
-		RuleRow,
-		ConflictCard, LoadError } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Banner, Notice } from '@sensei/ui';
+	import { SectionHead, Icon, ClassChip, PhasePill, LadderRung, RuleRow, ConflictCard } from '$lib/components/kit';
 	import Spark from '$lib/components/kit/Spark.svelte';
 	import type { KitConflict, KitLadderRung, KitWorkspace } from '$lib/components/kit/types';
 	import type { WorkspaceMetricsView } from '$lib/workspace-metrics-view';
@@ -36,7 +30,7 @@
 		ladder: KitLadderRung[];
 		conflicts: KitConflict[];
 		/** A failed constitution read — shown instead of the empty state (#106). */
-		error?: string | null;
+		error?: ReadError | string | null;
 		/** The workspace's per-repository metrics (WP5); null when the page did
 		 *  not read them (the personal drill-in) or the read failed. */
 		metrics?: WorkspaceMetricsView | null;
@@ -81,20 +75,20 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="this workspace's constitution" {error} />
+			<Notice size="panel" {...dojoLoadNotice("this workspace's constitution", error)} data-load-error />
 		{:else if ladder.length === 0}
 			<!-- Honest-empty: the composed constitution is resolved by the daemon in the
 			     editor and NOT yet federated to the dōjō (F4). We render the real workspace
 			     header above + this truthful state, never a fabricated ladder/conflicts. -->
-			<Banner kanji="観" tone="neutral" title="This workspace's constitution resolves in your editor.">
+			<Banner mark="観" tone="normal" title="This workspace's constitution resolves in your editor.">
 				sensei composes the ladder — your personal rules layered with this dōjō's rules, most-specific
 				wins — locally as you work. The dōjō's view of the resolved constitution is on its way; nothing
 				is shown here until it can be shown truthfully.
 			</Banner>
 		{:else}
 			<Banner
-				kanji="観"
-				tone={workspace.classification === 'client' ? 'accent' : 'neutral'}
+				mark="観"
+				tone={workspace.classification === 'client' ? 'action' : 'normal'}
 				title={workspace.classification === 'client'
 					? 'Client work — sources are dereferenced, as they always are.'
 					: 'These rules resolve here, most-specific wins.'}
@@ -178,7 +172,7 @@
 					{/if}
 				</div>
 				{#if metricsError}
-					<LoadError what="this workspace's metrics" error={metricsError} />
+					<Notice size="panel" {...dojoLoadNotice("this workspace's metrics", metricsError)} data-load-error />
 				{:else if metrics && metrics.repos.length === 0}
 					<p class="text-sm text-ink-faint">Nothing sent in this window.</p>
 				{:else if metrics}

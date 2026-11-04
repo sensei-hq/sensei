@@ -108,7 +108,7 @@ test.describe('Settings · Metrics', () => {
   test('renders against the daemon, and empty is not an error', async ({ tauriPage }) => {
     const live = await liveSummary();
 
-    // `data-screen-state`, hyphenated — the attribute ScreenState actually emits.
+    // `data-screen-state`, hyphenated — the attribute StateView actually emits.
     // An earlier version asserted `[data-screenstate="error"]`, which matches
     // nothing and so passed no matter what the screen showed: a check that cannot
     // fail is worse than no check, because it reads as coverage.

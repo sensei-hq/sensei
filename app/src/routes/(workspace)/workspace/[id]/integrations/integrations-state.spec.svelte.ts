@@ -363,6 +363,7 @@ describe('the connected card', () => {
     await s.load();
     await s.sync('t-1');
     expect(s.alert?.text).toBe('A sync is already running.');
+    expect(s.alertNotice).toEqual({ tone: 'fault', title: 'A sync is already running.', code: s.alert!.code, remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 
   it('Sync now: syncs that board, then reads the connections again', async () => {
@@ -700,5 +701,19 @@ describe('refusedRow', () => {
     expect(refusedRow(sameRef, { error: 'duplicate_mapping', field_ref: 'customfield_9' })).toBe(1);
     expect(refusedRow(rows, { error: 'field_in_use', field_ref: 'customfield_3' })).toBe(2);
     expect(refusedRow(rows, { error: 'rate_limited' })).toBe(null);
+  });
+});
+
+describe('loadNotice — the daemon-error view through the shared Notice', () => {
+  it('names what failed; the reason is the detail', async () => {
+    const { s } = screen([fail(0, '')]);
+    await s.load();
+    expect(s.loadNotice).toEqual({ tone: 'fault', title: "Couldn't load this workspace's trackers", detail: 'The sensei daemon didn’t respond.', remedy: 'Retry. If it keeps failing, reload the page.' });
+  });
+
+  it('none once loaded', async () => {
+    const { s } = screen([{ ok: true, data: [] }]);
+    await s.load();
+    expect(s.loadNotice).toBeNull();
   });
 });

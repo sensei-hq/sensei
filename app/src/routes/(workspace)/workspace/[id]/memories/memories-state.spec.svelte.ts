@@ -364,3 +364,12 @@ describe('WorkspaceMemoriesState.strengthOf', () => {
     });
 });
 
+
+describe('notices — through the shared Notice', () => {
+    it('each failure names what failed; the reason it holds is the detail', () => {
+        const s = new WorkspaceMemoriesState();
+        expect([s.batchNotice, s.decideNotice('b'), s.promoteNotice('a'), s.generaliseNotice('a')]).toEqual([null, null, null, null]);
+        s.batchError = 'boom';
+        expect(s.batchNotice).toEqual({ tone: 'fault', title: "Couldn't propose the batch", detail: 'boom', remedy: 'Retry. If it keeps failing, reload the page.' });
+    });
+});

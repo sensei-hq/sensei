@@ -1,6 +1,7 @@
 // Model chains and the reasoning roles they serve — the one role write and the
 // Settings · Inference state (audit 2026-10-28, item 13: the panel held its whole
 // slice in the component and repeated the wizard's clear-then-set write).
+import { failureNotice } from '@sensei/ui';
 import { failureReason, type SenseiApi } from '$lib/api.js';
 import type { DaemonChain, SenseiRole } from './contracts.js';
 import { ROLE_META, roleAssignments } from './role-meta.js';
@@ -51,6 +52,16 @@ export class ChainRoles {
   chains = $state<DaemonChain[]>([]);
   loading = $state(true);
   loadError = $state<string | null>(null);
+
+  /** Notice props for a failed read of the chains (packages/ui/notice.js). */
+  get loadNotice() {
+    return failureNotice("Couldn't load the chains", this.loadError);
+  }
+
+  /** Notice props for a role whose chain did not save. */
+  saveNotice(role: SenseiRole) {
+    return failureNotice(`Couldn't save the ${role} chain`, this.saveError[role]);
+  }
   /** Role → chain id — the daemon's truth after each write. */
   assignments = $state<Record<SenseiRole, string | null>>(byRole(null));
   /** Per role, so a slow write to one does not hide another's outcome. */

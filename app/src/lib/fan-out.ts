@@ -19,3 +19,15 @@ export async function fanOutWorkspaces<P extends { name: string }, T>(
     unread: results.flatMap(({ workspace, r }) => (r.ok ? [] : [{ name: workspace.name, reason: failureReason(r.error) }])),
   };
 }
+
+/** Notice props for the workspaces a cross-workspace read could not reach — what
+ *  the screen shows is then partial, and says so (#288). */
+export function unreadNotice(unread: UnreadWorkspace[]) {
+  if (unread.length === 0) return null;
+  return {
+    tone: 'fault' as const,
+    title: `Couldn't read ${unread.length} ${unread.length === 1 ? 'workspace' : 'workspaces'}`,
+    detail: unread.map((u) => `${u.name} (${u.reason})`).join(', '),
+    remedy: 'What this screen shows leaves them out.',
+  };
+}

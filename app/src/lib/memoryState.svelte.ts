@@ -1,3 +1,4 @@
+import { failureNotice } from '@sensei/ui';
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 import { failureReason, senseiApi } from './api.js';
 import { appState } from './appstate.svelte.js';
@@ -192,6 +193,11 @@ class MemoryState {
 
     actionError(id: string): string | null {
         return this.#actionErrors.get(id) ?? null;
+    }
+
+    /** Notice props for an action on a learning that did not land (packages/ui/notice.js). */
+    actionNotice(id: string) {
+        return failureNotice("Couldn't update that learning", this.actionError(id));
     }
 
     #begin(id: string): boolean {

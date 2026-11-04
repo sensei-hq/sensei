@@ -1,14 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import {
-		SectionHead,
-		Btn,
-		Chip,
-		ListSection,
-		KanjiToken,
-		ConfidenceBar,
-		Enso,
-		EmptyState, LoadError } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, EmptyState, Notice } from '@sensei/ui';
+	import { SectionHead, Btn, Chip, ListSection, KanjiToken, ConfidenceBar, Enso } from '$lib/components/kit';
 	import type { KitTriageGroup, KitCandidateDetail } from '$lib/components/kit/types';
 	import { impactTone, needsSecondApproval } from '$lib/triage/candidates-view';
 	import { createTriage } from '$lib/triage-state.svelte';
@@ -33,7 +27,7 @@
 		groups?: KitTriageGroup[];
 		detail: KitCandidateDetail;
 		/** A failed read — shown in place of the empty state (#335). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 
 	// Seed the selection store ONCE from the props — a different org re-mounts this
@@ -67,7 +61,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the triage queue" {error} />
+			<Notice size="panel" {...dojoLoadNotice("the triage queue", error)} data-load-error />
 		{:else}
 			{#if triage.all.length}
 				<div class="grid gap-4 items-start grid-cols-1 md:grid-cols-[1.1fr_1fr]">

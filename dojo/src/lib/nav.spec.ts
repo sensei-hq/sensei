@@ -9,6 +9,7 @@ import {
 	TABS_ORG,
 	navForOrg,
 	navGroupsFor,
+	rankOf,
 	tabsFor,
 	YOU_SECTIONS,
 	ORG_SECTIONS,
@@ -240,5 +241,19 @@ describe('nav marks', () => {
 		for (const t of [...TABS_YOU, ...TABS_ORG]) {
 			expect({ kanji: t.kanji, icon: t.icon }, t.id).toEqual({ kanji: byId.get(t.id)?.kanji, icon: byId.get(t.id)?.icon });
 		}
+	});
+});
+
+// rankof-label (r1): a membership's role arrives as the server LABEL
+// ('Maintainer'); rankOf ranks a label and a key the same, in one place.
+describe('rankOf — a label and a key rank the same', () => {
+	it.each(['contributor', 'maintainer', 'lead', 'admin'])('%s', (key) => {
+		const label = key.charAt(0).toUpperCase() + key.slice(1);
+		expect(rankOf(label)).toBe(rankOf(key));
+		expect(rankOf(key)).toBe(K2_ROLE_RANK[key]);
+	});
+
+	it('Member, an unknown label and no role rank as a contributor (0)', () => {
+		expect([rankOf('Member'), rankOf('Owner?'), rankOf(null), rankOf(undefined)]).toEqual([0, 0, 0, 0]);
 	});
 });

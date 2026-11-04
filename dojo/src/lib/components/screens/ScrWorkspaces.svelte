@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Btn, WorkspaceRow, EmptyState, LoadError } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, EmptyState, Notice } from '@sensei/ui';
+	import { SectionHead, Btn, WorkspaceRow } from '$lib/components/kit';
 	import type { KitWorkspace } from '$lib/components/kit/types';
 
 	// The full personal workspace list (mockup ScrWorkspaces) — a flush card of
@@ -20,7 +22,7 @@
 		/** A read-failure message — when set, the screen shows an error state
 		 *  instead of the honest-empty one, so a failure is never masked as "no
 		 *  workspaces" (F1 honesty: error ≠ empty). */
-		error?: string | null;
+		error?: ReadError | string | null;
 		showDojo?: boolean;
 		eyebrow?: string;
 		title?: string;
@@ -40,7 +42,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the workspaces" {error} />
+			<Notice size="panel" {...dojoLoadNotice("the workspaces", error)} data-load-error />
 		{:else if workspaces.length}
 			<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 				{#each workspaces as p (p.id)}

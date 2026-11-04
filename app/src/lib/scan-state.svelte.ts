@@ -4,6 +4,7 @@
  * and survives stage navigation.
  */
 
+import { failureNotice } from '@sensei/ui';
 import { ReactiveStageContext } from './stage.svelte.js';
 import { EventManager } from './events.js';
 import { senseiApi, dataOrThrow, failureReason, type ApiResult } from './api.js';
@@ -274,6 +275,11 @@ export class ScanState {
   status = $state<ScanRunStatus>('idle');
   rootCount = $state(0);
   error = $state<string | null>(null);
+
+  /** Notice props for a scan that failed (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice('The scan failed', this.error);
+  }
   daemonReachable = $state(true);
 
   #events: EventManager<StateEvent<{ id: string }>> | null = null;

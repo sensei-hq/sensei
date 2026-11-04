@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { Notice, StateView } from '@sensei/ui';
     import { railIcon } from "../settings-nav";
     import { untrack } from "svelte";
     import { invalidateAll } from "$app/navigation";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
-    import { PageHeader, Screen, ScreenState } from "$lib/components";
+    import { PageHeader, Screen } from "$lib/components";
     import type { ExtensionRow } from "../settings-reads";
     import { ExtensionsState } from "./extensions-state.svelte.js";
 
@@ -33,7 +34,7 @@
     {/snippet}
     <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16" data-testid="settings-extensions">
         {#if ex.loadError}
-            <ScreenState status="error" error={ex.loadError} onretry={() => void invalidateAll()} />
+            <StateView status="error" error={ex.loadError} onretry={() => void invalidateAll()} />
         {:else}
             <div
                 class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"
@@ -50,7 +51,7 @@
                     <div class="flex flex-col gap-0.5">
                         {#each ex.extensions as ext (ext.kind + "::" + ext.name)}
                             {@const busy = ex.isBusy(ext)}
-                            {@const toggleError = ex.toggleError(ext)}
+                            {@const toggleNotice = ex.toggleNotice(ext)}
                             <div
                                 class="extension-row flex items-center gap-3 py-2.5 border-b border-paper-edge"
                                 data-testid={`ext-row-${ext.kind}-${ext.name}`}
@@ -64,8 +65,8 @@
                                     <span class="text-xs text-ink-mute w-14 text-right"
                                         >saving…</span
                                     >
-                                {:else if toggleError}
-                                    <span class="text-xs text-danger" data-testid={`ext-error-${ext.kind}-${ext.name}`}>{toggleError}</span>
+                                {:else if toggleNotice}
+                                    <Notice size="inline" bare expanded {...toggleNotice} data-testid={`ext-error-${ext.kind}-${ext.name}`} />
                                 {/if}
                                 <label
                                     class="inline-flex items-center gap-2 cursor-pointer"

@@ -1,3 +1,4 @@
+import { readError, NOT_A_MEMBER, type ReadError } from '$lib/read-error';
 import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 import { ORG_SECTIONS, labelForSection } from '$lib/nav';
@@ -7,7 +8,6 @@ import { guardTenantScope } from '$lib/org-guard';
 import {
 	getKnowledge,
 	listWorkspaces,
-	DojoApiError,
 	type KnowledgeLibraryWire,
 	type WorkspaceRow
 } from '$lib/client-data';
@@ -106,16 +106,16 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		empty: K,
 		fetcher: (tk: string) => Promise<W>,
 		map: (w: W) => K
-	): Promise<{ value: K; error: string | null }> {
+	): Promise<{ value: K; error: ReadError | null }> {
 		if (section !== forSection) return { value: empty, error: null };
 		try {
 			const guarded = await guardTenantScope<W>(tenantKey, undefined as unknown as W, fetcher);
-			// A membership-less guard returns the sentinel; treat as empty.
-			if (guarded.noMembership) return { value: empty, error: null };
+			// No tenant for this membership: a refusal, said — never a blank screen (L3, r1).
+			if (guarded.noMembership) return { value: empty, error: NOT_A_MEMBER };
 			return { value: map(guarded.value), error: null };
 		} catch (e) {
-			const error = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
-			return { value: empty, error };
+			// The status travels with the message, so a 403 reads as a refusal (M3, r1).
+			return { value: empty, error: readError(e) };
 		}
 	}
 
@@ -124,7 +124,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	let triage: KitTriageGroup[] = [];
 	let candidateDetail: KitCandidateDetail = toKitCandidateDetail(undefined);
 	let approvals: KitApproval[] = [];
-	let triageError: string | null = null;
+	let triageError: ReadError | null = null;
 	if (section === 'triage' || section === 'approvals') {
 		try {
 			const guarded = await guardTenantScope<TriageRow[]>(tenantKey, [], (tk) => listTriage(tk, opts));
@@ -138,7 +138,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 			const topRow = top ? rows.find((r) => r.signature === top.id) : undefined;
 			candidateDetail = toKitCandidateDetail(topRow);
 		} catch (e) {
-			triageError = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
+			triageError = readError(e);
 		}
 	}
 
@@ -150,7 +150,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	let viewers: DojoViewerView[] = [];
 	let viewerWorkspaces: ViewerWorkspaceView[] = [];
 	let teams: TeamView[] = [];
-	let membersError: string | null = null;
+	let membersError: ReadError | null = null;
 	if (section === 'members' || section === 'audit') {
 		try {
 			const [m, p, a, v, pr, tm] = await Promise.all([
@@ -170,7 +170,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 			rolePolicies = toKitRolePolicies(p.value);
 			auditLog = toKitAuditThread(a.value);
 		} catch (e) {
-			membersError = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
+			membersError = readError(e);
 		}
 	}
 

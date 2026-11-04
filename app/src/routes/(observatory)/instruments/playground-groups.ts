@@ -7,6 +7,7 @@
  * Pure — the page passes the store's values in.
  */
 
+import { failureNotice } from '@sensei/ui';
 import { iconForKanji } from '$lib/glyph-vocabulary';
 
 export type PlaygroundTool = {
@@ -127,4 +128,9 @@ export function serversByFamily<S extends DiscoveredServer>(
       label: FAMILIES.find((f) => f.family === family)?.label ?? (family === 'manual' ? 'Added in sensei' : family),
       servers: [...rows].sort((a, b) => a.mcp_key.localeCompare(b.mcp_key)),
     }));
+}
+
+/** Notice props for a server group whose tools could not be read. */
+export function groupNotice(group: { name?: string; error?: string | null }) {
+  return failureNotice("Couldn't read this server's tools", group.error);
 }

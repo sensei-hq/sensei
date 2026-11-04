@@ -1,7 +1,12 @@
-// The product catalog on the Plan & billing screen: the tiers and what Relay
-// costs where. Product copy, the same for every org — not any org's account.
-// Which tier an org is on comes from its billing account (`billing-map`).
-import type { KitBillingTier, KitBillingRelayRow } from './components/kit/types';
+// The product catalog on the Plan & billing screen: two plans (D46, D52, D59,
+// D75). Free — every public repository and a personal dōjō's private ones, with
+// targets. Pro — an organization's private repositories too, with blocking targets (D86), billed
+// by the seats who work on them. The price is to be announced until a payment
+// provider exists (D75); no amount is shown. SSO, SCIM, audit, viewers and the
+// relay's team on-call queue are free on every plan (D59, D77). Product copy, the
+// same for every org — which plan an org is on comes from its billing account
+// (`billing-map`).
+import type { KitBillingTier } from './components/kit/types';
 
 export const BILLING_TIERS: KitBillingTier[] = [
 	{
@@ -9,46 +14,26 @@ export const BILLING_TIERS: KitBillingTier[] = [
 		kanji: '無',
 		name: 'Free',
 		price: 'Free',
-		sub: 'public · OSS · personal',
+		sub: 'every organization',
 		lines: [
-			'Public / open-source or personal solo dōjō',
-			'Unlimited members · full governance authoring',
-			'Relay for your own workspaces — watch · approve · decide · chat',
-			'Fair use: 1 active machine · standard realtime'
+			'Every public repository syncs',
+			"A personal dōjō's private repositories sync too, blocking targets included",
+			'Targets that warn, on every repository',
+			'SSO, SCIM, audit, viewers and the relay’s team queue',
+			"An organization's private repositories stay hidden"
 		]
 	},
 	{
-		id: 'team',
+		id: 'pro',
 		kanji: '組',
-		name: 'Team',
-		price: 'Per seat',
-		sub: '/ mo · active contributor',
+		name: 'Pro',
+		price: 'To be announced',
+		sub: 'per seat on private repositories',
 		lines: [
-			'Private, shared scopes for a company or team',
-			'Role consoles · audit',
-			'Relay across the team — shared inbox, presence, priority realtime',
-			'Read-only members always free'
-		]
-	},
-	{
-		id: 'enterprise',
-		kanji: '企',
-		name: 'Enterprise',
-		price: 'Contract',
-		sub: 'custom',
-		dark: true,
-		lines: [
-			'Self-hosted / VPC · SSO (OIDC / SAML) + SCIM',
-			'Audit retention & export · air-gapped bundle',
-			'Self-hosted relay · SSO on mobile',
-			'SLA & priority support'
+			"Blocking targets on an organization's private repositories",
+			'Every private repository syncs, on by default',
+			"Only the organization's admins can turn a repository's sync off",
+			'Contributors to public repositories and viewers are never counted'
 		]
 	}
-];
-
-export const RELAY_ROWS: KitBillingRelayRow[] = [
-	{ label: 'Relay on your own workspaces — watch · approve · decide · chat', free: true },
-	{ label: 'One active machine · standard realtime · native push', free: true },
-	{ label: "Shared team inbox & queue · presence (who's handling this)", free: false },
-	{ label: 'Higher concurrency · priority realtime · approval audit trail', free: false }
 ];

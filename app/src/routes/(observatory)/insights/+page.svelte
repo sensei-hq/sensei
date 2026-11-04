@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { Notice, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
-  import { PageHeader, Screen, ScreenState } from '$lib/components';
+  import { PageHeader, Screen } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
@@ -175,20 +176,18 @@
     </div>
 
     {#if board.actionError}
-      <div
-        role="alert"
-        class="flex items-center gap-2 py-2 px-6 bg-danger-soft border-b border-paper-edge shrink-0"
-      >
-        <Kanji char="警" size="inherit" tone="inherit" class="text-xs text-danger" />
-        <span class="text-xs text-danger">{board.actionError}</span>
-      </div>
+      {#if board.actionNotice}
+        <div class="py-2 px-6 border-b border-paper-edge shrink-0">
+          <Notice size="inline" expanded {...board.actionNotice} data-insights-action-error />
+        </div>
+      {/if}
     {/if}
   {/snippet}
   {#if board.loadError}
     <!-- The board could not be read (#288) — not three quiet columns. Retry
          re-reads the current scope through the state, which owns the board. -->
     <div class="p-8">
-      <ScreenState status="error" error={board.loadError} onretry={() => void board.retry(api)} />
+      <StateView status="error" error={board.loadError} onretry={() => void board.retry(api)} />
     </div>
   {:else}
   <div class="grid grid-cols-3 flex-1 min-h-0" data-triage-grid>

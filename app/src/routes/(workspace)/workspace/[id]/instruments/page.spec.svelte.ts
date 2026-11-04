@@ -54,6 +54,7 @@ describe('Workspace Instruments /+page — a failed read', () => {
       data: {
         workspace: { id: 'p1', name: 'p' }, tools: [], mcpToolStats: [], services: [],
         toolUsage: [], toolUsageError: 'Bad Gateway', error: null,
+        toolUsageNotice: { tone: 'fault', title: "Couldn't read which tools were used", detail: 'Bad Gateway' },
       } as unknown as PageData,
     });
     cleanup.push(m.destroy);

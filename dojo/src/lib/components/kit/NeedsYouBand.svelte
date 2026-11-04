@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Icon from './Icon.svelte';
 	import NeedsRow from './NeedsRow.svelte';
-	import EmptyState from './EmptyState.svelte';
+	import { EmptyState } from '@sensei/ui';
 	import { type NeedsAction } from './needs';
 	import type { KitNeed } from './types';
 

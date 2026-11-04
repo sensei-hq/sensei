@@ -1,6 +1,7 @@
 // Settings · Extensions — the installed skills, agents and hooks, and turning
 // one on or off. The read is the loader's (+page.ts). A toggle the daemon
 // refuses leaves the row as it was and says why on that row.
+import { failureNotice } from '@sensei/ui';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { failureReason, type ApiResult } from '$lib/api.js';
 import type { ExtensionRow } from '../settings-reads';
@@ -35,6 +36,11 @@ export class ExtensionsState {
 
   toggleError(e: ExtensionRow): string | null {
     return this.#errors.get(keyOf(e)) ?? null;
+  }
+
+  /** Notice props for a toggle that did not land (packages/ui/notice.js). */
+  toggleNotice(e: ExtensionRow) {
+    return failureNotice(`Couldn't switch ${e.name} ${e.enabled ? 'off' : 'on'}`, this.toggleError(e));
   }
 
   /** Busy per row, so a slow toggle does not disable its neighbours. */

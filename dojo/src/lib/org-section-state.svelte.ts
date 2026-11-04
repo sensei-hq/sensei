@@ -1,6 +1,7 @@
 // The org-zone console writes (#293) — a member's role, the dōjō's viewers and
 // teams. The page binds each write to the org's tenant
 // and session; this runs it, reloads on success, and says why on failure.
+import { actionFailedNotice } from '$lib/dojo-notices';
 import { DojoApiError } from '$lib/client-data';
 import type { KitMember } from '$lib/components/kit/types';
 import type { DojoViewerView } from '$lib/viewers-view';
@@ -29,6 +30,16 @@ const message = (e: unknown, fallback: string) => (e instanceof DojoApiError ? e
 export class OrgSectionState {
 	/** Why the last action failed — shown under the screen, never swallowed. */
 	actionError = $state<string | null>(null);
+
+	/** The failure as a Notice — the screen's dismissible toast. */
+	get actionNotice() {
+		return actionFailedNotice(this.actionError);
+	}
+
+	/** Dismiss the failure; the next attempt clears it anyway. */
+	dismiss() {
+		this.actionError = null;
+	}
 
 	constructor(
 		private readonly actions: OrgActions,

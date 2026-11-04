@@ -1,8 +1,9 @@
 <script lang="ts">
+    import { Notice, StateView } from '@sensei/ui';
     import { ftrBandView, ftrPctLabel } from '$lib/ftr';
     import { fmtCount, fmtMs } from '$lib/format';
     import { toolHealthView } from '$lib/state/mcp.svelte.js';
-    import { PageHeader, Screen, ScreenState } from '$lib/components';
+    import { PageHeader, Screen } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
     import { invalidateAll } from '$app/navigation';
@@ -55,7 +56,7 @@
 
     <div class="px-6 py-6">
         {#if data.error}
-            <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+            <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
         {:else}
         <!-- Services (MCP servers, inference providers) — per-workspace toggle. -->
         {#if services.length > 0}
@@ -85,10 +86,8 @@
                                 onclick={() => toggleService(service)}
                             >{service.enabledForWorkspace ? 'On' : 'Off'}</button>
                         </li>
-                        {#if servicesState.toggleError(service.id)}
-                            <li class="text-xs text-danger px-2" data-testid={`service-toggle-error-${service.name}`}>
-                                {service.displayName}: {servicesState.toggleError(service.id)}
-                            </li>
+                        {#if servicesState.toggleNotice(service.id, service.displayName)}
+                            <li class="px-2"><Notice size="inline" bare expanded {...servicesState.toggleNotice(service.id, service.displayName)!} data-testid={`service-toggle-error-${service.name}`} /></li>
                         {/if}
                     {/each}
                 </ul>
@@ -100,10 +99,8 @@
              reached). Its own read: a failure here does not blank the page. -->
         <section class="mb-8">
             <h3 class="text-sm font-medium m-0 mb-3">Tools used</h3>
-            {#if data.toolUsageError}
-                <p class="text-xs text-danger m-0" data-testid="tools-used-error">
-                    Could not read which tools were used: {data.toolUsageError}
-                </p>
+            {#if data.toolUsageNotice}
+                <Notice size="inline" expanded {...data.toolUsageNotice} data-testid="tools-used-error" />
             {:else if data.toolUsage.length > 0}
                 <div data-testid="tools-used"><ToolBubbles tools={data.toolUsage} /></div>
             {:else}

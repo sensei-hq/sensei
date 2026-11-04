@@ -94,6 +94,9 @@ export interface PersonaListDeps {
   approveKeychain: (persona: string) => Promise<string | null>;
   /** `POST /api/auth/personas/{label}/default`. `null` when done, else why not. */
   makeDefault: (label: string) => Promise<string | null>;
+  /** `POST /api/auth/signout?persona=<slot>`. `null` when both the Keychain and
+   *  the registry let go, else why not. Optional: the sign-in overlay never signs out. */
+  signOut?: (slot: string) => Promise<string | null>;
   /** Unix seconds. Injected so expiry can be tested. */
   now?: () => number;
 }
@@ -419,6 +422,21 @@ export class PersonaList {
     this.onChanged?.();
   }
 
+  /** Sign this identity out on this machine, then re-read: the daemon clears the
+   *  Keychain credential and the registry slot and says whether both happened. An
+   *  identity with no slot has nothing to sign out. */
+  async signOut(id: Identity): Promise<void> {
+    const slot = id.sessionSlot;
+    const signOut = this.#deps.signOut;
+    if (!slot || !signOut) return;
+    await this.#withBusy(id.label, async () => {
+      this.error = await signOut(slot).catch((e) => (e instanceof Error ? e.message : `could not sign ${id.label} out`));
+    });
+    if (this.error) return;
+    await this.load();
+    this.onChanged?.();
+  }
+
   /**
    * Start a sign-in for one identity, in the system browser (#300). Addressed by
    * its Keychain slot when there is one: the label is rewritten to the verified
@@ -483,6 +501,15 @@ export const personaList = new PersonaList({
     ]);
     const res = await senseiApi(appState.port).tryMakeDefaultPersona(label);
     return res.ok ? null : res.error.message || 'the daemon did not answer';
+  },
+  signOut: async (slot) => {
+    const [{ senseiApi }, { appState }] = await Promise.all([
+      import('./api.js'),
+      import('./appstate.svelte.js')
+    ]);
+    const res = await senseiApi(appState.port).trySignOut(slot);
+    if (!res.ok) return res.error.message || 'the daemon did not answer';
+    return res.data.ok ? null : (res.data.errors?.join('; ') || 'the sign-out did not complete');
   },
   openAuth: async (url) => {
     // The system browser, for every sign-in (#300): it holds the user's GitHub

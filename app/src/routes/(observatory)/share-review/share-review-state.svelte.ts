@@ -13,6 +13,8 @@
 // free strings, so an unrecognised value degrades to a neutral chip rather than
 // being dropped.
 
+import { DEFAULT_REMEDY } from '@sensei/ui';
+import { failureNotice } from '@sensei/ui';
 import type { ApiResult, SenseiApi } from '$lib/api.js';
 import type { ChipClasses } from '$lib/dojo-artifacts.js';
 import type { PublishBatchOutcome, ShareReviewItem } from '$lib/types.js';
@@ -157,6 +159,11 @@ export class PublishBatchAction {
   busy = $state(false);
   /** The last publish error, or null. Cleared at the start of each publish. */
   error = $state<string | null>(null);
+
+  /** Notice props for a publish that did not go through (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice("Couldn't publish the batch", this.error);
+  }
   /** The last successful publish outcome, or null — the "watch it travel" data. */
   outcome = $state<PublishBatchOutcome | null>(null);
 
@@ -182,4 +189,14 @@ export class PublishBatchAction {
     this.error = res.error.message;
     return false;
   }
+}
+
+/** Notice props for one item's publish message: an error is a fault, a hold a
+ *  refusal (a decision), anything else a normal note. `null` with no message. */
+export function itemNotice(item: { result: string; message?: string | null }) {
+  if (!item.message) return null;
+  const tone = item.result === 'error' ? 'fault' : item.result === 'held_residual_risk' || item.result === 'no_destination' ? 'refusal' : 'normal';
+  const n = { tone: tone as 'fault' | 'refusal' | 'normal', title: item.message, code: item.result };
+  // A failed publish names its next step (H2); a hold or a note is not a failure.
+  return tone === 'fault' ? { ...n, remedy: DEFAULT_REMEDY } : n;
 }

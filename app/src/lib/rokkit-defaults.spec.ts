@@ -58,13 +58,14 @@ describe.each([
 // role darkened toward black, AA on every tint in both modes.
 const ROLES = ["accent", "success", "warning", "danger", "error", "info"];
 // The website keeps its own copy of these guards, in its own repository (sensei-hq/website).
-const FRONTENDS = ["app/src", "dojo/src"];
+// packages/ui is the family both frontends render (M4, r1).
+const FRONTENDS = ["app/src", "dojo/src", "packages/ui"];
 
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const path = join(dir, e.name);
     if (e.isDirectory()) return e.name === "__snapshots__" ? [] : sources(path);
-    return /\.(svelte|ts)$/.test(e.name) && !/\.spec\./.test(e.name) ? [path] : [];
+    return /\.(svelte|ts|js)$/.test(e.name) && !/\.spec\./.test(e.name) ? [path] : [];
   });
 }
 

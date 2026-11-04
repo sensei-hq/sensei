@@ -1,10 +1,11 @@
 <script lang="ts">
+    import { Notice, EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
-  import { EmptyState, MoeReasoningPanel, PageHeader, Screen, ScreenState } from '$lib/components';
+  import { MoeReasoningPanel, PageHeader, Screen } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import {
     deltaView,
@@ -45,7 +46,7 @@
   {/snippet}
   <div class="px-6 py-6">
     {#if data.error}
-      <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+      <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
     {:else}
 
     <!-- Verdict counts — measured impact at a glance -->
@@ -69,7 +70,7 @@
     </div>
 
     {#if data.total === 0 || !selected}
-      <EmptyState
+      <EmptyState size="screen"
         kanji="果"
         title="no measurements yet"
         description="Accepted recommendations show up here once the analyzer's MeasureVerdicts pass has enough post-acceptance sessions to compare FTR before and after."
@@ -208,8 +209,8 @@
           disabled={!st.logForm.title.trim() || st.logging}
           data-testid="impact-log-button"
         >{st.logging ? 'Logging…' : 'Log impact'}</Button>
-        {#if st.logError}
-          <p class="text-xs text-danger m-0" data-testid="impact-log-error">{st.logError}</p>
+        {#if st.logNotice}
+          <Notice size="inline" bare expanded {...st.logNotice} data-testid="impact-log-error" />
         {/if}
       </form>
 
@@ -234,8 +235,8 @@
               <button type="button" disabled={st.isDeciding(entry.id)} onclick={() => decide(entry.id, 'failure')}
                       data-testid={`impact-failure-${entry.id}`}
                       class="px-2 py-1 text-xs rounded-md bg-danger-soft text-on-danger-soft border-none cursor-pointer">Failure</button>
-              {#if st.decideError(entry.id)}
-                <span class="text-xs text-danger" data-testid={`impact-decide-error-${entry.id}`}>{st.decideError(entry.id)}</span>
+              {#if st.decideNotice(entry.id)}
+                <Notice size="inline" bare expanded {...st.decideNotice(entry.id)!} data-testid={`impact-decide-error-${entry.id}`} />
               {/if}
             </li>
           {/each}

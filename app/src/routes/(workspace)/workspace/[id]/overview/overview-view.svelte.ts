@@ -7,6 +7,7 @@
 // the three stat blocks, the multi-repo chips, and the recent-session rows.
 // No component carries logic — it all lives here so it can be unit-tested in
 // isolation.
+import { failureNotice } from '@sensei/ui';
 import type {
   WorkspaceOverviewHeader,
   WorkspaceOverviewTopRec,
@@ -286,8 +287,10 @@ export function overviewPageData(
     overviewError: o.error,
     hotspots: h.data?.hotspots ?? null,
     hotspotsError: h.error,
+    hotspotsNotice: failureNotice("Couldn't read this week's hotspots", h.error),
     patterns: p.data,
     patternsError: p.error,
+    patternsNotice: failureNotice("Couldn't read the patterns in use", p.error),
   };
 }
 
@@ -342,4 +345,42 @@ export async function decideRecommendation(
     );
   }
   return settle(await api.tryAcceptWorkspaceRecommendation(workspaceId, recId));
+}
+
+/**
+ * The top recommendation's accept / reject, as state (moved out of +page.svelte so
+ * the page only renders). Guards double presses with `deciding`; reloads only when
+ * the decision landed (#288: a failure used to reload as if it had).
+ */
+export class RecommendationDecision {
+  deciding = $state(false);
+  /** Why the last decision did not land. */
+  error = $state<string | null>(null);
+  #api: DecideApi;
+  #reload: () => Promise<void>;
+  #confirm: (message: string) => boolean;
+
+  constructor(api: DecideApi, reload: () => Promise<void>, confirmWrite: (message: string) => boolean) {
+    this.#api = api;
+    this.#reload = reload;
+    this.#confirm = confirmWrite;
+  }
+
+  /** Notice props for a decision that did not land (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice("Couldn't record that decision", this.error);
+  }
+
+  async decide(workspaceId: string, recId: string, action: 'accept' | 'reject'): Promise<void> {
+    if (this.deciding) return;
+    this.deciding = true;
+    this.error = null;
+    try {
+      const result = await decideRecommendation(this.#api, workspaceId, recId, action, this.#confirm);
+      if (result.error) this.error = result.error;
+      else if (result.done) await this.#reload();
+    } finally {
+      this.deciding = false;
+    }
+  }
 }

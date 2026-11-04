@@ -31,6 +31,18 @@ const config = {
 			'@sensei/glyphs': '../packages/glyphs/index.js',
 			// Svelte components shared with the desktop app (#293).
 			'@sensei/ui': '../packages/ui/index.js'
+		},
+		typescript: {
+			// As in app/svelte.config.js: packages/ui imports rokkit, which each host
+			// installs; its own folder has no node_modules. vite.config.ts dedupes it
+			// for the build and vitest; this tells the type checker where it is — the
+			// exact names only, so a subpath still resolves through the package's
+			// exports. Relative to .svelte-kit/, where the generated tsconfig is written.
+			config: (tsconfig) => {
+				const paths = (tsconfig.compilerOptions.paths ??= {});
+				for (const name of ['@rokkit/ui', '@rokkit/states', '@rokkit/core']) paths[name] = [`../node_modules/${name}`];
+				return tsconfig;
+			}
 		}
 	},
 	vitePlugin: {

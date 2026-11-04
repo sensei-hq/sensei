@@ -924,6 +924,10 @@ export interface DojoMembership {
   last_heartbeat_at: string | null;
   enabled: boolean;
   bound_workspaces: DojoBoundWorkspace[];
+  /** The session slot of the identity this membership belongs to — the key the
+   *  identity list (`sessionSlot`) and sync rows (`persona`) use. `null` when no
+   *  identity is bound or the bound one is signed out. */
+  persona_slot: string | null;
 }
 
 /** The inferred (confirm-inferred) workspace→Dōjō binding surfaced in the workspace

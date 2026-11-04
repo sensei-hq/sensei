@@ -83,13 +83,28 @@ describe('Remedy', () => {
   it('renders a link only when remedy.url is non-null', () => {
     const m1 = mountComponent(Remedy, { remedy: fixture({ url: null }) });
     cleanup.push(m1.destroy);
-    expect(m1.container.querySelector('a[data-role="remedy-url"]')).toBeNull();
+    expect(m1.container.querySelector('a[data-action="learn-more"]')).toBeNull();
 
     const m2 = mountComponent(Remedy, {
       remedy: fixture({ url: 'https://brew.sh' }),
     });
     cleanup.push(m2.destroy);
-    const a = m2.container.querySelector('a[data-role="remedy-url"]') as HTMLAnchorElement;
+    const a = m2.container.querySelector('a[data-action="learn-more"]') as HTMLAnchorElement;
     expect(a?.href).toContain('brew.sh');
+    // An external page opens in the browser, never inside the app's webview.
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('rel')).toContain('noopener');
+  });
+
+  // The bootstrap's card IS the shared Notice now (docs/architecture/notice.md),
+  // so every other screen's error looks like this one.
+  it('renders as an action-tone Notice panel, keeping the remedy hook for e2e', () => {
+    const m = mountComponent(Remedy, { remedy: fixture() });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-component="remedy"]')).toBeTruthy();
+    const n = m.container.querySelector('[data-component="notice"]') as HTMLElement;
+    expect(n.dataset.size).toBe('panel');
+    expect(n.dataset.tone).toBe('action');
+    expect(n.querySelector('[data-part="heading"]')!.textContent).toBe('Run this in your terminal');
   });
 });

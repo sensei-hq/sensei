@@ -10,6 +10,7 @@
 //
 // A failed load is an error state. `api.listWorkspaces` turned any failure into
 // `[]`, which read as "no workspaces" — a fabricated empty.
+import { failureNotice } from '@sensei/ui';
 import { failureReason, type ApiResult } from '$lib/api.js';
 import type { DaemonWorkspace, DaemonWorkspaceFolder } from '$lib/setup/contracts.js';
 import { ROLES } from '$lib/setup/types.js';
@@ -85,6 +86,14 @@ export class WorkspacesSectionState {
   roleError = $state<string | null>(null);
   /** The last failed rename, shown until the next attempt. */
   renameError = $state<string | null>(null);
+  /** What the last failed save names, and why — for its Notice. */
+  #saveTitle = $state<string | null>(null);
+  #saveWhy = $state<string | null>(null);
+
+  /** Notice props for a rename or role save the daemon refused (packages/ui/notice.js). */
+  get saveNotice() {
+    return this.#saveTitle ? failureNotice(this.#saveTitle, this.#saveWhy) : null;
+  }
   query = $state('');
 
   readonly placed = $derived(
@@ -115,10 +124,14 @@ export class WorkspacesSectionState {
     const previous = target.name;
     target.name = next;
     this.renameError = null;
+    this.#saveTitle = null;
+    this.#saveWhy = null;
     const res = await api.tryUpdateWorkspace(workspaceId, { name: next });
     if (!res.ok) {
       target.name = previous;
       this.renameError = `Could not rename ${previous}: ${failureReason(res.error)}`;
+      this.#saveTitle = `Couldn't rename ${previous}`;
+      this.#saveWhy = failureReason(res.error);
     }
   }
 
@@ -130,10 +143,14 @@ export class WorkspacesSectionState {
     const previous = target.role;
     target.role = role === '' ? null : role;
     this.roleError = null;
+    this.#saveTitle = null;
+    this.#saveWhy = null;
     const res = await api.tryUpdateFolder(folderId, { role: target.role });
     if (!res.ok) {
       target.role = previous;
       this.roleError = `Could not save the role for ${target.name}: ${failureReason(res.error)}`;
+      this.#saveTitle = `Couldn't save the role for ${target.name}`;
+      this.#saveWhy = failureReason(res.error);
     }
   }
 }

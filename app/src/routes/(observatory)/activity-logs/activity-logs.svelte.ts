@@ -8,6 +8,7 @@
 // Everything here is pure and unit-tested except `ActivityLogsView`, the tiny
 // mutable surface the search box and row toggles bind to.
 
+import { failureNotice } from '@sensei/ui';
 import type { LogRow, LogLevel, ScheduledTask } from '$lib/types.js';
 import { failureReason, type ApiResult } from '$lib/api.js';
 
@@ -207,7 +208,12 @@ export function logsPageData(
   filters: LogFilters,
 ) {
   const logRows = rows.ok ? rows.data : [];
+  const rowsWhy = rows.ok ? null : failureReason(rows.error);
+  const tasksWhy = scheduled.ok ? null : failureReason(scheduled.error);
   return {
+    // Rendered through the shared Notice (packages/ui/notice.js).
+    rowsNotice: failureNotice("Couldn't read the log", rowsWhy),
+    tasksNotice: failureNotice("Couldn't read the background tasks", tasksWhy),
     rows: logRows,
     rowsError: rows.ok ? null : `Could not read the log: ${failureReason(rows.error)}`,
     filters,
