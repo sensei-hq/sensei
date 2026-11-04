@@ -59,7 +59,10 @@ export async function getWorkspaceDelivery(
 	await requireReader(db, tenantId, workspaceId);
 	const { data, error } = await db.rpc('workspace_delivery_boards', { p_workspace: workspaceId });
 	if (error) throw new AdminError(refusalStatus(error), error.message);
-	const boards = (data ?? []) as Omit<DeliveryBoard, 'sprints'>[];
+	// A set-returning function answers a list, [] when there is none; anything
+	// else is a failure, not "no boards" (D83).
+	if (!Array.isArray(data)) throw new AdminError(500, 'workspace_delivery_boards answered no list');
+	const boards = data as Omit<DeliveryBoard, 'sprints'>[];
 	const withSprints = await Promise.all(
 		boards.map(async (b) => ({
 			...b,

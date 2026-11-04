@@ -99,6 +99,11 @@ describe('getWorkspaceDelivery', () => {
 		expect(await getWorkspaceDelivery(db, T, W)).toEqual({ boards: [] });
 	});
 
+	it('an answer that is not a list is an error, never "no boards"', async () => {
+		const { db } = makeDb({ boards: { data: null, error: null } });
+		await expect(getWorkspaceDelivery(db, T, W)).rejects.toMatchObject({ status: 500 });
+	});
+
 	it('a failed read is an error, never "no boards"', async () => {
 		const failedBoards = makeDb({ boards: { data: null, error: { message: 'reset' } } });
 		await expect(getWorkspaceDelivery(failedBoards.db, T, W)).rejects.toMatchObject({ status: 500 });
