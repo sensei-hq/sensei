@@ -1449,8 +1449,14 @@ mod tests {
                 .unwrap()
                 .clone()
         };
-        assert_eq!(block("alpha")["complexity"], serde_json::json!({"functions": 6, "complex": 1}));
-        assert_eq!(block("beta")["complexity"], serde_json::json!({"functions": 1, "complex": 0}));
+        assert_eq!(
+            block("alpha")["complexity"],
+            serde_json::json!({"functions": 6, "complex": 1, "tier": "warning"})
+        );
+        assert_eq!(
+            block("beta")["complexity"],
+            serde_json::json!({"functions": 1, "complex": 0, "tier": "neutral"})
+        );
         assert!(block("gamma")["complexity"].is_null(), "gamma was never measured");
     }
 
@@ -1491,7 +1497,7 @@ mod tests {
         assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(
             body["total"],
-            serde_json::json!({"functions": 7, "complex": 1, "maxCyclo": 14, "files": 3})
+            serde_json::json!({"functions": 7, "complex": 1, "maxCyclo": 14, "files": 3, "tier": "warning"})
         );
         let alpha = &body["modules"][0];
         assert_eq!(alpha["id"], format!("{pkg}/alpha"), "{body}");

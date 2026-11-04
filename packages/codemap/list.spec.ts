@@ -10,9 +10,9 @@ const block = (id: string, group: string, extra: Partial<Block> = {}): Block => 
 const L0: Level0 = {
   level: 'module', groupBy: 'layers', cycles: [{ members: ['p/b', 'p/c'] }], coverage: { unplaced: 0 },
   blocks: [
-    block('p/a', 'L0', { symbols: 50, complexity: { functions: 10, complex: 3 } }),
+    block('p/a', 'L0', { symbols: 50, complexity: { functions: 10, complex: 3, tier: 'danger' } }),
     block('p/b', 'L1', { symbols: 20 }),
-    block('p/c', 'L1', { symbols: 30, complexity: { functions: 10, complex: 1 } }),
+    block('p/c', 'L1', { symbols: 30, complexity: { functions: 10, complex: 1, tier: 'neutral' } }),
     block('p/log', 'L1', { hub: true }),
   ],
   bands: [

@@ -12,7 +12,7 @@ const L0: Level0 = {
   level: 'module', groupBy: 'layers', coverage: { unplaced: 0 },
   cycles: [{ members: ['p/a', 'p/b'] }, { members: ['p/c', 'p/d', 'p/e'] }],
   blocks: [
-    block('p/a', { complexity: { functions: 10, complex: 3 }, weight_in: 16, weight_out: 7 }),
+    block('p/a', { complexity: { functions: 10, complex: 3, tier: 'danger' }, weight_in: 16, weight_out: 7 }),
     block('p/b', { weight_in: 3, weight_out: 9 }),
     block('p/c', { weight_out: 9 }),
   ],
@@ -112,12 +112,12 @@ describe('takeaways — the Complexity tree', () => {
   const file = (id: string, functions: number, complex: number, maxCyclo: number): ComplexityNode =>
     ({ id, label: id.split('/').pop()!, kind: 'file', functions, complex, maxCyclo, files: 1, children: [] });
   const tree: ComplexityTree = {
-    total: { functions: 30, complex: 5, maxCyclo: 41, files: 4 },
+    total: { functions: 30, complex: 5, maxCyclo: 41, files: 4, tier: 'warning' },
     maintainability: null,
     modules: [
-      { id: 'p/a', label: 'p/a', kind: 'module', functions: 20, complex: 4, maxCyclo: 41, files: 2,
+      { id: 'p/a', label: 'p/a', kind: 'module', functions: 20, complex: 4, maxCyclo: 41, files: 2, tier: 'warning',
         children: [file('a/big.rs', 12, 3, 41), file('a/ok.rs', 8, 1, 12)] },
-      { id: 'p/b', label: 'p/b', kind: 'module', functions: 10, complex: 1, maxCyclo: 15, files: 2,
+      { id: 'p/b', label: 'p/b', kind: 'module', functions: 10, complex: 1, maxCyclo: 15, files: 2, tier: 'neutral',
         children: [file('b/x.rs', 6, 1, 15), file('b/y.rs', 4, 0, 6)] },
     ],
   };

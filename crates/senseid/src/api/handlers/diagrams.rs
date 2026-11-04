@@ -4,6 +4,7 @@
 //! shape its view already produces, so the screen and any other consumer cannot
 //! disagree about what a span or a level means.
 
+use crate::analysis::codemap::{COCHANGE_MIN, CODEMAP_KINDS};
 use crate::analysis::neighbourhood::Side;
 use crate::api::state::AppState;
 use axum::{
@@ -495,24 +496,6 @@ pub(crate) async fn layering(
     .await
 }
 
-/// GET /api/workspaces/{id}/diagrams/zones
-///
-/// Martin's abstractness against instability, one point per module. The main
-/// sequence is `A + I = 1`; `distance` is how far off it a module sits, and
-/// `zone` names where — `pain` (concrete and depended upon), `useless`
-/// (abstract and depended upon by nothing), `risk`, or `main`.
-///
-/// No parameters. The grain is the module, which is the grain the mockup uses
-/// and the only one with enough points to read a sequence off — a workspace here
-/// is single digits of packages.
-///
-/// `abstractness`, `instability`, `distance` and `zone` can be NULL, and the
-/// screen MUST omit those points rather than drawing them at an axis origin.
-/// `coverage.unplaceable` counts them, so an omitted point is distinguishable
-/// from one that genuinely sits at zero.
-/// What a Code map band counts: calls and imports (M17).
-const CODEMAP_KINDS: [&str; 2] = ["calls", "imports"];
-
 #[derive(Deserialize)]
 pub(crate) struct CodemapQuery {
     #[serde(rename = "groupBy")]
@@ -567,7 +550,7 @@ pub(crate) async fn codemap(
         let (nodes, edges, deps, unplaced, complexity, paths, libraries) = tokio::try_join!(
             state.pg.structure_nodes(&workspace_id, "module"),
             state.pg.structure_edges(&workspace_id, "module", &kinds),
-            state.pg.dependency_graph(&workspace_id, "module", &kinds),
+            crate::analysis::codemap::module_dependencies(&state.pg, &workspace_id),
             state.pg.structure_unplaced(&workspace_id, &kinds),
             state.pg.codemap_module_complexity(&workspace_id),
             state.pg.codemap_module_paths(&workspace_id),
@@ -703,7 +686,6 @@ pub(crate) async fn codemap_module(
     Query(q): Query<CodemapModuleQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::analysis::codemap::{ModuleFile, level1};
-    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
     let workspace_id = resolve_workspace_id(&state, &id).await?;
     let module = q.id;
 
@@ -711,7 +693,7 @@ pub(crate) async fn codemap_module(
         let (files, nodes, deps) = tokio::try_join!(
             state.pg.codemap_module_files(&workspace_id, &module),
             state.pg.structure_nodes(&workspace_id, "module"),
-            state.pg.dependency_graph(&workspace_id, "module", &kinds),
+            crate::analysis::codemap::module_dependencies(&state.pg, &workspace_id),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         if files.is_empty() {
@@ -810,10 +792,6 @@ pub(crate) async fn codemap_file(
     .await
 }
 
-/// A pair changed together at least this many times to count (M17).
-const COCHANGE_MIN: i64 = 5;
-/// A commit touching more modules than this is a sweep, not a coupling.
-const COCHANGE_MAX_MODULES: i64 = 20;
 /// The most hidden couplings the lens draws.
 const COCHANGE_LIMIT: usize = 40;
 
@@ -827,38 +805,16 @@ pub(crate) async fn codemap_cochange(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::analysis::codemap::{CoChange, ModuleEdge, hidden_coupling};
-    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
     let workspace_id = resolve_workspace_id(&state, &id).await?;
 
     cached(&state, "codemap-cochange", &workspace_id, String::new(), async {
-        let ((pairs, commits), edges) = tokio::try_join!(
-            state.pg.codemap_cochange(&workspace_id, COCHANGE_MAX_MODULES, COCHANGE_MIN),
-            state.pg.structure_edges(&workspace_id, "module", &kinds),
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let pairs: Vec<CoChange> = pairs
-            .into_iter()
-            .map(|(a, b, together, a_changes, b_changes)| CoChange {
-                a,
-                b,
-                together,
-                a_changes,
-                b_changes,
-            })
-            .collect();
-        let edges: Vec<ModuleEdge> = edges
-            .into_iter()
-            .map(|e| ModuleEdge {
-                source: e.source,
-                target: e.target,
-                kind: e.kind,
-                count: e.occurrences,
-            })
-            .collect();
+        let (hidden, pairs, commits) =
+            crate::analysis::codemap::hidden_pairs(&state.pg, &workspace_id, COCHANGE_LIMIT)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         Ok(serde_json::json!({
-            "hidden": hidden_coupling(&pairs, &edges, COCHANGE_LIMIT),
-            "pairs": pairs.len(),
+            "hidden": hidden,
+            "pairs": pairs,
             "commits": commits,
             "minTogether": COCHANGE_MIN,
         }))
@@ -910,6 +866,21 @@ pub(crate) async fn codemap_complexity(
     .await
 }
 
+/// GET /api/workspaces/{id}/diagrams/zones
+///
+/// Martin's abstractness against instability, one point per module. The main
+/// sequence is `A + I = 1`; `distance` is how far off it a module sits, and
+/// `zone` names where — `pain` (concrete and depended upon), `useless`
+/// (abstract and depended upon by nothing), `risk`, or `main`.
+///
+/// No parameters. The grain is the module, which is the grain the mockup uses
+/// and the only one with enough points to read a sequence off — a workspace here
+/// is single digits of packages.
+///
+/// `abstractness`, `instability`, `distance` and `zone` can be NULL, and the
+/// screen MUST omit those points rather than drawing them at an axis origin.
+/// `coverage.unplaceable` counts them, so an omitted point is distinguishable
+/// from one that genuinely sits at zero.
 pub(crate) async fn zones(
     State(state): State<AppState>,
     Path(id): Path<String>,
