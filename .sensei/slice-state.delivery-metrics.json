@@ -15,13 +15,14 @@
     "review",
     "commit"
   ],
-  "current_phase": "F2b dojo endpoints",
+  "current_phase": "F2c daemon push",
   "completed": [
     "F1 (#351) committed",
     "F2 claims",
     "F2 locate",
     "F2 spec-audit (A1)",
-    "F2a dojo DDL + SQL tests"
+    "F2a dojo DDL + SQL tests",
+    "F2b dojo endpoints (POST /v1/you/delivery, GET \u2026/delivery, \u2026/delivery/tickets)"
   ],
   "gate_status": "pass",
   "open_questions": [],
@@ -41,5 +42,5 @@
     "F2 A1: D3/D4 rewritten after the pre-build audit (21 findings): plan tenant, facts once per tick, canonical hash without history_at, attempted marks + 6 h expiry + failure backoff + sync-state record, lock skip, consistency token, removed sprints sdlc null, removed tickets not sent, membership sprints, FOR UPDATE ordering, workspace from verified repository ids, app ticket order",
     "F2a: delivery_tickets.title nullable (Jira can return no summary; D83), no column defaults on removed/sprints"
   ],
-  "next_command": "/sensei:build #352 (unattended) \u2014 resume at F2b: POST /v1/you/delivery + read routes in dojo/"
+  "next_command": "/sensei:build #352 (unattended) \u2014 resume at F2c: sensei.tracker_push_marks DDL, dojo/delivery.rs pure fns, pg_store reads, UserPlane::push_delivery, dojo_sync step"
 }
