@@ -1,10 +1,10 @@
 # The personal journey
 
 > How one developer + their assistant move through sensei. Distilled from
-> [`../mockups/Sensei/Sensei Journey Map.html`](../mockups/Sensei/Sensei%20Journey%20Map.html).
+> `../mockups/Sensei/Sensei Journey Map.html`.
 > Traces to [objectives](../prd/02-objectives.md). The
 > end-to-end version — Rin, working across several dōjōs — is in
-> [`../mockups/Sensei/Sensei End-to-End Journey.html`](../mockups/Sensei/Sensei%20End-to-End%20Journey.html)
+> `../mockups/Sensei/Sensei End-to-End Journey.html`
 > (see [journeys → the whole loop](README.md#the-whole-loop--machine--dōjō--beyond)).
 > The path this journey must deliver end to end is
 > [the spine](README.md#the-spine--one-path-that-must-work-end-to-end).

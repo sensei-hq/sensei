@@ -70,6 +70,9 @@ One-liners with prior context: [`history/backlog/writeups.md`](history/backlog/w
 a **2026-10-13 snapshot and has not been re-checked**; check the code before filing anything from it,
 and file what is still true as an issue.
 
+- **Copilot token/cost zeros stored before 07a9def0e may be unknown.** `07a9def0e` stores `None`
+  where the transcript reports no token or cost figure; rows written before it hold `Some(0)`, which a
+  reader cannot tell apart from a real zero. The source cannot be re-read to repair them.
 - **The Rust indexer does not follow `pub use` re-exports.** A use through a re-exported path
   (`pg_store::X` for an item declared in `pg_store::x`) names an identity no declaration mints, so it
   dangles in the code graph (`indexer::resolve` ratchet). It is cross-file resolution, stage-12 work. The

@@ -160,9 +160,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   feature doc (mock tier table, flows, status table).
 - [design/dojo-web.md](../../../../design/dojo-web.md) — org context billing
   surface (admin).
-- [mockups/Sensei/lib/dojo/dojo-billing.jsx](../../../../mockups/Sensei/lib/dojo/dojo-billing.jsx)
+- `mockups/Sensei/lib/dojo/dojo-billing.jsx`
   — visual source (tier table + per-seat example, hardcoded data).
-- [mockups/Sensei/lib/dojo/dojo-saas.jsx](../../../../mockups/Sensei/lib/dojo/dojo-saas.jsx)
+- `mockups/Sensei/lib/dojo/dojo-saas.jsx`
   — SaaS entry: sign-in · orgs · create Dōjō (plan choice). Superseded: a dōjō comes
   from a git integration on the free tier and the plan is chosen in billing (D20).
 - [prd/01-vision.md §Business model](../../../01-vision.md) · [prd/03-personas.md §4,5](../../../03-personas.md).

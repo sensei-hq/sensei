@@ -149,7 +149,7 @@ for everyone below. That half of the console is specified in
 
 ## The governance authoring surface
 
-Source of record: [`mockups/Sensei/lib/dojo/dojo-governance.jsx`](../../../../mockups/Sensei/lib/dojo/dojo-governance.jsx)
+Source of record: `mockups/Sensei/lib/dojo/dojo-governance.jsx`
 (visual source, never edited). One screen, three jobs: pick a **scope**, set its
 **stance**, fill it with **artifacts** — then read back what everyone below
 inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
@@ -454,7 +454,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   [`rule-packs.md`](../../../../spec/dojo/screens/rule-packs.md) — the build-level
   element→data contracts for the rules editor and pack adoption.
 - [journeys/dojo.md](../../../../journeys/dojo.md) — journey map for each role.
-- [mockups/Sensei/lib/dojo/](../../../../mockups/Sensei/lib/dojo/) — visual
+- `mockups/Sensei/lib/dojo/` — visual
   source (never edited): `dojo-saas.jsx`, `dojo-governance.jsx`,
   `dojo-preview.jsx`, `dojo-billing.jsx`.
 - [prd/02-objectives.md §Dōjō](../../../02-objectives.md) · [prd/03-personas.md §2,3,4,5](../../../03-personas.md).

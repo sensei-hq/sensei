@@ -25,9 +25,9 @@ this as *sensei is doing the work, and I'm in the loop.*
 > fallbacks are dead code behind a factory that never chooses them. The flag
 > `SENSEI_RUN_DRIVE` is **OFF by default**, so on a default daemon the drive loop
 > heartbeats only. **The mobile relay is built in the dōjō** — run detail at
-> `(app)/you/(inbox)/runs/[run_id]`, the console at
-> `(console)/console/relay/[run_id]`, over the `v1/t/[origin]/[org]/relay/…` routes —
-> and is **unverified in production** (D27). The **desktop relay screen is greenfield**
+> `(app)/you/(inbox)/runs/[run_id]`, with `(console)/console/relay/[run_id]` a 308
+> redirect there for old push deep links, over the `v1/t/[origin]/[org]/relay/…`
+> routes — and is **unverified in production** (D27). The **desktop relay screen is greenfield**
 > (no test). There are no §12 gap IDs named for M21; the nearest are D-1/D-2 → T1.
 
 ## In scope / out of scope
@@ -55,9 +55,10 @@ this as *sensei is doing the work, and I'm in the loop.*
   trait_def.rs}`; `dojo/gate.rs`; `api/handlers/runs.rs`; `api/handlers/sessions.rs`
   (hook endpoints).
 - **App** — **desktop relay screen** (greenfield) · run detail in Observatory.
-- **Dōjō (mobile relay)** — run detail `(app)/you/(inbox)/runs/[run_id]`, the
-  console `(console)/console/relay/[run_id]`, and the relay Worker routes
-  `v1/t/[origin]/[org]/relay/{gates,inbox,nudge,reply,segments,session,status,review}`.
+- **Dōjō (mobile relay)** — run detail `(app)/you/(inbox)/runs/[run_id]`; the legacy
+  `(console)/console/relay/[run_id]` is a 308 redirect there for old push deep links;
+  and the relay Worker routes
+  `v1/t/[origin]/[org]/relay/{gates,inbox,nudge,push,reply,segments,session,status,review}`.
 - **Data** — **`activity.runs`, `activity.run_events`**; `dojo.relay_inbox`,
   `dojo.relay_sessions`, `dojo.relay_segments`.
   **No `sensei.runs` / `dojo.relay_messages` / `dojo.relay_gates` tables** — the

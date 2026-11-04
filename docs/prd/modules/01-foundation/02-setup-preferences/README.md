@@ -41,8 +41,8 @@ workspaces appear live.
 
 ## Data invariants
 
-- `GET /api/config` returns a flat key→value map; one key is read, written and deleted
-  at `/api/config/{key}`. The eight-section wire shape
+- `GET /api/config` returns a flat key→value map; one key is read or deleted
+  at `/api/config/{key}`, and writes go through `PUT /api/config`. The eight-section wire shape
   (`[assistants, assignments, folders, inference, instruments, libraries, profile,
   projects]`) was designed and dropped, so no client may expect it.
 - Settings apply live: editing a value writes immediately; no value requires a restart to

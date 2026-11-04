@@ -16,7 +16,8 @@ a repo the team has history on" (persona 2).
 
 ## In scope / out of scope
 
-- In: six-gate health check (Homebrew, Postgres, Ollama, components, DB, daemon); per-component
+- In: the health check (the package manager — Homebrew or winget — plus postgres, ollama,
+  sensei, database, daemon); per-component
   resolvers with dependency-aware order and fallback remedies; hardware-tier detection and
   model provisioning for the tier; the probing / remediating / all-green splash states; the
   Re-check entry in the Observatory; Tauri sidecar bootstrap in app-only mode.
@@ -32,7 +33,8 @@ a repo the team has history on" (persona 2).
   hardware tier (`api/routes.rs:581`, `crates/bootstrap/src/health/resolvers/*.rs`). The
   `GET /api/bootstrap/status` state machine (`state` + one row per gate) was designed and
   **dropped** in favour of `/health`; it has no route.
-- **Resolvers** — `crates/bootstrap/src/resolvers/{homebrew,postgres,ollama,components,db,daemon}.rs`;
+- **Resolvers** — `crates/bootstrap/src/health/resolvers/{postgres_install,ollama_install,
+  sensei_install,db_setup,daemon_start,brew_helpers,service_cascade}.rs`;
   one resolver per component; a resolver whose dependency failed is skipped in this pass.
 - **Hardware inspector** — `crates/bootstrap/src/hardware.rs`; model tier feeds M5's
   Preferences → Inference recommendation.
@@ -79,7 +81,7 @@ a repo the team has history on" (persona 2).
 - An offline machine gets remedy notes, the user completes them, and sensei continues.
 
 ```bash
-# green run — every gate is pass; probe cycle fast
+# green run — `status` is `ok` and every component (and `packageManager`) is `ready`; probe cycle fast
 curl -s http://localhost:7744/api/health | jq '{status, components: (.components | map({id, status}))}'
 # timed form: components[].id ∈ {postgres, ollama, sensei, database, daemon} plus
 # packageManager.id (homebrew | winget) — Homebrew is never a components[] row (INV-2/INV-3)

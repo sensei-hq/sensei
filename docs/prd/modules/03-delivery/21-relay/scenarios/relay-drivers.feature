@@ -1,4 +1,4 @@
-Feature: Relay — the three relay drivers and the unbuilt screens
+Feature: Relay — the three relay drivers and the unbuilt desktop screen
 
   # pinned: plan_update_maps_entries_to_segments_with_state
   Scenario: a plan update maps entries to segments with state
