@@ -99,8 +99,9 @@ learned ever vanishes"*.
 
 - Orphaned tables in `inference` (no writer, superseded by `narration_cache`) and
   empty-by-design dojo tables — see [06-gaps.md](../../../../roadmap/06-gaps.md).
-- [D-12/D-13](../../../../roadmap/06-gaps.md) — dependency drift (P0(deps)) live in the
-  register; not schema, but they press on `database@vVERSION` bump discipline.
+- ~~D-12~~/D-13 — D-12 **closed 2026-11-03** by `eefc6c119` (kavach 1.3.2 → one
+  `@rokkit` family); D-13's 28 advisories are not schema but press on
+  `database@vVERSION` bump discipline.
 
 ## Related
 

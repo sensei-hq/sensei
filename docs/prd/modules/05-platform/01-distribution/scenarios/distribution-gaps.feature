@@ -80,10 +80,11 @@ Feature: Distribution — the unbuilt Linux/Windows service layer and unified in
     Then the 28 medium advisories are tracked and accepted as non-code-fixable
     This is a known state (P3), not a build gap.
 
-  # gap: D-12
+  # resolved: D-12
   NO TEST
   Scenario: @rokkit/* and @kavach/* are not held back by lockfiles
     Given the package.json lockfiles
     When dependencies are updated
     Then rokkit and kavach packages are current
-    This is a lockfile maintenance gap (P3).
+    Closed 2026-11-03 by eefc6c119 — every @kavach/* at 1.3.2, one @rokkit
+    family at 1.14.0 (#191).

@@ -16,13 +16,14 @@ Feature: Website — the unbuilt claim audit and dependency drift
     Then the audit fails the build
     This is unbuilt.
 
-  # gap: D-12
+  # resolved: D-12
   NO TEST
   Scenario: @rokkit/* and @kavach/* are not held back by lockfiles
     Given the website package.json
     When dependencies are updated
     Then rokkit and kavach packages are current
-    This is a lockfile maintenance gap (P3).
+    Closed 2026-11-03 by eefc6c119 — every @kavach/* at 1.3.2, one @rokkit
+    family at 1.14.0 (#191).
 
   NO TEST
   Scenario: the claim audit runs on every deploy

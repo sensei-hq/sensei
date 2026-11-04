@@ -24,9 +24,11 @@ this as *sensei is doing the work, and I'm in the loop.*
 > `ClaudeDriver` for every config (`relay_drivers/mod.rs:29-31`), so ACP and the
 > fallbacks are dead code behind a factory that never chooses them. The flag
 > `SENSEI_RUN_DRIVE` is **OFF by default**, so on a default daemon the drive loop
-> heartbeats only. **The mobile and desktop
-> relay screens are greenfield / unbuilt** (no test). There are no §12 gap IDs
-> named for M21; the nearest are D-1/D-2 → T1.
+> heartbeats only. **The mobile relay is built in the dōjō** — run detail at
+> `(app)/you/(inbox)/runs/[run_id]`, the console at
+> `(console)/console/relay/[run_id]`, over the `v1/t/[origin]/[org]/relay/…` routes —
+> and is **unverified in production** (D27). The **desktop relay screen is greenfield**
+> (no test). There are no §12 gap IDs named for M21; the nearest are D-1/D-2 → T1.
 
 ## In scope / out of scope
 
@@ -37,9 +39,9 @@ this as *sensei is doing the work, and I'm in the loop.*
   the Dōjō gate (hard blocks: main-branch push, history rewrite, destructive
   deletes, deploy/publish/bump, credentials, money; semantic review for
   obfuscation), `/hook/gate` and `/hook/nudge`, `dojo.relay_*` tables.
-- Out: **mobile relay screen** (greenfield); **desktop relay screen**
-  (greenfield); the planner baseline/ratchet (C-1 → M20); tracker adapters
-  (D-6 → T3).
+- Out: the **dōjō's relay screens** (built in the dōjō tree, not here — see
+  Surfaces); the **desktop relay screen** (greenfield); the planner
+  baseline/ratchet (C-1 → M20); tracker adapters (D-6 → T3).
 
 ## Surfaces
 
@@ -52,8 +54,10 @@ this as *sensei is doing the work, and I'm in the loop.*
   `run_limits.rs`; `relay_drivers/{claude.rs, acp.rs, fallback.rs, mod.rs,
   trait_def.rs}`; `dojo/gate.rs`; `api/handlers/runs.rs`; `api/handlers/sessions.rs`
   (hook endpoints).
-- **App** — **mobile relay screen** (greenfield) · **desktop relay screen**
-  (greenfield) · run detail in Observatory.
+- **App** — **desktop relay screen** (greenfield) · run detail in Observatory.
+- **Dōjō (mobile relay)** — run detail `(app)/you/(inbox)/runs/[run_id]`, the
+  console `(console)/console/relay/[run_id]`, and the relay Worker routes
+  `v1/t/[origin]/[org]/relay/{gates,inbox,nudge,reply,segments,session,status,review}`.
 - **Data** — **`activity.runs`, `activity.run_events`**; `dojo.relay_inbox`,
   `dojo.relay_sessions`, `dojo.relay_segments`.
   **No `sensei.runs` / `dojo.relay_messages` / `dojo.relay_gates` tables** — the
@@ -122,19 +126,20 @@ SENSEI_RUN_DRIVE=1 cargo test -p senseid drive_run -- --nocapture 2>&1 | head -4
 - **A `base64` obfuscation slips through semantic review** — review regressed.
 - **The Dōjō protocol serialises a DB string that doesn't match the enum** —
   round-trip regressed.
-- **A mobile/desktop relay screen claims to show live drive progress** —
-  greenfield, must read as placeholder.
+- **The desktop relay screen claims to show live drive progress** — greenfield,
+  must read as placeholder.
 
 ## Scenarios
 
 - [`scenarios/relay.feature`](scenarios/relay.feature) — the drive loop,
   watchdog, limits, gate, Dōjō protocol (pinned).
 - [`scenarios/relay-drivers.feature`](scenarios/relay-drivers.feature) — the
-  three relay drivers and the unbuilt mobile/desktop screens (`NO TEST`).
+  three relay drivers and the unbuilt desktop screen (`NO TEST`).
 
 ## Open gaps
 
-- **Mobile relay screen** — greenfield, no test.
+- **Mobile relay unverified in production** — the dōjō surface is built (routes
+  above); no production run has been observed (D27).
 - **Desktop relay screen** — greenfield, no test.
 - [C-1](../../../../reorg.md) — planner persistence feeds the run's plan graph.
 - [D-6](../../../../reorg.md) — tracker adapters (Linear, Jira, GitHub Issues) →

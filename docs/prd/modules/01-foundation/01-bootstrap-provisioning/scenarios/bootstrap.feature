@@ -45,7 +45,7 @@ Feature: Bootstrap — the six-gate health check that provisions the machine and
     Then the model inventory reports the missing set explicitly
 
   Scenario: an all-green run hands over to the first-run scan within a bounded delay
-    Given every component in GET /api/health reports pass
+    Given every component in GET /api/health reports ready
     When the green state has rendered
     Then the splash transitions within 800ms
     And the Continue link is present in case the transition stalls
@@ -58,11 +58,11 @@ Feature: Bootstrap — the six-gate health check that provisions the machine and
 
   Scenario: Re-check from the Observatory returns to the Observatory, not first-run
     Given bootstrap was triggered via Re-check from the Observatory
-    When all gates pass
+    When every component reports ready
     Then the green state closes back into the Observatory main window
 
   # gap: M1
   Scenario: app-only Tauri sidecar bootstrap reaches the same green as the daemon path
     Given the app runs without the full daemon stack
     When the sidecar bootstrap completes
-    Then the same six gates report pass
+    Then the same six components report ready

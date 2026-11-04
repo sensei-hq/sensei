@@ -29,8 +29,9 @@ workspaces appear live.
 
 - **App** — `app/src/routes/(preferences)/settings/` (the pane; its panels live beside
   it); the setup wizard's `(config)/setup/scan` stage.
-- **API** — `GET/PUT /api/config` (a flat key→value map; `GET/PUT/DELETE
-  /api/config/{key}` for one key), `GET/PUT /api/preferences/collective`,
+- **API** — `GET/PUT /api/config` (a flat key→value map), `GET/DELETE
+  /api/config/{key}` for one key (writes go through `PUT /api/config`),
+  `GET/PUT /api/preferences/collective`,
   `POST /api/scan/roots` (persist + start scanning immediately), `GET /api/assistants/health`.
   The designed `GET/PUT /api/preferences` (one object per pane) and
   `GET /api/preferences/cues` were **never built** — there is no `/api/preferences`

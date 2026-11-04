@@ -26,11 +26,16 @@ the shared Dōjō, and the free tier isn't a trial.*
 > **Built:** the billing account and seat tables (`dojo.billing_accounts`,
 > `dojo.seats`, the `dojo.tenant_seat_usage` count), GET/POST
 > `/v1/t/[origin]/[org]/billing` (admin-only: the account plus live per-seat usage;
-> POST refreshes the cached seat count), and the org's **Plan & billing** section at
-> `/org/[slug]/billing`, which reads that route. **Not built:** anything that opens or
-> closes a seat — `dojo.seats` has no writer outside `database/tests/dojo/*`, so the
-> count the route serves is 0 in production until a seat is written; also a payment
-> provider, invoices, plan changes. **There is no payment provider yet**: none is chosen and none is
+> POST refreshes the cached seat count), the org's **Plan & billing** section at
+> `/org/[slug]/billing`, which reads that route, and seat opening on relay activity —
+> `openOrRefreshSeat` (`dojo/src/lib/server/billing-data.ts:153`) inserts into `seats`
+> and the relay session route calls it
+> (`dojo/src/routes/v1/t/[origin]/[org]/relay/session/+server.ts:98`) when the update
+> names a workspace. **Not built:** the daemon never sends `workspace_slug` — every
+> call site passes `None` (`crates/senseid/src/dojo/client.rs:869,1033,1136`,
+> `relay_project.rs:121`, `relay_run_project.rs:110`) — so no seat opens in practice;
+> nothing calls `closeSeat` (`billing-data.ts:189`) when a member is removed; and there
+> is no payment provider, invoices or plan changes. **There is no payment provider yet**: none is chosen and none is
 > in the code, so nothing below that mentions invoices or payment exists. The mockup
 > `dojo-billing.jsx` uses hardcoded example data.
 > The website has a live GitHub Sponsors link. The free tier intent exists but

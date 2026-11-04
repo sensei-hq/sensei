@@ -109,8 +109,8 @@ npx playwright test  # e2e
 
 - [T-3](../../../../roadmap/06-gaps.md) — e2e known reds block green-main
   claims (P1).
-- [D-12](../../../../roadmap/06-gaps.md) — dependency drift: `@rokkit/*`,
-  `@kavach/*` held back by lockfiles (P3).
+- ~~D-12~~ — **closed 2026-11-03** by `eefc6c119`: every `@kavach/*` at 1.3.2, so
+  `@rokkit/*` resolves once at 1.14.0 (#191).
 - [D-13](../../../../roadmap/06-gaps.md) — 28 medium OSV advisories
   (transitive; none code-fixable) (P3).
 
