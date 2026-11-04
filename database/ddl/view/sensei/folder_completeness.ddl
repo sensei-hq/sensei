@@ -89,6 +89,8 @@ Folder status is otherwise set by the queue reaching DetectCommunities, which is
 
 A folder is complete when every file it owns has reached a verdict AND every folder beneath it is complete. `expected` is the denominator, recorded by the walk — counting only the files rows that EXIST is vacuous, because a walk that died at file 40 of 100 leaves 40 decided rows and 60 with no row at all.
 
+A folder with no recorded `expected` is incomplete when it owns files, or when it is a repository folder (git, standalone, subtree) at any depth, which the walk always counts. A plain `folder` or `module` subfolder that owns nothing and carries no count is complete: the walk records no count where there is nothing to count, and such folders are the many empty directories of a real repository.
+
 A verdict is `parsed_at is not null or skip_reason is not null`. It is NOT `indexed_at`: that column is NOT NULL DEFAULT now(), so testing it is a tautology that counts every walked file as decided and makes the whole view report 100% before any parsing has run.
 
 `decided` is split into `parsed` and `skipped`, which sum to it. A folder whose progress is mostly skips is not mostly understood, and one total cannot say so.

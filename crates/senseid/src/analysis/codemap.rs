@@ -726,9 +726,18 @@ pub async fn module_dependencies(
     pg.dependency_graph(workspace_id, "module", &kinds).await
 }
 
+/// Every hidden pair at the code map's threshold — the metric's read. It takes
+/// no limit: the lens draws the strongest 40, the metric counts them all (review
+/// G7, L-3).
+pub async fn hidden_pairs_for_metric(
+    pg: &crate::db::pg_store::PgStore,
+    workspace_id: &uuid::Uuid,
+) -> Result<(Vec<Coupling>, usize, i64), String> {
+    hidden_pairs(pg, workspace_id, usize::MAX).await
+}
+
 /// Hidden coupling at the code map's threshold, the strongest `limit` of it:
-/// the pairs, how many pairs changed together at all, and the commits read. The
-/// lens draws the first 40; the metric counts every one (`usize::MAX`).
+/// the pairs, how many pairs changed together at all, and the commits read.
 pub async fn hidden_pairs(
     pg: &crate::db::pg_store::PgStore,
     workspace_id: &uuid::Uuid,

@@ -188,10 +188,6 @@ pub fn shape_by_repository(input: &ShapeInput<'_>) -> Vec<ShapeReading> {
     readings
 }
 
-/// The metric counts every hidden pair at the code map's threshold — never the
-/// lens's display cap of 40 (review G7, L-3).
-pub const EVERY_PAIR: usize = usize::MAX;
-
 /// Each module's one repository, deduplicated; a module in two is an error (G9).
 pub fn module_homes(rows: Vec<(String, uuid::Uuid)>) -> Result<Vec<(String, uuid::Uuid)>, String> {
     let mut home: std::collections::BTreeMap<String, uuid::Uuid> =
@@ -239,7 +235,7 @@ pub async fn write_shape(
     day: chrono::NaiveDate,
     ids: &std::collections::HashMap<String, uuid::Uuid>,
 ) -> Result<u32, String> {
-    use crate::analysis::codemap::{hidden_pairs, module_dependencies};
+    use crate::analysis::codemap::{hidden_pairs_for_metric, module_dependencies};
     const KEYS: [&str; 5] = [
         "dependency_cycles",
         "layer_up_edges",
@@ -254,7 +250,7 @@ pub async fn write_shape(
         pg.architecture_module_repositories(workspace_id),
         module_dependencies(pg, workspace_id),
         pg.component_zones(workspace_id),
-        hidden_pairs(pg, workspace_id, EVERY_PAIR),
+        hidden_pairs_for_metric(pg, workspace_id),
         pg.codemap_module_complexity(workspace_id),
         pg.repository_index_complete(workspace_id),
     )?;
@@ -787,21 +783,20 @@ mod tests {
             .await
             .unwrap();
         }
-        sqlx_core::query::query("UPDATE sensei.folders SET props = props || '{\"expected_files\": 2}'::jsonb WHERE id = $1")
-            .bind(root)
-            .execute(pg.pool())
-            .await
-            .unwrap();
-        for sub in ["src", "src/inner"] {
+        pg.set_folder_expected_files(&root, 2).await.unwrap();
+        // Both kinds the walker leaves without files or a count on real
+        // repositories: plain folders and module folders.
+        for (sub, kind) in [("src", "folder"), ("src/inner", "folder"), ("crates/core", "module")] {
             sqlx_core::query::query(
                 "INSERT INTO sensei.folders (root_id, parent_id, kind, name, path, abs_path, repository_id)
-                 VALUES ($1, $2, 'folder'::sensei.folder_kind, $3, $3, $4, $5)",
+                 VALUES ($1, $2, $6::sensei.folder_kind, $3, $3, $4, $5)",
             )
             .bind(root_id)
             .bind(root)
             .bind(sub)
             .bind(format!("/_test/walked-{}/{sub}", uuid::Uuid::new_v4()))
             .bind(rid)
+            .bind(kind)
             .execute(pg.pool())
             .await
             .unwrap();
@@ -896,9 +891,78 @@ mod tests {
             .unwrap();
     }
 
-    /// Review L-3: the metric counts every hidden pair — never the lens's cap.
-    #[test]
-    fn the_metric_reads_every_hidden_pair() {
-        assert_eq!(EVERY_PAIR, usize::MAX);
+    /// Review L-3 / r2 F2: the metric counts every hidden pair — never the lens's
+    /// cap of 40. Ten modules that always change together, with no dependency
+    /// between them, make 45 hidden pairs; the lens draws 40 of them.
+    #[tokio::test]
+    async fn the_metric_counts_every_hidden_pair_past_the_lens_cap() {
+        use crate::db::pg_store::graph_seed::SeedGraph;
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&pg, &uniq).await;
+        let pkg = format!("hp{}", uniq.simple());
+        let files: Vec<String> = (0..10).map(|i| format!("m{i}/x.rs")).collect();
+        for (i, file) in files.iter().enumerate() {
+            pg.seed_node_by_fqn(
+                &fid,
+                &format!("rust·{pkg}·m{i}·f"),
+                "function",
+                "f",
+                Some("rust"),
+                Some(crate::db::pg_store::FqnDef {
+                    file_path: file,
+                    signature: None,
+                    line_start: Some(1),
+                    line_end: Some(2),
+                    is_exported: true,
+                    parent_id: None,
+                }),
+            )
+            .await
+            .unwrap();
+        }
+        let (rid,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+                .bind(fid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        for c in 0..crate::analysis::codemap::COCHANGE_MIN {
+            let sha = format!("{c:040}");
+            sqlx_core::query::query(
+                "INSERT INTO sensei.commits(repository_id, sha, authored_at) VALUES ($1, $2, now())",
+            )
+            .bind(rid)
+            .bind(&sha)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            sqlx_core::query::query(
+                "INSERT INTO sensei.commit_files(repository_id, sha, path, lines_changed)
+                 SELECT $1, $2, p, 1 FROM unnest($3::text[]) p",
+            )
+            .bind(rid)
+            .bind(&sha)
+            .bind(&files)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        let metric = crate::analysis::codemap::hidden_pairs_for_metric(&pg, &pid).await;
+        let lens = crate::analysis::codemap::hidden_pairs(&pg, &pid, 40).await;
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.commits WHERE repository_id = $1")
+            .bind(rid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let (metric, lens) = (metric.unwrap(), lens.unwrap());
+        assert_eq!(lens.0.len(), 40, "the lens is capped — else this pins nothing");
+        assert_eq!((metric.0.len(), metric.1), (45, 45));
     }
 }
