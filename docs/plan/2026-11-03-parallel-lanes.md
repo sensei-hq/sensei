@@ -3,6 +3,21 @@
 The coordinator (the reviewer session) owns this file. Each lane reads **its own section and §1–§3**.
 The goal and the reasons for the order are in `docs/review/2026-11-03-orientation.md`.
 
+## Rust budget (user, 2026-11-04): at most three Rust build trees at any time
+
+A Rust `target/` is 20–27 GB, so five sessions building Rust fill the disk. From now on only these
+build Rust: **Claude Code A** (L2), **Claude Code B** (L3) and **one Muse at a time** (whichever holds a Rust item),
+plus L0's merge worktree. Everyone else works on SQL, TS, Svelte and docs, and has no `target/`.
+- **Muse-1** finishes F4 (its daemon `authored_at` part), then `cargo clean`s and stays SQL/TS: `run.sh --apply`, WP8, the
+  SQL half of WP9A. The Rust halves (WP9A's changed-only daemon offer, D18's plan-wire label) go to Claude Code A
+  after #156.
+- **Muse-2** is the Rust Muse: the pack-rule fix (`knowledge.rs`) and D83 batch B.
+- **Freebuff and Cowork**: no Rust builds.
+- **Reviews:** L0 reviews Rust in **one** review worktree (`lanes/review`) with one target, one review at a time,
+  never a fresh scratch tree with its own target.
+- **L0 owns disk:** `df` before every Rust review and merge; under 50 GB free, L0 `cargo clean`s idle targets.
+  Lanes never delete another lane's build output.
+
 ## Queue v3 (user, 2026-11-03): five implementation queues; Cowork does mockups only
 
 Implementation sessions: **Muse-1, Muse-2, Claude Code A, Claude Code B, Freebuff.** **Cowork** is slow, so it
