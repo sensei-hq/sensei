@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (mobile companion)
 **Route:** Relay iOS app · approve gate (no web route — phone app)
-**Source mockup:** [`lib/relay/relay.jsx`](../../mockups/Sensei/lib/relay/relay.jsx) → `RelayApprove`
+**Source mockup:** `lib/relay/relay.jsx` → `RelayApprove`
 **Data:** greenfield — an **approve gate** raised by the coordinator and delivered over the relay. Proposed: the gate payload `{ id, kind:'approve', machine, command, destructive: bool, reversible: bool, dry_run_available: bool }`; the reply `POST /api/relay/gates/{id}` `{ decision:'approve'|'reject', dry_run: bool }`. The command string is composed/echoed by the coordinator — it is the literal command, not a description.
 **App file:** _greenfield — mobile app not built_
 **Daemon files:** _greenfield — coordinator + relay transport not built_

@@ -8,12 +8,14 @@ client / workspace stakeholder ([persona 7](../../../03-personas.md#7--client--w
 
 The website is the **marketing site as a P2 module** — it must **only claim what
 is built**; reorg §12 tracks the claims that already slipped (D-11, D-12). The
-site is a SvelteKit app (`website/`) that sells the built product, not the
+site is a SvelteKit app in the sibling repository
+[sensei-hq/website](https://github.com/sensei-hq/website) (#346) that sells the built product, not the
 roadmap. The job is **every claim traces to a roadmap status**; the site is
 written *after* the roadmap so its claims trace to evidence. The user feels
 this as *what the site promises is what the product does.*
 
-> **Status honesty.** The SvelteKit marketing site exists (`website/`). The
+> **Status honesty.** The SvelteKit marketing site exists in the sibling repository
+> `sensei-hq/website` (#346), not in this tree. The
 > GitHub Sponsors link is live. **One claim was already dropped** (D-11). The
 > dependency drift on `@rokkit/*`, `@kavach/*` (D-12) affects the site's own
 > stack. The site must be audited against the roadmap before any deploy.
@@ -29,8 +31,8 @@ this as *what the site promises is what the product does.*
 
 ## Surfaces
 
-- **App** — `website/src/routes/*` (SvelteKit pages); `website/src/lib/components/`
-  (shared components); `website/static/` (assets).
+- **App** — in [sensei-hq/website](https://github.com/sensei-hq/website): `src/routes/*`
+  (SvelteKit pages); `src/lib/components/` (shared components); `static/` (assets).
 - **Data** — roadmap statuses (sourced from `roadmap/*.md` at build time or via
   a content layer); changelog from git tags.
 - **CI** — the claim audit runs in CI (planned) — any claim without a roadmap
@@ -45,7 +47,8 @@ this as *what the site promises is what the product does.*
 - **Lead.** **Pricing page reflects the final model.** Free = public repositories
   and every personal dōjō (private repositories included), forever; Paid = an
   organisation's private repositories, on its admin's or owner's subscription, per
-  active contributor; local sensei is never limited by plan (D46); no Enterprise tier;
+  active contributor; a solo developer gets everything free, blocking targets included
+  (D52); local sensei is never limited by plan (D46); no Enterprise tier;
   GitHub Sponsors optional.
 - **Lead.** **Install command is the unified one-liner** (P1) — not
   platform-specific instructions.
@@ -53,13 +56,13 @@ this as *what the site promises is what the product does.*
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Feature badge | Built / Partial / Mock-only / Designed | `Observatory · Built` |
-| Install command | one-liner | `curl -fsSL https://sensei.dev/install.sh | sh` |
-| Pricing tier | Free / Paid / Sponsor | `Paid · $20/active contributor/mo` |
-| Sponsors link | GitHub Sponsors | `github.com/sponsors/sensei-hq` |
-| Changelog entry | version + date + linked issues | `v0.12.0 · 2026-10-13 · #1247` |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Feature badge | Built / Partial / Mock-only / Designed | `Observatory · Built` | try what is Built; don't plan on Designed (the claim audit fails a badge with no roadmap trace) |
+| Install command | one-liner | `curl -fsSL https://sensei.dev/install.sh \| sh` | run it |
+| Pricing tier | Free / Paid / Sponsor | `Paid · $20/active contributor/mo` | choose a plan: free for a solo developer, a personal dōjō and public repositories; an org subscribes for its private repositories (D52) |
+| Sponsors link | GitHub Sponsors | `github.com/sponsors/sensei-hq` | sponsor the project |
+| Changelog entry | version + date + linked issues | `v0.12.0 · 2026-10-13 · #1247` | read the linked issues, then upgrade |
 
 ## Done gate
 
@@ -72,8 +75,8 @@ this as *what the site promises is what the product does.*
 - The changelog is generated from tags.
 
 ```bash
-# Not implemented — placeholder
-cd website && npm run claim-audit
+# Not implemented — placeholder (run in the sensei-hq/website checkout)
+npm run claim-audit
 ```
 
 ## Wrong gate
@@ -104,9 +107,10 @@ cd website && npm run claim-audit
 
 ## Related
 
-- [website/](../../../../../website/) — the SvelteKit marketing site.
+- [sensei-hq/website](https://github.com/sensei-hq/website) — the SvelteKit marketing site
+  (sibling repository, #346).
 - [features/07-pricing.md](../../../../features/07-pricing.md) — pricing model.
 - [roadmap/03-delivery.md](../../../../roadmap/03-delivery.md) — the statuses
   the site must trace.
 - [prd/01-vision.md §Business model](../../../01-vision.md) · [prd/03-personas.md §1,5,7](../../../03-personas.md).
-- Crates: **none** — this is a SvelteKit app (`website/`).
+- Crates: **none** — this is a SvelteKit app in `sensei-hq/website`.

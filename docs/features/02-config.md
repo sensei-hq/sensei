@@ -34,11 +34,11 @@ By default everything stays local. Nothing is shared until the user opts in.
 
 ## Mockups
 
-- [Setup wizard — the full stage set (assistants · profile · projects · libraries · instruments · routers · assignments)](../mockups/Sensei/lib/setup/setup-wizard.jsx)
-- [Routers — local + cloud model inference](../mockups/Sensei/lib/setup/wiz-inference.jsx) · [inference settings](../mockups/Sensei/lib/setup/inference-settings.jsx)
-- [Assignments — which model handles which role](../mockups/Sensei/lib/setup/wiz-assignments.jsx)
-- [Collective settings — sharing into a dōjō](../mockups/Sensei/lib/observatory/collective-settings.jsx) · [share hub](../mockups/Sensei/lib/observatory/share-hub.jsx)
-- [Dōjō in-app](../mockups/Sensei/lib/dojo/dojo-inapp.jsx)
+- Setup wizard — the full stage set (assistants · profile · projects · libraries · instruments · routers · assignments)
+- Routers — local + cloud model inference · inference settings
+- Assignments — which model handles which role
+- Collective settings — sharing into a dōjō · share hub
+- Dōjō in-app
 
 ## What's involved
 

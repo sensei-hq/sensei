@@ -5,6 +5,7 @@
     // Cycles opens the Cycles diagram), the controls the page passes — and the
     // side panel beside the diagram.
     import type { Snippet } from 'svelte';
+    import { StatCard, type StatCardTone } from '@rokkit/ui';
     import { PageHeader } from '$lib/components';
     import type { Stat } from '@sensei/codemap';
     import type { DiagramView } from './diagrams-nav.js';
@@ -19,22 +20,26 @@
         budget = null,
         hrefFor,
         controls,
+        focus = null,
     }: {
         view: DiagramView;
         about: DiagramHeaderState;
         /** Where the diagram is, e.g. `L0 · modules`; none for a diagram without levels. */
         level?: string | null;
         workspace: { name: string; repos: number | null };
-        /** The workspace's numbers; null while they are read. */
+        /** The diagram's numbers (the workspace's, or the database's on Database · ER); null while they are read. */
         stats: Stat[] | null;
         /** What the diagram draws of what there is. */
         budget?: string | null;
         /** The route of a diagram, for a stat one of them shows. */
         hrefFor: (lens: string) => string;
         controls?: Snippet;
+        /** What every lens is focused on (user, 2026-11-03), and how to clear it. */
+        focus?: { label: string; onclear: () => void } | null;
     } = $props();
 
-    const TONE = { ink: 'text-ink', danger: 'text-danger', warning: 'text-warning', success: 'text-success', faint: 'text-ink-faint' };
+    // The card's tone; plain ink is none.
+    const TONE: Record<Stat['tone'], StatCardTone | undefined> = { ink: undefined, danger: 'danger', warning: 'warning', success: 'success', faint: 'muted' };
     const ABOUT = $derived([
         { label: 'Use it to', text: view.use, accent: false },
         { label: 'How to read it', text: view.read, accent: false },
@@ -46,7 +51,7 @@
         stats
             ? stats.flatMap((s) =>
                   s.label === 'Modules' && workspace.repos != null
-                      ? [s, { label: 'Repos', value: workspace.repos.toLocaleString('en-US'), tone: 'ink' as const }]
+                      ? [s, { label: 'Repos', value: workspace.repos.toLocaleString('en-US'), tone: 'ink' as const, icon: 'i-solar-folder-with-files-bold-duotone' }]
                       : [s],
               )
             : [],
@@ -63,6 +68,18 @@
     <span class="inline-flex items-baseline gap-3">
         {view.label}
         {#if level}<span class="font-mono text-sm font-normal text-ink-mute" data-testid="diagram-level">{level}</span>{/if}
+        {#if focus}
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-accent text-sm font-normal text-ink self-center"
+                data-testid="diagram-focus">
+                <span class="i-solar-target-bold-duotone text-accent" aria-hidden="true"></span>
+                <span class="text-ink-mute">Focus</span>
+                <span class="font-mono max-w-80 truncate" title={focus.label}>{focus.label}</span>
+                <button type="button" class="p-0 bg-transparent border-none cursor-pointer text-ink-mute hover:text-ink leading-none"
+                    aria-label="Clear focus" title="Clear focus" onclick={focus.onclear}>
+                    <span class="i-solar-close-circle-bold-duotone" aria-hidden="true"></span>
+                </button>
+            </span>
+        {/if}
     </span>
 {/snippet}
 
@@ -98,16 +115,12 @@
     {/if}
     {#if about.stats}
         <div class="flex flex-col gap-3 px-6 py-5" data-testid="diagram-stats">
-            <ul class="m-0 p-0 list-none flex flex-wrap gap-2">
+            <div data-stat-cards>
                 {#each cards as s (s.label)}
-                    <li class="flex flex-col gap-0.5 min-w-24 px-3 py-2 rounded-lg border border-paper-edge bg-paper-soft" data-testid={`diagram-stat-${s.label}`}>
-                        <span class={`font-mono text-sm ${TONE[s.tone]}`}>
-                            {#if s.lens}<a class={`no-underline hover:underline ${TONE[s.tone]}`} href={hrefFor(s.lens)}>{s.value}</a>{:else}{s.value}{/if}
-                        </span>
-                        <span class="text-xs text-ink-mute">{s.label}</span>
-                    </li>
+                    <StatCard label={s.label} value={s.value} icon={s.icon} tone={TONE[s.tone]}
+                        href={s.lens ? hrefFor(s.lens) : undefined} data-testid={`diagram-stat-${s.label}`} />
                 {/each}
-            </ul>
+            </div>
             {#if !stats}<p class="m-0 text-sm text-ink-faint">Reading the workspace…</p>{/if}
             {#if budget}<p class="m-0 font-mono text-xs text-ink-mute" data-testid="diagram-budget">{budget}</p>{/if}
         </div>

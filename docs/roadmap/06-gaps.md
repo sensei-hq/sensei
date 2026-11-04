@@ -5,10 +5,13 @@ its evidence, its priority, and the module it blocks. This replaces the old
 plan gap analysis's G1–G10 numbering and the `production-readiness.md` A–H
 (now `07-quality.md`), which are absorbed here.
 
-> **Status:** the register's full population is **Phase 3** of the reorg
-> ([`../reorg.md`](../reorg.md) §12, §13). The ID scheme is final; the rows
-> below are the ones already decided (2026-10-13) and the ones the plane files
-> rely on. The complete F-/P-/T-/D-/M-/C-/X- register is folded in from reorg §12.
+> **Status: current as of 2026-11-03.** Every row below was checked against the
+> code on that date: a closed row names the commit or `file:line` that closed it,
+> a narrowed row says what remains, and the plane files agree with this table
+> ([`01-foundation.md`](01-foundation.md) … [`05-platform.md`](05-platform.md)).
+> The ID scheme is final; the rows are the ones decided on 2026-10-13, the ones
+> the plane files rely on, and the 2026-10-21 security pass. The reorg §12
+> families not yet folded in row by row are listed at the end.
 
 ## ID scheme
 
@@ -33,20 +36,20 @@ evidence is a suspicion, and gets labelled so.
 |---|---|---|---|---|
 | ~~A-1~~ | M2 · M17 | ~~app is kanji-only~~ — the kanji ⇄ icons switch is live (`ui.glyphs`, Settings → General; #133) | decision 10; reorg §12.10 | — |
 | A-2 | M2 | the personal-preference surface is narrower than the config the app already supports | decision 10 | P3 |
-| G-1 | M17 | graph/layered view unreadable at granular scale — no L0/L1/L2 level of detail | reorg §9.7 | P1 |
-| G-2 | M4 · M2 · M3 | indexer has no ignore mechanism (no `.senseiignore` reader, no ignore config); it walks committed mockups / vendored / generated code and skews the graph + metrics. Ignore is stored repo config synced via the Dōjō, **seeded from the repo's own ignore sources** (`.gitignore`, qlty `.qlty/qlty.toml` `exclude_patterns`) — not a dotfile | decision 2026-10-13 | P2 |
+| ~~G-1~~ | M17 | ~~graph/layered view unreadable at granular scale — no L0/L1/L2 level of detail~~ — **closed 2026-11-03:** `packages/codemap/` renders L0 (`ModuleMap.svelte:2`), L1 (`FileColumns.svelte`) and L2 (`SymbolView.svelte`) over `…/diagrams/codemap` (`api/routes.rs:139-145`), and an inspect test draws each lens (`app/e2e/tests-inspect/codemap-inspect.spec.ts:109`). Residual, tracked as M17: the dōjō embed and the daemon-pushed map | reorg §9.7 | — |
+| G-2 | M4 · M2 · M3 | the indexer honours `.gitignore` inside a repo scan (`indexer/repo.rs:290`, test `a_repo_scan_honours_gitignore` at `:926`), so "no ignore mechanism" was wrong; **what is missing** is the stored repo config synced via the Dōjō, **seeded from the repo's own ignore sources** (`.gitignore`, qlty `.qlty/qlty.toml` `exclude_patterns`) — not a dotfile — and the config/generated file classes | decision 2026-10-13 | P2 |
 | M-7 | M8 | no master-detail metric model, no `gating` field, gating eligibility undefined | reorg §9.6 | P1 |
 | M-8 | M8 | coverage-gated presentation absent; thin metrics read as strong (#155 generalised) | reorg §9.6 | P1 |
 | M-9 | M8 | no per-metric design/coverage record tying a metric to its chart and LOD | reorg §9.6 | P1 |
 | C-11 | M3 | transcript-scanning review not scoped as a task | decision 10 | P1 |
 | C-12 | M5 · M14 | inference-pipeline review not scoped as a task | decision 10 | P1 |
 | C-13 | M3 | Claude "mods" (supersedes plugin + hooks) — install path + migration not verified | decision 10 | P1 |
-| C-14 | M3 | multi-assistant expansion: Claude + OpenCode priority; others later; seam unspecified | decision 10 | P1 |
+| ~~C-14~~ | M3 | ~~multi-assistant expansion: seam unspecified~~ — **closed 2026-11-03:** the seam is `pub trait TranscriptAdapter` (`transcript/mod.rs:423`), proved by `assert_eq!(ads.len(), 6)` (`transcript/mod.rs:1718`) across the six adapters. The remaining adapters are work, not an unknown seam (#348, #349) | decision 10 | — |
 | C-15 | prd | personas (incl. manager + client/stakeholder viewpoints) — ✅ authored 2026-10-13 | `../prd/03-personas.md` | done |
 | C-16 | M3 | **Copilot CLI: `SynthEvent` lacks `tool_success` field** — `tool.execution_complete` reports `success: false` (2.2% failure rate in sample) but it cannot be represented; the only direct measure of agent friction is discarded | 2026-08-26 review §Signals we are still discarding | P1 |
 | C-17 | M3 | **Copilot CLI: turn duration not captured** — `assistant.turn_start` → `turn_end` available but not parsed | 2026-08-26 review §Signals we are still discarding | P2 |
 | C-18 | M3 | **Copilot CLI: `codeChanges` from `session.shutdown` not captured** — real lines added/removed and files touched | 2026-08-26 review §Signals we are still discarding | P2 |
-| C-19 | M3 | **Copilot CLI: per-model token usage with cache read/write not fully captured** — `session.shutdown` carries `totalPremiumRequests`, cache tokens; partially parsed but not all fields | 2026-08-26 review §Signals we are still discarding | P2 |
+| ~~C-19~~ | M3 | ~~**Copilot CLI: per-model token usage with cache read/write not fully captured**~~ — **closed 2026-11-03:** `session.shutdown` `modelMetrics` is parsed per model into `cache_read`, `cache_write`, `reasoning` and premium cost (`copilot_cli.rs:294-301`), pinned by the `parse_session_shutdown_tokens` fixture (`cache_read == Some(1000)`, two models, `:648`) | 2026-08-26 review §Signals we are still discarding | — |
 | C-20 | M3 | **Copilot CLI: `session.permissions_changed` not captured** — every point the agent stopped and waited for a human | 2026-08-26 review §Signals we are still discarding | P3 |
 | C-21 | M3 | **VS Code: no tool outcome recorded** — `toolInvocationSerialized` says a tool ran, never whether it worked; failure rate computed from it is 0/N (reads as flawless) | 2026-08-26 review §What VS Code does not record | P2 (known limitation) |
 | C-22 | M3 | **VS Code: no tokens of any kind recorded** | 2026-08-26 review §What VS Code does not record | P2 (known limitation) |
@@ -63,17 +66,17 @@ evidence is a suspicion, and gets labelled so.
 | ~~T-2~~ | T2 | ~~join/membership flow dead~~ — resolved by #307 A3 invites (7e547a19) | plan gap analysis | — |
 | F-3 | T1 | Dōjō sync works against the local dōjō; production unverified (needs an enrolled daemon); #184 open | production-readiness → `07-quality.md` | P1 |
 | D-11 | P2 | website presents unbuilt as shipped (one claim already dropped) | site↔product audit | P2 |
-| D-12 | P0(deps) | dependency drift: `@rokkit/*`, `@kavach/*` held back by lockfiles | production-readiness | P3 |
+| ~~D-12~~ | P0(deps) | ~~dependency drift~~ — resolved 2026-11-03 by `eefc6c119`, which moved every `@kavach/*` to 1.3.2; kavach 1.3.2 depends on `@rokkit/forms` 1.14.0, so `dojo/bun.lock` resolves every `@rokkit/*` once, at 1.14.0, and the nested 1.4.0 family is gone. Direct deps were already current (`app/` and `dojo/` 1.14.0, kavach 1.3.0). #191 is closed | production-readiness; `dojo/bun.lock` | — |
 | D-13 | P0(deps) | 28 medium osv advisories (transitive; none code-fixable) | production-readiness | P3 |
 | P-5 | P1 | Makefile/Homebrew macOS-only; Linux/Windows service + data-dir design first | reorg §10.3 | P1 |
 | G-MEM-FEEDBACK | M9 | LLM-facing memory feedback tools (`report_memory_use`, `report_learning`) do not exist; feedback is HTTP-only (`…/reinforce`, `…/challenge`) | M9 status honesty; tool registry | P1 |
-| G-MEM-SCOPE | M9 | `memory_scope` has no `user` / `org` rung; the cross-workspace and org-overlay ladder is designed, not built | M9 `memory_scope` enum vs doc ladder | P1 |
+| G-MEM-SCOPE | M9 | `memory_scope` is `global · workspace · stack · task_type · module` (`ddl/enum/sensei/memory_scope.ddl`) — **no `user` / `organization` rung**. Promotion already reaches both of those: `resolve_target_namespace` (`api/handlers/knowledge.rs:16`) returns NULL for the always-on `general`/`user` rung (`:31-35`) and resolves an `organization` scope to a namespace row, and `promote_memory` calls it (`:555`). What is missing is a `user`/`org` value in `memory_scope` and the cross-workspace / org-overlay read that layers them (D56's promotion path) | M9 `memory_scope` enum vs doc ladder | P1 |
 | G-PATTERN-STORE | M10 | `sensei.pattern_choices` / `sensei.pattern_registries` have no DDL; chosen options cannot persist | M10 status honesty; DDL inventory | P1 |
 | G-TRACE-STORE | M11 | `sensei.trace_links` / `sensei.doc_lint_findings` have no DDL; bidirectional links and doc-doctor findings cannot persist | M11 status honesty; DDL inventory | P1 |
 | G-TRACE-TOOL | M11 | `get_trace_links` is not a registered MCP tool | M11 status honesty; tool registry | P1 |
 | G-GOV-AUDIT | M13 | `sensei.rule_violations`, `sensei.governance_overrides` have no DDL; only `rule_check_runs` ships; verifier gate + override store unbuilt | M13 status honesty; DDL inventory | P1 |
 | G-LIB-WRAP | M12 | no `wrap_library` MCP tool; the wrap-me workflow has no write surface | M12 status honesty; tool registry | P2 |
-| G-DOJO-AUDIT | M16 | no `/api/dojo-binding` endpoint; the About screen's Dōjō binding is opt-in only | M16 Surfaces; route inventory | P2 |
+| G-DOJO-AUDIT | M16 | the binding is `POST /api/workspaces/{id}/dojo-binding` only (`api/routes.rs:539`, `handlers/dojo.rs:115`): **no GET** reads a binding back, and a confirmed binding writes no audit row. The About screen's binding is opt-in | M16 Surfaces; route inventory | P2 |
 | G-IMPACT-TEST | M19 | impact/insights endpoints and tables (`applied_recommendations`, `impact_regressions`, `insights`) unbuilt | M19 scenarios all `NO TEST` | P2 |
 | G-BILLING-DATA | T4 | `dojo.billing_accounts` and `dojo.seats` exist with the billing route; no payment provider, no invoice or subscription tables | T4 status honesty; DDL inventory | P2 |
 | G-COST-LEDGER | M5 | `inference_calls` table (cost/usage ledger) does not exist in DDL or code | M5 status honesty; DDL inventory | P2 |
@@ -86,7 +89,7 @@ address the gaps"). Ordered by risk; each is a GitHub issue.
 | ID | Gap | Issue | Priority |
 |---|---|---|---|
 | ~~G-SEC-1~~ | ~~An admin who leaves the GitHub org keeps their dōjō admin role~~ — fixed (ede5da58): a complete org read ends provisioned memberships the org no longer lists; invited members untouched | #309 closed | — |
-| G-SEC-2 | The dōjō has no secret store, yet D14/D21 hand it shared integration credentials | #310 | P1 (before Wave C) |
+| G-SEC-2 | The dōjō **does** have a secret store for forge tokens — Supabase Vault (`set_forge_token.ddl:59-64`, `rotate_forge_token.ddl`, `tenant_connections.ddl`), so "no secret store" was wrong; what is missing is a home for the shared integration credentials D14/D21 hand it, and a per-workspace tracker/CI connection | #310 | P1 (before Wave C) |
 | ~~G-SEC-3~~ | ~~Invite tokens in plain text, accepts unbounded~~ — fixed (f607bf0a): hash only, 429 after 10 failures in 15 min | #311 closed | — |
 | G-SEC-4 | Relay approval gates fail open on a lost or garbled reply — fail-open is a deliberate contract; the gate never loosens the engine's verdict. **Built 2026-10-21** (D28, 4fcea9de): an unanswered hard-block in an unattended run is denied; live proof with the next release | #312 | P1 |
 | G-SEC-5 | Viewer metric reads must be aggregate-only (D6, D8); grants, revokes and exports are not audited (T6) — **Done 2026-10-21** (6dad1e33): every grant change is audited, and a viewer reads no one else (SQL-pinned); export / first open come with the viewer shell | #313 | P1 (with T6) |
@@ -94,23 +97,29 @@ address the gaps"). Ordered by risk; each is a GitHub issue.
 | G-OPS-2 | develop far ahead of main; the next release runs a destructive dōjō reconcile — count, back up, rehearse on a copy. **Done 2026-10-21:** rehearsed on a prod copy (fixed the rename hook, 55b5753d), then released as v0.16.0 — the production reconcile went exactly as rehearsed and `dbd diff` is in sync | #315 | P0 (before release) |
 | G-FUN-1 | CI / DORA data need a puller that does not depend on a daemon being online (dōjō polling or webhooks) | #316 | P2 (Wave D) |
 | G-FUN-2 | Every daemon pulls a shared tracker — deduplicate before the mirrors drift (D22) | #317 | P2 |
-| G-FUN-3 | Code lags the decisions — part 1 done (5da293d5: contributor, no create-a-dōjō, no self_hosted); left: the team governance scope (D25, waits on client/stack scopes), one tracker per project (D23, needs design) | #318 | P1 |
+| G-FUN-3 | Code lags the decisions — part 1 done (5da293d5: contributor, no create-a-dōjō, no self_hosted); left: the team governance scope (D25, waits on client/stack scopes), one tracker per workspace (D23, needs design) | #318 | P1 |
 | G-FUN-4 | No email for invites, revocations, expiries | #319 | P2 |
 | G-FUN-5 | No retention / deletion rules for client data, departed members, viewer exports | #320 | P2 |
 | G-OPS-3 | No error monitoring or alerting; no production backup plan; qlty out of minutes | #321 | P2 |
 
-## Remaining population (Phase 3)
+## Remaining population
 
 The full register from [`../reorg.md`](../reorg.md) §12 spans the F- (faults),
 P- (perf: silent 1000% zoom graphs), D- (doc conflicts and claims), T- (test
 coverage: e2e flame-outs) and X- (backlog table) families. Closed since reorg §12
 was written: the e2e 23/130 reds (#134), `public.logs` at 25 GB (#180), no Rust
 tests in CI (#182), and the M- metric defects #153, #154 and #155. Each row
-will name the module it blocks, so a plane file and this register always agree.
+names the module it blocks, so a plane file and this register always agree.
+
+Folded in so far: `C-*` and `ACP-*` in full, `G-*` and `M-*` for the rows the
+modules rely on, and part of `P-*` (P-5), `D-*` (D-8, D-11–D-13), `T-*` (T-1) and
+`F-*` (F-3). **Not yet row by row:** the rest of `F-*` (faults), the rest of
+`P-*` (perf), the rest of `T-*` (e2e coverage) and all of `X-*` (the backlog
+table). Adding one is a docs change: name the module, the evidence, the priority.
 
 ## How a gap closes
 
 1. A `.feature` scenario in the module spec pins the behaviour (reorg §6).
 2. The status flips in the plane file when there is evidence.
-3. The row is removed from here and the work is tracked as a GitHub issue
-   ([`../backlog.md`](../backlog.md)).
+3. The row is struck through here with the commit or `file:line` that closed it,
+   and the remaining work is tracked as a GitHub issue ([`../backlog.md`](../backlog.md)).

@@ -166,6 +166,53 @@ pub fn fold_id(group: &str) -> String {
     format!("fold:{group}")
 }
 
+/// The map narrowed to a focus (user, 2026-11-03): the focused modules, the
+/// modules one dependency away in either direction, and only the edges that
+/// touch a focused module.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Focused {
+    pub modules: Vec<Module>,
+    pub edges: Vec<ModuleEdge>,
+    /// The kept modules that are not focused, sorted.
+    pub neighbours: Vec<String>,
+}
+
+/// Narrow `modules` and `edges` to `members` and their direct neighbours. Run
+/// before [`level0`], so nothing in the neighbourhood is folded away. A focus
+/// that names no known module keeps nothing.
+pub fn focus_scope(
+    modules: &[Module],
+    edges: &[ModuleEdge],
+    members: &std::collections::HashSet<String>,
+) -> Focused {
+    let known: std::collections::HashSet<&str> = modules.iter().map(|m| m.id.as_str()).collect();
+    let touches = |e: &&ModuleEdge| {
+        (members.contains(&e.source) || members.contains(&e.target))
+            && known.contains(e.source.as_str())
+            && known.contains(e.target.as_str())
+    };
+    let kept_edges: Vec<ModuleEdge> = edges.iter().filter(touches).cloned().collect();
+    let mut neighbours: Vec<String> = kept_edges
+        .iter()
+        .flat_map(|e| [&e.source, &e.target])
+        .filter(|id| !members.contains(*id))
+        .cloned()
+        .collect();
+    neighbours.sort_unstable();
+    neighbours.dedup();
+    let kept_modules: Vec<Module> = modules
+        .iter()
+        .filter(|m| members.contains(&m.id) || neighbours.binary_search(&m.id).is_ok())
+        .cloned()
+        .collect();
+    Focused { modules: kept_modules, edges: kept_edges, neighbours }
+}
+
+/// The modules a Group-by segment holds: every module whose group is `segment`.
+pub fn segment_members(modules: &[Module], segment: &str) -> std::collections::HashSet<String> {
+    modules.iter().filter(|m| m.group == segment).map(|m| m.id.clone()).collect()
+}
+
 /// L0 from the module-level nodes and edges.
 pub fn level0(modules: &[Module], edges: &[ModuleEdge], budget: usize) -> Level0 {
     let between: Vec<&ModuleEdge> = edges.iter().filter(|e| e.source != e.target).collect();
@@ -636,6 +683,63 @@ mod tests {
         max_cyclo: i64,
     ) -> MeasuredFile {
         MeasuredFile { module: module.into(), path: path.into(), functions, complex, max_cyclo }
+    }
+
+    fn ids(modules: &[Module]) -> Vec<&str> {
+        let mut v: Vec<&str> = modules.iter().map(|m| m.id.as_str()).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// A focus (user, 2026-11-03) narrows the map to the focused modules and the
+    /// modules one dependency away — in either direction — before anything is
+    /// folded, so the neighbourhood is drawn whole. Two hops away is out.
+    #[test]
+    fn a_focus_keeps_the_module_and_its_direct_neighbours() {
+        let modules = vec![m("a", "L0", 1), m("b", "L1", 1), m("c", "L1", 1), m("d", "L2", 1)];
+        let edges = vec![e("a", "b", "calls", 3), e("c", "a", "calls", 2), e("b", "d", "calls", 5)];
+        let f = focus_scope(&modules, &edges, &["a".to_string()].into());
+        assert_eq!(ids(&f.modules), ["a", "b", "c"]);
+        assert_eq!(f.neighbours, ["b", "c"]);
+    }
+
+    /// Only the dependencies that touch a focused module are kept: two
+    /// neighbours' own traffic is the rest of the map, not the focus.
+    #[test]
+    fn a_focus_keeps_only_the_edges_that_touch_it() {
+        let modules = vec![m("a", "L0", 1), m("b", "L1", 1), m("c", "L1", 1)];
+        let edges = vec![
+            e("a", "b", "calls", 3),
+            e("a", "c", "calls", 1),
+            e("b", "c", "calls", 9),
+            e("a", "a", "calls", 4),
+        ];
+        let f = focus_scope(&modules, &edges, &["a".to_string()].into());
+        let kept: Vec<(&str, &str)> =
+            f.edges.iter().map(|e| (e.source.as_str(), e.target.as_str())).collect();
+        assert_eq!(kept, [("a", "b"), ("a", "c"), ("a", "a")]);
+    }
+
+    /// A segment is a Group-by group: every module in it is focused, and its
+    /// neighbours are the modules outside it that it depends on or is used by.
+    #[test]
+    fn a_segment_focuses_every_module_in_it() {
+        let modules = vec![m("a", "L1", 1), m("b", "L1", 1), m("c", "L2", 1), m("d", "L3", 1)];
+        let edges = vec![e("a", "b", "calls", 1), e("b", "c", "calls", 2)];
+        let members = segment_members(&modules, "L1");
+        assert_eq!(members, ["a".to_string(), "b".to_string()].into());
+        let f = focus_scope(&modules, &edges, &members);
+        assert_eq!(ids(&f.modules), ["a", "b", "c"]);
+        assert_eq!(f.neighbours, ["c"]);
+    }
+
+    /// A focus that names nothing in the workspace narrows to nothing — the
+    /// caller answers it as not found, never as an empty map.
+    #[test]
+    fn a_focus_on_no_known_module_keeps_nothing() {
+        let modules = vec![m("a", "L0", 1)];
+        let f = focus_scope(&modules, &[], &["zzz".to_string()].into());
+        assert!(f.modules.is_empty() && f.edges.is_empty() && f.neighbours.is_empty());
     }
 
     /// The Complexity lens is a tree (user, 2026-11-02): module → folder → file,

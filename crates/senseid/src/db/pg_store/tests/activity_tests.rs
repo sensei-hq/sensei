@@ -1291,7 +1291,13 @@ async fn workspace_hotspots_count_recent_file_edits_and_reedits() {
     let rows = got.unwrap();
     let files: Vec<(&str, i64, i64)> = rows
         .iter()
-        .map(|r| (r["file_path"].as_str().unwrap(), r["edit_count"].as_i64().unwrap(), r["correction_count"].as_i64().unwrap()))
+        .map(|r| {
+            (
+                r["file_path"].as_str().unwrap(),
+                r["edit_count"].as_i64().unwrap(),
+                r["correction_count"].as_i64().unwrap(),
+            )
+        })
         .collect();
     assert_eq!(files, vec![("src/a.rs", 3, 1)], "{rows:?}");
 }

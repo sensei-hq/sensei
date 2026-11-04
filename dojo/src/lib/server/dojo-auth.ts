@@ -36,8 +36,11 @@ export type Caller = {
 	authUserId?: string;
 };
 
-/** Resolve the `{origin}/{org}` tenant id, or throw 404/500. */
-async function resolveTenantId(
+/** Resolve the `{origin}/{org}` tenant id, or throw 404/500. Exported for the
+ *  routes that address a tenant but admit callers no member floor covers (a
+ *  workspace viewer reads metrics without a membership): they resolve the
+ *  tenant with the service client, then read as the caller. */
+export async function resolveTenantId(
 	db: ReturnType<typeof dojoDb>,
 	origin: string,
 	org: string

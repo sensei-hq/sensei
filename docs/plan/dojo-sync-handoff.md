@@ -80,8 +80,8 @@ unmapped=101 graph_batches=0`. Denials are `not_subscribed`; unmapped are `no_co
   approval. (B) Compile the analysis to WASM for the Worker: one implementation, but heavy reads on
   every request. (C) The daemon also pushes derived payloads per (repository, tracked branch, head
   sha, view) at default controls; the raw graph stays as the source. **Recommend C** as the first
-  slice. It partly revisits the 2026-10-14 "raw graph only" decision, so it needs your yes. WP6/WP7
-  wait on this.
+  slice. ANSWERED C (user, 2026-11-03): push the diagram data, each payload tied to its commit and
+  time, so the dōjō can show the latest and a progression across time. Built in WP6/WP7.
 - **Q2. Diagrams per repository or per workspace?** Local diagrams are per workspace; dōjō graphs
   are per (repository, branch). **Recommend per repository first.**
 - **Q3. D18 environments.** Use `repository_graph_branches.label ∈ {production, testing,
@@ -165,22 +165,37 @@ Q3 adds the CHECK (`--scope dojo`).
   shows the error state.
 - Accept: the workspace page shows per-repository charts for the sensei-hq workspace.
 
-**WP6 · Diagram payload push (daemon + dōjō DB + Worker).** Blocked on Q1 = C. Depends on WP3
-(without a tracked `develop` there is nothing to verify on live data).
-- Schema (`--scope dojo`): `dojo.graph_diagrams(repository_id, branch, view, head_sha, payload
-  jsonb, pushed_at)` plus a SECURITY DEFINER `file_graph_diagrams` using the `file_graph_slices`
-  contract (principal from the session, verdict from `all_my_repositories`, the whole batch refused
-  on any failure, an older sha refused). Add policy `database/policies/dojo/graph_diagrams.sql`.
+**WP6 · Diagram payload push (daemon + dōjō DB + Worker).** Q1 = C (user, 2026-11-03), with history:
+every payload is tied to its commit and time, and none is overwritten. Depends on WP3 (without a
+tracked `develop` there is nothing to verify on live data).
+- Schema (`--scope dojo`): `dojo.graph_diagrams(repository_id, branch, view, head_sha, committed_at,
+  payload jsonb, pushed_at)`, unique on `(repository_id, branch, view, head_sha)`, indexed on
+  `(repository_id, branch, view, committed_at desc)`. One row per commit pushed — a later push adds a
+  row, it never replaces one. `committed_at` is the commit's own time (git), not the push time, so a
+  late push still lands at its place in the progression. Plus a SECURITY DEFINER
+  `file_graph_diagrams` using the `file_graph_slices` contract (principal from the session, verdict
+  from `all_my_repositories`, the whole batch refused on any failure); re-filing the same
+  `(…, head_sha)` is a no-op, not an error. Add policy `database/policies/dojo/graph_diagrams.sql`.
+- Reads (Worker): latest = the newest `committed_at` per (repository, branch, view); progression =
+  the rows of one (repository, branch, view) in a window, oldest first, payloads optional (a
+  `head_sha, committed_at` timeline first, a payload on demand) — it is the dōjō half of S6
+  (diagram history and animation).
 - Daemon: after a `Synced` checkout in `push_checkout`, compute the default-control payloads through
-  the existing `diagrams.rs` functions and push them. Record the result under
-  `repository_graph` (`partial` if one view fails).
+  the existing `diagrams.rs` functions and push them with the checkout's HEAD sha and commit time.
+  Record the result under `repository_graph` (`partial` if one view fails). History accrues from the
+  first push; no backfill of past commits in this slice.
 - Tests first: the SQL test (`other_tenant_refused`, `unelected_refused`,
-  `older_head_refused`), `a_synced_checkout_pushes_its_diagram_payloads`, and
-  `a_skipped_checkout_pushes_no_diagrams`.
-- Accept: `select view, head_sha from dojo.graph_diagrams` matches the local HEAD for each view.
+  `refiling_a_commit_changes_nothing`, `a_new_commit_adds_a_row_and_keeps_the_old`,
+  `latest_is_the_newest_commit_not_the_newest_push`), `a_synced_checkout_pushes_its_diagram_payloads`,
+  and `a_skipped_checkout_pushes_no_diagrams`.
+- Accept: for each view, the latest row's `head_sha` matches the local HEAD; after a second commit
+  is synced there are two rows per view, and the latest read answers the newer.
+- Open (raise before building): retention — payloads grow per commit; propose keeping every commit
+  for 90 days, then one per day. Needs the user's yes.
 
 **WP7 · Diagrams screen (dōjō UI).** Depends on WP6. Read route plus a flat Diagrams list (D19) with
-a branch picker over the tracked set, rendered with `@rokkit/graph`. Fix rendering defects in rokkit
+a branch picker over the tracked set, rendered with `@rokkit/graph`. Opens on the latest commit;
+a timeline of the commits pushed lets the reader step back through the progression. Fix rendering defects in rokkit
 upstream, never by overriding in the app.
 
 **Parallelism.** These can run at the same time: WP1, WP3, WP4. WP2 follows WP1, WP5 follows WP4,
@@ -234,6 +249,35 @@ flight.
   `allowed` grows by the personal private repositories that were refused.
 - Do not: give a member a switch on an org repository; touch an organisation's billing terms;
   gate anything local on the plan; delete a hidden repository's data.
+
+**WP9 · Registration that scales (dōjō DB + Worker + daemon).** Found 2026-11-03 against production:
+the dōjō runs on Cloudflare Workers, which cap outbound calls PER REQUEST (50 on the free plan), and
+registration costs 1 (caller) + 1 (`register_repository`) + 1 (`file_repository_workspace`) per
+repository — 157 at once failed every pass with "Too many subrequests". The daemon now sends 15 per
+request (fb92e3f39, ≤31 calls): a stopgap that guesses the server's budget from outside. And every
+daemon re-registers EVERY repository on EVERY pass (~1–2 min): ~11 requests and up to ~340 database
+calls a pass for one user, ~7–15k Worker requests a day — a handful of such users exhausts the free
+plan's 100k/day. Concurrency is not the cap's problem (each request has its own budget); volume is.
+- Part A — dōjō, one call per batch: a set-based `dojo.register_repositories(p_repos jsonb)` (returns
+  the same mapped/unmapped rows, filing included) so a request costs ~2 calls whatever its size; the
+  route calls it once, and answers its maximum batch (`max_batch`) so the daemon stops guessing.
+  Tests first: SQL — `registering_many_is_one_call_with_the_same_answers_as_one_by_one`,
+  `a_failed_filing_is_partial_for_that_repository_only`; route —
+  `the_route_makes_one_database_call_for_a_batch`, `it_answers_its_maximum_batch`.
+- Part B — daemon, register only what changed: remember each repository's last registration
+  (key, remote, workspace → answer, at) and offer only new or changed ones, plus everything once a day
+  (and after a sign-in) so a dōjō-side change is still learned. Verdict rows (WP1) still come from the
+  pass's full picture — the cached answers stand in for the ones not re-asked. Use the dōjō's
+  `max_batch` when it answers one, else 15. Tests first in `dojo_sync.rs` with the scripted plane:
+  `an_unchanged_repository_is_not_re_offered`, `a_moved_workspace_is_re_offered`,
+  `everything_is_re_offered_once_a_day`, `verdicts_cover_every_repository_even_when_few_were_offered`.
+- Accept: against production, a pass after the first offers 0 repositories (log `offered=0`) while
+  `sensei.sync_state` still holds a verdict for all mapped+unmapped; the Worker's subrequests per
+  registration request stay ≤ 3 (Cloudflare dashboard → Workers → Metrics).
+- Do not: raise the per-request cap by any means other than the batched call; drop a verdict for a
+  repository that was not re-offered; register on every pass "to be safe".
+- Depends on nothing; Part A ships with a dōjō release, Part B with a daemon release — B works
+  against an older dōjō (falls back to 15), A against an older daemon (it simply sends batches).
 
 ## 5. Context you need
 

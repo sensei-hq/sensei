@@ -13,10 +13,12 @@ Each plane file is a table: one row per module — status · what's done · the 
 step. The consolidated gap register is [`06-gaps.md`](06-gaps.md); issue-level open
 work is [`../backlog.md`](../backlog.md) (GitHub issues).
 
-> **Status of this file:** the per-module status tables are populated in **Phase 3**
-> of the reorg ([`../reorg.md`](../reorg.md) §13), folding the old feature
-> coverage map and the plan gap analysis (both deleted on 2026-10-21; they live
-> in git history). The models below are final now.
+> **Status of this file:** the per-module status tables were populated on **2026-11-03** from the
+> readiness table in [`../review/2026-11-03-orientation.md`](../review/2026-11-03-orientation.md) §2
+> and the capability audit
+> [`../review/2026-10-27-roadmap-vs-state.md`](../review/2026-10-27-roadmap-vs-state.md) §1, and every
+> row names what proves its cell. A status is a snapshot: when the module moves, move the cell and
+> re-check the evidence.
 
 ## Status model
 
@@ -49,9 +51,9 @@ Priorities are per-module and revisited when a plane file changes. "Shipped"
 beats "designed": promotion to ✅ requires evidence (tests, e2e, live data), not
 a spec.
 
-## The board — all 30 modules at a glance
+## The board — all 31 modules at a glance
 
-| Plane | Modules | Status (Phase 3 populates the cells) |
+| Plane | Modules | Status cells (per module, with evidence) |
 |---|---|---:|
 | Foundation | M1 Bootstrap · M2 Setup/Preferences · M3 Capture · M4 Code Graph · M5 Inference Gateway · M6 Storage/Data Model | [01-foundation.md](01-foundation.md) |
 | Insight | M7 Analyzer · M8 Metrics/Health · M9 Memory · M10 Patterns · M11 Traceability · M12 Libraries · M13 Governance | [02-insight.md](02-insight.md) |
@@ -66,12 +68,13 @@ analyze → learn → deliver → measure FTR**. Each plane file lists its own g
 the cross-plane ones that matter now:
 
 - **M17 (Code map L0/L1/L2) is a prerequisite for reading architecture metrics at
-  any scale** — reorg §9.7; the current layered render is unreadable (G-1).
+  any scale** — reorg §9.7. The desktop map is built and G-1 is closed (M17);
+  what is missing is the dōjō embed and the daemon-pushed map.
 - **M8 (master-detail + gating eligibility) must land before T3 promises gates** —
   1 of T3's 7 gating targets is buildable today, 2 need scoped reads, 4 are
   blocked on #156 (reorg §9.2).
 - **M3 adapter expansion (Claude + OpenCode first)** is the capture plane's
-  facing work (decision 10; C-13, C-14).
+  facing work (decision 10; C-13, #348, #349).
 - **P1 design is finished before implementation distributes across the three
   targets** (decision 7).
 

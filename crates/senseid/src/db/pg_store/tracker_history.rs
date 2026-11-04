@@ -189,9 +189,8 @@ impl PgStore {
             "SELECT history_error::text, history_at FROM sensei.trackers WHERE id = $1",
         )
         .bind(tracker_id)
-        .fetch_optional(&self.pool)
+        .fetch_one(&self.pool)
         .await
-        .map(|r| r.unwrap_or((None, None)))
         .map_err(|e| format!("tracker_history_state({tracker_id}): {e}"))
     }
 

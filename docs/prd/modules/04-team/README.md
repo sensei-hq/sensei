@@ -8,8 +8,8 @@
 |---|---|---|---|
 | T1 | Dōjō Core | Knowledge travels up, is governed, and comes back down | [`README`](01-dojo-core/README.md) · [`dojo-core`](01-dojo-core/scenarios/dojo-core.feature) · [`dojo-core-gaps`](01-dojo-core/scenarios/dojo-core-gaps.feature) |
 | T2 | Dōjō Consoles | All four roles (contributor · maintainer · lead · admin) have a live console | [`README`](02-dojo-consoles/README.md) · [`dojo-consoles`](02-dojo-consoles/scenarios/dojo-consoles.feature) · [`dojo-consoles-gaps`](02-dojo-consoles/scenarios/dojo-consoles-gaps.feature) |
-| T3 | Dōjō Workspace Planning | A workspace plans against its tracker and gates on code health | [`README`](03-dojo-workspace-planning/README.md) · [`dojo-workspace-planning`](03-dojo-workspace-planning/scenarios/dojo-workspace-planning.feature) · [`dojo-workspace-planning-gaps`](03-dojo-workspace-planning/scenarios/dojo-workspace-planning-gaps.feature) |
-| T4 | Billing & Seats | A hosted Dōjō can take the paid tier — gating, integrations, consolidated metrics — and is metered | [`README`](04-billing-seats/README.md) · [`billing-seats`](04-billing-seats/scenarios/billing-seats.feature) |
+| T3 | Dōjō Workspace Planning | A workspace plans against its tracker and sets code-health targets; a blocking target gates work | [`README`](03-dojo-workspace-planning/README.md) · [`dojo-workspace-planning`](03-dojo-workspace-planning/scenarios/dojo-workspace-planning.feature) · [`dojo-workspace-planning-gaps`](03-dojo-workspace-planning/scenarios/dojo-workspace-planning-gaps.feature) |
+| T4 | Billing & Seats | An organisation's private repositories take the paid tier — targets, integrations, consolidated metrics — and are metered; solo, personal and public are free | [`README`](04-billing-seats/README.md) · [`billing-seats`](04-billing-seats/scenarios/billing-seats.feature) |
 | T5 | Releases, DORA & Release Gates | Deployments are read from CI, the five DORA keys are computed, and a release that would ship a regression is held | [`README`](05-releases-and-dora/README.md) · [`releases-and-dora`](05-releases-and-dora/scenarios/releases-and-dora.feature) |
 | T6 | Workspace Viewer | A manager or client sees a granted workspace's outcomes — never who did what, never the code | [`README`](06-workspace-viewer/README.md) · [`workspace-viewer`](06-workspace-viewer/scenarios/workspace-viewer.feature) |
 
@@ -17,19 +17,21 @@
 
 Memberships, routing, preview and the universal strip (T1); the role consoles
 (T2 — the four Dōjō roles live in [`02-objectives.md`](../../02-objectives.md) §Dōjō:
-contributor < maintainer < **lead** < admin (D1), alongside the manager and
-client / workspace viewpoints);
-workspace planning against external trackers (Jira / ADO; sync reads; the one write, SDLC and
-usage metrics, is `spec/daemon/tracker-metrics-writeback.md`) with
-**delta-scoped, ratchet-fair quality gates** (T3, reorg §9); the free-where-public
-business model — open source, with a paid tier for gating, integrations and consolidated metrics (T4, D24); and release
+contributor < maintainer < **lead** < admin (D1); the lead is the team lead (D38, D58);
+a member manager is a maintainer or lead, and an outside manager or client is a
+**viewer** — not a role, aggregates only (D8, D54));
+workspace planning against external trackers (Jira / ADO) with
+**delta-scoped, ratchet-fair quality targets** (T3, reorg §9; D47); the free-where-public
+business model — open source; a solo developer gets everything free, and the paid tier is an
+organisation's private repositories: targets, integrations and consolidated metrics (T4, D52); and release
 pipelines, the five DORA keys and **release gates** that hold a release to the T3
 targets over its change set (T5).
 
-**Resolved 2026-10-21** ([roadmap/09](../../../roadmap/09-dojo-expansion.md)), narrowed
-2026-10-26: CI is **read-only**. Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is metrics write-back (usage and SDLC metrics) by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`, `spec/daemon/tracker-sdlc-metrics.md`). Further, a credential stays local unless its owner marks it
-shared, and a shared service key hands off to the **dōjō** (D14, D21); each daemon pulls its
-trackers at its person's cadence (D22); **sensei ⇄ dōjō is two-way sync** for workspaces, teams,
+**Resolved** ([roadmap/09](../../../roadmap/09-dojo-expansion.md)): external
+systems (trackers, CI) are read; **ticket writeback is opt-in per workspace, off by default**
+(D50, amending D3). **Org workspaces use dōjō-owned tracker connections** (D49; needs the
+secret store, #310), and new adapters (GitHub Issues, ADO) go on that path; **the daemon path
+stays for solo and personal use** (D22, D14, D21). **sensei ⇄ dōjō is two-way sync** for workspaces, teams,
 roles and connections, with the dōjō the authority on conflict. The canonical role
 ladder is `contributor < maintainer < lead < admin`.
 

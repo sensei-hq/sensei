@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { flushSync } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
 import ActionItemsHarness from './ActionItems.harness.svelte';
-import type { ActionItem, ActionUrgency } from './action-items.js';
+import type { ActionItem, ActionUrgency, ItemAction } from './action-items.js';
+import type { ConfirmView, ItemActions, ItemFlow } from './action-items-state.svelte.js';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -18,12 +20,24 @@ function item(over: Partial<ActionItem> = {}): ActionItem {
         impact: 'projected +8 pt ftr on auth-touching sessions',
         urgency: 'high',
         urgencyLabel: 'high',
+        action: { kind: 'snooze', label: 'Snooze 7 days', days: 7 },
         ...over,
     };
 }
 
-function mount(items: ActionItem[], error: string | null = null) {
-    const m = mountComponent(ActionItemsHarness, { items, error });
+/** A stand-in for ActionItemsState: flows set per item, calls recorded. */
+function fakeActions(flows: Record<string, ItemFlow> = {}, done: string | null = null) {
+    return {
+        done,
+        flow: vi.fn((id: string): ItemFlow => flows[id] ?? { status: 'idle' }),
+        act: vi.fn(async () => {}),
+        confirm: vi.fn(async () => {}),
+        cancel: vi.fn(() => {}),
+    } satisfies ItemActions;
+}
+
+function mount(items: ActionItem[], error: string | null = null, actions: ItemActions = fakeActions()) {
+    const m = mountComponent(ActionItemsHarness, { items, error, actions });
     cleanup.push(m.destroy);
     return m.container;
 }
@@ -90,5 +104,107 @@ describe('ActionItems', () => {
         // Never the "no action items" line for a failure — that would mask it.
         expect(q(root, '[data-action-items-empty]')).toBeNull();
         expect(q(root, '[data-action-item]')).toBeNull();
+    });
+
+    // ── L3 · ActionItems act (plan 2026-11-03 §L3.1) ─────────────────────
+
+    const withAction = (action: ItemAction, id = 'r1') => item({ id, action });
+    const RULE_CONFIRM: ConfirmView = {
+        kind: 'rule', heading: 'Guard the auth branches', body: 'Every auth branch has a test.',
+        path: null, scope: 'workspace · recommended', confirmLabel: 'Add the rule',
+    };
+    const FILE_CONFIRM: ConfirmView = {
+        kind: 'skill', heading: 'retry-budget', body: '---\nname: retry-budget\n---',
+        path: '.claude/skills/retry-budget/SKILL.md', scope: null, confirmLabel: 'Write the file',
+    };
+
+    it('every item has its one action, labelled by what it does', () => {
+        const root = mount([
+            withAction({ kind: 'propose-rule', label: 'Propose a rule' }, 'a'),
+            withAction({ kind: 'review-file', label: 'Review the skill' }, 'b'),
+            withAction({ kind: 'open-file', label: 'Show lib.rs in Finder', path: '/r/lib.rs' }, 'c'),
+            withAction({ kind: 'snooze', label: 'Snooze 7 days', days: 7 }, 'd'),
+        ]);
+        const label = (id: string) =>
+            q(root, `[data-action-item="${id}"] button[data-action-do]`)?.textContent?.trim();
+        expect(label('a')).toBe('Propose a rule');
+        expect(label('b')).toBe('Review the skill');
+        expect(label('c')).toBe('Show lib.rs in Finder');
+        expect(label('d')).toBe('Snooze 7 days');
+        expect(q(root, '[data-action-item="a"] [data-action-do]')?.getAttribute('data-action-do')).toBe('propose-rule');
+    });
+
+    it('a lens action is a link to the lens, not a button', () => {
+        const root = mount([withAction({ kind: 'open-lens', label: 'Open libraries', href: '/workspace/w1/libraries' })]);
+        const link = q(root, '[data-action-item="r1"] a[data-action-do="open-lens"]');
+        expect(link?.getAttribute('href')).toBe('/workspace/w1/libraries');
+        expect(link?.textContent?.trim()).toBe('Open libraries');
+        expect(q(root, '[data-action-item="r1"] button[data-action-do]')).toBeNull();
+    });
+
+    it('clicking the action hands the item to the state', () => {
+        const actions = fakeActions();
+        const it1 = withAction({ kind: 'snooze', label: 'Snooze 7 days', days: 7 });
+        const root = mount([it1], null, actions);
+        q(root, 'button[data-action-do="snooze"]')!.click();
+        flushSync();
+        expect(actions.act).toHaveBeenCalledWith(it1);
+    });
+
+    it('a working item disables its action and says it is busy', () => {
+        const root = mount([item()], null, fakeActions({ r1: { status: 'working' } }));
+        const btn = q(root, 'button[data-action-do]') as HTMLButtonElement | null;
+        expect(btn?.disabled).toBe(true);
+        expect(btn?.getAttribute('aria-busy')).toBe('true');
+    });
+
+    it('a rule to confirm shows its title, text and where it lands, with Add and Cancel', () => {
+        const actions = fakeActions({ r1: { status: 'confirm', confirm: RULE_CONFIRM } });
+        const it1 = withAction({ kind: 'propose-rule', label: 'Propose a rule' });
+        const root = mount([it1], null, actions);
+        const panel = q(root, '[data-action-confirm="rule"]');
+        expect(panel?.textContent).toContain('Guard the auth branches');
+        expect(panel?.textContent).toContain('Every auth branch has a test.');
+        expect(q(root, '[data-action-confirm-scope]')?.textContent).toContain('workspace · recommended');
+        expect(q(root, '[data-action-confirm-path]')).toBeNull();
+        q(root, 'button[data-action-confirm-yes]')!.click();
+        flushSync();
+        expect(actions.confirm).toHaveBeenCalledWith(it1);
+        expect(q(root, 'button[data-action-confirm-yes]')?.textContent?.trim()).toBe('Add the rule');
+        q(root, 'button[data-action-confirm-no]')!.click();
+        flushSync();
+        expect(actions.cancel).toHaveBeenCalledWith(it1);
+    });
+
+    it('a file to confirm shows the path it will write and its full content', () => {
+        const root = mount(
+            [withAction({ kind: 'review-file', label: 'Review the skill' })],
+            null,
+            fakeActions({ r1: { status: 'confirm', confirm: FILE_CONFIRM } }),
+        );
+        expect(q(root, '[data-action-confirm-path]')?.textContent).toContain('.claude/skills/retry-budget/SKILL.md');
+        expect(q(root, '[data-action-confirm="skill"] pre')?.textContent).toContain('name: retry-budget');
+        expect(q(root, 'button[data-action-confirm-yes]')?.textContent?.trim()).toBe('Write the file');
+    });
+
+    it('an item’s failure is shown on that item, and its action stays to retry', () => {
+        const root = mount(
+            [item({ id: 'a' }), item({ id: 'b' })],
+            null,
+            fakeActions({ a: { status: 'error', message: 'Conflict' } }),
+        );
+        expect(q(root, '[data-action-item="a"] [data-action-error]')?.textContent).toContain('Conflict');
+        expect(q(root, '[data-action-item="b"] [data-action-error]')).toBeNull();
+        expect(q(root, '[data-action-item="a"] button[data-action-do]')).not.toBeNull();
+    });
+
+    it('what the last action did is said above the list', () => {
+        const root = mount([item()], null, fakeActions({}, 'Snoozed until 2026-11-10'));
+        expect(q(root, '[data-action-done]')?.textContent).toContain('Snoozed until 2026-11-10');
+        expect(q(mount([item()]), '[data-action-done]')).toBeNull();
+        // The last item settled: the list is empty, and the outcome is still said.
+        const emptied = mount([], null, fakeActions({}, 'Rule added: Guard the auth branches'));
+        expect(q(emptied, '[data-action-done]')?.textContent).toContain('Rule added');
+        expect(q(emptied, '[data-action-items-empty]')).not.toBeNull();
     });
 });

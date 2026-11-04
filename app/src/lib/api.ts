@@ -1,4 +1,4 @@
-import type { CoChange, ComplexityTree, Level0, Level1, Level2, Zones } from '@sensei/codemap';
+import type { CoChange, ComplexityTree, Focus, Level0, Level1, Level2, Zones } from '@sensei/codemap';
 
 /** The daemon's Complexity tree: the maintainability reading arrives ungraded
  *  (the app grades it — codemap-port). */
@@ -473,8 +473,12 @@ export function senseiApi(port: number) {
     // non-pending verdict. Distinct from the manual `listImpactVerdicts`
     // retrospectives above.
     /** The Code map (M17): L0 modules, one module's files, one file's symbols. */
-    tryGetCodemap: (id: string, groupBy: 'layers' | 'folders') =>
-      tryGet<Level0>(`/api/workspaces/${enc(id)}/diagrams/codemap?groupBy=${enc(groupBy)}`),
+    /** L0; a focus narrows it to a module (`focus`) or a group (`segment`) and their neighbours. */
+    tryGetCodemap: (id: string, groupBy: 'layers' | 'folders', focus: Focus | null) =>
+      tryGet<Level0>(
+        `/api/workspaces/${enc(id)}/diagrams/codemap?groupBy=${enc(groupBy)}` +
+          (focus ? `&${focus.kind === 'module' ? 'focus' : 'segment'}=${enc(focus.id)}` : ''),
+      ),
     tryGetCodemapModule: (id: string, module: string) =>
       tryGet<Level1>(`/api/workspaces/${enc(id)}/diagrams/codemap/module?id=${enc(module)}`),
     tryGetCodemapFile: (id: string, file: string) =>
@@ -1281,6 +1285,21 @@ export function senseiApi(port: number) {
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     tryStop: () => tryPost<Record<string, unknown>>('/stop', {}),
+
+    // ── Metrics · action items (L3) ──────────────────────────────────────
+    // Both read the daemon's `{ error }` on a refusal, so the person sees why
+    // ("already decided", "a skill named … already exists"), not "Conflict".
+    /** Hide a pending recommendation for `days`; 404 when it is not this
+     *  workspace's, 409 when it is no longer pending. */
+    trySnoozeWorkspaceRecommendation: (id: string, recId: string, days: number) =>
+      tryJson<{ ok: boolean; snoozed_until: string }>(
+        'POST', `/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/snooze`, { days },
+      ),
+    /** `tryMaterializeRecommendation`, with the daemon's reason on a refusal. */
+    tryMaterializeRecommendationWithReason: (id: string, recId: string, opts: { gov_scope?: string; enforcement?: string }) =>
+      tryJson<{ ok: boolean; materialized?: unknown }>(
+        'POST', `/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts,
+      ),
   };
 }
 

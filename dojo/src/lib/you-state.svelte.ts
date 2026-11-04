@@ -4,7 +4,7 @@
 // handed in, and says why each one failed. Nothing shows a decision the server
 // did not record.
 import { SvelteSet } from 'svelte/reactivity';
-import type { MyRepoWire, ProvisionResult } from '$lib/client-data';
+import type { GraphBranchOutcomeWire, MyRepoWire, ProvisionResult } from '$lib/client-data';
 import type { KitDownstream, KitRulePack } from '$lib/components/kit/types';
 
 /** The writes the section makes — `$lib/client-data`, injected so a spec can fail them. */
@@ -16,6 +16,12 @@ export interface YouApi {
 		repoKey: string,
 		elected: boolean
 	) => Promise<{ repo_key: string; elected: boolean; sync_enabled: boolean; reason_code: string | null }>;
+	setGraphBranch: (
+		repoKey: string,
+		branch: string,
+		tracked: boolean,
+		label: string | null
+	) => Promise<GraphBranchOutcomeWire>;
 }
 
 /** Re-read the section's load (the page passes invalidateAll). */
@@ -126,6 +132,46 @@ export class YouSectionState {
 			const { [repoKey]: _dropped, ...rest } = this.#overrides;
 			this.#overrides = rest;
 			this.#toggleError = reason(e, 'could not change sharing');
+		} finally {
+			this.sharingPending.delete(repoKey);
+		}
+	}
+
+	/** Track a branch of a repository's shared code graph. No optimistic list
+	 *  update, unlike the election toggle: the outcome names one branch, and
+	 *  merging it needs the loaded list this class does not hold. The reload
+	 *  shows what the server recorded; the pending row shows something is. */
+	async track(
+		api: YouApi,
+		repoKey: string,
+		branch: string,
+		label: string | null,
+		reload: Reload
+	): Promise<void> {
+		if (this.sharingPending.has(repoKey)) return;
+		this.sharingPending.add(repoKey);
+		this.#toggleError = null;
+		try {
+			await api.setGraphBranch(repoKey, branch, true, label);
+			await reload();
+		} catch (e) {
+			this.#toggleError = reason(e, 'could not track that branch');
+		} finally {
+			this.sharingPending.delete(repoKey);
+		}
+	}
+
+	/** Untrack a branch. The screen confirms in-page first: untracking deletes
+	 *  that branch's graph, and this does not ask twice. */
+	async untrack(api: YouApi, repoKey: string, branch: string, reload: Reload): Promise<void> {
+		if (this.sharingPending.has(repoKey)) return;
+		this.sharingPending.add(repoKey);
+		this.#toggleError = null;
+		try {
+			await api.setGraphBranch(repoKey, branch, false, null);
+			await reload();
+		} catch (e) {
+			this.#toggleError = reason(e, 'could not untrack that branch');
 		} finally {
 			this.sharingPending.delete(repoKey);
 		}

@@ -14,7 +14,7 @@
     roles,
     zoom = 1,
     onselect,
-    onopen,
+    onfocus,
   }: {
     data: Level0;
     /** The bands this lens draws, after the band filters. */
@@ -27,7 +27,7 @@
     /** Over fitting the drawing to the column; 1 is fit. */
     zoom?: number;
     onselect: (id: string | null) => void;
-    onopen: (id: string) => void;
+    onfocus: (id: string) => void;
   } = $props();
 
   /** The width the drawing is laid out at; Fit scales it to the column. */
@@ -45,7 +45,7 @@
 
   const noteOf = (b: Block) => (b.hub ? `${b.weight_in} in` : `${shownFiles(b, roles)} files`);
   const pick = (b: Block) =>
-    b.folded.length || b.hub ? onselect(selected === b.id ? null : b.id) : onopen(b.id);
+    b.folded.length || b.hub ? onselect(selected === b.id ? null : b.id) : onfocus(b.id);
 </script>
 
 <!-- A scrollable region must take focus for keyboard users (axe scrollable-region-focusable). -->

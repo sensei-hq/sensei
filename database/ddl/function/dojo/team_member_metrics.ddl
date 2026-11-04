@@ -63,4 +63,6 @@ grant execute on function dojo.team_member_metrics(uuid, uuid[], text[], date) t
 comment on function dojo.team_member_metrics(uuid, uuid[], text[], date) is
 'Per-person totals and denominator-pooled rates of daily user-scoped metric rows in
 one dōjō since a day (#307 R8, D38). SECURITY INVOKER: dojo.repository_metrics''
-policy decides which rows count, so a caller learns only what they could read row by row.';
+policy decides which rows count, so a caller learns only what they could read row by row.
+The pooling rule is the same rule as workspace_metric_series'' viewer branch —
+change the two together.';

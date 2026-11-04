@@ -46,7 +46,7 @@ ENUM_DDL = REPO / "database/ddl/enum/sensei/tracker_metric.ddl"
 APP_METRICS = REPO / "app/src/routes/(workspace)/workspace/[id]/integrations/integrations-state.svelte.ts"
 NUMBER_TYPE = "com.atlassian.jira.plugin.system.customfieldtypes:float"
 NUMBER_SEARCHER = "com.atlassian.jira.plugin.system.customfieldtypes:exactnumber"
-DESCRIPTION = "Usage written by sensei after each sync (tracker metrics write-back). Edits are overwritten."
+DESCRIPTION = "Usage or SDLC metric written by sensei after each sync (tracker metrics write-back). Edits are overwritten."
 SENSEI_URL = "http://127.0.0.1:7744"
 
 
@@ -335,7 +335,7 @@ def self_test() -> int:
             fails.append(what)
 
     metrics = load_metrics(ENUM_DDL.read_text(), APP_METRICS.read_text())
-    check(metrics[0] == ("sessions", "Sessions") and len(metrics) == 13, "the repo's 13 metrics load in enum order")
+    check(metrics[0] == ("sessions", "Sessions") and len(metrics) == 34, "the repo's 34 metrics load in enum order")
     try:
         load_metrics("create type tracker_metric as enum ('a', 'b');", "{ metric: 'a', label: 'A' }")
         check(False, "an enum/app disagreement stops")

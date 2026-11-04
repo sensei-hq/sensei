@@ -92,6 +92,12 @@ scopes:
       # warning that reads as routine — which is how this was missed.
       - staging.metrics
       - staging.import_metrics
+      # Target eligibility (TG1): which catalogue metrics may be a target. Nothing
+      # in `dojo` references it yet, so deps cannot reach it; the staging pair
+      # seeds it (import/staging/metric_gating.jsonl), as for the catalogue above.
+      - sensei.metric_gating
+      - staging.metric_gating
+      - staging.import_metric_gating
       # Bootstrap tenants (the global-dōjō collective). Replaces
       # dojo.seed_global_dojo, which held the row as literal VALUES in plpgsql.
       - staging.tenants

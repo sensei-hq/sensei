@@ -1,9 +1,14 @@
 # Issue burndown: what to do first to close the most issues soonest
 
 Written 2026-10-18 from the audit of all open issues. Each kept issue carries a status comment
-listing what is done and what remains. 109 issues were open; 20 were closed as fixed, superseded or
-duplicate, leaving 89. The production-readiness items
+listing what is done and what remains. On 2026-10-18, 109 issues were open; 20 were closed as fixed,
+superseded or duplicate, leaving 89. The production-readiness items
 ([`07-quality.md`](07-quality.md) A–H) map onto these issues and are folded in below.
+
+> **This file is a log, not a count.** It records the waves and the work in the order they happened,
+> and every number in it is the one that was true on its date. For the live list read
+> [`../backlog.md`](../backlog.md), which indexes open work by area and freezes no total: 90 issues
+> were open on 2026-11-03 (`gh issue list --state open`).
 
 ## How it is ranked
 
@@ -298,8 +303,9 @@ The settings screen lists them as repositories.
   for the seconds the inventory capture takes after a restart.
 - **Code map decisions (user, 2026-10-27):** (1) the dōjō's Code health map is computed by the DAEMON
   and pushed with the graph sync — one implementation of layering/folding/hubs; the dōjō serves L0 as
-  pushed and answers L1/L2 in SQL over the graph it holds. (2) Complexity is computed in the indexer
-  (cyclomatic, per function, every indexed language) and stored on the node — not qlty's findings.
+  pushed and answers L1/L2 in SQL over the graph it holds. (2) **Reversed the same morning (2026-10-27):**
+  complexity stays qlty's — `analysis/codemap.rs:102` counts a module's functions "over cyclomatic 10
+  (local qlty)" — so the indexer does not compute it and no node carries a function's complexity.
 - ~~#343~~ **closed 2026-10-26** (151cd001, 5770a91b, c680010d): register an MCP server by hand in the
   Playground (family `manual`, kept by the discovery prune, removable here); the client now answers a
   server's own requests mid-call (semgrep asked `roots/list` and every call hung 60s). Live: semgrep
@@ -424,4 +430,4 @@ reason); the ResizeObserver console error on workspace metrics; an ambiguous lib
 | 3 | ~20 | ~1–2 weeks of small items |
 | 4 | ~6 | ~1 week |
 
-Waves 0–4 close roughly **40 of the 89** open issues.
+Projected 2026-10-18, when 89 were open: waves 0–4 close roughly **40 of them**.

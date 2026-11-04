@@ -6,6 +6,7 @@ import {
 	listOrgWorkspaces,
 	listUserWorkspaces,
 	getWorkspaceConstitution,
+	getWorkspaceMetrics,
 	attachRunToWorkspace,
 	fileRunUnderWorkspace,
 	AdminError,
@@ -170,5 +171,154 @@ describe('fileRunUnderWorkspace', () => {
 		b.update = () => b;
 		b.eq = () => Promise.resolve({ error: { message: 'denied' } });
 		await expect(fileRunUnderWorkspace(b as unknown as DojoClient, 's', 'p')).rejects.toBeInstanceOf(AdminError);
+	});
+});
+
+// WP4: a workspace's metric series — the read behind its charts. The gate (403),
+// the tenant scope (404) and the rollup (500 on error, never []) are three
+// separate answers, so they are decided in that order.
+describe('getWorkspaceMetrics', () => {
+	const TODAY = new Date('2026-11-03T12:00:00Z');
+
+	function makeMetricsDb(opts: {
+		canRead: boolean;
+		inTenant: boolean;
+		series: unknown[] | { error: { message: string } };
+	}) {
+		const calls: string[] = [];
+		const orders: Array<{ column: string; nullsFirst?: boolean }> = [];
+		const rpc = (fn: string, _args: Record<string, unknown>) => {
+			calls.push(`rpc:${fn}`);
+			if (fn === 'can_read_workspace') {
+				return Promise.resolve({ data: opts.canRead, error: null });
+			}
+			const chain: Record<string, unknown> = {};
+			chain.select = () => chain;
+			chain.order = (column: string, o?: { nullsFirst?: boolean }) => {
+				orders.push({ column, nullsFirst: o?.nullsFirst });
+				return chain;
+			};
+			chain.range = () => {
+				const s = opts.series;
+				return Promise.resolve(
+					Array.isArray(s) ? { data: s, error: null } : { data: null, error: s.error }
+				);
+			};
+			return chain;
+		};
+		const from = (table: string) => {
+			calls.push(`from:${table}`);
+			const chain: Record<string, unknown> = {};
+			chain.select = () => chain;
+			chain.eq = () => chain;
+			chain.maybeSingle = () =>
+				Promise.resolve(
+					opts.inTenant ? { data: { id: 'w1' }, error: null } : { data: null, error: null }
+				);
+			return chain;
+		};
+		return { db: { rpc, from } as unknown as DojoClient, calls, orders };
+	}
+
+	const ROWS = [
+		{
+			repository_id: 'r1',
+			repo_key: 'github.com/acme/api',
+			metric_key: 'ftr',
+			scope: 'repo',
+			principal_id: null,
+			computed_on: '2026-11-03',
+			grain: 'daily',
+			value: '0.5',
+			props: {}
+		},
+		{
+			repository_id: 'r1',
+			repo_key: 'github.com/acme/api',
+			metric_key: 'ftr',
+			scope: 'pooled',
+			principal_id: null,
+			computed_on: '2026-11-03',
+			grain: 'daily',
+			value: 7,
+			props: { pooled_rows: 3, numerator: '15', denominator: 6 }
+		}
+	];
+
+	it('returns the shaped series for a workspace the caller may read', async () => {
+		const { db } = makeMetricsDb({ canRead: true, inTenant: true, series: ROWS });
+		await expect(getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY })).resolves.toEqual({
+			since: '2026-10-05',
+			days: 30,
+			rows: [
+				{
+					repository_id: 'r1',
+					repo_key: 'github.com/acme/api',
+					metric_key: 'ftr',
+					scope: 'repo',
+					principal_id: null,
+					day: '2026-11-03',
+					value: 0.5,
+					props: {}
+				},
+				{
+					repository_id: 'r1',
+					repo_key: 'github.com/acme/api',
+					metric_key: 'ftr',
+					scope: 'pooled',
+					principal_id: null,
+					day: '2026-11-03',
+					value: 7,
+					props: { pooled_rows: 3, numerator: '15', denominator: 6 }
+				}
+			]
+		});
+	});
+
+	it('refuses a caller who may not read the workspace, before touching its rows', async () => {
+		// The gate runs first: an outsider learns nothing, not even whether the
+		// workspace is in this dōjō.
+		const { db, calls } = makeMetricsDb({ canRead: false, inTenant: true, series: ROWS });
+		const err = await getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY }).catch((e) => e);
+		expect(err).toBeInstanceOf(AdminError);
+		expect(err.status).toBe(403);
+		expect(calls).toEqual(['rpc:can_read_workspace']);
+	});
+
+	it('answers 404 when the workspace lives in another dōjō', async () => {
+		const { db, calls } = makeMetricsDb({ canRead: true, inTenant: false, series: ROWS });
+		const err = await getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY }).catch((e) => e);
+		expect(err).toBeInstanceOf(AdminError);
+		expect(err.status).toBe(404);
+		expect(calls).not.toContain('rpc:workspace_metric_series');
+	});
+
+	it('fails closed on a series error — never []', async () => {
+		const { db } = makeMetricsDb({
+			canRead: true,
+			inTenant: true,
+			series: { error: { message: 'connection reset' } }
+		});
+		const err = await getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY }).catch((e) => e);
+		expect(err).toBeInstanceOf(AdminError);
+		expect(err.status).toBe(500);
+		expect(err.message).toMatch(/connection reset/);
+	});
+
+	it('pages the series in a deterministic total order — an unordered OFFSET can drop or repeat rows', async () => {
+		// Each page re-runs the rollup with a fresh OFFSET; without an ORDER BY
+		// Postgres keeps no row order between runs, so past 1,000 rows a row can
+		// land on two pages or on none, with no error. The order is unique per
+		// row: within one branch the table's natural key is unique, and a pooled
+		// row carries a null principal where a detail row carries a real one.
+		const { db, orders } = makeMetricsDb({ canRead: true, inTenant: true, series: ROWS });
+		await getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY });
+		expect(orders).toEqual([
+			{ column: 'repository_id', nullsFirst: undefined },
+			{ column: 'metric_key', nullsFirst: undefined },
+			{ column: 'scope', nullsFirst: undefined },
+			{ column: 'computed_on', nullsFirst: undefined },
+			{ column: 'principal_id', nullsFirst: true }
+		]);
 	});
 });

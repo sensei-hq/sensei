@@ -55,13 +55,13 @@ a repo the team has history on" (persona 2).
 
 ## Signals shown
 
-| Element | Value | Meaning |
-|---|---|---|
-| Gate rows (×6) | kanji · name · detail · status | what's being checked and why it matters (`why`, `ifMissing`) — the wait teaches |
-| Elapsed timer | mono, top-right | real elapsed from `BootstrapTrace` |
-| Download size estimate | mono, top-right (when applicable) | how much a pending install will pull |
-| Re-check | Observatory entry | re-runs bootstrap on demand; returns to Observatory on green, not first-run |
-| All-green hero | `完` large + "everything ready · opening your workspace" | machine ready; auto-transition ≤ ~800ms |
+| Element | Value | Meaning | Decision it drives / next step |
+|---|---|---|---|
+| Gate rows (×6) | kanji · name · detail · status | what's being checked and why it matters (`why`, `ifMissing`) — the wait teaches | a red row names its fix: wait while sensei installs it, or run the `ifMissing` command it shows |
+| Elapsed timer | mono, top-right | real elapsed from `BootstrapTrace` | if it runs long with no row moving, take the Continue link |
+| Download size estimate | mono, top-right (when applicable) | how much a pending install will pull | none — candidate to cut (informational; no choice is offered) |
+| Re-check | Observatory entry | re-runs bootstrap on demand; returns to Observatory on green, not first-run | after fixing a red gate by hand, re-run bootstrap |
+| All-green hero | `完` large + "everything ready · opening your workspace" | machine ready; auto-transition ≤ ~800ms | none needed: sensei opens the folder scan on its own |
 
 ## Done gate
 

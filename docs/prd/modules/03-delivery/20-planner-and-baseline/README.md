@@ -66,18 +66,18 @@ plans it, and the baseline only moves when we actually got better.*
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Goal + depth bar | what and how deep | `Add auth · depth=3` |
-| Phase | top-level milestone | `Phase 1: Scaffold` |
-| Feature | shippable slice | `Feature: login flow` |
-| Task | atomic work with AC | `Task: add /login route · AC: 200 + session` |
-| Dependency | DAG edge | `task-2 depends on task-1` |
-| Task state | pending / running / done / blocked / failed | `running` |
-| Phase rollup | derived from tasks | `blocked` if any task blocked |
-| Progress | terminal / total | `3 / 7` |
-| Baseline FTR | FTR at plan start | `baselineFtr: 0.62` (unbuilt) |
-| Ratchet | baseline only advances on sustained improvement | `ratchet: +0.03 sustained` (unbuilt) |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Goal + depth bar | what and how deep | `Add auth · depth=3` | deepen the plan before an unattended run (plan-depth review) |
+| Phase | top-level milestone | `Phase 1: Scaffold` | none — candidate to cut (structure; the phase rollup carries the decision) |
+| Feature | shippable slice | `Feature: login flow` | check its acceptance criteria are observable before building |
+| Task | atomic work with AC | `Task: add /login route · AC: 200 + session` | start the next ready task |
+| Dependency | DAG edge | `task-2 depends on task-1` | finish or unblock the upstream task first |
+| Task state | pending / running / done / blocked / failed | `running` | blocked or failed → open the task and resolve it |
+| Phase rollup | derived from tasks | `blocked` if any task blocked | open the blocked task |
+| Progress | terminal / total | `3 / 7` | none — candidate to cut |
+| Baseline FTR | FTR at plan start | `baselineFtr: 0.62` (unbuilt) | set the plan's success target against it (unbuilt) |
+| Ratchet | baseline only advances on sustained improvement | `ratchet: +0.03 sustained` (unbuilt) | hold the new baseline: a later drop below it is flagged (unbuilt) |
 
 ## Done gate
 

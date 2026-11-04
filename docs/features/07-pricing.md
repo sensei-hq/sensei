@@ -66,8 +66,8 @@ Three tiers, kept deliberately simple:
 
 ## Mockups
 
-- [Plan & billing](../mockups/Sensei/lib/dojo/dojo-billing.jsx) — the tier table + per-seat example
-- [SaaS entry — sign-in · orgs · create dōjō (plan choice)](../mockups/Sensei/lib/dojo/dojo-saas.jsx)
+- Plan & billing — the tier table + per-seat example
+- SaaS entry — sign-in · orgs · create dōjō (plan choice)
 - Website support block: `website/src/routes/sensei/+page.svelte` (GitHub Sponsors)
 
 ## What's involved

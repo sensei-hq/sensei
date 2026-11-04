@@ -3,7 +3,7 @@
 // or with nothing selected the workspace by direction. L1 describes the open
 // module, L2 the open file. Copy follows the mockup.
 import type { Level } from './state.svelte';
-import { complexityTier } from './view';
+import { complexityTier, segmentLabel } from './view';
 import type { Block, Direction, Level0, Level1, Level2 } from './types';
 
 export type Tone = 'ink' | 'danger' | 'warning' | 'success' | 'faint';
@@ -40,6 +40,7 @@ export function inspect({ level, l0, l1, l2, selected }: InspectInput): Inspecti
   if (!l0) return empty();
   if (selected === LIBRARIES) return libraries(l0);
   const b = selected ? l0.blocks.find((x) => x.id === selected) : undefined;
+  if (!b && l0.focus?.kind === 'segment') return segment(l0, l0.focus);
   if (!b) return workspace(l0);
   if (b.folded.length) return fold(b);
   if (b.hub) return hub(b);
@@ -74,6 +75,38 @@ function module(b: Block, l0: Level0): Inspection {
     listLabel: 'What to look at',
     list: viol.length + partners.length || !b.roles.docs ? list : [{ text: 'No violations or cycles', value: '', tone: 'success' }],
     open: b.id,
+  };
+}
+
+/** A focused segment (user, 2026-11-03): its modules as one. */
+function segment(l0: Level0, focus: NonNullable<Level0['focus']>): Inspection {
+  const members = new Set(focus.members);
+  const blocks = l0.blocks.filter((b) => members.has(b.id));
+  const out = l0.bands.filter((x) => members.has(x.source));
+  const up = out.filter((x) => x.direction === 'up');
+  const skip = out.filter((x) => x.direction === 'skip');
+  const cycles = cycleMembers(l0).filter((m) => m.some((id) => members.has(id)));
+  const files = blocks.reduce((a, b) => a + Object.values(b.roles).reduce((x, v) => x + v, 0), 0);
+  const list = [...up, ...skip].map((x) => {
+    const v = violation(x.direction, x.target, x.weight);
+    return { ...v, text: `${x.source}: ${v.text.charAt(0).toLowerCase()}${v.text.slice(1)}` };
+  });
+  return {
+    eyebrow: `Segment · ${l0.groupBy}`,
+    title: segmentLabel(l0.groupBy, focus.id),
+    sub: 'The modules in this group, drawn with the modules they depend on or are used by.',
+    stats: [
+      { label: 'Modules', value: n(focus.members.length), tone: 'ink' },
+      { label: 'Neighbours', value: n(focus.neighbours.length), tone: 'ink' },
+      { label: 'Symbols', value: n(blocks.reduce((a, b) => a + b.symbols, 0)), tone: 'ink' },
+      { label: 'Files', value: n(files), tone: 'ink' },
+      { label: 'Upward', value: String(up.length), tone: up.length ? 'danger' : 'ink' },
+      { label: 'Skip a layer', value: String(skip.length), tone: skip.length ? 'warning' : 'ink' },
+      { label: 'Cycles', value: String(cycles.length), tone: cycles.length ? 'warning' : 'ink' },
+    ],
+    listLabel: 'What to look at',
+    list: list.length ? list : [{ text: 'No upward or skipping dependencies', value: '', tone: 'success' }],
+    open: null,
   };
 }
 
@@ -170,6 +203,8 @@ export interface Stat {
   label: string;
   value: string;
   tone: Tone;
+  /** The icon beside its label on the header's stat card. */
+  icon?: string;
   /** The diagram that shows it, when one does. */
   lens?: 'structure' | 'cycles';
 }
@@ -179,13 +214,13 @@ export interface Stat {
 export function workspaceStats(l0: Level0): Stat[] {
   const count = (d: Direction) => l0.bands.filter((b) => b.direction === d).length;
   return [
-    { label: 'Modules', value: n(l0.budget.modules), tone: 'ink' },
-    { label: 'Symbols', value: n(l0.blocks.reduce((a, b) => a + b.symbols, 0)), tone: 'ink' },
-    { label: 'Edges', value: n(l0.budget.edges), tone: 'ink' },
-    { label: 'Upward', value: String(count('up')), tone: 'danger', lens: 'structure' },
-    { label: 'Skip a layer', value: String(count('skip')), tone: 'warning', lens: 'structure' },
-    { label: 'Cycles', value: String(l0.cycles.length), tone: 'warning', lens: 'cycles' },
-    { label: 'Same layer · down', value: `${count('level')} · ${count('down')}`, tone: 'ink' },
+    { label: 'Modules', value: n(l0.budget.modules), tone: 'ink', icon: 'i-solar-box-minimalistic-bold-duotone' },
+    { label: 'Symbols', value: n(l0.blocks.reduce((a, b) => a + b.symbols, 0)), tone: 'ink', icon: 'i-solar-code-bold-duotone' },
+    { label: 'Edges', value: n(l0.budget.edges), tone: 'ink', icon: 'i-solar-routing-2-bold-duotone' },
+    { label: 'Upward', value: String(count('up')), tone: 'danger', lens: 'structure', icon: 'i-solar-arrow-up-bold-duotone' },
+    { label: 'Skip a layer', value: String(count('skip')), tone: 'warning', lens: 'structure', icon: 'i-solar-double-alt-arrow-down-bold-duotone' },
+    { label: 'Cycles', value: String(l0.cycles.length), tone: 'warning', lens: 'cycles', icon: 'i-solar-refresh-circle-bold-duotone' },
+    { label: 'Same layer · down', value: `${count('level')} · ${count('down')}`, tone: 'ink', icon: 'i-solar-arrow-down-bold-duotone' },
   ];
 }
 

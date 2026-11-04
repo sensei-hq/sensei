@@ -36,9 +36,9 @@ asked to make.
 
 ## Mockups
 
-- [Phone — run dashboard · detail · gate · nudge](../mockups/Sensei/lib/relay/relay.jsx) · [phone planner](../mockups/Sensei/lib/relay/relay-planner.jsx)
-- [Desktop — relay coordinator + plan author](../mockups/Sensei/lib/relay/relay-desktop.jsx)
-- [Console — inbox · watch · PR-review · nudge](../mockups/Sensei/lib/dojo/dojo-relay.jsx)
+- Phone — run dashboard · detail · gate · nudge · phone planner
+- Desktop — relay coordinator + plan author
+- Console — inbox · watch · PR-review · nudge
 - Design: [`plan/relay-engine.md`](../history/plan/relay-engine.md) · journey: [`journeys/relay.md`](../journeys/relay.md)
 
 ## What's involved

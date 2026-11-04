@@ -31,7 +31,9 @@
   const showsGrouping = $derived(map.level === 'modules' && map.lens !== 'zones');
   const showsRoles = $derived((map.level === 'modules' && canvasLens) || map.level === 'files');
   const showsBands = $derived(map.level === 'modules' && canvasLens && map.lens !== 'coupling');
-  const choices = $derived(map.l0 ? moduleChoices(map.l0) : []);
+  // Every module, focused or not: the finder searches the whole map.
+  const catalogue = $derived(map.whole ?? map.l0);
+  const choices = $derived(catalogue ? moduleChoices(catalogue) : []);
   const zones = $derived(map.lens === 'zones' && map.level === 'modules' && map.zones ? zonesView(map.zones) : null);
   const zoneOptions = $derived(
     zones
@@ -57,8 +59,8 @@
 <div class="flex flex-wrap items-center gap-x-6 gap-y-3" data-testid="codemap-controls">
   {#if map.level !== 'symbols' && choices.length}
     <div class="w-64" data-testid="codemap-find">
-      <Select items={choices} filterable filterPlaceholder="Type a module name" placeholder="Find a module" size="sm"
-        onchange={(value) => typeof value === 'string' && !value.startsWith('group:') && void map.openModule(port, value)} />
+      <Select items={choices} filterable filterPlaceholder="Type a module or group" placeholder="Focus a module or group" size="sm"
+        onchange={(value) => typeof value === 'string' && void map.focusChoice(port, value)} />
     </div>
   {/if}
   {#if showsGrouping}

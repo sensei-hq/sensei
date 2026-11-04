@@ -840,11 +840,12 @@ fn status_error(e: &AuthError) -> &'static str {
 /// Classify a failed refresh: does it destroy the stored session or not?
 ///
 /// Split out from the I/O so the decision can be tested without a dōjō. Only a
-/// 401/403 is terminal; everything else — a 5xx, a DNS failure, a timeout —
-/// leaves the credential in place, because clearing on those signs the user out
-/// for an outage they did not cause.
+/// dead token is terminal — a 401/403, or Supabase's 400 for a refresh token it
+/// has no record of ([`dojo_auth::is_dead_session`]); everything else — a 5xx,
+/// any other 400, a DNS failure, a timeout — leaves the credential in place,
+/// because clearing on those signs the user out for an outage they did not cause.
 fn refresh_failure(e: &str) -> AuthError {
-    match dojo_auth::status_of(e).is_some_and(dojo_auth::is_rejection) {
+    match dojo_auth::is_dead_session(e) {
         true => AuthError::Rejected(e.to_string()),
         false => AuthError::Unreachable(e.to_string()),
     }
@@ -1952,7 +1953,17 @@ mod tests {
         // A 5xx is the case that matters: it comes back from the same code path
         // as a 401, looks equally like "the server said no", and is precisely the
         // failure a retry fixes.
-        for terminal in ["dōjō returned 401: bad refresh", "dōjō returned 403"] {
+        // A refresh token the dōjō has no record of is as dead as a 401 — the
+        // session belongs to another dōjō, or was revoked. Supabase says so with
+        // a 400 and an error_code (2026-11-03: a session from the local dev dōjō,
+        // offered to production, was kept as "unreachable" every minute and the
+        // app never offered Sign in).
+        for terminal in [
+            "dōjō returned 401: bad refresh",
+            "dōjō returned 403",
+            r#"dōjō returned 400: {"code":400,"error_code":"refresh_token_not_found","msg":"Invalid Refresh Token: Refresh Token Not Found"}"#,
+            r#"dōjō returned 400: {"code":400,"error_code":"refresh_token_already_used","msg":"Invalid Refresh Token: Already Used"}"#,
+        ] {
             assert!(
                 matches!(refresh_failure(terminal), AuthError::Rejected(_)),
                 "{terminal} must clear the session"
@@ -1961,6 +1972,9 @@ mod tests {
         for transient in [
             "dōjō returned 500: boom",
             "dōjō returned 502",
+            // Any other 400 is a request the dōjō did not like, not a dead token.
+            r#"dōjō returned 400: {"code":400,"error_code":"validation_failed"}"#,
+            "dōjō returned 400: bad request",
             "error sending request: connection refused",
             "operation timed out",
         ] {

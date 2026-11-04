@@ -1,38 +1,20 @@
-// Diagrams · Schema — the workspace's database: tables and their keys, or every
-// object and what it depends on (#221).
+// Diagrams · Database · ER — the workspace's database as dbd's viewer shows it
+// (user, 2026-11-02): the design's Overview, Diagram and Entities, or one
+// entity's page (a table, an object, an enum), with the sidebar on the right.
 //
 // ## The payload is dbd's, passed through
 //
-// The daemon serves the ER half of dbd's `SchemaModel` v2 and rokkit's
-// `toGraphInput` reads it. This controller FILTERS that model and hands the
-// result to `toGraphInput` — it never re-keys a node or renames a field, because
-// a field rokkit cannot resolve looks correct while silently never firing.
-//
-// ## A filter counts what it cut
-//
-// Choosing a schema hides the others. A key or dependency with one end in a
-// hidden schema is a real relationship, so it is not drawn AND it is counted
-// beside the picture. Without the count, a schema whose keys all lead elsewhere
-// reads as self-contained.
-//
-// An unresolved dependency (a built-in, an object the store does not describe)
-// has no end in ANY schema, so no filter hides it: it stays while its source is
-// shown, drawn dimmed by rokkit as `unplaced`.
+// The daemon serves dbd's `SchemaModel` v3 (tables, refs, entities, deps,
+// enums); rokkit's `@rokkit/graph/schema` views read it as a `DesignModel`
+// unchanged — never re-keyed or renamed, because a field rokkit cannot resolve
+// looks correct while silently never firing. This state owns only what the page
+// does: the read, the open tab, the selection, and the diagram's settings.
 
-import { toGraphInput } from '@rokkit/graph/schema';
-import { DEFAULT_ICONS } from '@rokkit/graph/icons';
-import { resolveGroupStyles } from '@rokkit/graph';
-
-/** The sidebar's reading order: storage, then derived data, then behaviour (as dbd's). */
-const KIND_ORDER = ['table', 'view', 'materialized_view', 'function', 'procedure'];
-import type { SchemaDep, SchemaEntity, SchemaPayload, SchemaRef, SchemaTable } from '$lib/types.js';
-
-export type SchemaScope = 'er' | 'dependencies';
-
-export const SCOPES: { value: SchemaScope; label: string }[] = [
-  { value: 'er', label: 'Tables & keys' },
-  { value: 'dependencies', label: 'Dependencies' },
-];
+import { databaseLabel, overviewCounts, pageFor, type DesignModel } from '@rokkit/graph/schema';
+import type { Density, EdgeStyle } from '@rokkit/graph';
+import { messages } from '@rokkit/states';
+import type { Stat } from '@sensei/codemap';
+import type { SchemaPayload } from '$lib/types.js';
 
 export interface SchemaApi {
   tryGetWorkspaceSchema: (
@@ -42,35 +24,21 @@ export interface SchemaApi {
   >;
 }
 
-export interface SchemaOption {
-  /** `null` is All. */
-  value: string | null;
-  label: string;
-  tables: number;
-}
-
-/** The id `toGraphInput` gives a node, so a selection and a node agree. */
-export function objectId(schema: string, name: string): string {
-  return schema ? `${schema}.${name}` : name;
-}
-
-function plural(n: number, one: string, many: string): string {
-  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
-}
+/** The design-level tabs (dbd's; Changelog waits for dbd release 1). */
+export type DesignTabId = 'overview' | 'diagram' | 'entities';
 
 export class SchemaState {
   #api: SchemaApi;
   #workspaceId: () => string;
-
-  scope = $state<SchemaScope>('er');
-  /** The chosen schema; `null` is All. `load` drops a choice the new payload
-   *  does not name. */
-  #chosen = $state<string | null>(null);
   #picked = $state<string | null>(null);
 
   payload = $state<SchemaPayload | null>(null);
   failure = $state<string | null>(null);
   loading = $state(true);
+  tab = $state<DesignTabId>('overview');
+  /** The ER diagram's field detail and edge style — rokkit's own settings. */
+  density = $state<Density>('keys');
+  edgeStyle = $state<EdgeStyle>('curved');
 
   constructor(api: SchemaApi, workspaceId: () => string) {
     this.#api = api;
@@ -81,263 +49,50 @@ export class SchemaState {
     this.#api = api;
   }
 
-  get scopes() {
-    return SCOPES;
-  }
-
-  get view(): 'loading' | 'error' | 'none' | 'graph' {
+  get view(): 'loading' | 'error' | 'none' | 'design' {
     if (this.loading) return 'loading';
     if (this.failure) return 'error';
     const p = this.payload;
-    if (!p || (p.tables.length === 0 && p.entities.length === 0)) return 'none';
-    return 'graph';
+    if (!p || (p.tables.length === 0 && p.entities.length === 0 && (p.enums ?? []).length === 0)) return 'none';
+    return 'design';
   }
 
-  /** Every schema the payload names, tables first counted. */
-  get schemaOptions(): SchemaOption[] {
-    const p = this.payload;
-    if (!p) return [];
-    const counts = new Map<string, number>();
-    for (const t of p.tables) counts.set(t.schema, (counts.get(t.schema) ?? 0) + 1);
-    for (const e of p.entities) if (!counts.has(e.schema)) counts.set(e.schema, 0);
-    const named = [...counts.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, tables]) => ({ value: name, label: name, tables }));
-    return [{ value: null, label: 'All', tables: p.tables.length }, ...named];
+  /** The payload as rokkit's views read it. */
+  get model(): DesignModel | null {
+    return this.payload as DesignModel | null;
   }
 
-  get schema(): string | null {
-    return this.#chosen;
+  /** The design's counts as the header's stat cards (user, 2026-11-03) — a
+   *  card per kind it has, iconed as the diagram draws it; null until read. */
+  get stats(): Stat[] | null {
+    const m = this.view === 'design' ? this.model : null;
+    return m
+      ? overviewCounts(m).map((c) => ({ label: c.label, value: c.count.toLocaleString('en-US'), tone: 'ink' as const, icon: c.icon }))
+      : null;
   }
 
-  #shows(schema: string): boolean {
-    const s = this.schema;
-    return s === null || s === schema;
+  /** The line under the cards: the database and the model's version, each when known. */
+  get note(): string | null {
+    const m = this.model;
+    const parts = [
+      databaseLabel(m?.project?.db),
+      m?.version ? messages.graph.modelVersion.replace('{n}', String(m.version)) : undefined,
+    ].filter(Boolean);
+    return parts.length ? parts.join(' · ') : null;
   }
 
-  get #tables(): SchemaTable[] {
-    return (this.payload?.tables ?? []).filter((t) => this.#shows(t.schema));
-  }
-
-  get #entities(): SchemaEntity[] {
-    return (this.payload?.entities ?? []).filter((e) => this.#shows(e.schema));
-  }
-
-  /** Keys with both ends shown, and the count with exactly one. */
-  get #refs(): { kept: SchemaRef[]; cut: number } {
-    let cut = 0;
-    const kept: SchemaRef[] = [];
-    for (const r of this.payload?.refs ?? []) {
-      const ends = [this.#shows(r.from.s), this.#shows(r.to.s)];
-      if (ends[0] && ends[1]) kept.push(r);
-      else if (ends[0] || ends[1]) cut++;
-    }
-    return { kept, cut };
-  }
-
-  /** Deps with both ends shown — or an unresolved one whose source is — and the
-   *  count of placed deps with exactly one end shown. */
-  get #deps(): { kept: SchemaDep[]; cut: number } {
-    let cut = 0;
-    const kept: SchemaDep[] = [];
-    for (const d of this.payload?.deps ?? []) {
-      const from = this.#shows(d.from.s);
-      if (d.unresolved) {
-        if (from) kept.push(d);
-        continue;
-      }
-      const to = this.#shows(d.to.s);
-      if (from && to) kept.push(d);
-      else if (from || to) cut++;
-    }
-    return { kept, cut };
-  }
-
-  /** Links the schema filter cut, in the scope being drawn. */
-  get cut(): number {
-    return this.scope === 'er' ? this.#refs.cut : this.#deps.cut;
-  }
-
-  /** `toGraphInput` over the filtered model — nodes, edges and dbd's field map. */
-  get graphInput() {
-    const model = {
-      tables: this.#tables,
-      refs: this.#refs.kept,
-      entities: this.#entities,
-      deps: this.#deps.kept,
-    };
-    return toGraphInput(model, this.scope);
-  }
-
-  /** One fact per line. */
-  get coverage(): string[] {
-    // What the picture in view draws: keys are not drawn under Dependencies,
-    // and views and routines are not drawn under Keys.
-    const lines = [
-      this.scope === 'er'
-        ? `${plural(this.#tables.length, 'table', 'tables')} · ${plural(this.#refs.kept.length, 'key', 'keys')}`
-        : `${plural(this.#tables.length + this.#entities.length, 'object', 'objects')} · ${plural(this.#deps.kept.length, 'dependency', 'dependencies')}`,
-    ];
-    const cut = this.cut;
-    if (cut > 0) {
-      lines.push(
-        this.scope === 'er'
-          ? `${plural(cut, 'key leads', 'keys lead')} out of the shown schema, not drawn`
-          : `${plural(cut, 'dependency crosses', 'dependencies cross')} out of the shown schema, not drawn`,
-      );
-    }
-    if (this.scope === 'dependencies') {
-      const dim = this.#deps.kept.filter((d) => d.unresolved).length;
-      if (dim > 0) {
-        lines.push(
-          `${plural(dim, 'dependency', 'dependencies')} on a built-in or undescribed object, drawn dimmed`,
-        );
-      }
-    }
-    return lines;
-  }
-
-  /** The selected entity's id — a table, view or routine — or null. A selection
-   *  the filter hides is gone. */
   get selected(): string | null {
-    const id = this.#picked;
-    if (id === null) return null;
-    const shown = [...this.#tables, ...this.#entities].some((t) => objectId(t.schema, t.name) === id);
-    return shown ? id : null;
+    return this.#picked;
   }
 
-  /** The selected view or routine, or null (a table is `selectedTable`). */
-  get selectedEntity(): SchemaEntity | null {
-    const id = this.selected;
-    return id === null ? null : (this.#entities.find((e) => objectId(e.schema, e.name) === id) ?? null);
+  /** Which page the selection opens; null is the design itself. */
+  get page(): 'table' | 'object' | 'enum' | null {
+    const m = this.model;
+    return m && this.#picked ? (pageFor(m, this.#picked) ?? null) : null;
   }
 
-  /** What the selected view or routine reads, writes and calls — a built-in by name. */
-  get entityReach(): { reads: string[]; writes: string[]; calls: string[] } | null {
-    const e = this.selectedEntity;
-    if (!e) return null;
-    const from = (this.payload?.deps ?? []).filter((d) => d.from.s === e.schema && d.from.n === e.name);
-    const name = (d: SchemaDep) => (d.to.s ? `${d.to.s}.${d.to.n}` : d.to.n);
-    const of = (kind: SchemaDep['kind']) => from.filter((d) => d.kind === kind).map(name);
-    return { reads: of('reads'), writes: of('writes'), calls: of('calls') };
-  }
-
-  /** The entity types hidden from the list. */
-  #hiddenKinds = $state<Set<string>>(new Set());
-  /** Narrows the list to names holding it (case-folded). */
-  query = $state('');
-
-  toggleKind(kind: string) {
-    const next = new Set(this.#hiddenKinds);
-    if (next.has(kind)) next.delete(kind);
-    else next.add(kind);
-    this.#hiddenKinds = next;
-  }
-
-  #all(): { schema: string; name: string; kind: string }[] {
-    return [
-      ...this.#tables.map((t) => ({ schema: t.schema, name: t.name, kind: 'table' })),
-      ...this.#entities.map((e) => ({ schema: e.schema, name: e.name, kind: e.kind as string })),
-    ];
-  }
-
-  /** Each schema's colour, as the diagram paints its group (rokkit's assignment). */
-  schemaColours(mode: 'light' | 'dark'): Map<string, string> {
-    const styles = resolveGroupStyles(this.schemaOptions.flatMap((o) => (o.value ? [o.value] : [])), mode);
-    return new Map([...styles].map(([schema, st]) => [schema, (st as Record<string, string>)['--group-fill']]));
-  }
-
-  /** Each entity type present, how many, and whether the list shows it. */
-  get kindCounts(): { kind: string; count: number; shown: boolean }[] {
-    const all = this.#all();
-    return KIND_ORDER.map((kind) => ({ kind, count: all.filter((x) => x.kind === kind).length, shown: !this.#hiddenKinds.has(kind) }))
-      .filter((k) => k.count > 0);
-  }
-
-  /** Every schema to choose from, with its tables — items for a rokkit Select. */
-  get schemaChoices(): { label: string; value: string }[] {
-    return this.schemaOptions.map((o) => ({
-      label: `${o.value === null ? 'All schemas' : o.label} · ${o.tables}`,
-      value: o.value ?? '',
-    }));
-  }
-
-  /** The selected entity and everything it is keyed or linked to, as the diagram's
-   *  input — dbd's entity diagram. Null with nothing selected. */
-  get entityGraph() {
-    const id = this.selected;
-    const p = this.payload;
-    if (id === null || !p) return null;
-    const near = new Set([id]);
-    for (const r of p.refs) {
-      const [a, b] = [objectId(r.from.s, r.from.t), objectId(r.to.s, r.to.t)];
-      if (a === id) near.add(b);
-      if (b === id) near.add(a);
-    }
-    const deps = p.deps.filter((d) => !d.unresolved);
-    for (const d of deps) {
-      const [a, b] = [objectId(d.from.s, d.from.n), objectId(d.to.s, d.to.n)];
-      if (a === id) near.add(b);
-      if (b === id) near.add(a);
-    }
-    const isNear = (s: string, n: string) => near.has(objectId(s, n));
-    const model = {
-      tables: p.tables.filter((t) => isNear(t.schema, t.name)),
-      refs: p.refs.filter((r) => isNear(r.from.s, r.from.t) && isNear(r.to.s, r.to.t)),
-      entities: p.entities.filter((e) => isNear(e.schema, e.name)),
-      deps: deps.filter((d) => isNear(d.from.s, d.from.n) && isNear(d.to.s, d.to.n)),
-    };
-    return toGraphInput(model, this.selectedTable ? 'er' : 'dependencies');
-  }
-
-  /** Every shown entity grouped by schema, tables first, then views and routines —
-   *  the sidebar's items (dbd's /diagram sidebar), narrowed by type and name. */
-  get sidebar(): { label: string; value: string; badge: string; children: { label: string; value: string; kind: string; icon: string }[] }[] {
-    const q = this.query.trim().toLowerCase();
-    const all = this.#all().filter((x) => !this.#hiddenKinds.has(x.kind) && (!q || x.name.toLowerCase().includes(q)));
-    const order = (k: string) => KIND_ORDER.indexOf(k);
-    const schemas = [...new Set(all.map((x) => x.schema))].sort();
-    return schemas.map((schema) => {
-      const children = all
-        .filter((x) => x.schema === schema)
-        .sort((a, b) => order(a.kind) - order(b.kind) || a.name.localeCompare(b.name))
-        .map((x) => ({ label: x.name, value: objectId(x.schema, x.name), kind: x.kind, icon: DEFAULT_ICONS[x.kind] ?? DEFAULT_ICONS.table }));
-      return { label: schema, value: `schema:${schema}`, badge: String(children.length), children };
-    });
-  }
-
-  get selectedTable(): SchemaTable | null {
-    const id = this.selected;
-    return id === null ? null : (this.#tables.find((t) => objectId(t.schema, t.name) === id) ?? null);
-  }
-
-  /** What a change to the selected table reaches, over the whole model — a key
-   *  or a reader in another schema still counts: the tables it references, those
-   *  referencing it (each with the key column), and the objects that depend on it. */
-  get reach(): { references: string[]; referencedBy: string[]; dependents: string[] } | null {
-    const t = this.selectedTable;
-    if (!t) return null;
-    const is = (s: string, n: string) => s === t.schema && n === t.name;
-    const refs = this.payload?.refs ?? [];
-    return {
-      references: refs.filter((r) => is(r.from.s, r.from.t)).map((r) => `${r.to.s}.${r.to.t} (${r.from.c})`),
-      referencedBy: refs.filter((r) => is(r.to.s, r.to.t)).map((r) => `${r.from.s}.${r.from.t} (${r.from.c})`),
-      dependents: (this.payload?.deps ?? [])
-        .filter((d) => !d.unresolved && is(d.to.s, d.to.n))
-        .map((d) => `${d.from.s}.${d.from.n} ${d.kind}`),
-    };
-  }
-
-  select(id: string | null) {
-    this.#picked = id;
-  }
-
-  setScope(scope: SchemaScope) {
-    this.scope = scope;
-  }
-
-  setSchema(schema: string | null) {
-    this.#chosen = schema;
+  select(key: string | null) {
+    this.#picked = key;
   }
 
   async load() {
@@ -353,11 +108,9 @@ export class SchemaState {
           ? `Could not reach the daemon — ${res.error.message}`
           : `The daemon returned ${res.error.status} ${res.error.message}`;
     }
-    // A choice the new payload does not name falls back to All: an empty
-    // picture for a schema that is gone answers nothing.
-    if (this.#chosen !== null && !this.schemaOptions.some((o) => o.value === this.#chosen)) {
-      this.#chosen = null;
-    }
+    // A selection the new design does not have clears: a page for nothing
+    // answers nothing.
+    if (this.#picked !== null && this.page === null) this.#picked = null;
     this.loading = false;
   }
 }

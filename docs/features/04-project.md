@@ -75,11 +75,11 @@ data contract — is the [playbook design module](../design/playbook.md).
 
 ## Mockups
 
-- [Project window — sections + sidebar](../mockups/Sensei/lib/project/project-pages.jsx)
-- [Section previews (overview · memories · about · …)](../mockups/Sensei/lib/project/project-lite-panes.jsx)
-- [Atlas — the project's code graph](../mockups/Sensei/lib/project/project-atlas.jsx)
-- [Logs](../mockups/Sensei/lib/project/project-logs.jsx)
-- [Intake — the front door](../mockups/Sensei/lib/observatory/intake.jsx) (deep design: [playbook module](../design/playbook.md))
+- Project window — sections + sidebar
+- Section previews (overview · memories · about · …)
+- Atlas — the project's code graph
+- Logs
+- Intake — the front door (deep design: [playbook module](../design/playbook.md))
 
 ## What's involved
 

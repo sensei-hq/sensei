@@ -1730,6 +1730,18 @@ mod schema_tests {
         assert_eq!(read().await.0, None, "asked, none: cleared");
     }
 
+    /// D83: a tracker that is gone is an error, never "no history yet".
+    #[tokio::test]
+    async fn the_history_state_of_an_unknown_tracker_is_an_error() {
+        let pg = PgStore::test_store().await;
+        let w = workspace(&pg, "history-state").await;
+        let svc = format!("svc-{}", uuid::Uuid::new_v4());
+        let url = format!("https://h{}.atlassian.net", uuid::Uuid::new_v4().simple());
+        let t = insert_tracker(&pg, w, &url, "42", &svc).await.unwrap();
+        assert_eq!(pg.tracker_history_state(t).await, Ok((None, None)), "not read yet");
+        assert!(pg.tracker_history_state(uuid::Uuid::new_v4()).await.is_err());
+    }
+
     async fn insert_tracker(
         pg: &PgStore,
         workspace_id: uuid::Uuid,

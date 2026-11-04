@@ -426,7 +426,9 @@ import { listMyRepositories } from './repositories';
 
 describe('listMyRepositories — what a human is shown', () => {
 	function view(rows: Record<string, unknown>[]): Record<string, FakeTable> {
-		return { 'rpc:my_repositories': { rows } };
+		// The branches read is the shared set's default-empty, as
+		// metric_activations is in tables(): no rows means nothing tracked.
+		return { 'rpc:my_repositories': { rows }, 'rpc:my_graph_branches': { rows: [] } };
 	}
 	const ROW = {
 		repository_id: 'r1',
@@ -472,6 +474,30 @@ describe('listMyRepositories — what a human is shown', () => {
 		});
 	});
 
+	it('carries each repository’s tracked graph branches, so the screen shows what the daemon will push', async () => {
+		// The same `my_graph_branches` read the plan uses — what the screen shows
+		// and what the daemon pushes cannot disagree. Default first, then by
+		// name; a repository tracking none carries [] (its graph does not sync),
+		// never a guessed main.
+		const db = fakeDojoDb({
+			'rpc:my_repositories': {
+				rows: [ROW, { ...ROW, repository_id: 'r2', repo_key: 'github.com/acme/web', name: 'web' }]
+			},
+			'rpc:my_graph_branches': {
+				rows: [
+					{ repository_id: 'r1', branch: 'develop', is_default: false },
+					{ repository_id: 'r1', branch: 'main', is_default: true }
+				]
+			}
+		});
+		const [api, web] = await listMyRepositories(db as never);
+		expect(api.graph_branches).toEqual([
+			{ branch: 'main', is_default: true },
+			{ branch: 'develop', is_default: false }
+		]);
+		expect(web.graph_branches).toEqual([]);
+	});
+
 	it('THROWS on a read error rather than reporting an empty list', async () => {
 		// An empty list reads as "you have no repositories", which is a different
 		// and load-bearing claim. Same fail-closed rule as `listUserOrgs`.
@@ -505,8 +531,10 @@ describe('listMyRepositories — what a human is shown', () => {
 // hypothetical.
 describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	function manyRows(n: number) {
+		// Zero-padded: the read orders by repository_id, and the fake sorts
+		// textually — unpadded, r999 would sort last instead of r2349.
 		return Array.from({ length: n }, (_, i) => ({
-			repository_id: `r${i}`,
+			repository_id: `r${String(i).padStart(4, '0')}`,
 			repo_key: `github.com/acme/repo-${i}`,
 			name: `repo-${i}`,
 			tenant: 'organization/acme',
@@ -528,7 +556,10 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	}
 
 	it('returns EVERY repository past the first page, not the first 1000', async () => {
-		const db = fakeDojoDb({ 'rpc:my_repositories': { rows: manyRows(2350) } });
+		const db = fakeDojoDb({
+			'rpc:my_repositories': { rows: manyRows(2350) },
+			'rpc:my_graph_branches': { rows: [] }
+		});
 		const out = await listMyRepositories(db as never);
 		expect(out).toHaveLength(2350);
 		// The last row is the one a single unpaged read loses.
@@ -538,7 +569,10 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	it('stops at exactly one page when the total IS the page size', async () => {
 		// The off-by-one that turns a page loop into an infinite one: a full final
 		// page looks identical to "there is more".
-		const db = fakeDojoDb({ 'rpc:my_repositories': { rows: manyRows(1000) } });
+		const db = fakeDojoDb({
+			'rpc:my_repositories': { rows: manyRows(1000) },
+			'rpc:my_graph_branches': { rows: [] }
+		});
 		const out = await listMyRepositories(db as never);
 		expect(out).toHaveLength(1000);
 	});
@@ -550,5 +584,46 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 		const db = fakeDojoDb({ ...tables(), 'rpc:my_repositories': { rows: manyRows(1200) } });
 		const plan = await syncPlan(db as never);
 		expect(plan.allowed).toHaveLength(1200);
+	});
+});
+
+// ── Paged reads need a deterministic order, not just pages ────────────────────
+//
+// Each page re-runs the read with a fresh OFFSET; without an ORDER BY Postgres
+// keeps no row order between runs, so past 1,000 rows a row can land on two
+// pages or on none, with no error (WP4 F1). One row per (repository, caller)
+// makes repository_id the total order for my_repositories; branches add their
+// name.
+describe('paged reads page in a deterministic order', () => {
+	function orderedDb() {
+		const orders: Record<string, string[]> = {};
+		const db = {
+			rpc: (fn: string, _args?: Record<string, unknown>) => {
+				orders[fn] = [];
+				const chain: Record<string, unknown> = {};
+				chain.select = () => chain;
+				chain.order = (column: string) => {
+					orders[fn].push(column);
+					return chain;
+				};
+				chain.range = () => Promise.resolve({ data: [], error: null });
+				return chain;
+			}
+		};
+		return { db: db as never, orders };
+	}
+
+	it('listMyRepositories orders both reads', async () => {
+		const { db, orders } = orderedDb();
+		expect(await listMyRepositories(db)).toEqual([]);
+		expect(orders['my_repositories']).toEqual(['repository_id']);
+		expect(orders['my_graph_branches']).toEqual(['repository_id', 'branch']);
+	});
+
+	it('syncPlan orders both reads', async () => {
+		const { db, orders } = orderedDb();
+		expect(await syncPlan(db)).toEqual({ allowed: [], denied: [] });
+		expect(orders['my_repositories']).toEqual(['repository_id']);
+		expect(orders['my_graph_branches']).toEqual(['repository_id', 'branch']);
 	});
 });

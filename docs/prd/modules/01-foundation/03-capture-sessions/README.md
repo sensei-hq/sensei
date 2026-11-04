@@ -153,16 +153,16 @@ Closing a dash is adapter work against this contract, not a new design ([C-25](.
 
 ## Signals shown
 
-| Signal | Source | Consumer |
-|---|---|---|
-| Discovered repo/workspace rows | scan | every screen; Workspace window Overview |
-| Multi-repo suggestion card | scan analyzer | Observatory Workspaces pane |
-| `activity.assistant_events` rows | adapters / hooks | analyzer materialisation |
-| `activity.sessions` rows (ftr, corrections, analyzed_at) | materialisation | FTR, Sessions, replay |
-| Branch indicator ("main / feat-x") | branch scan-mode | code-graph + impact views |
-| Session tokens (split) + model | transcript adapters | M8 usage/cost metrics, Sessions |
-| `metered_cost` (billed) / `list_cost_usd` (list price) | transcript adapter / usage mod | M8 cost metrics |
-| `SessionMeasure` / `TurnComplete` events | usage mod (extensions) | per-turn usage, context occupancy, plan headroom (future M8 signals) |
+| Signal | Source | Consumer | Decision it drives / next step |
+|---|---|---|---|
+| Discovered repo/workspace rows | scan | every screen; Workspace window Overview | open the workspace window for the new workspace |
+| Multi-repo suggestion card | scan analyzer | Observatory Workspaces pane | accept or decline the *combine with …?* suggestion |
+| `activity.assistant_events` rows | adapters / hooks | analyzer materialisation | none — candidate to cut (an internal row; its decision is shown in M7) |
+| `activity.sessions` rows (ftr, corrections, analyzed_at) | materialisation | FTR, Sessions, replay | open a corrected session's replay to see what went wrong |
+| Branch indicator ("main / feat-x") | branch scan-mode | code-graph + impact views | check you are reading the branch you meant before acting on an impact view |
+| Session tokens (split) + model | transcript adapters | M8 usage/cost metrics, Sessions | compare models' cost per session in M8; change the default model when one costs more for the same FTR |
+| `metered_cost` (billed) / `list_cost_usd` (list price) | transcript adapter / usage mod | M8 cost metrics | tell money spent (billed) from quota used (subscription) before cutting usage |
+| `SessionMeasure` / `TurnComplete` events | usage mod (extensions) | per-turn usage, context occupancy, plan headroom (future M8 signals) | none — candidate to cut until the M8 headroom signals ship |
 
 ## Done gate
 

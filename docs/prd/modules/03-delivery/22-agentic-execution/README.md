@@ -62,13 +62,13 @@ works.*
 
 ## Signals shown (planned)
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Agent run status | pending / running / verifying / revising / done / failed | `verifying` |
-| Step | drive tick + verify result | `step 3: drive → test failed → revise` |
-| Plan revision | the delta from the previous plan | `revised: added integration test task` |
-| Verifier output | pass / fail / partial + raw output | `fail · 3 tests failed` |
-| Benchmark | agent FTR vs human FTR | `agent 68% vs human 72%` |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Agent run status | pending / running / verifying / revising / done / failed | `verifying` | failed → open the verifier output |
+| Step | drive tick + verify result | `step 3: drive → test failed → revise` | none — candidate to cut |
+| Plan revision | the delta from the previous plan | `revised: added integration test task` | accept or reject the revision |
+| Verifier output | pass / fail / partial + raw output | `fail · 3 tests failed` | fix the failing tests, or let the run revise |
+| Benchmark | agent FTR vs human FTR | `agent 68% vs human 72%` | decide whether to hand this task type to the agent |
 
 ## Done gate (planned)
 

@@ -52,14 +52,14 @@ workspaces appear live.
 
 ## Signals shown
 
-| Element | Value | Meaning |
-|---|---|---|
-| Panes (8) | Folders · Workspaces · Assistants · Libraries · Instruments · Inference · Assignments · Profile | ordered by frequency of visit |
-| Search field | text filter across every pane's values + labels + descriptions | type-ahead narrows live |
-| Review cues | "your top assistant sends 40% of sessions to Claude Code but you haven't picked a default persona" | a nudge with a direct link |
-| Canvas root list | roots + branch policy (`active-only` / `pinned` / `all`) | where code comes from |
-| Inference pane | chains, installed models, hardware tier chip, cost running total | gateway tuning per chain (M5) |
-| First-run banner | "Point sensei at your work." + live-arriving workspaces | one gate, one forward action |
+| Element | Value | Meaning | Decision it drives / next step |
+|---|---|---|---|
+| Panes (8) | Folders · Workspaces · Assistants · Libraries · Instruments · Inference · Assignments · Profile | ordered by frequency of visit | open the pane that holds the setting |
+| Search field | text filter across every pane's values + labels + descriptions | type-ahead narrows live | jump to the setting that matches |
+| Review cues | "your top assistant sends 40% of sessions to Claude Code but you haven't picked a default persona" | a nudge with a direct link | follow the link and fix the gap the cue names (pick the default persona) |
+| Canvas root list | roots + branch policy (`active-only` / `pinned` / `all`) | where code comes from | add or remove a root, or change its branch policy |
+| Inference pane | chains, installed models, hardware tier chip, cost running total | gateway tuning per chain (M5) | change a chain's model, or move a chain to a local model when the cost total climbs |
+| First-run banner | "Point sensei at your work." + live-arriving workspaces | one gate, one forward action | add a scan root and press Begin |
 
 ## Done gate
 

@@ -78,8 +78,21 @@ jobs:
       - name: DDL comments
         run: make check-ddl-comments
 
+      # D83: no new failure-mask shapes (a failed read turned into a plausible
+      # value). A static read of crates/, app/src, dojo/src, packages/ and
+      # database/ddl with its own self-test; same entry point as test-fast.
+      - name: No fabrication ratchet
+        run: make check-no-fabrication
+
+      - name: Doc links point at tracked files
+        run: make check-doc-links
+
       - name: Homebrew tokens in the docs
         run: make check-brew-tokens
+
+      # app and dojo are two installs; a spec they share must be the same in both.
+      - name: Shared JS dependency specs
+        run: make check-shared-js-specs
 
   test:
     runs-on: ubuntu-latest

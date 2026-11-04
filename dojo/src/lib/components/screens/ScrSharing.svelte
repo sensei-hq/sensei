@@ -14,17 +14,35 @@
 	// place `may_share AND elected` is decided.
 	import type { MyRepoWire } from '$lib/client-data';
 	import { authorityLabel, visibilityLabel } from '$lib/you-state.svelte';
+	import { GRAPH_LABELS } from '$lib/graph-labels';
 
 	interface Props {
 		repos: MyRepoWire[];
 		/** Non-null when the read FAILED. Rendered instead of an empty list: "you
 		 *  have no repositories" and "we could not ask" are different answers. */
 		error?: string | null;
-		/** Repo keys with a toggle in flight, so the row can disable itself. */
+		/** Repo keys with a write in flight, so the row can disable itself. */
 		pending?: ReadonlySet<string>;
 		onToggle?: (repoKey: string, elected: boolean) => void;
+		onTrack?: (repoKey: string, branch: string, label: string | null) => void;
+		onUntrack?: (repoKey: string, branch: string) => void;
 	}
-	let { repos, error = null, pending = new Set<string>(), onToggle }: Props = $props();
+	let { repos, error = null, pending = new Set<string>(), onToggle, onTrack, onUntrack }: Props = $props();
+
+	// Draft branch names and labels, per repository. The input starts EMPTY —
+	// pre-filling `main` would be the guess the plan refuses to make.
+	let drafts = $state<Record<string, string>>({});
+	let labels = $state<Record<string, string>>({});
+	// The `repoKey branch` awaiting its in-page confirmation, if any.
+	// Untracking deletes that branch's graph, so one click is never enough.
+	let confirming = $state<string | null>(null);
+
+	function trackRepo(r: MyRepoWire): void {
+		const branch = (drafts[r.repo_key] ?? '').trim();
+		if (!branch) return;
+		onTrack?.(r.repo_key, branch, labels[r.repo_key] || null);
+		drafts[r.repo_key] = '';
+	}
 
 </script>
 
@@ -66,6 +84,80 @@
 								{/if}
 							</span>
 						{/if}
+						<!-- The branches whose code graph this repository shares — what the
+						     daemon will push. An empty set says so honestly: the graph does
+						     not sync, and nothing here guesses `main`. -->
+						{#if r.graph_branches.length === 0}
+							<span class="text-xs text-ink-mute">graph: no tracked branch — its graph does not sync</span>
+						{:else}
+							<ul class="flex flex-wrap gap-x-3 gap-y-1">
+								{#each r.graph_branches as b (b.branch)}
+									<li class="flex items-center gap-1 text-xs text-ink-mute">
+										<span>{b.is_default ? `${b.branch} (default)` : b.branch}</span>
+										{#if confirming === `${r.repo_key} ${b.branch}`}
+											<span class="text-ink-faint">deletes its graph — sure?</span>
+											<button
+												type="button"
+												class="underline"
+												aria-label={`Confirm untracking ${b.branch}`}
+												disabled={pending.has(r.repo_key)}
+												onclick={() => {
+													onUntrack?.(r.repo_key, b.branch);
+													confirming = null;
+												}}
+											>
+												Yes, untrack
+											</button>
+											<button type="button" class="underline" onclick={() => (confirming = null)}>
+												Cancel
+											</button>
+										{:else}
+											<button
+												type="button"
+												class="underline"
+												aria-label={`Untrack ${b.branch}`}
+												disabled={!r.configurable_by_me || pending.has(r.repo_key)}
+												onclick={() => (confirming = `${r.repo_key} ${b.branch}`)}
+											>
+												Untrack
+											</button>
+										{/if}
+									</li>
+								{/each}
+							</ul>
+						{/if}
+						<div class="flex flex-wrap items-center gap-2">
+							<input
+								type="text"
+								class="rounded border border-line bg-transparent px-2 py-1 text-xs text-ink"
+								placeholder="branch name"
+								aria-label={`Branch to track for ${r.name ?? r.repo_key}`}
+								value={drafts[r.repo_key] ?? ''}
+								disabled={!r.configurable_by_me || pending.has(r.repo_key)}
+								oninput={(e) => (drafts[r.repo_key] = e.currentTarget.value)}
+							/>
+							<select
+								class="rounded border border-line bg-transparent px-2 py-1 text-xs text-ink"
+								aria-label={`Label for ${r.name ?? r.repo_key}`}
+								value={labels[r.repo_key] ?? ''}
+								disabled={!r.configurable_by_me || pending.has(r.repo_key)}
+								onchange={(e) => (labels[r.repo_key] = e.currentTarget.value)}
+							>
+								<option value="">No label</option>
+								{#each GRAPH_LABELS as l}
+									<option value={l}>{l}</option>
+								{/each}
+							</select>
+							<button
+								type="button"
+								class="rounded border border-line px-2 py-1 text-xs text-ink"
+								aria-label={`Track a branch of ${r.name ?? r.repo_key}`}
+								disabled={!r.configurable_by_me || pending.has(r.repo_key)}
+								onclick={() => trackRepo(r)}
+							>
+								Track
+							</button>
+						</div>
 					</div>
 
 					<div class="flex items-center gap-3">

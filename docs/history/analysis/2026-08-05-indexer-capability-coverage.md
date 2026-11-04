@@ -1,7 +1,7 @@
 # Indexer capability coverage — patterns, search, traceability
 
 _2026-08-05 · what the code-graph indexer is *meant* to do vs what it *actually* does, with a
-grounded plan. Companion to [`pipeline/code-graph.md`](../spec/pipeline/code-graph.md)._
+grounded plan. Companion to [`pipeline/code-graph.md`](../../spec/pipeline/code-graph.md)._
 
 ## Why this exists
 
@@ -16,9 +16,9 @@ that **do not exist**:
 
 | Spec | Claims | Reality |
 |---|---|---|
-| [`pipeline/patterns.md`](../spec/pipeline/patterns.md) | a 5-source pattern engine (`crates/senseid/src/patterns/…`, DDL with `source`/`pattern_id`/`example_nodes`) | `crates/senseid/src/patterns/` **does not exist**; the code says so — `pattern_effectiveness.rs:4`: *"our detected patterns are behavioral … not best-practice patterns"* |
-| [`pipeline/semantic-search.md`](../spec/pipeline/semantic-search.md) | `search/hybrid.rs`, `sensei.node_fts` tsvector, a `SearchResults{confidence,match_mode,fallback_hint}` contract | none of those files/tables/fields exist; search is a keyword router in `query.rs` |
-| [`pipeline/traceability.md`](../spec/pipeline/traceability.md) | section-level drift, `trace_links`, `expected/actual` signatures, confidence model | drift is file-level; `traces_to`=0; `expected/actual_signature` NULL on all 1,961 rows |
+| [`pipeline/patterns.md`](../../spec/pipeline/patterns.md) | a 5-source pattern engine (`crates/senseid/src/patterns/…`, DDL with `source`/`pattern_id`/`example_nodes`) | `crates/senseid/src/patterns/` **does not exist**; the code says so — `pattern_effectiveness.rs:4`: *"our detected patterns are behavioral … not best-practice patterns"* |
+| [`pipeline/semantic-search.md`](../../spec/pipeline/semantic-search.md) | `search/hybrid.rs`, `sensei.node_fts` tsvector, a `SearchResults{confidence,match_mode,fallback_hint}` contract | none of those files/tables/fields exist; search is a keyword router in `query.rs` |
+| [`pipeline/traceability.md`](../../spec/pipeline/traceability.md) | section-level drift, `trace_links`, `expected/actual` signatures, confidence model | drift is file-level; `traces_to`=0; `expected/actual_signature` NULL on all 1,961 rows |
 
 For a product whose job is detecting doc drift, its own specs are drifted. **Reconciling these
 three specs to reality is roadmap item 0** — otherwise every future plan built on them inherits
@@ -117,7 +117,7 @@ the same "reality ≠ spec" defect. This audit is the corrected map.
 
 ## 4 · Shared prerequisites — why these all wait on the code-graph fixes
 
-Three fixes in [`pipeline/code-graph.md`](../spec/pipeline/code-graph.md) are the common
+Three fixes in [`pipeline/code-graph.md`](../../spec/pipeline/code-graph.md) are the common
 bottleneck; the audits confirmed each is real, not assumed:
 
 1. **Embedding survival across reindex (D3).** Today `process_file` deletes+reinserts a changed
@@ -136,7 +136,7 @@ and traceability capabilities are all built on. Sequencing them before D3/D5b wo
 ## Roadmap (ordered, with dependencies)
 
 0. **Reconcile the three drifted specs** (patterns / semantic-search / traceability) to reality —
-   or mark them `roadmap`, not `draft`, in the [spec index](../spec/README.md). *(No code; stops
+   or mark them `roadmap`, not `draft`, in the [spec index](../../spec/README.md). *(No code; stops
    future plans inheriting fiction.)*
 1. **Land `pipeline/code-graph.md` D1–D6** — correctness/idempotency/durability + embedding
    survival + `section` nodes. *(Foundation for everything below.)*

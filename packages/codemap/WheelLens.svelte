@@ -6,13 +6,13 @@
   import { bandTone } from './view';
   import type { Level0 } from './types';
 
-  let { data, selected = null, zoom = 1, onselect, onopen }: {
+  let { data, selected = null, zoom = 1, onselect, onfocus }: {
     data: Level0;
     /** Over fitting the ring to the column; 1 is fit. */
     zoom?: number;
     selected?: string | null;
     onselect: (id: string | null) => void;
-    onopen: (id: string) => void;
+    onfocus: (id: string) => void;
   } = $props();
 
   let hovered = $state<string | null>(null);
@@ -46,10 +46,10 @@
     {#each [...wheel.nodes.values()] as n (n.id)}
       {@const folded = n.block.folded.length > 0}
       <g role="button" tabindex="0" class="cursor-pointer"
-        onclick={() => (folded ? onselect(selected === n.id ? null : n.id) : onopen(n.id))}
+        onclick={() => (folded ? onselect(selected === n.id ? null : n.id) : onfocus(n.id))}
         onmouseenter={() => (hovered = n.id)}
         onmouseleave={() => (hovered = null)}
-        onkeydown={(e) => e.key === 'Enter' && (folded ? onselect(n.id) : onopen(n.id))}
+        onkeydown={(e) => e.key === 'Enter' && (folded ? onselect(n.id) : onfocus(n.id))}
         data-testid={`wheel-node-${n.id}`}>
         <circle cx={n.x} cy={n.y} r={selected === n.id ? 6 : 4}
           fill={selected === n.id ? 'var(--accent)' : 'var(--ink-soft)'} />

@@ -2,7 +2,7 @@
 
 **Segment:** 04 · Observatory / Project window
 **Route:** `/project/[id]/diagrams/structure`
-**Source mockup:** [`lib/project/project-pages.jsx`](../../mockups/Sensei/lib/project/project-pages.jsx) → `PROJ_DIAGRAMS` `diag-structure`, rendered by [`Sensei Schema and Call Graph.dc.html`](../../mockups/Sensei/Sensei%20Schema%20and%20Call%20Graph.dc.html) view `structure`
+**Source mockup:** `lib/project/project-pages.jsx` → `PROJ_DIAGRAMS` `diag-structure`, rendered by `Sensei Schema and Call Graph.dc.html` view `structure`
 **Data:** `sensei.graph_nodes` + `sensei.edges`, both already populated. **No new indexing.**
 **App file:** _greenfield_
 **Daemon files:** _greenfield_ — no HTTP handler serves a structure payload yet

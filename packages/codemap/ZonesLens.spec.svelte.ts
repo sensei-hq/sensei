@@ -21,11 +21,23 @@ const DATA: Zones = {
 describe('ZonesLens', () => {
   it('names the points in focus and fades the rest', () => {
     target = document.body.appendChild(document.createElement('div'));
-    app = mount(ZonesLens, { target, props: { data: DATA, filter: 'issues', zoom: 1, onopen: vi.fn() } });
+    app = mount(ZonesLens, { target, props: { data: DATA, filter: 'issues', zoom: 1, onfocus: vi.fn() } });
     flushSync();
     const labels = [...target.querySelectorAll('[data-zone-label]')].map((t) => t.textContent?.trim());
     expect(labels).toEqual(['config', 'ports']);
     const opacity = (id: string) => target.querySelector(`[data-testid="zone-${id}"]`)?.getAttribute('fill-opacity');
     expect([opacity('p/config'), opacity('p/ports'), opacity('p/fine')]).toEqual(['0.9', '0.9', '0.12']);
+  });
+
+  // Review r2 N1: a failed read says why and offers Retry, never "Placing components…".
+  it('a failed read says why and offers Retry, never the placing line', () => {
+    const onretry = vi.fn();
+    target = document.body.appendChild(document.createElement('div'));
+    app = mount(ZonesLens, { target, props: { data: null, filter: 'issues', zoom: 1, onfocus: vi.fn(), failed: 'Bad Gateway', onretry } });
+    flushSync();
+    expect(target.textContent).not.toContain('Placing components');
+    expect(target.textContent).toContain('Bad Gateway');
+    ([...target.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Retry') as HTMLButtonElement).click();
+    expect(onretry).toHaveBeenCalledOnce();
   });
 });

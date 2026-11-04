@@ -15,7 +15,7 @@
 | **What** | [`prd/`](prd/README.md) | what we are building and why — vision · objectives · personas · 29 module specs | are new, or want the product intent |
 | **Where** | [`roadmap/`](roadmap/README.md) | is it built? how far? what's next? — per-module status + gaps | want the current truth |
 | **How** | [`architecture/`](architecture/README.md) | implementation per surface | are building or reviewing code |
-| **Seen** | [`mockups/`](mockups/) · [`journeys/`](journeys/README.md) · [`design/`](design/README.md) | what it looks like, the paths through it, the design system | are designing or validating UX |
+| **Seen** | `mockups/` · [`journeys/`](journeys/README.md) · [`design/`](design/README.md) | what it looks like, the paths through it, the design system | are designing or validating UX |
 
 **Precedence** ([`prd/README.md`](prd/README.md) §Precedence): `prd` > `roadmap`
 > `architecture` > `mockups`. If two disagree, the higher one wins and the lower

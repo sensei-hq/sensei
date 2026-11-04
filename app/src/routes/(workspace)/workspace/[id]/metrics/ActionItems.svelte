@@ -1,13 +1,20 @@
 <script lang="ts">
+    import { Button } from '@rokkit/ui';
     import { Kanji, Eyebrow } from '$lib/components';
     import type { ActionItem, ActionUrgency } from './action-items.js';
+    import type { ItemActions } from './action-items-state.svelte.js';
 
-    // The workspace-scoped "action items" panel: the pending recommendations,
-    // already score-ranked, each paired with the observation the screen makes
-    // above. Read-only display — accept/reject lives on the Impact screen. Pure
-    // template: the wire→view-model mapping is `buildActionItems` (a pure helper
-    // the page calls); this component only iterates the result.
-    let { items, error = null }: { items: ActionItem[]; error?: string | null } = $props();
+    // The workspace-scoped "action items" panel: the pending recommendations
+    // about this metric, already score-ranked, each with the one action it
+    // implies (propose a rule, review a skill or agent, show a file, open a lens,
+    // or snooze). Pure template: the items come from `buildActionItems`, and every
+    // action, its confirm and its outcome are `actions` (ActionItemsState) — this
+    // component only renders them and hands clicks back.
+    let {
+        items,
+        error = null,
+        actions,
+    }: { items: ActionItem[]; error?: string | null; actions: ItemActions } = $props();
 
     // Urgency → chip utility classes. This lookup IS the rendering rule (the one
     // kind of map the guidelines allow inside a component): high → danger,
@@ -26,6 +33,10 @@
         <Eyebrow>Action items</Eyebrow>
     </div>
 
+    {#if actions.done}
+        <p data-action-done class="text-sm text-ink-mute">{actions.done}</p>
+    {/if}
+
     {#if error}
         <p data-action-items-error class="text-sm text-ink-soft">
             Couldn’t load action items — {error}
@@ -33,6 +44,7 @@
     {:else if items.length}
         <div class="flex flex-col">
             {#each items as item (item.id)}
+                {@const flow = actions.flow(item.id)}
                 <article
                     data-action-item={item.id}
                     class="flex flex-col gap-1 py-3 border-t border-paper-edge"
@@ -55,6 +67,71 @@
                         <p data-action-impact class="text-xs text-ink-faint text-pretty">
                             {item.impact}
                         </p>
+                    {/if}
+
+                    {#if flow.status === 'confirm'}
+                        {@const c = flow.confirm}
+                        <div
+                            data-action-confirm={c.kind}
+                            class="flex flex-col gap-2 mt-2 p-3 rounded-lg bg-paper-soft border border-paper-edge"
+                        >
+                            <span class="text-sm text-ink font-medium">{c.heading}</span>
+                            {#if c.path}
+                                <span data-action-confirm-path class="mono text-xs text-ink-soft">
+                                    sensei will write {c.path}
+                                </span>
+                                <pre
+                                    class="mono text-xs text-ink-mute whitespace-pre-wrap max-h-60 overflow-auto m-0">{c.body}</pre>
+                            {:else}
+                                <p class="text-sm text-ink-mute leading-relaxed text-pretty m-0">{c.body}</p>
+                            {/if}
+                            {#if c.scope}
+                                <span data-action-confirm-scope class="text-xs text-ink-faint">
+                                    Added as a rule at {c.scope}
+                                </span>
+                            {/if}
+                            <div class="flex items-center gap-2">
+                                <Button
+                                    variant="primary"
+                                    size="sm"
+                                    data-action-confirm-yes
+                                    onclick={() => actions.confirm(item)}
+                                >{c.confirmLabel}</Button>
+                                <Button
+                                    variant="secondary"
+                                    style="outline"
+                                    size="sm"
+                                    data-action-confirm-no
+                                    onclick={() => actions.cancel(item)}
+                                >Cancel</Button>
+                            </div>
+                        </div>
+                    {:else}
+                        <div class="flex items-center gap-2 mt-1">
+                            {#if item.action.kind === 'open-lens'}
+                                <Button
+                                    variant="secondary"
+                                    style="outline"
+                                    size="sm"
+                                    href={item.action.href}
+                                    data-action-do="open-lens"
+                                >{item.action.label}</Button>
+                            {:else}
+                                <Button
+                                    variant="secondary"
+                                    style="outline"
+                                    size="sm"
+                                    data-action-do={item.action.kind}
+                                    disabled={flow.status === 'working'}
+                                    aria-busy={flow.status === 'working'}
+                                    onclick={() => actions.act(item)}
+                                >{item.action.label}</Button>
+                            {/if}
+                        </div>
+                    {/if}
+
+                    {#if flow.status === 'error'}
+                        <p data-action-error class="text-sm text-ink-soft">{flow.message}</p>
                     {/if}
                 </article>
             {/each}

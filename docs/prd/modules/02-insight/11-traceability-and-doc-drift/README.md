@@ -76,13 +76,13 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Workspace Overview `Doc drift` stat | `count(*) … where state='open' and project_id=X` | "Doc drift: 3" |
-| High-confidence drift | identifier gone (or unambiguous rename) | README: `authenticate()` → `authenticateWithCredentials` |
-| Medium-confidence drift | identifier exists, signature changed | Expected-vs-Actual drawer |
-| `get_trace_links(node)` *(not built)* | both directions around a node | "3 docs reference `RefreshTokenStore`" |
-| Doc-doctor findings | stale / undocumented / inconsistent / broken | severity-filtered on the Traceability screen |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Workspace Overview `Doc drift` stat | `count(*) … where state='open' and project_id=X` | "Doc drift: 3" | open Traceability and fix the drifted docs |
+| High-confidence drift | identifier gone (or unambiguous rename) | README: `authenticate()` → `authenticateWithCredentials` | apply the fix (`apply-fix`) |
+| Medium-confidence drift | identifier exists, signature changed | Expected-vs-Actual drawer | update the doc's signature from the Expected-vs-Actual drawer |
+| `get_trace_links(node)` *(not built)* | both directions around a node | "3 docs reference `RefreshTokenStore`" | not built — today, open the referencing docs by hand before changing the node |
+| Doc-doctor findings | stale / undocumented / inconsistent / broken | severity-filtered on the Traceability screen | fix by severity: refresh stale docs, document undocumented exports |
 
 ## Done gate
 

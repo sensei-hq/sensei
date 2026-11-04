@@ -3,7 +3,7 @@
 > The screen / route / navigation structure of the Dōjō web app (`dojo/`,
 > `dojo.sensei-hq.com`) — the **design layer** behind the user-facing
 > [Dōjō feature](../features/dojo/README.md). Captured from the
-> [Dōjō journey map](../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html)
+> Dōjō journey map
 > + [`journeys/dojo.md`](../journeys/dojo.md) + `mockups/Sensei/lib/dojo/*.jsx`, refined
 > in discussion (2026-07-23).
 >

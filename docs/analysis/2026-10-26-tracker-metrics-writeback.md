@@ -27,7 +27,7 @@ in the tracker, into mapped custom fields or else one sensei-owned comment.
 | same, R7 | Metrics computed at read, nothing materialised; a sum over zero non-NULL values is `null`, never `0`, with `<field>_n` |
 | same, isolation gate 2b | Jira logic (endpoints, auth, formats) lives only in `tracker/jira.rs` |
 | [`design/integrations-and-gating-requirements.md`](../design/integrations-and-gating-requirements.md) | Sync is **read-only** (decision 2026-10-14, "no export") |
-| [`prd/modules/04-team/03-dojo-project-planning`](../prd/modules/04-team/03-dojo-project-planning/README.md) | Hours/tokens are insights, never gates, never per-author gates |
+| [`prd/modules/04-team/03-dojo-project-planning`](../prd/modules/04-team/03-dojo-workspace-planning/README.md) | Hours/tokens are insights, never gates, never per-author gates |
 | `backlog.md`, Jira linkage deviation (3) | "no assignee synced/stored (no per-person figure)" |
 | `crates/senseid/src/tracker/mod.rs:96,254` | `GetTransport` only has `get_json`; `TrackerAdapter` has `validate`, `fetch_snapshot`, `match_links`, `unknown_keys`, `fetch_tasks`, with no write method |
 | `database/ddl/table/sensei/trackers.ddl` | `account` = the Atlassian **email** (keyring account); no account id |

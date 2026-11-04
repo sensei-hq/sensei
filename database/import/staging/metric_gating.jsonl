@@ -1,0 +1,2 @@
+{"metric_key": "coverage", "eligible": true, "delta_scoped": false, "min_coverage": 0.5, "note": "Target 2: an absolute, ratchetable reading; a target needs paths to say which files are guarded.", "modified_at": "2026-11-03T00:00:00Z"}
+{"metric_key": "ftr", "eligible": false, "delta_scoped": false, "min_coverage": 1.0, "note": "An insight into how sessions go, never a target (T3 Insights).", "modified_at": "2026-11-03T00:00:00Z"}

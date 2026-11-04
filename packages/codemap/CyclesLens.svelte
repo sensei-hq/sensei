@@ -6,7 +6,7 @@
   import { cycleRings } from './cycles';
   import type { Level0 } from './types';
 
-  let { data, zoom = 1, onopen }: { data: Level0; zoom?: number; onopen: (id: string) => void } = $props();
+  let { data, zoom = 1, onfocus }: { data: Level0; zoom?: number; onfocus: (id: string) => void } = $props();
   const rings = $derived(cycleRings(data));
   const short = (id: string) => id.split('/').slice(-1)[0];
   const cutOf = (r: (typeof rings)[number]) => r.edges.find((e) => e.cut);
@@ -45,7 +45,7 @@
             {#each r.nodes as n (n.id)}
               {@const outside = n.x >= r.size / 2}
               <g role="button" tabindex="0" class="cursor-pointer" data-cycle-node={n.id}
-                onclick={() => onopen(n.id)} onkeydown={(ev) => ev.key === 'Enter' && onopen(n.id)}>
+                onclick={() => onfocus(n.id)} onkeydown={(ev) => ev.key === 'Enter' && onfocus(n.id)}>
                 <circle cx={n.x} cy={n.y} r="6" fill="var(--paper)" stroke="var(--warning)" stroke-width="2" />
                 <text x={n.x + (outside ? 12 : -12)} y={n.y + 4} text-anchor={outside ? 'start' : 'end'} class="text-xs" fill="var(--ink)">{short(n.id)}</text>
                 <title>{n.id}</title>

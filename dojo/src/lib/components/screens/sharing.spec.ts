@@ -27,6 +27,7 @@ function repo(over: Partial<MyRepoWire> = {}): MyRepoWire {
 		reason_actor: 'user',
 		last_synced_at: null,
 		metric_rows: 0,
+		graph_branches: [],
 		...over
 	};
 }
@@ -110,6 +111,109 @@ describe('ScrSharing — the toggle', () => {
 		});
 		expect((getByLabelText('Share api') as HTMLInputElement).checked).toBe(true);
 		expect(getByText('not sharing')).toBeTruthy();
+	});
+});
+
+describe('ScrSharing — tracked graph branches', () => {
+	it('shows each tracked branch, with the default marked', () => {
+		const { getByText } = render(ScrSharing, {
+			props: {
+				repos: [
+					repo({
+						graph_branches: [
+							{ branch: 'main', is_default: true },
+							{ branch: 'develop', is_default: false }
+						]
+					})
+				]
+			}
+		});
+		expect(getByText(/main \(default\)/)).toBeTruthy();
+		expect(getByText('develop')).toBeTruthy();
+	});
+
+	it('says the graph does not sync when no branch is tracked — never a guessed main', () => {
+		const { getByText, queryByText } = render(ScrSharing, {
+			props: { repos: [repo({ graph_branches: [] })] }
+		});
+		expect(getByText(/its graph does not sync/)).toBeTruthy();
+		expect(queryByText(/main/)).toBeNull();
+	});
+
+	it('untracking asks for in-page confirmation first, naming the graph it deletes', async () => {
+		// Untracking deletes that branch's graph. A single click is too cheap
+		// for a destructive act — the row asks, in place, before reporting up.
+		const onUntrack = vi.fn();
+		const { getByRole, getByText, queryByRole } = render(ScrSharing, {
+			props: {
+				repos: [repo({ graph_branches: [{ branch: 'develop', is_default: false }] })],
+				onUntrack
+			}
+		});
+		await fireEvent.click(getByRole('button', { name: 'Untrack develop' }));
+		expect(onUntrack).not.toHaveBeenCalled();
+		expect(getByText(/deletes its graph/)).toBeTruthy();
+		await fireEvent.click(getByRole('button', { name: 'Confirm untracking develop' }));
+		expect(onUntrack).toHaveBeenCalledWith('github.com/acme/api', 'develop');
+		expect(queryByRole('button', { name: 'Confirm untracking develop' })).toBeNull();
+	});
+
+	it('cancelling the confirmation untracks nothing', async () => {
+		const onUntrack = vi.fn();
+		const { getByRole, queryByRole } = render(ScrSharing, {
+			props: {
+				repos: [repo({ graph_branches: [{ branch: 'develop', is_default: false }] })],
+				onUntrack
+			}
+		});
+		await fireEvent.click(getByRole('button', { name: 'Untrack develop' }));
+		await fireEvent.click(getByRole('button', { name: 'Cancel' }));
+		expect(onUntrack).not.toHaveBeenCalled();
+		expect(queryByRole('button', { name: 'Confirm untracking develop' })).toBeNull();
+	});
+
+	it('reports a new branch and its label upward', async () => {
+		const onTrack = vi.fn();
+		const { getByRole, getByLabelText } = render(ScrSharing, {
+			props: { repos: [repo()], onTrack }
+		});
+		await fireEvent.input(getByLabelText('Branch to track for api'), { target: { value: 'develop' } });
+		await fireEvent.change(getByLabelText('Label for api'), { target: { value: 'development' } });
+		await fireEvent.click(getByRole('button', { name: 'Track a branch of api' }));
+		expect(onTrack).toHaveBeenCalledWith('github.com/acme/api', 'develop', 'development');
+	});
+
+	it('tracks with no label when none is chosen', async () => {
+		const onTrack = vi.fn();
+		const { getByRole, getByLabelText } = render(ScrSharing, {
+			props: { repos: [repo()], onTrack }
+		});
+		await fireEvent.input(getByLabelText('Branch to track for api'), { target: { value: 'develop' } });
+		await fireEvent.click(getByRole('button', { name: 'Track a branch of api' }));
+		expect(onTrack).toHaveBeenCalledWith('github.com/acme/api', 'develop', null);
+	});
+
+	it('does not track a blank branch name', async () => {
+		const onTrack = vi.fn();
+		const { getByRole } = render(ScrSharing, { props: { repos: [repo()], onTrack } });
+		await fireEvent.click(getByRole('button', { name: 'Track a branch of api' }));
+		expect(onTrack).not.toHaveBeenCalled();
+	});
+
+	it('disables the branch controls when the caller may not configure it', () => {
+		// As the toggle: a refusal told, not discovered by trying.
+		const { getByRole } = render(ScrSharing, {
+			props: {
+				repos: [
+					repo({
+						configurable_by_me: false,
+						graph_branches: [{ branch: 'develop', is_default: false }]
+					})
+				]
+			}
+		});
+		expect((getByRole('button', { name: 'Untrack develop' }) as HTMLButtonElement).disabled).toBe(true);
+		expect((getByRole('button', { name: 'Track a branch of api' }) as HTMLButtonElement).disabled).toBe(true);
 	});
 });
 

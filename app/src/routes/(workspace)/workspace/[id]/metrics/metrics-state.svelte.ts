@@ -25,6 +25,9 @@ export type MetricsApi = Pick<
   | 'tryGetTranscriptConsent'
   | 'getWorkspaceMetricSeries'
   | 'tryGetWorkspaceRecommendations'
+  | 'tryPreviewRecommendation'
+  | 'tryMaterializeRecommendationWithReason'
+  | 'trySnoozeWorkspaceRecommendation'
 >;
 
 export type Grain = 'daily' | 'weekly' | 'monthly';
@@ -76,10 +79,17 @@ export class WorkspaceMetrics {
     return { status: 'ready', data: { ...v.data!, registry: r.data! }, error: null };
   }
 
-  /** Only pairs whose both metrics this workspace has. */
-  get correlations(): MetricCorrelation[] {
-    const present = new Set((this.values.data?.rows ?? []).map((r) => r.metric));
-    return (this.allCorrelations.data ?? []).filter((c) => present.has(c.a) && present.has(c.b));
+  /** The correlations read as a section: loading, this workspace's pairs (only
+   *  pairs whose both metrics it has), or why it failed — never an absent
+   *  section that reads as "nothing moves together" (D83 audit row 74). The
+   *  filter needs the values, so it waits on them and carries their failure. */
+  get correlationsSection(): Section<MetricCorrelation[]> {
+    const [c, v] = [this.allCorrelations, this.values];
+    if (c.status === 'error') return { status: 'error', data: null, error: c.error };
+    if (v.status === 'error') return { status: 'error', data: null, error: v.error };
+    if (c.status === 'loading' || v.status === 'loading' || !c.data || !v.data) return LOADING;
+    const present = new Set(v.data.rows.map((r) => r.metric));
+    return { status: 'ready', data: c.data.filter((p) => present.has(p.a) && present.has(p.b)), error: null };
   }
 
   /** Start the landing's reads; a fresh reopen reuses them, a stale one refreshes. */
@@ -134,5 +144,13 @@ export class WorkspaceMetrics {
         .then((r) => (this.#recommendations = settled(r)));
     }
     return this.#recommendations;
+  }
+
+  /** Drop a decided recommendation from what was read, so neither the landing
+   *  nor any detail offers it again. A failed or unfinished read is left as is. */
+  settleRecommendation(id: string): void {
+    const r = this.#recommendations;
+    if (r.status !== 'ready' || !r.data) return;
+    this.#recommendations = { ...r, data: r.data.filter((rec) => rec.id !== id) };
   }
 }

@@ -77,15 +77,15 @@ day after setup.
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Today FTR chip + sparkline | per-session FTR rolled into the M8 store; 14d trend inline | `ftr14d: 0.82`, arrow vs `ftr14dPrev` |
-| Health signal cards (`warn`) | `call_count ≥ 50 && error_rate ≥ 0.05` — per-tool action card | "get-embedding: 61% failure rate" |
-| Health signal cards (`opportunity`) | `call_count ≥ 10 && error_rate ≥ 0.05` | "search: room to improve" |
-| Summary cards (`unused`/`win`) | >1 dormant/workhorse collapse to ONE card each | "5 tools dormant · {short}…" |
-| Today insights / adopted | recommendation queue + memory adoption lane | "promote pattern?" · "adopted: use dbd for migrations" |
-| Community view | `DetectCommunities` daily full-refresh only | cluster colouring in Atlas |
-| Model preference chip | `model_insight` per-workspace | "Opus 4.6 chasing 0.82 here — try it" |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Today FTR chip + sparkline | per-session FTR rolled into the M8 store; 14d trend inline | `ftr14d: 0.82`, arrow vs `ftr14dPrev` | falling trend → open the sessions that needed corrections |
+| Health signal cards (`warn`) | `call_count ≥ 50 && error_rate ≥ 0.05` — per-tool action card | "get-embedding: 61% failure rate" | open the tool's failures in Instruments; fix the tool or stop using it |
+| Health signal cards (`opportunity`) | `call_count ≥ 10 && error_rate ≥ 0.05` | "search: room to improve" | try the failing calls in the Playground and fix the usage |
+| Summary cards (`unused`/`win`) | >1 dormant/workhorse collapse to ONE card each | "5 tools dormant · {short}…" | dormant: drop the tool or teach it in a rule · workhorse: none — candidate to cut |
+| Today insights / adopted | recommendation queue + memory adoption lane | "promote pattern?" · "adopted: use dbd for migrations" | Apply, Review or Dismiss the recommendation; challenge an adopted memory that is wrong |
+| Community view | `DetectCommunities` daily full-refresh only | cluster colouring in Atlas | open a cluster in the Code map |
+| Model preference chip | `model_insight` per-workspace | "Opus 4.6 chasing 0.82 here — try it" | switch this workspace's default model |
 
 ## Done gate
 

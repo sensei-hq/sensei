@@ -963,7 +963,7 @@ retires roughly 5,600 lines of v1.
 
 ### Known issues
 
-See [`docs/production-readiness.md`](docs/production-readiness.md), which
+See `docs/production-readiness.md`, which
 measures each of these against the live system:
 
 - `activity.sessions.metered_cost` is never non-zero, so no cost metric is

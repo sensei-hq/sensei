@@ -20,9 +20,9 @@ const VIEW: ListView = {
 
 describe('ModuleList', () => {
   it('draws each row 44px or taller, with its role bar and badges; only a module opens', () => {
-    const onopen = vi.fn();
+    const onfocus = vi.fn();
     target = document.body.appendChild(document.createElement('div'));
-    app = mount(ModuleList, { target, props: { view: VIEW, onopen } });
+    app = mount(ModuleList, { target, props: { view: VIEW, onfocus } });
     flushSync();
     const rows = [...target.querySelectorAll('[data-testid^="list-row-"]')] as HTMLElement[];
     expect(rows.map((r) => r.className.includes('min-h-11'))).toEqual([true, true]);
@@ -30,6 +30,24 @@ describe('ModuleList', () => {
     expect(target.querySelector('[data-testid="list-row-p/a"]')?.textContent).toContain('upward');
     (target.querySelector('[data-testid="list-row-p/a"]') as HTMLButtonElement).click();
     (target.querySelector('[data-testid="list-row-L0 → L1"]') as HTMLElement).click();
-    expect(onopen.mock.calls).toEqual([['p/a']]);
+    expect(onfocus.mock.calls).toEqual([['p/a']]);
+  });
+
+  // Review r3 N4: on a narrow screen the list stands in for the lens — a failed
+  // read says why with Retry, a read in flight says so, and neither is an empty list.
+  it('a failed read says why with Retry, and a pending one says it is reading — never an empty list', () => {
+    const onretry = vi.fn();
+    target = document.body.appendChild(document.createElement('div'));
+    app = mount(ModuleList, { target, props: { view: { groups: [] }, onfocus: vi.fn(), failed: 'Gateway Timeout', onretry } });
+    flushSync();
+    expect(target.textContent).toContain('Gateway Timeout');
+    ([...target.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Retry') as HTMLButtonElement).click();
+    expect(onretry).toHaveBeenCalledOnce();
+    unmount(app);
+    target.remove();
+    target = document.body.appendChild(document.createElement('div'));
+    app = mount(ModuleList, { target, props: { view: { groups: [] }, onfocus: vi.fn(), pending: true } });
+    flushSync();
+    expect(target.textContent).toContain('Reading');
   });
 });

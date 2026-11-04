@@ -544,6 +544,10 @@ impl PgStore {
     ///
     /// `checked_at` is always stamped, so "we asked and learned nothing" is
     /// distinguishable from "we never asked".
+    ///
+    /// A probe with no expiry keeps the known deadline — unless the token is live
+    /// and that deadline has passed: then it was another token's, and is cleared
+    /// (a dead token keeps it, as the reason it died).
     pub async fn set_forge_token_state(
         &self,
         session_slot: &str,
@@ -554,7 +558,10 @@ impl PgStore {
         sqlx_core::query::query(
             "UPDATE sensei.personas \
                 SET forge_token_state      = $2::sensei.forge_token_state \
-                  , forge_token_expires_at = COALESCE($3, forge_token_expires_at) \
+                  , forge_token_expires_at = CASE \
+                        WHEN $3 IS NOT NULL THEN $3 \
+                        WHEN $2 = 'active' AND forge_token_expires_at <= now() THEN NULL \
+                        ELSE forge_token_expires_at END \
                   , forge_token_checked_at = now() \
                   , modified_at            = now() \
               WHERE session_slot = $1",
@@ -643,6 +650,28 @@ mod forge_token_state_tests {
             "a probe carrying no expiry must not erase the one we already had"
         );
         assert_eq!(row.state, "active");
+        cleanup(&pg, &slot).await;
+    }
+
+    #[tokio::test]
+    async fn a_live_token_is_not_left_reading_a_deadline_that_has_passed() {
+        // 2026-11-03: a fresh sign-in gave a token whose responses carry no expiry
+        // header, and the stored deadline was the old token's — hours in the past.
+        // The token answered 200 and the app said "credential expired". A deadline
+        // a live token has outlived is not the token's; it is cleared.
+        let pg = PgStore::test_store().await;
+        let slot = format!("ztest-fts-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        pg.set_forge_token_state(&slot, "active", Some(1_700_000_000)).await.unwrap();
+        pg.set_forge_token_state(&slot, "active", None).await.unwrap();
+        let row = pg
+            .forge_token_rows()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| r.session_slot == slot)
+            .expect("row");
+        assert_eq!((row.state.as_str(), row.expires_at), ("active", None));
         cleanup(&pg, &slot).await;
     }
 

@@ -9,7 +9,7 @@
   import type { CodeMapState } from './state.svelte';
   import { inspect, LIBRARIES } from './inspector';
   import { listView } from './list';
-  import { budgetLine, drawnBands, legendFor } from './view';
+  import { budgetLine, drawnBands, legendFor, segmentLabel } from './view';
   import type { CodeMapPort } from './types';
   import ModuleMap from './ModuleMap.svelte';
   import MatrixLens from './MatrixLens.svelte';
@@ -54,10 +54,26 @@
   // An unmeasured width (0) is not a narrow screen.
   const narrow = $derived(width > 0 && width < 640);
   const l0 = $derived(map.l0);
-  const bands = $derived(l0 ? drawnBands(map.lens, l0, map.cochange, { edgeMode: map.edgeMode, minWeight: map.minWeight }) : []);
-  const toAct = $derived(l0 ? takeaways(map.lens, l0, map.cochange, map.zones, map.complexity) : []);
-  const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected }));
+  // The daemon narrowed the module map to the focus; the state narrows the rest.
+  const cochange = $derived(map.focusedCochange);
+  const complexity = $derived(map.focusedComplexity);
+  const zones = $derived(map.focusedZones);
+  /** The focus as the empty states name it. */
+  const focusLabel = $derived(map.focus ? (map.focus.kind === 'module' ? map.focus.id : segmentLabel(map.groupBy, map.focus.id)) : null);
+  const bands = $derived(l0 ? drawnBands(map.lens, l0, cochange, { edgeMode: map.edgeMode, minWeight: map.minWeight }) : []);
+  const toAct = $derived(l0 ? takeaways(map.lens, l0, cochange, zones, complexity) : []);
+  // A focused module is what the side panel inspects when nothing else is selected.
+  const focused = $derived(map.focus?.kind === 'module' ? map.focus.id : null);
+  const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected ?? focused }));
+  /** Open a module's files — the side panel's explicit action, not a click on a lens. */
   const open = (id: string) => void map.openModule(port, id);
+  /** The narrow list stands in for Zones and Hidden coupling from their own data;
+   *  until it is read (or when it failed) the list says so, never an empty list. */
+  const listNeeds = $derived((map.lens === 'zones' && !zones) || (map.lens === 'coupling' && !cochange));
+  /** Read the lens's own data again after it failed: showing it re-reads what is missing. */
+  const retry = () => void map.showLens(port, map.lens);
+  /** A click on a module in any lens focuses it (user, 2026-11-03). */
+  const focusOn = (id: string) => void map.setFocus(port, { kind: 'module', id });
   const zoomTo = (z: number) => (map.zoom = z);
 </script>
 
@@ -97,41 +113,42 @@
       {#if map.level === 'modules'}
         {#if l0}
           {#if narrow}
-            <ModuleList view={listView(map.lens, l0, map.cochange, map.zones)} onopen={open} />
+            <ModuleList view={listView(map.lens, l0, cochange, zones)} onfocus={focusOn}
+              failed={listNeeds ? map.dataError : null} pending={listNeeds && !map.dataError} onretry={retry} />
           {:else if map.lens === 'zones'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ZonesLens data={map.zones} filter={map.zoneFilter} zoom={map.zoom} onopen={open} />
+              <ZonesLens data={zones} filter={map.zoneFilter} zoom={map.zoom} onfocus={focusOn} failed={map.dataError} onretry={retry} />
             </ZoomFrame>
           {:else if map.lens === 'wheel'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <WheelLens data={l0} selected={map.selected} zoom={map.zoom} onselect={(id) => map.select(id)} onopen={open} />
+              <WheelLens data={l0} selected={map.selected ?? focused} zoom={map.zoom} onselect={(id) => map.select(id)} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'coupling'}
-            {#if map.cochange?.commits}
+            {#if cochange?.commits}
               <p class="m-0 text-xs text-ink-mute" data-testid="coupling-summary">
-                {`${map.cochange.hidden.length} pairs change together with no dependency between them · from ${map.cochange.commits} commits, ${map.cochange.minTogether}+ changes together`}
+                {`${cochange.hidden.length} pairs change together with no dependency between them · from ${cochange.commits} commits, ${cochange.minTogether}+ changes together`}
               </p>
             {/if}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <CouplingLens data={map.cochange} zoom={map.zoom} onopen={open} />
+              <CouplingLens data={cochange} zoom={map.zoom} onfocus={focusOn} focus={focusLabel} failed={map.dataError} onretry={retry} />
             </ZoomFrame>
           {:else if map.lens === 'complexity'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ComplexityLens data={map.complexity} zoom={map.zoom} onopen={open} />
+              <ComplexityLens data={complexity} zoom={map.zoom} onfocus={focusOn} focus={focusLabel} failed={map.dataError} onretry={retry} />
             </ZoomFrame>
           {:else if map.lens === 'cycles'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <CyclesLens data={l0} zoom={map.zoom} onopen={open} />
+              <CyclesLens data={l0} zoom={map.zoom} onfocus={focusOn} />
             </ZoomFrame>
           {:else if map.lens === 'matrix'}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <MatrixLens data={l0} zoom={map.zoom} onopen={open} />
+              <MatrixLens data={l0} zoom={map.zoom} onfocus={focusOn} />
             </ZoomFrame>
           {:else}
             <ZoomFrame zoom={map.zoom} onzoom={zoomTo}>
-              <ModuleMap data={l0} {bands} selected={map.selected}
+              <ModuleMap data={l0} {bands} selected={map.selected ?? focused}
                 byDirection={map.byDirection}
-                roles={map.roles} zoom={map.zoom} onselect={(id) => map.select(id)} onopen={open} />
+                roles={map.roles} zoom={map.zoom} onselect={(id) => map.select(id)} onfocus={focusOn} />
             </ZoomFrame>
           {/if}
           {#if l0.libraries.count}
@@ -154,14 +171,18 @@
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="flex flex-col gap-6 min-w-0 min-h-0 overflow-auto pl-6 border-l border-paper-edge" tabindex="0" role="region" aria-label="Side panel" data-testid="codemap-side">
         {#if map.level === 'modules' && map.lens === 'zones'}
-          {#if map.zones}
-            <ZonesDetails data={map.zones} filter={map.zoneFilter} onopen={open} />
+          {#if zones}
+            <ZonesDetails data={zones} filter={map.zoneFilter} onfocus={focusOn} />
           {/if}
-          <Takeaways items={toAct} onopen={open} {label} />
-        {:else if map.level === 'modules' && !map.selected}
-          <Takeaways items={toAct} onopen={open} {label} />
+          <Takeaways items={toAct} onfocus={focusOn} {label} />
+        {:else if map.level === 'modules' && !map.selected && !map.focus}
+          <Takeaways items={toAct} onfocus={focusOn} {label} />
         {:else}
-          <Inspector data={inspection} onopen={open} />
+          <Inspector data={inspection} onopen={open}
+            onclear={map.focus && map.level === 'modules' ? () => void map.clearFocus(port) : undefined} />
+          {#if map.level === 'modules' && map.focus && !map.selected}
+            <Takeaways items={toAct} onfocus={focusOn} {label} />
+          {/if}
         {/if}
       </div>
     {/if}

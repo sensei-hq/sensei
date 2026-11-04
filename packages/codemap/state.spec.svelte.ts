@@ -80,7 +80,7 @@ describe('CodeMapState', () => {
     s.select('p/a');
     s.lens = 'matrix';
     await s.setGroupBy(p, 'folders');
-    expect(p.level0).toHaveBeenLastCalledWith('folders');
+    expect(p.level0).toHaveBeenLastCalledWith('folders', null);
     expect([s.groupBy, s.selected, s.lens, s.level]).toEqual(['folders', 'p/a', 'matrix', 'modules']);
   });
 
@@ -102,27 +102,50 @@ describe('CodeMapState', () => {
     expect([s.level, s.error]).toEqual(['modules', 'Service Unavailable']);
   });
 
-  it('the Wheel, Zones and Matrix return to modules with the open module selected', async () => {
-    for (const lens of ['wheel', 'zones', 'matrix'] as const) {
+  it('every lens leaves the files view and keeps the focus (user, 2026-11-03)', async () => {
+    for (const lens of ['structure', 'wheel', 'cycles', 'matrix', 'zones', 'coupling', 'complexity'] as const) {
       const s = new CodeMapState();
       const p = port();
-      await s.load(p);
+      await s.setFocus(p, { kind: 'module', id: 'p/a' });
       await s.openModule(p, 'p/a');
       await s.openFile(p, 'f1', 'a/x.rs');
       await s.showLens(p, lens);
-      expect([s.lens, s.level, s.crumbs.length, s.l1, s.l2, s.selected], lens).toEqual([lens, 'modules', 1, null, null, 'p/a']);
+      expect([s.lens, s.level, s.crumbs.length, s.l1, s.l2, s.focus], lens).toEqual([lens, 'modules', 1, null, null, { kind: 'module', id: 'p/a' }]);
     }
   });
 
-  it('Structure, Cycles, Hidden coupling and Complexity keep the level', async () => {
-    for (const lens of ['structure', 'cycles', 'coupling', 'complexity'] as const) {
-      const s = new CodeMapState();
-      const p = port();
-      await s.load(p);
-      await s.openModule(p, 'p/a');
-      await s.showLens(p, lens);
-      expect([s.lens, s.level, s.crumbs.length], lens).toEqual([lens, 'files', 2]);
-    }
+  it('a focus re-reads the map narrowed to it; clearing it reads the whole map again', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.load(p);
+    expect(p.level0).toHaveBeenLastCalledWith('layers', null);
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    expect(p.level0).toHaveBeenLastCalledWith('layers', { kind: 'module', id: 'p/a' });
+    expect(s.focus).toEqual({ kind: 'module', id: 'p/a' });
+    await s.showLens(p, 'cycles');
+    expect(s.focus).toEqual({ kind: 'module', id: 'p/a' });
+    await s.clearFocus(p);
+    expect([s.focus, (p.level0 as ReturnType<typeof vi.fn>).mock.lastCall]).toEqual([null, ['layers', null]]);
+  });
+
+  it('focusing from the files view climbs back to the modules', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.load(p);
+    await s.openModule(p, 'p/a');
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    expect([s.level, s.crumbs.length, s.l1]).toEqual(['modules', 1, null]);
+  });
+
+  it('a regrouping keeps a module focus, and drops a segment focus the new grouping has no group for', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    await s.setGroupBy(p, 'folders');
+    expect(p.level0).toHaveBeenCalledWith('folders', { kind: 'module', id: 'p/a' });
+    await s.setFocus(p, { kind: 'segment', id: 'L1' });
+    await s.setGroupBy(p, 'layers');
+    expect([s.focus, (p.level0 as ReturnType<typeof vi.fn>).mock.lastCall]).toEqual([null, ['layers', null]]);
   });
 
   it('reads zones once, when the Zones lens first opens', async () => {
@@ -155,5 +178,146 @@ describe('CodeMapState', () => {
     release({ ok: true, data: L1 });
     await first;
     expect(s.l1?.module).toBe('p/b');
+  });
+
+  it('a lens’s own read is kept when a different read finishes after it (user, 2026-11-03)', async () => {
+    const s = new CodeMapState();
+    let release: (v: { ok: true; data: { hidden: []; pairs: number; commits: number; minTogether: number } }) => void = () => {};
+    const slow = new Promise<{ ok: true; data: { hidden: []; pairs: number; commits: number; minTogether: number } }>((r) => (release = r));
+    const p = port({ cochange: vi.fn(() => slow) });
+    await s.load(p);
+    const coupling = s.showLens(p, 'coupling');
+    await s.openModule(p, 'p/a');
+    release({ ok: true, data: { hidden: [], pairs: 0, commits: 7, minTogether: 5 } });
+    await coupling;
+    expect([s.cochange?.commits, s.loading]).toEqual([7, false]);
+  });
+
+  it('keeps the whole map to find modules in while the lenses draw a focus', async () => {
+    const s = new CodeMapState();
+    const narrowed = { ...L0(), blocks: [] };
+    const p = port({ level0: vi.fn((g, f) => ok(f ? narrowed : L0(g))) });
+    await s.load(p);
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    expect([s.l0, s.whole?.blocks.length]).toEqual([narrowed, 1]);
+  });
+
+  it('a pick from the finder focuses a module, or a whole group as a segment', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.focusChoice(p, 'p/a');
+    expect(s.focus).toEqual({ kind: 'module', id: 'p/a' });
+    await s.focusChoice(p, 'group:L1');
+    expect(s.focus).toEqual({ kind: 'segment', id: 'L1' });
+  });
+
+  // Review r1 F1: the finder is built from `whole`; a regroup under a focus must
+  // re-read the unfocused map in the new grouping, or the finder offers the old
+  // grouping's segments and picking one 404s.
+  it('a regroup under a focus re-reads the whole map in the new grouping', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    await s.setGroupBy(p, 'folders');
+    expect(p.level0).toHaveBeenCalledWith('folders', null);
+    expect(s.whole?.groupBy).toBe('folders');
+  });
+
+  // Review r1 F2: each kind of read keeps its own error; a later success of
+  // another kind must not clear it, or the lens sits on "Reading…" for good.
+  it('a lens keeps its read’s failure when a different read succeeds after it', async () => {
+    const s = new CodeMapState();
+    const p = port({ cochange: vi.fn(() => Promise.resolve({ ok: false as const, error: 'Gateway Timeout' })) });
+    await s.load(p);
+    await s.showLens(p, 'coupling');
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    expect(s.lensError).toBe('Gateway Timeout');
+    await s.showLens(p, 'structure');
+    expect(s.lensError).toBeNull();
+  });
+
+  // Review r1 F7: the state, not the component, narrows the lenses' data to the
+  // focus, so any host reading the state gets the focused view.
+  it('exposes the lenses’ data narrowed to the focus the map was read with', async () => {
+    const s = new CodeMapState();
+    const focused = { ...L0(), focus: { kind: 'module' as const, id: 'p/a', members: ['p/a'], neighbours: [] } };
+    const p = port({
+      level0: vi.fn((g, f) => ok(f ? focused : L0(g))),
+      cochange: vi.fn(() => ok({ hidden: [{ a: 'p/a', b: 'p/x', together: 6, strength: 0.6 }, { a: 'p/y', b: 'p/x', together: 6, strength: 0.6 }], pairs: 2, commits: 9, minTogether: 5 })),
+    });
+    await s.showLens(p, 'coupling');
+    expect(s.focusedCochange?.hidden.length).toBe(2);
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    expect(s.focusedCochange?.hidden.map((c) => c.b)).toEqual(['p/x']);
+    expect(s.focusedCochange?.hidden.every((c) => c.a === 'p/a' || c.b === 'p/a')).toBe(true);
+  });
+
+  // Review r2 N1(b): a failed lens read is retried by showing the lens again,
+  // and a success clears its error.
+  it('Retry after a failed coupling read reads it again, and its success clears the error', async () => {
+    const s = new CodeMapState();
+    const cochange = vi.fn()
+      .mockReturnValueOnce(Promise.resolve({ ok: false as const, error: 'Gateway Timeout' }))
+      .mockReturnValueOnce(ok({ hidden: [], pairs: 0, commits: 9, minTogether: 5 }));
+    const p = port({ cochange });
+    await s.showLens(p, 'coupling');
+    expect([s.lensError, s.dataError]).toEqual(['Gateway Timeout', 'Gateway Timeout']);
+    expect(s.mapError).toBeNull();
+    await s.showLens(p, 'coupling');
+    expect(cochange).toHaveBeenCalledTimes(2);
+    expect(s.lensError).toBeNull();
+  });
+
+  // Review r2 N2: a failed module read belongs to that attempt, not to every lens after it.
+  it('a failed module read does not follow the reader to another lens', async () => {
+    const s = new CodeMapState();
+    const p = port({ module: vi.fn(() => Promise.resolve({ ok: false as const, error: 'Not Found' })) });
+    await s.load(p);
+    await s.openModule(p, 'p/a');
+    expect(s.lensError).toBe('Not Found');
+    await s.showLens(p, 'zones');
+    expect(s.lensError).toBeNull();
+  });
+
+  // Review r2 N3: if the whole map cannot be re-read after a regroup, the finder
+  // falls back to the focused map (already in the new grouping), not the old one.
+  it('a failed whole-map read after a regroup leaves no stale whole map', async () => {
+    const s = new CodeMapState();
+    const p = port({ level0: vi.fn((g, f) => (f ? ok(L0(g)) : g === 'folders' ? Promise.resolve({ ok: false as const, error: 'Bad Gateway' }) : ok(L0(g)))) });
+    await s.load(p);
+    await s.setFocus(p, { kind: 'module', id: 'p/a' });
+    await s.setGroupBy(p, 'folders');
+    expect(s.whole).toBeNull();
+  });
+
+  // Review r3 L1: focusing, clearing the focus or regrouping also leaves a failed open behind.
+  it('a failed module open does not outlive a focus, a cleared focus or a regroup', async () => {
+    for (const next of ['focus', 'clear', 'regroup'] as const) {
+      const s = new CodeMapState();
+      const p = port({ module: vi.fn(() => Promise.resolve({ ok: false as const, error: 'Not Found' })) });
+      await s.load(p);
+      await s.openModule(p, 'p/a');
+      expect(s.mapError, next).toBe('Not Found');
+      if (next === 'focus') await s.setFocus(p, { kind: 'module', id: 'p/b' });
+      if (next === 'clear') await s.clearFocus(p);
+      if (next === 'regroup') await s.setGroupBy(p, 'folders');
+      expect(s.mapError, next).toBeNull();
+    }
+  });
+
+  // Review r3 L2: while a retried read is in flight the lens reads, not the old failure.
+  it('a retried read clears its old failure while it reads', async () => {
+    const s = new CodeMapState();
+    let release: (v: { ok: true; data: { hidden: []; pairs: number; commits: number; minTogether: number } }) => void = () => {};
+    const cochange = vi.fn()
+      .mockReturnValueOnce(Promise.resolve({ ok: false as const, error: 'Gateway Timeout' }))
+      .mockReturnValueOnce(new Promise((r) => (release = r)));
+    const p = port({ cochange });
+    await s.showLens(p, 'coupling');
+    expect(s.dataError).toBe('Gateway Timeout');
+    const retrying = s.showLens(p, 'coupling');
+    expect(s.dataError).toBeNull();
+    release({ ok: true, data: { hidden: [], pairs: 0, commits: 3, minTogether: 5 } });
+    await retrying;
   });
 });

@@ -59,11 +59,11 @@ learned ever vanishes"*.
 
 ## Signals shown
 
-| Element | Value | Meaning |
-|---|---|---|
-| Schema drift | dbd reconcile/deploy output | the schema is the source of truth; drift fails loudly |
-| `data.md` "Where the gaps are" | orphaned/empty tables | honesty surface (e.g. no writer on `inference.*`) |
-| Gate checks | check-* CI lines | layer rules: no SQL outside `db/pg_store/`, grants owned by the schema, comments well-formed |
+| Element | Value | Meaning | Decision it drives / next step |
+|---|---|---|---|
+| Schema drift | dbd reconcile/deploy output | the schema is the source of truth; drift fails loudly | fix the DDL and converge with `dbd reconcile` before deploy |
+| `data.md` "Where the gaps are" | orphaned/empty tables | honesty surface (e.g. no writer on `inference.*`) | write the missing writer, or drop the orphan table |
+| Gate checks | check-* CI lines | layer rules: no SQL outside `db/pg_store/`, grants owned by the schema, comments well-formed | move the SQL into `db/pg_store/`, or fix the grant or comment the check names |
 
 ## Done gate
 

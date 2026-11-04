@@ -164,9 +164,10 @@ pub struct RegisterResult {
 pub struct SyncPlan {
     #[serde(default)]
     pub allowed: Vec<MappedRepo>,
-    /// Always empty in phase 1 — `all_my_repositories` hardcodes
-    /// `sync_enabled = true`. Decoded anyway (D6): the shape must not start
-    /// crashing the daemon on the day the gate arrives.
+    /// Live entitlement refusals (`not_subscribed`, `forge_visibility_unknown`,
+    /// …) from `dojo.all_my_repositories` — the repositories the daemon must
+    /// not sync, each with the reason it may show. `#[serde(default)]` so a
+    /// dōjō that predates the field still decodes.
     #[serde(default)]
     pub denied: Vec<DeniedRepo>,
 }
@@ -245,16 +246,47 @@ async fn send(req: reqwest::RequestBuilder, token: &str, what: &str) -> Result<S
     Ok(text)
 }
 
-/// `POST /v1/you/repositories` — register these repositories and learn their tenants.
+/// Repositories registered per request. The dōjō runs on Cloudflare Workers,
+/// which cap the outbound calls one request may make (50 on the free plan), and
+/// registering costs one or two per repository: 157 in one request failed in
+/// production with "Too many subrequests" (2026-11-03).
+pub const REGISTER_BATCH: usize = 15;
+
+/// `POST /v1/you/repositories` — register these repositories and learn their
+/// tenants, [`REGISTER_BATCH`] at a time; the answers are one answer.
 pub async fn register_repositories(
     dojo_url: &str,
     token: &str,
     repos: &[RepoInput<'_>],
 ) -> Result<RegisterResult, String> {
-    let req = crate::federation::http_client()
-        .post(endpoint(dojo_url, "repositories"))
-        .json(&serde_json::json!({ "repos": repos }));
-    decode("registration", &send(req, token, "registration").await?)
+    register_in_batches(repos, REGISTER_BATCH, |batch| async move {
+        let req = crate::federation::http_client()
+            .post(endpoint(dojo_url, "repositories"))
+            .json(&serde_json::json!({ "repos": batch }));
+        decode("registration", &send(req, token, "registration").await?)
+    })
+    .await
+}
+
+/// Register `repos` `size` at a time and merge the answers, in order. A batch
+/// that fails fails the whole: half an answer read as the whole would record
+/// verdicts for half the repositories as if they were final.
+async fn register_in_batches<'r, F, Fut>(
+    repos: &'r [RepoInput<'r>],
+    size: usize,
+    mut register: F,
+) -> Result<RegisterResult, String>
+where
+    F: FnMut(&'r [RepoInput<'r>]) -> Fut,
+    Fut: std::future::Future<Output = Result<RegisterResult, String>>,
+{
+    let mut all = RegisterResult { mapped: Vec::new(), unmapped: Vec::new() };
+    for batch in repos.chunks(size.max(1)) {
+        let one = register(batch).await?;
+        all.mapped.extend(one.mapped);
+        all.unmapped.extend(one.unmapped);
+    }
+    Ok(all)
 }
 
 /// The three calls the sync cycle makes, behind a trait.
@@ -661,6 +693,61 @@ pub async fn provision(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn input(key: &str) -> RepoInput<'_> {
+        RepoInput { repo_key: key, remote_url: None, name: key, workspace: None }
+    }
+
+    /// The dōjō runs on Cloudflare Workers, which cap the outbound calls one
+    /// request may make; registration costs one or two per repository, so 157
+    /// at once failed in production with "Too many subrequests" (2026-11-03) —
+    /// while the local dev dōjō, on Node, has no cap. The offer goes in batches.
+    #[tokio::test]
+    async fn registration_goes_in_batches_and_answers_as_one() {
+        let keys: Vec<String> = (0..37).map(|i| format!("github.com/o/r{i}")).collect();
+        let repos: Vec<RepoInput> = keys.iter().map(|k| input(k)).collect();
+        let mut sizes = Vec::new();
+        let out = register_in_batches(&repos, 15, |batch| {
+            sizes.push(batch.len());
+            let mapped = batch.iter().filter(|r| r.repo_key.ends_with('0')).map(|r| r.repo_key.to_string());
+            let unmapped = batch.iter().filter(|r| !r.repo_key.ends_with('0')).map(|r| r.repo_key.to_string());
+            let result = RegisterResult {
+                mapped: mapped.map(|k| serde_json::from_value(serde_json::json!({ "repo_key": k, "tenant": "organization/o", "tenant_id": "00000000-0000-0000-0000-000000000001", "repo_id": "00000000-0000-0000-0000-000000000002" })).unwrap()).collect(),
+                unmapped: unmapped.map(|k| UnmappedRepo { repo_key: k, reason: "no_connection".into() }).collect(),
+            };
+            async move { Ok(result) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(sizes, vec![15, 15, 7]);
+        assert_eq!(out.mapped.len() + out.unmapped.len(), 37, "every repository answered once");
+        assert_eq!(
+            out.mapped.iter().map(|m| m.repo_key.as_str()).collect::<Vec<_>>(),
+            ["github.com/o/r0", "github.com/o/r10", "github.com/o/r20", "github.com/o/r30"]
+        );
+    }
+
+    /// A batch that fails fails the registration: half an answer read as the
+    /// whole would record verdicts for half the repositories as if final.
+    #[tokio::test]
+    async fn a_failed_batch_fails_the_registration() {
+        let keys: Vec<String> = (0..20).map(|i| format!("github.com/o/r{i}")).collect();
+        let repos: Vec<RepoInput> = keys.iter().map(|k| input(k)).collect();
+        let mut calls = 0;
+        let out = register_in_batches(&repos, 15, |_| {
+            calls += 1;
+            let n = calls;
+            async move {
+                if n == 2 {
+                    Err("dōjō returned 500 for the registration".to_string())
+                } else {
+                    Ok(RegisterResult { mapped: vec![], unmapped: vec![] })
+                }
+            }
+        })
+        .await;
+        assert_eq!(out.unwrap_err(), "dōjō returned 500 for the registration");
+    }
 
     #[test]
     fn an_ingest_result_decodes_and_names_what_was_refused() {

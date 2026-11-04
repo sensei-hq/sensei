@@ -81,8 +81,12 @@ describe('CodeMap', () => {
     const p = port();
     render(p);
     await settle();
-    // One click opens a module (M17).
+    // One click focuses a module (user, 2026-11-03); its files open from the side panel.
     (q('[data-testid="block-p/a"]') as SVGElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle();
+    expect(p.level0).toHaveBeenLastCalledWith('layers', { kind: 'module', id: 'p/a' });
+    expect(p.module).not.toHaveBeenCalled();
+    (q('[data-testid="codemap-open"]') as HTMLButtonElement).click();
     await settle();
     expect(p.module).toHaveBeenCalledWith('p/a');
     expect(q('[data-testid="inspector-title"]')?.textContent).toBe('p/a');
@@ -134,7 +138,7 @@ describe('CodeMap', () => {
     expect(q('[data-testid="coupling-summary"]')?.textContent).toContain('1 pairs change together with no dependency between them · from 40 commits');
   });
 
-  it('the Wheel puts the modules on a ring and opens one on a click', async () => {
+  it('the Wheel puts the modules on a ring and focuses one on a click', async () => {
     const p = port();
     const map = render(p);
     await settle();
@@ -144,7 +148,22 @@ describe('CodeMap', () => {
     expect(q('[data-testid="wheel-band-p/a>p/b"]')).not.toBeNull();
     (q('[data-testid="wheel-node-p/a"]') as SVGElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await settle();
-    expect(p.module).toHaveBeenCalledWith('p/a');
+    expect(p.level0).toHaveBeenLastCalledWith('layers', { kind: 'module', id: 'p/a' });
+    expect([map.focus, map.level, map.lens]).toEqual([{ kind: 'module', id: 'p/a' }, 'modules', 'wheel']);
+  });
+
+  it('picking a module on Hidden coupling focuses it and keeps drawing the lens', async () => {
+    const p = port();
+    const map = render(p);
+    await settle();
+    void map.showLens(p, 'coupling');
+    await settle();
+    const pick = target.querySelector('[data-testid="codemap-coupling"] [aria-label^="Focus"]') as HTMLElement;
+    pick.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle();
+    expect(map.focus?.kind).toBe('module');
+    expect([map.level, q('[data-testid="codemap-coupling"]') !== null]).toEqual(['modules', true]);
+    expect(p.module).not.toHaveBeenCalled();
   });
 
   it('Complexity draws the tree, not the block map, and says what to act on from it', async () => {
@@ -277,5 +296,100 @@ describe('CodeMap', () => {
     render({ ...port(), level0: vi.fn(() => Promise.resolve({ ok: false as const, error: 'Service Unavailable' })) });
     await settle();
     expect(q('[data-testid="codemap-error"]')?.textContent).toContain('Service Unavailable');
+  });
+
+  it('under a focus, Hidden coupling and Complexity draw only what the focus is in', async () => {
+    const p = port();
+    const focusedL0 = { ...L0, focus: { kind: 'module' as const, id: 'p/a', members: ['p/a'], neighbours: ['p/b'] } };
+    p.level0 = vi.fn((_g, f) => ok(f ? focusedL0 : L0));
+    p.cochange = vi.fn(() => ok({ hidden: [{ a: 'p/a', b: 'p/c', together: 7, strength: 0.7 }, { a: 'p/b', b: 'p/c', together: 6, strength: 0.6 }], pairs: 3, commits: 40, minTogether: 5 }));
+    p.complexity = vi.fn(() => ok({
+      total: { functions: 15, complex: 4, maxCyclo: 24, files: 2 }, maintainability: null,
+      modules: [
+        { id: 'p/a', label: 'p/a', kind: 'module' as const, functions: 10, complex: 3, maxCyclo: 24, files: 1, children: [] },
+        { id: 'p/c', label: 'p/c', kind: 'module' as const, functions: 5, complex: 1, maxCyclo: 12, files: 1, children: [] },
+      ],
+    }));
+    const map = render(p);
+    await settle();
+    await map.setFocus(p, { kind: 'module', id: 'p/a' });
+    void map.showLens(p, 'coupling');
+    await settle();
+    expect([...target.querySelectorAll('[data-pair]')].map((e) => e.getAttribute('data-pair'))).toEqual(['p/a|p/c']);
+    void map.showLens(p, 'complexity');
+    await settle();
+    expect(q('[data-testid="complexity-overall"]')?.textContent).toContain('3 of 10 functions');
+  });
+
+  it('a focused module’s panel: its numbers as stat cards, Open files, and Clear focus', async () => {
+    const p = port();
+    const map = render(p);
+    await settle();
+    await map.setFocus(p, { kind: 'module', id: 'p/a' });
+    await settle();
+    const symbols = q('[data-testid="inspector-stat-Symbols"]') as HTMLElement;
+    expect(symbols.matches('[data-stat-card]')).toBe(true);
+    expect(q('[data-testid="codemap-open"]')?.textContent?.trim()).toBe('Open files');
+    (q('[data-testid="codemap-clear-focus"]') as HTMLButtonElement).click();
+    await settle();
+    expect([map.focus, (p.level0 as ReturnType<typeof vi.fn>).mock.lastCall]).toEqual([null, ['layers', null]]);
+    expect(q('[data-testid="codemap-clear-focus"]')).toBeNull();
+  });
+
+  it('a focused segment’s panel describes the group, with Clear focus and no Open files', async () => {
+    const p = port();
+    p.level0 = vi.fn((_g, f) => ok(f ? { ...L0, focus: { kind: 'segment' as const, id: 'L0', members: ['p/a'], neighbours: ['p/b'] } } : L0));
+    const map = render(p);
+    await settle();
+    await map.setFocus(p, { kind: 'segment', id: 'L0' });
+    await settle();
+    expect(q('[data-testid="inspector-title"]')?.textContent).toBe('Layer L0');
+    expect([q('[data-testid="codemap-clear-focus"]') !== null, q('[data-testid="codemap-open"]')]).toEqual([true, null]);
+    expect(q('[data-testid="codemap-takeaways"]')).not.toBeNull();
+  });
+
+  // Review r3 N4(b): the page passes a lens's own failure to the lens.
+  it('a lens whose own read failed shows why with Retry, and Retry reads it again', async () => {
+    const p = port();
+    p.cochange = vi.fn()
+      .mockReturnValueOnce(Promise.resolve({ ok: false as const, error: 'Gateway Timeout' }))
+      .mockReturnValue(ok({ hidden: [], pairs: 0, commits: 3, minTogether: 5 }));
+    const map = render(p);
+    await settle();
+    void map.showLens(p, 'coupling');
+    await settle();
+    const failed = q('[data-testid="codemap-coupling"] [data-testid="lens-failed"]') as HTMLElement;
+    expect(failed.textContent).toContain('Gateway Timeout');
+    ([...failed.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Retry') as HTMLButtonElement).click();
+    await settle();
+    expect(p.cochange).toHaveBeenCalledTimes(2);
+    expect(q('[data-testid="lens-failed"]')).toBeNull();
+  });
+
+  // Review r3 N4(a): on a narrow screen the list stands in for the lens, and says the same.
+  it('on a narrow screen a lens whose read failed shows why with Retry, not an empty list', async () => {
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 400 });
+    vi.stubGlobal('ResizeObserver', class {
+      #cb: ResizeObserverCallback;
+      constructor(cb: ResizeObserverCallback) { this.#cb = cb; }
+      observe(el: Element) { this.#cb([{ target: el, contentRect: { width: 400 } } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver); }
+      unobserve() {}
+      disconnect() {}
+    });
+    try {
+      const p = port();
+      p.cochange = vi.fn(() => Promise.resolve({ ok: false as const, error: 'Gateway Timeout' }));
+      const map = render(p);
+      await settle();
+      void map.showLens(p, 'coupling');
+      await settle();
+      expect(q('[data-testid="codemap-list"]')?.textContent).toContain('Gateway Timeout');
+      expect([...target.querySelectorAll('[data-testid="codemap-list"] button')].some((b) => b.textContent?.trim() === 'Retry')).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      if (width) Object.defineProperty(HTMLElement.prototype, 'clientWidth', width);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+    }
   });
 });

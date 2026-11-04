@@ -106,4 +106,17 @@ describe('inspect', () => {
     expect([i.eyebrow, i.title]).toEqual(['File · test', 'a/tests/x.rs']);
     expect(Object.fromEntries(i.stats.map((s) => [s.label, s.value]))).toEqual({ Symbols: '1', Callers: '9', Callees: '2' });
   });
+
+  // A focused segment (user, 2026-11-03): the panel describes the group as one —
+  // how many modules it holds and borders, their size, how their dependencies
+  // leave it, and its cycles — and what to look at across its modules.
+  it('a focused segment: its modules as one, and what to look at across them', () => {
+    const l0 = { ...L0, focus: { kind: 'segment' as const, id: 'L1', members: ['p/a', 'p/b'], neighbours: ['p/c'] } };
+    const i = inspect({ level: 'modules', l0, l1: null, l2: null, selected: null });
+    expect([i.eyebrow, i.title, i.open]).toEqual(['Segment · layers', 'Layer L1', null]);
+    expect(Object.fromEntries(i.stats.map((s) => [s.label, s.value]))).toEqual({
+      Modules: '2', Neighbours: '1', Symbols: '80', Files: '9', Upward: '1', 'Skip a layer': '1', Cycles: '1',
+    });
+    expect(i.list.map((l) => l.text)).toEqual(['p/a: upward call to p/b', 'p/a: skips a layer to p/c']);
+  });
 });

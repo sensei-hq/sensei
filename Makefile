@@ -371,7 +371,7 @@ app-check:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin
+test-fast: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -387,6 +387,22 @@ test-crates-fast:
 ## rides the pre-commit path — the enforcement a documented exception could not give.
 check-sql-in-layer:
 	@scripts/check-sql-in-layer.py
+
+## D83: a failed read must surface as an error, never a plausible value. A ratchet
+## over failure-mask shapes per (rule, file) — scripts/fabrication-baseline.json may
+## only go down; reviewed non-masks live in scripts/fabrication-allow.tsv. The guard
+## mutation-tests itself first (--test), the way check-leak-guard does. No build and
+## no database, so it rides the pre-commit path; CI calls this same target.
+.PHONY: check-no-fabrication
+# Every relative link in the docs points at a file git tracks (dead links went unnoticed:
+# docs/mockups/ is untracked). Pending fixes are listed in scripts/doc-links-allow.tsv.
+check-doc-links:
+	@python3 scripts/check-doc-links.py --test >/dev/null
+	@python3 scripts/check-doc-links.py
+
+check-no-fabrication:
+	@python3 scripts/check-no-fabrication.py --test >/dev/null || python3 scripts/check-no-fabrication.py --test
+	@python3 scripts/check-no-fabrication.py
 
 check-ddl-grants:
 	@python3 scripts/check-grant-targets.py
@@ -428,6 +444,17 @@ check-tracker-docs:
 check-jira-fields-script:
 	@python3 -I scripts/jira-create-sensei-fields.py --self-test >/dev/null || python3 -I scripts/jira-create-sensei-fields.py --self-test
 
+# app and the dōjō are two bun installs with two lockfiles, so nothing made a
+# dependency they share agree: jsdom ^29 vs ^25, vitest ^4.1.5 vs ^4, and the
+# Libraries screen listed every spread as a version conflict (audit 2026-11-03).
+# One spec per shared name; a deliberate difference goes in
+# scripts/shared-js-specs-allow.tsv. Self-test first, then the tree. Instant and
+# needs no install, so it runs on every commit.
+.PHONY: check-shared-js-specs
+check-shared-js-specs:
+	@python3 scripts/check-shared-js-specs.py --self-test >/dev/null || python3 scripts/check-shared-js-specs.py --self-test
+	@python3 scripts/check-shared-js-specs.py
+
 # The leak guard's own self-test (#213): every rule catches its case and passes
 # the legitimate one, a hit is reported on its own line, and a message or stdin
 # hit exits non-zero. It ran only when someone remembered `--test`.
@@ -435,7 +462,7 @@ check-jira-fields-script:
 check-leak-guard:
 	@bash .githooks/check-no-leaks.sh --test >/dev/null || bash .githooks/check-no-leaks.sh --test
 
-test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard check-tracker-docs check-jira-fields-script test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
+test: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
 
 test-crates:
 	cargo test --workspace

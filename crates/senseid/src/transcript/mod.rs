@@ -187,15 +187,13 @@ pub(crate) fn merge_facts(facts: &mut TurnFacts, v: &serde_json::Value) {
     {
         return;
     }
-    let add = |slot: &mut Option<i64>, n: Option<i64>| {
-        if let Some(n) = n {
-            *slot = Some(slot.unwrap_or(0) + n);
-        }
-    };
-    add(&mut facts.tokens_in, u.get("input_tokens").and_then(|x| x.as_i64()));
-    add(&mut facts.tokens_out, u.get("output_tokens").and_then(|x| x.as_i64()));
-    add(&mut facts.cache_read, u.get("cache_read_input_tokens").and_then(|x| x.as_i64()));
-    add(&mut facts.cache_write, u.get("cache_creation_input_tokens").and_then(|x| x.as_i64()));
+    add_reported(&mut facts.tokens_in, u.get("input_tokens").and_then(|x| x.as_i64()));
+    add_reported(&mut facts.tokens_out, u.get("output_tokens").and_then(|x| x.as_i64()));
+    add_reported(&mut facts.cache_read, u.get("cache_read_input_tokens").and_then(|x| x.as_i64()));
+    add_reported(
+        &mut facts.cache_write,
+        u.get("cache_creation_input_tokens").and_then(|x| x.as_i64()),
+    );
 }
 
 /// Strip bulky prose/content from a record, keep metadata verbatim.
@@ -450,6 +448,21 @@ pub trait TranscriptAdapter: Send + Sync {
     fn parse_file(&self, key: &str) -> Option<ParsedTranscript> {
         let content = self.load_content(key)?;
         Some(self.parse(&content))
+    }
+}
+
+/// Add a reported count to a total that stays unknown until something reports
+/// one (D83): `None` plus nothing is still `None`, never a measured-looking 0.
+/// The one accumulator every transcript adapter uses.
+pub(crate) fn add_reported<T: Copy + std::ops::Add<Output = T>>(
+    slot: &mut Option<T>,
+    n: Option<T>,
+) {
+    if let Some(n) = n {
+        *slot = Some(match *slot {
+            Some(total) => total + n,
+            None => n,
+        });
     }
 }
 

@@ -131,6 +131,28 @@ pub fn is_rejection(status: u16) -> bool {
     matches!(status, 401 | 403)
 }
 
+/// The `error_code` a failure body carried (Supabase's auth errors name one),
+/// read from the JSON after the status — `None` when there is none.
+pub fn error_code_of(error: &str) -> Option<String> {
+    let body = error.strip_prefix("dōjō returned ")?.split_once(": ")?.1;
+    serde_json::from_str::<serde_json::Value>(body).ok()?["error_code"].as_str().map(String::from)
+}
+
+/// Whether a failure says the refresh token is DEAD: a 401/403, or the 400 with
+/// which Supabase answers a refresh token it has no record of (a session from
+/// another dōjō, or one revoked) or one already spent. Any other 400 is a
+/// request the dōjō did not like, and leaves the session alone.
+pub fn is_dead_session(error: &str) -> bool {
+    match status_of(error) {
+        Some(s) if is_rejection(s) => true,
+        Some(400) => matches!(
+            error_code_of(error).as_deref(),
+            Some("refresh_token_not_found" | "refresh_token_already_used")
+        ),
+        _ => false,
+    }
+}
+
 /// Render a failure body without inventing detail.
 fn dojo_error(status: u16, body: &str) -> String {
     let detail = serde_json::from_str::<serde_json::Value>(body)

@@ -6,14 +6,16 @@
 ## Purpose
 
 Billing & Seats is the **business layer**: a hosted Dōjō can be
-subscribed and metered. **Every dōjō gets the free tier** (D20); billing pays for
-what is beyond it — **gating, integrations and consolidated metrics in the dōjō** —
-**per active contributor**. Sensei itself serves the individual; the shared views and
-gates are the dōjō's. **Public repositories and every personal dōjō (private repositories included) are
-free; an organisation's private repositories need a subscription** taken by its admin or owner (D46).
+subscribed and metered. **Every dōjō gets the free tier** (D20). **A solo developer gets
+everything free** on their personal dōjō, blocking targets included (D52). **An
+organisation's public repositories are free**, targets included. **The paid tier is an
+organisation's private repositories** — targets on them, integrations and consolidated
+metrics in the dōjō — taken by its admin or owner, **per active contributor** (D46, D52,
+narrowing D24). Sensei itself serves the individual; the shared views and targets are the
+dōjō's.
 The plan lives only in the dōjō — local sensei works in full on any plan. Read-only members are free;
 GitHub Sponsors is optional support. There is **no separate Enterprise tier** —
-SSO/SCIM, audit retention, SLA become options on the paid org tier. There is no
+SSO/SCIM and the audit trail are free on every dōjō (D59); extended audit retention and an SLA are options on the paid org tier. There is no
 self-hosting (Q14). **Viewers and invited guests are never metered** — only active
 contributors are.
 The job is **meter what matters (active contributors), bill fairly, keep the
@@ -26,19 +28,22 @@ the shared Dōjō, and the free tier isn't a trial.*
 > `/v1/t/[origin]/[org]/billing` (admin-only: the account plus live per-seat usage;
 > POST refreshes the cached seat count), and the org's **Plan & billing** section at
 > `/org/[slug]/billing`, which reads that route. **Not built:** a payment provider,
-> invoices, plan changes. The mockup `dojo-billing.jsx` uses hardcoded example data.
+> invoices, plan changes. **There is no payment provider yet**: none is chosen and none is
+> in the code, so nothing below that mentions invoices or payment exists. The mockup
+> `dojo-billing.jsx` uses hardcoded example data.
 > The website has a live GitHub Sponsors link. The free tier intent exists but
 > the website says "free during preview" (not the final "free forever" claim).
 
 ## In scope / out of scope
 
-- In: the three tiers (Free public repositories · Paid private repositories · GitHub
-  Sponsors support); **active contributor metering** (definition, detection,
+- In: the three tiers (Free: a solo developer's personal dōjō and every public
+  repository · Paid: an organisation's private repositories · GitHub Sponsors support,
+  D52); **active contributor metering** (definition, detection,
   invoicing); plan selection in the organisation's Plan & billing (a dōjō arrives from a git
   integration on the free tier — D20); **Settings › Plan & billing for every
   organisation**, reading Free until a subscription exists (a personal dōjō has nothing
-  to buy — D46) — `/org/[slug]/billing` (admin surface); the **no-Enterprise decision** (fold
-  SSO/SCIM, audit retention, SLA into paid org options).
+  to buy — D46) — `/org/[slug]/billing` (admin surface); the **no-Enterprise decision** (SSO/SCIM and audit
+  free, D59; extended audit retention and SLA are paid org options).
 - Out: the federation backbone (T1), role consoles (T2), workspace planning (T3),
   the marketing website claims (P2).
 
@@ -70,6 +75,9 @@ the shared Dōjō, and the free tier isn't a trial.*
 - **Lead.** **The plan lives only in the dōjō.** Local sensei (app, daemon, CLI, MCP)
   works in full on any plan; a subscription is needed only for sync and the dōjō's
   benefits (D46).
+- **Lead.** **What the paid tier buys** (D52): targets on an organisation's private
+  repositories, integrations, and consolidated metrics in the dōjō. An org's public
+  repositories get targets free; a personal dōjō gets everything free.
 - **Lead.** **Paid = per active contributor.** Read-only members are free.
   "Active contributor" = a user who authored a commit/push/contribution in the
   billing window (exact definition TBD — gap).
@@ -83,14 +91,14 @@ the shared Dōjō, and the free tier isn't a trial.*
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Plan badge | Free / Paid / Sponsor | `Paid · 12 active contributors` |
-| Active contributor count | users who contributed in the window | `12 / 15 seats used` |
-| Billing window | monthly / annual | `Monthly · renews 2026-11-13` |
-| Invoice list | past invoices with status | `INV-2026-10 · $240 · paid` |
-| Payment method | card / invoice / sponsored | `Card ending ·••• 4242` |
-| Usage history | contributor count over time | chart: 8 → 12 → 11 → 12 |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Plan badge | Free / Paid / Sponsor | `Paid · 12 active contributors` | Free on an org → subscribe to sync its private repositories (D46, D52) |
+| Active contributor count | users who contributed in the window | `12 / 15 seats used` | near the included seats → expect a higher bill, or review who is active |
+| Billing window | monthly / annual | `Monthly · renews 2026-11-13` | none — candidate to cut |
+| Invoice list | past invoices with status | `INV-2026-10 · $240 · paid` | none — candidate to cut until a payment provider exists |
+| Payment method | card / invoice / sponsored | `Card ending ·••• 4242` | none — candidate to cut until a payment provider exists |
+| Usage history | contributor count over time | chart: 8 → 12 → 11 → 12 | none — candidate to cut |
 
 ## Done gate
 
@@ -98,8 +106,8 @@ the shared Dōjō, and the free tier isn't a trial.*
   the billing page, and the plan is recorded on the tenant.
 - The billing portal (`/org/[slug]/billing`) shows the current plan, active
   contributor count, invoices, and payment method (admin only).
-- Active contributors are metered correctly (definition implemented); invoices
-  are generated and paid via the payment processor.
+- Active contributors are metered correctly (definition implemented); once a payment
+  provider is chosen (none yet), invoices are generated and paid through it.
 - Downgrade/upgrade works; the free tier is truly free for public repositories.
 - An organisation's private repositories stay hidden until its admin or owner
   subscribes; a personal dōjō syncs its private repositories free (D46).

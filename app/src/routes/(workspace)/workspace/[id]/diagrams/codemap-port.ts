@@ -1,12 +1,12 @@
 // The app's Code map port: the daemon's codemap endpoints for one workspace,
 // each failure carried as its reason (#288).
 import { failureReason, type ApiResult, type ComplexityWire } from '$lib/api.js';
-import type { CoChange, CodeMapPort, GroupBy, Level0, Level1, Level2, Read, Zones } from '@sensei/codemap';
+import type { CoChange, CodeMapPort, Focus, GroupBy, Level0, Level1, Level2, Read, Zones } from '@sensei/codemap';
 import { formatPerKloc, metricGrade } from '$lib/metrics/metric-view.js';
 
 
 export interface CodemapApi {
-  tryGetCodemap: (id: string, groupBy: GroupBy) => Promise<ApiResult<Level0>>;
+  tryGetCodemap: (id: string, groupBy: GroupBy, focus: Focus | null) => Promise<ApiResult<Level0>>;
   tryGetCodemapModule: (id: string, module: string) => Promise<ApiResult<Level1>>;
   tryGetCodemapFile: (id: string, file: string) => Promise<ApiResult<Level2>>;
   tryGetZones: (id: string) => Promise<ApiResult<Zones>>;
@@ -21,7 +21,7 @@ const read = async <T>(r: Promise<ApiResult<T>>): Promise<Read<T>> => {
 
 export function codemapPort(api: CodemapApi, workspaceId: () => string): CodeMapPort {
   return {
-    level0: (groupBy) => read(api.tryGetCodemap(workspaceId(), groupBy)),
+    level0: (groupBy, focus) => read(api.tryGetCodemap(workspaceId(), groupBy, focus)),
     module: (id) => read(api.tryGetCodemapModule(workspaceId(), id)),
     file: (id) => read(api.tryGetCodemapFile(workspaceId(), id)),
     zones: () => read(api.tryGetZones(workspaceId())),

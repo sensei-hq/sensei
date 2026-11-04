@@ -19,39 +19,39 @@ sections, the **Diagrams** list opens the Code map (M17) and Database · ER.
 > **Status honesty.** Overview, Sessions, Memories, Traceability, Libraries,
 > Instruments, Patterns, Impact and About are built. The Diagrams list is built
 > (2026-10-29): the sidebar's Diagrams subsection carries the eight entries, each with
-> its mark and hint (`diagrams-nav.ts`). The **solution-track
-> roll-up** is mock-only (C-7), and the **Tasks** section is unbuilt pending planner
-> persistence (C-1 → M20). The screen specs cite `app/src/routes/project/[id]/…`,
-> but the real routes live in the `(project)` route group
-> (`app/src/routes/(project)/project/[id]/…`) — a doc drift to fix as legacy specs fold.
+> its mark and hint (`diagrams-nav.ts`). The **workspace roll-up across
+> its repositories** (formerly "solution track") is mock-only (C-7), and the **Tasks** section is unbuilt pending planner
+> persistence (C-1 → M20). The routes live in the `(workspace)` route group
+> (`app/src/routes/(workspace)/workspace/[id]/…`, D12/D30); older screen specs that cite
+> `project/[id]` are drift to fix as they fold.
 
 ## In scope / out of scope
 
-- In: the per-workspace panes and their shell (`ProjectSidebar`); the Overview
-  assembler (`GET /api/projects/{id}/overview`) — hero top-recommendation + FTR chip +
+- In: the per-workspace panes and their shell (`WorkspaceSidebar`); the Overview
+  assembler (`GET /api/workspaces/{id}/overview`) — hero top-recommendation + FTR chip +
   memories / doc-drift / sessions stats + recent sessions; per-section endpoints;
-  multi-repo membership via `sensei.folder_projects` + `folder_role` labels; the intake
+  multi-repo membership via `sensei.folder_workspaces` + `folder_role` labels; the intake
   front door (lifecycle × intent × risk → playbook recommend-and-confirm); the memories
   promotion / generalise lane; and Dōjō binding from About (opt-in).
-- Out: the portfolio / multi-workspace view (M15 Observatory); the solution-track
-  roll-up (mock-only, C-7); planner persistence and the Tasks tab (C-1 → M20); the
+- Out: the portfolio / multi-workspace view (M15 Observatory); the workspace roll-up
+  across repositories (mock-only, C-7); planner persistence and the Tasks tab (C-1 → M20); the
   Code map itself (M17) and the instruments tabs (M18) — this window mounts them.
 
 ## Surfaces
 
-- **API** — `/api/projects/{id}/overview` · `/drift` · `/drift/scan` · `/patterns` ·
+- **API** — `/api/workspaces/{id}/overview` · `/drift` · `/drift/scan` · `/patterns` ·
   `/libraries` · `/instruments` · `/mcp-tool-stats` · `/memories` · `/impact` ·
-  `/sessions` · `/ftr` · `/icon` · `/health`; `/api/patterns/{project}`.
+  `/sessions` · `/ftr` · `/icon` · `/health`; `/api/patterns/{workspace}`.
   **No `/api/dojo-binding` endpoint** (gap `G-DOJO-AUDIT`).
-- **App** — `app/src/routes/(project)/project/[id]/{overview,sessions,memories,
-  traceability,libraries,instruments,patterns,impact,about,atlas}/+page.svelte` and
-  `diagrams/`; shell `ProjectSidebar.svelte` (sections in `project-sidebar-view.ts`,
+- **App** — `app/src/routes/(workspace)/workspace/[id]/{intake,overview,metrics,sessions,
+  memories,traceability,libraries,instruments,patterns,impact,tickets,integrations,about}/+page.svelte`
+  and `diagrams/`; shell `WorkspaceSidebar.svelte` (sections in `workspace-sidebar-view.ts`,
   diagram entries in `diagrams/diagrams-nav.ts`).
-- **Data** — `sensei.projects`, `sensei.project_ftr_metrics` (view `project_metrics`),
-  `sensei.memories`, `sensei.project_drift` (view), `inference.drift_items`,
+- **Data** — `sensei.workspaces`, `sensei.project_ftr_metrics` (view `project_metrics`),
+  `sensei.memories`, `sensei.workspace_drift` (view), `inference.drift_items`,
   `inference.recommendations`, `activity.sessions`, `sensei.project_libraries`,
-  `sensei.libraries`, `sensei.project_dependencies`, **`project_patterns` (view —
-  the table `sensei.promoted_patterns` does not exist)**, `sensei.folder_projects`.
+  `sensei.libraries`, `sensei.project_dependencies`, **`workspace_patterns` (view —
+  the table `sensei.promoted_patterns` does not exist)**, `sensei.folder_workspaces` (view).
   **No `sensei.rules` table** — rules are `memories` rows with `namespace_id` +
   `enforcement` + `origin`.
 
@@ -87,10 +87,10 @@ tables, columns and keys are not the call graph.
   `sensei.project_ftr_metrics.ftr_14d` — the same view as the workspaces index; two
   derivations must never disagree.
 - **Lead.** Memories exclude archived. The section reads
-  `WHERE project_id = $id AND status != 'archived'`.
+  `WHERE workspace_id = $id AND status != 'archived'`.
 - **Lead.** Never merge silently. A multi-repo auto-suggestion shows a *"combine with
   {other-workspace}?"* banner; it never presents a merged view without consent.
-- **Lead.** `goal`, not `vision`. `project.goal ← sensei.projects.goal`; the column
+- **Lead.** `goal`, not `vision`. `workspace.goal ← sensei.workspaces.goal`; the column
   already exists — no rename.
 - **Lead.** The icon is read from jsonb. `icon->>'value'` where `icon->>'kind'='kanji'`,
   else `DEFAULT_KANJI = "場"`.
@@ -100,20 +100,20 @@ tables, columns and keys are not the call graph.
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Kanji + eyebrow | workspace identity | `全 · Project · Acme · 3 repos` |
-| FTR · 14d | rolling first-try rate | `FTR · 14d 72%` |
-| Hero headline/body | top recommendation via narration-cache, or all-quiet | `top_recommendation.title` / `"Sensei is observing…"` |
-| Sessions · 7d | sessions + corrected sub-count | `12 · 3 corrected` |
-| Memories | active / ready-share / to-merge | `24 · 5 to share · 2 to merge` |
-| Doc drift | open of referenced docs (warn tone) | `3 of 41 referenced docs` |
-| Recent rows | per-session FTR + folder role | `s-2891 · frontend · 42m · first-try right` |
-| Impact trend | FTR annotated per apply event | markers at `applied_at` |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Kanji + eyebrow | workspace identity | `全 · Workspace · Acme · 3 repos` | none — candidate to cut (identity) |
+| FTR · 14d | rolling first-try rate | `FTR · 14d 72%` | low → open Sessions and read the corrected ones |
+| Hero headline/body | top recommendation via narration-cache, or all-quiet | `top_recommendation.title` / `"Sensei is observing…"` | Apply, Review or Dismiss the top recommendation, or send it to the assistant |
+| Sessions · 7d | sessions + corrected sub-count | `12 · 3 corrected` | open the corrected sessions |
+| Memories | active / ready-share / to-merge | `24 · 5 to share · 2 to merge` | share the ready memories; merge the duplicates |
+| Doc drift | open of referenced docs (warn tone) | `3 of 41 referenced docs` | open Traceability and fix the drifted docs |
+| Recent rows | per-session FTR + folder role | `s-2891 · frontend · 42m · first-try right` | open a session's replay |
+| Impact trend | FTR annotated per apply event | markers at `applied_at` | open Impact to see which applied change moved FTR |
 
 ## Done gate
 
-- `/project/{id}/overview` renders header, hero, stats and the recent list on live data,
+- `/workspace/{id}/overview` renders header, hero, stats and the recent list on live data,
   with no placeholders.
 - The FTR chip equals the workspaces-index card FTR exactly.
 - Hero copy comes from the narration-cache, with a static fallback when quiet.
@@ -124,7 +124,7 @@ tables, columns and keys are not the call graph.
   hint; no mark repeats anywhere in the sidebar.
 
 ```bash
-curl -s http://localhost:7744/api/projects/$ID/overview \
+curl -s http://localhost:7744/api/workspaces/$ID/overview \
   | jq '{ftr: .ftr14d, hero: .top_recommendation.title, drift: .drift_open}'
 ```
 
@@ -149,7 +149,7 @@ curl -s http://localhost:7744/api/projects/$ID/overview \
 
 ## Open gaps
 
-- [C-7](../../../../reorg.md) — solution-track roll-up is mock-only → M16.
+- [C-7](../../../../reorg.md) — workspace roll-up across repositories is mock-only → M16.
 - [G8](../../../../reorg.md) — net-new surfaces; residual → M15/M16.
 - [C-1](../../../../reorg.md) — planner DB persistence + Tasks-tab wiring (v0
   stateless) → M20 — the workspace-window Tasks section stays unbuilt.
@@ -157,8 +157,9 @@ curl -s http://localhost:7744/api/projects/$ID/overview \
   it touches this window's Impact pane.
 - **Section kanji** — the app's `SECTIONS` use other kanji than this spec (Libraries
   is 蔵, not 庫).
-- **Doc drift** — every screen spec cites `app/src/routes/project/[id]/…` without the
-  `(project)` route group; fix as the legacy specs fold.
+- **Doc drift** — the `spec/screen/project-*` specs cite `app/src/routes/project/[id]/…`;
+  the real routes are `app/src/routes/(workspace)/workspace/[id]/…` (D12). Fix as the
+  legacy specs fold.
 
 ## Related
 
@@ -173,6 +174,6 @@ curl -s http://localhost:7744/api/projects/$ID/overview \
   workspace-overview / memories / about / sessions / shell drift rows.
 - [architecture/app](../../../../architecture/app.md) · [design/mockup-brief](../../../../design/mockup-brief.md).
 - [prd/02-objectives.md §04](../../../02-objectives.md) · [prd/01-vision.md](../../../01-vision.md#the-core-loop).
-- Crates: `crates/senseid/src/{project_overview.rs, api/handlers/project_detail.rs,
-  api/handlers/knowledge.rs, api/handlers/codebase.rs, db/pg_store/project.rs,
+- Crates: `crates/senseid/src/{workspace_overview.rs, api/handlers/workspace_detail.rs,
+  api/handlers/knowledge.rs, api/handlers/codebase.rs, db/pg_store/workspaces.rs,
   db/pg_store/graph.rs}`.
