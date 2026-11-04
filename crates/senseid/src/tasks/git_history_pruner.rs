@@ -66,8 +66,10 @@ pub fn spawn(pg: Arc<PgStore>) {
 
 /// One prune pass. Non-fatal: a failure is logged and retried next tick.
 pub async fn prune_once(pg: &PgStore) -> Result<(), String> {
-    let configured = pg.get_config(RETENTION_KEY).await.ok().flatten();
-    let days = effective_retention_days(configured);
+    let days = crate::tasks::retention::setting(
+        pg.get_config(RETENTION_KEY).await,
+        effective_retention_days,
+    )?;
     let removed = pg.prune_commits_older_than(days).await?;
     if removed > 0 {
         tracing::info!(
@@ -87,7 +89,6 @@ mod tests {
     /// the prune, and a commit past every window stays. The second half proves
     /// the commit is in the prune's reach once the read works.
     #[tokio::test]
-    #[ignore = "pending: D83 batch A"]
     async fn a_failed_retention_read_stops_the_prune_and_deletes_nothing() {
         let pg = PgStore::test_store().await;
         let pid = pg

@@ -6,10 +6,8 @@ describe('toPreferencesForm', () => {
     expect(toPreferencesForm({})).toEqual(DEFAULT_PREFERENCES);
   });
 
-  // Asserts the D83 mask (audit row 73): D83 batch A phase B flips it — corrupt
-  // JSON is an error, pinned on readPreferences in settings-reads.spec.ts.
-  it('falls back to defaults on corrupt JSON so the page never fails to render', () => {
-    expect(toPreferencesForm({ 'setup.preferences': '{not json' })).toEqual(DEFAULT_PREFERENCES);
+  it('throws on corrupt JSON — never the defaults a save would write back (D83 row 73)', () => {
+    expect(() => toPreferencesForm({ 'setup.preferences': '{not json' })).toThrow();
   });
 
   it('merges partial JSON on top of the defaults (a missing key stays default)', () => {

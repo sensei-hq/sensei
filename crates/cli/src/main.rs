@@ -457,32 +457,35 @@ fn is_user_scope_configured() -> bool {
 
 /// Mark user scope as configured.
 fn mark_user_scope_configured() {
-    let sensei_dir = cfg().sensei_dir();
-    let mut local = SenseiLocalConfig::load(&sensei_dir);
-    local.user_scope_configured = true;
-    if let Err(e) = local.save(&sensei_dir) {
+    if let Err(e) =
+        SenseiLocalConfig::update(&cfg().sensei_dir(), |c| c.user_scope_configured = true)
+    {
         eprintln!("Warning: failed to write sensei config: {e}");
     }
 }
 
 /// Add sensei's server to a project's `.mcp.json`, keeping every other server
-/// (D83 batch A, audit rows 17-19). Pending (phase B): today's behaviour reads
-/// an unreadable or unparsable file as empty and writes it back.
+/// (D83 batch A, audit rows 17-19). A file that cannot be read or parsed, or is
+/// not the object `.mcp.json` must be, is refused and left as it is.
 fn upsert_mcp_json(mcp_file: &std::path::Path) -> Result<(), String> {
-    let mut mcp_config: serde_json::Value = mcp_file
-        .exists()
-        .then(|| fs::read_to_string(mcp_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({"mcpServers": {}}));
-    mcp_config
+    let existing = sensei_bootstrap::config::read_existing(mcp_file)
+        .map_err(|e| format!("read {}: {e}", mcp_file.display()))?;
+    let mut mcp_config: serde_json::Value = match existing {
+        None => serde_json::json!({}),
+        Some(s) => {
+            serde_json::from_str(&s).map_err(|e| format!("parse {}: {e}", mcp_file.display()))?
+        }
+    };
+    let servers = mcp_config
         .as_object_mut()
-        .and_then(|o| o.entry("mcpServers").or_insert(serde_json::json!({})).as_object_mut())
-        .map(|servers| {
-            servers.insert(MCP_REGISTRY_KEY.into(), serde_json::json!({"command": SENSEI_MCP_BIN}))
-        });
-    fs::write(mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap())
-        .map_err(|e| e.to_string())
+        .ok_or_else(|| format!("{} is not a JSON object", mcp_file.display()))?
+        .entry("mcpServers")
+        .or_insert(serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| format!("{}: mcpServers is not an object", mcp_file.display()))?;
+    servers.insert(MCP_REGISTRY_KEY.into(), serde_json::json!({"command": SENSEI_MCP_BIN}));
+    let json = serde_json::to_string_pretty(&mcp_config).map_err(|e| e.to_string())?;
+    fs::write(mcp_file, json).map_err(|e| e.to_string())
 }
 
 // ── Init ────────────────────────────────────────────────────────────────────
@@ -1409,7 +1412,6 @@ mod tests {
     // ── D83 batch A: .mcp.json is never rewritten from a failed read ─────────
 
     #[test]
-    #[ignore = "pending: D83 batch A"]
     fn a_corrupt_mcp_json_is_refused_and_left_as_it_is() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".mcp.json");
@@ -1424,7 +1426,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending: D83 batch A"]
     fn an_unreadable_mcp_json_is_refused_and_left_as_it_is() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".mcp.json");
@@ -1437,7 +1438,6 @@ mod tests {
     /// Valid JSON of the wrong shape: today nothing is inserted, the file is
     /// written back, and `init` says `[ok]`.
     #[test]
-    #[ignore = "pending: D83 batch A"]
     fn an_mcp_json_that_is_not_an_object_is_refused_and_left_as_it_is() {
         let dir = tempfile::tempdir().unwrap();
         for body in ["[]", r#"{ "mcpServers": [] }"#] {

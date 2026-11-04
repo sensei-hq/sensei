@@ -16,7 +16,7 @@ describe('readPreferences', () => {
   });
   // D83 batch A, audit row 73: corrupt stored preferences read as the defaults,
   // and the page's auto-save wrote them over the real values.
-  it.skip('pending: D83 batch A — corrupt stored preferences are an error naming them, and no form', async () => {
+  it('corrupt stored preferences are an error naming them, and no form (D83 batch A)', async () => {
     const d = await readPreferences({ tryGetConfig: async () => ok({ 'setup.preferences': '{not json' }) });
     expect(d.prefs).toBeNull();
     expect(d.error).toMatch(/stored preferences/i);

@@ -70,7 +70,7 @@ pub enum Change {
 pub fn write_directive(path: &Path) -> std::io::Result<Change> {
     // `path` is program-derived (init: `current_dir().join("CLAUDE.md")`), never untrusted
     // or HTTP input — the Actix web path-traversal rule is a false positive in this CLI crate.
-    let existing = fs::read_to_string(path).ok(); // nosemgrep
+    let existing = sensei_bootstrap::config::read_existing(path)?; // nosemgrep
     let block = directive_block();
     if let Some(text) = existing.as_deref()
         && text.contains(&block)
@@ -89,7 +89,6 @@ mod tests {
     /// D83 batch A, audit row 25: a CLAUDE.md that exists but cannot be read (here,
     /// not UTF-8) was treated as absent and overwritten with the managed block only.
     #[test]
-    #[ignore = "pending: D83 batch A"]
     fn an_unreadable_claude_md_is_refused_and_left_as_it_is() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("CLAUDE.md");

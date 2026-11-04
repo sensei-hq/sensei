@@ -23,7 +23,12 @@ export async function readPreferences(
 ): Promise<{ prefs: PreferencesData | null; error: string | null; prefilled: boolean }> {
   const { data, error } = readOutcome(await api.tryGetConfig());
   if (!data) return { prefs: null, error, prefilled: false };
-  const prefs = toPreferencesForm(data);
+  let prefs: PreferencesData;
+  try {
+    prefs = toPreferencesForm(data);
+  } catch (e) {
+    return { prefs: null, error: `The stored preferences cannot be read: ${(e as Error).message}`, prefilled: false };
+  }
   if (prefs.displayName.trim()) return { prefs, error, prefilled: false };
   const name = (await guess()).trim();
   return name ? { prefs: { ...prefs, displayName: name }, error, prefilled: true } : { prefs, error, prefilled: false };

@@ -23,6 +23,7 @@
 use std::sync::Arc;
 
 use crate::db::pg_store::PgStore;
+use crate::tasks::retention::setting;
 use crate::tasks::ticker;
 
 /// Prune daily by default.
@@ -93,14 +94,16 @@ async fn run(pg: Arc<PgStore>) {
 /// only WHEN it happens.
 ///
 /// Every config value is re-read per pass, so a retention change takes effect
-/// without a restart. Individual failures are logged and swallowed — a
-/// task-execution rollup failure must not stop the activity prune that follows
+/// without a restart. A setting that cannot be read stops the pass before it
+/// deletes anything (D83 batch A). After that, a task-execution rollup failure
+/// is logged and swallowed — it must not stop the activity prune that follows
 /// it — and the pass reports Err only if the main prune failed, which is what
 /// the schedule row records.
 async fn prune_once(pg: &PgStore) -> Result<(), String> {
-    let days = parse_retention(pg.get_config("activity.retention_days").await.ok().flatten());
-    let backstop =
-        parse_backstop(pg.get_config("activity.capture_backstop_days").await.ok().flatten(), days);
+    let days = setting(pg.get_config("activity.retention_days").await, parse_retention)?;
+    let backstop = setting(pg.get_config("activity.capture_backstop_days").await, |v| {
+        parse_backstop(v, days)
+    })?;
 
     // Task-execution history rides the same pass rather than getting its own
     // pruner: it is the same concern (reclaim captured activity) on the same
@@ -112,14 +115,13 @@ async fn prune_once(pg: &PgStore) -> Result<(), String> {
     // collapses into a daily count once it succeeds. Failures keep their own,
     // longer window — the error message is the whole point of the log, and they
     // are ~0.7% of rows.
-    let exec_days = parse_positive(
-        pg.get_config("tasks.execution_retention_days").await.ok().flatten(),
-        DEFAULT_EXECUTION_RETENTION_DAYS,
-    );
-    let exec_failed_days = parse_positive(
-        pg.get_config("tasks.execution_failed_retention_days").await.ok().flatten(),
-        DEFAULT_EXECUTION_FAILED_RETENTION_DAYS,
-    );
+    let exec_days = setting(pg.get_config("tasks.execution_retention_days").await, |v| {
+        parse_positive(v, DEFAULT_EXECUTION_RETENTION_DAYS)
+    })?;
+    let exec_failed_days =
+        setting(pg.get_config("tasks.execution_failed_retention_days").await, |v| {
+            parse_positive(v, DEFAULT_EXECUTION_FAILED_RETENTION_DAYS)
+        })?;
     match pg.rollup_and_prune_task_executions(exec_days, exec_failed_days).await {
         Ok((rolled, pruned)) if pruned > 0 => tracing::info!(
             rolled,
@@ -169,7 +171,6 @@ mod tests {
     /// read stops the pass, and a session past every window stays. The second
     /// half proves the session is in the pass's reach once the read works.
     #[tokio::test]
-    #[ignore = "pending: D83 batch A"]
     async fn a_failed_retention_read_stops_the_pass_and_deletes_nothing() {
         let pg = PgStore::test_store().await;
         let uniq = uuid::Uuid::new_v4();

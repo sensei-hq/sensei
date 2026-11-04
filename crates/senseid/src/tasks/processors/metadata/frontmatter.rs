@@ -134,22 +134,29 @@ pub fn slugify(s: &str) -> String {
 
 /// Split a markdown document into its leading YAML frontmatter mapping (empty
 /// if none) and the body that follows. Tolerates BOM and CRLF. Used by
-/// [`merge_frontmatter`] so unmanaged keys + the body survive a write-back.
-fn split_frontmatter(content: &str) -> (serde_yaml::Mapping, String) {
+/// [`merge_frontmatter`] so unmanaged keys + the body survive a write-back — so a
+/// block that is not a YAML mapping is an error, never an empty map whose
+/// write-back would drop every key the user had (D83 batch A, rows 61-62).
+fn split_frontmatter(content: &str) -> Result<(serde_yaml::Mapping, String), String> {
     let c = content.strip_prefix('\u{feff}').unwrap_or(content).replace("\r\n", "\n");
+    let mapping = |yaml: &str| {
+        if yaml.trim().is_empty() {
+            return Ok(serde_yaml::Mapping::new());
+        }
+        serde_yaml::from_str::<serde_yaml::Mapping>(yaml)
+            .map_err(|e| format!("frontmatter is not a YAML mapping: {e}"))
+    };
     if let Some(rest) = c.strip_prefix("---\n") {
         // Closing fence is a line that is exactly `---`: match `\n---\n` (body
         // follows) or `\n---` at end of file.
         if let Some(idx) = rest.find("\n---\n") {
-            let map = serde_yaml::from_str::<serde_yaml::Mapping>(&rest[..idx]).unwrap_or_default();
-            return (map, rest[idx + 5..].to_string());
+            return Ok((mapping(&rest[..idx])?, rest[idx + 5..].to_string()));
         }
         if let Some(stripped) = rest.strip_suffix("\n---") {
-            let map = serde_yaml::from_str::<serde_yaml::Mapping>(stripped).unwrap_or_default();
-            return (map, String::new());
+            return Ok((mapping(stripped)?, String::new()));
         }
     }
-    (serde_yaml::Mapping::new(), c)
+    Ok((serde_yaml::Mapping::new(), c))
 }
 
 /// Merge sensei's managed identity fields (organization, client, workspace,
@@ -158,13 +165,14 @@ fn split_frontmatter(content: &str) -> (serde_yaml::Mapping, String) {
 /// writing a `# sensei:frontmatter` marker as the first line of the block. Only
 /// fields that are `Some`/non-empty are written (a cleared field is left as-is
 /// rather than emitting an empty value). Pure — returns the full new README
-/// content.
-pub fn merge_frontmatter(existing: &str, fm: &Frontmatter) -> String {
+/// content, or why the existing frontmatter cannot be merged into. Private to
+/// `metadata`: writers go through [`write_frontmatter`], which reads first.
+pub(super) fn merge_frontmatter(existing: &str, fm: &Frontmatter) -> Result<String, String> {
     use serde_yaml::Value;
     // A README still on `project:` is migrated first, so the old key cannot
     // linger beside the `workspace:` this writes.
     let migrated = migrate_workspace_key(existing);
-    let (mut map, body) = split_frontmatter(migrated.as_deref().unwrap_or(existing));
+    let (mut map, body) = split_frontmatter(migrated.as_deref().unwrap_or(existing))?;
 
     let mut set = |key: &str, val: &Option<String>| {
         if let Some(v) = val.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -184,20 +192,20 @@ pub fn merge_frontmatter(existing: &str, fm: &Frontmatter) -> String {
         map.insert(Value::from("stack"), Value::Sequence(seq));
     }
 
-    let yaml = serde_yaml::to_string(&map).unwrap_or_default();
+    let yaml = serde_yaml::to_string(&map).map_err(|e| format!("frontmatter: {e}"))?;
     // serde_yaml emits a trailing newline after the mapping; the body carries its own.
-    format!("---\n# sensei:frontmatter\n{yaml}---\n{body}")
+    Ok(format!("---\n# sensei:frontmatter\n{yaml}---\n{body}"))
 }
 
 /// Merge `fm` into the README at `readme` and write it back (D83 batch A, audit
 /// rows 44, 61-62): a README that exists but cannot be read, or whose frontmatter
 /// is not valid YAML, is refused and left as it is — never rewritten without the
-/// user's content. Pending (phase B): malformed frontmatter is still merged over.
-#[allow(dead_code)] // used by the workspace handler in D83 batch A phase B
+/// user's content. A README that does not exist is created.
 pub fn write_frontmatter(readme: &Path, fm: &Frontmatter) -> Result<(), String> {
-    let existing =
-        std::fs::read_to_string(readme).map_err(|e| format!("read {}: {e}", readme.display()))?;
-    let merged = merge_frontmatter(&existing, fm);
+    let existing = sensei_bootstrap::config::read_existing(readme)
+        .map_err(|e| format!("read {}: {e}", readme.display()))?;
+    let merged = merge_frontmatter(existing.as_deref().unwrap_or(""), fm)
+        .map_err(|e| format!("{}: {e}", readme.display()))?;
     std::fs::write(readme, merged).map_err(|e| format!("write {}: {e}", readme.display()))
 }
 
@@ -285,7 +293,6 @@ mod tests {
     /// D83 batch A, rows 61-62: malformed frontmatter YAML read as an empty map,
     /// and the write-back dropped every key the user had.
     #[test]
-    #[ignore = "pending: D83 batch A"]
     fn a_readme_with_malformed_frontmatter_is_refused_and_left_as_it_is() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("README.md");
@@ -310,13 +317,12 @@ mod tests {
     /// The handler's create path (review F2): a repository with no README gets
     /// one — the frontmatter and an empty body. Absent is not a failed read.
     #[test]
-    #[ignore = "pending: D83 batch A"]
     fn a_missing_readme_is_created_with_the_frontmatter() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("README.md");
         let fm = fm_workspace("sensei");
         write_frontmatter(&path, &fm).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), merge_frontmatter("", &fm));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), merge_frontmatter("", &fm).unwrap());
     }
 
     #[test]
@@ -408,7 +414,7 @@ mod tests {
             stack: vec!["rust".into(), "svelte".into()],
             ..Default::default()
         };
-        let out = merge_frontmatter("# Title\n\nBody text.\n", &fm);
+        let out = merge_frontmatter("# Title\n\nBody text.\n", &fm).unwrap();
         assert!(out.starts_with("---\n# sensei:frontmatter\n"), "marker comment first");
         assert!(out.contains("workspace: sensei"));
         assert!(out.contains("role: monorepo"));
@@ -423,7 +429,7 @@ mod tests {
     fn merge_preserves_unmanaged_keys_and_body_and_overwrites_managed() {
         let existing = "---\nworkspace: oldname\ncustom_key: keep-me\n---\n# Heading\n\nProse.\n";
         let fm = Frontmatter { workspace: Some("newname".into()), ..Default::default() };
-        let out = merge_frontmatter(existing, &fm);
+        let out = merge_frontmatter(existing, &fm).unwrap();
         let parsed = parse_frontmatter(&out).unwrap();
         assert_eq!(parsed.workspace.as_deref(), Some("newname"), "managed key overwritten");
         assert!(out.contains("custom_key: keep-me"), "unmanaged key preserved");
@@ -434,7 +440,7 @@ mod tests {
     #[test]
     fn merge_skips_empty_fields() {
         // An all-empty frontmatter should not emit blank keys, just the marker.
-        let out = merge_frontmatter("body only\n", &Frontmatter::default());
+        let out = merge_frontmatter("body only\n", &Frontmatter::default()).unwrap();
         assert!(!out.contains("workspace:"));
         assert!(out.contains("# sensei:frontmatter"));
         assert!(out.ends_with("body only\n"));
@@ -500,7 +506,7 @@ mod tests {
     #[test]
     fn the_writer_writes_workspace_over_a_readme_still_on_project() {
         let fm = Frontmatter { workspace: Some("New".into()), ..Default::default() };
-        let out = merge_frontmatter("---\nproject: Old\n---\nbody\n", &fm);
+        let out = merge_frontmatter("---\nproject: Old\n---\nbody\n", &fm).unwrap();
         assert!(out.contains("workspace: New"), "{out}");
         assert!(!out.contains("project:"), "the old key does not linger beside the new: {out}");
     }
