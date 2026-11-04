@@ -742,7 +742,7 @@ pub fn handle_list_tools() -> Value {
             ], &[
                 ("task", "string", "Optional task description; a sensitive/destructive task escalates an otherwise-low change."),
             ]),
-            tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization — the dōjō — / workspace / repository, where detected stacks' packs apply) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey.", &[], &[]),
+            tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization — the dōjō — / workspace / repository, where detected stacks' packs apply) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey. The response carries a `dojo_rules` marker (`not_bound` | `ok` with a count | `unavailable` with a reason) plus `rules_incomplete`, so a failed Dōjō pull reads as unavailable, never as no remote rules.", &[], &[]),
             tool("get_commands", "List the discoverable commands for this workspace — the actual `test` / `build` / `lint` / `e2e` invocations, derived from each folder's manifest (package.json scripts, etc.). Call when you need to know how to run tests, build, or lint here without guessing. Optionally filter by canonical category verb.", &[], &[
                 ("workspace",  "string", "Workspace name. Defaults to current workspace."),
                 ("category", "string", "Canonical verb filter — test | build | lint | e2e | run | format | typecheck | bench | docs | dev | start."),
