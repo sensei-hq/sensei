@@ -46,6 +46,11 @@ describe('toKitMember / toKitMembers', () => {
 	it('uses the resolved display name when present (WS-1)', () => {
 		expect(toKitMember(member({ display_name: 'Ada Lovelace' }), { now: NOW }).name).toBe('Ada Lovelace');
 	});
+	it.skip('pending: L4 member-names — an unnamed member reads as words, never an id fragment', () => {
+		const k = toKitMember(member(), { now: NOW });
+		expect(k.name).toBe('Unknown member (named at sign-in)');
+		expect(k.name).not.toContain('aaaaaaaa');
+	});
 	it('marks the viewer row with you', () => {
 		const k = toKitMember(member(), { self: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', now: NOW });
 		expect(k.you).toBe(true);

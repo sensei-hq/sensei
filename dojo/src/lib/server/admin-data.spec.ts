@@ -92,6 +92,58 @@ describe('listMembers (WS-1 identity enrichment)', () => {
 	});
 });
 
+// ── listMembers: principals fallback (brief item 1 — never a bare id as the name) ──
+// A member whose identities name no one falls back to `principals.display_name`
+// (same tenant scoping: only ids already scoped to the tenant's members).
+// Still unnamed → null/null, and the mapper says so in words.
+function makeMembersDbTables(
+	members: Terminal,
+	scope: { data?: unknown; error: unknown },
+	identities: { data?: unknown; error: unknown },
+	principals: { data?: unknown; error: unknown }
+) {
+	let table = '';
+	const b: Record<string, unknown> = {};
+	b.from = (t: string) => ((table = t), b);
+	b.select = () => b;
+	b.eq = () => b;
+	b.order = () => Promise.resolve(members);
+	b.in = () => Promise.resolve(table === 'principals' ? principals : table === 'memberships' ? scope : identities);
+	return b as unknown as DojoClient;
+}
+
+describe('listMembers (principals fallback)', () => {
+	it('leaves display_name null when neither identities nor principals name them', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [], error: null },
+			{ data: [], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: null, email: null });
+	});
+	it.skip('pending: L4 member-names — falls back to principals.display_name when identities name no one', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [], error: null },
+			{ data: [{ id: 'u1', display_name: 'Ada' }], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: 'Ada' });
+	});
+	it.skip('pending: L4 member-names — a principals-query error fails closed, never silent nulls', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [], error: null },
+			{ data: null, error: { message: 'pr boom' } }
+		);
+		await expect(listMembers(db, 't1')).rejects.toThrow(AdminError);
+	});
+});
+
 describe('listAudit', () => {
 	it('clamps the limit to 1..500 (default 100)', async () => {
 		const d1 = makeListDb({ data: [], error: null });

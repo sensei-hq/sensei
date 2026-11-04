@@ -16,4 +16,9 @@ describe('viewers view', () => {
 		expect(personLabel({ principalId: 'abcdef123456', name: null, email: 'a@x.co' })).toBe('a@x.co');
 		expect(personLabel({ principalId: 'abcdef123456', name: null, email: null })).toBe('abcdef12');
 	});
+	it.skip('pending: L4 member-names — an unnamed person reads as words, never an id fragment', () => {
+		expect(personLabel({ principalId: 'abcdef123456', name: null, email: null })).toBe(
+			'Unknown member (named at sign-in)'
+		);
+	});
 });
