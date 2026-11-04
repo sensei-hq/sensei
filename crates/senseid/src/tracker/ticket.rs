@@ -1,9 +1,6 @@
 //! One ticket, read live by its key (TG5, D63/D71): the tracker-agnostic read
 //! behind MCP `get_ticket`. Nothing read here is stored — description, assignee
 //! and acceptance criteria are shown to the assistant and dropped (D71).
-// pending: tg5a — the fetch route (targets/http.rs) uses these in phase B; until
-// then only the tests do.
-#![allow(dead_code)]
 
 use super::{GetTransport, TrackerError, TrackerKind};
 
@@ -54,12 +51,68 @@ pub struct JiraTicketReader<'a> {
     pub acceptance_criteria_field: Option<String>,
 }
 
+/// The fields the read maps, besides the configured acceptance-criteria field.
+const JIRA_FIELDS: [&str; 6] =
+    ["summary", "description", "status", "issuetype", "sprint", "assignee"];
+
 #[async_trait::async_trait]
 impl TicketReader for JiraTicketReader<'_> {
-    /// pending: tg5a
-    async fn read_ticket(&self, _key: &str) -> Result<Option<TicketDetail>, TrackerError> {
-        Err(TrackerError::UnsupportedTracker)
+    async fn read_ticket(&self, key: &str) -> Result<Option<TicketDetail>, TrackerError> {
+        let mut fields: Vec<&str> = JIRA_FIELDS.to_vec();
+        if let Some(f) = self.acceptance_criteria_field.as_deref() {
+            fields.push(f);
+        }
+        let path = format!("/rest/agile/1.0/issue/{key}");
+        let issue = match self.transport.get_json(&path, &[("fields", fields.join(","))]).await {
+            Ok(v) => v,
+            Err(TrackerError::NotFound) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let f = &issue["fields"];
+        let text = |v: &serde_json::Value| v.as_str().map(str::to_string);
+        let named =
+            |v: &serde_json::Value, k: &str| v.get(k).and_then(|n| n.as_str()).map(str::to_string);
+        let key = issue["key"].as_str().unwrap_or(key).to_string();
+        let title = text(&f["summary"]).ok_or(TrackerError::Decode)?;
+        let (acceptance_criteria, acceptance_criteria_source) =
+            match self.acceptance_criteria_field.as_deref() {
+                None => (Vec::new(), AcceptanceCriteriaSource::NotConfigured),
+                Some(id) => match criteria_lines(&f[id]) {
+                    lines if lines.is_empty() => (lines, AcceptanceCriteriaSource::FieldAbsent),
+                    lines => (lines, AcceptanceCriteriaSource::Field),
+                },
+            };
+        Ok(Some(TicketDetail {
+            url: format!("{}/browse/{key}", self.base_url.trim_end_matches('/')),
+            key,
+            title,
+            description: text(&f["description"]).filter(|d| !d.trim().is_empty()),
+            acceptance_criteria,
+            acceptance_criteria_source,
+            status: named(&f["status"], "name"),
+            issue_type: named(&f["issuetype"], "name"),
+            sprint: named(&f["sprint"], "name"),
+            assignee: named(&f["assignee"], "displayName"),
+            tracker: TrackerKind::Jira,
+        }))
     }
+}
+
+/// The criteria in a text field, one per non-empty line, with a leading list
+/// bullet (`-`, `*`, `•`) dropped. A list field is read item by item. Anything
+/// else (absent, null, a shape this does not know) is no criteria — the caller
+/// says `field_absent`, never invents a list.
+fn criteria_lines(v: &serde_json::Value) -> Vec<String> {
+    let clean = |l: &str| {
+        let l = l.trim();
+        l.strip_prefix(['-', '*', '•']).map(str::trim).unwrap_or(l).to_string()
+    };
+    let items: Vec<String> = match v {
+        serde_json::Value::String(s) => s.lines().map(clean).collect(),
+        serde_json::Value::Array(a) => a.iter().filter_map(|i| i.as_str()).map(clean).collect(),
+        _ => Vec::new(),
+    };
+    items.into_iter().filter(|l| !l.is_empty()).collect()
 }
 
 #[cfg(test)]
@@ -95,7 +148,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn reads_one_ticket_by_key() {
         let board = FakeBoard::standard().with(ISSUE, 0, issue(full_fields()));
         let t = reader(&board, Some("customfield_10100")).read_ticket("AUTH-7").await.unwrap();
@@ -124,7 +176,6 @@ mod tests {
     /// The read asks for the fields it maps — including the acceptance-criteria
     /// field when one is configured — and nothing it does not use.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn the_read_asks_for_the_fields_it_maps() {
         let board = FakeBoard::standard().with(ISSUE, 0, issue(full_fields()));
         reader(&board, Some("customfield_10100")).read_ticket("AUTH-7").await.unwrap();
@@ -147,7 +198,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_ticket_the_tracker_does_not_have_is_none() {
         let board = FakeBoard::standard();
         assert_eq!(reader(&board, None).read_ticket("AUTH-404").await.unwrap(), None);
@@ -156,7 +206,6 @@ mod tests {
     /// A failed read is the caller's error: never `None` (which reads as "no such
     /// ticket") and never a placeholder ticket.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_failed_read_is_an_error_not_a_missing_ticket() {
         for e in [TrackerError::Unauthorized, TrackerError::RateLimited, TrackerError::Transport] {
             let board = FakeBoard::standard().fail(ISSUE, e);
@@ -168,7 +217,6 @@ mod tests {
     /// is empty and says so; with the field configured but empty on this ticket
     /// the list is empty and says that instead.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn acceptance_criteria_say_why_they_are_empty() {
         let board = FakeBoard::standard().with(ISSUE, 0, issue(full_fields()));
         let t = reader(&board, None).read_ticket("AUTH-7").await.unwrap().unwrap();
@@ -190,7 +238,6 @@ mod tests {
 
     /// Fields a ticket does not have are absent, never a stand-in value.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_sparse_ticket_reads_as_sparse() {
         let board = FakeBoard::standard().with(ISSUE, 0, issue(json!({"summary": "Bare"})));
         let t = reader(&board, None).read_ticket("AUTH-7").await.unwrap().unwrap();

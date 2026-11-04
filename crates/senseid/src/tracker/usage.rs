@@ -12,6 +12,8 @@ use crate::tracker::sprint::SprintState;
 pub struct BySource {
     pub branch: i64,
     pub prompt: i64,
+    /// Sessions that fetched a ticket (get_ticket, D63): the start of work on it.
+    pub fetch: i64,
 }
 
 /// The usage of a distinct set of sessions. A sum over no known values is
@@ -300,7 +302,7 @@ mod tests {
     fn an_empty_set_has_null_sums_and_zero_counts() {
         let v = serde_json::to_value(Usage::default()).unwrap();
         assert_eq!(v["sessions"], 0);
-        assert_eq!(v["by_source"], serde_json::json!({"branch": 0, "prompt": 0}));
+        assert_eq!(v["by_source"], serde_json::json!({"branch": 0, "prompt": 0, "fetch": 0}));
         for f in [
             "active_secs",
             "tokens_fresh",
@@ -549,7 +551,10 @@ mod tests {
         sync(&pg, t, &FakeBoard::standard()).await;
         let auth2 = task_id(&pg, t, "10002").await;
         let u = ticket_usages(&pg, t, Some(&[auth2])).await.unwrap().remove(&auth2).unwrap();
-        assert_eq!((u.sessions, u.by_source.clone()), (3, BySource { branch: 3, prompt: 1 }));
+        assert_eq!(
+            (u.sessions, u.by_source.clone()),
+            (3, BySource { branch: 3, prompt: 1, fetch: 0 })
+        );
         assert_eq!((u.active_secs, u.active_n), (Some(180.0), 2), "a NULL duration is not 0");
         assert_eq!((u.tokens_fresh, u.tokens_fresh_n), (Some(15), 2));
         assert_eq!((u.metered_cost, u.metered_cost_n), (None, 0), "nothing known: null, not 0");
@@ -566,7 +571,6 @@ mod tests {
     /// the buckets sum to `sessions`. (A session found by two sources is in both
     /// buckets, as before — buckets are "sessions with a link of this source".)
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_fetch_only_session_counts_in_its_own_bucket() {
         let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
@@ -611,7 +615,7 @@ mod tests {
         // every ticket is read in one query (as the ticket list does).
         let auth3 = task_id(&pg, t, "10003").await;
         let only_prompt = ticket_usages(&pg, t, None).await.unwrap()[&auth3].clone();
-        assert_eq!(only_prompt.by_source, BySource { branch: 0, prompt: 1 });
+        assert_eq!(only_prompt.by_source, BySource { branch: 0, prompt: 1, fetch: 0 });
         let parts = ticket_usage_by_repo(&pg, t, auth2).await.unwrap();
         assert_eq!(parts.len(), 3);
         assert_eq!(parts.iter().map(|r| r.usage.sessions).sum::<i64>(), total.sessions);
@@ -881,7 +885,7 @@ mod tests {
             (1, 1),
             "one session, linked to two backlog tickets"
         );
-        assert_eq!(b.usage.by_source, BySource { branch: 1, prompt: 1 });
+        assert_eq!(b.usage.by_source, BySource { branch: 1, prompt: 1, fetch: 0 });
         assert_eq!(
             (b.usage.active_secs, b.usage.tokens_fresh),
             (Some(600.0), Some(10)),

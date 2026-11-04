@@ -1,6 +1,201 @@
 //! TG5 · the routes behind MCP `get_ticket` (D63, D71, D73): fetch a ticket live
 //! by its key, start work on it (a `fetch` link with `started_at`), and hand it
-//! over with the rules that apply. pending: tg5a — the handler lands in phase B.
+//! over with the rules that apply. Nothing read from the tracker is stored (D71),
+//! and a failed read is an error the caller sees — never an empty or placeholder
+//! ticket, and never a link.
+
+use axum::Json;
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use serde_json::{Value, json};
+
+use crate::api::state::AppState;
+use crate::db::pg_store::targets::FetchStart;
+use crate::tracker::ticket::{JiraTicketReader, TicketReader};
+use crate::tracker::{TrackerKind, adapter_for_kind, jira, runtime};
+
+/// Body of `POST /api/tickets/{key}/fetch`.
+#[derive(serde::Deserialize)]
+pub(crate) struct FetchBody {
+    /// The folder the work is in (the MCP call's cwd).
+    pub folder: String,
+    /// The assistant's own session id, to link the start of work to.
+    pub session_id: Option<String>,
+}
+
+/// A refusal: `status` with `{ "error": code, …extra }`.
+fn refuse(status: StatusCode, code: &str, extra: Value) -> Response {
+    let mut body = json!({ "error": code });
+    if let (Some(b), Some(e)) = (body.as_object_mut(), extra.as_object()) {
+        b.extend(e.clone());
+    }
+    (status, Json(body)).into_response()
+}
+
+/// `POST /api/tickets/{key}/fetch` — read the ticket live, start work on it, and
+/// hand it over with the repository's rules.
+pub(crate) async fn fetch_ticket(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(body): Json<FetchBody>,
+) -> Response {
+    let (folder_path, folder_id) =
+        match crate::api::handlers::knowledge::resolve_folder(&state, Some(&body.folder), None)
+            .await
+        {
+            Ok(f) => f,
+            Err(e) => return e.into_response(),
+        };
+
+    let pg = &state.pg;
+    // The folder's workspace, exactly one: none and several are different answers.
+    let workspace = match pg.workspaces_of_folder(&folder_id).await {
+        Ok(ws) => match ws.as_slice() {
+            [one] => *one,
+            [] => {
+                return refuse(
+                    StatusCode::NOT_FOUND,
+                    "folder_not_in_workspace",
+                    json!({"folder": folder_path}),
+                );
+            }
+            _ => {
+                return refuse(
+                    StatusCode::CONFLICT,
+                    "folder_in_many_workspaces",
+                    json!({"folder": folder_path}),
+                );
+            }
+        },
+        Err(e) => {
+            tracing::error!(error = %e, "fetch_ticket: folder workspaces read failed");
+            return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", json!({}));
+        }
+    };
+
+    // The tracker that answers to the key: one of THIS workspace's trackers whose
+    // project key is the key's prefix.
+    let upper = key.to_ascii_uppercase();
+    let trackers = match pg.trackers_for_workspace(workspace).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "fetch_ticket: trackers read failed");
+            return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", json!({}));
+        }
+    };
+    let prefix = upper.split_once('-').map(|(p, _)| p);
+    let tracker = trackers.iter().find(|t| {
+        TrackerKind::parse(&t.kind) == Some(TrackerKind::Jira)
+            && jira::is_jira_key(&upper)
+            && prefix.is_some_and(|p| p.eq_ignore_ascii_case(&t.external_scope))
+    });
+    let Some(tracker) = tracker else {
+        return refuse(StatusCode::NOT_FOUND, "no_tracker_for_key", json!({"key": key}));
+    };
+    let Some(adapter) = adapter_for_kind(TrackerKind::Jira) else {
+        return refuse(StatusCode::BAD_GATEWAY, "unsupported_tracker", json!({"key": key}));
+    };
+
+    // The live read, with the board's own credential.
+    let transport = match runtime::transport_for(&state.trackers, adapter, tracker, 0).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(code = e.code(), "fetch_ticket: no transport for the tracker");
+            return refuse(StatusCode::BAD_GATEWAY, e.code(), json!({"key": key}));
+        }
+    };
+    let reader = JiraTicketReader {
+        transport: transport.as_ref(),
+        base_url: tracker.base_url.clone(),
+        acceptance_criteria_field: tracker.params["acceptance_criteria_field"]
+            .as_str()
+            .map(String::from),
+    };
+    let ticket = match reader.read_ticket(&upper).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return refuse(StatusCode::NOT_FOUND, "ticket_not_found", json!({"key": key})),
+        Err(e) => {
+            tracing::warn!(code = e.code(), "fetch_ticket: the live read failed");
+            return refuse(StatusCode::BAD_GATEWAY, e.code(), json!({"key": key}));
+        }
+    };
+
+    // The ticket's rules (D73): the repository's resolved rules.
+    let rules =
+        match crate::api::handlers::knowledge::resolve_repo_ruleset(&state, &folder_id).await {
+            // As `get_rules` answers it, including whether the dōjō's rules are missing:
+            // a ticket handed over with incomplete rules says so.
+            Ok((r, dojo)) => json!({
+                "total": r.total,
+                "mandatory_count": r.mandatory_count,
+                "rules": r.rules,
+                "rules_incomplete": dojo.rules_incomplete(),
+                "dojo_rules": dojo,
+            }),
+            Err(e) => {
+                tracing::error!(error = %e, "fetch_ticket: rules could not be resolved");
+                return refuse(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "rules_unavailable",
+                    json!({"key": key}),
+                );
+            }
+        };
+
+    let start_of_work = start_work(&state, workspace, &upper, body.session_id.as_deref()).await;
+    Json(json!({ "ticket": ticket, "rules": rules, "start_of_work": start_of_work }))
+        .into_response()
+}
+
+/// Link the session to the ticket as the start of work, or say why not. The
+/// ticket is handed over either way; only `recorded: true` means a link exists.
+async fn start_work(
+    state: &AppState,
+    workspace: uuid::Uuid,
+    key: &str,
+    client: Option<&str>,
+) -> Value {
+    let not = |reason: &str| json!({"recorded": false, "reason": reason});
+    let Some(client) = client.filter(|c| !c.is_empty()) else { return not("no_session") };
+    let pg = &state.pg;
+    let session = match pg.session_for_client_id(client).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not("session_not_found"),
+        Err(e) => {
+            tracing::error!(error = %e, "fetch_ticket: session read failed");
+            return not("internal");
+        }
+    };
+    // The mirror row: as synced, else discovered now (the tracker-task lookup's path).
+    let task = match pg.tracker_task_detail(workspace, key).await {
+        Ok(Some(t)) => t.id,
+        Ok(None) => {
+            match crate::api::handlers::trackers::discover_on_miss(state, workspace, key).await {
+                Ok(t) => t.id,
+                Err((_, Json(e))) => {
+                    let code = e["error"].as_str().unwrap_or("internal").to_string();
+                    tracing::warn!(code = %code, "fetch_ticket: the ticket could not be mirrored");
+                    return not(&code);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "fetch_ticket: mirror read failed");
+            return not("internal");
+        }
+    };
+    match pg.record_fetch_link(&session, &task, key).await {
+        Ok(FetchStart::Recorded) => json!({"recorded": true}),
+        Ok(FetchStart::AlreadyStarted(at)) => {
+            json!({"recorded": false, "reason": "already_started", "started_at": at})
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "fetch_ticket: the start of work could not be recorded");
+            not("internal")
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -169,7 +364,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_fetch_links_the_session_and_records_start() {
         let h = harness().await;
         let w = world(&h, FakeBoard::standard().with(AUTH_2, 0, auth_2())).await;
@@ -186,7 +380,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_second_fetch_records_nothing_new() {
         let h = harness().await;
         let w = world(&h, FakeBoard::standard().with(AUTH_2, 0, auth_2())).await;
@@ -217,7 +410,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn an_unknown_key_is_404_and_writes_no_link() {
         let h = harness().await;
         let w = world(&h, FakeBoard::standard()).await;
@@ -232,7 +424,6 @@ mod tests {
     /// The ticket is still handed over when the session is unknown (or not
     /// given): the start of work is what is not recorded, and the answer says so.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_fetch_without_a_known_session_returns_the_ticket_and_says_not_recorded() {
         let h = harness().await;
         let w = world(&h, FakeBoard::standard().with(AUTH_2, 0, auth_2())).await;
@@ -252,7 +443,6 @@ mod tests {
     /// A failed live read is a 502 naming the tracker's error — never a 200 with an
     /// empty or placeholder ticket, and no link: refused, unreachable, throttled.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_reader_failure_is_502_not_an_empty_ticket() {
         let h = harness().await;
         for e in [TrackerError::Unauthorized, TrackerError::Transport, TrackerError::RateLimited] {
@@ -272,7 +462,6 @@ mod tests {
     /// The board's credential is gone from the Keychain (review r1 MED-1): a 502
     /// that says so, never a read without it, and no link.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_missing_token_is_502_token_missing() {
         let h = harness().await;
         let w = world(&h, FakeBoard::standard().with(AUTH_2, 0, auth_2())).await;
@@ -291,7 +480,6 @@ mod tests {
     /// so — not "no such ticket". (GitHub Issues keys, `#12` and `owner/repo#12`,
     /// are answered by the GitHub reader, TG5b; until then no tracker answers.)
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_key_no_tracker_answers_to_is_404_no_tracker_for_key() {
         let h = harness().await;
         let w = world(&h, FakeBoard::standard()).await;
@@ -310,7 +498,6 @@ mod tests {
     /// (review r1 HIGH-1): another workspace's board that answers to the key is
     /// never asked, and the folder's workspace has no tracker for it.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_key_resolves_only_against_the_folder_s_own_workspace() {
         let h = harness().await;
         let pg = &h.state.pg;
@@ -340,7 +527,6 @@ mod tests {
     /// A folder the daemon has not indexed is the folder resolver's own 404 —
     /// never a fall-back to some workspace.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn an_unindexed_folder_is_404() {
         let h = harness().await;
         world(&h, FakeBoard::standard().with(AUTH_2, 0, auth_2())).await;
@@ -349,10 +535,40 @@ mod tests {
         assert_eq!(b, json!({"error": "folder not indexed"}));
     }
 
+    /// A folder whose repository serves two workspaces has two answers (review r2
+    /// MED-1, L0 ruling): an explicit 409, distinct from "in no workspace", with no
+    /// board asked — picking one workspace would be a fabrication
+    /// (`sole_workspace_of`'s contract).
+    #[tokio::test]
+    async fn a_folder_in_two_workspaces_is_409() {
+        let h = harness().await;
+        let w = world(&h, FakeBoard::standard().with(AUTH_2, 0, auth_2())).await;
+        let other = h
+            .state
+            .pg
+            .create_workspace(&format!("_test:tg5:other:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let (folder_id,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.folders WHERE abs_path = $1")
+                .bind(&w.folder)
+                .fetch_one(h.state.pg.pool())
+                .await
+                .unwrap();
+        h.state.pg.set_folder_workspace(&folder_id, &other, "root", None).await.unwrap();
+        let asked = w.board.calls().len();
+        let (st, b) =
+            post_fetch(&h, "AUTH-2", json!({"folder": w.folder, "session_id": w.client_session}))
+                .await;
+        assert_eq!(st, StatusCode::CONFLICT, "{b}");
+        assert_eq!(b, json!({"error": "folder_in_many_workspaces", "folder": w.folder}));
+        assert_eq!(w.board.calls().len(), asked, "no board was asked");
+        assert_eq!(links_of(&h, w.session).await, vec![]);
+    }
+
     /// A folder that belongs to no workspace has no trackers to answer: an
     /// explicit 404 naming it — never a 200, never another workspace's tracker.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_folder_in_no_workspace_is_404() {
         let h = harness().await;
         world(&h, FakeBoard::standard().with(AUTH_2, 0, auth_2())).await;
@@ -375,7 +591,6 @@ mod tests {
     /// A ticket on the board that the mirror has not seen yet is discovered, then
     /// linked — the same discover-on-miss the tracker-task lookup uses.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_ticket_not_yet_mirrored_is_discovered_then_linked() {
         let h = harness().await;
         let fresh = json!({"id": "10900", "key": "AUTH-900", "fields": {"summary": "New"}});
@@ -401,7 +616,6 @@ mod tests {
     /// LOW-1): the ticket is still handed over, and the start of work says why it
     /// was not recorded — never `recorded: true` without a link.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_discovery_failure_after_a_read_returns_the_ticket_not_recorded() {
         let h = harness().await;
         let fresh = json!({"id": "10901", "key": "AUTH-901", "fields": {"summary": "Newer"}});
@@ -424,7 +638,6 @@ mod tests {
     /// The ticket's rules (D73) are the repository's resolved rules — exactly what
     /// `get_rules` answers for the same folder — handed over with the ticket.
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn the_ticket_s_rules_arrive_with_it() {
         let h = harness().await;
         let w = world(&h, FakeBoard::standard().with(AUTH_2, 0, auth_2())).await;
@@ -432,9 +645,10 @@ mod tests {
             call(&h, "GET", &format!("/api/knowledge/rules?folder={}", w.folder), None).await;
         let (st, b) = post_fetch(&h, "AUTH-2", json!({"folder": w.folder})).await;
         assert_eq!(st, StatusCode::OK, "{b}");
-        assert_eq!(
-            b["rules"],
-            json!({"total": rules["total"], "mandatory_count": rules["mandatory_count"], "rules": rules["rules"]})
-        );
+        // `get_rules`' own answer for the folder, without its `folder` echo — so the
+        // dōjō-rules state (`dojo_rules`, `rules_incomplete`) arrives too.
+        let mut expected = rules.clone();
+        expected.as_object_mut().unwrap().remove("folder");
+        assert_eq!(b["rules"], expected);
     }
 }

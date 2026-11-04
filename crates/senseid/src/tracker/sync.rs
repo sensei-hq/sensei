@@ -1142,7 +1142,6 @@ mod tests {
     /// by branch/prompt beside it (the fallback for a ticket fetched elsewhere,
     /// e.g. `gh issue view`).
     #[tokio::test]
-    #[ignore = "pending: tg5a"]
     async fn a_sync_relink_keeps_fetch_links() {
         let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;

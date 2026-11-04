@@ -5,7 +5,7 @@ import type { MetricReason, ProjectSdlc, SprintSdlc, TicketSdlc, TrackerUsage } 
 /** R7 usage: nothing known unless named. */
 export const usage = (over: Partial<TrackerUsage> = {}): TrackerUsage => ({
   sessions: 0,
-  by_source: { branch: 0, prompt: 0 },
+  by_source: { branch: 0, prompt: 0, fetch: 0 },
   shared: 0,
   active_secs: null,
   active_n: 0,

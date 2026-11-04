@@ -626,7 +626,6 @@ mod tests {
     /// TG5: every link source the daemon writes is a label of `sensei.link_source`
     /// (a missing one is a failed insert at runtime), and `fetch` is one of them.
     #[test]
-    #[ignore = "pending: tg5a"]
     fn every_link_source_is_a_label_of_the_ddl_enum() {
         let labels = test_support::ddl_enum_labels("link_source");
         for s in [LinkSource::Branch, LinkSource::Prompt, LinkSource::Fetch] {
