@@ -1,0 +1,111 @@
+-- WP8: an organisation's PUBLIC repository is the organisation's (D46 ELECTION).
+-- Absent decision ELECTED, authority `organization`, admin-only — while the
+-- sync outcome stays true.
+--
+-- WHAT BREAKS THIS TEST (today): authority is the member's and any member may
+-- switch it off. The elected/sync halves of the no-decision case pass today
+-- and after (guard pins); authority and configurable_by_me go red until WP8.
+-- The organisation's own election is unread today, so the override case goes
+-- red wholesale until WP8.
+--
+-- Run through --apply (the view DDL is passed in, not \ir'd): the file seeds,
+-- asserts, rolls back. Nothing persists.
+begin;
+
+insert into dojo.principals (id, auth_user_id, display_name) values
+  ('a3333333-3333-3333-3333-333333333333', 'aa333333-3333-3333-3333-333333333333', 'Bob'),
+  ('d3333333-3333-3333-3333-333333333333', 'dd333333-3333-3333-3333-333333333333', 'Alice');
+
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url, claimed_at) values
+  ('b3333333-3333-3333-3333-333333333333', 'organization/ztest-wp8-acme', 'organization', 'ztest-wp8-acme',
+   'Acme', 'dojo.sensei-hq.org/organization/ztest-wp8-acme', now());
+
+-- A plain contributor: the member the switch is taken from. Plus the admin,
+-- who holds the organisation's override.
+insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role, disabled_at) values
+  ('b3333333-3333-3333-3333-333333333333', 'a3333333-3333-3333-3333-333333333333',
+   'employer', 'github_oauth', 'contributor', null),
+  ('b3333333-3333-3333-3333-333333333333', 'd3333333-3333-3333-3333-333333333333',
+   'employer', 'github_oauth', 'admin', null);
+
+insert into dojo.repositories (tenant_id, repo_key, remote_url, name, provider, visibility, visibility_captured_at) values
+  ('b3333333-3333-3333-3333-333333333333', 'github.com/ztest-wp8-acme/web',
+   'git@github.com:ztest-wp8-acme/web.git', 'web', 'github', 'public', now()),
+  ('b3333333-3333-3333-3333-333333333333', 'github.com/ztest-wp8-acme/web-off',
+   'git@github.com:ztest-wp8-acme/web-off.git', 'web-off', 'github', 'public', now());
+
+-- No elections on web: the absent decision. The tenant policy says private
+-- repositories are NOT shared — a policy about private repositories must not
+-- switch a public one off.
+insert into dojo.tenant_share_policy (tenant_id, private_repos_shared) values
+  ('b3333333-3333-3333-3333-333333333333', false);
+
+-- The organisation's override on web-off: elected = false.
+insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected)
+  select r.tenant_id, r.id, 'organization', null, false
+    from dojo.repositories r
+   where r.repo_key = 'github.com/ztest-wp8-acme/web-off';
+
+do $$
+declare
+    r record;
+begin
+    select elected, sync_enabled, may_share, authority, configurable_by_me
+      into r
+      from dojo.all_my_repositories
+     where principal_id = 'a3333333-3333-3333-3333-333333333333'
+       and repo_key = 'github.com/ztest-wp8-acme/web';
+    if r is null then
+        raise exception 'org public row missing entirely.';
+    end if;
+    if r.elected is not true then
+        raise exception 'org public repo with no decision is not elected.';
+    end if;
+    if r.sync_enabled is not true then
+        raise exception 'org public repo with no decision does not sync.';
+    end if;
+    if r.may_share is not true then
+        raise exception 'org public repo is not entitled.';
+    end if;
+    if r.authority is distinct from 'organization' then
+        raise exception 'org public repo authority is %, want organization.', r.authority;
+    end if;
+    if r.configurable_by_me is not false then
+        raise exception 'a contributor may switch an org public repo.';
+    end if;
+end $$;
+
+-- The organisation's override: every member reads the organisation's off.
+do $$
+declare
+    expected record;
+    got      record;
+begin
+    for expected in
+        select * from (values
+            ('a3333333-3333-3333-3333-333333333333'),
+            ('d3333333-3333-3333-3333-333333333333')
+        ) as t(principal_id)
+    loop
+        select elected, sync_enabled, refused_by, reason_code, configured_by::text as configured_by
+          into got
+          from dojo.all_my_repositories
+         where principal_id = expected.principal_id::uuid
+           and repo_key = 'github.com/ztest-wp8-acme/web-off';
+        if got is null then
+            raise exception 'org-public override row missing for %.', expected.principal_id;
+        end if;
+        if got.elected is not false
+           or got.sync_enabled is not false
+           or got.refused_by is distinct from 'election'
+           or got.reason_code is distinct from 'not_elected_org'
+           or got.configured_by is distinct from 'organization' then
+            raise exception 'org-public override misread for %: (elected=%, sync=%, by=%, reason=%, configured_by=%).',
+                expected.principal_id, got.elected, got.sync_enabled,
+                coalesce(got.refused_by, 'NONE'), coalesce(got.reason_code, 'NONE'),
+                coalesce(got.configured_by, 'NONE');
+        end if;
+    end loop;
+end $$;
+
+rollback;

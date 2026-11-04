@@ -422,7 +422,7 @@ describe('syncPlan', () => {
 //
 // This returns the row the screen needs, from the same view the daemon reads, so
 // what a user is shown and what the daemon does cannot disagree.
-import { listMyRepositories } from './repositories';
+import { isBillingHiddenRepo, listMyRepositories } from './repositories';
 
 describe('listMyRepositories — what a human is shown', () => {
 	function view(rows: Record<string, unknown>[]): Record<string, FakeTable> {
@@ -511,6 +511,91 @@ describe('listMyRepositories — what a human is shown', () => {
 			'rpc:my_repositories': { rows: [], error: { message: 'boom' } }
 		});
 		await expect(listMyRepositories(db as never)).rejects.toThrow(/boom/);
+	});
+
+	it('keeps billing-hidden rows in the load AND carries their refusal, so one predicate hides and counts', async () => {
+		// WP8 F5: hidden is presentation, not the read. The load must see the
+		// hidden rows (otherwise the member-line count is impossible) and each
+		// row must carry `entitlement_refusal` (otherwise the predicate has
+		// nothing to read). The predicate itself is pinned below; this pins
+		// that the read gives it what it needs.
+		const hidden = {
+			...ROW,
+			repository_id: 'r-hidden',
+			repo_key: 'github.com/acme/secret',
+			name: 'secret',
+			forge_visibility: 'private',
+			may_share: false,
+			elected: false,
+			sync_enabled: false,
+			entitlement_refusal: 'not_subscribed',
+			reason_code: 'not_subscribed'
+		};
+		const db = fakeDojoDb(view([hidden, ROW]));
+		const out = await listMyRepositories(db as never);
+		expect(out.map((r) => r.repo_key)).toEqual(['github.com/acme/secret', 'github.com/acme/api']);
+		expect(out[0].entitlement_refusal).toBe('not_subscribed');
+	});
+});
+
+// ── WP8 F5: one predicate hides and counts ───────────────────────────────────
+//
+// Billing hides an org-private repository whose ENTITLEMENT refuses for a
+// billing reason, and counts it on the member line instead. The list and the
+// count share this predicate so they cannot disagree: neither re-derives the
+// set. The hidden set is `unclaimed` | `not_subscribed` |
+// `subscription_expired` (D88: no grace) — a capture refusal is not a billing
+// state, and an election refusal on an entitled row must not hide it, which
+// is why the predicate reads `entitlement_refusal` and not `reason_code`.
+describe('isBillingHiddenRepo — the hidden set, decided once', () => {
+	function row(over: Record<string, unknown>) {
+		return {
+			tenant: 'organization/acme',
+			forge_visibility: 'private',
+			entitlement_refusal: null,
+			...over
+		} as Parameters<typeof isBillingHiddenRepo>[0];
+	}
+
+	it.each([['unclaimed'], ['not_subscribed'], ['subscription_expired']])(
+		'hides an org-private repository refused %s',
+		(refusal) => {
+			expect(isBillingHiddenRepo(row({ entitlement_refusal: refusal }))).toBe(true);
+		}
+	);
+
+	it('shows an entitled org-private repository', () => {
+		expect(isBillingHiddenRepo(row({ entitlement_refusal: null }))).toBe(false);
+	});
+
+	it('shows a capture refusal: stale or unknown is not a billing state', () => {
+		expect(isBillingHiddenRepo(row({ entitlement_refusal: 'forge_visibility_stale' }))).toBe(false);
+		expect(isBillingHiddenRepo(row({ entitlement_refusal: 'forge_visibility_unknown' }))).toBe(false);
+	});
+
+	it('shows an entitled row even when the final reason is an election refusal', () => {
+		// The whole argument for reading `entitlement_refusal` instead of
+		// `reason_code`: this row's `reason_code` is `not_elected_org`, but
+		// its entitlement said yes.
+		expect(isBillingHiddenRepo(row({ entitlement_refusal: null }))).toBe(false);
+	});
+
+	it('shows an org-PUBLIC repository whatever its entitlement says', () => {
+		expect(
+			isBillingHiddenRepo(row({ forge_visibility: 'public', entitlement_refusal: 'not_subscribed' }))
+		).toBe(false);
+	});
+
+	it('shows a personal repository whatever its entitlement says', () => {
+		expect(
+			isBillingHiddenRepo(row({ tenant: 'personal/alice', entitlement_refusal: 'not_subscribed' }))
+		).toBe(false);
+	});
+
+	it('shows a row whose tenant does not parse: hiding fails visible', () => {
+		expect(isBillingHiddenRepo(row({ tenant: 'acme', entitlement_refusal: 'not_subscribed' }))).toBe(
+			false
+		);
 	});
 });
 

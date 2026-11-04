@@ -279,6 +279,11 @@ export interface MyRepository {
 	elected: boolean;
 	sync_enabled: boolean;
 	configurable_by_me: boolean;
+	/** The entitlement axis's own refusal (`unclaimed`, `not_subscribed`,
+	 *  `subscription_expired`, a capture refusal), or null when entitled. The
+	 *  billing hide/count predicate (WP8 F5) reads THIS, not `reason_code`:
+	 *  the final reason may be an election refusal on an entitled row. */
+	entitlement_refusal: string | null;
 	reason_code: string | null;
 	reason: string | null;
 	remedy: string | null;
@@ -293,7 +298,29 @@ export interface MyRepository {
 /** The columns a screen needs. Named rather than `*` so a view rename fails here
  *  instead of rendering `undefined` as a missing permission. */
 const MY_REPO_COLUMNS =
-	'repository_id, repo_key, name, tenant, owning_org, forge_visibility, authority, may_share, elected, sync_enabled, configurable_by_me, reason_code, reason, remedy, reason_actor, last_synced_at, metric_rows';
+	'repository_id, repo_key, name, tenant, owning_org, forge_visibility, authority, may_share, elected, sync_enabled, configurable_by_me, entitlement_refusal, reason_code, reason, remedy, reason_actor, last_synced_at, metric_rows';
+
+/**
+ * Whether Billing hides this row — and counts it on the member line instead.
+ *
+ * ONE predicate for both (WP8 F5): the list and the count cannot disagree
+ * because neither re-derives the set. Hidden is an org-private repository
+ * whose ENTITLEMENT refuses for a billing reason — `unclaimed`,
+ * `not_subscribed`, `subscription_expired` (D88: no grace). A capture refusal
+ * is not a billing state, so it never hides; neither does an election
+ * refusal on an entitled row, which is why this reads `entitlement_refusal`
+ * and not `reason_code`.
+ *
+ * Hidden rows still reach the load (`listMyRepositories` filters nothing):
+ * hidden is presentation, and the count is impossible if the read drops them.
+ */
+export function isBillingHiddenRepo(
+	row: Pick<MyRepository, 'tenant' | 'forge_visibility' | 'entitlement_refusal'>
+): boolean {
+	// Phase-A stub (WP8 tests r2): the spec below pins the truth table, the
+	// body lands with the phase-B implementation.
+	return false;
+}
 
 /**
  * Every repository the caller can see, with the verdict AND what to do about it.

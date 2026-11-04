@@ -5,11 +5,14 @@
 -- WP8's ENTITLEMENT change (`when mr.origin = 'personal' then null` after the
 -- capture term) entitles it. Red until then.
 --
--- Interim pattern until --apply merges: \ir the view DDL under test, seed,
--- assert, rollback. Nothing persists.
+-- The capture cases below are green before and after: they pin the personal
+-- ALLOW's POSITION — below the capture term, so a stale or unknown capture
+-- refuses whoever owns the tenant. A personal ALLOW placed above the capture
+-- term turns them red.
+--
+-- Run through --apply (the view DDL is passed in, not \ir'd): the file seeds,
+-- asserts, rolls back. Nothing persists.
 begin;
-
-\ir ../../ddl/view/dojo/all_my_repositories.ddl
 
 insert into dojo.principals (id, auth_user_id, display_name) values
   ('a1111111-1111-1111-1111-111111111111', 'aa111111-1111-1111-1111-111111111111', 'Alice');
@@ -25,7 +28,13 @@ insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role,
 
 insert into dojo.repositories (tenant_id, repo_key, remote_url, name, provider, visibility, visibility_captured_at) values
   ('b1111111-1111-1111-1111-111111111111', 'github.com/ztest-wp8-alice/notes',
-   'git@github.com:ztest-wp8-alice/notes.git', 'notes', 'github', 'private', now());
+   'git@github.com:ztest-wp8-alice/notes.git', 'notes', 'github', 'private', now()),
+  -- Captured 31 days ago: the TTL (30 days) has lapsed.
+  ('b1111111-1111-1111-1111-111111111111', 'github.com/ztest-wp8-alice/stale',
+   'git@github.com:ztest-wp8-alice/stale.git', 'stale', 'github', 'private', now() - interval '31 days'),
+  -- Never captured at all.
+  ('b1111111-1111-1111-1111-111111111111', 'github.com/ztest-wp8-alice/unknown',
+   'git@github.com:ztest-wp8-alice/unknown.git', 'unknown', 'github', null, null);
 
 -- No billing row: a personal tenant carries none, and must not need one.
 
@@ -56,6 +65,39 @@ begin
     if r.elected is not true then
         raise exception 'personal repo with no decision is not elected.';
     end if;
+end $$;
+
+-- Capture before personal-ALLOW: a stale or unknown capture refuses, with no
+-- authority and no sync, on a personal tenant like any other.
+do $$
+declare
+    expected record;
+    got      record;
+begin
+    for expected in
+        select * from (values
+            ('github.com/ztest-wp8-alice/stale',   'forge_visibility_stale'),
+            ('github.com/ztest-wp8-alice/unknown', 'forge_visibility_unknown')
+        ) as t(repo_key, refusal)
+    loop
+        select v.entitlement_refusal, v.may_share, v.authority::text as authority, v.sync_enabled
+          into got
+          from dojo.all_my_repositories v
+         where v.principal_id = 'a1111111-1111-1111-1111-111111111111'
+           and v.repo_key = expected.repo_key;
+        if not found then
+            raise exception 'no row for %.', expected.repo_key;
+        end if;
+        if got.entitlement_refusal is distinct from expected.refusal
+           or got.may_share is not false
+           or got.authority is not null
+           or got.sync_enabled is not false then
+            raise exception '%: expected (refusal=%, may=false, authority=NULL, sync=false), got (refusal=%, may=%, authority=%, sync=%).',
+                expected.repo_key, expected.refusal,
+                coalesce(got.entitlement_refusal, 'ENTITLED'), got.may_share,
+                coalesce(got.authority, 'NULL'), got.sync_enabled;
+        end if;
+    end loop;
 end $$;
 
 rollback;

@@ -5,15 +5,15 @@
 -- WHAT BREAKS THIS TEST (today): the member's election is read and any member
 -- (contributor, lead) may flip it. Red until WP8.
 --
--- The 403/200 halves (member refused, admin allowed) live at the election
--- route, tested with the route — this pins the VIEW columns the route reads
--- (`authority`, `configurable_by_me`, `elected`).
+-- Both halves: the VIEW columns (`authority`, `configurable_by_me`,
+-- `elected`), read as postgres, and the 403/200 the election route maps —
+-- `set_repository_election` raises `insufficient_privilege` for the
+-- contributor and the lead (each under their own `authenticated` JWT) and
+-- succeeds for the admin, filing an organisation election with no principal.
 --
--- Interim pattern until --apply merges: \ir the view DDL under test, seed,
--- assert, rollback. Nothing persists.
+-- Run through --apply (the view DDL is passed in, not \ir'd): the file seeds,
+-- asserts, rolls back. Nothing persists.
 begin;
-
-\ir ../../ddl/view/dojo/all_my_repositories.ddl
 
 insert into dojo.principals (id, auth_user_id, display_name) values
   ('a4444444-4444-4444-4444-444444444444', 'aa444444-4444-4444-4444-444444444444', 'Alice'),
@@ -78,6 +78,57 @@ begin
     end if;
     if a_config is not true then
         raise exception 'an admin may not change an org public repo.';
+    end if;
+end $$;
+
+-- ── the 403/200 halves, as each role ─────────────────────────────────────────
+set local role authenticated;
+do $$
+declare
+    r record;
+begin
+    -- Bob (contributor): refused.
+    perform set_config('request.jwt.claims', '{"sub":"bb444444-4444-4444-4444-444444444444"}', true);
+    begin
+        perform dojo.set_repository_election('github.com/ztest-wp8-acme/web', false);
+        raise exception 'a contributor changed an org public repo (403).';
+    exception when insufficient_privilege then null;
+    end;
+
+    -- Carol (lead): refused — a lead is not an admin.
+    perform set_config('request.jwt.claims', '{"sub":"cc444444-4444-4444-4444-444444444444"}', true);
+    begin
+        perform dojo.set_repository_election('github.com/ztest-wp8-acme/web', false);
+        raise exception 'a lead changed an org public repo (403).';
+    exception when insufficient_privilege then null;
+    end;
+
+    -- Alice (admin): allowed, under organisation authority.
+    perform set_config('request.jwt.claims', '{"sub":"aa444444-4444-4444-4444-444444444444"}', true);
+    select * into r from dojo.set_repository_election('github.com/ztest-wp8-acme/web', false);
+    if r.authority is distinct from 'organization' then
+        raise exception 'admin election on org public returned authority %, want organization.', r.authority;
+    end if;
+    if r.elected is not false then
+        raise exception 'admin election on org public did not switch it off.';
+    end if;
+end $$;
+reset role;
+
+-- The stored row: organisation, no principal. Bob's user opt-out stays as
+-- history, unread.
+do $$
+declare
+    rows text;
+begin
+    select string_agg(authority || ':' || coalesce(principal_id::text, 'none') || ':' || elected, ', '
+                      order by authority, principal_id nulls first)
+      into rows
+      from dojo.repository_elections e
+      join dojo.repositories r on r.id = e.repository_id
+     where r.repo_key = 'github.com/ztest-wp8-acme/web';
+    if rows is distinct from 'organization:none:false, user:b4444444-4444-4444-4444-444444444444:false' then
+        raise exception 'stored elections for the org public repo: %.', coalesce(rows, 'NONE');
     end if;
 end $$;
 
