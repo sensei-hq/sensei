@@ -11,12 +11,12 @@ describe('viewers view', () => {
 		).toEqual([{ principalId: 'v1', name: 'Ana', email: 'a@x.co', workspaces: [{ id: 'p', name: 'P' }] }]);
 	});
 
-	it('labels a viewer by name, else email, else a short id — never an invented name', () => {
+	it('labels a viewer by name, else email, else honest words — never an invented name', () => {
 		expect(personLabel({ principalId: 'abcdef123456', name: 'Ana', email: 'a@x.co' })).toBe('Ana');
 		expect(personLabel({ principalId: 'abcdef123456', name: null, email: 'a@x.co' })).toBe('a@x.co');
-		expect(personLabel({ principalId: 'abcdef123456', name: null, email: null })).toBe('abcdef12');
+		expect(personLabel({ principalId: 'abcdef123456', name: null, email: null })).toBe('Name not shared yet');
 	});
-	it.skip('pending: L4 member-names — an unnamed person reads as words, never an id fragment', () => {
+	it('L4 member-names — an unnamed person reads as words, never an id fragment', () => {
 		expect(personLabel({ principalId: 'abcdef123456', name: null, email: null })).toBe('Name not shared yet');
 	});
 });

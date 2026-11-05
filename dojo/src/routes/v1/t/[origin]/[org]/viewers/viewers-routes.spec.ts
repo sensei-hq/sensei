@@ -1,6 +1,7 @@
 // Route tests for the dōjō's viewers (#307 A3, D8): list, remove, grant and revoke
-// a workspace. ADMIN floor; run with the caller's own JWT (the database decides);
-// a refusal keeps its status. Store mocked.
+// a workspace. ADMIN floor; rows run with the caller's own JWT (the database
+// decides), names through the service client; a refusal keeps its status.
+// Store mocked.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 class AdminError extends Error {
@@ -68,7 +69,7 @@ describe('the viewers routes', () => {
 		const res = await list.GET(ev());
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ viewers: [{ principal_id: 'v1', workspaces: [] }] });
-		expect(mocks.listDojoViewers).toHaveBeenCalledWith(USER, 't1');
+		expect(mocks.listDojoViewers).toHaveBeenCalledWith(USER, 't1', { client: 'service' });
 	});
 
 	it('DELETE removes a viewer; PUT/DELETE grant and revoke a workspace', async () => {

@@ -75,22 +75,36 @@ describe('resolveDisplayNames', () => {
 		expect(captured.ids).toEqual(['u1', 'u2']); // deduped + blanks dropped
 	});
 	it('groups multiple identity rows per principal and picks the best', async () => {
-		const { db } = makeDb({
-			data: [
+		const { db } = makeTableDb({
+			memberships: [
+				{ tenant_id: 't1', user_id: 'u1' },
+				{ tenant_id: 't1', user_id: 'u2' }
+			],
+			identities: [
 				{ principal_id: 'u1', display_name: null, email: 'u1@x.co', last_login_at: null },
 				{ principal_id: 'u1', display_name: 'Ada', email: null, last_login_at: '2026-07-01T00:00:00Z' },
 				{ principal_id: 'u2', display_name: 'Bob', email: 'bob@x.co', last_login_at: null }
 			],
-			error: null
+			principals: []
 		});
 		const map = await resolveDisplayNames(db, 't1', ['u1', 'u2']);
 		expect(map.get('u1')).toEqual({ display_name: 'Ada', email: null });
 		expect(map.get('u2')).toEqual({ display_name: 'Bob', email: 'bob@x.co' });
 	});
-	it('omits users with no identity row (caller falls back to shortId)', async () => {
-		const { db } = makeDb({ data: [{ principal_id: 'u1', display_name: 'Ada', email: null, last_login_at: null }], error: null });
+	it('reads null/null for a scoped id nothing names (the mapper says so in words)', async () => {
+		const { db } = makeTableDb({
+			memberships: [
+				{ tenant_id: 't1', user_id: 'u1' },
+				{ tenant_id: 't1', user_id: 'ghost' }
+			],
+			identities: [
+				{ principal_id: 'u1', display_name: 'Ada', email: null, last_login_at: null }
+			],
+			principals: []
+		});
 		const map = await resolveDisplayNames(db, 't1', ['u1', 'ghost']);
-		expect(map.has('ghost')).toBe(false);
+		expect(map.get('u1')).toEqual({ display_name: 'Ada', email: null });
+		expect(map.get('ghost')).toEqual({ display_name: null, email: null });
 	});
 	it('treats null data as no identities', async () => {
 		const { db } = makeDb({ data: null, error: null });
@@ -150,7 +164,7 @@ describe('resolveDisplayNames is scoped to the tenant', () => {
 		const identityRead = calls.find((c) => c.table === 'identities' && c.op === 'in');
 		expect(identityRead?.args[1], 'only members are looked up').toEqual(['member']);
 	});
-	it.skip('pending: L4 member-names — the principals fallback reads tenant members only, never requested outsiders', async () => {
+	it('L4 member-names — the principals fallback reads tenant members only, never requested outsiders', async () => {
 		const { db, calls } = makeTableDb({
 			memberships: [
 				{ tenant_id: 't1', user_id: 'member' },
@@ -173,7 +187,7 @@ describe('resolveDisplayNames is scoped to the tenant', () => {
 		expect(principalsRead?.args[1], 'principals fallback is tenant-scoped').toEqual(['member']);
 		expect(names.get('outsider')).toBeUndefined();
 	});
-	it.skip('pending: L4 member-names — viewers share the principals fallback, viewer-scoped', async () => {
+	it('L4 member-names — viewers share the principals fallback, viewer-scoped', async () => {
 		const { db } = makeTableDb({
 			dojo_viewers: [
 				{ tenant_id: 't1', principal_id: 'viewer' },

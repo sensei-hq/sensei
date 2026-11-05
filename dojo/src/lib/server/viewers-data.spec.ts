@@ -39,6 +39,7 @@ function db(over: Record<string, FakeTable> = {}) {
 				{ principal_id: 'elsewhere', display_name: 'Not here', email: 'x@example.com', last_login_at: null }
 			]
 		},
+		principals: { rows: [] },
 		'rpc:remove_dojo_viewer': { rows: [] },
 		'rpc:grant_workspace_viewer': { rows: [] },
 		'rpc:revoke_workspace_viewer': { rows: [] },

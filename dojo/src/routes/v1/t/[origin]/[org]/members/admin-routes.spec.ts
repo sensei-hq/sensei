@@ -126,6 +126,9 @@ describe('members and identities run as the signed-in admin (#236)', () => {
 		for (const m of [mocks.listMembers, mocks.setMemberRole, mocks.listIdentities]) {
 			expect(m.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
 		}
+		// The members' names resolve through the service client (`principals`
+		// admits no client reads — the resolveDisplayNames exception).
+		expect(mocks.listMembers.mock.calls[0][2]).toEqual({ client: 'service' });
 		expect(mocks.recordAudit.mock.calls[0][0]).toEqual({ client: 'service' });
 	});
 	it('refuses a caller with no session rather than acting as the service role', async () => {
