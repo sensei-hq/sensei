@@ -27,8 +27,9 @@ function makeListDb(result: { data: unknown; error: unknown }) {
 }
 
 // Table-keyed mock for the activity sort: each `.from(table)` chain resolves
-// that table's canned result at its `.order()` / `.in()` terminal, recording
-// every call so tests can pin the read's narrowing (F3).
+// that table's canned result at its `.order()` / `.in()` terminal, and each
+// `.rpc(fn, args)` resolves the `rpc:<fn>` entry — recording every call so
+// tests can pin the read's narrowing (F3: one rpc with the listed ids).
 function makeActivityDb(tables: Record<string, { data?: unknown; error: unknown }>) {
 	let table = '';
 	const calls: Array<{ table: string; op: string; args: unknown[] }> = [];
@@ -47,24 +48,31 @@ function makeActivityDb(tables: Record<string, { data?: unknown; error: unknown 
 		calls.push({ table, op: 'in', args });
 		return Promise.resolve(tables[table] ?? { data: [], error: null });
 	};
+	b.rpc = (fn: string, args: unknown) => {
+		calls.push({ table: fn, op: 'rpc', args: [args] });
+		return Promise.resolve(tables[`rpc:${fn}`] ?? { data: [], error: null });
+	};
 	return { db: b as unknown as DojoClient, calls };
 }
 
 describe('listOrgWorkspaces', () => {
 	it('returns the tenant rows', async () => {
 		const rows = [{ id: 'p1' }, { id: 'p2' }];
-		const { db, captured } = makeListDb({ data: rows, error: null });
+		const { db, calls } = makeActivityDb({
+			workspaces: { data: rows, error: null },
+			'rpc:workspace_activity': { data: [], error: null }
+		});
 		expect(await listOrgWorkspaces(db, 't1')).toEqual(rows);
-		expect(captured.tenantEq).toBe('t1');
+		expect(calls.find((c) => c.table === 'workspaces' && c.op === 'eq')?.args).toEqual(['tenant_id', 't1']);
 	});
 	it('keeps API order when no workspace has any activity', async () => {
 		const { db } = makeActivityDb({
 			workspaces: { data: [{ id: 'w1' }, { id: 'w2' }], error: null },
-			workspace_activity: { data: [], error: null }
+			'rpc:workspace_activity': { data: [], error: null }
 		});
 		expect((await listOrgWorkspaces(db, 't1')).map((w) => w.id)).toEqual(['w1', 'w2']);
 	});
-	it.skip('pending: L4 workspace-sort — most recently active first, quiet workspaces last, no invented date', async () => {
+	it('L4 workspace-sort r4 — most recently active first, quiet last, one rpc', async () => {
 		const { db, calls } = makeActivityDb({
 			workspaces: {
 				data: [
@@ -74,8 +82,8 @@ describe('listOrgWorkspaces', () => {
 				],
 				error: null
 			},
-			// The max lives in the DB (F3): one read, per-workspace activity.
-			workspace_activity: {
+			// The max lives in the DB (F3): one rpc, per-workspace activity.
+			'rpc:workspace_activity': {
 				data: [
 					{ workspace_id: 'w1', last_activity_at: '2026-11-02T10:00:00Z' },
 					{ workspace_id: 'w2', last_activity_at: '2026-11-03T10:00:00Z' }
@@ -86,18 +94,15 @@ describe('listOrgWorkspaces', () => {
 		const out = await listOrgWorkspaces(db, 't1');
 		expect(out.map((w) => w.id)).toEqual(['w2', 'w1', 'w3']);
 		expect(out[2]).toEqual({ id: 'w3', last_run_at: null });
-		// F3: the view read is narrowed to the listed ids — a whole-view read
-		// would hit max_rows and truncate with no error.
-		const activityRead = calls.find((c) => c.table === 'workspace_activity' && c.op === 'in');
-		expect(activityRead?.args, 'view read narrowed to listed ids').toEqual([
-			'workspace_id',
-			['w1', 'w2', 'w3']
-		]);
+		// F3: the rpc carries the listed ids — a whole-view read would hit
+		// max_rows and truncate with no error.
+		const activityRead = calls.find((c) => c.table === 'workspace_activity' && c.op === 'rpc');
+		expect(activityRead?.args, 'rpc narrowed to listed ids').toEqual([{ p_ids: ['w1', 'w2', 'w3'] }]);
 	});
-	it.skip('pending: L4 workspace-sort — an activity-read error fails closed, never API order', async () => {
+	it('L4 workspace-sort r4 — an rpc error fails closed, never API order', async () => {
 		const { db } = makeActivityDb({
 			workspaces: { data: [{ id: 'w1' }], error: null },
-			workspace_activity: { data: null, error: { message: 'act boom' } }
+			'rpc:workspace_activity': { data: null, error: { message: 'act boom' } }
 		});
 		await expect(listOrgWorkspaces(db, 't1')).rejects.toThrow(AdminError);
 	});
@@ -128,7 +133,7 @@ function makeUserDb(result: { data: unknown; error: unknown }) {
 }
 
 describe('listUserWorkspaces — every workspace the caller may read (RLS), across dōjōs', () => {
-	it.skip('pending: L4 workspace-sort — the personal list sorts by activity too, quiet last', async () => {
+	it('L4 workspace-sort r4 — the personal list sorts by activity too, quiet last', async () => {
 		const { db, calls } = makeActivityDb({
 			workspaces: {
 				data: [
@@ -137,7 +142,7 @@ describe('listUserWorkspaces — every workspace the caller may read (RLS), acro
 				],
 				error: null
 			},
-			workspace_activity: {
+			'rpc:workspace_activity': {
 				data: [{ workspace_id: 'w2', last_activity_at: '2026-11-03T10:00:00Z' }],
 				error: null
 			}
@@ -145,21 +150,24 @@ describe('listUserWorkspaces — every workspace the caller may read (RLS), acro
 		const out = await listUserWorkspaces(db);
 		expect(out.map((w) => w.id)).toEqual(['w2', 'w1']);
 		expect(out[1]).toEqual({ id: 'w1', last_run_at: null });
-		const activityRead = calls.find((c) => c.table === 'workspace_activity' && c.op === 'in');
-		expect(activityRead?.args, 'view read narrowed to listed ids').toEqual(['workspace_id', ['w1', 'w2']]);
+		const activityRead = calls.find((c) => c.table === 'workspace_activity' && c.op === 'rpc');
+		expect(activityRead?.args, 'rpc narrowed to listed ids').toEqual([{ p_ids: ['w1', 'w2'] }]);
 	});
-	it.skip('pending: L4 workspace-sort — the personal list fails closed when the activity read errors', async () => {
+	it('L4 workspace-sort r4 — the personal list fails closed when the rpc errors', async () => {
 		const { db } = makeActivityDb({
 			workspaces: { data: [{ id: 'w1' }], error: null },
-			workspace_activity: { data: null, error: { message: 'act boom' } }
+			'rpc:workspace_activity': { data: null, error: { message: 'act boom' } }
 		});
 		await expect(listUserWorkspaces(db)).rejects.toThrow(AdminError);
 	});
 	it('returns the readable rows with their dōjō, with no owner filter', async () => {
 		const rows = [{ id: 'p1', tenant_id: 't1' }, { id: 'p2', tenant_id: 't2' }];
-		const { db, captured } = makeUserDb({ data: rows, error: null });
+		const { db, calls } = makeActivityDb({
+			workspaces: { data: rows, error: null },
+			'rpc:workspace_activity': { data: [], error: null }
+		});
 		expect(await listUserWorkspaces(db)).toEqual(rows);
-		expect(captured.eqs).toEqual([]);
+		expect(calls.filter((c) => c.table === 'workspaces' && c.op === 'eq')).toEqual([]);
 	});
 	it('honest-empty [] when data is null (genuine empty, not a mask)', async () => {
 		const { db } = makeUserDb({ data: null, error: null });
