@@ -59,8 +59,9 @@ export interface Membership {
 	/** ISO-8601, or null when active. */
 	disabled_at: string | null;
 	created_at: string;
-	/** WS-1: best display name resolved from the member's `dojo.identities` row,
-	 *  or null when they have no named identity (the mapper falls back to a shortId). */
+	/** WS-1: best display name resolved from the member's `dojo.identities` row
+	 *  then `principals.display_name`, or null when nothing names them (the
+	 *  mapper says so in words). */
 	display_name: string | null;
 	email: string | null;
 }

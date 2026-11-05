@@ -43,6 +43,7 @@ function db(over: Record<string, FakeTable> = {}) {
 		identities: {
 			rows: [{ principal_id: 'ada', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }]
 		},
+		principals: { rows: [] },
 		workspaces: { rows: [{ id: 'p1', tenant_id: T }, { id: 'px', tenant_id: 'other' }] },
 		'rpc:create_team': { rows: [{ id: 'new-team' }] },
 		'rpc:rename_team': { rows: [] },

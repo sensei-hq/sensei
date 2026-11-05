@@ -55,9 +55,11 @@ describe('listPolicies', () => {
 	});
 });
 
-// ── listMembers: memberships query + WS-1 identity enrichment (a second query) ──
-// listMembers issues TWO queries: memberships (terminal `.order()`) then
-// dojo.identities via resolveDisplayNames (terminal `.in()`).
+// ── listMembers: memberships query + WS-1 identity enrichment + principals fallback ──
+// listMembers issues THREE queries: memberships (terminal `.order()`), then the
+// tenant scope + dojo.identities via resolveDisplayNames (terminal `.in()`),
+// then `principals` for ids the identities still leave unnamed. Table-keyed
+// stub below (makeMembersDbTables); the queue stub cannot tell the reads apart.
 function makeMembersDb(members: Terminal, identities: { data?: unknown; error: unknown }) {
 	const b: Record<string, unknown> = {};
 	b.from = () => b;
@@ -70,13 +72,16 @@ function makeMembersDb(members: Terminal, identities: { data?: unknown; error: u
 
 describe('listMembers (WS-1 identity enrichment)', () => {
 	it('enriches each member with the display name + email resolved from identities', async () => {
-		const db = makeMembersDb(
+		const db = makeMembersDbTables(
 			{ data: [{ id: 'm1', user_id: 'u1' }, { id: 'm2', user_id: 'u2' }], error: null },
-			{ data: [{ principal_id: 'u1', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }], error: null }
+			{ data: [{ user_id: 'u1' }, { user_id: 'u2' }], error: null },
+			{ data: [{ principal_id: 'u1', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }], error: null },
+			{ data: [], error: null }
 		);
 		const out = await listMembers(db, 't1');
 		expect(out[0]).toMatchObject({ id: 'm1', display_name: 'Ada', email: 'ada@x.co' });
-		expect(out[1]).toMatchObject({ id: 'm2', display_name: null, email: null }); // no identity → shortId fallback
+		// u2: no identity, no principals row → null/null, the mapper says so in words.
+		expect(out[1]).toMatchObject({ id: 'm2', display_name: null, email: null });
 	});
 	it('returns [] (and skips the identity query) when there are no members', async () => {
 		const db = makeMembersDb({ data: null, error: null }, { data: [], error: null });
@@ -87,8 +92,95 @@ describe('listMembers (WS-1 identity enrichment)', () => {
 		await expect(listMembers(db, 't1')).rejects.toThrow(AdminError);
 	});
 	it('throws AdminError(500) when the identity-enrichment query errors (fail-closed)', async () => {
-		const db = makeMembersDb({ data: [{ id: 'm1', user_id: 'u1' }], error: null }, { data: null, error: { message: 'id boom' } });
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: null, error: { message: 'id boom' } },
+			{ data: [], error: null }
+		);
 		await expect(listMembers(db, 't1')).rejects.toThrow(AdminError);
+	});
+});
+
+// ── listMembers: principals fallback (brief item 1 — never a bare id as the name) ──
+// A member whose identities name no one falls back to `principals.display_name`
+// (same tenant scoping: only ids already scoped to the tenant's members).
+// Still unnamed → null/null, and the mapper says so in words.
+function makeMembersDbTables(
+	members: Terminal,
+	scope: { data?: unknown; error: unknown },
+	identities: { data?: unknown; error: unknown },
+	principals: { data?: unknown; error: unknown }
+) {
+	let table = '';
+	const b: Record<string, unknown> = {};
+	b.from = (t: string) => ((table = t), b);
+	b.select = () => b;
+	b.eq = () => b;
+	b.order = () => Promise.resolve(members);
+	b.in = () => Promise.resolve(table === 'principals' ? principals : table === 'memberships' ? scope : identities);
+	return b as unknown as DojoClient;
+}
+
+describe('listMembers (principals fallback)', () => {
+	it('leaves display_name null when neither identities nor principals name them', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [], error: null },
+			{ data: [], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: null, email: null });
+	});
+	it('L4 member-names — falls back to principals.display_name when identities name no one', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [], error: null },
+			{ data: [{ id: 'u1', display_name: 'Ada' }], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: 'Ada' });
+	});
+	it('L4 member-names — a principals-query error fails closed, never silent nulls', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [], error: null },
+			{ data: null, error: { message: 'pr boom' } }
+		);
+		await expect(listMembers(db, 't1')).rejects.toThrow(AdminError);
+	});
+	it('L4 member-names — a nameless identity row still falls back to principals, keeping its email', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [{ principal_id: 'u1', display_name: null, email: 'a@x.co' }], error: null },
+			{ data: [{ id: 'u1', display_name: 'Ada' }], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: 'Ada', email: 'a@x.co' });
+	});
+	it('the identity name wins over the principals name (refreshed beats written-once)', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [{ principal_id: 'u1', display_name: 'Ida', email: 'i@x.co' }], error: null },
+			{ data: [{ id: 'u1', display_name: 'Ada' }], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: 'Ida', email: 'i@x.co' });
+	});
+	it('a whitespace-only principals name counts as absent', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [], error: null },
+			{ data: [{ id: 'u1', display_name: '   ' }], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: null, email: null });
 	});
 });
 
