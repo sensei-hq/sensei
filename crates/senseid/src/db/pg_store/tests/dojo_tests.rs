@@ -801,6 +801,42 @@ async fn a_pulled_row_is_never_pushed_back() {
     assert_eq!(after_n, 0, "a dojo-computed row is NOT pushed back");
 }
 
+// H2/F4: the window skips rows whose backoff has not elapsed. The stuck row
+// sorts FIRST (the window orders by computed_on DESC; both fixtures share a
+// date, so the stuck one is moved a day up — a uuid tiebreak would flake)
+// with a limit of one: without the skip the window returns it and the due
+// row behind it never comes out.
+#[tokio::test]
+#[ignore = "pending: sync-hardening"]
+async fn a_row_in_backoff_does_not_hold_the_push_window() {
+    let s = pg_store().await;
+    let stuck_uniq = uuid::Uuid::new_v4();
+    let (stuck_pid, stuck_rid) = seed_sync_fixture(&s, &stuck_uniq).await;
+    let fresh_uniq = uuid::Uuid::new_v4();
+    let (fresh_pid, _) = seed_sync_fixture(&s, &fresh_uniq).await;
+    let stuck_key = format!("test/bare-{stuck_uniq}");
+    let fresh_key = format!("test/bare-{fresh_uniq}");
+
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics \
+            SET next_attempt_at = now() + interval '1 hour', \
+                computed_on = date '2020-05-02' \
+          WHERE repository_id = $1",
+    )
+    .bind(stuck_rid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let rows = s.unpushed_metric_rows(&["user"], &[&stuck_key, &fresh_key], 1).await.unwrap();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &stuck_pid, None, &[]).await;
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &fresh_pid, None, &[]).await;
+
+    assert_eq!(rows.len(), 1, "the window still offers one row");
+    assert_eq!(rows[0].repo_key, fresh_key, "the due row, not the stuck one");
+}
+
 #[tokio::test]
 async fn a_pushed_commit_row_carries_its_authored_time_and_an_unknown_sha_does_not() {
     // F4 phase B: per-commit rows carry props.authored_at from sensei.commits

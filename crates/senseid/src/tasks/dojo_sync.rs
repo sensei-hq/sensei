@@ -1732,6 +1732,75 @@ mod tests {
         n.0
     }
 
+    /// Rows still queued: never marked, or recomputed since the mark. A
+    /// re-pushed row that is never confirmed stays pending WITHOUT being
+    /// un-marked — marks stand, staleness re-queues.
+    async fn pending_count(pg: &PgStore, repo_key: &str) -> i64 {
+        let n: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.repository_metrics rm \
+               JOIN sensei.repositories r ON r.id = rm.repository_id \
+              WHERE r.repo_key = $1 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at)",
+        )
+        .bind(repo_key)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        n.0
+    }
+
+    /// Whether the row for one date is marked — the per-row verdict a
+    /// same-(repo, metric) sibling needs.
+    async fn shared_on(pg: &PgStore, repo_key: &str, computed_on: chrono::NaiveDate) -> bool {
+        let n: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.repository_metrics rm \
+               JOIN sensei.repositories r ON r.id = rm.repository_id \
+              WHERE r.repo_key = $1 AND rm.computed_on = $2 AND rm.shared_at IS NOT NULL",
+        )
+        .bind(repo_key)
+        .bind(computed_on)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        n.0 > 0
+    }
+
+    /// A second row for the seed's (repo, metric) at another date — same
+    /// identity except `computed_on`, so a stored match on (repo, metric)
+    /// alone cannot tell them apart.
+    async fn seed_sibling_row(
+        pg: &PgStore,
+        repo_key: &str,
+        metric_key: &str,
+        computed_on: chrono::NaiveDate,
+    ) {
+        let rid: (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.repositories WHERE repo_key = $1")
+                .bind(repo_key)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        let mid: (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.metrics WHERE key = $1")
+                .bind(metric_key)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        pg.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid.0,
+            repository_id: &rid.0,
+            scope: "repo",
+            identity: None,
+            commit_sha: None,
+            computed_on,
+            grain: "daily",
+            value: 2.0,
+            props: &serde_json::json!({}),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+
     async fn push_state(pg: &PgStore, repo_key: &str) -> Option<(String, Option<String>)> {
         sqlx_core::query_as::query_as(
             "SELECT state, last_error FROM sensei.sync_state \
@@ -2045,6 +2114,16 @@ mod tests {
         String::from_utf8(bytes).expect("utf8 logs")
     }
 
+    /// Lines logged AT ERROR carrying `msg`. "Loud" is the error level, not a
+    /// substring anywhere — an `info!` with the same words must not pass.
+    fn error_lines_with<'l>(logs: &'l str, msg: &str) -> Vec<&'l str> {
+        logs.lines().filter(|l| l.contains(" ERROR ") && l.contains(msg)).collect()
+    }
+
+    /// The bearer the log tests sync with: distinctive, so an assertion that
+    /// it never appears in captured logs proves the token is never logged.
+    const SECRET_TOK: &str = "tok-SECRET-ztest";
+
     fn current_thread_rt() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
     }
@@ -2052,7 +2131,7 @@ mod tests {
     // (a): every cycle complete names the dōjō it pushed to.
     #[test]
     #[ignore = "pending: sync-hardening"]
-    fn cycle_complete_names_the_dojob_it_pushed_to() {
+    fn cycle_complete_names_the_dojo_it_pushed_to() {
         let logs = captured_logs(|| {
             current_thread_rt().block_on(async {
                 let pg = PgStore::connect_test().await.unwrap();
@@ -2066,7 +2145,7 @@ mod tests {
                     push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: None })),
                     ..Default::default()
                 };
-                sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
                 crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
             })
         });
@@ -2075,6 +2154,7 @@ mod tests {
             logs.contains("dojo_url=http://stub.invalid"),
             "complete line names no dōjō; logs:\n{logs}"
         );
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
     }
 
     // (c): 0 accepted with a non-empty batch and no rejections marks nothing.
@@ -2112,11 +2192,12 @@ mod tests {
                     push: Some(Ok(IngestResult { accepted: 0, rejected: vec![], stored: None })),
                     ..Default::default()
                 };
-                sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
                 crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
             })
         });
         assert!(logs.contains("marking nothing"), "0 accepted must say so loudly; logs:\n{logs}");
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
     }
 
     // H2: with per-row confirmation, only stored rows are marked.
@@ -2159,6 +2240,44 @@ mod tests {
         assert_eq!(shared_b, 0, "the unconfirmed row stays queued");
     }
 
+    // H2/F5: the stored match is the FULL row key. Two rows of one
+    // (repo, metric) on different dates, only the first echoed: a match on
+    // (repo, metric) alone marks both.
+    #[tokio::test]
+    #[ignore = "pending: sync-hardening"]
+    async fn only_the_echoed_row_is_marked_when_a_metric_has_two_dates() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, metric) = seed(&pg).await;
+        let seed_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
+        let other_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap();
+        seed_sibling_row(&pg, &key, &metric, other_day).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 2,
+                rejected: vec![],
+                stored: Some(vec![StoredMetricKey {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    scope: "repo".to_string(),
+                    computed_on: "2026-08-27".to_string(),
+                    grain: "daily".to_string(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let first = shared_on(&pg, &key, seed_day).await;
+        let second = shared_on(&pg, &key, other_day).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert!(first, "the echoed row is marked");
+        assert!(!second, "the unconfirmed date stays queued");
+    }
+
     // H2: a row neither confirmed nor rejected is quiet twice, then loud —
     // while staying queued throughout. The verdict is honest from cycle 1
     // (skipped: rows outstanding); only the error waits for N.
@@ -2184,10 +2303,11 @@ mod tests {
         for i in 0..3 {
             let logs = captured_logs(|| {
                 rt.block_on(async {
-                    sync_persona(&pg, "ztest-slot", "tok", &shortfall_plane()).await.unwrap();
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &shortfall_plane()).await.unwrap();
                 })
             });
-            loud.push(logs.contains("stored confirmation missing"));
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
             if i == 0 {
                 first_verdict = rt.block_on(async { push_state(&pg, &key).await });
             }
@@ -2238,10 +2358,11 @@ mod tests {
         for _ in 0..2 {
             let logs = captured_logs(|| {
                 rt.block_on(async {
-                    sync_persona(&pg, "ztest-slot", "tok", &short_plane()).await.unwrap();
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
                 })
             });
-            loud.push(logs.contains("stored confirmation missing"));
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
         }
         // Cycle 3: clean — the row is confirmed and marked.
         let logs = captured_logs(|| {
@@ -2262,7 +2383,7 @@ mod tests {
                     })),
                     ..Default::default()
                 };
-                sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
                 // Recompute re-queues the same (repo, metric): the mark is
                 // older than the row again.
                 sqlx_core::query::query(
@@ -2276,22 +2397,26 @@ mod tests {
                 .unwrap();
             })
         });
-        loud.push(logs.contains("stored confirmation missing"));
+        loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
         // Cycles 4-6: shortfall again — the count restarted.
         for _ in 0..3 {
             let logs = captured_logs(|| {
                 rt.block_on(async {
-                    sync_persona(&pg, "ztest-slot", "tok", &short_plane()).await.unwrap();
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
                 })
             });
-            loud.push(logs.contains("stored confirmation missing"));
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
         }
-        let shared = rt.block_on(async {
+        let (shared, pending) = rt.block_on(async {
             let s = shared_count(&pg, &key).await;
+            let p = pending_count(&pg, &key).await;
             crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
-            s
+            (s, p)
         });
-        assert_eq!(shared, 0, "the re-queued row is never confirmed");
+        assert_eq!(shared, 1, "cycle 3's mark stands — marks are never un-made");
+        assert_eq!(pending, 1, "the recomputed row is queued again, never confirmed");
         assert_eq!(
             loud,
             vec![false, false, false, false, false, true],
@@ -2322,10 +2447,11 @@ mod tests {
         for _ in 0..2 {
             let logs = captured_logs(|| {
                 rt.block_on(async {
-                    sync_persona(&pg, "ztest-slot", "tok", &short_plane()).await.unwrap();
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
                 })
             });
-            loud.push(logs.contains("stored confirmation missing"));
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
         }
         // Gap cycle: the plan allows nothing, so nothing is pushed.
         let logs = captured_logs(|| {
@@ -2334,17 +2460,19 @@ mod tests {
                     plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
                     ..Default::default()
                 };
-                sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
             })
         });
-        loud.push(logs.contains("stored confirmation missing"));
+        loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
         // Third shortfall: loud, because the gap did not reset.
         let logs = captured_logs(|| {
             rt.block_on(async {
-                sync_persona(&pg, "ztest-slot", "tok", &short_plane()).await.unwrap();
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
             })
         });
-        loud.push(logs.contains("stored confirmation missing"));
+        loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
         let shared = rt.block_on(async {
             let s = shared_count(&pg, &key).await;
             crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
@@ -2352,6 +2480,63 @@ mod tests {
         });
         assert_eq!(shared, 0, "unconfirmed rows stay queued");
         assert_eq!(loud, vec![false, false, false, true], "the gap keeps the count");
+    }
+
+    // H2/F4: a loud row waits its backoff, then is re-offered. Three
+    // shortfall cycles go loud; the fourth offers nothing for it; once the
+    // backoff has elapsed it is pushed again. (The backoff length is the
+    // implementation's — the test only pins wait-then-reoffer, moving the
+    // clock with SQL rather than waiting real hours.)
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn a_loud_row_waits_its_backoff_then_is_re_offered() {
+        let rt = current_thread_rt();
+        let (pg, pid, key) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, _) = seed(&pg).await;
+            (pg, pid, key)
+        });
+        let short_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            rt.block_on(sync_persona(&pg, "ztest-slot", "tok", &short_plane())).unwrap();
+        }
+        // Still queued — never confirmed, never marked. (Pre-implementation
+        // this is where the test fails: the complement marks it in cycle 1,
+        // which is exactly the bug the backoff builds on.)
+        let pending = rt.block_on(pending_count(&pg, &key));
+        assert_eq!(pending, 1, "the unconfirmed row stays queued through the loud cycles");
+        // Fourth cycle: the loud row waits.
+        let waiting = short_plane();
+        rt.block_on(sync_persona(&pg, "ztest-slot", "tok", &waiting)).unwrap();
+        let waited = waiting.pushed_rows.lock().unwrap().clone();
+        // The backoff elapses: the row is offered again.
+        rt.block_on(async {
+            sqlx_core::query::query(
+                "UPDATE sensei.repository_metrics rm SET next_attempt_at = now() - interval '1 minute'
+                  FROM sensei.repositories r
+                 WHERE r.id = rm.repository_id AND r.repo_key = $1",
+            )
+            .bind(&key)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        });
+        let reoffered = short_plane();
+        rt.block_on(sync_persona(&pg, "ztest-slot", "tok", &reoffered)).unwrap();
+        let offered_again = reoffered.pushed_rows.lock().unwrap().clone();
+        rt.block_on(async {
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        });
+        assert!(waited.is_empty(), "the loud row waits its backoff, offered: {waited:?}");
+        assert_eq!(offered_again.len(), 1, "elapsed backoff re-offers the row");
+        assert_eq!(offered_again[0].0, key);
     }
 
     // H2 version gate: a dōjō that predates per-row confirmation keeps the
@@ -2410,6 +2595,177 @@ mod tests {
         let shared = shared_count(&pg, &key).await;
         crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
         assert_eq!(shared, 0, "rejected wins");
+    }
+
+    // F7: a legacy shape that rejects SOME rows names the rows it kept but
+    // cannot say which of the rest fell short — so it marks nothing at all.
+    #[tokio::test]
+    #[ignore = "pending: sync-hardening"]
+    async fn a_partially_rejected_legacy_push_marks_nothing() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid_a, key_a, metric_a) = seed(&pg).await;
+        let (pid_b, key_b, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 0,
+                rejected: vec![RejectedMetric {
+                    repo_key: key_a.clone(),
+                    metric: metric_a.clone(),
+                    reason: "unknown_metric".into(),
+                }],
+                stored: None,
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared_a = shared_count(&pg, &key_a).await;
+        let shared_b = shared_count(&pg, &key_b).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        assert_eq!(shared_a, 0, "the rejected row stays queued");
+        assert_eq!(shared_b, 0, "the unaccounted row stays queued too");
+    }
+
+    // F7: accepted < pushed - rejected is a SILENT shortfall on a legacy
+    // shape — the count admits a row fell short without saying which.
+    #[tokio::test]
+    #[ignore = "pending: sync-hardening"]
+    async fn a_count_shortfall_on_a_legacy_push_marks_nothing() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid_a, key_a, _) = seed(&pg).await;
+        let (pid_b, key_b, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared_a = shared_count(&pg, &key_a).await;
+        let shared_b = shared_count(&pg, &key_b).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        assert_eq!(shared_a, 0, "a silent shortfall marks nothing");
+        assert_eq!(shared_b, 0, "a silent shortfall marks nothing");
+    }
+
+    // F7: both mark-nothing legacy shapes say so loudly.
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn legacy_mark_nothing_shapes_warn() {
+        enum Shape {
+            PartialRejected,
+            CountShortfall,
+        }
+        async fn run_shape(pg: &PgStore, shape: Shape) -> String {
+            let (pid_a, key_a, metric_a) = seed(pg).await;
+            let (pid_b, key_b, _) = seed(pg).await;
+            let push = match shape {
+                Shape::PartialRejected => IngestResult {
+                    accepted: 0,
+                    rejected: vec![RejectedMetric {
+                        repo_key: key_a.clone(),
+                        metric: metric_a.clone(),
+                        reason: "unknown_metric".into(),
+                    }],
+                    stored: None,
+                },
+                Shape::CountShortfall => {
+                    IngestResult { accepted: 1, rejected: vec![], stored: None }
+                }
+            };
+            let plane = StubPlane {
+                plan: Some(SyncPlan {
+                    allowed: vec![
+                        mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                        mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                    ],
+                    denied: vec![],
+                }),
+                push: Some(Ok(push)),
+                ..Default::default()
+            };
+            let rt = current_thread_rt();
+            let logs = captured_logs(|| {
+                rt.block_on(sync_persona(pg, "ztest-slot", SECRET_TOK, &plane)).unwrap();
+            });
+            rt.block_on(async {
+                crate::tasks::test_support::cleanup_metrics_fixture(pg, &pid_a, None, &[]).await;
+                crate::tasks::test_support::cleanup_metrics_fixture(pg, &pid_b, None, &[]).await;
+            });
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+            logs
+        }
+
+        let rt = current_thread_rt();
+        let pg = rt.block_on(PgStore::connect_test()).unwrap();
+        let partial = rt.block_on(run_shape(&pg, Shape::PartialRejected));
+        assert!(
+            partial.contains("marking nothing"),
+            "partial-rejected legacy must warn; logs:\n{partial}"
+        );
+        let shortfall = rt.block_on(run_shape(&pg, Shape::CountShortfall));
+        assert!(
+            shortfall.contains("marking nothing"),
+            "count shortfall must warn; logs:\n{shortfall}"
+        );
+    }
+
+    // F8: the stored:None complement keeps old dōjōs working, but says so —
+    // once per cycle (not per row), naming the dōjō — until the complement
+    // goes away (backlog: remove when every supported dōjō returns stored).
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn stored_none_complement_marks_but_warns_once_naming_the_dojo() {
+        let rt = current_thread_rt();
+        let pg = rt.block_on(PgStore::connect_test()).unwrap();
+        let (pid_a, key_a, _) = rt.block_on(seed(&pg));
+        let (pid_b, key_b, _) = rt.block_on(seed(&pg));
+        let plane = StubPlane {
+            url: "http://stub.invalid".into(),
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 2, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        let logs = captured_logs(|| {
+            rt.block_on(sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane)).unwrap();
+        });
+        let (shared_a, shared_b) = rt
+            .block_on(async { (shared_count(&pg, &key_a).await, shared_count(&pg, &key_b).await) });
+        rt.block_on(async {
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        });
+        assert_eq!(shared_a, 1, "the legacy complement still marks");
+        assert_eq!(shared_b, 1, "the legacy complement still marks");
+        let warns: Vec<_> = logs
+            .lines()
+            .filter(|l| {
+                l.contains(" WARN ")
+                    && l.contains("unconfirmed")
+                    && l.contains("dojo_url=http://stub.invalid")
+            })
+            .collect();
+        assert_eq!(warns.len(), 1, "one complement warn per cycle, naming the dōjō; logs:\n{logs}");
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
     }
 
     #[tokio::test]

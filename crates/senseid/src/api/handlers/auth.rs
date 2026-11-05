@@ -1846,6 +1846,7 @@ mod tests {
             Ok(Credentials {
                 refresh_token: rt.map(Into::into),
                 provider_token: gho.map(Into::into),
+                minted_registry: None,
             })
         };
         assert_eq!(approval(creds(Some("rt"), Some("gho"))), Ok(()));
@@ -2043,5 +2044,54 @@ mod tests {
         let u = user_with(serde_json::json!([{ "provider": "email", "identity_data": {} }]));
         assert_eq!(github_identity(&u), None);
         assert_eq!(github_identity(&serde_json::json!({ "id": "abc" })), None);
+    }
+
+    // F2/M1: a refresh token is never sent to a registry that did not mint
+    // it. Credentials minted at A while the dōjō is now B fail BEFORE any
+    // refresh request — a refresh outcome (Network, Rejected) could never
+    // name both registries, so the message proves no request went out.
+    // Real keychain: macOS-gated, uuid persona, cleared afterwards.
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[ignore = "pending: sync-hardening"]
+    async fn a_refresh_token_is_never_sent_to_a_registry_that_did_not_mint_it() {
+        let persona = uuid::Uuid::new_v4().to_string();
+        session::store_test_credentials(
+            &persona,
+            "rt-fake-not-a-token",
+            Some("https://minted.invalid"),
+        )
+        .unwrap();
+        let err = live_access_token(&persona).await.unwrap_err();
+        session::clear_session(&persona).unwrap();
+        let msg = err.to_string();
+        let current = crate::dojo_client::settings::dojo_url();
+        assert!(
+            msg.contains("https://minted.invalid") && msg.contains(&current),
+            "the refusal must name the minter AND the current dōjō, got: {msg}"
+        );
+        assert!(
+            !matches!(err, AuthError::SignedOut),
+            "a minted-elsewhere session is not a silent sign-out: {msg}"
+        );
+    }
+
+    // F2/M1 legacy: credentials stored before registries were recorded fail
+    // closed — a distinct sign-in-again error, never a refresh attempt, never
+    // a silent SignedOut. Real keychain: macOS-gated, uuid persona, cleared.
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[ignore = "pending: sync-hardening"]
+    async fn legacy_credentials_without_a_minter_ask_for_a_fresh_sign_in() {
+        let persona = uuid::Uuid::new_v4().to_string();
+        session::store_test_credentials(&persona, "rt-fake-not-a-token", None).unwrap();
+        let err = live_access_token(&persona).await.unwrap_err();
+        session::clear_session(&persona).unwrap();
+        let msg = err.to_string();
+        assert!(
+            !matches!(err, AuthError::SignedOut),
+            "legacy credentials fail closed with a distinct error, got: {msg}"
+        );
+        assert!(msg.contains("sign in"), "the remedy is one fresh sign-in, got: {msg}");
     }
 }

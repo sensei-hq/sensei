@@ -27,6 +27,8 @@ create table if not exists repository_metrics (
 , computed_by   metric_computed_by not null default 'local'
   -- When this row was last pushed. NULL = never shared.
 , shared_at     timestamptz
+  -- H2 backoff: NULL = due now.
+, next_attempt_at timestamptz
 , source        metric_source not null default 'measured'
 , modified_at   timestamptz   not null default now()
 );
@@ -88,3 +90,5 @@ comment on column repository_metrics.persona_id
      is 'The persona `identity` resolves to. NULLABLE and DERIVED — never a replacement for the raw email above. Resolving at write time would be a destructive merge: each row came from `git log --author=<email>`, so combining two aliases must SUM, and a later persona reassignment would have no source left to recompute from. Keeping both makes re-attribution a re-derivation over immutable raw attribution.';
 comment on column repository_metrics.computed_by
      is 'WHO computed this row — the loop-breaker for pull-else-compute. Without it local cannot tell a value dōjō handed down from one it produced, so it recomputes the shared value and pushes it back, forever.';
+comment on column repository_metrics.next_attempt_at
+     is 'H2 backoff: a loud (3x shortfall) row waits until this time before the push window offers it again. NULL = due now. Set by the daemon on going loud, read by unpushed_metric_rows; never blocks a row''s first push.';

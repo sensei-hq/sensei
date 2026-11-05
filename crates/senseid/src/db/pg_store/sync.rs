@@ -166,16 +166,31 @@ fn pushable(row: PushableRow) -> PushableMetric {
     }
 }
 
-/// Consecutive stored-confirmation shortfalls per (repo, metric): H2's
-/// quiet-then-loud rule. In-memory on purpose: a restart resets to N quiet
-/// retries, which bounds silence to N cycles per process lifetime without
-/// schema churn (D89 may persist it). Owned by [`PgStore`] so it outlives
-/// cycles; fresh per test store so tests never share counts. Phase A declares
-/// it with its counting rules; phase B records into it from `push_allowed`.
+/// One pushed row's identity, as the dōjō echoes it in
+/// [`StoredMetricKey`](crate::dojo_client::user_plane::StoredMetricKey):
+/// the streak is per ROW, because one (repo, metric) pair holds rows at
+/// different dates — one confirmed and one unconfirmed is then neither clean
+/// nor short for the pair.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ShortfallKey {
+    pub repo_key: String,
+    pub metric: String,
+    pub scope: String,
+    pub computed_on: chrono::NaiveDate,
+    pub grain: String,
+    pub commit_sha: Option<String>,
+}
+
+/// Consecutive stored-confirmation shortfalls per row: H2's quiet-then-loud
+/// rule. In-memory on purpose: a restart resets to N quiet retries, which
+/// bounds silence to N cycles per process lifetime without schema churn (D89
+/// may persist it). Owned by [`PgStore`] so it outlives cycles; fresh per
+/// test store so tests never share counts. Phase A declares it with its
+/// counting rules; phase B records into it from `push_allowed`.
 #[derive(Debug, Default)]
 pub struct ShortfallTracker {
     #[allow(dead_code)] // phase A: counted in phase B
-    strikes: std::collections::HashMap<(String, String), u32>,
+    strikes: std::collections::HashMap<ShortfallKey, u32>,
 }
 
 #[allow(dead_code)] // phase A: called from push_allowed in phase B
@@ -183,19 +198,19 @@ impl ShortfallTracker {
     /// Shortfalls before a row goes loud.
     pub const LOUD_AFTER: u32 = 3;
 
-    /// One cycle pushed (repo, metric) rows with a shortfall. Returns the new
-    /// consecutive count.
-    pub fn record_shortfall(&mut self, repo_key: &str, metric: &str) -> u32 {
-        let n = self.strikes.entry((repo_key.to_string(), metric.to_string())).or_insert(0);
+    /// One cycle pushed a row with a shortfall. Returns the new consecutive
+    /// count for that row's identity.
+    pub fn record_shortfall(&mut self, key: &ShortfallKey) -> u32 {
+        let n = self.strikes.entry(key.clone()).or_insert(0);
         *n += 1;
         *n
     }
 
-    /// A cycle pushed (repo, metric) rows with no shortfall: the streak ends.
-    /// Keys with nothing pushed keep their count (nothing was tried, nothing
-    /// was learned).
-    pub fn record_clean(&mut self, repo_key: &str, metric: &str) {
-        self.strikes.remove(&(repo_key.to_string(), metric.to_string()));
+    /// A cycle pushed a row with no shortfall: its streak ends. Keys with
+    /// nothing pushed keep their count (nothing was tried, nothing was
+    /// learned).
+    pub fn record_clean(&mut self, key: &ShortfallKey) {
+        self.strikes.remove(key);
     }
 }
 

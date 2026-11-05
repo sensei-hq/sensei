@@ -177,12 +177,35 @@ pub struct Credentials {
     /// GitHub's token, when the sign-in captured one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_token: Option<String>,
+    /// The registry that minted these tokens (M1): a session token is
+    /// presented only to its own registry. `None` on items stored before
+    /// registries were recorded — legacy items fail closed (fresh sign-in),
+    /// never sent anywhere. Stored at exchange time in phase B; read by
+    /// `live_session` and `TenantCredential::of`. Metadata, not a
+    /// credential: it does not count for `is_empty`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minted_registry: Option<String>,
 }
 
 impl Credentials {
     fn is_empty(&self) -> bool {
         self.refresh_token.is_none() && self.provider_token.is_none()
     }
+}
+
+/// Store a full credential item for tests (M1 reds): refresh token plus the
+/// registry that minted it. Real keychain — callers gate on macOS and clear
+/// the persona afterwards.
+#[cfg(test)]
+pub(crate) fn store_test_credentials(
+    persona: &str,
+    refresh_token: &str,
+    minted_registry: Option<&str>,
+) -> Result<(), KeychainError> {
+    update_credentials_with(&Keychain, persona, |c| {
+        c.refresh_token = Some(refresh_token.to_string());
+        c.minted_registry = minted_registry.map(str::to_string);
+    })
 }
 
 /// The account holding a persona's [`Credentials`].
@@ -249,7 +272,9 @@ fn load_credentials_with(
         None => read_optional(store, LEGACY_ACCOUNT)?,
     };
     let provider_token = read_optional(store, &provider_account_for(persona))?;
-    let creds = Credentials { refresh_token, provider_token };
+    // Migrated from pre-registry slots: no minter recorded, so legacy — fail
+    // closed, never sent anywhere until a fresh sign-in records one.
+    let creds = Credentials { refresh_token, provider_token, minted_registry: None };
     if creds.is_empty() {
         return Err(KeychainError::NotFound);
     }

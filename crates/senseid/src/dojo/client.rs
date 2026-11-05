@@ -760,6 +760,96 @@ mod tests {
         );
     }
 
+    // F3: the registry match is the EXACT origin (scheme+host+port) — a shared
+    // prefix is not a match, and a registry root carrying a path is not a root.
+    #[test]
+    #[ignore = "pending: sync-hardening"]
+    fn a_registry_that_only_shares_a_prefix_is_foreign() {
+        let base = crate::dojo_client::settings::dojo_url();
+        for suffix in [".evil.invalid", "/extra/path"] {
+            let registry = format!("{base}{suffix}");
+            let mut m = bound(Some("acme-slot"));
+            m.registry_url = registry.clone();
+            m.dojo_url = format!("{registry}/organization/acme");
+            assert!(
+                matches!(TenantCredential::of(&m), TenantCredential::ForeignRegistry { .. }),
+                "{registry} shares only a prefix and must be foreign"
+            );
+        }
+    }
+
+    // F3: the normalization in force — scheme and host lowercase (URL
+    // semantics; DNS is case-insensitive too, so no attacker mints a case
+    // variant), default ports implied, one trailing slash trimmed, path must
+    // be empty. Green before and after: it pins what "same registry" means.
+    #[test]
+    fn same_registry_normalizations_present_a_session() {
+        let base = crate::dojo_client::settings::dojo_url();
+        let upper = base.to_uppercase();
+        let mut m = bound(Some("acme-slot"));
+        m.registry_url = upper.clone();
+        m.dojo_url = format!("{upper}/organization/acme");
+        assert_eq!(
+            TenantCredential::of(&m),
+            TenantCredential::Session { slot: "acme-slot".into() }
+        );
+    }
+
+    // F2/M1: `of()` compares the membership against the CREDENTIAL's minted
+    // registry, not just the ambient setting — a membership moved to a new
+    // registry while the session was minted at the old one presents nothing.
+    // Real keychain: macOS-gated, uuid persona, cleared afterwards.
+    #[test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[ignore = "pending: sync-hardening"]
+    fn of_compares_a_membership_against_the_credential_minted_registry() {
+        use crate::dojo_client::session;
+        let persona = uuid::Uuid::new_v4().to_string();
+        session::store_test_credentials(
+            &persona,
+            "rt-fake-not-a-token",
+            Some("https://minted.invalid"),
+        )
+        .unwrap();
+        // Ambient is never .invalid (RFC 2606), so membership and minter
+        // always differ here without touching any setting.
+        let registry = crate::dojo_client::settings::dojo_url();
+        let mut m = bound(Some(&persona));
+        m.registry_url = registry.clone();
+        m.dojo_url = format!("{registry}/organization/acme");
+        let cred = TenantCredential::of(&m);
+        session::clear_session(&persona).unwrap();
+        match cred {
+            TenantCredential::ForeignRegistry { membership_registry, session_registry } => {
+                assert!(membership_registry.contains(&registry), "names the membership registry");
+                assert!(session_registry.contains("minted.invalid"), "names the minter");
+            }
+            other => {
+                panic!("a membership moved registries must not present its session, got {other:?}")
+            }
+        }
+    }
+
+    // F2/M1 legacy: credentials with no minter recorded present NOTHING —
+    // `of()` has no error channel, so legacy reads as SignedOut (sign in
+    // again); the distinct error lives in `live_session`. Real keychain:
+    // macOS-gated, uuid persona, cleared afterwards.
+    #[test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[ignore = "pending: sync-hardening"]
+    fn legacy_credentials_without_a_minter_present_nothing() {
+        use crate::dojo_client::session;
+        let persona = uuid::Uuid::new_v4().to_string();
+        session::store_test_credentials(&persona, "rt-fake-not-a-token", None).unwrap();
+        let m = bound(Some(&persona));
+        let cred = TenantCredential::of(&m);
+        session::clear_session(&persona).unwrap();
+        assert!(
+            matches!(cred, TenantCredential::SignedOut { .. }),
+            "legacy credentials present nothing, got {cred:?}"
+        );
+    }
+
     #[tokio::test]
     #[ignore = "pending: sync-hardening"]
     async fn a_foreign_membership_fails_before_any_call_without_a_token() {
