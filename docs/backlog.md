@@ -66,6 +66,9 @@ status — open or closed is GitHub's answer.
 
 ## Open — not yet filed
 
+- **Surface `no_package` files as actionable (2026-11-04).** "N files aren't in any package; add a manifest to map them",
+  per repository. It follows L1's stuck-index fix.
+
 - **`plan_folders` has no production caller (indexer, 2026-11-04, L1 module-tree analysis).** It says the deepest folder owns
   a file, but the production `repo_scan` puts every file on the root. Either wire it in or delete it. The module tree doesn't
   need it, since it joins on the fqn package.
