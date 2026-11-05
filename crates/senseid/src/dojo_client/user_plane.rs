@@ -374,6 +374,11 @@ pub trait UserPlane: Send + Sync {
         metric: &str,
         enabled: bool,
     ) -> Result<ActivationOutcome, String>;
+
+    /// The dōjō this plane talks to — for log lines that must name it
+    /// (sync-hardening F8: the legacy-complement warn; the cycle-complete
+    /// line). Sync, because it is configuration, not a call.
+    fn dojo_url(&self) -> &str;
 }
 
 /// What the dōjō says the ruling now is, re-read rather than echoed.
@@ -430,6 +435,9 @@ impl UserPlane for HttpUserPlane {
         enabled: bool,
     ) -> Result<ActivationOutcome, String> {
         set_metric_activation(&self.dojo_url, token, repo_key, metric, enabled).await
+    }
+    fn dojo_url(&self) -> &str {
+        &self.dojo_url
     }
     async fn provision(
         &self,
@@ -495,6 +503,21 @@ pub struct RejectedMetric {
     pub reason: String,
 }
 
+/// One pushed row the dōjō confirms it stored (sync-hardening H2): the row's
+/// identity as pushed, echoed back. Field for field with [`MetricPush`] minus
+/// the payload — the daemon marks a row shared only on a full-key match.
+/// `computed_on` stays a string (YYYY-MM-DD, as pushed) so a skewed echo
+/// fails matching, never decoding.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct StoredMetricKey {
+    pub repo_key: String,
+    pub metric: String,
+    pub scope: String,
+    pub computed_on: String,
+    pub grain: String,
+    pub commit_sha: Option<String>,
+}
+
 /// What the dōjō did with a batch.
 ///
 /// Partial acceptance is the designed outcome — one bad row must not block a
@@ -507,6 +530,12 @@ pub struct IngestResult {
     pub accepted: u32,
     #[serde(default)]
     pub rejected: Vec<RejectedMetric>,
+    /// Per-row stored confirmation (H2). `None` — field absent — is a dōjō that
+    /// predates confirmation: the daemon falls back to the complement of
+    /// `rejected`. `Some` (even empty) is a dōjō that confirms: only listed
+    /// rows are marked. Phase A declares it; phase B reads it.
+    #[serde(default)]
+    pub stored: Option<Vec<StoredMetricKey>>,
 }
 
 /// `POST /v1/you/metrics` — push metric rows.

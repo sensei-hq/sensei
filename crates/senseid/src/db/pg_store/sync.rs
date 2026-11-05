@@ -115,6 +115,11 @@ const PROVABLY_THEIRS: &str = "(rm.identity IS NULL AND r.repo_key = ANY($3)) \
                                WHERE e.persona_id = $1 AND e.source = 'claimed' \
                                  AND e.removed_at IS NULL)";
 
+/// A row whose backoff has elapsed (or was never backed off): the only rows a
+/// push window offers. A waiting row holds no share of the limit — it waits
+/// its turn, then is re-offered.
+const BACKOFF_ELAPSED: &str = "(rm.next_attempt_at IS NULL OR rm.next_attempt_at <= now())";
+
 /// The push read's columns and joins, shared by the repo and user queries so
 /// the carried shape — including the commits join behind `props.authored_at`
 /// — cannot drift between the two paths. The join is the commits primary key,
@@ -163,6 +168,52 @@ fn pushable(row: PushableRow) -> PushableMetric {
         commit_sha,
         props,
         source,
+    }
+}
+
+/// One pushed row's identity, as the dōjō echoes it in
+/// [`StoredMetricKey`](crate::dojo_client::user_plane::StoredMetricKey):
+/// the streak is per ROW, because one (repo, metric) pair holds rows at
+/// different dates — one confirmed and one unconfirmed is then neither clean
+/// nor short for the pair.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ShortfallKey {
+    pub repo_key: String,
+    pub metric: String,
+    pub scope: String,
+    pub computed_on: chrono::NaiveDate,
+    pub grain: String,
+    pub commit_sha: Option<String>,
+}
+
+/// Consecutive stored-confirmation shortfalls per row: H2's quiet-then-loud
+/// rule. In-memory on purpose: a restart resets to N quiet retries, which
+/// bounds silence to N cycles per process lifetime without schema churn (D89
+/// may persist it). Owned by [`PgStore`] so it outlives cycles; fresh per
+/// test store so tests never share counts. Phase A declares it with its
+/// counting rules; phase B records into it from `push_allowed`.
+#[derive(Debug, Default)]
+pub struct ShortfallTracker {
+    strikes: std::collections::HashMap<ShortfallKey, u32>,
+}
+
+impl ShortfallTracker {
+    /// Shortfalls before a row goes loud.
+    pub const LOUD_AFTER: u32 = 3;
+
+    /// One cycle pushed a row with a shortfall. Returns the new consecutive
+    /// count for that row's identity.
+    pub fn record_shortfall(&mut self, key: &ShortfallKey) -> u32 {
+        let n = self.strikes.entry(key.clone()).or_insert(0);
+        *n += 1;
+        *n
+    }
+
+    /// A cycle pushed a row with no shortfall: its streak ends. Keys with
+    /// nothing pushed keep their count (nothing was tried, nothing was
+    /// learned).
+    pub fn record_clean(&mut self, key: &ShortfallKey) {
+        self.strikes.remove(key);
     }
 }
 
@@ -534,6 +585,7 @@ impl PgStore {
                 AND rm.scope::text = ANY($1) \
                 AND r.repo_key = ANY($2) \
                 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at) \
+                AND {BACKOFF_ELAPSED} \
               ORDER BY rm.computed_on DESC, rm.id \
               LIMIT $3"
         ))
@@ -567,6 +619,7 @@ impl PgStore {
     ) -> Result<Vec<PushableMetric>, String> {
         let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(&format!(
             "{PUSHABLE_ROWS_FROM} WHERE {USER_ROWS_IN_PLAY} AND ({PROVABLY_THEIRS}) \
+              AND {BACKOFF_ELAPSED} \
               ORDER BY rm.computed_on DESC, rm.id \
               LIMIT $4"
         ))
@@ -640,13 +693,49 @@ impl PgStore {
         if ids.is_empty() {
             return Ok(0);
         }
+        // A fresh mark clears the backoff: it was spent waiting on an older
+        // value, and a recomputed row must re-offer at once, not wait out a
+        // stale sentence.
         let n = sqlx_core::query::query(
-            "UPDATE sensei.repository_metrics SET shared_at = now() WHERE id = ANY($1)",
+            "UPDATE sensei.repository_metrics \
+                SET shared_at = now(), next_attempt_at = NULL \
+              WHERE id = ANY($1)",
         )
         .bind(ids)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("mark_metric_rows_shared: {e}"))?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Record a stored-confirmation shortfall for one pushed row (H2);
+    /// returns the new consecutive count for the row's identity.
+    pub fn record_shortfall(&self, key: &ShortfallKey) -> u32 {
+        self.shortfalls.lock().unwrap().record_shortfall(key)
+    }
+
+    /// A pushed row was confirmed: its streak ends (H2).
+    pub fn record_clean(&self, key: &ShortfallKey) {
+        self.shortfalls.lock().unwrap().record_clean(key)
+    }
+
+    /// Hold loud rows out of the push window for an hour (H2/F4): the dōjō
+    /// is not confirming them, so re-offering every cycle is noise. The
+    /// window re-offers them once the backoff elapses.
+    pub async fn set_metric_backoff(&self, ids: &[uuid::Uuid]) -> Result<u64, String> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let n = sqlx_core::query::query(
+            "UPDATE sensei.repository_metrics \
+                SET next_attempt_at = now() + interval '1 hour' \
+              WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_metric_backoff: {e}"))?
         .rows_affected();
         Ok(n)
     }
@@ -947,5 +1036,34 @@ mod offered_workspace_tests {
             .await;
             exec(&pg, "DELETE FROM sensei.workspaces WHERE name = $1", &[name]).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod shortfall_tracker_tests {
+    use super::*;
+
+    // L2: the shortfall streak is per ROW, not per (repo, metric) pair — one
+    // date confirmed every cycle must not clear another date's streak. (Not
+    // moot under F-E's backoff: the backoff skips re-offering a loud row,
+    // while the tracker counts unconfirmed cycles — orthogonal mechanisms.)
+    #[test]
+    fn a_confirmed_date_does_not_clear_another_dates_streak() {
+        let day = |d: u32| ShortfallKey {
+            repo_key: "r".into(),
+            metric: "m".into(),
+            scope: "repo".into(),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap(),
+            grain: "daily".into(),
+            commit_sha: None,
+        };
+        let (confirmed, never) = (day(1), day(2));
+        let mut t = ShortfallTracker::default();
+        let mut n = 0;
+        for _ in 0..ShortfallTracker::LOUD_AFTER {
+            t.record_clean(&confirmed);
+            n = t.record_shortfall(&never);
+        }
+        assert_eq!(n, ShortfallTracker::LOUD_AFTER, "the unconfirmed date still goes loud at 3");
     }
 }

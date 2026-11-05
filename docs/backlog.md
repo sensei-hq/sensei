@@ -34,6 +34,7 @@ week; `—` means no lane holds it yet. Per-module status and its evidence:
 | Metrics engine | ~75% | daily→quarterly views, the perf work, My metrics, team views | ActionItems has no action (0 buttons/links); #156 architecture metrics missing | L3 (ActionItems), L2 (#156) |
 | Metrics as **targets** | ~0% | nothing (verified) | gating eligibility (`metric_gating`, TG1), a target store and mode, evaluation, a failure flow (D47/D48; M-7) | L0 (spec), then L3 |
 | Sync (WP1–9) | ~40% | WP1–3, WP4 staged | WP4 F4, WP5, WP8 (D46), WP9A set-based registration, #314 production verify; #184 never sent a row | L1 |
+| Sync hardening (L3 F8) | — | stored:None complement marks + warns once per cycle | remove the complement when every supported dōjō returns `stored` (then the warn and this row go away) | L3 |
 | Governance | ~50% | scope resolution, rule packs + adoption, resolved rules pulled | no violation/override store (G-GOV-AUDIT); no "what adopting changed here"; team scope #318 | — |
 | Learnings | ~60% | memories, Learnings screen, share-review, k ≥ 3 promotion, playbook rules | no `report_learning` / `report_memory_use`; no failure → lesson loop; too many competing verbs (D65) | L1 (after #314), L0 (spec) |
 | Trackers / sprints | ~35% | Jira (daemon), boards per level (D40), sprints, Tickets screen | GitHub Issues / ADO adapters (D49, behind #310); tracker-ownership conflict; epics unread | L7 |
