@@ -18,7 +18,7 @@ marks). For that to work without breaking:
 - **Ids are minted on the desktop and are stable everywhere.** `uuid` v7 (time-ordered) for every table, `actions`
   included (no `bigserial`), so a row has the same id on both sides and an upsert on `(user_id, id)` is idempotent.
 - **The crew lives in `relay.crews`, not `activity.runs`.** `activity` is desktop-only, so a shared schema can't point at it.
-  `relay.crews (user_id, id, workspace_id, goal, status, heartbeat_at, started_at, completed_at)`. The daemon may link a crew
+  `relay.crews (user_id, id, workspace_id null, goal, status, heartbeat_at, started_at, completed_at)`. The daemon may link a crew
   to a drive run later; nothing depends on it.
 - **No foreign key leaves the `relay` schema.** The ticket is referenced by its **portable identity**,
   `ticket_provider` + `ticket_key` (e.g. `jira` / `SEN-52`). Each side resolves it in its own tracker tables: the desktop in
@@ -30,6 +30,18 @@ marks). For that to work without breaking:
 - **The dōjō is read-mostly.** The person can answer a decision and post a message there (`answered`, `message` actions).
   Those sync back to the desktop through the existing pull path, with the same ids, so neither side ever overwrites the
   other's rows.
+
+## Repository required, workspace optional (user, 2026-11-05)
+On this Mac, **67 of 157 repositories belong to no workspace**, and 5 belong to more than one. So the workspace can't be the
+key, or work on those repositories would never appear:
+- **Every task names its repository** (required): `repo_key`, the portable identity (`github.com/org/repo`), resolved on
+  each side. No foreign key leaves `relay`.
+- **The workspace is optional** on `crews`, `items` and `tasks` (`workspace_id` null). It's a tag and a filter, never a
+  gate.
+- **Scope is the crew and the user,** not the workspace. Reading a task is `(user_id, crew_id, task_id)`. Another user's
+  task, or one from a crew you're not in, is not found.
+- **The Relay screen lives in the main window** (all crews, filterable by repository or workspace). The workspace window
+  shows the same screen pre-filtered to its workspace.
 
 ## Principles
 - **Reuse.**
@@ -64,7 +76,7 @@ lease) · `state` (`'queued','granted','released','expired','refused'`) · `expi
 - A resource lease is the build slot: at most one granted per resource, machine-wide (partial unique).
 
 ### `relay.items`: the queue (triage and backlog)
-`user_id` · `id` · `workspace_id` · `ticket_provider` / `ticket_key` null (**the ticket's portable identity, resolved on each side; never its content**) · `title`, `kind`
+`user_id` · `id` · `workspace_id` null · `repo_key` null (a manual item may not name one yet) · `ticket_provider` / `ticket_key` null (**the ticket's portable identity, resolved on each side; never its content**) · `title`, `kind`
 (`'bug','feature','gap','issue','finding'`), `tags` text[] (**only for manual items**; a ticketed item reads its title, type
 and sprint from the tracker) · `state` (`'backlog','planned','closed'`) · `position` int null (backlog order) ·
 `added_by`, `added_at`.
@@ -74,7 +86,7 @@ and sprint from the tracker) · `state` (`'backlog','planned','closed'`) · `pos
 - The ticket button is the tracker task's key and URL.
 
 ### `relay.tasks`: what a lane works on
-`user_id` · `id` · `crew_id` · `item_id` null · `lane_id` null (**one active task per lane**, partial unique) · `reviewer_lane_id`
+`user_id` · `id` · `crew_id` · `item_id` null · `repo_key` (**required**) · `workspace_id` null · `lane_id` null (**one active task per lane**, partial unique) · `reviewer_lane_id`
 null (never the author's lane; checked) · `title` · `phase` (`'analysis','tests','impl','docs','mockup'`) · `state`
 (`'assigned','working','in_review','rework','approved','done','blocked','interrupted','cancelled'`; see *Stages*)
 · `round` · `owned_paths`, `acceptance`, `resources` text[] · `deps` uuid[] · `assigned_at`, `state_changed_at`,
