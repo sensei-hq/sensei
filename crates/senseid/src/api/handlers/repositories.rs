@@ -81,6 +81,54 @@ pub(crate) async fn patch_repository(
     Ok(Json(serde_json::json!({ "repo_key": repo_key, "visibility": visibility })))
 }
 
+// ── WP8 (D46): the election, written to the dōjō ─────────────────────────────
+//
+// pending: wp8-daemon — `patch_repository` moves onto these in phase B: it
+// writes the dōjō's repository election (`PATCH /v1/you/repositories/election`)
+// where the person may change it and answers 409 where they may not; the local
+// `visibility` gate is retired (nothing local is gated on the plan).
+
+/// What the dōjō answered an election.
+#[allow(dead_code)] // pending: wp8-daemon (used by patch_repository in phase B)
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ElectionOutcome {
+    /// Recorded: the dōjō's own answer (`elected`, `sync_enabled`, …).
+    Recorded(serde_json::Value),
+    /// The person may not change it (an organisation's repository and not its
+    /// admin): the dōjō's reason.
+    Refused(String),
+    /// The dōjō does not know the repository (not registered there).
+    NotRegistered(String),
+    /// The dōjō could not be asked, or failed: the reason.
+    Unavailable(String),
+}
+
+/// The one dōjō call the election makes — a seam, so a test can script the dōjō.
+#[allow(dead_code)] // pending: wp8-daemon (used by patch_repository in phase B)
+#[async_trait::async_trait]
+pub(crate) trait ElectionPlane: Send + Sync {
+    async fn set_election(&self, token: &str, repo_key: &str, elected: bool) -> ElectionOutcome;
+}
+
+/// The dōjō's HTTP status and body, as an election outcome. pending: wp8-daemon
+#[allow(dead_code)] // pending: wp8-daemon (used by patch_repository in phase B)
+pub(crate) fn classify_election(_status: u16, _body: &str) -> ElectionOutcome {
+    ElectionOutcome::Unavailable("pending: wp8-daemon".into())
+}
+
+/// Record `elected` for the local repository `repo_key` in the dōjō, through
+/// `plane`, as the person `token` signs for. pending: wp8-daemon
+#[allow(dead_code)] // pending: wp8-daemon (used by patch_repository in phase B)
+pub(crate) async fn elect(
+    _pg: &crate::db::pg_store::PgStore,
+    _plane: &dyn ElectionPlane,
+    _token: &str,
+    _repo_key: &str,
+    _elected: bool,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(err(StatusCode::NOT_IMPLEMENTED, "pending: wp8-daemon"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,5 +303,197 @@ mod tests {
         assert!(gate_after_share.iter().any(|r| r.repo_key == key), "gate 1 yields it");
         assert_eq!(revoked.expect("200").0["visibility"], "private");
         assert!(!gate_after_revoke.iter().any(|r| r.repo_key == key), "and stops yielding it");
+    }
+
+    // ── WP8 daemon side (spec: docs/plan/dojo-sync-handoff.md WP8; review
+    // reviews/L3/wp8-tests-r1.md, L0 rulings) ───────────────────────────────
+
+    /// A scripted dōjō: answers every election with `answer`, and records each call.
+    struct ScriptedPlane {
+        answer: ElectionOutcome,
+        calls: std::sync::Mutex<Vec<(String, String, bool)>>,
+    }
+
+    impl ScriptedPlane {
+        fn answering(answer: ElectionOutcome) -> Self {
+            Self { answer, calls: Default::default() }
+        }
+        fn calls(&self) -> Vec<(String, String, bool)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ElectionPlane for ScriptedPlane {
+        async fn set_election(
+            &self,
+            token: &str,
+            repo_key: &str,
+            elected: bool,
+        ) -> ElectionOutcome {
+            self.calls.lock().unwrap().push((token.into(), repo_key.into(), elected));
+            self.answer.clone()
+        }
+    }
+
+    /// A local repository row; returns its key.
+    async fn local_repo(pg: &crate::db::pg_store::PgStore) -> String {
+        let key = format!("ztest-host/acme/{}", uuid::Uuid::new_v4());
+        sqlx_core::query::query(
+            "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, 'ztest-repo')",
+        )
+        .bind(&key)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        key
+    }
+
+    async fn local_visibility(pg: &crate::db::pg_store::PgStore, key: &str) -> String {
+        let (v,): (String,) = sqlx_core::query_as::query_as(
+            "SELECT visibility::text FROM sensei.repositories WHERE repo_key = $1",
+        )
+        .bind(key)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        v
+    }
+
+    /// The person may change it (their own repository, or an org's as its admin):
+    /// the election goes to the dōjō with their session, the dōjō's answer comes
+    /// back, and nothing local is written — the local visibility gate is retired.
+    #[tokio::test]
+    #[ignore = "pending: wp8-daemon"]
+    async fn patch_visibility_writes_the_election_where_the_person_may() {
+        let st = state().await;
+        let key = local_repo(&st.pg).await;
+        let plane = ScriptedPlane::answering(ElectionOutcome::Recorded(serde_json::json!({
+            "repo_key": key, "elected": false, "sync_enabled": false,
+        })));
+        let Json(out) = elect(&st.pg, &plane, "TOKEN", &key, false).await.expect("200");
+        assert_eq!(plane.calls(), vec![("TOKEN".to_string(), key.clone(), false)]);
+        assert_eq!(out["repo_key"], serde_json::json!(key));
+        assert_eq!(out["elected"], serde_json::json!(false));
+        assert_eq!(out["sync_enabled"], serde_json::json!(false));
+        assert_eq!(local_visibility(&st.pg, &key).await, "private", "nothing local is written");
+    }
+
+    /// An organisation's public repository is the organisation's (D46): a member
+    /// who is not its admin is refused by the dōjō, and the daemon answers 409 with
+    /// the dōjō's reason — never a 200, and nothing local changes.
+    #[tokio::test]
+    #[ignore = "pending: wp8-daemon"]
+    async fn patch_visibility_on_an_org_public_repo_is_refused() {
+        let st = state().await;
+        let key = local_repo(&st.pg).await;
+        let plane = ScriptedPlane::answering(ElectionOutcome::Refused(
+            "only the organisation's admin may change this".into(),
+        ));
+        let (status, Json(b)) = elect(&st.pg, &plane, "TOKEN", &key, false).await.expect_err("409");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            b,
+            serde_json::json!({
+                "error": "not_yours_to_change", "repo_key": key,
+                "reason": "only the organisation's admin may change this",
+            })
+        );
+        assert_eq!(local_visibility(&st.pg, &key).await, "private");
+    }
+
+    /// A repository the dōjō has not registered cannot be elected: 409 that says so.
+    #[tokio::test]
+    #[ignore = "pending: wp8-daemon"]
+    async fn a_repository_the_dojo_does_not_know_is_409_not_registered() {
+        let st = state().await;
+        let key = local_repo(&st.pg).await;
+        let plane =
+            ScriptedPlane::answering(ElectionOutcome::NotRegistered("unknown repository".into()));
+        let (status, Json(b)) = elect(&st.pg, &plane, "TOKEN", &key, true).await.expect_err("409");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(b, serde_json::json!({"error": "not_registered", "repo_key": key}));
+    }
+
+    /// The dōjō could not be asked: 502 with the reason — never a 200 that reads as
+    /// "recorded".
+    #[tokio::test]
+    #[ignore = "pending: wp8-daemon"]
+    async fn an_unreachable_dojo_is_502() {
+        let st = state().await;
+        let key = local_repo(&st.pg).await;
+        let plane =
+            ScriptedPlane::answering(ElectionOutcome::Unavailable("connection refused".into()));
+        let (status, Json(b)) = elect(&st.pg, &plane, "TOKEN", &key, true).await.expect_err("502");
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(b["error"], serde_json::json!("connection refused"));
+    }
+
+    /// A repository this daemon has never seen is a 404, and the dōjō is not asked.
+    #[tokio::test]
+    #[ignore = "pending: wp8-daemon"]
+    async fn an_unknown_local_repository_is_404_and_asks_no_dojo() {
+        let st = state().await;
+        let plane = ScriptedPlane::answering(ElectionOutcome::Recorded(serde_json::json!({})));
+        let key = format!("ztest-host/never/{}", uuid::Uuid::new_v4());
+        let (status, _) = elect(&st.pg, &plane, "TOKEN", &key, true).await.expect_err("404");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(plane.calls().is_empty(), "the dōjō was not asked");
+    }
+
+    /// The dōjō's status decides the outcome; the body's reason is carried.
+    #[test]
+    #[ignore = "pending: wp8-daemon"]
+    fn the_dojo_s_status_decides_the_election_outcome() {
+        let ok = classify_election(200, r#"{"repo_key":"k","elected":true,"sync_enabled":true}"#);
+        assert_eq!(
+            ok,
+            ElectionOutcome::Recorded(
+                serde_json::json!({"repo_key":"k","elected":true,"sync_enabled":true})
+            )
+        );
+        assert_eq!(
+            classify_election(403, r#"{"error":"only an admin may change this"}"#),
+            ElectionOutcome::Refused("only an admin may change this".into())
+        );
+        assert_eq!(
+            classify_election(404, r#"{"error":"unknown repository"}"#),
+            ElectionOutcome::NotRegistered("unknown repository".into())
+        );
+        assert!(matches!(classify_election(500, "boom"), ElectionOutcome::Unavailable(_)));
+        assert!(
+            matches!(classify_election(200, "not json"), ElectionOutcome::Unavailable(_)),
+            "an unreadable 200 is not a recorded election"
+        );
+    }
+
+    /// The request body is `{persona, elected}`: `elected` strictly a boolean (a
+    /// string "false" must not turn sharing on), `persona` required — and the old
+    /// `{visibility}` body is refused, since the local gate is retired.
+    #[tokio::test]
+    #[ignore = "pending: wp8-daemon"]
+    async fn the_body_is_persona_and_a_strict_boolean() {
+        let st = state().await;
+        let key = local_repo(&st.pg).await;
+        for bad in [
+            serde_json::json!({"persona": "p", "elected": "false"}),
+            serde_json::json!({"elected": true}),
+            serde_json::json!({"visibility": "shared"}),
+        ] {
+            let (status, _) = patch_repository(
+                State(st.clone()),
+                Path(key.clone()),
+                HeaderMap::new(),
+                body(bad.clone()),
+            )
+            .await
+            .expect_err("400");
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+        }
+        assert_eq!(
+            local_visibility(&st.pg, &key).await,
+            "private",
+            "a refused body writes nothing"
+        );
     }
 }
