@@ -43,15 +43,16 @@ begin
     raise exception 'finding_classes must not carry user_id.';
   end if;
 
-  -- PK(user_id, id): the sync's idempotent upsert key.
+  -- PK(user_id, id), in that order: the sync's idempotent upsert key.
   select count(*) into n from (
     select c.relname from pg_catalog.pg_constraint con
       join pg_catalog.pg_class c on c.oid = con.conrelid
       join pg_catalog.pg_namespace s on s.oid = c.relnamespace
      where s.nspname = 'relay' and con.contype = 'p'
-       and (select array_agg(a.attname::text order by a.attname) from pg_catalog.pg_attribute a
+       and (select array_agg(a.attname::text order by array_position(con.conkey, a.attnum))
+              from pg_catalog.pg_attribute a
              where a.attrelid = c.oid and a.attnum = any (con.conkey))
-           = array['id', 'user_id']
+           = array['user_id', 'id']
   ) pk where relname in ('crews', 'lanes', 'leases', 'items', 'tasks', 'actions');
   if n <> 6 then
     raise exception 'PK(user_id, id) must be on all six tables, saw % of 6.', n;
@@ -61,7 +62,8 @@ begin
     join pg_catalog.pg_class c on c.oid = con.conrelid
     join pg_catalog.pg_namespace s on s.oid = c.relnamespace
    where s.nspname = 'relay' and c.relname = 'finding_classes' and con.contype = 'p'
-     and (select array_agg(a.attname::text order by a.attname) from pg_catalog.pg_attribute a
+     and (select array_agg(a.attname::text order by array_position(con.conkey, a.attnum))
+            from pg_catalog.pg_attribute a
            where a.attrelid = c.oid and a.attnum = any (con.conkey))
          = array['code'];
   if n <> 1 then

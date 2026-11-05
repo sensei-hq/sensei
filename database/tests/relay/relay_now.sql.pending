@@ -14,10 +14,12 @@
 -- to: asserts, rolls back.
 --
 -- NOTE (for L0): the sectioned shape (section + id + payload) is proposed —
--- one view, four grains, the daemon selects and shapes. `completed_today`
--- falls back to `state_changed_at` when `completed_at` is null (approved
--- tasks). Tracker-side triage (tasks with no item yet) is composed by the
--- daemon per side; this view counts manual triage items only. Rule if otherwise.
+-- one view, four grains, the daemon selects and shapes. Each section carries
+-- the full grain (no per-row re-join by the daemon). `completed_today` falls
+-- back to `state_changed_at` when `completed_at` is null (approved tasks),
+-- over the UTC calendar day (deterministic, TZ-free). Tracker-side triage
+-- (tasks with no item yet) is composed by the daemon per side; this view
+-- counts manual triage items only. Rule if otherwise.
 
 begin;
 
@@ -29,21 +31,21 @@ insert into relay.crews (user_id, id, workspace_id, goal, status) values
   ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f909',
    null, 'Theirs', 'active');
 
-insert into relay.lanes (user_id, id, crew_id, code, title, role, family, repo, token_hash) values
+insert into relay.lanes (user_id, id, crew_id, code, title, role, family, version, model, repo, token_hash) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f911',
-   '11111111-1111-7000-8000-00000000f901', 'L1', 'Diagrams', 'coordinator', 'claude-code',
+   '11111111-1111-7000-8000-00000000f901', 'L1', 'Diagrams', 'coordinator', 'claude-code', '2.1', 'claude-opus',
    'github.com/sensei-hq/sensei', 'x'),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f912',
-   '11111111-1111-7000-8000-00000000f901', 'L2', null, 'contributor', 'claude-code',
+   '11111111-1111-7000-8000-00000000f901', 'L2', null, 'contributor', 'claude-code', null, null,
    'github.com/sensei-hq/sensei', 'x'),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f913',
-   '11111111-1111-7000-8000-00000000f902', 'L1', null, 'coordinator', 'codex',
+   '11111111-1111-7000-8000-00000000f902', 'L1', null, 'coordinator', 'codex', null, null,
    'github.com/sensei-hq/sensei', 'x'),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f914',
-   '11111111-1111-7000-8000-00000000f901', 'L4', null, 'contributor', 'codex',
+   '11111111-1111-7000-8000-00000000f901', 'L4', null, 'contributor', 'codex', null, null,
    'github.com/sensei-hq/sensei', 'x'),
   ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f919',
-   '22222222-2222-7000-8000-00000000f909', 'L1', null, 'coordinator', 'claude-code',
+   '22222222-2222-7000-8000-00000000f909', 'L1', null, 'coordinator', 'claude-code', null, null,
    'github.com/sensei-hq/other', 'x');
 
 -- L1: an expired lease, then the live granted one (newest wins). L2/L4: none.
@@ -63,35 +65,52 @@ insert into relay.leases (user_id, id, crew_id, lane_id, kind, state, expires_at
 -- stamp is state_changed_at — completed_at stays null). T3: done today with a
 -- merge. T4: done today, nothing to merge. T5: done two days ago (out). T6:
 -- unassigned working (out of completed, on no lane). T8: asked then answered.
-insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, title, phase, state, round, state_changed_at, completed_at) values
+insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, workspace_id, title, phase, state, round, state_changed_at, completed_at) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f931',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f911',
-   'github.com/sensei-hq/sensei', 'Active one', 'tests', 'working', 1, now(), null),
+   'github.com/sensei-hq/sensei', 'b1111111-1111-4111-8111-111111111111', 'Active one', 'tests', 'working', 1, now(), null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f932',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f912',
-   'github.com/sensei-hq/sensei', 'Approved one', 'impl', 'approved', 2, now(), null),
+   'github.com/sensei-hq/sensei', null, 'Approved one', 'impl', 'approved', 2, now(), null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f933',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f912',
-   'github.com/sensei-hq/sensei', 'Merged one', 'impl', 'done', 2, now(), now()),
+   'github.com/sensei-hq/sensei', null, 'Merged one', 'impl', 'done', 2, now(), now()),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f934',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f912',
-   'github.com/sensei-hq/sensei', 'Plain done one', 'docs', 'done', 1, now(), now()),
+   'github.com/sensei-hq/sensei', null, 'Plain done one', 'docs', 'done', 1, now(), now()),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f935',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f912',
-   'github.com/sensei-hq/sensei', 'Old done one', 'impl', 'done', 1,
+   'github.com/sensei-hq/sensei', null, 'Old done one', 'impl', 'done', 1,
    now() - interval '2 days', now() - interval '2 days'),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f936',
    '11111111-1111-7000-8000-00000000f901', null,
-   'github.com/sensei-hq/sensei', 'Unassigned working', 'tests', 'working', 1, now(), null),
+   'github.com/sensei-hq/sensei', null, 'Unassigned working', 'tests', 'working', 1, now(), null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f937',
    '11111111-1111-7000-8000-00000000f902', '11111111-1111-7000-8000-00000000f913',
-   'github.com/sensei-hq/sensei', 'Spare working', 'tests', 'working', 1, now(), null),
+   'github.com/sensei-hq/sensei', null, 'Spare working', 'tests', 'working', 1, now(), null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f938',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f914',
-   'github.com/sensei-hq/sensei', 'Asked then answered', 'tests', 'working', 1, now(), null),
+   'github.com/sensei-hq/sensei', null, 'Asked then answered', 'tests', 'working', 1, now(), null),
   ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f939',
    '22222222-2222-7000-8000-00000000f909', '22222222-2222-7000-8000-00000000f919',
-   'github.com/sensei-hq/other', 'Their working', 'tests', 'working', 1, now(), null);
+   'github.com/sensei-hq/other', null, 'Their working', 'tests', 'working', 1, now(), null);
+
+-- T10: done today on L1 (a titled lane in completed_today). T11/T12: the UTC
+-- day boundary — midnight sharp reads completed, a second before does not.
+insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, workspace_id, title, phase, state, round, state_changed_at, completed_at) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f930',
+   '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f911',
+   'github.com/sensei-hq/sensei', null, 'Done on L1', 'impl', 'done', 2, now(), now()),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f93a',
+   '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f912',
+   'github.com/sensei-hq/sensei', null, 'Midnight sharp', 'impl', 'done', 1,
+   date_trunc('day', now() at time zone 'UTC') at time zone 'UTC',
+   date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f93b',
+   '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f912',
+   'github.com/sensei-hq/sensei', null, 'Second before', 'impl', 'done', 1,
+   date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' - interval '1 second',
+   date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' - interval '1 second');
 
 -- A1: open, asked of the person, blocking T1. A2: open, asked of a lane (out).
 -- A3: asked of the person, answered (out). A5: T3's merge. A6/A7: T8's asked
@@ -165,14 +184,25 @@ begin
 
   -- L1: the full lane row — newest lease, active task, needs its answer.
   select payload into v_json from relay.now where section = 'lane' and id = '11111111-1111-7000-8000-00000000f911';
-  if v_json->>'code' is distinct from 'L1' or v_json->>'role' is distinct from 'coordinator'
-     or v_json->>'family' is distinct from 'claude-code' then
+  if v_json->>'code' is distinct from 'L1' or v_json->>'title' is distinct from 'Diagrams'
+     or v_json->>'role' is distinct from 'coordinator'
+     or v_json->>'family' is distinct from 'claude-code'
+     or v_json->>'version' is distinct from '2.1' or v_json->>'model' is distinct from 'claude-opus' then
     raise exception 'L1 lane payload wrong: %.', v_json;
   end if;
   if v_json->'task'->>'id' is distinct from '11111111-1111-7000-8000-00000000f931'
+     or v_json->'task'->>'title' is distinct from 'Active one'
+     or v_json->'task'->>'repo_key' is distinct from 'github.com/sensei-hq/sensei'
+     or v_json->'task'->>'workspace_id' is distinct from 'b1111111-1111-4111-8111-111111111111'
+     or v_json->'task'->>'phase' is distinct from 'tests'
      or v_json->'task'->>'state' is distinct from 'working'
+     or (v_json->'task'->>'round')::int is distinct from 1
      or (v_json->'task'->>'needs_answer')::boolean is distinct from true then
     raise exception 'L1 task payload wrong: %.', v_json->'task';
+  end if;
+  select state_changed_at into v_ts from relay.tasks where id = '11111111-1111-7000-8000-00000000f931';
+  if (v_json->'task'->>'state_changed_at')::timestamptz is distinct from v_ts then
+    raise exception 'L1 task state_changed_at wrong: %.', v_json->'task';
   end if;
   if v_json->'lease'->>'state' is distinct from 'granted'
      or (v_json->'lease'->>'expires_at')::timestamptz is distinct from '2026-11-05T18:00:00Z'::timestamptz then
@@ -210,9 +240,15 @@ begin
   if v_json->>'question' is distinct from 'Where does the activity log live?'
      or v_json->>'context' is distinct from 'Activity logs is waiting.'
      or v_json->>'recommended' is distinct from 'db'
+     or v_json->>'task_id' is distinct from '11111111-1111-7000-8000-00000000f931'
      or v_json->>'task_title' is distinct from 'Active one'
      or (v_json->>'asked_at')::timestamptz is distinct from '2026-11-05T16:00:00Z'::timestamptz then
     raise exception 'A1 decision payload wrong: %.', v_json;
+  end if;
+  select crew_id::text into v_text from relay.now where section = 'open_asked'
+    and id = '11111111-1111-7000-8000-00000000f941';
+  if v_text is distinct from '11111111-1111-7000-8000-00000000f901' then
+    raise exception 'the A1 row should carry crew C1, saw %.', v_text;
   end if;
   if v_json->'options' is distinct from '[{"id": "db", "label": "In the database", "detail": null}]'::jsonb then
     raise exception 'A1 options wrong: %.', v_json->'options';
@@ -236,11 +272,12 @@ begin
     raise exception 'U1 triage payload wrong: %.', v_json;
   end if;
 
-  -- Completed today: the approved (fallback stamp), the merged, the plain done —
-  -- and nothing older or still working.
+  -- Completed today: the approved (fallback stamp), the merged, the plain done,
+  -- the done-on-L1, the midnight-sharp — and nothing older, earlier, or
+  -- still working.
   select count(*) into n from relay.now where section = 'completed_today';
-  if n <> 3 then
-    raise exception 'completed_today should hold 3 rows, saw %.', n;
+  if n <> 5 then
+    raise exception 'completed_today should hold 5 rows, saw %.', n;
   end if;
   select payload->>'outcome' into v_text from relay.now where section = 'completed_today'
     and payload->>'task_id' = '11111111-1111-7000-8000-00000000f932';
@@ -259,16 +296,43 @@ begin
   if v_text is distinct from 'merged' then
     raise exception 'T3 outcome should be merged, saw %.', v_text;
   end if;
+  select payload into v_json from relay.now where section = 'completed_today'
+    and payload->>'task_id' = '11111111-1111-7000-8000-00000000f933';
+  if v_json->>'repo_key' is distinct from 'github.com/sensei-hq/sensei'
+     or v_json->>'title' is distinct from 'Merged one'
+     or v_json->>'lane_code' is distinct from 'L2'
+     or v_json->'lane_title' is distinct from 'null'::jsonb then
+    raise exception 'T3 completed payload wrong: %.', v_json;
+  end if;
+  select crew_id::text into v_text from relay.now where section = 'completed_today'
+    and payload->>'task_id' = '11111111-1111-7000-8000-00000000f933';
+  if v_text is distinct from '11111111-1111-7000-8000-00000000f901' then
+    raise exception 'the T3 row should carry crew C1, saw %.', v_text;
+  end if;
   select payload->>'outcome' into v_text from relay.now where section = 'completed_today'
     and payload->>'task_id' = '11111111-1111-7000-8000-00000000f934';
   if v_text is distinct from 'done' then
     raise exception 'T4 outcome should be done, saw %.', v_text;
   end if;
+  -- T10: the titled lane reads through.
+  select payload into v_json from relay.now where section = 'completed_today'
+    and payload->>'task_id' = '11111111-1111-7000-8000-00000000f930';
+  if v_json->>'outcome' is distinct from 'done'
+     or v_json->>'lane_code' is distinct from 'L1'
+     or v_json->>'lane_title' is distinct from 'Diagrams' then
+    raise exception 'T10 completed payload wrong: %.', v_json;
+  end if;
+  -- T11: midnight sharp UTC reads completed; T12, a second before, does not.
+  select count(*) into n from relay.now where section = 'completed_today'
+    and payload->>'task_id' = '11111111-1111-7000-8000-00000000f93a';
+  if n <> 1 then
+    raise exception 'midnight-sharp UTC should read completed.';
+  end if;
   select count(*) into n from relay.now where section = 'completed_today'
     and payload->>'task_id' in ('11111111-1111-7000-8000-00000000f935', '11111111-1111-7000-8000-00000000f936',
-                                '11111111-1111-7000-8000-00000000f931');
+                                '11111111-1111-7000-8000-00000000f931', '11111111-1111-7000-8000-00000000f93b');
   if n <> 0 then
-    raise exception 'old/working tasks must leave completed_today, saw %.', n;
+    raise exception 'old/pre-midnight/working tasks must leave completed_today, saw %.', n;
   end if;
 
   -- Row identity rides alongside the payload (and the triage row is crew-agnostic).
@@ -285,14 +349,14 @@ begin
     raise exception 'the triage row should be crew-agnostic.';
   end if;
 
-  -- The daemon owner sees all twelve rows (5 lanes + 2 asks + 2 triage + 3 completed).
+  -- The daemon owner sees all fourteen rows (5 lanes + 2 asks + 2 triage + 5 completed).
   select count(*) into n from relay.now;
-  if n <> 12 then
-    raise exception 'the owner should see 12 now rows, saw %.', n;
+  if n <> 14 then
+    raise exception 'the owner should see 14 now rows, saw %.', n;
   end if;
 end $$;
 
--- U1 reads their nine (4 lanes + asked + triage + 3 completed); U2 their three.
+-- U1 reads their eleven (4 lanes + asked + triage + 5 completed); U2 their three.
 set local role authenticated;
 select set_config('request.jwt.claims',
   '{"sub":"a1111111-1111-4111-8111-111111111111","role":"authenticated"}', true);
@@ -301,12 +365,12 @@ declare
   n int;
 begin
   select count(*) into n from relay.now;
-  if n <> 9 then
-    raise exception 'U1 should read 9 now rows, saw %.', n;
+  if n <> 11 then
+    raise exception 'U1 should read 11 now rows, saw %.', n;
   end if;
   select count(*) into n from relay.now where section = 'completed_today';
-  if n <> 3 then
-    raise exception 'U1 should read 3 completed rows, saw %.', n;
+  if n <> 5 then
+    raise exception 'U1 should read 5 completed rows, saw %.', n;
   end if;
 end $$;
 reset role;
