@@ -110,3 +110,34 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
 	});
 });
+
+// billing follow-up (user rulings 2026-11-05): a flagged repository is hidden for every
+// user, and members see NO line about it — no "supported on paid plans" claim (wrong for a
+// past-due org that IS on Pro) and no link to Plan & billing (an admin page a member can't
+// open). Admins see the hidden repositories in Billing instead.
+describe('ScrSharing · billing follow-up · no line about hidden repositories', () => {
+	afterEach(cleanup);
+
+	it.skip('pending: billing-followup — flagged rows leave the list with no plan line and no link to Plan & billing', () => {
+		const { container } = show([
+			repo({ repository_id: 'a', name: 'core' }),
+			repo({ repository_id: 'b', name: 'portal', repo_key: 'github.com/globex/portal', tenant: 'github/globex', owning_org: 'globex' }),
+			shown({ repository_id: 'p', name: 'site', forge_visibility: 'public', reason_code: null, reason: null, remedy: null, may_share: true, sync_enabled: true })
+		]);
+		expect(listed(container)).toEqual(['Share site']);
+		expect(container.textContent).not.toMatch(/\bcore\b|\bportal\b/);
+		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
+		expect(container.textContent).not.toMatch(/paid plans?/i);
+		expect(container.querySelector('a[href*="/billing"]')).toBeNull();
+	});
+
+	// When every repository is hidden the screen says there is nothing to share — not "No
+	// repositories yet" (they exist) and nothing about plans.
+	it.skip('pending: billing-followup — every row hidden: "none can be shared right now", no plan claim, not "No repositories yet"', () => {
+		const { container } = show([repo(), repo({ repository_id: 'b', name: 'b' })]);
+		expect(listed(container)).toEqual([]);
+		expect(container.querySelector('[data-screen-body]')?.textContent).toContain('None of your repositories can be shared right now.');
+		expect(container.textContent).not.toMatch(/No repositories yet|paid plans?/i);
+		expect(container.querySelector('a[href*="/billing"]')).toBeNull();
+	});
+});
