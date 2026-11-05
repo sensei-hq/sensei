@@ -1,4 +1,4 @@
-// billing build (Design, phase A r2) — the Plan & billing tab as the approved mockup
+// billing build (Design) — the Plan & billing tab as the approved mockup
 // draws it (coord/mockups/L4-billing-r3, reviews/Design/L4-billing-mockup-r3.md).
 // Pure: billing-map, the catalog, and the seat breakdown, without a DOM.
 //
@@ -9,23 +9,13 @@
 import { describe, it, expect } from 'vitest';
 import { toKitBilling, noBilling } from './billing-map';
 import { BILLING_TIERS } from './billing-catalog';
-import * as view from './billing-view';
+import { countedSeats, SEAT_COPY, type BillableUserWire } from './billing-view';
+import type { KitBilling } from './components/kit/types';
 import type { BillingResponse } from './admin-data';
 import { personLabel } from './viewers-view';
 
-// ── test-local shapes the build adds; phase B deletes these and uses the real types ──
-type Tone = 'normal' | 'refusal' | 'fault';
-type Built = Omit<ReturnType<typeof toKitBilling>, 'problem'> & {
-	tag: 'Current plan' | 'Trial' | 'Past due' | null;
-	problem: { tone: Tone; title: string; detail: string; remedy: string; code: string } | null;
-};
-type Named = { user_id: string; display_name: string | null; email: string | null; workspaces: { name: string; slug: string; role: string }[] };
-type Pending = {
-	countedSeats: (users: Named[]) => { name: string; workspaces: string }[];
-	SEAT_COPY: Record<string, unknown>;
-};
-const { countedSeats, SEAT_COPY } = view as unknown as typeof view & Pending;
-const built = (res: BillingResponse, now: Date): Built => toKitBilling(res, now) as unknown as Built;
+const built = (res: BillingResponse, now: Date) => toKitBilling(res, now);
+type Built = KitBilling;
 
 const usage = (n = 3): BillingResponse['usage'] => ({ seats_used: n, total_active_seats: n, billable_users: [] });
 const account = (plan: string, status: string, period_end: string | null = '2026-12-01T00:00:00Z'): NonNullable<BillingResponse['account']> => ({
@@ -41,14 +31,14 @@ const NOW = new Date('2026-11-04T00:00:00Z');
 const current = (b: Built) => b.tiers.filter((t) => t.current).map((t) => t.id);
 
 describe('billing build · each account state says what it means (mockup r3)', () => {
-	it.skip('pending: billing-build — no account: Free, tagged "Current plan", nothing to say', () => {
+	it('no account: Free, tagged "Current plan", nothing to say', () => {
 		const b = built({ account: null, usage: usage() }, NOW);
 		expect(current(b)).toEqual(['free']);
 		expect(b.tag).toBe('Current plan');
 		expect(b.problem).toBeNull();
 	});
 
-	it.skip('pending: billing-build — Pro active: Pro is attached, renews, nothing to do (L4: no Repositories-tab clause)', () => {
+	it('Pro active: Pro is attached, renews, nothing to do (L4: no Repositories-tab clause)', () => {
 		const b = built({ account: account('pro', 'active'), usage: usage() }, NOW);
 		expect(current(b)).toEqual(['pro']);
 		expect(b.renews).toBe('Dec 1');
@@ -62,18 +52,18 @@ describe('billing build · each account state says what it means (mockup r3)', (
 	});
 
 	// L1: the current plan's tag, per state.
-	it.skip.each([
+	it.each([
 		['active', 'Current plan'],
 		['trialing', 'Trial'],
 		['past_due', 'Past due']
-	] as const)('pending: billing-build — Pro %s: Pro is current and tagged "%s"', (status, tag) => {
+	] as const)('Pro %s: Pro is current and tagged "%s"', (status, tag) => {
 		const b = built({ account: account('pro', status), usage: usage() }, NOW);
 		expect(current(b)).toEqual(['pro']);
 		expect(b.tag).toBe(tag);
 	});
 
 	// L4: a trial ends; it never "renews".
-	it.skip('pending: billing-build — trial: its end date in the title, no renewal', () => {
+	it('trial: its end date in the title, no renewal', () => {
 		const b = built({ account: account('pro', 'trialing', '2026-11-20T00:00:00Z'), usage: usage() }, NOW);
 		expect(b.renews).toBeNull();
 		expect(b.problem).toEqual({
@@ -86,7 +76,7 @@ describe('billing build · each account state says what it means (mockup r3)', (
 	});
 
 	// L3: past due is still Pro (billing_accounts.plan); M1: D88 in full — hidden at once, back as they were.
-	it.skip('pending: billing-build — past due: Pro stays current; hidden now, back as they were once paid', () => {
+	it('past due: Pro stays current; hidden now, back as they were once paid', () => {
 		const b = built({ account: account('pro', 'past_due'), usage: usage() }, NOW);
 		expect(b.plan).toBe('Pro');
 		expect(b.renews).toBeNull();
@@ -101,14 +91,14 @@ describe('billing build · each account state says what it means (mockup r3)', (
 
 	// L2: all_my_repositories checks the status before the period, so a past-due account
 	// whose period has also ended is still past due.
-	it.skip('pending: billing-build — past due with an ended period stays past due (the view\'s order)', () => {
+	it('past due with an ended period stays past due (the view\'s order)', () => {
 		const b = built({ account: account('pro', 'past_due', '2026-11-01T00:00:00Z'), usage: usage() }, NOW);
 		expect(current(b)).toEqual(['pro']);
 		expect(b.tag).toBe('Past due');
 		expect(b.problem?.code).toBe('not_subscribed');
 	});
 
-	it.skip('pending: billing-build — period ended: Free is current; hidden again, back as they were (D88), code subscription_expired', () => {
+	it('period ended: Free is current; hidden again, back as they were (D88), code subscription_expired', () => {
 		const b = built({ account: account('pro', 'active', '2026-11-01T00:00:00Z'), usage: usage() }, NOW);
 		expect(current(b)).toEqual(['free']);
 		expect(b.tag).toBe('Current plan');
@@ -121,7 +111,7 @@ describe('billing build · each account state says what it means (mockup r3)', (
 		});
 	});
 
-	it.skip('pending: billing-build — canceled: Free is current, the same promise and remedy, code not_subscribed', () => {
+	it('canceled: Free is current, the same promise and remedy, code not_subscribed', () => {
 		const b = built({ account: account('pro', 'canceled'), usage: usage() }, NOW);
 		expect(current(b)).toEqual(['free']);
 		expect(b.problem).toEqual({
@@ -134,8 +124,8 @@ describe('billing build · each account state says what it means (mockup r3)', (
 	});
 
 	// L6: the mockup hides the plan cards for an unknown key and shows "Plan unknown".
-	it.skip('pending: billing-build — unknown key: the mockup\'s fault, no current plan, no tag, the cards hidden, "Plan unknown"', () => {
-		const b = built({ account: account('enterprise', 'active', null), usage: usage() }, NOW) as Built & { badge: string | null; showPlans: boolean };
+	it('unknown key: the mockup\'s fault, no current plan, no tag, the cards hidden, "Plan unknown"', () => {
+		const b = built({ account: account('enterprise', 'active', null), usage: usage() }, NOW);
 		expect(b.plan).toBeNull();
 		expect(current(b)).toEqual([]);
 		expect(b.tag).toBeNull();
@@ -151,8 +141,8 @@ describe('billing build · each account state says what it means (mockup r3)', (
 	});
 
 	// WP8: nothing loaded (a failed read) claims no plan — never "Free".
-	it.skip('pending: billing-build — nothing loaded: no plan, no tag, no badge, no current card', () => {
-		const b = noBilling() as unknown as Built & { badge: string | null };
+	it('nothing loaded: no plan, no tag, no badge, no current card', () => {
+		const b = noBilling();
 		expect(b.plan).toBeNull();
 		expect(b.tag).toBeNull();
 		expect(b.badge).toBeNull();
@@ -160,7 +150,7 @@ describe('billing build · each account state says what it means (mockup r3)', (
 	});
 
 	// L5: every state and the catalog.
-	it.skip('pending: billing-build — every state and the catalog spell "organization" (L2)', () => {
+	it('every state and the catalog spell "organization" (L2)', () => {
 		const states: BillingResponse['account'][] = [
 			null,
 			account('pro', 'active'),
@@ -179,11 +169,11 @@ describe('billing build · the plan cards are the mockup\'s (D46, D52, D59, D85,
 	const free = BILLING_TIERS.find((t) => t.id === 'free')!;
 	const pro = BILLING_TIERS.find((t) => t.id === 'pro')!;
 
-	it.skip('pending: billing-build — Free reads "No charge · for every organization", not "Free" twice', () => {
+	it('Free reads "No charge · for every organization", not "Free" twice', () => {
 		expect([free.price, free.sub]).toEqual(['No charge', 'for every organization']);
 	});
 
-	it.skip('pending: billing-build — Free lists public repositories, personal dōjōs, warn targets, governance, public-sync control and the free admin features', () => {
+	it('Free lists public repositories, personal dōjōs, warn targets, governance, public-sync control and the free admin features', () => {
 		expect(free.lines).toEqual([
 			"This organization's public repositories, on by default",
 			"Members' personal dōjōs, private repositories and blocking targets included",
@@ -196,7 +186,7 @@ describe('billing build · the plan cards are the mockup\'s (D46, D52, D59, D85,
 		]);
 	});
 
-	it.skip('pending: billing-build — Pro lists only what it adds, scoped to private repositories (B3, L3)', () => {
+	it('Pro lists only what it adds, scoped to private repositories (B3, L3)', () => {
 		expect([pro.price, pro.sub]).toEqual(['To be announced', 'per seat on private repositories']);
 		expect(pro.lines).toEqual([
 			'Everything in Free',
@@ -210,7 +200,7 @@ describe('billing build · the plan cards are the mockup\'s (D46, D52, D59, D85,
 });
 
 describe('billing build · who is counted (M3)', () => {
-	const users: Named[] = [
+	const users: BillableUserWire[] = [
 		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', email: 'alex@example.com', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
 		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, email: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] },
 		{ user_id: '5c6d7e80-0000-0000-0000-000000000003', display_name: null, email: 'sam@example.com', workspaces: [{ name: 'ws-delta', slug: 'ws-delta', role: 'contributor' }] }
@@ -218,18 +208,18 @@ describe('billing build · who is counted (M3)', () => {
 
 	// L9's rule (develop 91dc59735; L0 ruling r3): name, then email, then words — the same
 	// personLabel Members and Viewers use; never an id fragment, never an invented handle.
-	it.skip('pending: billing-build — a seat reads its name, else its email, else words, never an id fragment', () => {
-		const names = countedSeats(users).map((u: { name: string }) => u.name);
+	it('a seat reads its name, else its email, else words, never an id fragment', () => {
+		const names = countedSeats(users).map((u) => u.name);
 		expect(names).toEqual(['Alex Doe', 'Name not shared yet', 'sam@example.com']);
 		expect(names).toEqual(users.map((u) => personLabel({ principalId: u.user_id, name: u.display_name, email: u.email })));
 		expect(names.join(' ')).not.toMatch(/0b1e2f30|5c6d7e80|7d3c9a10/);
 	});
 
-	it.skip('pending: billing-build — the role is shown per workspace', () => {
+	it('the role is shown per workspace', () => {
 		expect(countedSeats(users)[0].workspaces).toBe('ws-alpha (contributor), ws-beta (maintainer)');
 	});
 
-	it.skip('pending: billing-build — the seat copy says only what is built: seats open on a relay session; closing is not built', () => {
+	it('the seat copy says only what is built: seats open on a relay session; closing is not built', () => {
 		expect(SEAT_COPY).toEqual({
 			label: 'active relay seats on private workspaces',
 			basis: 'What the dōjō counts today: people with an active relay session on a private workspace.',

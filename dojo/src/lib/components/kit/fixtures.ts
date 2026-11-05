@@ -1169,7 +1169,11 @@ export const billing: KitBilling = {
 		{ d: 'Jun 1, 2026', amt: '$396.00', s: 'paid' },
 		{ d: 'May 1, 2026', amt: '$372.00', s: 'paid' }
 	],
-	problem: null
+	problem: null,
+	tag: 'Current plan',
+	badge: 'Pro',
+	showPlans: true,
+	seats: []
 };
 
 /** The org's plan & billing state (dojo2-data `billing`). One authored fixture

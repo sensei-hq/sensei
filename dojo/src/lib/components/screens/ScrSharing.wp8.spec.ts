@@ -41,7 +41,7 @@ const lines = (c: HTMLElement) => [...c.querySelectorAll('[data-plan-hidden]')].
 describe('ScrSharing · WP8 · reads billing_hidden', () => {
 	afterEach(cleanup);
 
-	it.skip('pending: billing-build — sharing_hides_an_org_private_repo_until_subscribed_and_links_to_billing', () => {
+	it('sharing_hides_an_org_private_repo_until_subscribed_and_links_to_billing', () => {
 		const { container } = show([
 			repo({ repository_id: 'a', name: 'core' }),
 			repo({ repository_id: 'b', name: 'portal', reason_code: 'unclaimed' }),
@@ -58,7 +58,7 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 	});
 
 	// The flag is the whole decision: a flagged row is hidden whatever reason_code says.
-	it.skip('pending: billing-build — billing_hidden true hides the row whatever reason_code says', () => {
+	it('billing_hidden true hides the row whatever reason_code says', () => {
 		const { container } = show([
 			repo({ repository_id: 'a', name: 'a', reason_code: null, reason: null, remedy: null }),
 			repo({ repository_id: 'b', name: 'b', reason_code: 'not_elected_org' })
@@ -69,14 +69,14 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 
 	// A guard (passes today, must stay): it kills a screen that re-derives the rule from
 	// reason_code, because the server said "not hidden".
-	it.skip('pending: billing-build — billing_hidden false with reason_code not_subscribed stays listed, with its reason', () => {
+	it('billing_hidden false with reason_code not_subscribed stays listed, with its reason', () => {
 		const { container, getByText } = show([shown({ name: 'kept', reason_code: 'not_subscribed' })]);
 		expect(listed(container)).toEqual(['Share kept']);
 		expect(getByText(/No active subscription for this organization/)).toBeTruthy();
 		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
 	});
 
-	it.skip('pending: billing-build — one line per organization, never one per repository', () => {
+	it('one line per organization, never one per repository', () => {
 		const { container } = show([
 			repo({ repository_id: 'a', name: 'a' }),
 			repo({ repository_id: 'b', name: 'b' }),
@@ -86,14 +86,14 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 		expect(container.querySelector('[data-plan-hidden="globex"] a')?.getAttribute('href')).toBe('/org/globex/billing');
 	});
 
-	it.skip('pending: billing-build — when every repository is hidden, the line shows, not "No repositories yet"', () => {
+	it('when every repository is hidden, the line shows, not "No repositories yet"', () => {
 		const { container } = show([repo()]);
 		expect(container.textContent).not.toMatch(/No repositories yet/);
 		expect(lines(container)).toEqual(['acme']);
 	});
 
 	// Guards (pass today, must stay): rows the server did not flag are listed.
-	it.skip('pending: billing-build — sharing_lists_a_personal_private_repo', () => {
+	it('sharing_lists_a_personal_private_repo', () => {
 		const { container } = show([
 			shown({ name: 'notes', repo_key: 'github.com/jdoe/notes', tenant: 'github/jdoe', owning_org: null, authority: 'user', reason_code: null, reason: null, remedy: null, may_share: true, sync_enabled: true, configurable_by_me: true })
 		]);
@@ -101,7 +101,7 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
 	});
 
-	it.skip("pending: billing-build — a capture refusal stays listed with its reason; it is not the plan's to hide", () => {
+	it("a capture refusal stays listed with its reason; it is not the plan's to hide", () => {
 		const { container, getByText } = show([
 			shown({ name: 'unknown-vis', forge_visibility: null, reason_code: 'forge_visibility_unknown', reason: 'Waiting to learn whether it is public or private' })
 		]);

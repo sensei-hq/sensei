@@ -1,4 +1,4 @@
-// billing build (Design, phase A) — M3: "Who is counted" needs each seat's name,
+// billing build (Design) — M3: "Who is counted" needs each seat's name,
 // and the wire carries only user_id. GET …/billing resolves the names through the
 // same identity join the members read uses (resolveDisplayNames), and never invents one.
 // Names are read through dojoDb() — the access matrix's resolveDisplayNames exception:
@@ -58,7 +58,7 @@ describe('GET …/billing · seat names (billing build, M3)', () => {
 		);
 	});
 
-	it.skip('pending: billing-build — names each billable user through dojoDb(), for exactly those users; the seats stay the caller\'s read', async () => {
+	it('names each billable user through dojoDb(), for exactly those users; the seats stay the caller\'s read', async () => {
 		const res = await GET(ev());
 		expect(res.status).toBe(200);
 		const body = await res.json();
@@ -74,14 +74,14 @@ describe('GET …/billing · seat names (billing build, M3)', () => {
 		]);
 	});
 
-	it.skip('pending: billing-build — with no billable user, no identity read', async () => {
+	it('with no billable user, no identity read', async () => {
 		mocks.loadActiveSeatRows.mockResolvedValue([]);
 		await GET(ev());
 		expect(mocks.resolveDisplayNames).not.toHaveBeenCalled();
 	});
 
 	// M1 (r1): a failed name read is an error, never a 200 of null names (D83).
-	it.skip('pending: billing-build — a failed identity read answers 500 with the error, and no seat list', async () => {
+	it('a failed identity read answers 500 with the error, and no seat list', async () => {
 		mocks.resolveDisplayNames.mockRejectedValue(new AdminError(500, 'identities: boom'));
 		const res = await GET(ev());
 		expect(res.status).toBe(500);

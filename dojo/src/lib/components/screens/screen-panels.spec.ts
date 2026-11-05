@@ -52,7 +52,7 @@ describe('remembered panels reach the screens (D87)', () => {
 	afterEach(cleanup);
 	afterAll(() => vi.unstubAllGlobals());
 
-	it.skip('pending: billing-build — Plan & billing opens its info band as stored, and a toggle saves dojo.org.billing', async () => {
+	it('Plan & billing opens its info band as stored, and a toggle saves dojo.org.billing', async () => {
 		const billing = toKitBilling({ account: null, usage: { seats_used: 0, total_active_seats: 0, billable_users: [] } });
 		const { container, getByRole } = render(ScrBilling, { props: { orgName: 'acme', billing } });
 		expect(container.querySelector('[data-screen-shell]')).toBeTruthy();
@@ -63,7 +63,7 @@ describe('remembered panels reach the screens (D87)', () => {
 		expect(saved('dojo.org.billing')?.info).toBe(true);
 	});
 
-	it.skip('pending: billing-build — Sharing opens its filter band as stored, and a toggle saves dojo.you.sharing', async () => {
+	it('Sharing opens its filter band as stored, and a toggle saves dojo.you.sharing', async () => {
 		const { container, getByRole } = render(ScrSharing, { props: { repos: [repo] } });
 		expect(container.querySelector('[data-screen-shell]')).toBeTruthy();
 		expect(container.querySelector('[data-screen-filters]')).toBeNull();

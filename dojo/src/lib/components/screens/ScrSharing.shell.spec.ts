@@ -51,7 +51,7 @@ const sharingKanji = NAV_YOU.flatMap((g) => g.items).find((i) => i.id === 'shari
 describe('ScrSharing · the screen shell (D87)', () => {
 	afterEach(cleanup);
 
-	it.skip('pending: billing-build — renders through ScreenShell with view id dojo.you.sharing: the nav mark, title, and the description it has today', () => {
+	it('renders through ScreenShell with view id dojo.you.sharing: the nav mark, title, and the description it has today', () => {
 		const { container } = render(ScrSharing, { props: { repos: ROWS } });
 		const shell = container.querySelector('[data-screen-shell]') as HTMLElement;
 		expect(shell.dataset.view).toBe('dojo.you.sharing');
@@ -60,7 +60,7 @@ describe('ScrSharing · the screen shell (D87)', () => {
 		expect(shell.querySelector('[data-screen-description]')?.textContent).toMatch(/Which repositories send metrics to a dōjō/);
 	});
 
-	it.skip('pending: billing-build — search sits in the filter band and narrows the list by name', async () => {
+	it('search sits in the filter band and narrows the list by name', async () => {
 		const { container } = render(ScrSharing, { props: { repos: ROWS } });
 		const input = container.querySelector('[data-screen-filters] [data-screen-search] input') as HTMLInputElement;
 		expect(input.placeholder).toBe('Search repositories');
@@ -68,14 +68,23 @@ describe('ScrSharing · the screen shell (D87)', () => {
 		expect(listed(container)).toEqual(['Share notes']);
 	});
 
-	it.skip('pending: billing-build — search matches the repository key too', async () => {
+	it('search matches the repository key too', async () => {
 		const { container } = render(ScrSharing, { props: { repos: ROWS } });
 		await search(container, 'acme/site');
 		expect(listed(container)).toEqual(['Share site']);
 	});
 
+	// A search that matches nothing says so, rather than an empty list that reads as "no repositories".
+	it('a search with no match says so, not "No repositories yet"', async () => {
+		const { container } = render(ScrSharing, { props: { repos: ROWS } });
+		await search(container, 'zzz');
+		expect(listed(container)).toEqual([]);
+		expect(container.querySelector('[data-screen-body]')?.textContent).toContain('No repository matches “zzz”.');
+		expect(container.textContent).not.toMatch(/No repositories yet/);
+	});
+
 	// Search filters what is shown; it never brings back a row the server flagged hidden.
-	it.skip('pending: billing-build — search never lists a billing-hidden row', async () => {
+	it('search never lists a billing-hidden row', async () => {
 		const hidden = repo({ repository_id: 'h', name: 'api-private', forge_visibility: 'private', authority: 'organization', billing_hidden: true, sync_enabled: false, reason_code: 'not_subscribed' });
 		const { container } = render(ScrSharing, { props: { repos: [...ROWS, hidden] } });
 		await search(container, 'api');
@@ -84,20 +93,20 @@ describe('ScrSharing · the screen shell (D87)', () => {
 	});
 
 	// Parity (CONTRACT §9): the error and empty states move into the body unchanged.
-	it.skip('pending: billing-build — a failed read is the error state inside the shell body, never an empty list', () => {
+	it('a failed read is the error state inside the shell body, never an empty list', () => {
 		const { container } = render(ScrSharing, { props: { repos: [], error: 'boom' } });
 		expect(container.querySelector('[data-screen-body] [data-load-error]')).toBeTruthy();
 		expect(container.textContent).not.toMatch(/No repositories yet/);
 	});
 
-	it.skip('pending: billing-build — no repositories says so inside the shell body', () => {
+	it('no repositories says so inside the shell body', () => {
 		const { container } = render(ScrSharing, { props: { repos: [] } });
 		expect(container.querySelector('[data-screen-body]')?.textContent).toMatch(/No repositories yet/);
 	});
 
 	// L3 (r2): the attributes alone pass for a hand-rolled div; the shell must be rokkit's.
 	// L1 (r3): an unused import passes the import check alone — it must also render the shell.
-	it.skip('pending: billing-build — ScrSharing imports ScreenShell from @rokkit/app and renders it', () => {
+	it('ScrSharing imports ScreenShell from @rokkit/app and renders it', () => {
 		const src = readFileSync(join(process.cwd(), 'src/lib/components/screens/ScrSharing.svelte'), 'utf8');
 		expect(src).toMatch(/import\s*\{[^}]*\bScreenShell\b[^}]*\}\s*from\s*['"]@rokkit\/app['"]/);
 		expect(src).toMatch(/<ScreenShell\b/);
