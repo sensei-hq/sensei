@@ -36,7 +36,8 @@ const repo = (over: Partial<MyRepoWire> = {}): MyRepoWire => ({
 const shown = (over: Partial<MyRepoWire> = {}) => repo({ billing_hidden: false, ...over });
 const show = (repos: MyRepoWire[]) => render(ScrSharing, { props: { repos } });
 const listed = (c: HTMLElement) => [...c.querySelectorAll('[aria-label^="Share "]')].map((e) => e.getAttribute('aria-label'));
-const lines = (c: HTMLElement) => [...c.querySelectorAll('[data-plan-hidden]')].map((e) => (e as HTMLElement).dataset.planHidden);
+// Nothing on Sharing speaks of hidden repositories: no plan claim, no link to Plan & billing.
+const saysNothing = (c: HTMLElement) => !/paid plans?/i.test(c.textContent ?? '') && c.querySelector('a[href*="/billing"]') === null;
 
 describe('ScrSharing · WP8 · reads billing_hidden', () => {
 	afterEach(cleanup);
@@ -48,7 +49,7 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 			repo({ repository_id: 'b', name: 'b', reason_code: 'not_elected_org' })
 		]);
 		expect(listed(container)).toEqual([]);
-		expect(lines(container)).toEqual([]);
+		expect(saysNothing(container)).toBe(true);
 	});
 
 	// A guard (passes today, must stay): it kills a screen that re-derives the rule from
@@ -57,7 +58,7 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 		const { container, getByText } = show([shown({ name: 'kept', reason_code: 'not_subscribed' })]);
 		expect(listed(container)).toEqual(['Share kept']);
 		expect(getByText(/No active subscription for this organization/)).toBeTruthy();
-		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
+		expect(saysNothing(container)).toBe(true);
 	});
 
 	// Guards (pass today, must stay): rows the server did not flag are listed.
@@ -66,7 +67,7 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 			shown({ name: 'notes', repo_key: 'github.com/jdoe/notes', tenant: 'github/jdoe', owning_org: null, authority: 'user', reason_code: null, reason: null, remedy: null, may_share: true, sync_enabled: true, configurable_by_me: true })
 		]);
 		expect(listed(container)).toEqual(['Share notes']);
-		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
+		expect(saysNothing(container)).toBe(true);
 	});
 
 	it("a capture refusal stays listed with its reason; it is not the plan's to hide", () => {
@@ -75,7 +76,7 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 		]);
 		expect(listed(container)).toEqual(['Share unknown-vis']);
 		expect(getByText(/Waiting to learn whether it is public or private/)).toBeTruthy();
-		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
+		expect(saysNothing(container)).toBe(true);
 	});
 });
 
@@ -94,7 +95,7 @@ describe('ScrSharing · billing follow-up · no line about hidden repositories',
 		]);
 		expect(listed(container)).toEqual(['Share site']);
 		expect(container.textContent).not.toMatch(/\bcore\b|\bportal\b/);
-		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
+		expect(saysNothing(container)).toBe(true);
 		expect(container.textContent).not.toMatch(/paid plans?/i);
 		expect(container.querySelector('a[href*="/billing"]')).toBeNull();
 	});
