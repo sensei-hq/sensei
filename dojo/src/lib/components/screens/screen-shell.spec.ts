@@ -27,6 +27,14 @@ describe('dōjō screens use the shared Screen layout (#293)', () => {
 		expect(screens.filter((f) => !NOT_YET.has(f) && !usesScreen(f))).toEqual([]);
 	});
 
+	// billing build (D87): a screen moved onto rokkit's ScreenShell counts as laid out too — the
+	// shell supersedes #293's Screen as each screen's lane touches it. Replaces the test above in
+	// phase B, which deletes the original (ScrBilling and ScrSharing render <ScreenShell>).
+	it.skip('pending: billing-build — every screen not listed as pending uses Screen or ScreenShell (D87)', () => {
+		const usesShell = (f: string) => /<Screen(Shell)?[\s>]/.test(readFileSync(join(DIR, f), 'utf8'));
+		expect(screens.filter((f) => !NOT_YET.has(f) && !usesShell(f))).toEqual([]);
+	});
+
 	it('a screen that has moved to Screen leaves the pending list', () => {
 		expect([...NOT_YET].filter(usesScreen)).toEqual([]);
 	});

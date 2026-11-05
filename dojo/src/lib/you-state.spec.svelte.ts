@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { YouSectionState, forgeSyncMessage, visibilityLabel, authorityLabel, type YouApi } from '$lib/you-state.svelte';
 import type { GraphBranchOutcomeWire, MyRepoWire } from '$lib/client-data';
-import * as you from '$lib/you-state.svelte';
 
 // The personal-zone section's actions (#293): every write says why it failed,
 // and nothing shows a decision the server did not record.
@@ -129,62 +128,3 @@ describe('sharing labels', () => {
 	});
 });
 
-
-// billing build · WP8 (reviews/Design/L4-billing-build-tests-r2.md H1, L0 rulings 2026-11-05):
-// Sharing's hidden line groups the rows the SERVER flagged (`billing_hidden`) per organization.
-// The helper reads the flag and takes no predicate: the rule lives once, in
-// `isBillingHiddenRepo` ($lib/server/repositories.ts), and nothing here re-derives it.
-// ── test-local shape the build adds; phase B imports it directly ──
-type HiddenOrg = { org: string; count: number; href: string };
-type Pending = { splitBillingHidden(rows: MyRepoWire[]): { shown: MyRepoWire[]; hidden: HiddenOrg[] } };
-const { splitBillingHidden } = you as typeof you & Pending;
-
-const wire = (id: string, org: string | null, billing_hidden: boolean, reason_code: string | null = null): MyRepoWire => ({
-	repository_id: id,
-	repo_key: `github.com/${org ?? 'jdoe'}/${id}`,
-	name: id,
-	tenant: `github/${org ?? 'jdoe'}`,
-	owning_org: org,
-	forge_visibility: 'private',
-	authority: org ? 'organization' : 'user',
-	may_share: !billing_hidden,
-	elected: true,
-	sync_enabled: false,
-	configurable_by_me: false,
-	reason_code,
-	reason: null,
-	remedy: null,
-	reason_actor: null,
-	last_synced_at: null,
-	metric_rows: 0,
-	graph_branches: [],
-	billing_hidden
-});
-
-describe('splitBillingHidden · groups by the flag (WP8)', () => {
-	it.skip('pending: billing-build — shown rows keep their order; flagged rows are counted per org, first seen first, linked to its Plan & billing', () => {
-		const { shown, hidden } = splitBillingHidden([
-			wire('a', 'acme', true),
-			wire('p', 'acme', false),
-			wire('g', 'globex', true),
-			wire('b', 'acme', true),
-			wire('n', null, false)
-		]);
-		expect(shown.map((r) => r.repository_id)).toEqual(['p', 'n']);
-		expect(hidden).toEqual([
-			{ org: 'acme', count: 2, href: '/org/acme/billing' },
-			{ org: 'globex', count: 1, href: '/org/globex/billing' }
-		]);
-	});
-
-	it.skip('pending: billing-build — the flag decides, never reason_code: false + not_subscribed is shown, true + null is hidden', () => {
-		const { shown, hidden } = splitBillingHidden([wire('kept', 'acme', false, 'not_subscribed'), wire('gone', 'globex', true, null)]);
-		expect(shown.map((r) => r.repository_id)).toEqual(['kept']);
-		expect(hidden).toEqual([{ org: 'globex', count: 1, href: '/org/globex/billing' }]);
-	});
-
-	it.skip('pending: billing-build — nothing flagged: every row shown, no line', () => {
-		const rows = [wire('a', 'acme', false), wire('n', null, false)];
-		expect(splitBillingHidden(rows)).toEqual({ shown: rows, hidden: [] });
-	});
-});

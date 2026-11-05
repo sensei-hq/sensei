@@ -12,7 +12,7 @@ import type { BillingResponse } from '$lib/admin-data';
 
 // ── test-local wire shape the build adds (display_name); phase B deletes it ──
 type NamedUsage = Omit<BillingResponse['usage'], 'billable_users'> & {
-	billable_users: { user_id: string; display_name: string | null; workspaces: { name: string; slug: string; role: string }[] }[];
+	billable_users: { user_id: string; display_name: string | null; email: string | null; workspaces: { name: string; slug: string; role: string }[] }[];
 };
 const kit = (account: BillingResponse['account'], u: NamedUsage) => toKitBilling({ account, usage: u as BillingResponse['usage'] }, NOW);
 
@@ -21,8 +21,8 @@ const usage: NamedUsage = {
 	seats_used: 2,
 	total_active_seats: 4,
 	billable_users: [
-		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
-		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] }
+		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', email: 'alex@example.com', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
+		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, email: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] }
 	]
 };
 const acct = (status: string, plan = 'pro'): NonNullable<BillingResponse['account']> => ({
@@ -72,7 +72,7 @@ describe('ScrBilling · billing build · the screen shell (D87)', () => {
 		await new Promise((r) => setTimeout(r, 300));
 		await tick();
 		const items = [...container.querySelectorAll('details[data-billing-counted] li')].map((li) => li.textContent?.replace(/\s+/g, ' ').trim());
-		expect(items).toEqual(['0b1e2f30 — ws-gamma (contributor)']);
+		expect(items).toEqual(['Name not shared yet — ws-gamma (contributor)']);
 	});
 });
 
@@ -161,17 +161,31 @@ describe('ScrBilling · billing build · the plan tab', () => {
 		expect(proposed.textContent).toContain('Proposed — not in code.');
 	});
 
-	it.skip('pending: billing-build — "Who is counted" lists each seat by its joined name (or short id), role per workspace, and the built remedy (M3)', () => {
+	// L9's rule (L0 ruling r3): personLabel — name, then email, then words; never an id fragment.
+	it.skip('pending: billing-build — "Who is counted" lists each seat by personLabel (name, email or words, never an id fragment), role per workspace, and the built remedy (M3)', () => {
 		const { container } = screen(null);
 		const who = container.querySelector('details[data-billing-counted]') as HTMLDetailsElement;
 		expect(who.querySelector('summary')?.textContent).toContain('Who is counted');
 		const items = [...who.querySelectorAll('li')].map((li) => li.textContent?.replace(/\s+/g, ' ').trim());
 		expect(items).toEqual([
 			'Alex Doe — ws-alpha (contributor), ws-beta (maintainer)',
-			'0b1e2f30 — ws-gamma (contributor)'
+			'Name not shared yet — ws-gamma (contributor)'
 		]);
 		expect(who.textContent).toContain("Closing a seat isn't built yet.");
-		expect(who.textContent).not.toMatch(/@\w/);
+		expect(who.textContent).not.toMatch(/0b1e2f30|7d3c9a10/);
+		// No invented handle: the only "@" is a real email, never "@word" on its own.
+		expect(who.textContent?.replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '')).not.toMatch(/@\w/);
+	});
+
+	it.skip('pending: billing-build — a seat with no name but an email reads the email', () => {
+		const emailOnly: NamedUsage = {
+			seats_used: 1,
+			total_active_seats: 1,
+			billable_users: [{ user_id: '5c6d7e80-0000-0000-0000-000000000003', display_name: null, email: 'sam@example.com', workspaces: [{ name: 'ws-delta', slug: 'ws-delta', role: 'contributor' }] }]
+		};
+		const { container } = screen(null, emailOnly);
+		const items = [...container.querySelectorAll('details[data-billing-counted] li')].map((li) => li.textContent?.replace(/\s+/g, ' ').trim());
+		expect(items).toEqual(['sam@example.com — ws-delta (contributor)']);
 	});
 
 	it.skip('pending: billing-build — with no seats, "Who is counted" says nobody is, not an empty list', () => {
@@ -190,8 +204,10 @@ describe('ScrBilling · billing build · the plan tab', () => {
 	});
 
 	// L3 (r2): the data-screen-* assertions alone pass for a hand-rolled div; the shell must be rokkit's.
-	it.skip('pending: billing-build — ScrBilling imports ScreenShell from @rokkit/app', () => {
+	// L1 (r3): an unused import passes the import check alone — it must also render the shell.
+	it.skip('pending: billing-build — ScrBilling imports ScreenShell from @rokkit/app and renders it', () => {
 		const src = readFileSync(join(process.cwd(), 'src/lib/components/screens/ScrBilling.svelte'), 'utf8');
 		expect(src).toMatch(/import\s*\{[^}]*\bScreenShell\b[^}]*\}\s*from\s*['"]@rokkit\/app['"]/);
+		expect(src).toMatch(/<ScreenShell\b/);
 	});
 });

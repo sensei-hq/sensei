@@ -96,8 +96,10 @@ describe('ScrSharing · the screen shell (D87)', () => {
 	});
 
 	// L3 (r2): the attributes alone pass for a hand-rolled div; the shell must be rokkit's.
-	it.skip('pending: billing-build — ScrSharing imports ScreenShell from @rokkit/app', () => {
+	// L1 (r3): an unused import passes the import check alone — it must also render the shell.
+	it.skip('pending: billing-build — ScrSharing imports ScreenShell from @rokkit/app and renders it', () => {
 		const src = readFileSync(join(process.cwd(), 'src/lib/components/screens/ScrSharing.svelte'), 'utf8');
 		expect(src).toMatch(/import\s*\{[^}]*\bScreenShell\b[^}]*\}\s*from\s*['"]@rokkit\/app['"]/);
+		expect(src).toMatch(/<ScreenShell\b/);
 	});
 });

@@ -1,7 +1,9 @@
 // billing build (Design, phase A) — M3: "Who is counted" needs each seat's name,
 // and the wire carries only user_id. GET …/billing resolves the names through the
-// same identity join the members read uses (resolveDisplayNames, as the caller),
-// and never invents one.
+// same identity join the members read uses (resolveDisplayNames), and never invents one.
+// Names are read through dojoDb() — the access matrix's resolveDisplayNames exception:
+// callers cannot read `principals`, so a caller-scoped read 500s for any unnamed
+// seat-holder (L9, develop 91dc59735; L0 ruling r3). The SEATS stay the caller's read.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const caller: Record<string, unknown> = { tenantId: 't1', userId: 'admin-uuid', role: 'admin', access: 4, membershipId: 'm1', accessToken: 'jwt-A' };
@@ -46,18 +48,29 @@ describe('GET …/billing · seat names (billing build, M3)', () => {
 		vi.clearAllMocks();
 		mocks.resolveTenantAccess.mockResolvedValue(caller);
 		mocks.getBillingAccount.mockResolvedValue(null);
-		mocks.loadActiveSeatRows.mockResolvedValue([seat('u1', 'ws-alpha'), seat('u2', 'ws-gamma')]);
-		mocks.resolveDisplayNames.mockResolvedValue(new Map([['u1', { display_name: 'Alex Doe', email: null }]]));
+		mocks.loadActiveSeatRows.mockResolvedValue([seat('u1', 'ws-alpha'), seat('u2', 'ws-gamma'), seat('u3', 'ws-delta')]);
+		// u1 named; u2 an email only; u3 nobody named (no entry) — an ordinary dōjō.
+		mocks.resolveDisplayNames.mockResolvedValue(
+			new Map([
+				['u1', { display_name: 'Alex Doe', email: null }],
+				['u2', { display_name: null, email: 'sam@example.com' }]
+			])
+		);
 	});
 
-	it.skip('pending: billing-build — names each billable user from the identity join, as the caller, for exactly those users', async () => {
+	it.skip('pending: billing-build — names each billable user through dojoDb(), for exactly those users; the seats stay the caller\'s read', async () => {
 		const res = await GET(ev());
+		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(mocks.resolveDisplayNames).toHaveBeenCalledWith({ client: 'user', token: 'jwt-A' }, 't1', ['u1', 'u2']);
-		const users = (body as { usage: { billable_users: { user_id: string; display_name: string | null }[] } }).usage.billable_users;
-		expect(users.map((u) => [u.user_id, u.display_name])).toEqual([
-			['u1', 'Alex Doe'],
-			['u2', null]
+		expect(mocks.resolveDisplayNames).toHaveBeenCalledTimes(1);
+		expect(mocks.resolveDisplayNames).toHaveBeenCalledWith({ client: 'service' }, 't1', ['u1', 'u2', 'u3']);
+		// Kills a route that does everything as service: the seat rows are read as the caller.
+		expect(mocks.loadActiveSeatRows.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+		const users = (body as { usage: { billable_users: { user_id: string; display_name: string | null; email: string | null }[] } }).usage.billable_users;
+		expect(users.map((u) => [u.user_id, u.display_name, u.email])).toEqual([
+			['u1', 'Alex Doe', null],
+			['u2', null, 'sam@example.com'],
+			['u3', null, null]
 		]);
 	});
 

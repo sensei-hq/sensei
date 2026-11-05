@@ -11,6 +11,7 @@ import { toKitBilling, noBilling } from './billing-map';
 import { BILLING_TIERS } from './billing-catalog';
 import * as view from './billing-view';
 import type { BillingResponse } from './admin-data';
+import { personLabel } from './viewers-view';
 
 // ── test-local shapes the build adds; phase B deletes these and uses the real types ──
 type Tone = 'normal' | 'refusal' | 'fault';
@@ -18,7 +19,7 @@ type Built = Omit<ReturnType<typeof toKitBilling>, 'problem'> & {
 	tag: 'Current plan' | 'Trial' | 'Past due' | null;
 	problem: { tone: Tone; title: string; detail: string; remedy: string; code: string } | null;
 };
-type Named = { user_id: string; display_name: string | null; workspaces: { name: string; slug: string; role: string }[] };
+type Named = { user_id: string; display_name: string | null; email: string | null; workspaces: { name: string; slug: string; role: string }[] };
 type Pending = {
 	countedSeats: (users: Named[]) => { name: string; workspaces: string }[];
 	SEAT_COPY: Record<string, unknown>;
@@ -210,12 +211,18 @@ describe('billing build · the plan cards are the mockup\'s (D46, D52, D59, D85,
 
 describe('billing build · who is counted (M3)', () => {
 	const users: Named[] = [
-		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
-		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] }
+		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', email: 'alex@example.com', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
+		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, email: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] },
+		{ user_id: '5c6d7e80-0000-0000-0000-000000000003', display_name: null, email: 'sam@example.com', workspaces: [{ name: 'ws-delta', slug: 'ws-delta', role: 'contributor' }] }
 	];
 
-	it.skip('pending: billing-build — a name comes from the identity join; with none, the short id, never an invented handle', () => {
-		expect(countedSeats(users).map((u: { name: string }) => u.name)).toEqual(['Alex Doe', '0b1e2f30']);
+	// L9's rule (develop 91dc59735; L0 ruling r3): name, then email, then words — the same
+	// personLabel Members and Viewers use; never an id fragment, never an invented handle.
+	it.skip('pending: billing-build — a seat reads its name, else its email, else words, never an id fragment', () => {
+		const names = countedSeats(users).map((u: { name: string }) => u.name);
+		expect(names).toEqual(['Alex Doe', 'Name not shared yet', 'sam@example.com']);
+		expect(names).toEqual(users.map((u) => personLabel({ principalId: u.user_id, name: u.display_name, email: u.email })));
+		expect(names.join(' ')).not.toMatch(/0b1e2f30|5c6d7e80|7d3c9a10/);
 	});
 
 	it.skip('pending: billing-build — the role is shown per workspace', () => {

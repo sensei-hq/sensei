@@ -289,6 +289,17 @@ describe('ScrBilling — Free and Pro, no price, an honest attach', () => {
 		expect(container.querySelector('[data-attach-notice]')!.textContent).toContain('Until then this plan stays as it is.');
 	});
 
+	// Replaces the test above in phase B (billing build), which deletes the original: the approved
+	// mockup has no summary card, so the renewal is said inside the "Pro is attached" notice (M2, r3).
+	it.skip('pending: billing-build — on Pro: its renewal in the notice, no attach, and the disabled Move to Free says why (M6)', () => {
+		const pro = toKitBilling({ account: { plan: 'pro', status: 'active', seats_included: 0, seats_used: 0, seats_computed_at: null, period_start: null, period_end: '2026-08-01T00:00:00Z' }, usage }, new Date('2026-07-15T00:00:00Z'));
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: pro } });
+		expect(container.querySelector('[data-billing-problem] [data-component="notice"]')?.textContent ?? '').toContain('Renews Aug 1.');
+		expect(container.querySelector('[data-action="attach-pro"]')).toBeNull();
+		expect((container.querySelector('[data-action="move-free"]') as HTMLButtonElement).disabled).toBe(true);
+		expect(container.querySelector('[data-attach-notice]')!.textContent).toContain('Until then this plan stays as it is.');
+	});
+
 	it('a lapsed account says why its private repositories are hidden (M5)', () => {
 		const lapsed = toKitBilling({ account: { plan: 'pro', status: 'past_due', seats_included: 0, seats_used: 0, seats_computed_at: null, period_start: null, period_end: '2026-12-01T00:00:00Z' }, usage }, new Date('2026-11-01T00:00:00Z'));
 		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: lapsed } });
