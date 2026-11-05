@@ -12,6 +12,11 @@
 // `relay.now` and `relay.task_history`, and the action kinds) and the interaction
 // contract `coord/mockups/relay-lanes/CONTRACT.md` §3.
 //
+// Repository required, workspace optional (lanes-data, user 2026-11-05): every task names its
+// `repo_key`; `workspace_id` is a tag and a filter, never a gate. Reads are scoped by the user and
+// the crew. The main window reads every crew; the workspace window reads the same views filtered
+// to its workspace.
+//
 // D83: every self-reported value is nullable. `null` means "not reported" and the
 // screen says so; it is never coerced to 0. Times are ISO instants; the screen
 // formats them.
@@ -68,9 +73,17 @@ export interface RelayTicket {
 
 // ─── relay.now ──────────────────────────────────────────────────────────────
 
+/** What a read is narrowed to. Empty = every crew (the main window). */
+export interface RelayFilter {
+  workspace_id?: string;
+  /** The portable identity, e.g. `github.com/sensei-hq/sensei`. */
+  repo_key?: string;
+}
+
 export interface RelayCrew {
   id: string;
-  workspace_id: string;
+  /** Optional: a crew may work on repositories that belong to no workspace. */
+  workspace_id: string | null;
   goal: string | null;
   status: string;
   started_at: string;
@@ -81,6 +94,9 @@ export interface RelayCrew {
 export interface RelayLaneTask {
   id: string;
   title: string;
+  /** Required: the repository the task works on. */
+  repo_key: string;
+  workspace_id: string | null;
   phase: RelayTaskPhase;
   state: RelayTaskState;
   round: number;
@@ -91,6 +107,7 @@ export interface RelayLaneTask {
 
 export interface RelayLane {
   id: string;
+  crew_id: string;
   /** `L1`…, unique per crew. */
   code: string;
   /** The lane's objective ("Diagrams"); null until the coordinator's first assignment. */
@@ -114,6 +131,7 @@ export interface RelayDecisionOption {
 export interface RelayDecision {
   /** The `asked` action's id; the answer replies to it. */
   id: string;
+  crew_id: string;
   task_id: string | null;
   task_title: string | null;
   /** `body_md` of the `asked` action. */
@@ -134,6 +152,8 @@ export interface RelayTriageSource {
 
 export interface RelayCompletedTask {
   task_id: string;
+  crew_id: string;
+  repo_key: string;
   title: string;
   lane_code: string;
   lane_title: string | null;
@@ -158,9 +178,16 @@ export interface RelayResources {
   swap_floor_gb: number;
 }
 
-/** `relay.now` for one workspace. `crew: null` = no crew yet (not a failure). */
+/** The choices the main window's filter band offers. */
+export interface RelayFacets {
+  repos: string[];
+  workspaces: { id: string; name: string }[];
+}
+
+/** `relay.now` for a filter. `crews: []` = no crew yet (not a failure). */
 export interface RelayNow {
-  crew: RelayCrew | null;
+  crews: RelayCrew[];
+  facets: RelayFacets;
   lanes: RelayLane[];
   decisions: RelayDecision[];
   triage: RelayTriageSource[];
@@ -171,21 +198,29 @@ export interface RelayNow {
 
 // ─── The queue (relay.items + the triage view) ──────────────────────────────
 
-/** A triage row: a tracker task in an active sprint with no item yet, or a manual item. */
-export interface RelayTriageItem {
-  /** Set for a manual item; null for a tracker task that has no item yet. */
-  item_id: string | null;
+interface RelayTriageBase {
+  /** A manual item may not name a repository yet. */
+  repo_key: string | null;
+  workspace_id: string | null;
   kind: RelayItemKind;
   title: string;
   /** Only for manual items; a ticketed row reads its tags from the tracker. */
   tags: string[];
+  /** The tracker's own name for it ("sprint 47", "milestone 11"); null for a manual item. */
   sprint: string | null;
-  ticket: RelayTicket | null;
   added_by_you: boolean;
 }
 
+/** A triage row. Exactly one identity, so `+` always has something to send (r2 F10):
+ *  a manual item by its id, or a tracker task (no item yet) by its ticket. */
+export type RelayTriageItem =
+  | (RelayTriageBase & { item_id: string; ticket: null })
+  | (RelayTriageBase & { item_id: null; ticket: RelayTicket });
+
 export interface RelayBacklogItem {
   item_id: string;
+  repo_key: string | null;
+  workspace_id: string | null;
   kind: RelayItemKind;
   title: string;
   tags: string[];
@@ -214,7 +249,10 @@ export interface RelayTaskLane {
 
 export interface RelayTaskHeader {
   id: string;
+  crew_id: string;
   title: string;
+  repo_key: string;
+  workspace_id: string | null;
   phase: RelayTaskPhase;
   state: RelayTaskState;
   round: number;
@@ -257,26 +295,136 @@ export interface RelayHandoff {
   at: string;
 }
 
-/** One `relay.actions` row, props unpacked. `lane_code: null` = the person acted. */
-export interface RelayAction {
+// ─── Action props, per kind (lanes-data.md `relay.actions` table; the daemon validates the keys) ──
+// D83: every self-reported key is optional and nullable; absent or null = "not reported", never 0.
+
+export interface RelayFile {
+  path: string;
+  added: number;
+  removed: number;
+  /** Computed by the broker from the task's `owned_paths`, not claimed by the lane. */
+  outside_owned: boolean;
+}
+
+export interface RelayGate {
+  cmd: string;
+  exit: number;
+  counts: string | null;
+}
+
+export interface RelaySubagent {
+  role: string;
+  model: string | null;
+}
+
+export interface RelayTelemetry {
+  family?: string | null;
+  version?: string | null;
+  model?: string | null;
+  tokens_in?: number | null;
+  tokens_out?: number | null;
+  tokens_cache?: number | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+  context_tokens?: number | null;
+  compactions?: number | null;
+  peak_memory_mb?: number | null;
+  subagents?: RelaySubagent[] | null;
+}
+
+export type RelayFindingSeverity = 'high' | 'medium' | 'low';
+
+export interface RelayFinding {
+  severity: RelayFindingSeverity;
+  /** A `relay.finding_classes` code. */
+  class: string;
+  text: string;
+  file: string | null;
+  line: number | null;
+}
+
+/** `message.props.to` (L0 ruling 3): a lane by its uuid; the screen shows its code. */
+export type RelayMessageTo =
+  | { kind: 'coordinator' }
+  | { kind: 'lane'; lane_id: string }
+  | { kind: 'everyone' };
+
+export type RelaySurface = 'desktop' | 'dojo';
+
+/** Props by action kind, exactly the lanes-data table. */
+export interface RelayActionProps {
+  assigned: { docs: string[]; owned_paths: string[]; acceptance: string[] };
+  brief_updated: { docs: string[] };
+  started: Record<string, never>;
+  reported: RelayTelemetry & {
+    look_at?: string | null;
+    flags?: string | null;
+    base?: string | null;
+    branch?: string | null;
+    commits?: string[];
+    files?: RelayFile[];
+    gates?: RelayGate[];
+  };
+  reviewed: RelayTelemetry & {
+    verdict: 'approved' | 'changes_requested';
+    findings: RelayFinding[];
+    probes?: number | null;
+  };
+  asked: {
+    /** One line: what is waiting on it (L0 ruling 1). */
+    context: string | null;
+    options: RelayDecisionOption[];
+    recommended: string | null;
+    blocks: string[];
+    /** `person`, or a lane id. */
+    asked_of: string;
+  };
+  answered: { option: string; surface: RelaySurface };
+  message: { to: RelayMessageTo; surface: RelaySurface };
+  /** Receipts: `reply_to` = the message, one per recipient (L0 ruling 2). */
+  delivered: Record<string, never>;
+  read: Record<string, never>;
+  merged: { commits: string[]; into: string; gates: RelayGate[] };
+  interrupted: { checkpoint?: unknown; to_lane?: string | null };
+  /** `to_lane` is the lane's uuid; the screen shows its code. */
+  reoffered: { checkpoint?: unknown; to_lane: string | null };
+  compacted: { context_tokens_before?: number | null; context_tokens_after?: number | null };
+}
+
+interface RelayActionBase {
   id: string;
-  kind: RelayActionKind;
+  /** Who acted, by code; null = the person. */
   lane_code: string | null;
   round: number | null;
   phase: RelayTaskPhase | null;
   body_md: string | null;
-  props: Record<string, unknown>;
+  /** An answer → its question; a review → the report; a receipt → the message. */
   reply_to: string | null;
   created_at: string;
+}
+
+/** One `relay.actions` row, props unpacked, discriminated on `kind` (r2 F9). */
+export type RelayAction = {
+  [K in RelayActionKind]: RelayActionBase & { kind: K; props: RelayActionProps[K] };
+}[RelayActionKind];
+
+/** A crew lane by id, so a uuid in props (`to.lane_id`, `to_lane`) is shown by its code. */
+export interface RelayLaneRef {
+  id: string;
+  code: string;
+  title: string | null;
 }
 
 export interface RelayTaskView {
   task: RelayTaskHeader;
   run: RelayRunDetails;
   decision: RelayDecision | null;
+  /** The latest brief: the `assigned` one, or the last `brief_updated`. */
   handoff: RelayHandoff | null;
   /** Newest first, down to `assigned`, as the view orders it. */
   history: RelayAction[];
+  /** The crew's lanes, for the codes behind uuids in props. */
+  lanes: RelayLaneRef[];
 }
 
 // ─── Writes (person → broker) ───────────────────────────────────────────────
@@ -284,7 +432,8 @@ export interface RelayTaskView {
 /** CONTRACT §3h-bis `send_message`. */
 export interface RelaySendMessage {
   crew_id: string;
-  to: { lane_id: string } | { role: 'coordinator' } | { all: true };
+  /** The shape the `message` action stores (L0 ruling 3). */
+  to: RelayMessageTo;
   /** "About": null = no particular task. */
   task_id: string | null;
   /** ≤ 600 characters, plain text. */
@@ -297,6 +446,7 @@ export interface RelayAnswer {
   decision_id: string;
   option: string;
   note: string | null;
+  /** No `by`: the daemon records the person as `lane_id = null` (lanes-data), CONTRACT §3e's `by: 'person'`. */
   surface: 'desktop' | 'dojo';
 }
 
@@ -308,9 +458,10 @@ export type RelayAddToBacklog =
 // ─── The client ─────────────────────────────────────────────────────────────
 
 export interface RelayApi {
-  tryGetNow(workspaceId: string): Promise<ApiResult<RelayNow>>;
-  tryGetQueue(workspaceId: string): Promise<ApiResult<RelayQueue>>;
-  tryGetTask(taskId: string): Promise<ApiResult<RelayTaskView>>;
+  tryGetNow(filter: RelayFilter): Promise<ApiResult<RelayNow>>;
+  tryGetQueue(filter: RelayFilter): Promise<ApiResult<RelayQueue>>;
+  /** Scoped by (user, crew, task): another user's task, or one from a crew you're not in, is a 404. */
+  tryGetTask(crewId: string, taskId: string): Promise<ApiResult<RelayTaskView>>;
   trySendMessage(body: RelaySendMessage): Promise<ApiResult<{ message_id: string }>>;
   tryAnswerDecision(body: RelayAnswer): Promise<ApiResult<{ action_id: string }>>;
   tryAddToBacklog(body: RelayAddToBacklog): Promise<ApiResult<{ item_id: string }>>;

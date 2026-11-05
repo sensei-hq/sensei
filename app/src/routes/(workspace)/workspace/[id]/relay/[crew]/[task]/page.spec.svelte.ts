@@ -14,7 +14,7 @@ import { tick } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
 import type { ApiResult } from '$lib/api.js';
 import type { RelayAction, RelayTaskView } from '$lib/relay-api.js';
-import * as F from '../test-stubs/relay-fixtures.js';
+import * as F from '$lib/test-stubs/relay-fixtures.js';
 
 const PAGE = './+page.svelte';
 const LOADER = './+page.js';
@@ -22,14 +22,14 @@ const LOADER = './+page.js';
 const relay = vi.hoisted(() => ({ api: null as unknown }));
 vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api) }));
 
-const route = vi.hoisted(() => ({ id: 'w1', task: 't-header' }));
+const route = vi.hoisted(() => ({ id: 'w1', crew: '', task: 't-header' }));
 vi.mock('$app/state', () => ({
   page: {
     get params() {
-      return { id: route.id, task: route.task };
+      return { id: route.id, crew: route.crew, task: route.task };
     },
     get url() {
-      return new URL(`http://localhost/workspace/${route.id}/relay/${route.task}`);
+      return new URL(`http://localhost/workspace/${route.id}/relay/${route.crew}/${route.task}`);
     },
   },
 }));
@@ -49,19 +49,31 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.mocked(ScreenShell).mockClear();
   route.id = 'w1';
+  route.crew = '';
   route.task = 't-header';
 });
 
-async function open(opts: { task?: ApiResult<RelayTaskView>; taskId?: string; workspace?: string } = {}) {
+async function open(
+  opts: {
+    task?: ApiResult<RelayTaskView>;
+    taskId?: string;
+    crewId?: string;
+    workspace?: string;
+    /** Shape the fake before the loader reads (e.g. answer per workspace). */
+    setup?: (api: F.FakeRelayApi) => void;
+  } = {},
+) {
   const api = F.fakeRelayApi();
   if (opts.task) api.tryGetTask.mockResolvedValue(opts.task);
+  opts.setup?.(api);
   relay.api = api;
   route.id = opts.workspace ?? 'w1';
+  route.crew = opts.crewId ?? F.CREW_ID;
   route.task = opts.taskId ?? 't-header';
   const { load } = await import(/* @vite-ignore */ LOADER);
   const data = await load({
-    params: { id: route.id, task: route.task },
-    url: new URL(`http://localhost/workspace/${route.id}/relay/${route.task}`),
+    params: { id: route.id, crew: route.crew, task: route.task },
+    url: new URL(`http://localhost/workspace/${route.id}/relay/${route.crew}/${route.task}`),
   } as never);
   const { default: Page } = await import(/* @vite-ignore */ PAGE);
   const m = mountComponent(Page, { data } as never);
@@ -86,9 +98,10 @@ describe('Relay · task — the loader’s read', () => {
   it.skip('pending: relay-screen — reads this task’s history, and the page reads nothing of its own', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
-    const { api } = await open({ taskId: 't-billing' });
+    const { api } = await open({ taskId: 't-billing', crewId: F.OTHER_CREW_ID, workspace: 'w2' });
     expect(api.tryGetTask).toHaveBeenCalledTimes(1);
-    expect(api.tryGetTask).toHaveBeenCalledWith('t-billing');
+    // r2 F3 (repository ruling): the read is scoped by the crew in the route, not the workspace.
+    expect(api.tryGetTask).toHaveBeenCalledWith(F.OTHER_CREW_ID, 't-billing');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
@@ -181,6 +194,7 @@ describe('Relay · task — History', () => {
     const ids = all(c, '[data-history-entry]').map((e) => e.getAttribute('data-history-entry'));
     expect(ids).toEqual([
       'act-merged',
+      'act-msg-2',
       'act-review-2',
       'act-msg',
       'act-report-2',
@@ -309,7 +323,7 @@ describe('Relay · task — a failed read', () => {
     await vi.waitFor(() => expect(one(c, '[data-history-entry]')).not.toBeNull());
     expect(one(c, '[data-relay-error]')).toBeNull();
     expect(api.tryGetTask).toHaveBeenCalledTimes(1);
-    expect(api.tryGetTask).toHaveBeenCalledWith('t-billing');
+    expect(api.tryGetTask).toHaveBeenCalledWith(F.CREW_ID, 't-billing');
   });
 
   it.skip('pending: relay-screen — a Retry that fails again shows the new reason', async () => {
@@ -332,5 +346,174 @@ describe('Relay · task — a failed read', () => {
     pending.resolve(F.ok(F.taskView()));
     await vi.waitFor(() => expect(one(c, '[data-history-entry]')).not.toBeNull());
     expect(api.tryGetTask).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── r2 (review relay-screen-tests-r1) ──────────────────────────────────────
+
+const hhmm = (iso: string) => {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+describe('Relay · task r2 — the shell (F1)', () => {
+  it.skip('pending: relay-screen — search is off on the task view too', async () => {
+    const { c } = await open();
+    expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
+    expect((vi.mocked(ScreenShell).mock.calls[0][1] as unknown as Record<string, unknown>).search).toBe(false);
+    expect(one(c, '[data-screen-search]')).toBeNull();
+  });
+});
+
+describe('Relay · task r2 — scoped by the crew and the user (F3, repository ruling)', () => {
+  // The daemon reads (user, crew, task): t-header is in CREW_ID; any other crew, or another
+  // user's task id, is a 404. The screen shows "not found", never a row.
+  const perCrew = (api: F.FakeRelayApi) =>
+    api.tryGetTask.mockImplementation(async (crewId: string, taskId: string) =>
+      crewId === F.CREW_ID && taskId === 't-header' ? F.ok(F.taskView()) : F.fail(404, 'task not found'),
+    );
+
+  it.skip('pending: relay-screen — a task from another crew, or another user’s, is "not found": no header, history or Retry', async () => {
+    const cases: Array<[string, string, string]> = [
+      ['another crew', F.OTHER_CREW_ID, 't-header'],
+      ['another user', F.CREW_ID, 't-someone-elses'],
+    ];
+    for (const [why, crewId, taskId] of cases) {
+      const { c, api } = await open({ workspace: 'w2', crewId, taskId, setup: perCrew });
+      expect(api.tryGetTask, why).toHaveBeenCalledWith(crewId, taskId);
+      const notFound = need(one(c, '[data-relay-not-found]'), `the not-found notice (${why})`);
+      expect(notFound.getAttribute('data-tone'), why).toBe('refusal');
+      expect(one(notFound, '[data-action="retry"]'), why).toBeNull();
+      expect(one(c, 'a[data-back]')?.getAttribute('href'), why).toBe('/workspace/w2/relay');
+      expect(one(c, '[data-task-title]'), why).toBeNull();
+      expect(one(c, '[data-history-entry]'), why).toBeNull();
+      expect(one(c, '[data-run-details]'), why).toBeNull();
+      expect(one(c, '[data-relay-error]'), why).toBeNull();
+      expect(text(c), why).not.toContain('Diagrams header on ScreenShell');
+    }
+  });
+
+  it.skip('pending: relay-screen — the same task under its own crew draws', async () => {
+    const { c, api } = await open({ crewId: F.CREW_ID, taskId: 't-header', setup: perCrew });
+    expect(api.tryGetTask).toHaveBeenCalledWith(F.CREW_ID, 't-header');
+    expect(text(one(c, '[data-task-title]'))).toBe('Diagrams header on ScreenShell');
+    expect(one(c, '[data-relay-not-found]')).toBeNull();
+  });
+});
+
+describe('Relay · task r2 — its decision (F4, L3)', () => {
+  const withDecision = () => F.ok(F.taskView({ decision: F.decision({ task_id: 't-header' }) }));
+
+  it.skip('pending: relay-screen — two presses of Answer answer once', async () => {
+    const { c, api } = await open({ task: withDecision() });
+    const pending = F.deferred<ApiResult<{ action_id: string }>>();
+    api.tryAnswerDecision.mockReturnValue(pending.promise);
+    const row = need(one(c, '[data-decision]'), 'the decision');
+    need(one(row, '[data-option="db"]'), 'the db option').click();
+    await tick();
+    const answer = need(one(row, '[data-decision-answer]'), 'Answer');
+    answer.click();
+    answer.click();
+    pending.resolve(F.ok({ action_id: 'act-answer' }));
+    await vi.waitFor(() => expect(api.tryAnswerDecision).toHaveBeenCalled());
+    await tick();
+    expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1);
+  });
+
+  it.skip('pending: relay-screen — an answer re-reads the task, and the decision leaves', async () => {
+    const { c, api } = await open({ task: withDecision() });
+    api.tryGetTask.mockResolvedValue(F.ok(F.taskView({ decision: null })));
+    const row = need(one(c, '[data-decision]'), 'the decision');
+    need(one(row, '[data-option="file"]'), 'the file option').click();
+    await tick();
+    need(one(row, '[data-decision-answer]'), 'Answer').click();
+    await vi.waitFor(() => expect(one(c, '[data-decision]')).toBeNull());
+    expect(api.tryGetTask).toHaveBeenCalledTimes(2);
+    expect(api.tryGetTask).toHaveBeenLastCalledWith(F.CREW_ID, 't-header');
+  });
+
+  it.skip('pending: relay-screen — a refused answer says why and keeps the decision', async () => {
+    const { c, api } = await open({ task: withDecision() });
+    api.tryAnswerDecision.mockResolvedValue(F.fail(409, 'already answered on the dōjō'));
+    const row = need(one(c, '[data-decision]'), 'the decision');
+    need(one(row, '[data-option="db"]'), 'the db option').click();
+    await tick();
+    need(one(row, '[data-decision-answer]'), 'Answer').click();
+    await vi.waitFor(() => expect(text(one(c, '[data-decision-error]'))).toContain('already answered on the dōjō'));
+    expect(one(c, '[data-decision]')).not.toBeNull();
+  });
+});
+
+describe('Relay · task r2 — receipts fold per message (F5)', () => {
+  it.skip('pending: relay-screen — each message carries its own receipts: one read, one only delivered', async () => {
+    const { c } = await open();
+    const first = need(one(c, '[data-history-entry="act-msg"]'), 'history entry act-msg');
+    const second = need(one(c, '[data-history-entry="act-msg-2"]'), 'history entry act-msg-2');
+    expect(one(first, '[data-message-state]')?.getAttribute('data-message-state')).toBe('read');
+    expect(one(second, '[data-message-state]')?.getAttribute('data-message-state')).toBe('delivered');
+    for (const receipt of ['act-read', 'act-delivered', 'act-delivered-2']) {
+      expect(one(c, `[data-history-entry="${receipt}"]`), receipt).toBeNull();
+    }
+    // `to` is stored as the lane's uuid; the reader sees its code.
+    expect(text(second)).toContain('L1');
+    expect(text(c)).not.toContain(F.LANE.L1);
+  });
+});
+
+describe('Relay · task r2 — the steps beyond the turns (F8)', () => {
+  const stepsView = () =>
+    F.taskView({
+      history: F.historyWithSteps(),
+      handoff: { body_md: 'Also keep the old keyboard shortcut working.', docs: ['coord/briefs/L1-diagrams-r2.md'], at: F.minutesAgo(120) },
+    });
+
+  it.skip('pending: relay-screen — a brief update is its own step, and Handed off shows the latest brief', async () => {
+    const { c } = await open({ task: F.ok(stepsView()) });
+    const updated = need(one(c, '[data-history-entry="act-brief-2"]'), 'history entry act-brief-2');
+    expect(text(one(updated, '[data-entry-title]'))).toBe('Brief updated');
+    expect(text(updated)).toContain('Also keep the old keyboard shortcut working.');
+    const handoff = need(one(c, '[data-handoff]'), 'Handed off');
+    expect(text(handoff)).toContain('Also keep the old keyboard shortcut working.');
+    expect(text(handoff)).not.toContain('Move the diagrams header onto ScreenShell');
+  });
+
+  it.skip('pending: relay-screen — a lost lease and its re-offer: "Lease lost", then "Re-offered to L3"', async () => {
+    const { c } = await open({ task: F.ok(stepsView()) });
+    expect(text(one(need(one(c, '[data-history-entry="act-interrupted"]'), 'the lease-lost step'), '[data-entry-title]'))).toBe('Lease lost');
+    const reoffered = need(one(c, '[data-history-entry="act-reoffered"]'), 'the re-offer step');
+    expect(text(one(reoffered, '[data-entry-title]'))).toBe('Re-offered to L3');
+    expect(text(c)).not.toContain(F.LANE.L3);
+  });
+
+  it.skip('pending: relay-screen — started, asked, answered and compacted are plain one-line steps, never blank', async () => {
+    const { c } = await open({ task: F.ok(stepsView()) });
+    for (const id of ['act-started', 'act-asked', 'act-answered', 'act-compacted']) {
+      const step = need(one(c, `[data-history-entry="${id}"]`), `history entry ${id}`);
+      const title = text(one(step, '[data-entry-title]'));
+      expect(title, id).not.toBe('');
+      expect(text(step), id).not.toMatch(/undefined|null|\[object/);
+      expect(one(step, '[data-turn-more]'), id).toBeNull();
+    }
+    expect(all(c, '[data-history-entry]').map((e) => e.getAttribute('data-history-entry'))).toEqual([
+      'act-reoffered',
+      'act-interrupted',
+      'act-compacted',
+      'act-answered',
+      'act-asked',
+      'act-brief-2',
+      'act-started',
+      'act-assigned',
+    ]);
+  });
+});
+
+describe('Relay · task r2 — the facts line (L2)', () => {
+  it.skip('pending: relay-screen — names the member and the time, assigned → completed', async () => {
+    const view = F.taskView();
+    const { c } = await open({ task: F.ok(view) });
+    const facts = text(one(c, '[data-task-facts]'));
+    expect(facts).toMatch(/claude-code|Claude Code/);
+    expect(facts).toContain(hhmm(view.task.assigned_at));
+    expect(facts).toContain(hhmm(view.task.completed_at!));
   });
 });

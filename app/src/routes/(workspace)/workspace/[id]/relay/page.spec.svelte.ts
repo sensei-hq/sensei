@@ -19,7 +19,7 @@ import { mountComponent } from '$lib/test-mount.js';
 import { KANJI_ICONS } from '$lib/glyph-vocabulary';
 import type { ApiResult } from '$lib/api.js';
 import type { RelayNow, RelayQueue } from '$lib/relay-api.js';
-import * as F from './test-stubs/relay-fixtures.js';
+import * as F from '$lib/test-stubs/relay-fixtures.js';
 
 // Variables, so the transform does not resolve them before phase B creates them.
 const PAGE = './+page.svelte';
@@ -81,12 +81,19 @@ async function loadFor(workspace: string, api: F.FakeRelayApi) {
 }
 
 async function open(
-  opts: { now?: ApiResult<RelayNow>; queue?: ApiResult<RelayQueue>; workspace?: string } = {},
+  opts: {
+    now?: ApiResult<RelayNow>;
+    queue?: ApiResult<RelayQueue>;
+    workspace?: string;
+    /** The workspace layout's data, which SvelteKit merges into the page's `data`. */
+    layout?: Record<string, unknown>;
+  } = {},
 ): Promise<Opened> {
   const api = F.fakeRelayApi();
   if (opts.now) api.tryGetNow.mockResolvedValue(opts.now);
   if (opts.queue) api.tryGetQueue.mockResolvedValue(opts.queue);
-  const data = await loadFor(opts.workspace ?? 'w1', api);
+  const loaded = await loadFor(opts.workspace ?? 'w1', api);
+  const data = { ...(opts.layout ?? {}), ...(loaded as object) };
   const { default: Page } = await import(/* @vite-ignore */ PAGE);
   const m = mountComponent(Page, { data } as never);
   cleanup.push(m.destroy);
@@ -143,10 +150,11 @@ describe('Relay — the loader’s read', () => {
     vi.stubGlobal('fetch', fetchSpy);
     const { api } = await open({ workspace: 'w2' });
     expect(api.tryGetNow).toHaveBeenCalledTimes(1);
-    expect(api.tryGetNow).toHaveBeenCalledWith('w2');
+    // The workspace window is the same screen pre-filtered to its workspace (repository ruling).
+    expect(api.tryGetNow).toHaveBeenCalledWith({ workspace_id: 'w2' });
     expect(api.tryGetQueue).toHaveBeenCalledTimes(1);
-    expect(api.tryGetQueue).toHaveBeenCalledWith('w2');
-    expect(api.tryGetNow).not.toHaveBeenCalledWith('w1');
+    expect(api.tryGetQueue).toHaveBeenCalledWith({ workspace_id: 'w2' });
+    expect(api.tryGetNow).not.toHaveBeenCalledWith({ workspace_id: 'w1' });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
@@ -155,7 +163,8 @@ describe('Relay — the loader’s read', () => {
 
 describe('Relay · Now — Needs you', () => {
   it.skip('pending: relay-screen — is absent when nothing needs the person', async () => {
-    const { c } = await open();
+    // r2 L6: the default crew has triage (as the default queue does), so this one has none.
+    const { c } = await open({ now: F.ok(F.now({ triage: [], decisions: [] })), queue: F.ok(F.queue({ triage: [] })) });
     expect(section(c, 'lanes')).not.toBeNull();
     expect(section(c, 'needs-you')).toBeNull();
   });
@@ -193,11 +202,11 @@ describe('Relay · Now — Needs you', () => {
     expect(all(first, '[data-option]').map((o) => o.getAttribute('data-option'))).toEqual(['db', 'file']);
     expect(all(first, '[data-option][data-recommended]').map((o) => o.getAttribute('data-option'))).toEqual(['db']);
     expect(one(first, '[data-decision-answer]')).not.toBeNull();
-    expect(one(first, 'a[href="/workspace/w1/relay/t-logs"]')).not.toBeNull();
+    expect(one(first, `a[href="/workspace/w1/relay/${F.CREW_ID}/t-logs"]`)).not.toBeNull();
 
     // The recommended option is each decision's own, not "the first one".
     expect(all(second, '[data-option][data-recommended]').map((o) => o.getAttribute('data-option'))).toEqual(['org']);
-    expect(one(second, 'a[href="/workspace/w1/relay/t-billing"]')).not.toBeNull();
+    expect(one(second, `a[href="/workspace/w1/relay/${F.CREW_ID}/t-billing"]`)).not.toBeNull();
   });
 
   it.skip('pending: relay-screen — "N to triage — from …" counts every source, names them, and opens Queue', async () => {
@@ -265,44 +274,7 @@ describe('Relay · Now — Needs you', () => {
 // ─── Now · Lanes ────────────────────────────────────────────────────────────
 
 describe('Relay · Now — Lanes', () => {
-  const crew = () =>
-    F.now({
-      lanes: [
-        F.coordinatorLane(),
-        F.lane(),
-        F.lane({
-          id: 'lane-3',
-          code: 'L3',
-          title: 'Activity logs',
-          task: {
-            id: 't-logs',
-            title: 'Activity logs',
-            phase: 'tests',
-            state: 'blocked',
-            round: 1,
-            state_changed_at: F.minutesAgo(55),
-            needs_answer: true,
-          },
-        }),
-        F.lane({
-          id: 'lane-2',
-          code: 'L2',
-          title: 'Billing',
-          family: 'cowork',
-          lease_state: 'expired',
-          task: {
-            id: 't-billing',
-            title: 'Billing build',
-            phase: 'tests',
-            state: 'interrupted',
-            round: 3,
-            state_changed_at: F.minutesAgo(70),
-            needs_answer: false,
-          },
-        }),
-        F.lane({ id: 'lane-5', code: 'L5', title: 'Docs pages', family: 'freebuff', version: '1.4', task: null }),
-      ],
-    });
+  const crew = F.fiveLaneCrew;
 
   it.skip('pending: relay-screen — one row per lane: its objective, member, the one task, its state and the time on it', async () => {
     const { c } = await open({ now: F.ok(crew()) });
@@ -349,7 +321,7 @@ describe('Relay · Now — Lanes', () => {
 
   it.skip('pending: relay-screen — a lane on a task opens the task view; an idle lane opens nothing', async () => {
     const { c } = await open({ now: F.ok(crew()) });
-    expect(one(c, '[data-lane-row="L1"] a[href="/workspace/w1/relay/t-structure"]')).not.toBeNull();
+    expect(one(c, `[data-lane-row="L1"] a[href="/workspace/w1/relay/${F.CREW_ID}/t-structure"]`)).not.toBeNull();
     expect(one(c, '[data-lane-row="L5"] a')).toBeNull();
   });
 });
@@ -368,7 +340,7 @@ describe('Relay · Now — Completed today', () => {
     expect(text(rows[0])).toContain('Diagrams');
     expect(text(one(rows[0], '[data-state]'))).toBe('merged');
     expect(text(one(rows[1], '[data-state]'))).toBe('approved');
-    expect(one(rows[0], 'a[href="/workspace/w1/relay/t-header"]')).not.toBeNull();
+    expect(one(rows[0], `a[href="/workspace/w1/relay/${F.CREW_ID}/t-header"]`)).not.toBeNull();
   });
 });
 
@@ -510,7 +482,7 @@ describe('Relay · Queue', () => {
     need(one(c, '[data-relay-queue-error] [data-action="retry"]'), '[data-relay-queue-error] [data-action="retry"]').click();
     await vi.waitFor(() => expect(section(c, 'triage')).not.toBeNull());
     expect(one(c, '[data-relay-queue-error]')).toBeNull();
-    expect(api.tryGetQueue).toHaveBeenLastCalledWith('w1');
+    expect(api.tryGetQueue).toHaveBeenLastCalledWith({ workspace_id: 'w1' });
     expect(api.tryGetNow).not.toHaveBeenCalled();
   });
 });
@@ -544,7 +516,7 @@ describe('Relay — Message the crew', () => {
   it.skip('pending: relay-screen — To: the coordinator, each contributor lane, everyone; About: no particular task, or a crew task', async () => {
     const { c } = await compose();
     const to = field(c, 'to') as HTMLSelectElement;
-    expect([...to.options].map((o) => o.value)).toEqual(['coordinator', 'lane-1', 'everyone']);
+    expect([...to.options].map((o) => o.value)).toEqual(['coordinator', F.LANE.L1, 'everyone']);
     expect([...to.options].map((o) => o.textContent?.trim())[1]).toContain('L1 · Diagrams');
     const about = field(c, 'about') as HTMLSelectElement;
     expect([...about.options].map((o) => o.value)).toEqual(['', 't-review-er', 't-structure']);
@@ -553,7 +525,7 @@ describe('Relay — Message the crew', () => {
 
   it.skip('pending: relay-screen — Queue message sends To, About and the text for this crew, then says it is queued', async () => {
     const { c, api } = await compose();
-    setValue(field(c, 'to'), 'lane-1', 'change');
+    setValue(field(c, 'to'), F.LANE.L1, 'change');
     setValue(field(c, 'about'), 't-structure', 'change');
     setValue(field(c, 'text'), 'Keep the old keyboard shortcut working.');
     await tick();
@@ -563,7 +535,7 @@ describe('Relay — Message the crew', () => {
     expect(api.trySendMessage).toHaveBeenCalledTimes(1);
     expect(api.trySendMessage).toHaveBeenCalledWith({
       crew_id: F.CREW_ID,
-      to: { lane_id: 'lane-1' },
+      to: { kind: 'lane', lane_id: F.LANE.L1 },
       task_id: 't-structure',
       text: 'Keep the old keyboard shortcut working.',
       surface: 'desktop',
@@ -580,7 +552,7 @@ describe('Relay — Message the crew', () => {
     need(field(c, 'send'), 'Queue message').click();
     await vi.waitFor(() => expect(api.trySendMessage).toHaveBeenCalledTimes(1));
     expect(api.trySendMessage).toHaveBeenLastCalledWith(
-      expect.objectContaining({ to: { role: 'coordinator' }, task_id: null }),
+      expect.objectContaining({ to: { kind: 'coordinator' }, task_id: null }),
     );
 
     await vi.waitFor(() => expect(one(c, '[data-compose-queued]')).not.toBeNull());
@@ -589,7 +561,7 @@ describe('Relay — Message the crew', () => {
     await tick();
     need(field(c, 'send'), 'Queue message').click();
     await vi.waitFor(() => expect(api.trySendMessage).toHaveBeenCalledTimes(2));
-    expect(api.trySendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ to: { all: true } }));
+    expect(api.trySendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ to: { kind: 'everyone' } }));
   });
 
   it.skip('pending: relay-screen — an empty message, or one over 600 characters, cannot be queued', async () => {
@@ -664,7 +636,7 @@ describe('Relay — a failed read', () => {
     await vi.waitFor(() => expect(section(c, 'lanes')).not.toBeNull());
     expect(one(c, '[data-relay-error]')).toBeNull();
     expect(api.tryGetNow).toHaveBeenCalledTimes(1);
-    expect(api.tryGetNow).toHaveBeenCalledWith('w2');
+    expect(api.tryGetNow).toHaveBeenCalledWith({ workspace_id: 'w2' });
   });
 
   it.skip('pending: relay-screen — a Retry that fails again shows the new reason, not the old one, and not an empty crew', async () => {
@@ -719,7 +691,7 @@ describe('Relay — a navigation replaces what is shown', () => {
     await vi.waitFor(() => expect(one(m.container, '[data-lane-row="L1"]')).not.toBeNull());
 
     api.tryGetNow.mockResolvedValue(
-      F.ok(F.now({ crew: { ...F.now().crew!, id: F.OTHER_CREW_ID, workspace_id: 'w2' }, lanes: [F.lane({ id: 'lane-9', code: 'L9', title: 'Billing' })] })),
+      F.ok(F.now({ crews: [F.crew({ id: F.OTHER_CREW_ID, workspace_id: 'w2' })], lanes: [F.lane({ id: 'lane-9', code: 'L9', title: 'Billing' })] })),
     );
     props.data = await loadFor('w2', api);
     await tick();
@@ -782,7 +754,7 @@ describe('Relay — the shell (D87)', () => {
   it.skip('pending: relay-screen — the context names this crew by the end of its id (a uuid v7 starts with the clock)', async () => {
     const { c } = await open({
       workspace: 'w2',
-      now: F.ok(F.now({ crew: { ...F.now().crew!, id: F.OTHER_CREW_ID, workspace_id: 'w2' } })),
+      now: F.ok(F.now({ crews: [F.crew({ id: F.OTHER_CREW_ID, workspace_id: 'w2' })] })),
     });
     const context = text(one(c, '[data-screen-context]'));
     expect(context).toContain(`crew ${F.OTHER_CREW_ID.slice(-4)}`);
@@ -889,5 +861,164 @@ describe('Relay — rows at phone width', () => {
     const provider = need(one(row, '[data-ticket-provider]'), '[data-ticket-provider]');
     expect(text(provider)).toBe('Jira');
     expect(provider.className).toMatch(/(^|\s)(max-sm:hidden|hidden sm:inline(-flex)?)(\s|$)/);
+  });
+});
+
+// ─── r2 (review relay-screen-tests-r1) ──────────────────────────────────────
+
+/** A local "HH:MM" for an instant, as the reader's clock shows it. */
+const hhmm = (iso: string) => {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+describe('Relay r2 — the header (F1, F2, L4)', () => {
+  it.skip('pending: relay-screen — search is off on Relay (L0 ruling): no search field, no filters band', async () => {
+    const { c } = await open();
+    expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
+    expect(shellProps().search).toBe(false);
+    expect(one(c, '[data-screen-search]')).toBeNull();
+    expect(one(c, '[data-screen-filters]')).toBeNull();
+  });
+
+  it.skip('pending: relay-screen — the header’s controls are exactly Now, Queue, Message the crew and the info toggle', async () => {
+    const { c } = await open();
+    const header = need(one(c, '[data-screen-header]'), 'the shell header');
+    const controls = all(header, 'button, a, [role="tab"]')
+      .map((el) => el.getAttribute('aria-label') || text(el))
+      .map((label) => (label.startsWith('Queue') ? 'Queue' : label))
+      .sort();
+    // No stats / filters / side toggles, and no other action (CONTRACT §1a, user r1).
+    expect(controls).toEqual(['Message the crew', 'Now', 'Queue', 'What it’s for']);
+  });
+
+  it.skip('pending: relay-screen — the context is the workspace, then the crew', async () => {
+    const { c } = await open({
+      workspace: 'w2',
+      layout: { workspace: { id: 'w2', name: 'Billing service' }, workspaceId: 'w2' },
+      now: F.ok(F.now({ crews: [F.crew({ id: F.OTHER_CREW_ID, workspace_id: 'w2' })] })),
+    });
+    expect(text(one(c, '[data-screen-context]'))).toBe(`Billing service · crew ${F.OTHER_CREW_ID.slice(-4)}`);
+  });
+});
+
+describe('Relay r2 — one write per press (F4)', () => {
+  it.skip('pending: relay-screen — two presses of Answer answer once', async () => {
+    const { c, api } = await open({ now: F.ok(F.now({ decisions: [F.decision()] })) });
+    const pending = F.deferred<ApiResult<{ action_id: string }>>();
+    api.tryAnswerDecision.mockReturnValue(pending.promise);
+    api.tryGetNow.mockResolvedValue(F.ok(F.now({ decisions: [] })));
+    const row = need(one(c, '[data-decision]'), 'a decision');
+    need(one(row, '[data-option="db"]'), 'the db option').click();
+    await tick();
+    const answer = need(one(row, '[data-decision-answer]'), 'Answer');
+    answer.click();
+    answer.click();
+    pending.resolve(F.ok({ action_id: 'act-answer' }));
+    await vi.waitFor(() => expect(one(c, '[data-decision]')).toBeNull());
+    expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1);
+  });
+
+  it.skip('pending: relay-screen — two presses of + add once', async () => {
+    const { c, api } = await open();
+    const pending = F.deferred<ApiResult<{ item_id: string }>>();
+    api.tryAddToBacklog.mockReturnValue(pending.promise);
+    need(tab(c, 'Queue'), 'the Queue tab').click();
+    await tick();
+    const [ticketed] = triageRows(c);
+    const add = need(one(ticketed, '[data-add-to-backlog]'), '+ on the tracker row');
+    add.click();
+    add.click();
+    pending.resolve(F.ok({ item_id: 'item-58' }));
+    await vi.waitFor(() => expect(api.tryGetQueue).toHaveBeenCalledTimes(2));
+    expect(api.tryAddToBacklog).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Relay r2 — Message the crew across five lanes (F6)', () => {
+  it.skip('pending: relay-screen — To lists every contributor lane in the view’s order; About skips the idle lane', async () => {
+    const { c } = await open({ now: F.ok(F.fiveLaneCrew()) });
+    need(toolbarButton(c, 'Message the crew'), 'the Message the crew action').click();
+    await tick();
+    const to = need(one(c, '[data-compose-to]'), 'To') as HTMLSelectElement;
+    expect([...to.options].map((o) => o.value)).toEqual([
+      'coordinator',
+      F.LANE.L1,
+      F.LANE.L3,
+      F.LANE.L2,
+      F.LANE.L5,
+      'everyone',
+    ]);
+    expect(to.options[2].textContent).toContain('L3 · Activity logs');
+    const about = need(one(c, '[data-compose-about]'), 'About') as HTMLSelectElement;
+    expect([...about.options].map((o) => o.value)).toEqual(['', 't-review-er', 't-structure', 't-logs', 't-billing']);
+  });
+});
+
+describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
+  const task = (over: Partial<NonNullable<ReturnType<typeof F.lane>['task']>>) => ({
+    id: 't-x',
+    title: 'A task',
+    repo_key: F.REPO,
+    workspace_id: 'w1' as string | null,
+    phase: 'impl' as const,
+    state: 'working' as const,
+    round: 1,
+    state_changed_at: F.minutesAgo(12),
+    needs_answer: false,
+    ...over,
+  });
+
+  it.skip('pending: relay-screen — blocked on a dependency reads "blocked"; only an open decision reads "needs your answer"', async () => {
+    const { c } = await open({
+      now: F.ok(
+        F.now({
+          lanes: [
+            F.lane({ id: F.LANE.L4, code: 'L4', title: 'Metrics', task: task({ id: 't-dep', state: 'blocked' }) }),
+            F.lane({ id: F.LANE.L3, code: 'L3', title: 'Logs', task: task({ id: 't-ask', state: 'blocked', needs_answer: true }) }),
+          ],
+        }),
+      ),
+    });
+    expect(text(one(c, '[data-lane-row="L4"] [data-state]'))).toBe('blocked');
+    expect(text(one(c, '[data-lane-row="L3"] [data-state]'))).toBe('needs your answer');
+  });
+
+  it.skip('pending: relay-screen — the lane lease drives "lease lost", with the time it expired; a task interrupted under a live lease reads "interrupted"', async () => {
+    const expired = new Date(Date.now() - 20 * 60_000).toISOString();
+    const { c } = await open({
+      now: F.ok(
+        F.now({
+          lanes: [
+            F.lane({ id: F.LANE.L2, code: 'L2', title: 'Billing', lease_state: 'expired', lease_expires_at: expired, task: task({ id: 't-b', state: 'working' }) }),
+            F.lane({ id: F.LANE.L5, code: 'L5', title: 'Docs', lease_state: 'granted', task: task({ id: 't-d', state: 'interrupted' }) }),
+          ],
+        }),
+      ),
+    });
+    const lost = need(one(c, '[data-lane-row="L2"]'), 'the L2 row');
+    expect(text(one(lost, '[data-state]'))).toBe('lease lost');
+    expect(text(lost)).toContain(`at ${hhmm(expired)}`);
+    expect(text(one(c, '[data-lane-row="L5"] [data-state]'))).toBe('interrupted');
+  });
+});
+
+describe('Relay r2 — Completed today rows (L1)', () => {
+  it.skip('pending: relay-screen — each row leads with its time, and "done" (nothing to merge) has its own label', async () => {
+    const at = F.minutesAgo(90);
+    const { c } = await open({
+      now: F.ok(
+        F.now({
+          completed_today: [
+            F.completed({ completed_at: at }),
+            F.completed({ task_id: 't-mock', title: 'Relay mockup', outcome: 'done', completed_at: F.minutesAgo(30) }),
+          ],
+        }),
+      ),
+    });
+    const rows = all(need(section(c, 'completed'), 'the completed section'), '[data-completed-row]');
+    expect(rows).toHaveLength(2);
+    expect(text(rows[0]).startsWith(hhmm(at))).toBe(true);
+    expect(text(one(rows[1], '[data-state]'))).toBe('done');
   });
 });

@@ -38,6 +38,15 @@ describe("buildNavItems", () => {
     expect(byHref(entries, "/intake")).toBeUndefined();
   });
 
+  // D90 + repository ruling (user, 2026-11-05): 67 of 157 repositories have no workspace, so
+  // Relay lives in the main window (every crew), marked 継, and its task routes nest under it.
+  // Its icon is checked by "observatory rail glyphs" below, as every entry's is.
+  it.skip("pending: relay-screen — the main window has Relay (継), active on its task routes", () => {
+    const relay = byHref(buildNavItems(), "/relay");
+    expect(relay).toMatchObject({ kanji: "継", text: "Relay", value: "/relay" });
+    expect(resolveActiveHref("/relay/crew-1/t-1")).toBe("/relay");
+  });
+
   it("renders a separator before Settings", () => {
     const entries = buildNavItems();
     const sepIdx = entries.findIndex(
