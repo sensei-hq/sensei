@@ -46,8 +46,8 @@ describe('GET …/billing · seat names (billing build, M3)', () => {
 		vi.clearAllMocks();
 		mocks.resolveTenantAccess.mockResolvedValue(caller);
 		mocks.getBillingAccount.mockResolvedValue(null);
-		mocks.loadActiveSeatRows.mockResolvedValue([seat('u1', 'platform-core'), seat('u2', 'mobile-app')]);
-		mocks.resolveDisplayNames.mockResolvedValue(new Map([['u1', { display_name: 'Priya K', email: null }]]));
+		mocks.loadActiveSeatRows.mockResolvedValue([seat('u1', 'ws-alpha'), seat('u2', 'ws-gamma')]);
+		mocks.resolveDisplayNames.mockResolvedValue(new Map([['u1', { display_name: 'Alex Doe', email: null }]]));
 	});
 
 	it.skip('pending: billing-build — names each billable user from the identity join, as the caller, for exactly those users', async () => {
@@ -56,7 +56,7 @@ describe('GET …/billing · seat names (billing build, M3)', () => {
 		expect(mocks.resolveDisplayNames).toHaveBeenCalledWith({ client: 'user', token: 'jwt-A' }, 't1', ['u1', 'u2']);
 		const users = (body as { usage: { billable_users: { user_id: string; display_name: string | null }[] } }).usage.billable_users;
 		expect(users.map((u) => [u.user_id, u.display_name])).toEqual([
-			['u1', 'Priya K'],
+			['u1', 'Alex Doe'],
 			['u2', null]
 		]);
 	});

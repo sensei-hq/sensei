@@ -65,7 +65,7 @@ describe('billing build · each account state says what it means (mockup r3)', (
 		['active', 'Current plan'],
 		['trialing', 'Trial'],
 		['past_due', 'Past due']
-	] as const)('Pro %s: Pro is current and tagged "%s"', (status, tag) => {
+	] as const)('pending: billing-build — Pro %s: Pro is current and tagged "%s"', (status, tag) => {
 		const b = built({ account: account('pro', status), usage: usage() }, NOW);
 		expect(current(b)).toEqual(['pro']);
 		expect(b.tag).toBe(tag);
@@ -210,16 +210,16 @@ describe('billing build · the plan cards are the mockup\'s (D46, D52, D59, D85,
 
 describe('billing build · who is counted (M3)', () => {
 	const users: Named[] = [
-		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Priya K', workspaces: [{ name: 'platform-core', slug: 'platform-core', role: 'contributor' }, { name: 'delivery-portal', slug: 'delivery-portal', role: 'maintainer' }] },
-		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, workspaces: [{ name: 'mobile-app', slug: 'mobile-app', role: 'contributor' }] }
+		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
+		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] }
 	];
 
 	it.skip('pending: billing-build — a name comes from the identity join; with none, the short id, never an invented handle', () => {
-		expect(countedSeats(users).map((u: { name: string }) => u.name)).toEqual(['Priya K', '0b1e2f30']);
+		expect(countedSeats(users).map((u: { name: string }) => u.name)).toEqual(['Alex Doe', '0b1e2f30']);
 	});
 
 	it.skip('pending: billing-build — the role is shown per workspace', () => {
-		expect(countedSeats(users)[0].workspaces).toBe('platform-core (contributor), delivery-portal (maintainer)');
+		expect(countedSeats(users)[0].workspaces).toBe('ws-alpha (contributor), ws-beta (maintainer)');
 	});
 
 	it.skip('pending: billing-build — the seat copy says only what is built: seats open on a relay session; closing is not built', () => {

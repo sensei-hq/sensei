@@ -230,7 +230,15 @@ describe('ScrBilling — Free and Pro, no price, an honest attach', () => {
 		expect(queryByText(/Renews/)).toBeNull();
 	});
 
-	// Superseded by billing build (r2): the current plan's tag reads "Current plan" (mockup).
+	it('shows both plans, Pro priced "to be announced", and no dollar amount anywhere (D75)', () => {
+		const { container, getByText, getAllByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(getAllByText('Pro').length).toBeGreaterThanOrEqual(1);
+		expect(getByText('To be announced')).toBeTruthy();
+		expect(getByText('current')).toBeTruthy();
+		expect(container.textContent).not.toMatch(/\$\s?\d/);
+	});
+
+	// Replaces the test above in phase B (billing build), which deletes the original: the current plan's tag reads "Current plan" (mockup).
 	it.skip('pending: billing-build — shows both plans, Pro priced "to be announced", and no dollar amount anywhere (D75)', () => {
 		const { container, getByText, getAllByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
 		expect(getAllByText('Pro').length).toBeGreaterThanOrEqual(1);
@@ -239,14 +247,25 @@ describe('ScrBilling — Free and Pro, no price, an honest attach', () => {
 		expect(container.textContent).not.toMatch(/\$\s?\d/);
 	});
 
-	// Superseded by billing build (r2): the mockup's lines.
+	it('says what is always free, and that Pro is what targets on private repositories need', () => {
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(container.textContent).toMatch(/SSO, SCIM, audit/);
+		expect(container.textContent).toContain("Blocking targets on an organization's private repositories");
+	});
+
+	// Replaces the test above in phase B (billing build), which deletes the original: the mockup's lines.
 	it.skip('pending: billing-build — says what is always free, and that Pro is what targets on private repositories need', () => {
 		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
 		expect(container.textContent).toContain('SSO, SCIM and the audit trail');
 		expect(container.textContent).toContain('Blocking targets on those private repositories');
 	});
 
-	// Superseded by billing build (r2): the seats section's label (SEAT_COPY.label).
+	it('the seat card says what it counts (L2)', () => {
+		const { getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(getByText('seats on private workspaces')).toBeTruthy();
+	});
+
+	// Replaces the test above in phase B (billing build), which deletes the original: the seats section's label (SEAT_COPY.label).
 	it.skip('pending: billing-build — the seat card says what it counts (L2)', () => {
 		const { getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
 		expect(getByText('active relay seats on private workspaces')).toBeTruthy();

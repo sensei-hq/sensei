@@ -21,8 +21,8 @@ const usage: NamedUsage = {
 	seats_used: 2,
 	total_active_seats: 4,
 	billable_users: [
-		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Priya K', workspaces: [{ name: 'platform-core', slug: 'platform-core', role: 'contributor' }, { name: 'delivery-portal', slug: 'delivery-portal', role: 'maintainer' }] },
-		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, workspaces: [{ name: 'mobile-app', slug: 'mobile-app', role: 'contributor' }] }
+		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
+		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] }
 	]
 };
 const acct = (status: string, plan = 'pro'): NonNullable<BillingResponse['account']> => ({
@@ -68,11 +68,11 @@ describe('ScrBilling · billing build · the screen shell (D87)', () => {
 		const { container } = screen(null);
 		const input = container.querySelector('[data-screen-filters] [data-screen-search] input') as HTMLInputElement;
 		expect(input.placeholder).toBe('Search who is counted');
-		await fireEvent.input(input, { target: { value: 'mobile' } });
+		await fireEvent.input(input, { target: { value: 'gamma' } });
 		await new Promise((r) => setTimeout(r, 300));
 		await tick();
 		const items = [...container.querySelectorAll('details[data-billing-counted] li')].map((li) => li.textContent?.replace(/\s+/g, ' ').trim());
-		expect(items).toEqual(['0b1e2f30 — mobile-app (contributor)']);
+		expect(items).toEqual(['0b1e2f30 — ws-gamma (contributor)']);
 	});
 });
 
@@ -119,7 +119,7 @@ describe('ScrBilling · billing build · the plan tab', () => {
 		['active', 'Current plan'],
 		['trialing', 'Trial'],
 		['past_due', 'Past due']
-	] as const)('Pro %s: the Pro card reads "%s", Free is untagged', (status, tag) => {
+	] as const)('pending: billing-build — Pro %s: the Pro card reads "%s", Free is untagged', (status, tag) => {
 		const { container } = screen(acct(status));
 		expect(tagOf(container, 'pro')).toBe(tag);
 		expect(tagOf(container, 'free')).toBeNull();
@@ -167,8 +167,8 @@ describe('ScrBilling · billing build · the plan tab', () => {
 		expect(who.querySelector('summary')?.textContent).toContain('Who is counted');
 		const items = [...who.querySelectorAll('li')].map((li) => li.textContent?.replace(/\s+/g, ' ').trim());
 		expect(items).toEqual([
-			'Priya K — platform-core (contributor), delivery-portal (maintainer)',
-			'0b1e2f30 — mobile-app (contributor)'
+			'Alex Doe — ws-alpha (contributor), ws-beta (maintainer)',
+			'0b1e2f30 — ws-gamma (contributor)'
 		]);
 		expect(who.textContent).toContain("Closing a seat isn't built yet.");
 		expect(who.textContent).not.toMatch(/@\w/);
@@ -187,5 +187,11 @@ describe('ScrBilling · billing build · the plan tab', () => {
 		// 6/8-digit hex, an arbitrary-value class, or a colour function (issue refs like #106 are fine).
 		expect(src).not.toMatch(/#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?\b|-\[#|rgba?\(|oklch\(|hsla?\(/);
 		expect(src).not.toMatch(/\bbg-ink\b/);
+	});
+
+	// L3 (r2): the data-screen-* assertions alone pass for a hand-rolled div; the shell must be rokkit's.
+	it.skip('pending: billing-build — ScrBilling imports ScreenShell from @rokkit/app', () => {
+		const src = readFileSync(join(process.cwd(), 'src/lib/components/screens/ScrBilling.svelte'), 'utf8');
+		expect(src).toMatch(/import\s*\{[^}]*\bScreenShell\b[^}]*\}\s*from\s*['"]@rokkit\/app['"]/);
 	});
 });
