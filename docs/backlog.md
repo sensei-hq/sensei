@@ -66,6 +66,10 @@ status — open or closed is GitHub's answer.
 
 ## Open — not yet filed
 
+- **Known limitation: two windows can race on the single `ui.views` config entry (D87 panel store, 2026-11-04).** The last save
+  wins, so a panel toggled in another window at the same moment can be lost. Fix if it's ever seen: per-view keys, or
+  compare-and-set on the daemon.
+
 - **Surface `no_package` files as actionable (2026-11-04).** "N files aren't in any package; add a manifest to map them",
   per repository. It follows L1's stuck-index fix.
 
