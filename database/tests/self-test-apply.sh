@@ -275,6 +275,33 @@ case "$code:$out" in
     *) fail "rollback tail (exit $code, want nonzero naming rb-tail.ddl) -- $out" ;;
 esac
 
+# --- F1: a quote in a DDL path is escaped in the marker. ---
+# A symlink keeps quoted names out of the repo: the roots guard reads the
+# real path (admitted — it resolves into fixtures/), while the marker
+# splices the path as given, quote and all. midline.ddl persists nothing
+# even unescaped.
+qdir=$(mktemp -d)
+ln -s "$PWD/$FX/midline.ddl" "$qdir/it's.ddl"
+out=$(./run.sh --apply dojo "$qdir/it's.ddl" "$FX/ok.probe" 2>&1); code=$?
+rm -rf "$qdir"
+case "$code:$out" in
+    0:*) fail "quoted DDL path exited 0" ;;
+    *"syntax error"*) fail "quoted DDL path breaks the marker -- $out" ;;
+    *"it's.ddl ended the transaction"*) pass "quoted DDL path named by the marker" ;;
+    *) fail "quoted DDL path (exit $code, want the marker naming it's.ddl) -- $out" ;;
+esac
+
+# --- F2: a rolled-back tail that then commits persists nothing. ---
+# The wrapper runs read-write under a read-only session default, so any
+# transaction after the wrapper ends is read-only: the tail's write errors
+# out under ON_ERROR_STOP instead of committing.
+out=$(./run.sh --apply dojo "$FX/rb-commit-tail.ddl" "$FX/ok.probe" 2>&1); code=$?
+case "$code:$out" in
+    0:*) fail "rollback-commit tail exited 0" ;;
+    *"read-only transaction"*) pass "rollback-commit tail refused read-only" ;;
+    *) fail "rollback-commit tail (exit $code, want a read-only refusal) -- $out" ;;
+esac
+
 # --- L-b: the marker is checked after EACH DDL file, not once at the end. ---
 # after-midline.ddl persists nothing but announces itself; it must never run.
 out=$(./run.sh --apply dojo "$FX/midline.ddl" "$FX/after-midline.ddl" "$FX/ok.probe" 2>&1); code=$?

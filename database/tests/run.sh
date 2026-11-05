@@ -97,7 +97,10 @@ if [ "${1:-}" = "--apply" ]; then
     # AUTOCOMMIT=off: after a rollback inside a DDL file, psql opens an
     # implicit transaction for the file's tail instead of autocommitting it,
     # so the tail persists nothing and the per-file marker still fires (F2).
-    psql_args=(-X -q -v ON_ERROR_STOP=1 -v AUTOCOMMIT=off -c "begin" -c "select set_config('run_apply.txn','on',true)")
+    # The wrapper opens read-write under a read-only session default
+    # (PGOPTIONS below): any transaction after the wrapper ends is read-only,
+    # so a tail that then commits mid-line errors out instead of persisting.
+    psql_args=(-X -q -v ON_ERROR_STOP=1 -v AUTOCOMMIT=off -c "begin read write" -c "select set_config('run_apply.txn','on',true)")
     # The commit trap (L-a): a deferred constraint trigger in pg_temp turns ANY
     # commit of the wrapper — commit, end, mid-line, in a DDL file or a test —
     # into an abort. Rolls back with the wrapper; temp-only, nothing persists.
@@ -117,7 +120,11 @@ if [ "${1:-}" = "--apply" ]; then
         psql_args+=(-f "$fa" -c "do \$\$ begin if current_setting('run_apply.txn', true) is distinct from 'on' then raise exception 'run.sh --apply: $f_esc ended the transaction'; end if; end \$\$;")
     done
     psql_args+=(-f "$ta" -c "rollback")
-    psql "$target_url" "${psql_args[@]}"
+
+    # Read-only by default for every transaction but the wrapper's own. Via
+    # PGOPTIONS, not a SET: a SET inside the wrapper is undone by the same
+    # rollback this guards against (r3 F2).
+    PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c default_transaction_read_only=on" psql "$target_url" "${psql_args[@]}"
     exit $?
 fi
 
