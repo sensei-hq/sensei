@@ -113,7 +113,8 @@ describe.skip('pending: diagrams-shell — the diagrams render on the ScreenShel
     await settle();
     expect(q('[data-screen-title]')?.textContent?.trim()).toBe('Structure');
     expect(q('[data-screen-description]')?.textContent?.trim()).toBe(DIAGRAM_VIEWS[0].shows);
-    expect(q('[data-screen-context]')?.textContent).toContain('L0');
+    // The whole level tag, as the old header drew it: `L<depth> · <level>`.
+    expect(q('[data-screen-context]')?.textContent?.trim()).toBe('L0 · modules');
     expect(q('[data-screen-mark]')?.textContent).toBe('構');
   });
 
@@ -128,12 +129,15 @@ describe.skip('pending: diagrams-shell — the diagrams render on the ScreenShel
   it('the info band is the view’s three columns, the last one the next step', async () => {
     renderLens('structure');
     await settle();
-    const info = q('[data-screen-info]');
-    expect(info?.textContent).toContain('Use it to');
-    expect(info?.textContent).toContain(DIAGRAM_VIEWS[0].use);
-    expect(info?.textContent).toContain('How to read it');
-    expect(info?.textContent).toContain('What to do');
-    expect(info?.textContent).toContain(DIAGRAM_VIEWS[0].todo);
+    // `?? ''`, so a missing band fails as a missing band rather than as a
+    // `toContain` on `undefined` (readable message, same behaviour).
+    const info = q('[data-screen-info]')?.textContent ?? '';
+    expect(info).toContain('Use it to');
+    expect(info).toContain(DIAGRAM_VIEWS[0].use);
+    expect(info).toContain('How to read it');
+    expect(info).toContain(DIAGRAM_VIEWS[0].read);
+    expect(info).toContain('What to do');
+    expect(info).toContain(DIAGRAM_VIEWS[0].todo);
   });
 
   it('the stats band is the workspace’s numbers, with the repos beside the modules', async () => {
@@ -231,9 +235,21 @@ describe.skip('pending: diagrams-shell — the diagrams render on the ScreenShel
     expect(q('[data-screen-footer] [data-testid="diagram-budget"]')?.textContent).toBe('schema model v3');
   });
 
-  it('the legacy diagram keys migrate once, into every diagram’s view id', () => {
+  it('the legacy diagram keys migrate once, into every diagram’s view id — after the views are read', () => {
     const layout = readFileSync(join(process.cwd(), 'src/routes/+layout.svelte'), 'utf8');
-    expect(layout).toMatch(/migrateLegacyViews\(/);
     expect(layout).toMatch(/DIAGRAM_VIEW_IDS/);
+    // One call, and it is reactive. `migrateLegacyViews` throws before the
+    // daemon's map has been read ("refusing to migrate them"), and the map is
+    // read by the layouts' `appState.load()`, which a layout's top level runs
+    // before: a synchronous call passes a bare `/migrateLegacyViews\(/` and then
+    // throws on start in any browser still holding the old keys. No spec mounts
+    // the root layout, so this source check is that guard.
+    expect(layout.match(/migrateLegacyViews\(/g) ?? []).toHaveLength(1);
+    const effect = layout.match(/\$effect\(\s*\(\)\s*=>\s*\{[\s\S]*?migrateLegacyViews\(DIAGRAM_VIEW_IDS\)[\s\S]*?\}\);/)?.[0] ?? '';
+    expect(effect).not.toBe('');
+    // …and gated on a read that worked: `loaded` is also true when the read
+    // failed, and that leaves the map unread.
+    expect(effect).toContain('appState.loaded');
+    expect(effect).toContain('configError');
   });
 });
