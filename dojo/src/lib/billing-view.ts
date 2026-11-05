@@ -123,11 +123,14 @@ export function hiddenCountLine(count: number): string {
 	return `${count} private ${count === 1 ? 'repository is' : 'repositories are'} hidden from everyone in this organization.`;
 }
 
-/** How the org's hidden private repositories come back, for the account's state:
- *  past due — once it is paid; a lapsed or canceled Pro — once it is renewed (both
- *  "as they were", D88); never on Pro — they sync once Pro is attached. */
-export function hiddenReturnLine(b: Pick<KitBilling, 'tag' | 'problem'>): string {
+/** How the org's hidden private repositories come back — or `null` when Billing
+ *  lists no hidden repositories at all (user ruling 2026-11-05). The list is for an
+ *  account that had Pro and lost it: past due comes back once it is paid; a lapsed
+ *  Pro (canceled, unpaid, a period ended) once it is renewed — both "as they were"
+ *  (D88). On Free, never subscribed, unclaimed or an unknown key: no list (the
+ *  repositories stay hidden for everyone all the same). */
+export function hiddenReturnLine(b: Pick<KitBilling, 'tag' | 'problem'>): string | null {
 	if (b.tag === 'Past due') return 'They come back as they were once it is paid.';
-	if (b.problem?.code === 'not_subscribed' || b.problem?.code === 'subscription_expired') return 'They come back as they were once Pro is renewed.';
-	return 'They sync once Pro is attached.';
+	const lapsed = b.problem?.tone === 'refusal' && (b.problem.code === 'not_subscribed' || b.problem.code === 'subscription_expired');
+	return lapsed ? 'They come back as they were once Pro is renewed.' : null;
 }

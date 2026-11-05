@@ -49,8 +49,13 @@
 	let panels = $state(panelsFor(VIEW));
 	let filter = $state<{ values: Record<string, unknown>; stat?: string | null }>({ values: {}, stat: null });
 	const query = $derived(String(filter.values.q ?? '').trim().toLowerCase());
+	// "Who is counted" is the user's to open; a search opens it, and clearing the
+	// search gives it back as they left it.
+	let whoOpen = $state(false);
 
 	const current = $derived(currentTier(billing));
+	// The hidden list is for an account that had Pro and lost it; `null` = no list.
+	const hiddenLine = $derived(hiddenReturnLine(billing));
 	const notice = $derived(current ? attachNotice(current) : null);
 	const offered = $derived(billing.tiers.some((t) => tierAction(t.id, current) !== null));
 	const context = $derived(error || !billing.badge ? orgName : `${orgName} · ${billing.badge}`);
@@ -100,8 +105,11 @@
 				<div data-billing-problem><Notice size="panel" {...billing.problem} /></div>
 			{/if}
 
-			<!-- The org's private repositories the plan hides, for every user (D88). -->
-			{#if hiddenError}
+			<!-- The org's private repositories the plan hides, for every user (D88);
+			     listed only after Pro was lost (past due or lapsed). -->
+			{#if !hiddenLine}
+				<!-- Free, never subscribed, unclaimed or unknown: no list. -->
+			{:else if hiddenError}
 				<section data-billing-hidden aria-labelledby="billing-hidden-h" class="border-line flex flex-col gap-2 rounded border p-4">
 					<h2 id="billing-hidden-h" class="text-ink-mute m-0 text-xs font-medium uppercase tracking-widest">Hidden private repositories</h2>
 					<Notice size="inline" {...dojoLoadNotice('the hidden repositories', hiddenError)} data-load-error />
@@ -115,7 +123,7 @@
 							<li class="text-ink">{name}</li>
 						{/each}
 					</ul>
-					<p class="text-ink-mute m-0 text-xs">{hiddenReturnLine(billing)}</p>
+					<p class="text-ink-mute m-0 text-xs">{hiddenLine}</p>
 				</section>
 			{/if}
 
@@ -176,7 +184,14 @@
 							<span class="display text-ink text-3xl font-light">{billing.seatsActive ?? '—'}</span>
 							<span class="text-ink text-sm">{SEAT_COPY.label}</span>
 							<span class="text-ink-mute text-xs">{SEAT_COPY.basis}</span>
-							<details data-billing-counted class="mt-2 text-sm" open={query ? true : undefined}>
+							<details
+								data-billing-counted
+								class="mt-2 text-sm"
+								open={query ? true : whoOpen}
+								ontoggle={(e) => {
+									if (!query) whoOpen = e.currentTarget.open;
+								}}
+							>
 								<summary class="text-ink-mute cursor-pointer">Who is counted</summary>
 								{#if billing.seats.length === 0}
 									<p class="text-ink-mute m-0 mt-2">No one has a seat on a private workspace.</p>

@@ -278,14 +278,6 @@ describe('ScrBilling · billing follow-up', () => {
 		expect(container.querySelector('[data-billing-hidden]')?.textContent ?? '').toContain('They come back as they were once Pro is renewed.');
 	});
 
-	it('on Free with no account: they sync once Pro is attached (never "come back")', () => {
-		const { container } = withHidden(null, { org: 'acme', count: 1, repos: ['core'] });
-		const text = container.querySelector('[data-billing-hidden]')?.textContent ?? '';
-		expect(text).toContain('1 private repository is hidden from everyone in this organization.');
-		expect(text).toContain('They sync once Pro is attached.');
-		expect(text).not.toMatch(/come back/);
-	});
-
 	it('nothing hidden: no hidden-repositories section', () => {
 		const { container } = withHidden(acct('active'), null);
 		expect(container.querySelector('[data-billing-hidden]')).toBeNull();
@@ -300,11 +292,10 @@ describe('ScrBilling · billing follow-up', () => {
 		expect(sec.textContent).not.toMatch(/are hidden from everyone|is hidden from everyone/);
 	});
 
-	// The org page has no load spec; this ties the read to the screen so neither end is unwired.
-	it('the org page loads the hidden group for the billing section and passes it on', () => {
-		const load = readFileSync(join(process.cwd(), 'src/routes/(app)/org/[slug]/[section]/+page.ts'), 'utf8');
+	// The page passes the billing section's hidden group to the screen (the load itself is
+	// pinned by billing-section-load.spec and the wiring test below).
+	it('the org page passes the hidden group and its error to ScrBilling', () => {
 		const page = readFileSync(join(process.cwd(), 'src/routes/(app)/org/[slug]/[section]/+page.svelte'), 'utf8');
-		expect(load).toMatch(/loadOrgHidden\(\s*slug\s*,/);
 		expect(page).toMatch(/<ScrBilling[^>]*\bhidden=\{data\.billingHidden\}/);
 		expect(page).toMatch(/<ScrBilling[^>]*\bhiddenError=\{data\.billingHiddenError\}/);
 	});
@@ -323,35 +314,35 @@ const withStatus = (status: string) => ({ ...acct('active'), status });
 describe('ScrBilling · billing polish', () => {
 	afterEach(cleanup);
 
-	it.skip.each([
+	it.each([
 		['canceled', withStatus('canceled')],
 		['unpaid', withStatus('unpaid')],
 		['incomplete_expired', withStatus('incomplete_expired')]
-	] as const)('pending: billing-polish — %s (a Pro that lapsed): listed, back as they were once Pro is renewed', (_s, account) => {
+	] as const)('%s (a Pro that lapsed): listed, back as they were once Pro is renewed', (_s, account) => {
 		const { container } = withHidden(account, twoHidden);
 		const text = container.querySelector('[data-billing-hidden]')?.textContent ?? '';
 		expect(text).toContain('2 private repositories are hidden from everyone in this organization.');
 		expect(text).toContain('They come back as they were once Pro is renewed.');
 	});
 
-	it.skip.each([
+	it.each([
 		['Free with no account', null],
 		['Free by key', acct('active', 'free')],
 		['an unknown plan key', acct('active', 'enterprise')]
-	] as const)('pending: billing-polish — %s: no hidden list, even with hidden repositories', (_s, account) => {
+	] as const)('%s: no hidden list, even with hidden repositories', (_s, account) => {
 		const { container } = withHidden(account, twoHidden);
 		expect(container.querySelector('[data-billing-hidden]')).toBeNull();
 		expect(container.textContent).not.toMatch(/once Pro is attached|hidden from everyone/);
 	});
 
 	// No list to show means no read failure to show either.
-	it.skip('pending: billing-polish — on Free, a failed hidden read draws no section', () => {
+	it('on Free, a failed hidden read draws no section', () => {
 		const { container } = withHidden(null, null, { hiddenError: { status: 0, message: 'could not reach the dojo service' } });
 		expect(container.querySelector('[data-billing-hidden]')).toBeNull();
 	});
 
 	// L4: clearing the search gives the disclosure back to the user — it stays as they left it.
-	it.skip('pending: billing-polish — clearing the search keeps a hand-opened "Who is counted" open', async () => {
+	it('clearing the search keeps a hand-opened "Who is counted" open', async () => {
 		const { container } = screen(null);
 		const who = container.querySelector('details[data-billing-counted]') as HTMLDetailsElement;
 		who.open = true;
@@ -367,7 +358,7 @@ describe('ScrBilling · billing polish', () => {
 
 	// L2: a real wiring check — the page hands the billing section to loadBillingSection with
 	// the caller's repositories read, so a stub like `async () => []` fails here.
-	it.skip('pending: billing-polish — the org page loads the billing section through loadBillingSection with listMyRepos', () => {
+	it('the org page loads the billing section through loadBillingSection with listMyRepos', () => {
 		const load = readFileSync(join(process.cwd(), 'src/routes/(app)/org/[slug]/[section]/+page.ts'), 'utf8');
 		expect(load).toMatch(/section === 'billing'\s*\?\s*await loadBillingSection\(\s*slug\s*,[\s\S]*?\(\)\s*=>\s*listMyRepos\(opts\)\s*\)/);
 		expect(load).not.toMatch(/loadOrgHidden\(/);

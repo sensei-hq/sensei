@@ -17,7 +17,7 @@ export interface BillingHiddenOrg {
 const label = (r: MyRepoWire) => r.name ?? r.repo_key;
 
 /** The rows to list (in their order) and, per organization in first-seen order,
- *  the repositories the plan hides. A flagged row with no owning org can't be
+ *  the repositories the plan hides, in name order. A flagged row with no owning org can't be
  *  grouped, so it stays listed (the server's predicate makes that impossible). */
 export function splitBillingHidden(rows: MyRepoWire[]): { shown: MyRepoWire[]; hidden: BillingHiddenOrg[] } {
 	const shown: MyRepoWire[] = [];
@@ -29,7 +29,8 @@ export function splitBillingHidden(rows: MyRepoWire[]): { shown: MyRepoWire[]; h
 		}
 		byOrg.set(r.owning_org, [...(byOrg.get(r.owning_org) ?? []), label(r)]);
 	}
-	return { shown, hidden: [...byOrg].map(([org, repos]) => ({ org, count: repos.length, repos })) };
+	// A person reads the list: name order, not the read's uuid order.
+	return { shown, hidden: [...byOrg].map(([org, repos]) => ({ org, count: repos.length, repos: [...repos].sort((a, b) => a.localeCompare(b)) })) };
 }
 
 /** One organization's hidden group, or `null` when none of its repositories is hidden. */
