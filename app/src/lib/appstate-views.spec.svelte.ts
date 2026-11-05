@@ -5,22 +5,7 @@
  * visit: everything open.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as appstate from './appstate.svelte.js';
-import type { PanelState } from '@rokkit/app';
-
-// Phase A (pending: shell-store): the store's API does not exist yet, so it is
-// reached through this shape; phase B imports it directly and drops the cast.
-interface ViewsApi {
-  viewPanels(viewId: string): PanelState;
-  setViewPanels(viewId: string, next: PanelState): Promise<void>;
-  migrateLegacyViews(viewIds: string[]): Promise<void>;
-  readonly viewsError: string | null;
-  onConfigSaved: ((keys: string[]) => void) | null;
-  load(): Promise<void>;
-}
-const AppState = appstate.AppState as unknown as new () => ViewsApi;
-type AppState = ViewsApi;
-const VIEWS_KEY = (appstate as unknown as { VIEWS_KEY: string }).VIEWS_KEY;
+import { AppState, VIEWS_KEY } from './appstate.svelte.js';
 import { STORAGE_KEYS } from './storage-keys.js';
 
 const apiMock = {
