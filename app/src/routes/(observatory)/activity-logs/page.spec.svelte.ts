@@ -25,6 +25,14 @@ vi.mock('@rokkit/app', async (importOriginal) => {
   return { ...m, ScreenShell: vi.fn(m.ScreenShell as never) };
 });
 
+// r2 (N1): the shell draws the mark in the reader's glyph mode, so the mode is
+// the one thing this file stubs — every other test reads the app's default.
+const glyphs = vi.hoisted(() => ({ mode: 'kanji' as 'kanji' | 'icon' }));
+vi.mock('$lib/glyphs', async (importOriginal) => {
+  const m = (await importOriginal()) as Record<string, unknown>;
+  return { ...m, useGlyphMode: () => () => glyphs.mode };
+});
+
 import { goto } from '$app/navigation';
 import { ScreenShell } from '@rokkit/app';
 
@@ -35,6 +43,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.mocked(goto).mockClear();
   vi.mocked(ScreenShell).mockClear();
+  glyphs.mode = 'kanji';
 });
 
 function logRow(over: Partial<LogRow> = {}): LogRow {
@@ -251,6 +260,7 @@ describe('Observatory · Logs — a failed log read can be retried', () => {
     vi.stubGlobal('fetch', fetchSpy);
     const c = await mount({
       rows: [],
+      tasks: [task({ name: 'scanner' })],
       filters: { ...DEFAULT_FILTERS, level: 'error', since: '1h' },
       rowsNotice: notice("Couldn't read the log", 'daemon unreachable'),
       rowsError: 'Could not read the log: daemon unreachable',
@@ -263,6 +273,9 @@ describe('Observatory · Logs — a failed log read can be retried', () => {
     await vi.waitFor(() => expect(rowHeaders(c).length).toBe(1));
     expect(c.textContent).toContain('back again');
     expect(c.querySelector('[data-logs-error]')).toBeNull();
+    // r2 (L2): the log's own Retry writes back the log's half only — the
+    // workers the loader already read stay put.
+    expect(c.querySelector('[data-task-name="scanner"]')).not.toBeNull();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const url = String(fetchSpy.mock.calls[0][0]);
     expect(url).toContain('/api/logs');
@@ -281,6 +294,7 @@ describe('Observatory · Logs — a log retry that fails again', () => {
     vi.stubGlobal('fetch', fetchSpy);
     const c = await mount({
       rows: [],
+      tasks: [task({ name: 'scanner' })],
       rowsNotice: notice("Couldn't read the log", 'daemon unreachable'),
       rowsError: 'Could not read the log: daemon unreachable',
     });
@@ -295,6 +309,8 @@ describe('Observatory · Logs — a log retry that fails again', () => {
     });
     expect(c.querySelector('[data-logs-error]')?.textContent).not.toContain('daemon unreachable');
     expect(c.textContent).not.toContain('no logs for these filters');
+    // r2 (L2): a failed log re-read leaves the workers alone too.
+    expect(c.querySelector('[data-task-name="scanner"]')).not.toBeNull();
     expect(c.querySelector('[data-log-count]')).toBeNull();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
@@ -455,5 +471,84 @@ describe('Observatory · Logs — a failed tasks read can be retried', () => {
     expect(c.textContent).toContain('still here');
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(String(fetchSpy.mock.calls[0][0])).toContain('/api/tasks/scheduled');
+  });
+});
+
+// r2 (M2): the page keeps its own copy of the read so each Retry can write back
+// only its half. A navigation must still replace that copy whole — the server
+// filters go through the URL, so a loader answer the screen ignored would leave
+// the old rows under the new filter, which reads as the filter not working.
+describe('Observatory · Logs — a navigation replaces what is shown', () => {
+  it('the loader’s new answer replaces the old rows', async () => {
+    const props = $state({ data: pageData({ rows: [logRow({ id: 'a', message: 'first_read' })] }) });
+    const m = mountComponent(Page, props as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.textContent).toContain('first_read'));
+
+    props.data = pageData({ rows: [logRow({ id: 'b', message: 'second_read' })] });
+    await tick();
+    await vi.waitFor(() => expect(m.container.textContent).toContain('second_read'));
+    expect(m.container.textContent).not.toContain('first_read');
+  });
+
+  it('a navigation after a retry wins', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [logRow({ id: 'r', message: 'retried_row' })],
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const props = $state({
+      data: pageData({ rows: [], rowsNotice: notice("Couldn't read the log", 'daemon unreachable') }),
+    });
+    const m = mountComponent(Page, props as never);
+    cleanup.push(m.destroy);
+    await tick();
+
+    (m.container.querySelector('[data-logs-error] [data-action="retry"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(m.container.textContent).toContain('retried_row'));
+
+    props.data = pageData({ rows: [logRow({ id: 'n', message: 'from_the_url' })] });
+    await tick();
+    await vi.waitFor(() => expect(m.container.textContent).toContain('from_the_url'));
+    expect(m.container.textContent).not.toContain('retried_row');
+  });
+});
+
+// r2 (N1): the shell draws the mark in the reader's glyph mode — the page asks
+// the app's preference and hands it over; a shell left in one mode loses it.
+describe('Observatory · Logs — the mark follows the glyph preference', () => {
+  it('draws the kanji, or the icon class in icon mode', async () => {
+    glyphs.mode = 'kanji';
+    const kanji = await mount({ rows: [logRow()] });
+    expect(kanji.querySelector('[data-screen-mark]')?.textContent?.trim()).toBe('診');
+
+    glyphs.mode = 'icon';
+    const icon = await mount({ rows: [logRow()] });
+    expect(icon.querySelector('[data-screen-mark]')?.className).toContain('i-solar-');
+  });
+});
+
+// r2 (M1): every existing e2e opens this screen by `[data-screen="activity-logs"]`
+// (contract Addendum 2: every existing spec and e2e stays green unedited).
+// `ScreenShell` takes no rest props, so the page carries the hook on a wrapper —
+// until rokkit's shell passes attributes through (For L0 (c)).
+describe('Observatory · Logs — the e2e anchor', () => {
+  it.skip('pending: L5 activity-logs r2 — the page keeps data-screen="activity-logs"', async () => {
+    const c = await mount({ rows: [logRow({ message: 'still here' })] });
+    const anchor = c.querySelector('[data-screen="activity-logs"]');
+    expect(anchor).not.toBeNull();
+    expect(anchor?.querySelector('[data-screen-shell]')).not.toBeNull();
+  });
+});
+
+// r2 (L4): the shell's sidebar is a panel, not a spare column. A daemon with no
+// workers and no tasks error has nothing to put in it, so the page passes no
+// sidebar at all — an empty 17.5rem panel is a blank with no next step.
+describe('Observatory · Logs — no workers, no sidebar', () => {
+  it.skip('pending: L5 activity-logs r2 — no sidebar without workers', async () => {
+    const c = await mount({ rows: [logRow({ message: 'still here' })], tasks: [] });
+    expect(c.textContent).toContain('still here');
+    expect(c.querySelector('[data-screen-sidebar]')).toBeNull();
   });
 });

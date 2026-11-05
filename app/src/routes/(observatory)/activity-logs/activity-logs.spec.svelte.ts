@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { LogRow } from '$lib/types.js';
 import {
   DEFAULT_FILTERS,
@@ -6,6 +6,7 @@ import {
   MAX_LIMIT,
   filtersFromParams,
   logsPageData,
+  readLogs,
   buildLogsQuery,
   levelTone,
   moduleOf,
@@ -238,5 +239,38 @@ describe('logsPageData', () => {
     const d = logsPageData(ok([]), fail, filters);
     expect(d.tasksError).toContain('boom');
     expect(d.rowsError).toBeNull();
+  });
+});
+
+// r2 (L3): `readLogs` is the one filters→query mapping — the loader and the
+// notice's Retry both go through it — so the whole query is pinned, not just
+// the two fields the page tests happen to exercise.
+describe('readLogs', () => {
+  const spy = () => vi.fn().mockResolvedValue({ ok: true as const, data: [] });
+
+  it('asks for every filter the URL carries, verbatim', async () => {
+    const tryGetLogs = spy();
+    await readLogs({ tryGetLogs }, filtersFromParams(
+      new URLSearchParams('level=warn&source=daemon&module=scanner&since=1h&limit=50'),
+    ));
+    expect(tryGetLogs.mock.calls[0][0]).toEqual({
+      level: 'warn',
+      source: 'daemon',
+      module: 'scanner',
+      since: '1h',
+      limit: 50,
+    });
+  });
+
+  it('sends no filter at all for an empty level / source / module', async () => {
+    const tryGetLogs = spy();
+    await readLogs({ tryGetLogs }, filtersFromParams(new URLSearchParams()));
+    expect(tryGetLogs.mock.calls[0][0]).toEqual({
+      level: undefined,
+      source: undefined,
+      module: undefined,
+      since: DEFAULT_FILTERS.since,
+      limit: DEFAULT_FILTERS.limit,
+    });
   });
 });
