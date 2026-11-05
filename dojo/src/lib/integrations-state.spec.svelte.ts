@@ -120,4 +120,19 @@ describe('IntegrationsState', () => {
 		expect(s.units).toEqual([ACME]);
 		expect(s.busy).toBeNull();
 	});
+
+	it('a failure is a fault notice; a partial list is a refusal notice, saying the list is not complete', async () => {
+		const s = new IntegrationsState(api());
+		await s.load();
+		expect([s.errorNotice, s.incompleteNotice]).toEqual([null, null]);
+		s.error = 'GitHub read failed (401)';
+		expect(s.errorNotice).toEqual({ tone: 'fault', title: "Couldn't finish with GitHub", detail: 'GitHub read failed (401)', remedy: 'Reconnect GitHub, then retry.' });
+		s.complete = false;
+		expect(s.incompleteNotice).toEqual({
+			tone: 'refusal',
+			title: 'This list is not complete',
+			detail: 'GitHub could not read every organization you belong to.',
+			remedy: 'Ask an owner of each missing organization to approve sensei on GitHub, then reload.'
+		});
+	});
 });

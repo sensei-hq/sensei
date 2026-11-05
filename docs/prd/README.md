@@ -40,7 +40,7 @@ down?*
 | What are we building, and why? | **`prd/`** (this tree) |
 | Is it built? How far? What's next? | [`roadmap/`](../roadmap/README.md) |
 | How is it built? | [`architecture/`](../architecture/README.md) |
-| What does it look like? | [`mockups/`](../mockups/) |
+| What does it look like? | `mockups/` |
 | What is open right now? | [`backlog.md`](../backlog.md) (GitHub issues) |
 
 If two disagree, the higher row wins; the lower one is the bug.
@@ -72,7 +72,7 @@ reading order; the index is [`modules/README.md`](modules/README.md).
 - **Status and gaps** — that is [`../roadmap/`](../roadmap/README.md). A module
   spec describes the target; the roadmap says whether it exists yet.
 - **Implementation** — that is [`../architecture/`](../architecture/README.md).
-- **Visual ground truth** — that is [`../mockups/`](../mockups/), untouched.
+- **Visual ground truth** — that is `../mockups/`, untouched.
 - **Design system and cross-cutting UX** — [`../design/`](../design/README.md).
 
 ## Read next

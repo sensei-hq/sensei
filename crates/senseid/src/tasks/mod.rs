@@ -43,6 +43,7 @@ pub mod progress_emitter;
 pub mod queue;
 pub mod reconcile_scheduler;
 pub mod resume;
+pub mod retention;
 pub mod retry;
 pub mod schedule;
 pub mod schema_deploy;

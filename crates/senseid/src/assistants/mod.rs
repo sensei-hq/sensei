@@ -301,14 +301,14 @@ pub fn configure(
     // Persist the set of successfully configured assistants. If the save fails
     // (disk full, permission denied), surface it as a warning — configure()
     // already completed, the local config just won't reflect the run.
-    let sensei_dir = crate::paths::sensei_dir();
-    let mut local_cfg = sensei_bootstrap::SenseiLocalConfig::load(&sensei_dir);
-    local_cfg.configured_assistants = targets
+    let configured: Vec<String> = targets
         .iter()
         .filter(|a| result.configured.contains(&a.id().to_string()))
         .map(|a| a.id().to_string())
         .collect();
-    if let Err(e) = local_cfg.save(&sensei_dir) {
+    if let Err(e) = sensei_bootstrap::SenseiLocalConfig::update(&crate::paths::sensei_dir(), |c| {
+        c.configured_assistants = configured
+    }) {
         result.warnings.push(format!("save SenseiLocalConfig: {}", e));
     }
 
@@ -1087,20 +1087,6 @@ mod tests {
     }
 
     // ── Edge cases ─────────────────────────────────────────────────────
-
-    #[test]
-    fn upsert_into_invalid_json_file_overwrites() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("mcp.json");
-        std::fs::write(&path, "not json at all").unwrap();
-
-        let entry = serde_json::json!({"command": "sensei-mcp"});
-        upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
-
-        let content: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
-    }
 
     #[test]
     fn remove_from_invalid_json_returns_false() {

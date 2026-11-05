@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Banner, Btn, Chip, Avatar, RoleTag, ListSection } from '$lib/components/kit';
+	import { Screen, Banner } from '@sensei/ui';
+	import { SectionHead, Btn, Chip, Avatar, RoleTag, ListSection } from '$lib/components/kit';
 	import type { KitScopeOwner } from '$lib/components/kit/types';
 	import { LADDER_GROUPS, type LadderGroupName } from '$lib/org-ladder-view';
 
@@ -58,7 +58,7 @@
 		{#if unowned}
 			<!-- A real notice, not ambient chrome: only shown when a queue would route
 			     to the fallback maintainer. -->
-			<Banner tone="warning" title="{unownedPhrase} — its queue routes to a fallback maintainer.">
+			<Banner tone="refusal" title="{unownedPhrase} — its queue routes to a fallback maintainer.">
 				Assign an owner to give the scope an SLA. Nothing stalls in the meantime.
 			</Banner>
 		{/if}

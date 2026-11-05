@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from '@rokkit/ui';
+  import { Notice, failureNotice } from '@sensei/ui';
 
   // #300: every sign-in opens the system browser. If that browser is signed in
   // to GitHub as someone else, the daemon refuses the callback rather than store
@@ -15,6 +16,8 @@
 
   let copied = $state(false);
   let copyError = $state<string | null>(null);
+  // The copy's own feedback — UI-local, like a button's label.
+  const copyNotice = $derived(failureNotice("Couldn't copy the link", copyError));
 
   async function copyLink() {
     if (!pending) return;
@@ -44,7 +47,7 @@
       <Button size="sm" style="outline" onclick={copyLink} data-testid="sign-in-copy-link">
         {copied ? 'Copied' : 'Copy link'}
       </Button>
-      {#if copyError}<span class="text-danger">{copyError}</span>{/if}
+      {#if copyNotice}<Notice size="inline" bare expanded {...copyNotice} data-copy-error />{/if}
     </div>
   </div>
 {/if}

@@ -53,10 +53,10 @@ insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant
   ('c0000000-0000-4000-8000-000000000532', '91000000-0000-4000-8000-000000000532', 'b0000000-0000-4000-8000-00000000053a'),
   ('c0000000-0000-4000-8000-000000000533', '91000000-0000-4000-8000-000000000534', 'b0000000-0000-4000-8000-00000000053c'),
   ('c0000000-0000-4000-8000-000000000531', '91000000-0000-4000-8000-000000000535', 'b0000000-0000-4000-8000-00000000053a');
--- ola has opted out of syncing repo 5: shared, but not elected for her (sync_enabled false).
+-- The organisation has opted repo 5 (public) out of sync: on an org's public
+-- repository only its own election counts (D46), so for ola sync_enabled is false.
 insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected) values
-  ('b0000000-0000-4000-8000-00000000053a', '91000000-0000-4000-8000-000000000535', 'user',
-   'a0000000-0000-4000-8000-000000000532', false);
+  ('b0000000-0000-4000-8000-00000000053a', '91000000-0000-4000-8000-000000000535', 'organization', null, false);
 
 -- ola writes to repo 1 on the forge, so she reads W1 (dojo.can_read_workspace).
 insert into dojo.repository_roles (repository_id, principal_id, forge_permission, forge_role) values

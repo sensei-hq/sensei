@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
   // Settings · Workspaces (#271). Presentation only: what to list, saving a role or
   // a rename, and the error states live in workspaces-section-state.svelte.ts.
@@ -6,7 +7,6 @@
   import { apiBase } from '$lib/api.js';
   import { glyphMode } from '$lib/glyphs';
   import { appState } from '$lib/appstate.svelte.js';
-  import { ScreenState } from '$lib/components';
   import { ROLES } from '$lib/setup/types.js';
   import WorkspaceGlyph from '../../../routes/(observatory)/workspaces/WorkspaceGlyph.svelte';
   import { workspaceIcon } from '../../../routes/(observatory)/workspaces/buckets.js';
@@ -79,19 +79,19 @@
 {/snippet}
 
 {#if state.loading}
-  <ScreenState status="loading" />
+  <StateView status="loading" />
 {:else if state.error}
-  <ScreenState status="error" error={state.error} onretry={() => state.load(api)} />
+  <StateView status="error" error={state.error} onretry={() => state.load(api)} />
 {:else if state.workspaces.length === 0}
-  <ScreenState
+  <StateView
     status="empty"
     kanji="組"
     title="No workspaces yet"
     description="Add a folder to watch under Settings · Roots, and its repositories appear here."
   />
 {:else}
-  {#if state.roleError || state.renameError}
-    <p class="text-xs text-danger mb-3" role="alert" data-save-error>{state.roleError ?? state.renameError}</p>
+  {#if state.saveNotice}
+    <div class="mb-3"><Notice size="inline" expanded {...state.saveNotice} data-save-error /></div>
   {/if}
 
   <p class="text-sm text-ink-mute leading-normal mt-0 mb-4">

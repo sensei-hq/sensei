@@ -3,6 +3,20 @@
 The coordinator (the reviewer session) owns this file. Each lane reads **its own section and §1–§3**.
 The goal and the reasons for the order are in `docs/review/2026-11-03-orientation.md`.
 
+## Lane names (user, 2026-11-04): one vocabulary, and it wins over every older label below
+
+| Lane | Session | Was (older sections of this plan) |
+|---|---|---|
+| **L1** | Claude Code A | L2 (+ L8 batches A, C) |
+| **L2** | Claude Code B | L3 |
+| **L3** | Muse-1 | L1 |
+| **L4** | Muse-2 | L9 (+ L8 batch B) |
+| **L5** | Freebuff | L6, then L5 (page refactors) |
+| **Design** | Cowork | L4 |
+
+Sections below still use the old numbers. Read them through this table. The current queue per lane is in
+`~/Developer/sensei-hq/coord/TRACKER.md`; folders and branches are in `coord/README.md` "Who you are".
+
 ## Rust budget (user, 2026-11-04): at most three Rust build trees at any time
 
 A Rust `target/` is 20–27 GB, so five sessions building Rust fill the disk. From now on only these
@@ -82,6 +96,9 @@ item only.
 | D84 | **S6 (diagram history) waits until every sync works** (user): after #314's production verification, not this week. S6's Q1–Q6 stay open until then. |
 | D85 | **The billing screen is Cowork's new mockup work of 2026-11-03** (user). The earlier mockups in `docs/mockups/Sensei/` are its reference. The decision-driven fixes (Pro, "to be announced", nothing free listed as paid) apply. |
 | D86 | **What the paid tier sells, in words** (clarifies D24 and D20 after D47/D52): the paid benefit is **blocking targets on an organisation's private repositories**, plus integrations and consolidated metrics. "Gating" in D20/D24 means exactly that. A target that only warns, and any target on public or personal repositories, is free. |
+| D87 | **One screen shell for every screen** (user, 2026-11-04). A sticky header (icon/kanji, title, description, a toolbar toggling info/stats/filters/sidebar, an optional action bar); an info section (3 columns); a stats row from a stats state (`{title, icon|kanji, value, description?}` on a 12-column grid, cards spanning 1–3 columns); a filter band (a snippet, or a schema rendered by `@rokkit/forms`); body and sidebar scroll independently; sticky footer. Kanji and icon glyph modes both supported. Generic parts go upstream: the shell and stats grid into `@rokkit/app` (app chrome), StatCard `description` into `@rokkit/ui`; glyph-mode wiring stays in `@sensei/ui`. It replaces the app's `PageHeader` and the dōjō's `Screen`. Design (Cowork) designs it from the diagrams (incl. ER) and the sync screen; L0 coordinates rokkit; L1 moves the diagrams first; every other screen adopts it when its lane next touches it. **Remembered panels:** every view registers a stable view id; the first visit opens everything, later visits restore what the user left. All view states load once at startup into a shared app state (desktop: `appState` config from the daemon, synced across windows), never per-screen storage. The rokkit shell takes panel state as a bindable prop and stays storage-agnostic. **Actionable stats:** a stat may carry a filter (or an `href`); clicking it filters the screen's data to that problem and marks the stat active; a stat with neither isn't clickable. **The shell is chrome only:** body and sidebar are per-screen snippets that keep the existing components (the tree view, ER and structure diagrams, the inspector) unchanged. Every screen gets free-form search. Adopting the shell loses nothing: existing specs and e2e stay green unedited, and each migration reports a before → after parity list. **Info band look (user, 2026-11-04):** the first-run "Your first session" panel is the info design everywhere: a role wash (role colour mixed into paper, mode-aware), not an opaque `-soft` tint; eyebrow + kanji + display title; kanji steps; a progress/stat column. Contract final: `coord/mockups/screen-shell/CONTRACT.md`. |
+| D88 | **Past due: no grace** (user, 2026-11-04). The moment an org's subscription isn't active or trialing, its private repositories are hidden (the entitlement view refuses them as `not_subscribed`). Hidden, never deleted: once paid they are reinstated as they were. |
+| D89 | **Sync targets: one or many dōjōs** (user, 2026-11-04). `SENSEI_DOJO_URLS` (comma list; unset = production only; `DOJO_URL`/config remain a one-element list). Tests sync to a local dōjō, normal use to production, a developer may sync to both. Each target syncs independently: its own memberships, session, cycle, failures and **per-target sent marks** (a row is unsent for a target until that target confirms it stored it). Every log and status line names the target. No fallback between targets. Brief: `coord/briefs/L3-sync-targets.md`. |
 
 The coordinator writes these into `docs/decisions.md` after Muse's WP4 commit lands. That file is in
 Muse's index right now.
@@ -149,7 +166,7 @@ Owns: `crates/senseid/src/tasks/{dojo_sync,graph_push}.rs`, `crates/senseid/src/
 `crates/senseid/src/dojo_client/**`, `dojo/src/routes/v1/you/**`,
 `dojo/src/routes/v1/t/[origin]/[org]/workspaces/**`, `dojo/src/lib/server/{workspaces-data,repositories,graph-ingest,metrics-ingest}.ts`,
 `dojo/src/lib/workspace-metrics-*`, `dojo/src/routes/(app)/org/[slug]/workspaces/[id]/**`, DDL
-`database/ddl/**/dojo/{all_my_repositories,register_repositor*,*_metric_series,repository_*}` and their
+`database/ddl/**/dojo/{all_my_repositories,register_repositor*,*_metric_series,repository_*,is_iso_instant,set_repository_election}` and their
 tests under `database/tests/dojo/**`; `docs/lanes/L1.md`;
 `dojo/src/lib/components/screens/ScrWorkspacePreview.svelte`; for WP5 round 2 also `kit/MetricCards.svelte` (new),
 `kit/Spark.svelte`, `components/Spark.svelte`, `my-metrics-view.ts`, `ScrMyMetrics.svelte`.

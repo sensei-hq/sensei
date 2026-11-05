@@ -172,6 +172,11 @@ export interface MyRepoWire {
 	/** The branches whose code graph this repository shares. Empty → the graph
 	 *  does not sync, never a guessed `main`. */
 	graph_branches: GraphBranchWire[];
+	/** Billing hides this row AND counts it on the member line (WP8 F5).
+	 *  Decided server-side, at the one load — the screen reads the flag and
+	 *  re-derives nothing. (`origin`/`entitlement_refusal` stay server-side:
+	 *  they are the predicate's inputs, and the wire carries its answer.) */
+	billing_hidden: boolean;
 }
 
 /** What the graph-branches route reports — the branch's tracking after the

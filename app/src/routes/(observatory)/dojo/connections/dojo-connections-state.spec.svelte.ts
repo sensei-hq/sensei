@@ -25,6 +25,7 @@ const membership = (over: Partial<DojoMembership> = {}): DojoMembership => ({
   last_heartbeat_at: null,
   enabled: true,
   bound_workspaces: [],
+  persona_slot: null,
   ...over,
 });
 

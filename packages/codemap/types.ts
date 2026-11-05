@@ -5,6 +5,10 @@
 export type GroupBy = 'layers' | 'folders';
 export type Direction = 'down' | 'skip' | 'up' | 'level';
 export type Role = 'code' | 'test' | 'docs' | 'config' | 'generated';
+/** How a module's (or row's) complexity reads — the daemon's one rule (#156):
+ *  over a fifth of its functions above cyclomatic 10 is `danger`, over a tenth
+ *  `warning`; `null` when nothing was measured. */
+export type Tier = 'danger' | 'warning' | 'neutral';
 
 /** Files by role — so tests and docs never read as code size. */
 export type RoleCounts = Record<Role, number>;
@@ -25,7 +29,7 @@ export interface Block {
   /** For a "+N more" block, the modules folded into it. */
   folded: string[];
   /** Functions and how many exceed cyclomatic 10 (local qlty); null: not measured. */
-  complexity?: { functions: number; complex: number } | null;
+  complexity?: { functions: number; complex: number; /** The daemon's reading of it (#156): the one rule the lens and the metrics share. */ tier: Tier | null } | null;
 }
 
 export interface Band {
@@ -161,12 +165,15 @@ export interface ComplexityNode {
   complex: number;
   /** The highest cyclomatic complexity of any function under this row. */
   maxCyclo: number;
+  /** The daemon's reading of the row (#156): the one rule the lens and the metrics share. */
+  tier: Tier | null;
   files: number;
   children: ComplexityNode[];
 }
 
 export interface ComplexityTree {
-  total: { functions: number; complex: number; maxCyclo: number; files: number };
+  /** The tier is the daemon's; a total the app sums (under a focus) has none. */
+  total: { functions: number; complex: number; maxCyclo: number; files: number; tier: Tier | null };
   modules: ComplexityNode[];
   /** The workspace's latest maintainability reading, graded by the host; null
    *  where none is computed. */

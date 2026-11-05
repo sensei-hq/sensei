@@ -12,7 +12,7 @@ const L0: Level0 = {
   cycles: [{ members: ['p/a', 'p/c'] }],
   coverage: { unplaced: 0 },
   blocks: [
-    block('p/a', { complexity: { functions: 10, complex: 3 } }),
+    block('p/a', { complexity: { functions: 10, complex: 3, tier: 'danger' } }),
     block('p/b', { roles: { code: 2, test: 0, docs: 1, config: 0, generated: 0 } }),
     block('p/c'),
     block('p/log', { hub: true, weight_in: 90 }),

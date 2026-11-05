@@ -32,7 +32,7 @@ week; `—` means no lane holds it yet. Per-module status and its evidence:
 | Onboarding / health | ~75% | bootstrap, the 5-step setup, Health + Remedy, Developer ID | first run never mentions the dōjō; #282 Keychain re-asked on rebuilt binaries; #300 / #301 sign-in | L4 (setup step, menus) |
 | Diagrams (local) | ~85% | S0–S4, S3 ER, S7 focus (committed) | S4 2c pooling double count; S6 history (proposal); the dōjō side (WP6/7) 0% | L2; dōjō side not this week |
 | Metrics engine | ~75% | daily→quarterly views, the perf work, My metrics, team views | ActionItems has no action (0 buttons/links); #156 architecture metrics missing | L3 (ActionItems), L2 (#156) |
-| Metrics as **targets** | ~0% | nothing (verified) | the M-7 gating field, a target store, evaluation, a failure flow (D47/D48) | L0 (spec), then L3 |
+| Metrics as **targets** | ~0% | nothing (verified) | gating eligibility (`metric_gating`, TG1), a target store and mode, evaluation, a failure flow (D47/D48; M-7) | L0 (spec), then L3 |
 | Sync (WP1–9) | ~40% | WP1–3, WP4 staged | WP4 F4, WP5, WP8 (D46), WP9A set-based registration, #314 production verify; #184 never sent a row | L1 |
 | Governance | ~50% | scope resolution, rule packs + adoption, resolved rules pulled | no violation/override store (G-GOV-AUDIT); no "what adopting changed here"; team scope #318 | — |
 | Learnings | ~60% | memories, Learnings screen, share-review, k ≥ 3 promotion, playbook rules | no `report_learning` / `report_memory_use`; no failure → lesson loop; too many competing verbs (D65) | L1 (after #314), L0 (spec) |
@@ -66,10 +66,30 @@ status — open or closed is GitHub's answer.
 
 ## Open — not yet filed
 
+- **Known limitation: two windows can race on the single `ui.views` config entry (D87 panel store, 2026-11-04).** The last save
+  wins, so a panel toggled in another window at the same moment can be lost. Fix if it's ever seen: per-view keys, or
+  compare-and-set on the daemon.
+
+- **Surface `no_package` files as actionable (2026-11-04).** "N files aren't in any package; add a manifest to map them",
+  per repository. It follows L1's stuck-index fix.
+
+- **`plan_folders` has no production caller (indexer, 2026-11-04, L1 module-tree analysis).** It says the deepest folder owns
+  a file, but the production `repo_scan` puts every file on the root. Either wire it in or delete it. The module tree doesn't
+  need it, since it joins on the fqn package.
+- **Svelte file nodes are `module`, not `component` (indexer, 2026-11-04).** It's queued after the stuck-index item.
+
+- **Drop `sensei.repositories.visibility` and `repo_visibility` (WP8, 2026-11-04).** WP8 retires the column as a gate; nothing
+  reads it after L2's daemon side lands. **Trigger:** the desktop app's sync toggle reads `configurable_by_me` (L2, WP8 daemon
+  side). Then drop the column and the enum in one dbd reconcile, deploying twice.
+
 One-liners with prior context: [`history/backlog/writeups.md`](history/backlog/writeups.md). This list is
 a **2026-10-13 snapshot and has not been re-checked**; check the code before filing anything from it,
 and file what is still true as an issue.
 
+- **Copilot token/cost zeros stored before 07a9def0e may be unknown** (checked 2026-11-04).
+  `07a9def0e` stores `None` where the transcript reports no token or cost figure; rows written before it
+  hold `Some(0)`, which a reader cannot tell apart from a real zero. The source cannot be re-read to
+  repair them.
 - **The Rust indexer does not follow `pub use` re-exports.** A use through a re-exported path
   (`pg_store::X` for an item declared in `pg_store::x`) names an identity no declaration mints, so it
   dangles in the code graph (`indexer::resolve` ratchet). It is cross-file resolution, stage-12 work. The

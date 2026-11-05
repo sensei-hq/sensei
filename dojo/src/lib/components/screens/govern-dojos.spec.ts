@@ -152,9 +152,9 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 	});
 
 	it('says when the Microsoft account could not be linked (#308 R5c), and is quiet otherwise', () => {
-		const notice = 'Couldn’t link your Microsoft account: why.';
+		const notice = { tone: 'refusal' as const, title: 'Couldn’t link your Microsoft account', detail: 'Why.' };
 		const { getByRole } = render(ScrMyDojos, { props: { dojos, microsoftNotice: notice } });
-		expect(getByRole('alert').textContent).toContain(notice);
+		expect(getByRole('alert').textContent).toMatch(/Couldn’t link your Microsoft account[\s\S]*Why\./);
 		cleanup();
 		const quiet = render(ScrMyDojos, { props: { dojos } });
 		expect(quiet.queryByRole('alert')).toBeNull();

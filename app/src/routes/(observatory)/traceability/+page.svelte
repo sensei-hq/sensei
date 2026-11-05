@@ -1,8 +1,9 @@
 <script lang="ts">
+    import { EmptyState, StateView } from '@sensei/ui';
     import { driftChipClasses } from '$lib/traceability.svelte.js';
     import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen, EmptyState, ScreenState, UnreadWorkspacesNotice } from '$lib/components';
+  import { PageHeader, Screen, UnreadWorkspacesNotice } from '$lib/components';
   import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
   import {
     rollupHeadline,
@@ -60,20 +61,20 @@
 
     {#if !data.rollup || !data.groups}
     <div class="max-w-[1060px] mx-auto px-7 pb-10">
-      <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+      <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
     </div>
     {:else}
     <div class="max-w-[1060px] mx-auto px-7 pb-10" data-traceability-total={data.rollup.total}>
       <UnreadWorkspacesNotice unread={data.unread} />
       {#if data.rollup.total === 0 && data.indexedDocs === 0}
         <!-- Nothing to check (#290): no document is indexed in any workspace. -->
-        <EmptyState
+        <EmptyState size="screen"
           kanji="巻"
           title="no documents indexed"
           description="Drift is checked against indexed documents, and sensei does not index markdown yet — so nothing has been checked. This is not a clean bill of health."
         />
       {:else if data.rollup.total === 0}
-        <EmptyState
+        <EmptyState size="screen"
           kanji="巻"
           title="no drift detected"
           description="Doc-to-code references are all resolving. Broken or drifted mentions will surface here once a workspace's next scan finds one."

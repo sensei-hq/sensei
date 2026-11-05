@@ -1,234 +1,143 @@
 <script lang="ts">
-    import { railIcon } from "../settings-nav";
-  import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen, ScreenState, SignInPending } from "$lib/components";
-  import { IDENTITY_TONE_CLASS, personaList } from '$lib/personas.svelte.js';
-  import {
-    agreementLine,
-    detailLine,
-    entityLabel,
-    groupByEntity,
-    groupSync,
-    summarise,
-    syncToneClass,
-    type SyncItem,
-  } from './dojo-status-state.svelte.js';
+  // Settings · Dōjō connection (user, 2026-11-03): identities first; a connected
+  // identity lists its dōjōs and what each has filed. This file only composes:
+  // every decision is in DojoConnectionScreen (dojo-connection-state.svelte.ts),
+  // the identity facts and actions in personaList.
+  import { railIcon } from '../settings-nav';
+  import { Toggle } from '@rokkit/ui';
+  import { Notice } from '@sensei/ui';
+  import { PageHeader, Screen, SignInPending } from '$lib/components';
+  import { personaList } from '$lib/personas.svelte.js';
+  import { TRAVELS, type RepoFilter } from './dojo-connection.js';
+  import { DojoConnectionScreen } from './dojo-connection-state.svelte.js';
+  import TravelsPanel from './TravelsPanel.svelte';
+  import IdentityCards from './IdentityCards.svelte';
+  import IdentityHeader from './IdentityHeader.svelte';
+  import DojoRepos from './DojoRepos.svelte';
 
   let { data } = $props();
 
-  // The identity state is the one the sign-in overlay renders: every sentence,
-  // tone and button below is decided there, and its clock moves while this
-  // screen is open, so "30 minutes left" reaches "credential expired" on its own.
+  // The identity clock moves while this screen is open, so "30 minutes left"
+  // reaches "credential expired" on its own.
   $effect(() => {
     void personaList.load();
     personaList.start();
     return () => personaList.stop();
   });
 
-  // Each identity's sync, by day and repository, under the identity's NAME —
-  // `default` is a Keychain slot, and read as "the default identity".
-  const grouped = $derived(
-    data.sync
-      ? groupSync(
-          data.sync.entities,
-          personaList.identities.map((p) => ({ slot: p.sessionSlot, label: p.label })),
-        )
-      : [],
-  );
-  const syncOf = (label: string | null) => grouped.find((g) => g.label === label);
-  const unattributed = $derived(syncOf(null));
-  // One row per repository — the verdict key carries no identity, so whoever's
-  // pass wrote last is what reads. A section of its own, under one heading.
-  const repoGroup = $derived(
-    data.sync ? groupByEntity(data.sync.entities).find((g) => g.entity === 'repository') : undefined,
+  const screen = new DojoConnectionScreen(
+    () => ({
+      identities: personaList.identities,
+      phase: personaList.phase,
+      identitiesError: personaList.error,
+      memberships: data.memberships ?? null,
+      membershipsError: data.membershipsError ?? null,
+      sync: data.sync?.entities ?? null,
+      syncError: data.error ?? null,
+    }),
+    {
+      act: (id) => personaList.act(id),
+      makeDefault: (id) => personaList.makeDefault(id),
+      signOut: (id) => personaList.signOut(id),
+      reload: () => personaList.load(),
+    },
   );
 
+  const filterOptions = $derived(screen.filters.map((f) => ({ value: f.key, label: f.label, count: f.count })));
 </script>
 
 <Screen>
-    {#snippet header()}
+  {#snippet header()}
     <PageHeader
       eyebrow="Settings"
-      kanji="結" icon={railIcon("/settings/dojo")}
-      title="Dōjō"
-      description="The credential that reaches your dōjō, and what has been agreed with it. A forge token lasts about eight hours and renews itself silently; this is where you can see one running out before it does."
+      kanji="結"
+      icon={railIcon('/settings/dojo')}
+      title="Dōjō connection"
+      description="Connect each of your GitHub identities to its dōjōs. Once connected, you'll see which repositories sync and why."
     />
-    {/snippet}
+  {/snippet}
 
-    <div class="max-w-[820px] mx-auto px-12 pt-8 pb-16" data-screen="settings-dojo">
-      <section>
-        <h2 class="display text-base font-medium m-0 mb-1 text-ink">Identities</h2>
-        <p class="text-xs text-ink-mute mt-0 mb-3 max-w-[620px] leading-normal">
-          Each identity's credential, and what it has agreed with its dōjō — by day, by repository.
-          Renewal is automatic; it only needs you when the session behind it has gone. A skipped
-          item is a decision, not a fault.
-        </p>
+  <div class="max-w-[1100px] mx-auto px-6 md:px-12 pt-8 pb-16 flex flex-col gap-6" data-screen="settings-dojo">
+    <TravelsPanel travels={TRAVELS} />
 
-        {#if data.sync}
-          <!-- Empty is said in words, never as a healthy "all agreed". -->
-          <p class="text-xs text-ink-soft mt-0 mb-3" data-summary data-empty={data.sync.count === 0 || undefined}>
-            {summarise(data.sync.counts)}
-          </p>
-        {/if}
-        {#if data.error || !data.sync}
-          <ScreenState
-            status="error"
-            error={data.error ?? 'Failed to load sync state'}
-            onretry={invalidateAll}
+    {#if screen.identitiesNotice}
+      <Notice size="panel" {...screen.identitiesNotice} data-identities-notice />
+    {/if}
+
+    {#if personaList.phase === 'loading'}
+      <p class="m-0 text-sm text-ink-mute" data-personas-loading>Reading identities…</p>
+    {:else if personaList.phase === 'empty'}
+      <Notice size="panel" tone="normal" title="No identities yet"
+              detail="sensei infers them from commit authorship as you work." data-personas-empty />
+    {:else if personaList.phase === 'list' && screen.header}
+      <div class="flex flex-wrap items-start gap-6">
+        <section aria-labelledby="ids-h" class="flex-[2_1_300px] min-w-0 flex flex-col gap-2.5">
+          <h2 id="ids-h" class="m-0 font-display text-lg font-normal text-ink">Identities</h2>
+          <IdentityCards cards={screen.cards} onselect={(label) => screen.select(label)} />
+          <p class="m-0 text-xs text-ink-mute">Identities are inferred from commit authorship on this machine. Sign-in happens in your system browser.</p>
+        </section>
+
+        <section aria-label="Selected identity" class="flex-[3_1_480px] min-w-0 flex flex-col gap-4">
+          <IdentityHeader
+            header={screen.header}
+            onprimary={() => screen.runPrimary()}
+            onmakedefault={() => screen.runMakeDefault()}
+            onsignout={() => screen.runSignOut()}
           />
-        {/if}
+          <div data-sign-in-pending><SignInPending pending={personaList.pending} /></div>
 
-        {#if personaList.phase === 'error'}
-          <!-- A failed registry read is NOT "no identities": that phrasing invites
-               connecting one, which is the wrong action against a registry that is
-               merely unreachable. -->
-          <p class="text-xs text-danger m-0" data-persona-error>{personaList.error}</p>
-        {:else if personaList.phase === 'loading'}
-          <p class="text-sm text-ink-soft m-0" data-personas-loading>Reading identities…</p>
-        {:else if personaList.phase === 'empty'}
-          <p class="text-sm text-ink-soft m-0" data-personas-empty>
-            No identities yet. sensei infers them from commit authorship as you work.
-          </p>
-        {:else}
-          {#if personaList.defaultError}
-            <p class="text-xs text-ink-soft mt-0 mb-3" data-default-error>{personaList.defaultError}</p>
-          {/if}
-          <div class="mb-3" data-sign-in-pending><SignInPending pending={personaList.pending} /></div>
-          <div class="flex flex-col gap-4" data-personas>
-            {#each personaList.identities as p (p.label)}
-              <div
-                class="border border-paper-edge rounded-lg overflow-hidden"
-                data-identity={p.label}
-                data-persona={p.label}
-                data-tone={p.tone}
-              >
-                <div class="grid grid-cols-[1fr_auto] gap-6 items-center px-4 py-3 bg-paper-soft">
-                  <div>
-                    <div class="text-sm text-ink">
-                      <span data-identity-name>{p.name}</span>
-                      {#if p.isDefault}
-                        <span class="ml-1 text-xs text-ink-soft" data-default-persona>default</span>
-                      {:else}
-                        <button
-                          type="button"
-                          class="ml-2 text-xs text-ink-mute underline cursor-pointer bg-transparent border-0 p-0
-                                 disabled:opacity-50"
-                          disabled={p.busy}
-                          onclick={() => personaList.makeDefault(p)}
-                          data-make-default
-                        >
-                          Make default
-                        </button>
-                      {/if}
-                    </div>
-                    <div class="text-xs mt-0.5 {IDENTITY_TONE_CLASS[p.tone]}" data-standing>{p.standing}</div>
-                  </div>
-                  {#if p.badge}
-                    <span class="text-xs text-success whitespace-nowrap" data-badge>{p.badge}</span>
-                  {:else if p.action}
-                    <button
-                      type="button"
-                      class="text-xs px-3 py-1.5 rounded-md border border-paper-edge text-ink
-                             hover:bg-paper-soft cursor-pointer disabled:opacity-50"
-                      disabled={p.busy}
-                      onclick={() => personaList.act(p)}
-                    >
-                      {p.buttonLabel}
-                    </button>
-                  {/if}
-                </div>
-                {@render syncDays(syncOf(p.label)?.days ?? [])}
-              </div>
-            {/each}
-
-            {#if unattributed}
-              <!-- Written before each record named its identity; the next pass fills it in. -->
-              <div class="border border-paper-edge rounded-lg overflow-hidden" data-identity="">
-                <div class="px-4 py-3 bg-paper-soft text-sm text-ink-soft">Not yet attributed to an identity</div>
-                {@render syncDays(unattributed.days)}
+          {#if screen.body === 'connect'}
+            <ol data-connect-steps class="m-0 pl-5 flex flex-col gap-1.5 text-sm text-ink-mute">
+              {#each screen.connectSteps as step (step)}<li>{step}</li>{/each}
+            </ol>
+          {:else if screen.body === 'attention' && screen.attention}
+            <Notice size="panel" {...screen.attention} />
+          {:else if screen.body === 'dojos'}
+            {#if screen.loadNotices.length > 0}
+              <div data-load-notices class="flex flex-col gap-2">
+                {#each screen.loadNotices as n (n.code)}<Notice size="panel" {...n} />{/each}
               </div>
             {/if}
-          </div>
-        {/if}
-
-        <p class="text-xs text-ink-faint mt-3 mb-0">
-          Connections themselves — which dōjōs, their kind and tenant — are managed
-          under <a class="underline" href="/dojo/connections">Dōjō · Connections</a>.
-        </p>
-      </section>
-
-      <section>
-        <h2 class="display text-base font-medium m-0 mb-1 mt-8 text-ink">Repositories</h2>
-        <p class="text-xs text-ink-mute mt-0 mb-3 max-w-[620px] leading-normal">
-          What the last sync decided about each cloned repository — synced, skipped with
-          why, or partly filed. A skipped repository is a decision, not a fault.
-        </p>
-
-        {#if repoGroup}
-          <p class="text-xs text-ink-soft mt-0 mb-3" data-repositories-summary>
-            {summarise(repoGroup.counts)}
-          </p>
-          <div class="flex flex-col gap-4" data-repositories>
-            {#each repoGroup.rows as r (r.entity_key)}
-              <div
-                class="border border-paper-edge rounded-lg overflow-hidden"
-                data-repository={r.entity_key}
-              >
-                <div class="px-4 py-2 text-sm text-ink truncate">{r.entity_key}</div>
-                <div class="px-4 pb-2">{@render syncLine({ row: r, branch: null })}</div>
+            {#if screen.identityIssues.length > 0}
+              <div data-identity-issues class="flex flex-col gap-2">
+                {#each screen.identityIssues as n (n.key)}<Notice size="inline" {...n} expanded />{/each}
               </div>
-            {/each}
-          </div>
-        {:else}
-          <p class="text-xs text-ink-soft m-0" data-repositories-empty>
-            No repository verdicts yet. They appear after a sync pass reaches the dōjō.
-          </p>
-        {/if}
-      </section>
-    </div>
-
-</Screen>
-
-{#snippet syncDays(days: import('./dojo-status-state.svelte.js').SyncDay[])}
-  {#each days as d (d.day)}
-    <div class="px-4 pt-3 pb-1 text-xs uppercase tracking-wide text-ink-soft" data-day={d.day ?? ''}>
-      {d.day ?? 'never'}
-    </div>
-    {#each d.own as item (item.row.entity_key + item.row.entity + item.row.direction)}
-      <div class="px-4 py-2">{@render syncLine(item)}</div>
-    {/each}
-    {#each d.repositories as r (r.name)}
-      <div class="px-4 py-2 border-t border-paper-edge" data-repository={r.name}>
-        <div class="text-sm text-ink truncate">{r.name}</div>
-        {#each r.items as item (item.row.entity_key + item.row.entity + item.row.direction)}
-          <div class="pl-3 mt-1">{@render syncLine(item)}</div>
-        {/each}
+            {/if}
+            {#if screen.noDojos}
+              <Notice size="panel" {...screen.noDojos} data-no-dojos />
+            {:else}
+              {#if screen.summary !== null && (screen.dojos.length > 0 || screen.filter !== 'all')}
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <p class="m-0 text-sm text-ink-mute" data-summary>{screen.summary}</p>
+                  <Toggle
+                    options={filterOptions}
+                    value={screen.filter}
+                    onchange={(v: unknown) => screen.setFilter(v as RepoFilter)}
+                    label="Filter repositories"
+                    size="sm"
+                  >
+                    {#snippet itemContent(proxy)}
+                      <span data-filter={proxy.get('value')}>{proxy.label}</span>
+                      <span class="font-mono text-xs">{proxy.get('count')}</span>
+                    {/snippet}
+                  </Toggle>
+                </div>
+              {/if}
+              {#if screen.dojos.length > 0}<DojoRepos dojos={screen.dojos} />{/if}
+            {/if}
+            {#if screen.activity.length > 0}
+              <details class="text-sm text-ink-mute" data-activity>
+                <summary class="cursor-pointer">Sync activity</summary>
+                <ul class="m-0 mt-2 pl-4 flex flex-col gap-1 font-mono text-xs">
+                  {#each screen.activity as a (a.key)}
+                    <li data-entity={a.key}>{a.label} · <span class={a.toneClass}>{a.line}</span></li>
+                  {/each}
+                </ul>
+              </details>
+            {/if}
+          {/if}
+        </section>
       </div>
-    {/each}
-    {#each d.boards as b (b.name)}
-      <div class="px-4 py-2 border-t border-paper-edge" data-board={b.name}>
-        <div class="text-sm text-ink truncate">{b.name}</div>
-        {#each b.items as item (item.row.entity_key + item.row.entity + item.row.direction)}
-          <div class="pl-3 mt-1">{@render syncLine(item)}</div>
-        {/each}
-      </div>
-    {/each}
-  {/each}
-{/snippet}
-
-{#snippet syncLine(item: SyncItem)}
-  {@const detail = detailLine(item.row)}
-  <div data-entity={item.row.entity} data-state={item.row.state} data-branch={item.branch ?? undefined}>
-    <div class="flex flex-wrap items-baseline gap-x-3 text-xs">
-      <span class="text-ink-mute">
-        {entityLabel(item.row.entity)} · {item.row.direction}{#if item.branch}<span class="text-ink-soft"> · {item.branch}</span>{/if}
-      </span>
-      <span class={syncToneClass(item.row.state)} data-agreement>{agreementLine(item.row)}</span>
-    </div>
-    {#if detail}
-      <!-- Shown for `skipped` too, where it is the REASON (in words) rather than a
-           failure — the tone is what distinguishes them. -->
-      <div class="text-xs text-ink-faint mt-0.5" data-detail>{detail}</div>
     {/if}
   </div>
-{/snippet}
+</Screen>

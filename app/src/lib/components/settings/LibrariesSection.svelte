@@ -2,24 +2,17 @@
     import Kanji from '$lib/components/Kanji.svelte';
   import { onMount } from 'svelte';
   import { wizardState } from '$lib/wizard-state.svelte.js';
+  import { Notice } from '@sensei/ui';
+  import { SectionRead } from '$lib/section-read.svelte.js';
   import Switch from '$lib/components/Switch.svelte';
 
-  let loading = $state(true);
-  let error = $state<string | null>(null);
+  const read = new SectionRead("Couldn't load libraries");
 
   const libs = $derived(wizardState.libraries.libs);
   const detectedCount = $derived(libs.length);
   const wrappedCount = $derived(libs.filter(l => l.enabled).length);
 
-  onMount(async () => {
-    try {
-      await wizardState.refreshLibraries();
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      loading = false;
-    }
-  });
+  onMount(() => read.run(() => wizardState.refreshLibraries()));
 </script>
 
 <div class="max-w-[820px]">
@@ -29,16 +22,13 @@
     is managed under Instruments.
   </p>
 
-  {#if loading}
+  {#if read.loading}
     <div data-testid="libraries-loading" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
       <Kanji char="書" size="inherit" tone="inherit" class="text-4xl text-accent opacity-20 block mb-4" />
       <p class="text-sm text-ink-mute">Loading libraries…</p>
     </div>
-  {:else if error}
-    <div data-testid="libraries-error" class="mb-6 p-4 rounded-md border border-danger bg-paper-mute">
-      <div class="text-sm font-semibold text-danger">Could not load libraries</div>
-      <div class="text-xs text-ink-soft mt-1 font-mono select-text">{error}</div>
-    </div>
+  {:else if read.notice}
+    <div class="mb-6"><Notice size="panel" {...read.notice} data-testid="libraries-error" /></div>
   {:else if libs.length === 0}
     <div data-testid="libraries-empty" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
       <Kanji char="書" size="inherit" tone="inherit" class="text-4xl text-accent opacity-20 block mb-4" />

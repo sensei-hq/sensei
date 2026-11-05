@@ -10,7 +10,7 @@ import type { PersonalUser } from './personal-home-view';
 
 /** Map a server role LABEL (Admin · Maintainer · Lead · Contributor · Member) to
  *  the lowercase rank key `navForOrg`/`K2_ROLE_RANK` expect. Contributor and
- *  Member are the base seat ⇒ `developer`; unknown labels floor to `developer`
+ *  Member are the base seat ⇒ `contributor`; unknown labels floor to `contributor`
  *  so a viewer never sees more than their rank. */
 export function roleKey(label: string | null | undefined): string {
 	switch ((label ?? '').toLowerCase()) {

@@ -68,6 +68,9 @@ describe('OrgSectionState', () => {
 		const s = new OrgSectionState(actions({ saveTeam: vi.fn().mockRejectedValue(apiError('this dōjō already has a team named P')) }), vi.fn());
 		expect(await s.saveTeam(null, 'P')).toBe(false);
 		expect(s.actionError).toBe('this dōjō already has a team named P');
+		expect(s.actionNotice).toMatchObject({ tone: 'fault', title: "That change didn't go through", detail: 'this dōjō already has a team named P' });
+		s.dismiss();
+		expect([s.actionError, s.actionNotice]).toEqual([null, null]);
 	});
 
 	it('says why a write failed, and does not reload', async () => {

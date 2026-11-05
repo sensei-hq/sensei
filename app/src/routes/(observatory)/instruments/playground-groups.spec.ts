@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPlaygroundGroups, serversByFamily, inferKind } from './playground-groups.js';
+import { buildPlaygroundGroups, serversByFamily, inferKind , groupNotice } from './playground-groups.js';
 
 const server = (id: string, acp_family: string, mcp_key: string, enabled = true) =>
   ({ id, acp_family, mcp_key, enabled });
@@ -79,5 +79,12 @@ describe('buildPlaygroundGroups — a server that could not be read', () => {
   it('has no error for a server read cleanly', () => {
     const [g] = buildPlaygroundGroups([server], { srv: { tools: [{ name: 'list_issues' }], error: null } });
     expect([g.tools.length, g.error]).toEqual([1, null]);
+  });
+});
+
+describe('groupNotice', () => {
+  it("a group whose tools could not be read: a fault Notice with the probe's failure", () => {
+    expect(groupNotice({ error: 'spawn failed' })).toEqual({ tone: 'fault', title: "Couldn't read this server's tools", detail: 'spawn failed', remedy: 'Retry. If it keeps failing, reload the page.' });
+    expect(groupNotice({ error: null })).toBeNull();
   });
 });

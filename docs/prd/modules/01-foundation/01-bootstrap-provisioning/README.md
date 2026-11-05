@@ -16,7 +16,8 @@ a repo the team has history on" (persona 2).
 
 ## In scope / out of scope
 
-- In: six-gate health check (Homebrew, Postgres, Ollama, components, DB, daemon); per-component
+- In: the health check (the package manager — Homebrew or winget — plus postgres, ollama,
+  sensei, database, daemon); per-component
   resolvers with dependency-aware order and fallback remedies; hardware-tier detection and
   model provisioning for the tier; the probing / remediating / all-green splash states; the
   Re-check entry in the Observatory; Tauri sidecar bootstrap in app-only mode.
@@ -25,12 +26,15 @@ a repo the team has history on" (persona 2).
 
 ## Surfaces
 
-- **App splash** — `app/src/routes/bootstrap/+page.svelte` renders probing, remediating, and
-  all-green (`完`) states; a Continue link is the escape hatch if the auto-transition stalls.
-- **`GET /api/bootstrap/status`** — the daemon's bootstrap state machine: top-level
-  `state` (`probing|green|remediating|failed`) plus one row per gate
-  (`id, kanji, name, detail, status, why, ifMissing, started_at, resolved_at`).
-- **Resolvers** — `crates/bootstrap/src/resolvers/{homebrew,postgres,ollama,components,db,daemon}.rs`;
+- **App splash** — the `(config)/setup` wizard stages (`welcome → scan → roots →
+  assistants → done`, `app/src/routes/(config)/setup/`); the all-green (`完`) state is the
+  last stage.
+- **`GET /api/health`** — the daemon's readiness: the six gates resolved ready plus the
+  hardware tier (`api/routes.rs:581`, `crates/bootstrap/src/health/resolvers/*.rs`). The
+  `GET /api/bootstrap/status` state machine (`state` + one row per gate) was designed and
+  **dropped** in favour of `/health`; it has no route.
+- **Resolvers** — `crates/bootstrap/src/health/resolvers/{postgres_install,ollama_install,
+  sensei_install,db_setup,daemon_start,brew_helpers,service_cascade}.rs`;
   one resolver per component; a resolver whose dependency failed is skipped in this pass.
 - **Hardware inspector** — `crates/bootstrap/src/hardware.rs`; model tier feeds M5's
   Preferences → Inference recommendation.
@@ -40,9 +44,13 @@ a repo the team has history on" (persona 2).
 
 ## Data invariants
 
-- `status.gates[*].status ∈ {probing, pass, remedy, fail}`; the all-green state is reached
-  **only** when every gate reports `pass`.
-- A gate's wait is bounded — on timeout it falls to `fail` with a reason, never `probing` forever.
+- `components[*].status ∈ {pending, checking, installing, ready, failed}` and
+  `packageManager.status` uses the same set; top-level `status ∈ {checking, resolving, ok,
+  needs-action}`. The all-green state is reached **only** when all six are `ready` and the
+  top-level `status` is `ok`; `needs-action` always carries a `remedy` (INV-1,
+  `crates/bootstrap/src/health/types.rs:130-141`).
+- A component's wait is bounded — on timeout it falls to `failed` with a reason, never `checking`
+  forever.
 - Resolvers form a dependency graph: a dependent resolver is skipped while its dependency is
   still failing, and runs within the same pass once the dependency recovers.
 - Hardware tier ∈ {lite, balanced, advanced, no-inference}; the tier→model map is exhaustive —
@@ -50,8 +58,8 @@ a repo the team has history on" (persona 2).
   `no-inference`, not silently empty.
 - `BootstrapTrace` records each gate's `started_at` / `resolved_at` and total elapsed; the
   splash timer reads real daemon time, not a client-side clock.
-- Offline path: Homebrew / Ollama gates fall to `remedy` with a "run this yourself" note; the
-  machine never `fail`s the whole run because it is offline.
+- Offline path: Homebrew / Ollama report `failed` and the payload carries a `remedy` with a
+  "run this yourself" note; the run never reports all-green because it is offline.
 
 ## Signals shown
 
@@ -73,16 +81,17 @@ a repo the team has history on" (persona 2).
 - An offline machine gets remedy notes, the user completes them, and sensei continues.
 
 ```bash
-# green run — every gate is pass; probe cycle fast
-curl -s http://localhost:7744/api/bootstrap/status | jq '{state, gates: (.gates | map({id, status}))}'
-# timed form: any gate.id in {homebrew, postgres, ollama, sdk, db, daemon} shows a status
+# green run — `status` is `ok` and every component (and `packageManager`) is `ready`; probe cycle fast
+curl -s http://localhost:7744/api/health | jq '{status, components: (.components | map({id, status}))}'
+# timed form: components[].id ∈ {postgres, ollama, sensei, database, daemon} plus
+# packageManager.id (homebrew | winget) — Homebrew is never a components[] row (INV-2/INV-3)
 ```
 
 ## Wrong gate
 
-- **All-green renders while a `remedy`/`fail` gate is pending** — gate aggregate wrong; some
-  gates counted as pass when they weren't.
-- **Gate rows hang in `probing` with no timeout** — the user can't tell why they're waiting.
+- **All-green renders while a component is `failed` or the top-level status is `needs-action`** —
+  the aggregate is wrong; some components were counted ready when they weren't.
+- **Component rows hang in `checking` with no timeout** — the user can't tell why they're waiting.
 - **Auto-transition never fires and Continue is absent** — the user is trapped on the splash.
 - **Re-check from Observatory closes the app** — the fresh-install vs re-check context was
   handled wrong.

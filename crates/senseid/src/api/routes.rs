@@ -233,6 +233,8 @@ pub fn create_router(state: AppState) -> Router {
             "/api/workspaces/{id}/recommendations/{rec_id}/snooze",
             post(workspace_detail::snooze_workspace_recommendation),
         )
+        // TG5 · MCP get_ticket: read a ticket live and start work on it (D63).
+        .route("/api/tickets/{key}/fetch", post(crate::targets::http::fetch_ticket))
         .route("/api/workspaces/{id}/impact", get(workspace_detail::get_workspace_impact))
         .route(
             "/api/workspaces/{id}/impact-verdicts",
@@ -1449,8 +1451,14 @@ mod tests {
                 .unwrap()
                 .clone()
         };
-        assert_eq!(block("alpha")["complexity"], serde_json::json!({"functions": 6, "complex": 1}));
-        assert_eq!(block("beta")["complexity"], serde_json::json!({"functions": 1, "complex": 0}));
+        assert_eq!(
+            block("alpha")["complexity"],
+            serde_json::json!({"functions": 6, "complex": 1, "tier": "warning"})
+        );
+        assert_eq!(
+            block("beta")["complexity"],
+            serde_json::json!({"functions": 1, "complex": 0, "tier": "neutral"})
+        );
         assert!(block("gamma")["complexity"].is_null(), "gamma was never measured");
     }
 
@@ -1491,7 +1499,7 @@ mod tests {
         assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(
             body["total"],
-            serde_json::json!({"functions": 7, "complex": 1, "maxCyclo": 14, "files": 3})
+            serde_json::json!({"functions": 7, "complex": 1, "maxCyclo": 14, "files": 3, "tier": "warning"})
         );
         let alpha = &body["modules"][0];
         assert_eq!(alpha["id"], format!("{pkg}/alpha"), "{body}");

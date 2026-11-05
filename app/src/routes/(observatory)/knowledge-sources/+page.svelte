@@ -1,20 +1,24 @@
 <script lang="ts">
+    import { EmptyState } from '@sensei/ui';
     import { railIcon } from "../observatory-nav";
-    import { onMount } from "svelte";
+    import { untrack } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
-    import EmptyState from "$lib/components/EmptyState.svelte";
     import { PageHeader, Screen } from "$lib/components";
     import { Button } from "@rokkit/ui";
     import { KnowledgeSourcesState } from "$lib/knowledge-sources.svelte.js";
 
-    const state = new KnowledgeSourcesState();
+    let { data } = $props();
 
-    onMount(() => {
-        state.load(senseiApi(appState.port));
+    // Presentation only: the list read is the loader's (+page.ts); the state
+    // owns the form and the writes, and every failure it shows is that read's
+    // error (#288).
+    const api = senseiApi(appState.port);
+    const state = new KnowledgeSourcesState(untrack(() => data));
+    $effect(() => {
+        const read = data;
+        untrack(() => state.setRead(read));
     });
-
-    const api = () => senseiApi(appState.port);
 </script>
 
 <Screen>
@@ -44,7 +48,7 @@
                     size="sm"
                     data-testid="add-source"
                     disabled={state.adding}
-                    onclick={() => state.add(api())}
+                    onclick={() => state.add(api)}
                 >Add</Button>
             </div>
             {#if state.addError}
@@ -55,7 +59,7 @@
         {#if state.loading}
             <p class="text-sm text-ink-mute">Loading sources...</p>
         {:else if state.sources.length === 0}
-            <EmptyState
+            <EmptyState size="screen"
                 kanji="連"
                 title="No knowledge sources."
                 description="Register a hive-mind endpoint to federate rules and memories across machines."
@@ -79,12 +83,12 @@
                             <button
                                 class="ks-btn px-3 py-1 rounded-md border border-paper-edge bg-transparent text-xs text-ink-soft cursor-pointer"
                                 data-testid="sync-{source.id}"
-                                onclick={() => state.sync(api(), source.id)}
+                                onclick={() => state.sync(api, source.id)}
                             >Sync</button>
                             <button
                                 class="ks-btn px-3 py-1 rounded-md border border-paper-edge bg-transparent text-xs text-error cursor-pointer"
                                 data-testid="remove-{source.id}"
-                                onclick={() => state.remove(api(), source.id)}
+                                onclick={() => state.remove(api, source.id)}
                             >Remove</button>
                         </div>
                         <div class="flex items-center gap-3 mt-2 text-xs text-ink-mute">

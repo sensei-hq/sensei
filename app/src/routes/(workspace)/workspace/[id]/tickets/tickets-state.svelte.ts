@@ -1,6 +1,7 @@
 // The workspace window's Tickets screen: one lane per sprint board, side by side
 // (D40), each listing its tickets first with the sprint as a filter.
 // Spec: docs/spec/screen/workspace-tickets.md, docs/spec/tracker-levels.md.
+import { failureNotice } from '@sensei/ui';
 import type { ApiResult } from '$lib/api.js';
 import { activeMinutes, compactDuration, compactTokens, durationMinutes } from '$lib/sessions-digest.js';
 import { SDLC_REASONS, sprintWindowReason, ticketSdlcRows, type SdlcRow, type Words } from '$lib/sdlc-figures.js';
@@ -72,7 +73,7 @@ function apiCost(u: TrackerUsage): string {
 /** One usage object as table cells. Unknown is "—", never 0. */
 export function usageCells(u: TrackerUsage): UsageCells {
   return {
-    sessions: `${u.sessions} (${u.by_source.branch}/${u.by_source.prompt})`,
+    sessions: `${u.sessions} (${u.by_source.branch}/${u.by_source.prompt}/${u.by_source.fetch})`,
     active: compactDuration(activeMinutes(u.active_secs)),
     fresh: compactTokens(u.tokens_fresh),
     out: compactTokens(u.tokens_out),
@@ -117,6 +118,16 @@ export class TicketLane {
   tasksError = $state<string | null>(null);
   unlinked = $state<UnlinkedSession[] | null>(null);
   unlinkedError = $state<string | null>(null);
+
+  /** Notice props for a failed ticket read (packages/ui/notice.js). */
+  get tasksNotice() {
+    return failureNotice("Couldn't load this board's tickets", this.tasksError);
+  }
+
+  /** Notice props for a failed read of the sessions linked to no ticket. */
+  get unlinkedNotice() {
+    return failureNotice("Couldn't load the sessions not linked to a ticket", this.unlinkedError);
+  }
 
   constructor(
     api: SprintsApi,
@@ -270,6 +281,18 @@ export class TicketsState {
   lanes = $state<TicketLane[]>([]);
   ticket = $state<TrackerTaskDetail | null>(null);
   ticketError = $state<string | null>(null);
+  /** The key of the ticket last opened — what a failed read names. */
+  ticketKey = $state<string | null>(null);
+
+  /** Notice props for a failed load: what failed, the reason as the detail. */
+  get loadNotice() {
+    return failureNotice("Couldn't load this workspace's tickets", this.loadError);
+  }
+
+  /** Notice props for a ticket that would not open. */
+  get ticketNotice() {
+    return failureNotice(`Couldn't open ${this.ticketKey ?? 'that ticket'}`, this.ticketError);
+  }
   /** The lane a ticket was opened from: where "Back" returns. */
   ticketLane = $state<TicketLane | null>(null);
   /** The SDLC reason vocabulary, read with the boards. */
@@ -367,9 +390,10 @@ export class TicketsState {
   async openTicket(lane: TicketLane, key: string) {
     const seq = ++this.#ticketSeq;
     this.ticketError = null;
+    this.ticketKey = key;
+    this.ticketLane = lane;
     const res = await this.#api.tryGetTrackerTask(this.#workspaceId, key);
     if (seq !== this.#ticketSeq) return;
-    this.ticketLane = lane;
     if (res.ok) this.ticket = res.data;
     else {
       this.ticket = null;

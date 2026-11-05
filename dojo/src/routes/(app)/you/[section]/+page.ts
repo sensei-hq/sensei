@@ -15,7 +15,7 @@ import {
 import { toKitWorkspaces } from '$lib/workspaces-map';
 import { toKitContributions, toKitDownstreams } from '$lib/contributions-map';
 import { toKitRulePacks } from '$lib/rulepacks-map';
-import { microsoftNotice as noticeFor } from '$lib/azure-view';
+import { microsoftNotice as noticeFor, type MicrosoftNotice } from '$lib/azure-view';
 import { toMyMetricsView, type MyMetricsView } from '$lib/my-metrics-view';
 import type { KitWorkspace, KitContribution, KitDownstream, KitRulePack } from '$lib/components/kit/types';
 
@@ -103,12 +103,16 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 
 	// Whether the Microsoft account is linked (#308 R5c) — said on My dōjōs only
 	// when it could not be. A failed check is said too, never read as "linked".
-	let microsoftNotice: string | null = null;
+	let microsoftNotice: MicrosoftNotice | null = null;
 	if (section === 'dojos') {
 		try {
 			microsoftNotice = noticeFor(await getMicrosoftLink({ fetch, accessToken }));
 		} catch (e) {
-			microsoftNotice = `Could not check your Microsoft account link: ${e instanceof Error ? e.message : 'the request failed'}.`;
+			microsoftNotice = {
+				tone: 'fault',
+				title: 'Couldn’t check your Microsoft account link',
+				detail: e instanceof Error ? e.message : 'The request failed.'
+			};
 		}
 	}
 

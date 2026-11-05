@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { Notice, StateView } from '@sensei/ui';
     import { railIcon } from "../settings-nav";
   import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, Screen, ScreenState, Switch } from '$lib/components';
+  import { PageHeader, Screen, Switch } from '$lib/components';
   import { personaList } from '$lib/personas.svelte.js';
   import { MetricSettings, reasonKindClass } from './metric-status-state.svelte.js';
 
@@ -48,7 +49,7 @@
 
     {#if data.error || !state}
       <div class="max-w-[1060px] mx-auto px-7 pb-10">
-        <ScreenState
+        <StateView
           status="error"
           error={data.error ?? 'Failed to load metric status'}
           onretry={invalidateAll}
@@ -100,9 +101,9 @@
 
           <section>
             {#if state.loading}
-              <ScreenState status="loading" />
+              <StateView status="loading" />
             {:else if state.error && state.rows.length === 0}
-              <ScreenState
+              <StateView
                 status="error"
                 error={state.error}
                 onretry={() => state.selected && state.select(state.selected)}
@@ -110,10 +111,10 @@
             {:else if !state.selected}
               <p class="text-sm text-ink-soft m-0">Choose a repository to see its metrics.</p>
             {:else}
-              {#if state.error}
+              {#if state.notice}
                 <!-- A write error, with the rows still shown: the reason the switch
                      did not move is more useful beside the switch than in place of it. -->
-                <p class="text-xs text-danger mb-3 mt-0" data-write-error>{state.error}</p>
+                <div class="mb-3"><Notice size="inline" expanded {...state.notice} data-write-error /></div>
               {/if}
               {#if state.blockedReason}
                 <!-- The controller distinguishes the two causes — no remote vs nobody

@@ -9,7 +9,8 @@
     import { daemonHealth } from "$lib/daemon-health.svelte.js";
     import { glyphMode, setGlyphMode } from "$lib/glyphs";
     import { personaList } from "$lib/personas.svelte.js";
-    import { DaemonStatusBanner } from "$lib/components";
+    import { Banner, setStateDefaults } from "@sensei/ui";
+    import { daemonBanner } from "$lib/daemon-banner";
     import { windowDuties } from "$lib/window-duties.js";
     import { openSettingsWindow } from "$lib/stores/windows.svelte.js";
     import { AlertList } from "@rokkit/ui";
@@ -19,6 +20,12 @@
 
     // The glyph preference, for every mark below (#133).
     setGlyphMode(() => glyphMode(appState.config));
+    // Every screen's failure names the daemon — the one thing every sensei screen depends on.
+    setStateDefaults({
+      remedy: "Check that the sensei daemon is running, then retry. Health shows which part is down.",
+      service: "the sensei daemon",
+    });
+    const banner = $derived(daemonBanner(daemonHealth.dbMode, appState.configError));
 
     // Which window this is decides what it does beyond its own pages: the
     // global work is the main window's alone (a second copy in Settings opened
@@ -129,7 +136,7 @@
     <button type="button" data-open-identities onclick={openIdentities}>Open Settings</button>
 {/snippet}
 
-<DaemonStatusBanner mode={daemonHealth.dbMode} configError={appState.configError} />
+{#if banner}<Banner bleed {...banner} data-daemon-banner />{/if}
 {#if duties.announcesIdentities}
     <AlertList position="bottom-right" />
 {/if}

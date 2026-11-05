@@ -273,12 +273,20 @@ export interface MyRepository {
 	name: string | null;
 	tenant: string;
 	owning_org: string | null;
+	/** The tenant's origin, as the view owns it — the billing predicate reads
+	 *  this, never a parse of `tenant`. */
+	origin: 'personal' | 'organization';
 	forge_visibility: 'public' | 'private' | null;
 	authority: 'user' | 'organization' | null;
 	may_share: boolean;
 	elected: boolean;
 	sync_enabled: boolean;
 	configurable_by_me: boolean;
+	/** The entitlement axis's own refusal (`unclaimed`, `not_subscribed`,
+	 *  `subscription_expired`, a capture refusal), or null when entitled. The
+	 *  billing hide/count predicate (WP8 F5) reads THIS, not `reason_code`:
+	 *  the final reason may be an election refusal on an entitled row. */
+	entitlement_refusal: string | null;
 	reason_code: string | null;
 	reason: string | null;
 	remedy: string | null;
@@ -288,12 +296,51 @@ export interface MyRepository {
 	/** The branches whose code graph this repository shares. Empty → the graph
 	 *  does not sync, never a guessed `main`. */
 	graph_branches: GraphBranch[];
+	/** Billing hides this row AND counts it on the member line (WP8 F5).
+	 *  Computed here, at the one load, by `isBillingHiddenRepo` — no screen
+	 *  re-derives the set, so the list and the count cannot disagree. */
+	billing_hidden: boolean;
 }
 
 /** The columns a screen needs. Named rather than `*` so a view rename fails here
  *  instead of rendering `undefined` as a missing permission. */
 const MY_REPO_COLUMNS =
-	'repository_id, repo_key, name, tenant, owning_org, forge_visibility, authority, may_share, elected, sync_enabled, configurable_by_me, reason_code, reason, remedy, reason_actor, last_synced_at, metric_rows';
+	'repository_id, repo_key, name, tenant, owning_org, origin, forge_visibility, authority, may_share, elected, sync_enabled, configurable_by_me, entitlement_refusal, reason_code, reason, remedy, reason_actor, last_synced_at, metric_rows';
+
+/**
+ * Whether Billing hides this row — and counts it on the member line instead.
+ *
+ * ONE predicate for both (WP8 F5): the list and the count cannot disagree
+ * because neither re-derives the set. Hidden is an org-private repository
+ * whose ENTITLEMENT refuses for a billing reason — `unclaimed`,
+ * `not_subscribed`, `subscription_expired` (D88: no grace). A capture refusal
+ * is not a billing state, so it never hides; neither does an election
+ * refusal on an entitled row, which is why this reads `entitlement_refusal`
+ * and not `reason_code`.
+ *
+ * Hidden rows still reach the load (`listMyRepositories` filters nothing):
+ * hidden is presentation, and the count is impossible if the read drops them.
+ */
+/** The entitlement refusals that hide an org-private repository from Billing's
+ *  list and count it on the member line instead (D88: no grace — a lapsed
+ *  period hides the day it lapses). Capture refusals are not billing states
+ *  and never hide. */
+const BILLING_HIDDEN_REFUSALS: ReadonlySet<string> = new Set([
+	'unclaimed',
+	'not_subscribed',
+	'subscription_expired'
+]);
+
+export function isBillingHiddenRepo(
+	row: Pick<MyRepository, 'origin' | 'forge_visibility' | 'entitlement_refusal'>
+): boolean {
+	return (
+		row.origin === 'organization' &&
+		row.forge_visibility === 'private' &&
+		row.entitlement_refusal !== null &&
+		BILLING_HIDDEN_REFUSALS.has(row.entitlement_refusal)
+	);
+}
 
 /**
  * Every repository the caller can see, with the verdict AND what to do about it.
@@ -347,7 +394,11 @@ export async function listMyRepositories(db: DojoClient): Promise<MyRepository[]
 		),
 		graphBranchesByRepo(db)
 	]);
-	return repos.map((r) => ({ ...r, graph_branches: branchesOf.get(r.repository_id) ?? [] }));
+	return repos.map((r) => ({
+		...r,
+		graph_branches: branchesOf.get(r.repository_id) ?? [],
+		billing_hidden: isBillingHiddenRepo(r)
+	}));
 }
 
 /** What `dojo.set_graph_branch` reports — the branch's tracking after the write. */

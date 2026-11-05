@@ -86,7 +86,7 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
           assigned_to_me: null,
           writeback_status: null,
           writeback_at: null,
-          usage: usage({ sessions: 1, by_source: { branch: 1, prompt: 0 }, active_secs: 600, active_n: 1 }),
+          usage: usage({ sessions: 1, by_source: { branch: 1, prompt: 0, fetch: 0 }, active_secs: 600, active_n: 1 }),
           sdlc: ticketSdlc(),
         },
       ],

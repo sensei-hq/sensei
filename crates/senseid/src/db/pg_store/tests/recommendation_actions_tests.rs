@@ -191,7 +191,8 @@ async fn a_rework_recommendation_carries_its_file_resolved_through_its_pattern()
         recs.iter().find(|r| r["id"] == id.to_string()).unwrap_or_else(|| panic!("{id} read"))["file"].clone()
     };
     assert_eq!(file(&r_rel), serde_json::json!(format!("{root}/src/api/server.rs")));
-    assert_eq!(file(&r_abs), serde_json::json!(abs_file.to_string_lossy()));
+    // An absolute file outside the repository is not offered (actionitems-lows LOW-1).
+    assert_eq!(file(&r_abs), serde_json::Value::Null, "an absolute file elsewhere: not offered");
     // Not about one file, no pattern, a pattern since replaced, a relative file
     // with no folder to resolve it against, one that climbs out of the
     // repository with `..`, or one no longer on disk: no file, never a guessed
@@ -240,5 +241,96 @@ async fn a_snoozed_rec_is_never_the_focal_pick() {
     let ranked: Vec<uuid::Uuid> =
         s.get_pending_recs_for_ranking(&ws).await.unwrap().into_iter().map(|r| r.0).collect();
     assert_eq!(ranked, vec![next], "the ranking pass never sees a snoozed rec");
+    s.delete_workspace(&ws).await.unwrap();
+}
+
+/// A repository folder on disk (`<repo>/inside.rs`), a directory outside it
+/// (`<elsewhere>/outside.rs`), and `<repo>/link → <elsewhere>`: the fixture the
+/// confinement tests share. The tempdirs live while the returned guards do.
+async fn confinement_fixture(
+    s: &PgStore,
+    tag: &str,
+) -> (uuid::Uuid, uuid::Uuid, tempfile::TempDir, tempfile::TempDir) {
+    let ws = s.create_workspace(&format!("_test:{tag}"), None, None).await.unwrap();
+    let folder = create_test_folder(s, &format!("{tag}_{}", uuid::Uuid::new_v4().simple())).await;
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::write(repo.path().join("inside.rs"), "").unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::write(elsewhere.path().join("outside.rs"), "").unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), repo.path().join("link")).unwrap();
+    query_as::<_, (uuid::Uuid,)>(
+        "UPDATE sensei.folders SET abs_path = $2 WHERE id = $1 RETURNING id",
+    )
+    .bind(folder)
+    .bind(repo.path().to_string_lossy().to_string())
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    (ws, folder, repo, elsewhere)
+}
+
+/// The `file` the pending read offers for a rework pattern named `rework: <name>`.
+async fn offered_file(
+    s: &PgStore,
+    ws: &uuid::Uuid,
+    folder: &uuid::Uuid,
+    name: &str,
+) -> serde_json::Value {
+    let p = pattern(s, ws, Some(folder), &format!("rework: {name}")).await;
+    let r =
+        rec(s, ws, &format!("_test:{name}"), "audit_stale", serde_json::json!({ "patterns": [p] }))
+            .await;
+    let recs = s.get_workspace_recommendations(ws, Some("pending")).await.unwrap();
+    recs.iter().find(|x| x["id"] == r.to_string()).unwrap()["file"].clone()
+}
+
+/// ActionItems review r1 LOW-1: a hotspot file outside the repository (the
+/// session edited `~/.zshrc`, or another repository's file) is not offered, even
+/// though it exists; one inside the repository by its absolute path is, as
+/// written (not its canonical `/private/var/…` form on macOS).
+#[tokio::test]
+async fn a_rework_file_outside_its_repository_is_not_offered() {
+    let s = pg_store().await;
+    let (ws, folder, repo, elsewhere) = confinement_fixture(&s, "rework_outside").await;
+    let inside = repo.path().join("inside.rs").to_string_lossy().to_string();
+    let outside = elsewhere.path().join("outside.rs").to_string_lossy().to_string();
+    assert_eq!(offered_file(&s, &ws, &folder, &inside).await, serde_json::json!(inside));
+    assert_eq!(
+        offered_file(&s, &ws, &folder, &outside).await,
+        serde_json::Value::Null,
+        "outside the repository: not offered"
+    );
+    s.delete_workspace(&ws).await.unwrap();
+}
+
+/// A symlink inside the repository that points out of it does not make its
+/// target inside (lanes review r1 LOW-1, L0: canonicalise BOTH the file and the
+/// root; on macOS the tempdirs live under `/var` → `/private/var`, so
+/// canonicalising one side only would also fail the inside case above).
+#[tokio::test]
+async fn an_absolute_path_through_an_in_repository_symlink_out_is_not_offered() {
+    let s = pg_store().await;
+    let (ws, folder, repo, _elsewhere) = confinement_fixture(&s, "rework_link_abs").await;
+    let via_link = repo.path().join("link").join("outside.rs").to_string_lossy().to_string();
+    assert_eq!(
+        offered_file(&s, &ws, &folder, &via_link).await,
+        serde_json::Value::Null,
+        "an absolute path through a symlink out of the repository: not offered"
+    );
+    s.delete_workspace(&ws).await.unwrap();
+}
+
+/// The same escape written relative to the repository (lanes review r2 F1, L0:
+/// required) — the common shape, and lexically inside, so a confinement check
+/// made only on absolute paths would offer it.
+#[tokio::test]
+async fn a_relative_path_through_an_in_repository_symlink_out_is_not_offered() {
+    let s = pg_store().await;
+    let (ws, folder, _repo, _elsewhere) = confinement_fixture(&s, "rework_link_rel").await;
+    assert_eq!(
+        offered_file(&s, &ws, &folder, "link/outside.rs").await,
+        serde_json::Value::Null,
+        "a relative path through a symlink out of the repository: not offered"
+    );
     s.delete_workspace(&ws).await.unwrap();
 }

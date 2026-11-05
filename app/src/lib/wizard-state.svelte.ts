@@ -9,6 +9,7 @@
  * objects; status persists via commitStage; active flips on route change.
  */
 
+import { failureNotice } from '@sensei/ui';
 import { senseiApi, failureReason, daemonFailure, type ApiResult, type SenseiApi } from './api.js';
 import { EventManager } from './events.js';
 import { roleAssignments } from './setup/role-meta.js';
@@ -329,6 +330,8 @@ export interface AssistantView {
   error: string | null;
   busy: boolean;
   showError: boolean;
+  /** Notice props for the failure, when `showError` (packages/ui/notice.js). */
+  errorNotice: ReturnType<typeof failureNotice>;
   state: 'idle' | 'configuring' | 'failed' | 'done';
   configured: boolean;
   header: { text: string; tone: string; icon: 'spinner' | 'check' | 'cross' | null };
@@ -385,6 +388,7 @@ export function assistantViewOf(
     error,
     busy: configuring,
     showError: enabled && !!error && !configuring,
+    errorNotice: enabled && !configuring ? failureNotice(`Couldn't configure ${family.name}`, error) : null,
     state,
     configured,
     header
@@ -1082,3 +1086,9 @@ export class WizardState {
 
 
 export const wizardState = new WizardState();
+
+/** Notice props for a router key that would not save (packages/ui/notice.js). */
+export function routerSaveNotice(router: { id: string; saveState: string; saveError: string }) {
+  if (router.saveState !== 'failed') return null;
+  return failureNotice(`Couldn't save the ${router.id} key`, router.saveError || 'The daemon did not say why.');
+}

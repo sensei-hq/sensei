@@ -1,13 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import {
-		SectionHead,
-		Btn,
-		Icon,
-		Chip,
-		KanjiToken,
-		RuleRow,
-		RuleEditor, LoadError } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Notice } from '@sensei/ui';
+	import { SectionHead, Btn, Icon, Chip, KanjiToken, RuleRow, RuleEditor } from '$lib/components/kit';
 	import type { KitConstitutionSection, KitRule } from '$lib/components/kit/types';
 	import { createOrgLadder } from '$lib/org-ladder-state.svelte';
 	import { untrack } from 'svelte';
@@ -31,7 +26,7 @@
 		orgName: string;
 		sections: KitConstitutionSection[];
 		/** A failed rules read — shown instead of an empty constitution (#106). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 
 	// Seed the authoring store ONCE from the props — a different org re-mounts this
@@ -63,7 +58,7 @@
 	<div class="relative">
 		<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 			{#if error}
-				<LoadError what="the dōjō's rules" {error} />
+				<Notice size="panel" {...dojoLoadNotice("the dōjō's rules", error)} data-load-error />
 			{:else if sections.length === 0}
 				<p class="text-ink-soft text-sm m-0">This dōjō has no published rules yet.</p>
 			{:else}

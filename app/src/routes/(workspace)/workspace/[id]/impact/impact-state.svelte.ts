@@ -2,6 +2,7 @@
 // form, and the two writes (log an impact, decide one), each of which says why
 // it failed rather than carrying on (#304). The API and the reload are handed
 // in, so a spec can fail them.
+import { failureNotice } from '@sensei/ui';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { failureReason, type ApiResult } from '$lib/api.js';
 import type { ImpactBuckets, ImpactRow } from '$lib/impact.js';
@@ -55,7 +56,7 @@ export class WorkspaceImpactState {
       this.logForm = { title: '', note: '' };
       await reload();
     } else {
-      this.logError = `The impact was not logged: ${failureReason(res.error)}`;
+      this.logError = failureReason(res.error);
     }
     this.logging = false;
   }
@@ -68,13 +69,21 @@ export class WorkspaceImpactState {
     return this.#decideErrors.get(id) ?? null;
   }
 
+  // Through the shared Notice (packages/ui/notice.js): what failed, then why.
+  get logNotice() {
+    return failureNotice("Couldn't log that impact", this.logError);
+  }
+  decideNotice(id: string) {
+    return failureNotice("Couldn't record that verdict", this.decideError(id));
+  }
+
   async decide(api: WorkspaceImpactApi, workspaceId: string, id: string, outcome: ImpactOutcome, reload: Reload): Promise<void> {
     if (!workspaceId) return;
     this.#deciding.add(id);
     this.#decideErrors.delete(id);
     const res = await api.tryDecideImpactVerdict(workspaceId, id, outcome);
     if (res.ok) await reload();
-    else this.#decideErrors.set(id, `Not recorded: ${failureReason(res.error)}`);
+    else this.#decideErrors.set(id, failureReason(res.error));
     this.#deciding.delete(id);
   }
 }

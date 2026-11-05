@@ -26,7 +26,7 @@ const sprint = (over: Partial<SprintUsageRow> = {}): SprintUsageRow => ({
   complete_at: null,
   tasks: 5,
   candidates_in_window: 3,
-  linked_sprint: usage({ sessions: 2, by_source: { branch: 2, prompt: 0 }, active_secs: 3840, active_n: 2 }),
+  linked_sprint: usage({ sessions: 2, by_source: { branch: 2, prompt: 0, fetch: 0 }, active_secs: 3840, active_n: 2 }),
   linked_other: usage({ sessions: 1 }),
   unlinked: usage(),
   reason: null,
@@ -45,7 +45,7 @@ const task = (over: Partial<TrackerTaskRow> = {}): TrackerTaskRow => ({
   assigned_to_me: null,
   writeback_status: null,
   writeback_at: null,
-  usage: usage({ sessions: 3, by_source: { branch: 3, prompt: 1 }, active_secs: 3840, active_n: 2, tokens_fresh: 7700, tokens_fresh_n: 2 }),
+  usage: usage({ sessions: 3, by_source: { branch: 3, prompt: 1, fetch: 0 }, active_secs: 3840, active_n: 2, tokens_fresh: 7700, tokens_fresh_n: 2 }),
   sdlc: ticketSdlc(),
   ...over,
 });
@@ -123,7 +123,7 @@ function daemon(over: Partial<SprintsApi> = {}) {
     },
     tryGetBacklog: async (_p, t) => {
       calls.push(`backlog:${t}`);
-      return ok({ tickets: 2, usage: usage({ sessions: 1, by_source: { branch: 1, prompt: 0 }, active_secs: 600, active_n: 1 }) });
+      return ok({ tickets: 2, usage: usage({ sessions: 1, by_source: { branch: 1, prompt: 0, fetch: 0 }, active_secs: 600, active_n: 1 }) });
     },
     tryListBacklogTasks: async (_p, t) => {
       calls.push(`backlog-tasks:${t}`);
@@ -315,7 +315,7 @@ describe('the sprint filter', () => {
 describe('ticket rows', () => {
   it('formats known values and leaves unknown ones as —', () => {
     expect(usageCells(task().usage)).toEqual({
-      sessions: '3 (3/1)',
+      sessions: '3 (3/1/0)',
       active: '1h 04m',
       fresh: '7.7k',
       out: '—',
@@ -325,12 +325,17 @@ describe('ticket rows', () => {
       wall: '—',
       cycle: '—',
     });
+    // A session that only fetched the ticket (get_ticket) is in its own bucket:
+    // never `1 (0/0)`, a count its parts don't explain (TG5, L0 ruling).
+    expect(usageCells(usage({ sessions: 1, by_source: { branch: 0, prompt: 0, fetch: 1 } })).sessions).toBe(
+      '1 (0/0/1)',
+    );
     // The cost cell is the API cost (session API cost C5), not a source's own figure.
     expect(usageCells(usage({ metered_cost: 1.5, metered_cost_n: 1 })).cost).toBe('—');
     expect(usageCells(usage({ api_cost: 1.2449, api_cost_n: 2 })).cost).toBe('$1.24');
     expect(usageCells(usage({ api_cost: 1.2449, api_cost_n: 2, api_cost_partial: 1 })).cost).toBe('$1.24+');
     expect(usageCells(usage({ api_cost: 0.004, api_cost_n: 1 })).cost).toBe('<$0.01');
-    expect(usageCells(usage()).sessions).toBe('0 (0/0)');
+    expect(usageCells(usage()).sessions).toBe('0 (0/0/0)');
   });
 
   it('splits active AI time into Claude and you, and spans the cycle from first start to last end', () => {
@@ -574,5 +579,34 @@ describe('SDLC figures (tracker-sdlc-metrics S8)', () => {
     const known = s.ticketSdlc.find((r) => r.id === 'defects')!;
     expect(known.figures.map((f) => f.text)).toEqual(['1', '0', '3', '2']);
     expect(known.note).toBe(null);
+  });
+});
+
+// Each failure renders through the shared Notice (docs/architecture/notice.md):
+// the state names what failed; the reason it already holds is the detail.
+describe('notices', () => {
+  it('a failed load: "Couldn\'t load this workspace\'s tickets", the reason as detail', async () => {
+    const { s } = await ready({ tryListTrackers: async () => fail(0) });
+    expect(s.loadNotice).toEqual({ tone: 'fault', title: "Couldn't load this workspace's tickets", detail: 'The sensei daemon didn’t respond.', remedy: 'Retry. If it keeps failing, reload the page.' });
+  });
+
+  it('a failed ticket read', async () => {
+    const { s, l } = await ready({ tryGetTrackerTask: async () => fail(404, 'task_not_found') });
+    await s.openTicket(l, 'AUTH-1');
+    expect(s.ticketNotice).toEqual({ tone: 'fault', title: "Couldn't open AUTH-1", detail: 'No ticket with that key in sensei.', remedy: 'Retry. If it keeps failing, reload the page.' });
+  });
+
+  it("a lane's failed ticket and unlinked reads", async () => {
+    const t = await ready({ tryListTrackerTasks: async () => fail(500, 'internal') });
+    expect(t.l.tasksNotice).toEqual({ tone: 'fault', title: "Couldn't load this board's tickets", detail: 'The sensei daemon hit a database error.', remedy: 'Retry. If it keeps failing, reload the page.' });
+    const u = await ready({ tryListUnlinkedSessions: async () => fail(0) });
+    await u.l.setFilter('s13');
+    await u.l.toggleUnlinked();
+    expect(u.l.unlinkedNotice).toEqual({ tone: 'fault', title: "Couldn't load the sessions not linked to a ticket", detail: 'The sensei daemon didn’t respond.', remedy: 'Retry. If it keeps failing, reload the page.' });
+  });
+
+  it('none when nothing failed', async () => {
+    const { s, l } = await ready();
+    expect([s.loadNotice, s.ticketNotice, l.tasksNotice, l.unlinkedNotice]).toEqual([null, null, null, null]);
   });
 });

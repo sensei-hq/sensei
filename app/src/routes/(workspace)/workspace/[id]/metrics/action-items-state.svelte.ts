@@ -52,7 +52,7 @@ const IDLE: ItemFlow = Object.freeze({ status: 'idle' });
 const WORKING: ItemFlow = Object.freeze({ status: 'working' });
 
 /** What the panel renders from and calls: the state's surface, nothing else. */
-export type ItemActions = Pick<ActionItemsState, 'done' | 'flow' | 'act' | 'confirm' | 'cancel'>;
+export type ItemActions = Pick<ActionItemsState, 'done' | 'doneIn' | 'flow' | 'act' | 'confirm' | 'cancel'>;
 
 /** The confirm view a preview implies. A consent-required preview is a file,
  *  whatever the item guessed; anything else is a rule. */
@@ -84,6 +84,8 @@ const wakeDate = (iso: string): string => new Date(iso).toLocaleDateString('en-C
 export class ActionItemsState {
     /** What the last settled action did, for the panel to say. */
     done = $state<string | null>(null);
+    /** The panel (metric) the last settled action was taken in. */
+    #doneScope = $state<string | null>(null);
 
     #flows = new SvelteMap<string, ItemFlow>();
     /** The preview each item is being asked to confirm, as the daemon sent it. */
@@ -91,13 +93,20 @@ export class ActionItemsState {
 
     constructor(private readonly deps: ActionItemsDeps) {}
 
+    /** What the last settled action did, for the panel it was acted in (`scope`,
+     *  the metric's detail) only — never another metric's, whose list never held
+     *  that item. */
+    doneIn(scope: string): string | null {
+        return this.#doneScope === scope ? this.done : null;
+    }
+
     flow(id: string): ItemFlow {
         return this.#flows.get(id) ?? IDLE;
     }
 
     /** Do the item's action. A second call while one is in flight is ignored;
      *  after a failure (or a cancel) it starts again from the top. */
-    async act(item: ActionItem): Promise<void> {
+    async act(item: ActionItem, scope: string | null = null): Promise<void> {
         if (this.flow(item.id).status === 'working') return;
         const { api, workspaceId } = this.deps;
         const action = item.action;
@@ -119,7 +128,7 @@ export class ActionItemsState {
                 this.#flows.set(item.id, WORKING);
                 const r = await api.trySnoozeWorkspaceRecommendation(workspaceId(), item.id, action.days);
                 if (!r.ok) return this.#fail(item.id, failureReason(r.error));
-                this.#settled(item.id, `Snoozed until ${wakeDate(r.data.snoozed_until)}`);
+                this.#settled(item.id, `Snoozed until ${wakeDate(r.data.snoozed_until)}`, scope);
                 return;
             }
             case 'propose-rule':
@@ -139,7 +148,7 @@ export class ActionItemsState {
     }
 
     /** Write what the person was shown. Only from a confirm. */
-    async confirm(item: ActionItem): Promise<void> {
+    async confirm(item: ActionItem, scope: string | null = null): Promise<void> {
         const flow = this.flow(item.id);
         const preview = this.#previews.get(item.id);
         if (flow.status !== 'confirm' || !preview) return;
@@ -151,7 +160,7 @@ export class ActionItemsState {
         );
         if (!r.ok) return this.#fail(item.id, failureReason(r.error));
         const { confirm } = flow;
-        this.#settled(item.id, confirm.path ? `Wrote ${confirm.path}` : `Rule added: ${confirm.heading}`);
+        this.#settled(item.id, confirm.path ? `Wrote ${confirm.path}` : `Rule added: ${confirm.heading}`, scope);
     }
 
     /** Back out of a confirm: nothing is written; the item stays pending. */
@@ -165,10 +174,11 @@ export class ActionItemsState {
         this.#flows.set(id, { status: 'error', message });
     }
 
-    #settled(id: string, message: string): void {
+    #settled(id: string, message: string, scope: string | null): void {
         this.#flows.delete(id);
         this.#previews.delete(id);
         this.deps.settle(id);
         this.done = message;
+        this.#doneScope = scope;
     }
 }

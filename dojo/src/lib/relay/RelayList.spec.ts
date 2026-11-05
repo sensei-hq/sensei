@@ -41,10 +41,10 @@ describe('RelayList', () => {
 		relayInboxState.begin();
 		relayInboxState.loaded(outcome({ sessions: relayInboxMock(), unreachable: ['two'], plansMissing: 1 }));
 		relayInboxState.setFilter('all');
-		const { container, getByText } = render(RelayList);
+		const { container } = render(RelayList);
 		const partial = container.querySelector('[data-inbox-partial]');
 		expect(partial?.textContent).toContain('two');
-		expect(getByText('1 run(s) are shown without their plan.')).toBeTruthy();
+		expect(partial?.textContent).toContain('1 run(s) are shown without their plan.');
 		expect(container.querySelector('[data-inbox-error]')).toBeNull();
 	});
 

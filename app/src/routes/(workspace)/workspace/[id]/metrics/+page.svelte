@@ -76,7 +76,7 @@
         {#if metrics.history}
             <div
                 data-component="metrics-history-off"
-                class="mb-6 bg-warning-soft border border-paper-edge rounded-lg px-4 py-3 text-sm text-ink"
+                class="mb-6 bg-warning-soft border border-paper-edge rounded-lg px-4 py-3 text-sm text-on-warning-soft"
             >
                 {metrics.history.text}
             </div>

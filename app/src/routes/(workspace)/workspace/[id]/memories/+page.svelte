@@ -1,6 +1,7 @@
 <script lang="ts">
+    import { Notice, EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
-    import { PageHeader, Screen, EmptyState, Eyebrow, ScreenState } from '$lib/components';
+    import { PageHeader, Screen, Eyebrow } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
     import { invalidateAll } from '$app/navigation';
@@ -45,7 +46,7 @@
     {/snippet}
     <div class="px-6 py-6">
         {#if data.error}
-            <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+            <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
         {:else}
         <!-- Ready-to-share hero — counts the generalised memories and offers to
              stage them for the next share batch. Success-toned, quiet voice. -->
@@ -105,8 +106,8 @@
                                 data-testid={`batch-reject-${batch.id}`}
                                 onclick={() => decide(batch.id, 'rejected')}
                             >Reject</Button>
-                            {#if memState.decideError(batch.id)}
-                                <span class="text-xs text-danger" data-testid={`batch-error-${batch.id}`}>{memState.decideError(batch.id)}</span>
+                            {#if memState.decideNotice(batch.id)}
+                                <Notice size="inline" bare expanded {...memState.decideNotice(batch.id)!} data-testid={`batch-error-${batch.id}`} />
                             {/if}
                         </li>
                     {/each}
@@ -123,8 +124,8 @@
                 <span class="text-xs text-ink-faint font-mono">{memState.countLabel}</span>
             </div>
             <div class="flex items-center justify-end gap-3 mb-3">
-                {#if memState.batchError}
-                    <span class="text-xs text-danger" data-testid="propose-batch-error">{memState.batchError}</span>
+                {#if memState.batchNotice}
+                    <Notice size="inline" bare expanded {...memState.batchNotice} data-testid="propose-batch-error" />
                 {/if}
                 <Button
                     variant="primary"
@@ -294,7 +295,7 @@
 
                                             {#if memState.pendingScope}
                                                 <div class="mt-3 rounded-md border border-warning-soft bg-warning-soft p-3" data-testid="governance-note">
-                                                    <p class="text-xs text-ink-soft leading-normal m-0 mb-2">
+                                                    <p class="text-xs text-on-warning-soft leading-normal m-0 mb-2">
                                                         {memState.governanceNote(memState.pendingScope)}
                                                     </p>
                                                     <div class="flex items-center gap-2">
@@ -316,8 +317,8 @@
                                                 </div>
                                             {/if}
 
-                                            {#if memState.promoteError(openedMemory.id)}
-                                                <p class="text-xs text-danger m-0 mt-2" data-testid="widen-error">{memState.promoteError(openedMemory.id)}</p>
+                                            {#if memState.promoteNotice(openedMemory.id)}
+                                                <div class="mt-2"><Notice size="inline" bare expanded {...memState.promoteNotice(openedMemory.id)!} data-testid="widen-error" /></div>
                                             {/if}
                                         {/if}
                                     </div>
@@ -333,10 +334,8 @@
                                     data-testid="generalise-button"
                                     onclick={() => generalise(openedMemory.id)}
                                 >{memState.isGeneralising(openedMemory.id) ? 'generalising…' : 'generalise'}</Button>
-                                {#if memState.generaliseError(openedMemory.id)}
-                                    <p class="text-xs text-danger m-0 mt-2" data-testid="generalise-error">
-                                        {memState.generaliseError(openedMemory.id)}
-                                    </p>
+                                {#if memState.generaliseNotice(openedMemory.id)}
+                                    <div class="mt-2"><Notice size="inline" bare expanded {...memState.generaliseNotice(openedMemory.id)!} data-testid="generalise-error" /></div>
                                 {/if}
                             {/if}
                         </div>
@@ -344,7 +343,7 @@
                 {/if}
             </div>
         {:else}
-            <EmptyState
+            <EmptyState size="screen"
                 kanji="覚"
                 title="Nothing to remember yet."
                 description="As you work in this workspace, sensei watches for corrections and patterns. Memories appear here once there's enough evidence to teach — and the ones that generalise cleanly become ready to share."

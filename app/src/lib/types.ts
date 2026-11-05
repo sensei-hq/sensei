@@ -924,6 +924,10 @@ export interface DojoMembership {
   last_heartbeat_at: string | null;
   enabled: boolean;
   bound_workspaces: DojoBoundWorkspace[];
+  /** The session slot of the identity this membership belongs to — the key the
+   *  identity list (`sessionSlot`) and sync rows (`persona`) use. `null` when no
+   *  identity is bound or the bound one is signed out. */
+  persona_slot: string | null;
 }
 
 /** The inferred (confirm-inferred) workspace→Dōjō binding surfaced in the workspace
@@ -2010,7 +2014,8 @@ export interface TrackerSyncCounts {
  *  0); every sum carries the count it summed (`_n`). */
 export interface TrackerUsage {
   sessions: number;
-  by_source: { branch: number; prompt: number };
+  /** Sessions with a link of each source; `fetch` = the assistant fetched the ticket (get_ticket). */
+  by_source: { branch: number; prompt: number; fetch: number };
   /** Sessions in the set linked to two or more of the tracker's tickets. */
   shared: number;
   active_secs: number | null;

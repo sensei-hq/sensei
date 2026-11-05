@@ -56,10 +56,10 @@ insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant
   ('c0000000-0000-4000-8000-000000000522', '91000000-0000-4000-8000-000000000522', 'b0000000-0000-4000-8000-00000000052a'),
   ('c0000000-0000-4000-8000-000000000523', '91000000-0000-4000-8000-000000000524', 'b0000000-0000-4000-8000-00000000052c'),
   ('c0000000-0000-4000-8000-000000000521', '91000000-0000-4000-8000-000000000525', 'b0000000-0000-4000-8000-00000000052a');
--- ola has opted out of syncing repo 5: shared, but not elected for her (sync_enabled false).
+-- The organisation has opted repo 5 (public) out of sync: on an org's public
+-- repository only its own election counts (D46), so for ola sync_enabled is false.
 insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected) values
-  ('b0000000-0000-4000-8000-00000000052a', '91000000-0000-4000-8000-000000000525', 'user',
-   'a0000000-0000-4000-8000-000000000522', false);
+  ('b0000000-0000-4000-8000-00000000052a', '91000000-0000-4000-8000-000000000525', 'organization', null, false);
 
 -- ola writes to repo 1 on the forge, so she reads W1 (dojo.can_read_workspace).
 insert into dojo.repository_roles (repository_id, principal_id, forge_permission, forge_role) values
@@ -238,7 +238,7 @@ declare
 begin
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000522"}', true);
 
-    -- A shared repository the caller has not elected for sync is not consent.
+    -- A shared repository not elected for sync (here, by its organisation) is not consent.
     begin
         perform dojo.file_delivery_facts(t, array['github.com/ztest-df/optout'], base);
         raise exception 'consent: a repository not elected for sync was accepted';

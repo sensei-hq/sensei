@@ -1,7 +1,8 @@
 <script lang="ts">
+    import { StateView } from '@sensei/ui';
     import { deltaView } from '$lib/impact';
     import Kanji from '$lib/components/Kanji.svelte';
-    import { PageHeader, Screen, ScreenState } from '$lib/components';
+    import { PageHeader, Screen } from '$lib/components';
     import { invalidateAll } from '$app/navigation';
     import type { PatternEntry } from '$lib/types.js';
 
@@ -113,7 +114,7 @@
     <div class="px-6 py-6">
         {#if data.error}
             <!-- A failed read is shown, never "no patterns" (#85). -->
-            <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+            <StateView status="error" error={data.error} failure={data.failure} onretry={() => invalidateAll()} />
         {:else}
         {#if data.followed.length > 0}
             <section class="mb-5">

@@ -15,6 +15,7 @@
  * is testable with a hand-rolled mock and never reaches for a global.
  */
 
+import { failureNotice } from '@sensei/ui';
 import { SvelteSet } from 'svelte/reactivity';
 import { failureReason, type SenseiApi } from '$lib/api.js';
 import { strengthView, type StrengthView } from '$lib/memoryState.svelte.js';
@@ -180,6 +181,14 @@ export class InsightsBoardState {
   removedIds = new SvelteSet<string>();
   /** Set when an action round-trip fails; the card is restored alongside. */
   actionError = $state<string | null>(null);
+  /** What the last failed action names, and why — for its Notice. */
+  #actionTitle = $state<string | null>(null);
+  #actionWhy = $state<string | null>(null);
+
+  /** Notice props for an apply or dismiss that did not land (packages/ui/notice.js). */
+  get actionNotice() {
+    return this.#actionTitle ? failureNotice(this.#actionTitle, this.#actionWhy) : null;
+  }
   /** True while a workspace-scope refetch is in flight. */
   loading = $state(false);
   /** Why the board could not be read, or null (#288). The page then shows the
@@ -273,6 +282,8 @@ export class InsightsBoardState {
   async retry(api: SenseiApi): Promise<void> {
     this.removedIds.clear();
     this.actionError = null;
+    this.#actionTitle = null;
+    this.#actionWhy = null;
     this.loading = true;
     const read = await api.tryGetInsights(this.selectedWorkspaceId ?? undefined);
     // A failed read drops the previous scope's board, so it cannot pass as this one's.
@@ -289,22 +300,30 @@ export class InsightsBoardState {
    */
   async apply(api: SenseiApi, rec: RecCardVm): Promise<void> {
     this.actionError = null;
+    this.#actionTitle = null;
+    this.#actionWhy = null;
     this.#remove(rec.id);
     const res = await api.tryAcceptWorkspaceRecommendation(rec.workspaceId, rec.id);
     if (!res.ok) {
       this.#restore(rec.id);
       this.actionError = `Couldn't apply "${rec.title}": ${failureReason(res.error)}`;
+      this.#actionTitle = `Couldn't apply "${rec.title}"`;
+      this.#actionWhy = failureReason(res.error);
     }
   }
 
   /** Dismiss a recommendation. Same optimistic-then-verify shape as apply. */
   async dismiss(api: SenseiApi, rec: RecCardVm): Promise<void> {
     this.actionError = null;
+    this.#actionTitle = null;
+    this.#actionWhy = null;
     this.#remove(rec.id);
     const res = await api.tryRejectWorkspaceRecommendation(rec.workspaceId, rec.id);
     if (!res.ok) {
       this.#restore(rec.id);
       this.actionError = `Couldn't dismiss "${rec.title}": ${failureReason(res.error)}`;
+      this.#actionTitle = `Couldn't dismiss "${rec.title}"`;
+      this.#actionWhy = failureReason(res.error);
     }
   }
 }

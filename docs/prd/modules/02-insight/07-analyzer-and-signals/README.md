@@ -26,7 +26,8 @@ day after setup.
   correction clusters, recommendation candidates L2); `AggregateToolInsights` health
   signals with the per-MCP curation contract; the narration-cache copy pipeline that
   voices every derived card.
-- Out: the FTR **metric aggregation** store (`sensei.project_metrics`) — M8 owns the
+- Out: the FTR **metric aggregation** store (`sensei.repository_metrics` and the
+  `workspace_metric_*` roll-ups) — M8 owns the
   registry, the store, and the health score; the analyzer writes `sessions.ftr`, the
   metric computer rolls it up. Memory formation/reinforcement is M9; pattern
   detection *machinery* is M10; drift scanning execution is M11. Insights *surfacing*
@@ -40,15 +41,16 @@ day after setup.
   `tasks/handlers/generate.rs` (recommendation candidates),
   `tasks/handlers/consolidate.rs` (memory consolidation hookup).
 - **API** — `GET /api/observatory/tool-signals`; `GET /api/tasks?status=queued`;
-  `GET /api/projects/{id}/ftr` / `/api/observatory/ftr` (read the M7-derived
+  `GET /api/workspaces/{id}/ftr` / `/api/observatory/ftr` (read the M7-derived
   `sessions.ftr` line through the M8 store).
 - **App** — Today (FTR chip + sparkline + insights), Insights triage, Health L1/L2,
   memory adopted lane, communities view.
 
 ## Data invariants
 
-- **Watermark.** `sensei.config['analyzer.watermark']` holds `{project_uuid:
-  rfc3339_ts}`; a project is due iff its latest `activity.sessions.started_at` >
+- **Watermark.** `sensei.config['analyzer.watermark']` holds `{workspace_id:
+  rfc3339_ts}` (`tasks/analyzer_scheduler.rs:36`, `HashMap<Uuid, DateTime>`); a
+  workspace is due iff its latest `activity.sessions.started_at` >
   watermark. Enqueueing **advances the watermark** in the same pass — a re-run with
   no new activity is a no-op. Watermark persisted each tick; malformed entries are
   dropped, not fatal.

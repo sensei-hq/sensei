@@ -204,7 +204,7 @@
                             </p>
                         </div>
 
-                        <ActionItems items={md.actionItems} error={recommendations.error} actions={actions} />
+                        <ActionItems items={md.actionItems} error={recommendations.error} actions={actions} scope={data.selectedKey} />
                     {:else}
                         <div class="text-sm text-ink-soft py-8">
                             That signal isn’t computed for this workspace — pick one from the list.

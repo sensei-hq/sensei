@@ -169,7 +169,21 @@ export function syncLine(r: AzureSyncResult): string {
 export type MicrosoftLinkStatus = { state: 'none' } | { state: 'linked' } | { state: 'not_linked'; reason: string };
 
 /** What My dōjōs says about it — only when it could not be linked. */
-export function microsoftNotice(s: MicrosoftLinkStatus): string | null {
+export function microsoftNotice(s: MicrosoftLinkStatus): MicrosoftNotice | null {
 	if (s.state !== 'not_linked') return null;
-	return `Couldn’t link your Microsoft account: ${s.reason}. Your Azure DevOps organizations’ dōjōs were not joined.`;
+	const reason = s.reason.charAt(0).toUpperCase() + s.reason.slice(1);
+	return {
+		tone: 'refusal',
+		title: 'Couldn’t link your Microsoft account',
+		detail: `${reason}. Your Azure DevOps organizations’ dōjōs were not joined.`,
+		remedy: 'Sign in again with the one Microsoft account you use for Azure DevOps.'
+	};
+}
+
+/** My dōjōs' Microsoft-link notice — a Notice's tone, title and detail. */
+export interface MicrosoftNotice {
+	tone: 'refusal' | 'fault';
+	title: string;
+	detail: string;
+	remedy?: string;
 }

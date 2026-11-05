@@ -1,6 +1,7 @@
 // The workspace window's Delivery Metrics screen: each sprint board's sprints, with
 // their figures and the AI work in your sessions behind them.
 // Spec: docs/spec/daemon/tracker-delivery-metrics.md D2 (B1–B3, B5).
+import { failureNotice } from '@sensei/ui';
 import { formatDayLabel } from '$lib/metrics/metric-view.js';
 import {
   SDLC_REASONS,
@@ -95,6 +96,11 @@ export class DeliveryBoard {
   tickets = $state<TicketLink[] | null>(null);
   ticketsError = $state<string | null>(null);
 
+  /** A failed tickets read, as a Notice (the Tickets screen's words). */
+  get ticketsNotice() {
+    return failureNotice("Couldn't load this sprint's tickets", this.ticketsError);
+  }
+
   constructor(api: DeliveryApi, workspaceId: string, tracker: TrackerConnection, sprints: SprintUsageRow[], words: Words) {
     this.#api = api;
     this.#workspaceId = workspaceId;
@@ -187,6 +193,11 @@ export class DeliveryState {
 
   view = $state<View>('loading');
   loadError = $state<string | null>(null);
+
+  /** A failed read of the boards or sprints, as a Notice. */
+  get loadNotice() {
+    return failureNotice("Couldn't load this workspace's delivery metrics", this.loadError);
+  }
   boards = $state<DeliveryBoard[]>([]);
 
   constructor(api: DeliveryApi, workspaceId: string) {

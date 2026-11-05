@@ -323,3 +323,9 @@ describe('MemoryState.strengthOf', () => {
   });
 });
 
+
+describe('memoryState.actionNotice', () => {
+  it('none while no action failed', () => {
+    expect(memoryState.actionNotice('nope')).toBeNull();
+  });
+});

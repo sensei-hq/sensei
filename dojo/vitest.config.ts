@@ -29,6 +29,8 @@ export default defineConfig({
 		}
 	},
 	resolve: {
+		// As vite.config.ts: the shared packages take rokkit from this host.
+		dedupe: ['@rokkit/ui', '@rokkit/states', '@rokkit/core'],
 		alias: {
 			$lib: new URL('./src/lib', import.meta.url).pathname,
 			// Mirrors svelte.config.js: the vocabulary shared with the app (#133).

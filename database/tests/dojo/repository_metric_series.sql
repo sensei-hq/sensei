@@ -9,23 +9,27 @@
 -- dojo.workspace_metric_series is the workspace rollup over
 -- dojo.repositories_in_workspaces: the detail rows the caller may read, plus —
 -- for a workspace viewer — the aggregate view D8 decides: repo-scoped rows
--- as-is, user-scoped rows pooled to one row per repository, metric and day with
--- NO principal. A viewer reads aggregates and per-repository splits, never
--- per-person. A pooled row carries scope 'pooled' — never 'user' — so a screen
--- summing scope = 'user' cannot count the same people twice, and its pooling in
--- props (pooled_rows, and the rate numerator/denominator by
--- team_member_metrics' rule — null unless every pooled row has a positive
--- denominator), so a reader pools a rate across days by the same rule instead of
--- summing rates. A pool of one is shown (D10: an aggregate over one
--- contributor is shown) — the lone day pins that, carrying its rate.
+-- as-is, user-scoped readings pooled to one row per repository, metric and day
+-- with NO principal. A viewer reads aggregates and per-repository splits,
+-- never per-person. A pooled row carries scope 'pooled' — never 'user' — so a
+-- screen summing scope = 'user' cannot count the same people twice. One
+-- reading per person per day (a person's commit rows collapse to the latest by
+-- authored_at desc nulls last, pushed_at desc, commit_sha desc; commit-less
+-- rows add), and a pool with fewer than 2 contributors is withheld (F4, which
+-- supersedes D10 for viewer pools). The pooling rides in props (pooled_rows,
+-- contributors, and the rate numerator/denominator by team_member_metrics'
+-- rule — null unless every reading has a positive denominator), so a reader
+-- pools a rate across days by the same rule instead of summing rates; a screen
+-- shows contributors (people), never pooled_rows (readings).
 --
 -- WHAT BREAKS THIS TEST: a contributor reading a peer's user rows; a maintainer
 -- not reading them; a lead not reading a teammate's, or reading a non-teammate's;
--- a viewer seeing a per-person row, a pooled row under scope 'user', or a sum
--- that includes a day outside the window; a pool of one withheld (D10 shows it);
--- a member's viewer aggregates duplicating detail rows the member already reads;
--- any row for a non-member; a series that guesses a metric key instead of
--- resolving it.
+-- a viewer seeing a per-person row, a pooled row under scope 'user', a pool of
+-- one (withheld, F4), or a sum that includes a day outside the window; a
+-- person's commit rows counted more than once, or a reading that is not their
+-- latest commit's; a member's viewer aggregates duplicating detail rows the
+-- member already reads; any row for a non-member; a series that guesses a
+-- metric key instead of resolving it.
 begin;
 
 insert into dojo.principals (id, auth_user_id, display_name) values
@@ -94,7 +98,7 @@ insert into dojo.workspace_viewers (workspace_id, principal_id) values
 -- One metric, nine rows: R repo-scoped, R user-scoped for alice / dave / zed
 -- (zed has no role on R), S repo-scoped, plus alice's and dave's yesterday rows
 -- (no denominator — their pool must not invent a rate), alice's lone row two
--- days back (a pool of one — shown, D10), and her stale row outside
+-- days back (a pool of one — withheld, F4), and her stale row outside
 -- the 30-day window (it must count nowhere).
 insert into dojo.repository_metrics (id, tenant_id, repository_id, metric_id, scope, principal_id, computed_on, value, props)
 select v.id::uuid, 'b0000000-0000-4000-8000-00000000004a', v.repo::uuid, m.id, v.scope, v.who::uuid, v.day::date, v.value, v.props::jsonb
@@ -110,6 +114,12 @@ select v.id::uuid, 'b0000000-0000-4000-8000-00000000004a', v.repo::uuid, m.id, v
     ('81000000-0000-4000-8000-000000000009', '90000000-0000-4000-8000-0000000000b1', 'user', 'a0000000-0000-4000-8000-000000000041', current_date - 2,   9, '{"denominator": 1}')
   ) as v(id, repo, scope, who, day, value, props)
  cross join (select id from sensei.metrics order by key limit 1) m;
+
+-- The catalogue key every series must resolve, captured as the owner: nothing
+-- below may name sensei.* as authenticated (fresh databases grant no USAGE on
+-- the schema — reads through functions/views resolve to OIDs and don't need
+-- it, direct reads fail). Tests that need catalogue facts stash them here.
+select set_config('test.expected_metric_key', key, true) from sensei.metrics order by key limit 1;
 
 set local role authenticated;
 
@@ -128,8 +138,9 @@ declare
     pn int;
     pnum numeric;
     pden numeric;
+    contrib int;
 begin
-    select key into k from sensei.metrics order by key limit 1;
+    select current_setting('test.expected_metric_key') into k;
 
     -- ── role_holder_reads_repo_rows ──────────────────────────────────────────
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000041"}', true);
@@ -138,7 +149,7 @@ begin
     if n <> 1 or v <> 10 then
         raise exception 'role_holder_reads_repo_rows: alice should read R''s one repo row worth 10, got % rows worth %', n, v;
     end if;
-    if k <> (select key from sensei.metrics order by key limit 1) then
+    if k <> current_setting('test.expected_metric_key') then
         raise exception 'role_holder_reads_repo_rows: the series should resolve the metric key, got %', k;
     end if;
 
@@ -212,31 +223,28 @@ begin
     -- Today's pool: 1 + 2 + 4, with the rate pooled by its denominators
     -- (1×1 + 2×3 + 4×2) / (1 + 3 + 2) — and the stale 100 outside the window.
     select value, (props->>'pooled_rows')::int, (props->>'numerator')::numeric,
-           (props->>'denominator')::numeric
-      into v, pn, pnum, pden
+           (props->>'denominator')::numeric, (props->>'contributors')::int
+      into v, pn, pnum, pden, contrib
       from dojo.workspace_metric_series(p_id, since)
      where scope = 'pooled' and computed_on = current_date;
-    if v <> 7 or pn <> 3 or pnum <> 15 or pden <> 6 then
-        raise exception 'viewer_gets_aggregates_only: today''s pool should be 7 over 3 rows (15/6), got % over % rows (%/%)', v, pn, pnum, pden;
+    if v <> 7 or pn <> 3 or pnum <> 15 or pden <> 6 or contrib <> 3 then
+        raise exception 'viewer_gets_aggregates_only: today''s pool should be 7 over 3 rows (15/6) from 3 contributors, got % over % rows (%/%) from %', v, pn, pnum, pden, contrib;
     end if;
     -- Yesterday's pool has no denominator anywhere, so it invents no rate.
     select value, (props->>'pooled_rows')::int, (props->>'numerator')::numeric,
-           (props->>'denominator')::numeric
-      into v, pn, pnum, pden
+           (props->>'denominator')::numeric, (props->>'contributors')::int
+      into v, pn, pnum, pden, contrib
       from dojo.workspace_metric_series(p_id, since)
      where scope = 'pooled' and computed_on = current_date - 1;
-    if v <> 8 or pn <> 2 or pnum is not null or pden is not null then
-        raise exception 'viewer_gets_aggregates_only: yesterday''s pool should be 8 over 2 rows with no rate, got % over % rows (%/%)', v, pn, pnum, pden;
+    if v <> 8 or pn <> 2 or pnum is not null or pden is not null or contrib <> 2 then
+        raise exception 'viewer_gets_aggregates_only: yesterday''s pool should be 8 over 2 rows with no rate from 2 contributors, got % over % rows (%/%) from %', v, pn, pnum, pden, contrib;
     end if;
-    -- Two days back alice stands alone: a pool of one is shown (D10), carrying
-    -- its rate — one person's number, honestly labelled by pooled_rows = 1.
-    select value, (props->>'pooled_rows')::int, (props->>'numerator')::numeric,
-           (props->>'denominator')::numeric
-      into v, pn, pnum, pden
-      from dojo.workspace_metric_series(p_id, since)
+    -- Two days back alice stands alone: a pool of one is withheld (F4) — one
+    -- person's number never reaches a viewer.
+    select count(*) into n from dojo.workspace_metric_series(p_id, since)
      where scope = 'pooled' and computed_on = current_date - 2;
-    if v <> 9 or pn <> 1 or pnum <> 9 or pden <> 1 then
-        raise exception 'viewer_gets_aggregates_only: the lone day''s pool should be 9 over 1 row (9/1), got % over % rows (%/%)', v, pn, pnum, pden;
+    if n <> 0 then
+        raise exception 'viewer_gets_aggregates_only: the lone day''s pool must be withheld from viewers, got % rows', n;
     end if;
     -- The repo row passes through as-is; S is not in P so it stays out.
     select count(*), sum(value) into n, v
@@ -264,8 +272,8 @@ begin
         raise exception 'viewer_gets_aggregates_only: ivy must see no per-person row, got %', n;
     end if;
     select count(*) into n from dojo.workspace_metric_series(p_id, since) where scope = 'pooled';
-    if n <> 3 then
-        raise exception 'viewer_gets_aggregates_only: ivy should see 3 pooled rows (the lone day shown, D10), got %', n;
+    if n <> 2 then
+        raise exception 'viewer_gets_aggregates_only: ivy should see 2 pooled rows (the lone day withheld, F4), got %', n;
     end if;
 
     -- dave maintains R AND views P: the repo row still arrives once — the
@@ -278,8 +286,8 @@ begin
     end if;
     select count(*) into n from dojo.workspace_metric_series(p_id, since)
      where scope = 'pooled';
-    if n <> 3 then
-        raise exception 'viewer_gets_aggregates_only: dave should see 3 pooled rows beside his detail, got %', n;
+    if n <> 2 then
+        raise exception 'viewer_gets_aggregates_only: dave should see 2 pooled rows beside his detail, got %', n;
     end if;
     -- And the two halves do not double-count: detail user rows plus pooled rows
     -- of the same day are different scopes, never summed together.
@@ -332,6 +340,184 @@ begin
     select count(*) + n into n from dojo.workspace_metric_series(p_id, since);
     if n <> 0 then
         raise exception 'non_member_reads_nothing: carol administers another dōjō and should read nothing here, got % rows', n;
+    end if;
+end $$;
+
+-- ── F4: pools count people, and one person counts once ──────────────────────
+-- Own fixture (amelia, boris, client-f4 in tenant ztest-wsmetrics-f4), so the
+-- P-workspace counts above never move. Back to the owner for the inserts, then
+-- authenticated again for the reads (the definer test's idiom).
+reset role;
+
+-- Eight days — today two contributors
+-- (shown), yesterday one commit-less row (withheld), day -2 one contributor
+-- with two commit rows (withheld — F4 counts people), day -3 one contributor
+-- with three commit rows plus a second contributor (shown, first person once),
+-- day -4 one keyed and one keyless commit row plus a second contributor (the
+-- keyed row wins). Day -5 is one person with a commit-less and a commit row
+-- (withheld — two readings, one contributor); day -6 the same plus a second
+-- contributor (shown: 3 readings, 2 contributors); day -7 two keyless commits
+-- where the later-pushed row has the lower sha (pushed_at breaks the tie).
+-- Per-commit rows carry props.authored_at (L0 ruling; the daemon sends it from
+-- sensei.commits, unknown shas without the key).
+insert into dojo.principals (id, auth_user_id, display_name) values
+  ('a0000000-0000-4000-8000-000000000051', 'a1000000-0000-4000-8000-000000000051', 'amelia'),
+  ('a0000000-0000-4000-8000-000000000052', 'a1000000-0000-4000-8000-000000000052', 'boris'),
+  ('a0000000-0000-4000-8000-000000000053', 'a1000000-0000-4000-8000-000000000053', 'client-f4');
+
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
+  ('b0000000-0000-4000-8000-00000000005a', 'organization/ztest-wsmetrics-f4', 'organization',
+   'ztest-wsmetrics-f4', 'f4 follow-up fixture', 'x');
+
+insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via) values
+  ('b0000000-0000-4000-8000-00000000005a', 'a0000000-0000-4000-8000-000000000051', 'contributor', 'employer', 'github_oauth'),
+  ('b0000000-0000-4000-8000-00000000005a', 'a0000000-0000-4000-8000-000000000052', 'contributor', 'employer', 'github_oauth');
+
+insert into dojo.workspaces (id, tenant_id, slug, name) values
+  ('c0000000-0000-4000-8000-00000000006a',
+   'b0000000-0000-4000-8000-00000000005a', 'ztest-wsmetrics-f4-p', 'workspace F4P');
+
+insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
+  ('90000000-0000-4000-8000-0000000000c1', 'b0000000-0000-4000-8000-00000000005a',
+   'github.com/ztest-wsmetrics-f4/r', 'r', 'github');
+insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant_id) values
+  ('c0000000-0000-4000-8000-00000000006a', '90000000-0000-4000-8000-0000000000c1', 'b0000000-0000-4000-8000-00000000005a');
+
+insert into dojo.workspace_viewers (workspace_id, principal_id) values
+  ('c0000000-0000-4000-8000-00000000006a', 'a0000000-0000-4000-8000-000000000053');
+
+-- Day -3: time order f3 < 7c < 0a1, sha sort reversed, latest written first
+-- (a last-write picker takes f3 and fails); latest middle by value and
+-- numerator with its own denominator, so max, min and split-part pickers fail.
+insert into dojo.repository_metrics (id, tenant_id, repository_id, metric_id, scope, principal_id, commit_sha, computed_on, value, props, pushed_at)
+select v.id::uuid, 'b0000000-0000-4000-8000-00000000005a', '90000000-0000-4000-8000-0000000000c1', m.id, 'user', v.who::uuid, v.sha, v.day::date, v.value,
+       v.props::jsonb || case when v.comm is null then '{}'::jsonb else jsonb_build_object('authored_at', v.comm) end,
+       coalesce(v.pushed::timestamptz, now())
+  from (values
+    ('82000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000051', null,                                       current_date,     1, '{"denominator": 1}', null, null),
+    ('82000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000052', null,                                       current_date,     2, '{"denominator": 3}', null, null),
+    ('82000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000051', null,                                       current_date - 1, 5, '{"denominator": 2}', null, null),
+    ('82000000-0000-4000-8000-000000000004', 'a0000000-0000-4000-8000-000000000051', 'aa0000000000000000000000000000000000000001', current_date - 2, 4, '{"denominator": 2}', format('%sT09:00:00Z', (current_date - 2)::text), null),
+    ('82000000-0000-4000-8000-000000000005', 'a0000000-0000-4000-8000-000000000051', 'bb0000000000000000000000000000000000000002', current_date - 2, 6, '{"denominator": 3}', format('%sT11:00:00Z', (current_date - 2)::text), null),
+    ('82000000-0000-4000-8000-000000000006', 'a0000000-0000-4000-8000-000000000051', 'f3c81a000000000000000000000000000000000003', current_date - 3, 0.30, '{"denominator": 10}', format('%sT10:00:00Z', (current_date - 3)::text), ((current_date - 3) + time '08:02')::timestamptz),
+    ('82000000-0000-4000-8000-000000000007', 'a0000000-0000-4000-8000-000000000051', '7c2d00000000000000000000000000000000000004', current_date - 3, 0.05, '{"denominator": 2}',  format('%sT12:00:00Z', (current_date - 3)::text), ((current_date - 3) + time '08:01')::timestamptz),
+    ('82000000-0000-4000-8000-000000000008', 'a0000000-0000-4000-8000-000000000051', '0a1900000000000000000000000000000000000005', current_date - 3, 0.10, '{"denominator": 4}',  format('%sT14:00:00Z', (current_date - 3)::text), ((current_date - 3) + time '08:00')::timestamptz),
+    ('82000000-0000-4000-8000-000000000009', 'a0000000-0000-4000-8000-000000000052', null,                                       current_date - 3, 0.50, '{"denominator": 6}', null, ((current_date - 3) + time '08:03')::timestamptz),
+    ('82000000-0000-4000-8000-000000000010', 'a0000000-0000-4000-8000-000000000051', 'cc0000000000000000000000000000000000000006', current_date - 4, 7, '{"denominator": 2}', format('%sT10:00:00Z', (current_date - 4)::text), ((current_date - 4) + time '08:00')::timestamptz),
+    ('82000000-0000-4000-8000-000000000011', 'a0000000-0000-4000-8000-000000000051', 'dd0000000000000000000000000000000000000007', current_date - 4, 100, '{"denominator": 100}', null, ((current_date - 4) + time '09:00')::timestamptz),
+    ('82000000-0000-4000-8000-000000000012', 'a0000000-0000-4000-8000-000000000052', null,                                       current_date - 4, 1, '{"denominator": 1}', null, ((current_date - 4) + time '08:30')::timestamptz),
+    ('82000000-0000-4000-8000-000000000013', 'a0000000-0000-4000-8000-000000000051', null,                                       current_date - 5, 1, '{"denominator": 1}', null, null),
+    ('82000000-0000-4000-8000-000000000014', 'a0000000-0000-4000-8000-000000000051', 'ee0000000000000000000000000000000000000008', current_date - 5, 2, '{"denominator": 2}', format('%sT10:00:00Z', (current_date - 5)::text), null),
+    ('82000000-0000-4000-8000-000000000015', 'a0000000-0000-4000-8000-000000000051', null,                                       current_date - 6, 1, '{"denominator": 1}', null, null),
+    ('82000000-0000-4000-8000-000000000016', 'a0000000-0000-4000-8000-000000000051', 'ee2000000000000000000000000000000000000009', current_date - 6, 2, '{"denominator": 2}', format('%sT10:00:00Z', (current_date - 6)::text), null),
+    ('82000000-0000-4000-8000-000000000017', 'a0000000-0000-4000-8000-000000000052', null,                                       current_date - 6, 4, '{"denominator": 4}', null, null),
+    ('82000000-0000-4000-8000-000000000018', 'a0000000-0000-4000-8000-000000000051', 'f7000000000000000000000000000000000000000a', current_date - 7, 50, '{"denominator": 5}', null, ((current_date - 7) + time '08:00')::timestamptz),
+    ('82000000-0000-4000-8000-000000000019', 'a0000000-0000-4000-8000-000000000051', '0b000000000000000000000000000000000000000b', current_date - 7, 6, '{"denominator": 3}', null, ((current_date - 7) + time '09:00')::timestamptz),
+    ('82000000-0000-4000-8000-000000000020', 'a0000000-0000-4000-8000-000000000052', null,                                       current_date - 7, 1, '{"denominator": 1}', null, ((current_date - 7) + time '08:30')::timestamptz)
+  ) as v(id, who, sha, day, value, props, comm, pushed)
+ cross join (select id from sensei.metrics order by key limit 1) m;
+
+set local role authenticated;
+
+do $$
+declare
+    fp_id  constant uuid := 'c0000000-0000-4000-8000-00000000006a';
+    fsince constant date := current_date - 30;
+    n int;
+    v numeric;
+    pn int;
+    pnum numeric;
+    pden numeric;
+    contrib int;
+begin
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000053"}', true);
+
+    -- The two-contributor pool is shown, carrying its pooled rate and count.
+    select value, (props->>'pooled_rows')::int, (props->>'numerator')::numeric,
+           (props->>'denominator')::numeric, (props->>'contributors')::int
+      into v, pn, pnum, pden, contrib
+      from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date;
+    if v <> 3 or pn <> 2 or pnum <> 7 or pden <> 4 or contrib <> 2 then
+        raise exception 'f4_two_pool_shown: today''s pool should be 3 over 2 rows (7/4) from 2 contributors, got % over % rows (%/%) from %', v, pn, pnum, pden, contrib;
+    end if;
+
+    -- The pool of one is withheld (F4).
+    select count(*) into n from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date - 1;
+    if n <> 0 then
+        raise exception 'f4_lone_pool_withheld: yesterday''s pool of one must be withheld from viewers, got % rows', n;
+    end if;
+
+    -- F1: one person with two commits is still one person — withheld.
+    select count(*) into n from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date - 2;
+    if n <> 0 then
+        raise exception 'f4_one_person_two_commits_withheld: day -2''s two rows are one person and must be withheld, got % pooled rows', n;
+    end if;
+
+    -- F2: one reading per person per day — amelia's latest (0a1: 0.10, num
+    -- 0.4, den 4) once, plus boris's commit-less row.
+    select value, (props->>'numerator')::numeric, (props->>'denominator')::numeric,
+           (props->>'contributors')::int
+      into v, pnum, pden, contrib
+      from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date - 3;
+    if v <> 0.60 or pnum <> 3.4 or pden <> 10 then
+        raise exception 'f4_one_person_many_commits_counts_once: day -3''s pool should be 0.60 (3.4/10) with amelia counted once, got % (%/%)', v, pnum, pden;
+    end if;
+    if contrib <> 2 then
+        raise exception 'f4_one_person_many_commits_counts_once: day -3''s pool should cover 2 contributors, got %', contrib;
+    end if;
+
+    -- Keyless rows order after keyed: amelia's keyed row (7, num 14, den 2)
+    -- is her reading even though the keyless row was written later; boris's
+    -- commit-less row adds as now.
+    select value, (props->>'numerator')::numeric, (props->>'denominator')::numeric,
+           (props->>'contributors')::int
+      into v, pnum, pden, contrib
+      from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date - 4;
+    if v <> 8 or pnum <> 15 or pden <> 3 then
+        raise exception 'f4_keyless_rows_order_after_keyed: day -4''s pool should be 8 (15/3) from the keyed row, got % (%/%)', v, pnum, pden;
+    end if;
+    if contrib <> 2 then
+        raise exception 'f4_keyless_rows_order_after_keyed: day -4''s pool should cover 2 contributors, got %', contrib;
+    end if;
+
+    -- H1: contributors counts people, pooled_rows counts readings — they
+    -- differ whenever one person has two readings on a shown day. Runs before
+    -- the day -5 block so each count mutant fails on its own assertion.
+    select value, (props->>'pooled_rows')::int, (props->>'numerator')::numeric,
+           (props->>'denominator')::numeric, (props->>'contributors')::int
+      into v, pn, pnum, pden, contrib
+      from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date - 6;
+    if v <> 7 or pn <> 3 or pnum <> 21 or pden <> 7 or contrib <> 2 then
+        raise exception 'f4_contributors_counts_people_not_readings: day -6''s pool should be 7 (21/7) over 3 readings from 2 contributors, got % (%/%) over % rows from %', v, pnum, pden, pn, contrib;
+    end if;
+
+    -- H1: one person with a commit-less row AND a commit row is still one
+    -- person — two readings, one contributor, withheld.
+    select count(*) into n from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date - 5;
+    if n <> 0 then
+        raise exception 'f4_one_person_commit_and_commitless_withheld: day -5''s two readings are one person and must be withheld, got % pooled rows', n;
+    end if;
+
+    -- M1: keyless ties break on pushed_at. Amelia's two keyless commits: the
+    -- later-pushed row (0b, lower sha) is her reading; a sha-first order
+    -- would take f7's 50 instead.
+    select value, (props->>'numerator')::numeric, (props->>'denominator')::numeric,
+           (props->>'contributors')::int
+      into v, pnum, pden, contrib
+      from dojo.workspace_metric_series(fp_id, fsince)
+     where scope = 'pooled' and computed_on = current_date - 7;
+    if v <> 7 or pnum <> 19 or pden <> 4 then
+        raise exception 'f4_keyless_ties_break_on_pushed_at: day -7''s pool should be 7 (19/4) from the later-pushed row, got % (%/%)', v, pnum, pden;
+    end if;
+    if contrib <> 2 then
+        raise exception 'f4_keyless_ties_break_on_pushed_at: day -7''s pool should cover 2 contributors, got %', contrib;
     end if;
 end $$;
 

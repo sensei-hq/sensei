@@ -6,17 +6,16 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import { ftrReadLabel } from "$lib/ftr.js";
-    import EmptyState from "$lib/components/EmptyState.svelte";
-    import ScreenState from "$lib/components/ScreenState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
     import { Eyebrow, Kanji, Screen } from "$lib/components";
     import { Button, Select } from "@rokkit/ui";
     import { mcp, toolHealthView, toolUsageTotals } from "$lib/state/mcp.svelte.js";
-    import { buildPlaygroundGroups, serversByFamily, type PlaygroundTool } from "./playground-groups.js";
+    import { buildPlaygroundGroups, groupNotice, serversByFamily, type PlaygroundTool } from "./playground-groups.js";
+    import { Notice, EmptyState, StateView } from '@sensei/ui';
     import { INSTRUMENT_TABS, kindMark } from "./instrument-marks";
     import { glyphMode } from "$lib/glyphs";
     import ToolHealthCard from "./ToolHealthCard.svelte";
-    import { InstrumentsState } from "./instruments-state.svelte";
+    import { InstrumentsState, SERVERS_UNREADABLE } from "./instruments-state.svelte";
     import {
         collapsedFor, filterGroups, fmtDate, fmtPayload, heroCopy as heroCopyFor,
         initialTab,
@@ -278,7 +277,7 @@
 
                             <!-- Tool lines -->
                             {#if !collapsed && group.error}
-                                <p class="text-xs text-danger px-3 py-2 m-0" data-testid={`group-error-${group.id}`}>Could not read its tools: {group.error}</p>
+                                <div class="px-3 py-2"><Notice size="inline" bare expanded {...groupNotice(group)!} data-testid={`group-error-${group.id}`} /></div>
                             {/if}
                             {#if !collapsed}
                                 <div>
@@ -336,19 +335,17 @@
                                     <input class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" placeholder="command, e.g. npx" bind:value={ins.serverForm.command} data-testid="add-server-command" />
                                     <textarea class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" rows="2" placeholder="arguments, one per line" bind:value={ins.serverForm.args} data-testid="add-server-args"></textarea>
                                     <textarea class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" rows="2" placeholder="environment, KEY=VALUE per line" bind:value={ins.serverForm.env}></textarea>
-                                    {#if ins.serverFormError}
-                                        <p class="m-0 text-danger" data-testid="add-server-error">{ins.serverFormError}</p>
+                                    {#if ins.serverFormNotice}
+                                        <Notice size="inline" bare expanded {...ins.serverFormNotice} data-testid="add-server-error" />
                                     {/if}
                                     <Button variant="primary" size="sm" type="submit" data-testid="add-server-submit">Add server</Button>
                                 </form>
                             {/if}
                             {#if ins.serversError}
-                                <p class="px-3 py-1 text-xs text-danger" data-testid="servers-error">{ins.serversError}</p>
+                                <div class="px-3 py-1"><Notice size="inline" bare expanded {...ins.serversNotice!} data-testid="servers-error" /></div>
                             {/if}
                             {#if mcp.mcpServersStatus === 'error'}
-                                <p class="px-3 py-1 text-xs text-danger" data-testid="servers-load-error">
-                                    Could not read the discovered servers from the daemon.
-                                </p>
+                                <div class="px-3 py-1"><Notice size="inline" bare expanded {...SERVERS_UNREADABLE} data-testid="servers-load-error" /></div>
                             {:else if discoveredServers.length === 0 && mcp.mcpServersStatus === 'ready'}
                                 <p class="px-3 py-2 text-xs text-ink-mute">
                                     No MCP servers yet. Configure one in Claude Code, Cursor or Zed and scan, or add one here.
@@ -426,7 +423,7 @@
                                 />
                             </label>
                             {#if ins.workspacesError}
-                                <p class="text-xs text-danger m-0 mb-2" data-testid="run-in-error">{ins.workspacesError}</p>
+                                <div class="mb-2"><Notice size="inline" bare expanded {...ins.workspacesNotice!} data-testid="run-in-error" /></div>
                             {/if}
 
                             {#if fields.length === 0}
@@ -492,8 +489,8 @@
                                 <div class="flex-1"></div>
                                 {#if running}
                                     <span class="font-mono text-xs text-ink-soft">calling …</span>
-                                {:else if ins.toolError}
-                                    <span class="font-mono text-xs text-danger" data-testid="tool-error">{ins.toolError}</span>
+                                {:else if ins.toolNotice}
+                                    <Notice size="inline" bare expanded {...ins.toolNotice} data-testid="tool-error" />
                                 {:else if ins.toolResult}
                                     <span class="font-mono text-xs text-success" data-testid="tool-ok">ok · {fmtMs(ins.durationMs)}</span>
                                 {/if}
@@ -530,14 +527,14 @@
                 <p class="text-sm text-ink-mute px-7 py-5">Loading sessions…</p>
             {:else if ins.replayError}
                 <div class="px-7 py-5">
-                    <ScreenState
+                    <StateView
                         status="error"
                         error={ins.replayError}
                         onretry={() => void ins.retryReplaySessions(api)}
                     />
                 </div>
             {:else if ins.replaySessions.length === 0}
-                <EmptyState
+                <EmptyState size="screen"
                     kanji="録"
                     title="No sessions recorded yet"
                     description="Tool calls from your assistant sessions appear here once sensei has captured at least one session."
@@ -615,8 +612,8 @@
                                     <div class="text-xs uppercase tracking-wide text-ink-soft mb-2">
                                         timeline ({ins.sessionCalls.length})
                                     </div>
-                                    {#if ins.replayDetailError}
-                                        <p class="text-xs text-danger" data-testid="replay-detail-error">Could not read this session's tool calls: {ins.replayDetailError}</p>
+                                    {#if ins.replayDetailNotice}
+                                        <Notice size="inline" bare expanded {...ins.replayDetailNotice} data-testid="replay-detail-error" />
                                     {:else if ins.sessionCalls.length === 0}
                                         <p class="text-xs text-ink-mute">No tool calls in this session.</p>
                                     {:else}
@@ -744,9 +741,9 @@
     {#if mcp.toolsHealthStatus === 'loading' || mcp.toolsHealthStatus === 'idle'}
         <p class="text-sm text-ink-mute" data-testid="tool-health-loading">Loading tool sources…</p>
     {:else if mcp.toolsHealthError}
-        <ScreenState status="error" error={mcp.toolsHealthError} onretry={() => void mcp.loadToolsHealth(true)} />
+        <StateView status="error" error={mcp.toolsHealthError} onretry={() => void mcp.loadToolsHealth(true)} />
     {:else if toolsHealth.length === 0}
-        <EmptyState
+        <EmptyState size="screen"
             kanji="健"
             title="No tool sources discovered yet"
             description="Sources appear once sensei has scanned your assistant configs and probed each MCP. Built-in tools and every installed MCP show up here with the share of registered tools actually in use."
@@ -807,13 +804,13 @@
          row (4 cards) on top, then Signals grid, then per-tool usage
          table. Verdict split bar layers into each expanded row (Slice D). -->
     {#if mcp.catalogError || mcp.insightsError}
-        <ScreenState
+        <StateView
             status="error"
             error={mcp.catalogError ?? mcp.insightsError}
             onretry={() => { void mcp.loadCatalog(true); void mcp.loadInsights(true); }}
         />
     {:else if toolStats.length === 0}
-        <EmptyState
+        <EmptyState size="screen"
             kanji="健"
             title="No tool usage data yet"
             description="Tool usage statistics appear after your assistant sessions call sensei tools. Start a session to begin tracking."

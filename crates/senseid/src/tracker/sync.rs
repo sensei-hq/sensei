@@ -1136,6 +1136,49 @@ mod tests {
         assert_eq!(links(&pg, t).await, vec![], "a link the text no longer supports is dropped");
     }
 
+    /// TG5 (D63): a `fetch` link is the start of work, written when the assistant
+    /// fetched the ticket — no text supports it, so a sync's full relink must
+    /// keep it, `started_at` included. Key matching still links the same session
+    /// by branch/prompt beside it (the fallback for a ticket fetched elsewhere,
+    /// e.g. `gh issue view`).
+    #[tokio::test]
+    async fn a_sync_relink_keeps_fetch_links() {
+        let pg = PgStore::test_store().await;
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let s = session_with(&pg, Some(r), &[], &["picking up AUTH-3"]).await;
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.session_task_links
+                    (session_id, task_id, source, matched_key, mentions, started_at)
+             SELECT $1, id, 'fetch', 'AUTH-2', 1, '2026-11-01T09:00:00Z'
+               FROM sensei.tracker_tasks WHERE tracker_id = $2 AND external_id = '10002'",
+        )
+        .bind(s)
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        assert_eq!(
+            links(&pg, t).await,
+            sorted(vec![
+                link(s, "10002", "fetch", "AUTH-2", 1),
+                link(s, "10003", "prompt", "AUTH-3", 1),
+            ]),
+            "the fetch link survives the relink; key matching still links by prompt"
+        );
+        let (started,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+            "SELECT started_at FROM sensei.session_task_links WHERE session_id = $1 AND source = 'fetch'",
+        )
+        .bind(s)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(started.map(|d| d.to_rfc3339()), Some("2026-11-01T09:00:00+00:00".into()));
+    }
+
     #[tokio::test]
     async fn a_removed_issue_keeps_its_links() {
         let pg = PgStore::test_store().await;

@@ -58,13 +58,14 @@ describe.each([
 // role darkened toward black, AA on every tint in both modes.
 const ROLES = ["accent", "success", "warning", "danger", "error", "info"];
 // The website keeps its own copy of these guards, in its own repository (sensei-hq/website).
-const FRONTENDS = ["app/src", "dojo/src"];
+// packages/ui is the family both frontends render (M4, r1).
+const FRONTENDS = ["app/src", "dojo/src", "packages/ui"];
 
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const path = join(dir, e.name);
     if (e.isDirectory()) return e.name === "__snapshots__" ? [] : sources(path);
-    return /\.(svelte|ts)$/.test(e.name) && !/\.spec\./.test(e.name) ? [path] : [];
+    return /\.(svelte|ts|js)$/.test(e.name) && !/\.spec\./.test(e.name) ? [path] : [];
   });
 }
 
@@ -97,6 +98,33 @@ describe("text on a soft tint", () => {
         (r) => text.includes(`class:bg-${r}-soft=`) && text.includes(`class:text-${r}=`),
       ).map((r) => `${relative(root, f)} class:text-${r} beside class:bg-${r}-soft`);
       return [...lines, ...directives];
+    });
+    expect(found).toEqual([]);
+  });
+
+  // `ink` is near-white by night and a -soft tint stays light, so ink text on a tint reads ~1:1 in dark
+  // mode (Settings · Dōjō's "Dōjō to sensei" tile, 2026-11-04). An element on a tint, and everything
+  // nested inside it, writes `text-on-{role}-soft`, never `text-ink*`.
+  it("never draws ink on a soft tint, nor inside one", () => {
+    const indent = (l: string) => l.length - l.trimStart().length;
+    const found = files.filter((f) => f.endsWith(".svelte")).flatMap((f) => {
+      const lines = readFileSync(f, "utf8").split("\n");
+      return lines.flatMap((line, i) =>
+        // A tint chosen by a condition (`tint ? 'bg-accent-soft' : 'bg-paper'`) pairs its text by the same
+        // condition, which a line scan cannot see: the component's own spec pins each surface's pair.
+        ROLES.filter(
+          (r) =>
+            new RegExp(`(?<![\\w-])bg-${r}-soft(?![\\w-])`).test(line) &&
+            !new RegExp(`[?:]\\s*['"]bg-${r}-soft`).test(line),
+        ).flatMap((r) => {
+          const block = [line];
+          for (let j = i + 1; j < lines.length && (lines[j].trim() === "" || indent(lines[j]) > indent(line)); j++)
+            block.push(lines[j]);
+          return block.some((b) => /(?<![\w-])text-ink(-soft|-mute|-faint)?(?![\w-])/.test(b))
+            ? [`${relative(root, f)}:${i + 1} text-ink* on or inside bg-${r}-soft`]
+            : [];
+        }),
+      );
     });
     expect(found).toEqual([]);
   });

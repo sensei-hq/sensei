@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { Notice, StateView } from '@sensei/ui';
     import { railIcon } from "../../observatory-nav";
   import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, Screen, Kanji, ScreenState } from '$lib/components';
+  import { PageHeader, Screen, Kanji } from '$lib/components';
   import {
     CollectiveSharing,
     ATTRIBUTION_OPTIONS,
@@ -69,7 +70,7 @@
 
     {#if data.error || !state}
       <div class="max-w-[1060px] mx-auto px-7 pb-10">
-        <ScreenState status="error" error={data.error ?? 'Failed to load sharing preferences'} onretry={invalidateAll} />
+        <StateView status="error" error={data.error ?? 'Failed to load sharing preferences'} onretry={invalidateAll} />
       </div>
     {:else}
     <div class="max-w-[1060px] mx-auto px-7 pb-10" data-collective-destination={state.destination}>
@@ -79,8 +80,8 @@
         {#if state.saving}
           <span class="text-ink-mute" data-saving>saving…</span>
         {/if}
-        {#if state.error}
-          <span class="text-danger" data-error>{state.error}</span>
+        {#if state.notice}
+          <Notice size="inline" bare expanded {...state.notice} data-error />
         {/if}
       </div>
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { Notice } from '@sensei/ui';
     import { PageHeader, Screen, Kanji } from '$lib/components';
     import { Button, Select } from '@rokkit/ui';
     import { appState } from '$lib/appstate.svelte.js';
@@ -6,6 +7,7 @@
     import { page } from '$app/state';
     import {
         BindingAction,
+        bindingLoadNotice,
         confirmedChip,
         inferredChip,
         resolveBinding,
@@ -224,11 +226,11 @@
                 {@render confirmedRow(bindingView)}
             {:else if bindingView.state === 'inferred'}
                 {@render inferredRow(bindingView)}
-                {#if bindAction.error}
-                    <p class="text-xs text-danger m-0 mt-2" data-binding-error>{bindAction.error}</p>
+                {#if bindAction.notice}
+                    <div class="mt-2"><Notice size="inline" bare expanded {...bindAction.notice} data-binding-error /></div>
                 {/if}
             {:else if bindingView.state === 'error'}
-                <p class="text-xs text-danger m-0" data-binding-load-error>{bindingView.message}</p>
+                <Notice size="inline" bare expanded {...bindingLoadNotice(bindingView)!} data-binding-load-error />
             {:else}
                 <p class="text-sm text-ink-faint m-0">
                     no dōjō binding — this workspace's findings stay local.
@@ -240,8 +242,8 @@
             <h3 class="text-xs font-semibold text-ink-soft m-0 mb-2 uppercase tracking-wide">
                 Repos{data.reposError ? '' : ` (${data.repos.length})`}
             </h3>
-            {#if data.reposError}
-                <p class="text-xs text-danger m-0" data-repos-error>{data.reposError}</p>
+            {#if data.reposNotice}
+                <Notice size="inline" bare expanded {...data.reposNotice} data-repos-error />
             {/if}
             <ul class="list-none m-0 p-0">
                 {#each data.repos as repo (repo.id)}

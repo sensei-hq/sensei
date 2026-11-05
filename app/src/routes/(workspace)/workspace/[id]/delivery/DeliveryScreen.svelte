@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
   // The Delivery Metrics screen (docs/spec/daemon/tracker-delivery-metrics.md D2).
   // PRESENTATIONAL: the numbers, words and requests are delivery-state's; this
   // renders them and reports clicks.
@@ -48,11 +49,10 @@
           <a href="/workspace/{workspaceId}/integrations" class="self-start text-primary underline">Connect one in Integrations</a>
         </div>
       {:else if screen.view === 'daemon_error'}
-        <div data-view="daemon_error" class="flex flex-col gap-3 rounded-md border border-paper-edge bg-paper-soft p-4">
-          <p role="alert" class="m-0 text-sm text-danger">{screen.loadError}</p>
-          <div>
-            <button type="button" class={button} data-action="retry" onclick={() => screen.load()}>Retry</button>
-          </div>
+        <div data-view="daemon_error">
+          {#if screen.loadNotice}
+            <Notice size="panel" {...screen.loadNotice} primary={{ label: 'Retry', onclick: () => screen.load(), name: 'retry' }} />
+          {/if}
         </div>
       {:else}
         <div class="flex min-w-0 flex-col gap-10">
@@ -134,8 +134,8 @@
                   {#if board.factsNote}
                     <p class="m-0 text-sm text-ink-soft">{board.factsNote}</p>
                   {/if}
-                  {#if board.ticketsError}
-                    <p role="alert" class="m-0 text-sm text-danger">{board.ticketsError}</p>
+                  {#if board.ticketsNotice}
+                    <Notice size="inline" {...board.ticketsNotice} expanded />
                   {:else if board.tickets === null}
                     <p class="m-0 text-sm text-ink-mute">Reading tickets…</p>
                   {:else if board.tickets.length === 0}

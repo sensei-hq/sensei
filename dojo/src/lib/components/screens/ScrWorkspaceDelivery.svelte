@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Icon, LoadError } from '$lib/components/kit';
+	import { Screen, Notice } from '@sensei/ui';
+	import { SectionHead, Icon } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
 	import type { SdlcFigure } from '@sensei/sdlc-figures';
 	import type { DeliveryPageState } from '$lib/delivery-state.svelte';
 	import { TEAM_EXPLAINER, type DeliveryBoardView, type TeamView } from '$lib/workspace-delivery-view';
@@ -74,7 +75,7 @@
 
 	<div class="flex flex-col gap-10 px-4 pb-8 md:px-8">
 		{#if error}
-			<LoadError what="this workspace's delivery" {error} />
+			<Notice size="panel" {...dojoLoadNotice("this workspace's delivery", error)} data-load-error />
 		{:else if view && view.boards.length === 0}
 			<p class="text-sm text-ink-faint">No board has reported to this dōjō yet.</p>
 		{:else if view}
@@ -147,7 +148,7 @@
 								<div data-sprint-people={chosen.id}>{@render people(chosen.team)}</div>
 							{/each}
 							{#if state.ticketsError}
-								<p role="alert" class="m-0 text-sm text-danger">{state.ticketsError}</p>
+								<Notice size="inline" expanded {...dojoLoadNotice("this sprint's tickets", state.ticketsError)} />
 							{:else if state.tickets === null}
 								<p class="m-0 text-sm text-ink-mute">Reading tickets…</p>
 							{:else if state.tickets.length === 0}

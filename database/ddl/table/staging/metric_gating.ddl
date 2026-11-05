@@ -27,3 +27,8 @@ comment on column metric_gating.note
      is 'Why the metric is or is not eligible.';
 comment on column metric_gating.modified_at
      is 'The row''s edit time; a live row newer than this is not overwritten.';
+
+-- Row level security (the Supabase advisor), with no client policy. An import
+-- staging table: written and read by the import alone, as the owner; a client
+-- role reads nothing here. Inert on the daemon, which connects as the owner.
+alter table staging.metric_gating enable row level security;

@@ -689,10 +689,13 @@ impl PgStore {
         // has now leaves the R11 negative cache.
         add_task_keys(&mut tx, id).await.map_err(db)?;
 
-        // Relink: a full replacement.
+        // Relink: a full replacement of what key matching found. A `fetch` link is
+        // the start of work (the assistant fetched the ticket, D63): no text
+        // supports it, so the relink keeps it, `started_at` included.
         sqlx_core::query::query(
             "DELETE FROM sensei.session_task_links
-              WHERE task_id IN (SELECT id FROM sensei.tracker_tasks WHERE tracker_id = $1)",
+              WHERE task_id IN (SELECT id FROM sensei.tracker_tasks WHERE tracker_id = $1)
+                AND source <> 'fetch'",
         )
         .bind(id)
         .execute(&mut *tx)

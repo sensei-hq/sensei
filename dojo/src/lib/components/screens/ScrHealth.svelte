@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection, LoadError } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Notice } from '@sensei/ui';
+	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection } from '$lib/components/kit';
 	import type { KitHealth } from '$lib/components/kit/types';
 	import { signalToneClass, alertToneClass, barMax, barPct } from '$lib/health-view';
 
@@ -19,7 +21,7 @@
 		orgName: string;
 		health: KitHealth;
 		/** A failed read — shown in place of the empty state (#335). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 
 	const max = $derived(barMax(health.contribVsApprove));
@@ -36,7 +38,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the health rollup" {error} />
+			<Notice size="panel" {...dojoLoadNotice("the health rollup", error)} data-load-error />
 		{:else}
 			<!-- Signal cards — two-up on phone, four-up on desktop. -->
 			<div class="grid grid-cols-2 gap-4 md:grid-cols-4">

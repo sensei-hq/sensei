@@ -218,57 +218,77 @@ describe('ScrHealth — signal cards, bar chart and alerts', () => {
 	});
 });
 
-describe('ScrBilling — plan, tiers, relay rows and invoices', () => {
+describe('ScrBilling — Free and Pro, no price, an honest attach', () => {
 	afterEach(cleanup);
+	const usage = { seats_used: 18, total_active_seats: 25, billable_users: [] };
+	const free = () => toKitBilling({ account: null, usage });
 
-	it('with no billing account, shows no plan, price, total or invoice it does not have (#106)', () => {
-		const { getByText, queryByText } = render(ScrBilling, {
-			props: { orgName: 'Acme Corp', billing: toKitBilling({ account: null, usage: { seats_used: 3, total_active_seats: 3, billable_users: [] } }) }
-		});
-		expect(getByText('No billing account yet')).toBeTruthy();
+	it('with no billing account, reads Free and shows no renewal or invoice it does not have (#106)', () => {
+		const { getAllByText, getByText, queryByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(getAllByText('Free').length).toBeGreaterThanOrEqual(1);
 		expect(getByText('No invoices — no payment provider is connected.')).toBeTruthy();
 		expect(queryByText(/Renews/)).toBeNull();
-		expect(queryByText(/\$/)).toBeNull();
-		expect(queryByText('current')).toBeNull();
 	});
 
-	it('shows the plan summary with the live monthly total (seats × per-seat)', () => {
-		const { getByText, getAllByText } = render(ScrBilling, {
-			props: { orgName: 'Acme Corp', billing }
-		});
-		expect(getByText('Plan & billing')).toBeTruthy();
-		// the plan appears in the header chip and the current-plan card.
-		expect(getAllByText('Team · private').length).toBeGreaterThanOrEqual(1);
-		// 34 active × $12 = $408.
-		expect(getByText('$408')).toBeTruthy();
-		expect(getByText('34 × $12')).toBeTruthy();
-	});
-
-	it('renders the three tiers, marking the current one and offering CTAs for the rest', () => {
-		const { getByText, getAllByText } = render(ScrBilling, {
-			props: { orgName: 'Acme Corp', billing }
-		});
-		// "Free" is both the tier name and the free tier's price → two matches.
-		expect(getAllByText('Free').length).toBe(2);
-		expect(getByText('Enterprise')).toBeTruthy();
-		// the current (Team) tier shows a "current" chip; the others show a CTA
-		// each (Free → Downgrade, Enterprise → Contact sales).
+	it('shows both plans, Pro priced "to be announced", and no dollar amount anywhere (D75)', () => {
+		const { container, getByText, getAllByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(getAllByText('Pro').length).toBeGreaterThanOrEqual(1);
+		expect(getByText('To be announced')).toBeTruthy();
 		expect(getByText('current')).toBeTruthy();
-		expect(getByText('Downgrade')).toBeTruthy();
-		expect(getByText('Contact sales')).toBeTruthy();
+		expect(container.textContent).not.toMatch(/\$\s?\d/);
 	});
 
-	it('shows the relay free-vs-paid rows and the invoice history', () => {
-		const { getByText, getAllByText } = render(ScrBilling, {
-			props: { orgName: 'Acme Corp', billing }
-		});
-		expect(getByText("Relay — free for individuals, paid where it's shared")).toBeTruthy();
-		// two free rows + two paid rows in the fixture.
-		expect(getAllByText('free · individuals').length).toBe(2);
-		expect(getAllByText('paid · team').length).toBe(2);
-		expect(getByText('Invoices')).toBeTruthy();
-		expect(getByText('Jul 1, 2026')).toBeTruthy();
-		expect(getByText('$408.00')).toBeTruthy();
+	it('says what is always free, and that Pro is what targets on private repositories need', () => {
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(container.textContent).toMatch(/SSO, SCIM, audit/);
+		expect(container.textContent).toContain("Blocking targets on an organization's private repositories");
+	});
+
+	it('the seat card says what it counts (L2)', () => {
+		const { getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		expect(getByText('seats on private workspaces')).toBeTruthy();
+	});
+
+	it('Attach Pro is offered but cannot run until payments are connected — and says so', () => {
+		const { container, getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
+		const attach = container.querySelector('[data-action="attach-pro"]') as HTMLButtonElement;
+		expect(attach.textContent).toContain('Attach Pro');
+		expect(attach.disabled).toBe(true);
+		const n = container.querySelector('[data-attach-notice] [data-component="notice"]') as HTMLElement;
+		expect(n.dataset.tone).toBe('normal');
+		expect(getByText('Plan changes open once payments are connected')).toBeTruthy();
+	});
+
+	it('on Pro: its renewal, no attach, and the disabled Move to Free says why (M6)', () => {
+		const { container, getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing } });
+		expect(getByText(/Renews Aug 1/)).toBeTruthy();
+		expect(container.querySelector('[data-action="attach-pro"]')).toBeNull();
+		expect((container.querySelector('[data-action="move-free"]') as HTMLButtonElement).disabled).toBe(true);
+		expect(container.querySelector('[data-attach-notice]')!.textContent).toContain('Until then this plan stays as it is.');
+	});
+
+	it('a lapsed account says why its private repositories are hidden (M5)', () => {
+		const lapsed = toKitBilling({ account: { plan: 'pro', status: 'past_due', seats_included: 0, seats_used: 0, seats_computed_at: null, period_start: null, period_end: '2026-12-01T00:00:00Z' }, usage }, new Date('2026-11-01T00:00:00Z'));
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: lapsed } });
+		const n = container.querySelector('[data-billing-problem] [data-component="notice"]') as HTMLElement;
+		expect(n.dataset.tone).toBe('refusal');
+		expect(n.textContent).toContain('past due');
+	});
+});
+
+describe('ScrBilling — a read that was refused (M3, r1)', () => {
+	afterEach(cleanup);
+	it('a 403 is a refusal that says who to ask, never "Retry"', () => {
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing, error: { status: 403, message: 'admins only' } } });
+		const n = container.querySelector('[data-load-error]') as HTMLElement;
+		expect(n.dataset.tone).toBe('refusal');
+		expect(n.textContent).toContain('Ask an admin for access.');
+		expect(n.textContent).not.toContain('Retry');
+	});
+
+	it('an unreachable dōjō is a fault that says so', () => {
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing, error: { status: 0, message: 'could not reach the dojo service' } } });
+		expect((container.querySelector('[data-load-error]') as HTMLElement).dataset.tone).toBe('fault');
 	});
 });
 

@@ -1,7 +1,8 @@
 <script lang="ts">
+    import { EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
   import { invalidateAll } from '$app/navigation';
-  import { EmptyState, MoeReasoningPanel, PageHeader, Screen, ScreenState, UnreadWorkspacesNotice } from '$lib/components';
+  import { MoeReasoningPanel, PageHeader, Screen, UnreadWorkspacesNotice } from '$lib/components';
   import { railIcon } from '../observatory-nav';
   import {
     deltaView,
@@ -74,7 +75,7 @@
   {/snippet}
   {#if data.error}
     <div class="p-8">
-      <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+      <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
     </div>
   {:else}
   {#if data.unread.length > 0}
@@ -82,7 +83,7 @@
   {/if}
   {#if data.total === 0 || !open}
     <div class="p-6">
-      <EmptyState
+      <EmptyState size="screen"
         kanji="果"
         title="no measurements yet"
         description="Accepted recommendations show up here once the analyzer's MeasureVerdicts pass has enough post-acceptance sessions (typically ≥3 sessions across ≥3 days)."

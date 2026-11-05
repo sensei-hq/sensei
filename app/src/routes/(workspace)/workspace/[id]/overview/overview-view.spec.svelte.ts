@@ -260,4 +260,10 @@ describe('overviewPageData', () => {
     expect(d.patterns).toBeNull();
     expect(d.patternsError).toBe('Service Unavailable');
   });
+
+  it('says each failed section through the shared Notice: what failed, then why', () => {
+    const d = overviewPageData(err, err, ok({ followed: [], antiPatterns: [] }));
+    expect(d.hotspotsNotice).toEqual({ tone: 'fault', title: "Couldn't read this week's hotspots", detail: 'Service Unavailable', remedy: 'Retry. If it keeps failing, reload the page.' });
+    expect(d.patternsNotice).toBeNull();
+  });
 });

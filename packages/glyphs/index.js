@@ -129,6 +129,10 @@ export const KANJI_ICONS = {
   '聴': 'i-solar-headphones-round-bold-duotone',
   '源': 'i-solar-database-bold-duotone',
   '難': 'i-solar-sad-circle-bold-duotone',
+  // The Notice tones (packages/ui/notice.js): 止 a refusal — someone decided
+  // this; 待 normal — nothing is wrong, it resolves itself (as impact's 待 pending).
+  '止': 'i-solar-forbidden-circle-bold-duotone',
+  '待': 'i-solar-hourglass-bold-duotone',
   // The dōjō's marks (#133 D2).
   '令': 'i-solar-flag-bold-duotone',
   '件': 'i-solar-clipboard-bold-duotone',

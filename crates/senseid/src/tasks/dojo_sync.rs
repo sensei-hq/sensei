@@ -173,6 +173,14 @@ pub async fn tick(
     pg: Arc<PgStore>,
     trackers: Arc<crate::tracker::runtime::TrackerRuntime>,
 ) -> Result<(), String> {
+    // Once: backfill props.authored_at onto per-commit user rows pushed before
+    // the key existed, so the next pushes carry it. A failure retries on the
+    // next tick; it never fails the pass.
+    match pg.backfill_push_authored_at_once().await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(n, "dojo_sync: backfilled push authored_at once"),
+        Err(e) => tracing::warn!(error = %e, "dojo_sync: authored_at backfill failed"),
+    }
     let personas = pg.signed_in_personas().await?;
     if personas.is_empty() {
         tracing::debug!("dojo_sync: no signed-in personas");

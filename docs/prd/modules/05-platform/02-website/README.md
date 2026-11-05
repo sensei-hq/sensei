@@ -7,7 +7,7 @@ client / workspace stakeholder ([persona 7](../../../03-personas.md#7--client--w
 ## Purpose
 
 The website is the **marketing site as a P2 module** — it must **only claim what
-is built**; reorg §12 tracks the claims that already slipped (D-11, D-12). The
+is built**; reorg §12 tracks the claims that already slipped (D-11). The
 site is a SvelteKit app in the sibling repository
 [sensei-hq/website](https://github.com/sensei-hq/website) (#346) that sells the built product, not the
 roadmap. The job is **every claim traces to a roadmap status**; the site is
@@ -16,9 +16,9 @@ this as *what the site promises is what the product does.*
 
 > **Status honesty.** The SvelteKit marketing site exists in the sibling repository
 > `sensei-hq/website` (#346), not in this tree. The
-> GitHub Sponsors link is live. **One claim was already dropped** (D-11). The
-> dependency drift on `@rokkit/*`, `@kavach/*` (D-12) affects the site's own
-> stack. The site must be audited against the roadmap before any deploy.
+> GitHub Sponsors link is live. **One claim was already dropped** (D-11). The site's
+> own dependency drift closed with the rest (`eefc6c119`). The site must be audited
+> against the roadmap before any deploy.
 
 ## In scope / out of scope
 
@@ -93,16 +93,16 @@ npm run claim-audit
 
 - [`scenarios/website.feature`](scenarios/website.feature) — the claim audit,
   pricing page, install command, changelog (pinned for GitHub Sponsors,
-  `NO TEST` / `# gap: D-11, D-12` for the rest).
+  `NO TEST` / `# gap: D-11` for the rest).
 - [`scenarios/website-gaps.feature`](scenarios/website-gaps.feature) — the
-  unbuilt claim audit CI, dependency drift (`NO TEST` / `# gap: D-11, D-12`).
+  unbuilt claim audit CI (`NO TEST` / `# gap: D-11`).
 
 ## Open gaps
 
 - [D-11](../../../../roadmap/06-gaps.md) — website presents unbuilt as shipped
   (one claim already dropped) (P2).
-- [D-12](../../../../roadmap/06-gaps.md) — dependency drift: `@rokkit/*`,
-  `@kavach/*` held back by lockfiles (P3).
+- ~~D-12~~ — **closed 2026-11-03** by `eefc6c119`: every `@kavach/*` at 1.3.2, so
+  `@rokkit/*` resolves once at 1.14.0 (#191).
 - **Claim audit CI** — not built.
 
 ## Related

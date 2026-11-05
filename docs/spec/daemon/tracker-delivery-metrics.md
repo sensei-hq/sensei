@@ -338,8 +338,9 @@ tracker and persona delete.
   transport error → nothing but `attempted_at`; re-sent next tick.
 - Each board's outcome is also recorded in the sync state (`mark_synced` / `mark_sync_error` /
   `mark_sync_skipped`, entity `tracker_board`, key `board_key`), so a failing board is visible
-  outside the log: Settings → Dōjō lists it under its day as a board (named by its key's
-  start, never as a repository). A board that fails to build, or a board read that fails, is
+  outside the log: Settings → Dōjō shows it among the identity's own sync — its activity line,
+  and a fault notice when failing — named by its key's start (`board abababab`), never as a
+  repository. A board that fails to build, or a board read that fails, is
   recorded too and reaches the tick's failures, after every board has been tried. One board's failure, including a database error writing its mark, never
   stops the others.
 - A changed tenant changes the key, so nothing is suppressed after re-filing.

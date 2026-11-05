@@ -76,7 +76,7 @@ describe('a link from Delivery Metrics', () => {
     await vi.waitFor(() => expect(m.container.querySelector('[data-view="ticket"]')).not.toBe(null));
     expect(asked).toContain('/api/workspaces/p-1/tracker-tasks/AUTH-2');
     expect(m.container.querySelector('[data-view="ticket"] h2')!.textContent).toContain('AUTH-2');
-    expect(m.container.querySelector('[data-action="back"]')!.textContent).toBe('Back to Mobile Scrum · All tickets');
+    expect(m.container.querySelector('[data-action="back"]')!.textContent?.trim()).toBe('Back to Mobile Scrum · All tickets');
   });
 
   it('without a link, no ticket opens', async () => {

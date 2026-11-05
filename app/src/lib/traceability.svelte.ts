@@ -1,6 +1,7 @@
 // Doc drift — the rules every traceability screen shares (audit 2026-10-28,
 // item 10: the workspace screen drew an unknown drift status as a green dot, the
 // observatory drew it muted), and the workspace screen's scan action.
+import { failureNotice } from '@sensei/ui';
 import { failureReason, type ApiResult } from '$lib/api.js';
 import type { ChipClasses } from '$lib/dojo-artifacts.js';
 
@@ -59,6 +60,11 @@ export class DriftScan {
   get summaryText(): string | null {
     const s = this.summary;
     return s ? `Scanned ${s.scannedDocs} docs · added ${s.newBroken} broken · resolved ${s.resolved}.` : null;
+  }
+
+  /** Notice props for a failed scan (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice('The drift scan failed', this.error);
   }
 
   /** Why the last scan failed, as a sentence; null when it did not. */

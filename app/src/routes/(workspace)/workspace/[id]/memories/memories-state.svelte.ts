@@ -11,6 +11,7 @@
  * generalise, widen — with the API and the reload handed in, so the whole thing
  * is testable without a transport. Every failure is shown, never swallowed.
  */
+import { failureNotice } from '@sensei/ui';
 import { strengthView, type StrengthView } from '$lib/memoryState.svelte.js';
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 import { failureReason, type ApiResult } from '$lib/api.js';
@@ -321,7 +322,7 @@ export class WorkspaceMemoriesState {
             this.selected.clear();
             await reload();
         } else {
-            this.batchError = `The batch was not proposed: ${failureReason(res.error)}`;
+            this.batchError = failureReason(res.error);
         }
         this.creating = false;
     }
@@ -334,13 +335,27 @@ export class WorkspaceMemoriesState {
         return this.#decideErrors.get(batchId) ?? null;
     }
 
+    // Through the shared Notice (packages/ui/notice.js): what failed, then why.
+    get batchNotice() {
+        return failureNotice("Couldn't propose the batch", this.batchError);
+    }
+    decideNotice(batchId: string) {
+        return failureNotice("Couldn't record that decision", this.decideError(batchId));
+    }
+    promoteNotice(id: string) {
+        return failureNotice("Couldn't widen it", this.promoteError(id));
+    }
+    generaliseNotice(id: string) {
+        return failureNotice("Couldn't generalise it", this.generaliseError(id));
+    }
+
     async decide(api: MemoriesApi, workspaceId: string, batchId: string, status: BatchDecision, reload: Reload): Promise<void> {
         if (!workspaceId) return;
         this.#deciding.add(batchId);
         this.#decideErrors.delete(batchId);
         const res = await api.tryDecideMemoryShareBatch(workspaceId, batchId, status);
         if (res.ok) await reload();
-        else this.#decideErrors.set(batchId, `Not ${status}: ${failureReason(res.error)}`);
+        else this.#decideErrors.set(batchId, failureReason(res.error));
         this.#deciding.delete(batchId);
     }
 

@@ -40,7 +40,7 @@
 			<div class="text-success text-xs font-semibold uppercase" style="letter-spacing: 0.18em; margin-bottom: 4px">
 				{conflict.winner.level} · wins
 			</div>
-			<div class="text-ink text-sm font-medium">{conflict.winner.text}</div>
+			<div class="text-on-success-soft text-sm font-medium">{conflict.winner.text}</div>
 		</div>
 	</div>
 	<div class="border-paper-edge bg-paper text-ink-mute border-t text-sm" style="padding: 12px 16px; line-height: 1.55">

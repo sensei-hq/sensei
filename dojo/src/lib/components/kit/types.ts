@@ -545,30 +545,20 @@ export interface KitScopeOwner {
 
 /** A plan tier card on the billing screen (dojo2-data `billing.tiers[]`). */
 export interface KitBillingTier {
-	/** free · team · ent. */
+	/** free · pro. */
 	id: string;
-	/** Tier glyph (無 · 組 · 企). */
+	/** Tier glyph (無 · 組). */
 	kanji: string;
-	/** The tier name (e.g. "Free" · "Team" · "Enterprise"). */
+	/** The tier name (e.g. "Free" · "Pro"). */
 	name: string;
-	/** The headline price (e.g. "Free" · "Per seat" · "Contract"). */
+	/** The headline price (e.g. "Free" · "To be announced"). */
 	price: string;
-	/** The price qualifier (e.g. "/ mo · active contributor"). */
+	/** The price qualifier (e.g. "per seat on private repositories"). */
 	sub: string;
 	/** The tier's feature lines. */
 	lines: string[];
 	/** The viewer's current tier (accent border · no CTA). */
 	current?: boolean;
-	/** The enterprise tier renders on a dark ink field. */
-	dark?: boolean;
-}
-
-/** A relay free-vs-paid row on the billing screen (dojo2-data `billing.relayRows[]`). */
-export interface KitBillingRelayRow {
-	/** The capability line. */
-	label: string;
-	/** Free for individuals (true) or paid where shared (false). */
-	free: boolean;
 }
 
 /** An invoice row on the billing screen (dojo2-data `billing.invoices[]`). */
@@ -584,11 +574,8 @@ export interface KitBillingInvoice {
 /** Plan & billing state for an org (dojo2-data `billing`). Free where public or
  *  personal; seats bill per active contributor. */
 export interface KitBilling {
-	/** The current plan label (e.g. "Team"); null with no billing account. */
+	/** The current plan label ("Free" · "Pro"); null when nothing was loaded or the plan is unknown. */
 	plan: string | null;
-	/** The monthly price per active contributor; null until a price is set
-	 *  (no payment provider is wired, D-BILLING). */
-	perSeat: number | null;
 	/** Billable active contributors; null when nothing was loaded. */
 	seatsActive: number | null;
 	/** Read-only members (always free); null when not counted. */
@@ -596,8 +583,18 @@ export interface KitBilling {
 	/** The next renewal date (e.g. "Aug 1"); null without a billing period. */
 	renews: string | null;
 	tiers: KitBillingTier[];
-	relayRows: KitBillingRelayRow[];
 	invoices: KitBillingInvoice[];
+	/** Why the account is not what it says — lapsed, or a plan sensei does not
+	 *  know; `null` when there is nothing to say. */
+	problem: KitBillingProblem | null;
+}
+
+/** A billing account that is not current, or not understood (M5). */
+export interface KitBillingProblem {
+	tone: 'refusal' | 'fault';
+	title: string;
+	detail: string;
+	remedy: string;
 }
 
 /** An identity mapping — how a directory/source maps to members + roles

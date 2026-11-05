@@ -77,6 +77,19 @@ export const relayInboxState = {
 	get plansMissing() {
 		return plansMissing;
 	},
+	/** The unreadable inbox as a Notice (fault) — the list's error panel. */
+	get errorNotice() {
+		return error ? { tone: 'fault' as const, title: m.inbox_error_title(), detail: error } : null;
+	},
+	/** A partial read as a Notice (refusal): the runs are shown, and it names what is missing. */
+	get partialNotice() {
+		if (status !== 'ready' || (!unreachable.length && !plansMissing)) return null;
+		const lines = [
+			unreachable.length ? m.inbox_partial_unreachable({ names: unreachable.join(', ') }) : null,
+			plansMissing ? m.inbox_partial_plans({ count: plansMissing }) : null
+		].filter(Boolean);
+		return { tone: 'refusal' as const, mark: '欠', title: m.inbox_partial_title(), detail: lines.join(' ') };
+	},
 
 	load(next: RelaySession[]) {
 		sessions = next;
