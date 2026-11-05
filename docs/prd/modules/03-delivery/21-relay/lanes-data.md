@@ -1,129 +1,107 @@
-# Relay lanes · data model (proposal for discussion, 2026-11-05)
+# Relay lanes · data model (proposal r2 for discussion, 2026-11-05)
 
-**For:** [lanes.md](lanes.md). **Screen and interaction contract:** `coord/mockups/relay-lanes/CONTRACT.md` (Design r1, settled
-with the user). This turns that contract's §2–§4 into tables. Nothing here is built yet.
+**For:** [lanes.md](lanes.md). **Screen and interaction contract:** `coord/mockups/relay-lanes/CONTRACT.md` (Design r1, with
+the "Message the crew" addendum, settled with the user). Nothing here is built yet.
+
+**r2 (user, 2026-11-05):**
+- Reports, reviews, findings, decisions and messages are all **actions on a task**: one table, categorised by kind.
+- What is shared is **Markdown**; the numbers and structure behind it are **props**, which feed metrics.
+- Items **reference the tracker's tickets** rather than copying them.
+- One leases table.
 
 ## Principles
-- **Reuse the run engine.** A crew **is** an `activity.runs` row (a new `kind = 'crew'` beside today's drive runs). Every
-  event **is** an `activity.run_events` row; its `kind` enum gains the crew event names (CONTRACT §3i). Gates stay M21's.
-- **New tables live in a new `relay` schema** in the sensei DB (daemon-owned), for crew-only concepts: lanes, items, tasks,
-  reports, reviews, findings, decisions, leases.
-- **Nullable means "not reported" (D83).** Self-reported numbers are never defaulted to 0; totals say how many turns
-  reported.
-- **Enums for closed sets, a seeded table for the growing one** (finding classes: the learning loop adds to it).
-- **The dōjō gets outlines** (slice 2): the same shapes minus `report_md`, which goes only where sharing is on.
+- **Reuse.**
+  - A crew **is** an `activity.runs` row (new `kind = 'crew'`).
+  - Tickets **are** `sensei.tracker_tasks` (the TG5 integration). Sprints come from `sensei.tracker_task_sprints`, and
+    "an assistant fetched this ticket" from `sensei.session_task_links`.
+  - Gates stay M21's.
+- **One log for a crew: `relay.actions`.** Every hand-off, report, review, question, answer, message, merge and lease change
+  is a row. It is the bus, the history and the audit trail. Drive runs keep `activity.run_events`; nothing is written twice.
+- **Markdown for people, props for machines.** `body_md` is what a reader sees: a summary, a review, a question, a message.
+  `props` (jsonb) holds structured facts: telemetry, files, gates, findings, options. Its keys are fixed per action kind
+  and validated by the daemon, and metrics read them through views.
+- **Nullable means "not reported" (D83).** A missing prop is absent, never 0. Totals say how many turns reported.
 
-## Tables
+## Tables (six)
 
-### `activity.runs` (existing) + one column
-| column | type | note |
+### `activity.runs` (existing) + `kind`
+`kind run_kind ('drive','crew')`, default `'drive'`. The crew's workspace, goal, status, heartbeat and timestamps are the
+existing columns.
+
+### `relay.lanes`: who is registered
+`id` uuid pk · `run_id` → runs · `code` (`L1`…, unique per run) · `title` null (the objective, e.g. "Diagrams") · `role`
+(`'coordinator','contributor'`; one coordinator per run) · `family` / `version` null / `model` null · `capabilities` text[]
+· `repo`, `worktree` null (the broker creates it) · `token_hash` · `checkpoint` jsonb null (for `reregister`) ·
+`registered_at` / `unregistered_at` null.
+Liveness is **not** a column here; it's the lane's lease (below).
+
+### `relay.leases`: one table for every lease
+`id` · `run_id` · `lane_id` · `kind` (`'lane','resource'`) · `resource` text null (`rust-build`, `e2e`…; null for a lane
+lease) · `state` (`'queued','granted','released','expired','refused'`) · `expires_at` null · `granted_at`,
+`released_at` null · `props` jsonb (disk/swap at grant, refusal reason).
+- A lane lease is renewed by every MCP call. When it expires, the lane is suspended.
+- A resource lease is the build slot: at most one granted per resource, machine-wide (partial unique).
+
+### `relay.items`: the queue (triage and backlog)
+`id` · `workspace_id` · `tracker_task_id` → `sensei.tracker_tasks` null (**the ticket; never copied**) · `title`, `kind`
+(`'bug','feature','gap','issue','finding'`), `tags` text[] (**only for manual items**; a ticketed item reads its title, type
+and sprint from the tracker) · `state` (`'backlog','planned','closed'`) · `position` int null (backlog order) ·
+`added_by`, `added_at`.
+- **Triage is a view, not rows:** tracker tasks in an active sprint (`tracker_task_sprints`, primary sprint) for the
+  workspace's connected trackers that have no item yet, plus manual triage items (`state = 'triage'`, the one extra state).
+- **`+` (add to backlog)** creates the item with `tracker_task_id` set and `state = 'backlog'`.
+- The ticket button is the tracker task's key and URL.
+
+### `relay.tasks`: what a lane works on
+`id` · `run_id` · `item_id` null · `lane_id` null (**one active task per lane**, partial unique) · `reviewer_lane_id`
+null (never the author's lane; checked) · `title` · `phase` (`'tests','impl','docs','mockup','merge'`) · `state`
+(`'ready','assigned','in_progress','reported','in_review','changes_requested','approved','merged','done','blocked','interrupted'`)
+· `round` · `owned_paths`, `acceptance`, `resources` text[] · `deps` uuid[] · `assigned_at`, `state_changed_at`,
+`completed_at` null.
+- The ticket comes through `item_id → tracker_task_id`.
+- The **brief is the `assigned` action's `body_md`**, frozen. A change is a `brief_updated` action.
+- A review is a state of the task: the reviewer's queue is `reviewer_lane_id = me and state = 'in_review'`.
+
+### `relay.actions`: everything that happens
+`id` bigserial · `run_id` · `task_id` null (null for crew-level ones, e.g. a message "about no particular task") ·
+`lane_id` null (who acted; null = the person) · `kind` (`action_kind`, below) · `round` null · `phase` null ·
+`body_md` text null (the shared text, ≤ 600 chars for summaries, leak-guarded) · `report_md` text null (a full report;
+shared to the dōjō only when sharing is on) · `props` jsonb · `reply_to` bigint null (an answer → its question; a
+review → the report it reviews) · `created_at`.
+
+| `kind` | `body_md` is | `props` keys |
 |---|---|---|
-| `kind` | `run_kind` enum `('drive','crew')`, default `'drive'` | new; a crew is a run |
+| `assigned` | the hand-off brief | `docs[]`, `owned_paths[]`, `acceptance[]` |
+| `brief_updated` | the new brief | `docs[]` |
+| `started` | — | — |
+| `reported` | the summary sent with the request for review | `look_at`, `flags`, `base`, `branch`, `commits[]`, `files[{path,added,removed,outside_owned}]`, `gates[{cmd,exit,counts}]`, `family`, `version`, `model`, `tokens_in`, `tokens_out`, `tokens_cache`, `started_at`, `ended_at`, `context_tokens`, `compactions`, `peak_memory_mb`, `subagents[{role,model}]` |
+| `reviewed` | the review summary | `verdict` (`approved` / `changes_requested`), `findings[{severity,class,text,file,line}]`, `probes`, `subagents[]`, the same telemetry keys |
+| `asked` | the question | `options[{id,label,detail}]`, `recommended`, `blocks[task_id]`, `asked_of` (`person` / lane) |
+| `answered` | an optional note | `option`, `surface` (`desktop` / `dojo`) |
+| `message` | the message | `to` (`coordinator` / lane / `everyone`), `surface`; delivery is tracked by `delivered` / `read` actions with `reply_to` |
+| `merged` | the merge note | `commits[]`, `into`, `gates[]` |
+| `interrupted` / `reoffered` | — | `checkpoint`, `to_lane` |
+| `compacted` | — | `context_tokens_before`, `context_tokens_after` |
 
-The crew's workspace, goal, status, heartbeat and timestamps are the existing columns.
+- **Decisions are actions** (`asked` and `answered`, linked by `reply_to`). An open decision is an `asked` with no answer,
+  and its task reads "needs your answer" while it is open. The same applies to messages.
+- **Finding classes:** a lookup table `relay.finding_classes (code, label, added_by)`, seeded from the README checklist. The
+  daemon rejects an unknown class in `props.findings`. The learning loop adds classes.
 
-### `relay.lanes`: who is registered (CONTRACT §3a, §3f)
-| column | type | note |
-|---|---|---|
-| `id` | uuid pk | |
-| `run_id` | uuid → `activity.runs` | the crew |
-| `code` | text | `L1`, `L2`…; unique per run |
-| `title` | text null | the objective ("Diagrams"), set at first assignment |
-| `role` | `lane_role` enum `('coordinator','contributor')` | one coordinator per run (partial unique) |
-| `family` / `version` / `model` | text / text null / text null | self-reported, recorded on every report too |
-| `capabilities` | text[] | `rust`, `sql`, `ts`, `mockups`, `can-push`, `can-run-hooks` |
-| `repo` / `worktree` | text / text null | the broker creates the worktree (lanes.md §13.2) |
-| `token_hash` | text | the lane token is shown once; only its hash is stored |
-| `lease_state` | `lease_state` enum `('live','suspended','gone')` | |
-| `lease_expires_at` / `heartbeat_at` | timestamptz | any MCP call renews |
-| `checkpoint` | jsonb null | resumed by `reregister` |
-| `registered_at` / `unregistered_at` | timestamptz / null | |
-
-### `relay.items`: triage and backlog in one table (CONTRACT §1d, §3h)
-| column | type | note |
-|---|---|---|
-| `id` | uuid pk | |
-| `workspace_id` | uuid | |
-| `state` | `item_state` enum `('triage','backlog','planned','closed')` | `+` moves triage → backlog |
-| `position` | int null | backlog order; the coordinator takes the lowest |
-| `kind` | `item_kind` enum `('bug','feature','gap','issue','finding')` | |
-| `title` / `tags` | text / text[] | |
-| `source_provider` | `item_source` enum `('jira','ado','github','manual')` | |
-| `source_key` / `source_url` / `sprint` | text null | the ticket button; the sprint pill |
-| `created_by` / `created_at` | text / timestamptz | |
-
-### `relay.tasks`: what a lane works on (CONTRACT §3b)
-| column | type | note |
-|---|---|---|
-| `id` | uuid pk | |
-| `run_id` / `item_id` | uuid / uuid null | the item it came from |
-| `lane_id` | uuid null | **one active task per lane** (partial unique where state is active) |
-| `reviewer_lane_id` | uuid null | set when the task enters review; never the author's lane (check) |
-| `title` / `tags` | text / text[] | |
-| `phase` | `task_phase` enum `('tests','impl','docs','mockup','merge')` | |
-| `state` | `task_state` enum `('ready','assigned','in_progress','reported','in_review','changes_requested','approved','merged','done','blocked','interrupted')` | |
-| `round` | int | +1 per `changes_requested` |
-| `ticket_provider` / `ticket_key` / `ticket_url` | null | inherited from the item, or set by the coordinator |
-| `brief_summary` / `brief_docs` | text / text[] | **frozen at assignment**; a change is `task.brief_updated` |
-| `acceptance` / `owned_paths` / `resources` | text[] | |
-| `deps` | uuid[] | forward-only (the coordinator checks) |
-| `assigned_at` / `state_changed_at` / `completed_at` | timestamptz null | for "time on it" and "Completed today" |
-
-A review is **a state of the task, not a separate task**: `get_tasks` for a reviewer returns tasks where
-`reviewer_lane_id = me` and `state = 'in_review'`, ahead of new work.
-
-### `relay.reports`: a work or rework turn (CONTRACT §3c)
-| column | type | note |
-|---|---|---|
-| `id` / `task_id` / `lane_id` | uuid | |
-| `round` / `phase` | int / `task_phase` | |
-| `summary_changed` / `summary_look_at` / `summary_flags` | text / text / text null | ≤ 600 chars each, leak-guarded |
-| `report_md` | text | shared to the dōjō only when sharing is on |
-| `base` / `branch` / `commits` | text / text / text[] | |
-| `files` | jsonb `[{path, added, removed, outside_owned}]` | **the broker computes `outside_owned`** |
-| `gates` | jsonb `[{cmd, exit, counts}]` | |
-| `family` / `version` / `model` | text | a snapshot at report time |
-| `tokens_in` / `tokens_out` / `tokens_cache` | bigint null | not reported = null |
-| `started_at` / `ended_at` | timestamptz null | |
-| `context_tokens` / `compactions` / `peak_memory_mb` | int null | |
-| `subagents` | jsonb `[{role, model}]` | |
-| `created_at` | timestamptz | |
-
-### `relay.reviews` + `relay.findings` (CONTRACT §3d)
-`reviews`: `id, task_id, report_id, round, verdict` (enum `('approved','changes_requested')`), `summary` (≤ 600),
-`reviewer_lane_id`, the reviewer's `family`/`version`/`model`, `subagents` jsonb, `probes` int null, the same telemetry
-columns as reports, `created_at`.
-`findings`: `id, review_id, severity` (enum `('high','medium','low','info')`), `class` → `relay.finding_classes(code)`,
-`text, file null, line null, answered_in_report_id null` (set when the next round answers it).
-`finding_classes`: seeded with `vacuous-test, missing-failure-path, single-tenant-fixture, role-untested,
-aggregate-direction, secret-in-output, skipped-live-test, stale-claim, fabricated-value, parity-loss, …` (the README
-checklist). The coordinator may add one.
-
-### `relay.decisions` (CONTRACT §3e)
-`id, run_id, task_id null, question, context, options` (jsonb `[{id,label,detail}]`), `recommended, blocks uuid[]`,
-`state` (enum `('open','answered','withdrawn')`), `answer_option, answer_note, answered_by`, `answered_surface` (enum
-`('desktop','dojo')`), `asked_at, answered_at`.
-
-### `relay.resource_leases` (lanes.md §8)
-`id, run_id, lane_id, resource` (text: `rust-build`, `e2e`…), `state` (enum `('queued','granted','released','refused')`),
-`requested_at, granted_at, released_at`, `disk_free_bytes, swap_free_bytes` (measured at grant), `refusal_reason null`.
-One `granted` row per resource machine-wide (partial unique).
-
-### `activity.run_events` (existing): kinds and two columns
-- `kind` gains: `lane.registered`, `lane.suspended`, `lane.resumed`, `task.assigned`, `task.brief_updated`,
-  `task.started`, `task.reported`, `review.submitted`, `decision.asked`, `decision.answered`, `task.interrupted`,
-  `task.reoffered`, `merge.done`, `task.completed`, `triage.added`, `backlog.added`, `resource.granted`,
-  `context.compacted`.
-- New nullable `task_id` and `lane_id` columns (indexed), so a task's history and a lane's timeline are one query each.
-  `detail` jsonb keeps the payload.
-
-## Derived reads (views, security-invoker; the screen never sums in TS)
-- `relay.now`: decisions open, the triage count by source, one row per lane with its active task, completed today.
-- `relay.task_history`: one task's events, reports, reviews and findings, newest first.
-- `relay.lane_metrics`: first-pass approval, rounds, finding classes by family/version/model.
+## Derived reads (security-invoker views; the screen never adds up numbers itself)
+- `relay.now`: open `asked` actions for the person · the triage count by tracker and sprint · one row per lane with its
+  active task and lease · today's completed tasks.
+- `relay.task_history`: a task's actions, newest first, with props unpacked for the folds.
+- `relay.lane_metrics`: per family/version/model: rounds, first-pass approval, finding classes (unnested from
+  `reviewed.props.findings`), tokens, time working vs waiting for review, how accurate claims were.
 
 ## Integrity
-- The coordinator is unique per run, an active task is unique per lane, and a granted lease is unique per resource.
-- `reviewer_lane_id <> lane_id` (no self-review).
-- Every state change writes a `run_events` row in the same transaction: the events are the bus and the audit trail.
-- Lane tokens are hashed. No transcript text in any column. Every text field is leak-guarded before any push.
+- One coordinator per run, one active task per lane, at most one granted lease per resource, no self-review.
+- Every task state change and its action are written in **one transaction**.
+- Lane tokens are hashed. No transcript text anywhere. `body_md` and `report_md` pass the leak guard before any push.
+
+## Decided (user, 2026-11-05)
+- Actions over separate report/review/finding/decision/message tables.
+- Markdown for what is shared; props for what metrics read.
+- Items reference tracker tickets; triage is a view over active sprints.
+- One `leases` table.
