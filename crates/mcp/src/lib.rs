@@ -31,24 +31,45 @@ pub enum HttpMethod {
 ///
 /// `query` is an ordered list of key/value pairs (some daemon handlers read
 /// several, e.g. `?workspace=…&limit=…&tags=…`); `body` is the JSON payload for
-/// `POST`/`PUT` tools (`None` for plain `GET`s).
+/// `POST`/`PUT` tools (`None` for plain `GET`s). `headers` carries request
+/// headers — relay lane calls authenticate over the Authorization header
+/// (never the query: tokens must not land in access logs).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DaemonRequest {
     pub method: HttpMethod,
     pub path: String,
     pub query: Vec<(String, String)>,
     pub body: Option<Value>,
+    pub headers: Vec<(String, String)>,
 }
 
 impl DaemonRequest {
     fn get(path: impl Into<String>) -> Self {
-        Self { method: HttpMethod::Get, path: path.into(), query: Vec::new(), body: None }
+        Self {
+            method: HttpMethod::Get,
+            path: path.into(),
+            query: Vec::new(),
+            body: None,
+            headers: Vec::new(),
+        }
     }
     fn post_json(path: impl Into<String>, body: Value) -> Self {
-        Self { method: HttpMethod::Post, path: path.into(), query: Vec::new(), body: Some(body) }
+        Self {
+            method: HttpMethod::Post,
+            path: path.into(),
+            query: Vec::new(),
+            body: Some(body),
+            headers: Vec::new(),
+        }
     }
     fn put_json(path: impl Into<String>, body: Value) -> Self {
-        Self { method: HttpMethod::Put, path: path.into(), query: Vec::new(), body: Some(body) }
+        Self {
+            method: HttpMethod::Put,
+            path: path.into(),
+            query: Vec::new(),
+            body: Some(body),
+            headers: Vec::new(),
+        }
     }
     fn with_query(mut self, key: impl Into<String>, val: impl Into<String>) -> Self {
         self.query.push((key.into(), val.into()));
@@ -497,6 +518,20 @@ pub fn daemon_request_for(
             ))
         }
     }
+}
+
+/// Shape the inline `relay_wait_for_task` daemon call (the binary sends it on
+/// a longer-timeout client — a hold of up to 50 s outlives the default one).
+/// Pure so the reds pin it: GET + `lane_id`/`timeout_ms` query, authenticating
+/// over the Authorization header. `timeout_ms` passes through verbatim; the
+/// daemon clamps.
+pub fn build_relay_wait_request(
+    lane_id: &str,
+    lane_token: &str,
+    timeout_ms: Option<u64>,
+) -> DaemonRequest {
+    let _ = (lane_id, lane_token, timeout_ms);
+    todo!("relay item 2 phase B")
 }
 
 /// Pure: build the JSON body for `propose_memory` / `save_memory`. Both tools
@@ -1986,7 +2021,7 @@ mod tests {
         .unwrap();
         assert_eq!(req.method, HttpMethod::Post);
         assert_eq!(req.path, "/api/runs/plan");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["goal"], "ship it");
         assert_eq!(body["workspace"], "sensei", "unset workspace defaults to the resolved repo");
         assert_eq!(body["plan_ref"], "docs/plan/x/plan.md");
@@ -2114,7 +2149,7 @@ mod tests {
             .unwrap();
         assert_eq!(req.method, HttpMethod::Post);
         assert_eq!(req.path, "/api/mcp/call");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["tool"], "search");
         assert_eq!(body["params"]["repoId"], "sensei", "resolved name injected as repoId");
         assert_eq!(body["params"]["q"], "foo");
@@ -2130,7 +2165,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(req.path, "/api/mcp/call");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["tool"], "get_file_tags", "daemon-side tool name");
         assert_eq!(body["params"]["tag"], "hook", "pattern renamed to tag");
         assert_eq!(body["params"]["repoId"], "sensei");
@@ -2141,7 +2176,7 @@ mod tests {
         let req = daemon_request_for("get_workspace_summary", &json!({}), "/cwd", Some("sensei"))
             .unwrap();
         assert_eq!(req.path, "/api/mcp/call");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["tool"], "get_workspace_summary");
         assert_eq!(body["params"]["repoId"], "sensei");
     }
@@ -2200,7 +2235,7 @@ mod tests {
             Some("sensei"),
         )
         .unwrap();
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["gov_scope"], "organization");
         assert_eq!(body["folder"], "/proj/cwd", "cwd forwarded as governing folder");
         assert_eq!(body["enforcement"], "mandatory");
@@ -2220,7 +2255,7 @@ mod tests {
             Some("sensei"),
         )
         .unwrap();
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["spine_slot"], "brief");
         assert_eq!(body["feature"], "auth");
 
@@ -2315,7 +2350,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(req.path, "/api/knowledge/outcomes");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["outcomes"][0]["memory_id"], "m1");
         assert_eq!(body["outcomes"][0]["outcome"], "applied");
     }
@@ -2404,7 +2439,7 @@ mod tests {
                 .unwrap();
         assert_eq!(req.method, HttpMethod::Post);
         assert_eq!(req.path, "/api/stance");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["under"], json!("/my/cwd"), "under defaults to cwd");
         assert_eq!(body["autonomy"], json!("run_freely"));
         assert!(
@@ -2423,7 +2458,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["under"], json!("/repo"), "explicit under overrides cwd");
         assert_eq!(body["scope"], json!("workspace"));
         assert_eq!(body["review"], json!("quorum"));
@@ -2507,5 +2542,241 @@ mod tests {
             resolved(resolve_default_workspace(Some(""), Some(&empty), "cwdname")),
             ("cwdname".into(), "cwd", None)
         );
+    }
+
+    // ── Relay lanes (slice 1, item 2) ───────────────────────────────────────
+    // Phase A pins the shapes; the schemas, arms and sender loop are phase-B
+    // implementation. Tool names carry the `relay_` prefix (no contract fixes
+    // MCP names; the prefix avoids collisions with future unprefixed tools).
+    // Q-marked tests encode a recommendation, not a settled reading.
+
+    const RELAY_TOOLS: &[&str] = &[
+        "relay_register",
+        "relay_heartbeat",
+        "relay_reregister",
+        "relay_unregister",
+        "relay_get_tasks",
+        "relay_wait_for_task",
+        "relay_report_task",
+        "relay_submit_review",
+        "relay_ask_decision",
+        "relay_answer_decision",
+        "relay_send_message",
+        "relay_plan_item",
+        "relay_assign_task",
+        "relay_merge_task",
+    ];
+
+    const LANE_ID: &str = "01938931-0000-7000-8000-000000000001";
+    const TOKEN: &str = "tok-test-1";
+
+    fn auth_header(token: &str) -> (String, String) {
+        ("authorization".into(), ["Bearer", token].join(" "))
+    }
+
+    fn lane_args(extra: Value) -> Value {
+        let mut obj = extra.as_object().cloned().unwrap_or_default();
+        obj.insert("lane_id".into(), json!(LANE_ID));
+        obj.insert("lane_token".into(), json!(TOKEN));
+        Value::Object(obj)
+    }
+
+    /// The request carries the token ONLY in the headers — never the path,
+    /// query or body (tokens must not land in access logs).
+    fn assert_token_only_in_headers(req: &DaemonRequest, token: &str) {
+        assert!(!req.path.contains(token), "token in path: {}", req.path);
+        for (k, v) in &req.query {
+            assert!(!k.contains(token) && !v.contains(token), "token in query: {k}={v}");
+        }
+        if let Some(body) = &req.body {
+            assert!(!body.to_string().contains(token), "token in body: {body}");
+        }
+        assert!(req.headers.contains(&auth_header(token)), "no auth header: {req:?}");
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_tools_are_listed() {
+        let tools = handle_list_tools();
+        let names: Vec<&str> =
+            tools["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        for tool in RELAY_TOOLS {
+            assert!(names.contains(tool), "{tool} is listed");
+        }
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_register_requires_role_and_family() {
+        assert_eq!(missing_required("relay_register", &json!({})), vec!["role", "family"]);
+        // Q6-REC: crew_id rides along when given, but is not required yet.
+        assert!(
+            missing_required("relay_register", &json!({"role": "contributor", "family": "x"}))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_lane_calls_require_identity() {
+        for tool in ["relay_heartbeat", "relay_get_tasks", "relay_report_task"] {
+            assert_eq!(
+                missing_required(tool, &json!({})),
+                vec!["lane_id", "lane_token"],
+                "{tool} requires identity"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_register_posts_lane_shape_unauthenticated() {
+        // Register MINTS the token, so it carries no auth header (consistent
+        // with the daemon's localhost trust: tokens bind lane identity, not
+        // machine access).
+        let req = daemon_request_for(
+            "relay_register",
+            &json!({"role": "contributor", "family": "claude-code",
+                    "crew_id": "c1", "capabilities": ["rust"]}),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/register");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["role"], "contributor");
+        assert_eq!(body["family"], "claude-code");
+        assert_eq!(body["crew_id"], "c1");
+        assert_eq!(body["capabilities"], json!(["rust"]));
+        assert!(req.headers.is_empty());
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_heartbeat_posts_with_auth() {
+        let req =
+            daemon_request_for("relay_heartbeat", &lane_args(json!({})), "/cwd", None).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/heartbeat");
+        assert_eq!(req.body.as_ref().unwrap()["lane_id"], LANE_ID);
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_get_tasks_gets_with_auth() {
+        let req =
+            daemon_request_for("relay_get_tasks", &lane_args(json!({})), "/cwd", None).unwrap();
+        assert_eq!(req.method, HttpMethod::Get);
+        assert_eq!(req.path, "/api/relay/tasks");
+        assert!(req.query.contains(&("lane_id".to_string(), LANE_ID.to_string())));
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_wait_is_inline_for_the_long_hold() {
+        // A hold of up to 50 s needs the binary's longer-timeout client, so
+        // `daemon_request_for` returns None (the infer/embed pattern, Q10).
+        assert!(
+            daemon_request_for("relay_wait_for_task", &lane_args(json!({})), "/cwd", None)
+                .is_none()
+        );
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_wait_builder_shapes_hold_open() {
+        let req = build_relay_wait_request(LANE_ID, TOKEN, Some(5_000));
+        assert_eq!(req.method, HttpMethod::Get);
+        assert_eq!(req.path, "/api/relay/tasks/wait");
+        assert!(req.query.contains(&("lane_id".to_string(), LANE_ID.to_string())));
+        assert!(req.query.contains(&("timeout_ms".to_string(), "5000".to_string())));
+        assert_token_only_in_headers(&req, TOKEN);
+        // Omitted → the key is absent (never null-filled); the daemon
+        // applies its default.
+        let req = build_relay_wait_request(LANE_ID, TOKEN, None);
+        assert!(!req.query.iter().any(|(k, _)| k == "timeout_ms"));
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_assign_splits_caller_and_assignee_q1_q13_rec() {
+        // Q13-REC: `lane_id` is the calling coordinator, `to_lane` the
+        // assignee; both uuids (Q1-REC).
+        let to_lane = "01938931-0000-7000-8000-000000000002";
+        let req = daemon_request_for(
+            "relay_assign_task",
+            &lane_args(json!({"task_id": "t1", "to_lane": to_lane,
+                              "title": "T", "phase": "tests"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/t1/assign");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["to_lane"], to_lane);
+        assert_eq!(body["phase"], "tests");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_report_forwards_turn_shape() {
+        let req = daemon_request_for(
+            "relay_report_task",
+            &lane_args(json!({"task_id": "t1", "phase": "impl", "round": 2,
+                              "summary": {"changed": "c", "look_at": "l", "flags": null},
+                              "files": [{"path": "a", "added": 1, "removed": 0}]})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.path, "/api/relay/tasks/t1/report");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["phase"], "impl");
+        assert_eq!(body["round"], 2);
+        assert_eq!(body["summary"]["changed"], "c");
+        assert_eq!(body["files"][0]["path"], "a");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_message_requires_to_and_text() {
+        assert_eq!(
+            missing_required("relay_send_message", &lane_args(json!({}))),
+            vec!["to", "text"]
+        );
+        let req = daemon_request_for(
+            "relay_send_message",
+            &lane_args(json!({"to": {"kind": "everyone"}, "text": "hi"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/messages");
+        assert_eq!(req.body.as_ref().unwrap()["text"], "hi");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_existing_tools_unaffected() {
+        // Guard: the phase-B match insertion must not move existing arms.
+        let req = daemon_request_for(
+            "update_phase",
+            &json!({ "phase": "build", "workspace": "torii" }),
+            "/cwd",
+            Some("sensei"),
+        )
+        .unwrap();
+        assert_eq!(req.path, "/api/state/torii");
+        let req = daemon_request_for("search", &json!({ "query": "foo" }), "/cwd", Some("sensei"))
+            .unwrap();
+        assert_eq!(req.path, "/api/mcp/call");
     }
 }
