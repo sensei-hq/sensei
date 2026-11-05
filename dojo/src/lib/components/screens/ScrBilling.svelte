@@ -6,7 +6,8 @@
 	import type { ReadError } from '$lib/read-error';
 	import { Chip, ListSection } from '$lib/components/kit';
 	import type { KitBilling } from '$lib/components/kit/types';
-	import { tierAction, currentTier, attachNotice, SEAT_COPY } from '$lib/billing-view';
+	import { tierAction, currentTier, attachNotice, SEAT_COPY, hiddenCountLine, hiddenReturnLine } from '$lib/billing-view';
+	import type { BillingHiddenOrg } from '$lib/billing-hidden';
 	import { NAV_ORG_BASE } from '$lib/nav';
 	import { glyphs } from '$lib/glyphs.svelte';
 	import { panelsFor, savePanels } from '$lib/view-states.svelte';
@@ -18,8 +19,10 @@
 	// Free: an organization's public repositories and its members' personal dōjōs.
 	// Pro: its private repositories too, billed per seat; the price is to be
 	// announced (D46, D52, D59, D75, D86). On rokkit's ScreenShell (D87, view
-	// `dojo.org.billing`): search narrows "Who is counted"; the bands remember how
-	// the user left them (view-states).
+	// `dojo.org.billing`): search narrows "Who is counted" and opens it; the bands
+	// remember how the user left them (view-states). The org's private repositories
+	// the plan hides are listed here, for admins only — members are told nothing
+	// on Sharing (user ruling 2026-11-05).
 	//
 	// Presentational: the page supplies the billing state from the live `…/billing`
 	// read; the copy and actions come from billing-map and billing-view. A failed
@@ -27,16 +30,22 @@
 	let {
 		orgName,
 		billing,
-		error = null
+		error = null,
+		hidden = null,
+		hiddenError = null
 	}: {
 		orgName: string;
 		billing: KitBilling;
 		/** A failed read — shown in place of the plan (#335). */
 		error?: ReadError | string | null;
+		/** The org's repositories the plan hides (`billing_hidden`), or `null` when none is. */
+		hidden?: BillingHiddenOrg | null;
+		/** A failed read of them — said in their section, never "none hidden". */
+		hiddenError?: ReadError | string | null;
 	} = $props();
 
 	const VIEW = 'dojo.org.billing';
-	const navIcon = NAV_ORG_BASE.flatMap((g) => g.items).find((i) => i.id === 'billing')?.icon;
+	const nav = NAV_ORG_BASE.flatMap((g) => g.items).find((i) => i.id === 'billing');
 	let panels = $state(panelsFor(VIEW));
 	let filter = $state<{ values: Record<string, unknown>; stat?: string | null }>({ values: {}, stat: null });
 	const query = $derived(String(filter.values.q ?? '').trim().toLowerCase());
@@ -56,7 +65,7 @@
 		error
 			? undefined
 			: [
-					{ label: 'What it’s for', kanji: '円', title: 'The plan decides which of this organization’s repositories the dōjō holds.' },
+					{ label: 'What it’s for', kanji: nav?.kanji ?? '', title: 'The plan decides which of this organization’s repositories the dōjō holds.' },
 					{
 						label: 'How to read it',
 						steps: [
@@ -72,7 +81,7 @@
 
 <ScreenShell
 	viewId={VIEW}
-	mark={{ kanji: '円', icon: navIcon }}
+	mark={{ kanji: nav?.kanji ?? '', icon: nav?.icon }}
 	glyphs={glyphs.mode === 'icon' ? 'icon' : 'text'}
 	title="Plan & billing"
 	{context}
@@ -89,6 +98,25 @@
 		{:else}
 			{#if billing.problem}
 				<div data-billing-problem><Notice size="panel" {...billing.problem} /></div>
+			{/if}
+
+			<!-- The org's private repositories the plan hides, for every user (D88). -->
+			{#if hiddenError}
+				<section data-billing-hidden aria-labelledby="billing-hidden-h" class="border-line flex flex-col gap-2 rounded border p-4">
+					<h2 id="billing-hidden-h" class="text-ink-mute m-0 text-xs font-medium uppercase tracking-widest">Hidden private repositories</h2>
+					<Notice size="inline" {...dojoLoadNotice('the hidden repositories', hiddenError)} data-load-error />
+				</section>
+			{:else if hidden}
+				<section data-billing-hidden aria-labelledby="billing-hidden-h" class="border-line flex flex-col gap-2 rounded border p-4">
+					<h2 id="billing-hidden-h" class="text-ink-mute m-0 text-xs font-medium uppercase tracking-widest">Hidden private repositories</h2>
+					<p class="text-ink m-0 text-sm">{hiddenCountLine(hidden.count)}</p>
+					<ul class="m-0 flex flex-col gap-1 pl-4 text-sm">
+						{#each hidden.repos as name, i (i)}
+							<li class="text-ink">{name}</li>
+						{/each}
+					</ul>
+					<p class="text-ink-mute m-0 text-xs">{hiddenReturnLine(billing)}</p>
+				</section>
 			{/if}
 
 			{#if billing.showPlans}
@@ -148,7 +176,7 @@
 							<span class="display text-ink text-3xl font-light">{billing.seatsActive ?? '—'}</span>
 							<span class="text-ink text-sm">{SEAT_COPY.label}</span>
 							<span class="text-ink-mute text-xs">{SEAT_COPY.basis}</span>
-							<details data-billing-counted class="mt-2 text-sm">
+							<details data-billing-counted class="mt-2 text-sm" open={query ? true : undefined}>
 								<summary class="text-ink-mute cursor-pointer">Who is counted</summary>
 								{#if billing.seats.length === 0}
 									<p class="text-ink-mute m-0 mt-2">No one has a seat on a private workspace.</p>

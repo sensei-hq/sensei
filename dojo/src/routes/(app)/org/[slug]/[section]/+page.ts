@@ -7,6 +7,7 @@ import { tabForSection } from '$lib/role-surfaces-view';
 import { guardTenantScope } from '$lib/org-guard';
 import {
 	getKnowledge,
+	listMyRepos,
 	listWorkspaces,
 	type KnowledgeLibraryWire,
 	type WorkspaceRow
@@ -36,6 +37,7 @@ import {
 	type BillingResponse
 } from '$lib/admin-data';
 import { toKitBilling, noBilling } from '$lib/billing-map';
+import { loadOrgHidden } from '$lib/billing-hidden';
 import {
 	toKitTriageGroups,
 	toKitApprovals,
@@ -216,6 +218,13 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		toKitBilling
 	);
 
+	// Billing (admin) — the org's private repositories the plan hides, counted and
+	// listed for its admins (user ruling 2026-11-05). From the caller's own
+	// repositories (a tenant's repository appears for each member) grouped by the
+	// server's `billing_hidden` flag; a failed read is its own error.
+	const billingHidden =
+		section === 'billing' ? await loadOrgHidden(slug, () => listMyRepos(opts)) : { hidden: null, error: null };
+
 	// Workspaces (org) — the tenant's dojo.workspaces (daemon-populated on relay runs).
 	// Real read; honest-empty until populated — NOT the orgWorkspacesFor(slug) fixture.
 	const workspacesRes = await guardedFor<WorkspaceRow[], KitWorkspace[]>(
@@ -276,6 +285,8 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		health: healthRes.value,
 		healthError: healthRes.error,
 		billing: billingRes.value,
-		billingError: billingRes.error
+		billingError: billingRes.error,
+		billingHidden: billingHidden.hidden,
+		billingHiddenError: billingHidden.error
 	};
 };

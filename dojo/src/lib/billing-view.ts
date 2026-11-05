@@ -116,3 +116,18 @@ export const SEAT_COPY = {
 	remedy: "A seat opens when someone starts a relay session on a private workspace. Closing a seat isn't built yet.",
 	proposed: { label: 'people working on private repositories', note: 'The count Pro is priced by (D59). Proposed — not in code.' }
 } as const;
+
+/** The hidden-repositories section's count line (user ruling 2026-11-05): hidden
+ *  for everyone, the admin included. */
+export function hiddenCountLine(count: number): string {
+	return `${count} private ${count === 1 ? 'repository is' : 'repositories are'} hidden from everyone in this organization.`;
+}
+
+/** How the org's hidden private repositories come back, for the account's state:
+ *  past due — once it is paid; a lapsed or canceled Pro — once it is renewed (both
+ *  "as they were", D88); never on Pro — they sync once Pro is attached. */
+export function hiddenReturnLine(b: Pick<KitBilling, 'tag' | 'problem'>): string {
+	if (b.tag === 'Past due') return 'They come back as they were once it is paid.';
+	if (b.problem?.code === 'not_subscribed' || b.problem?.code === 'subscription_expired') return 'They come back as they were once Pro is renewed.';
+	return 'They sync once Pro is attached.';
+}

@@ -190,7 +190,7 @@
 {:else if data.section === 'health'}
 	<ScrHealth orgName={data.orgName} health={data.health} error={data.healthError} />
 {:else if data.section === 'billing'}
-	<ScrBilling orgName={data.orgName} billing={data.billing} error={data.billingError} />
+	<ScrBilling orgName={data.orgName} billing={data.billing} error={data.billingError} hidden={data.billingHidden} hiddenError={data.billingHiddenError} />
 {:else}
 	<!-- Named branches only. This used to be an unlabelled `{:else}` holding
 	     billing, which happened to be correct because ORG_SECTIONS covered

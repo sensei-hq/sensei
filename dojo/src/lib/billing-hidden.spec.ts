@@ -1,13 +1,13 @@
 // billing build · WP8 (reviews/Design/L4-billing-build-tests-r2.md H1; r3 L3, L0 rulings 2026-11-05):
-// Sharing's hidden line — and later Billing's member line (M4) — group the rows the SERVER
-// flagged (`billing_hidden`) per organization. One pure helper, in a neutral module both
+// Billing's hidden-repositories section groups the rows the SERVER flagged
+// (`billing_hidden`) per organization. One pure helper, in a neutral module both
 // zones can import (`$lib/billing-hidden`). It reads the flag and takes no predicate: the
 // rule lives once, in `isBillingHiddenRepo` ($lib/server/repositories.ts), and nothing here
 // re-derives it.
 import { describe, it, expect } from 'vitest';
 import type { MyRepoWire } from './client-data';
 
-import { splitBillingHidden } from './billing-hidden';
+import { splitBillingHidden, orgHidden, loadOrgHidden } from './billing-hidden';
 
 const wire = (id: string, org: string | null, billing_hidden: boolean, reason_code: string | null = null): MyRepoWire => ({
 	repository_id: id,
@@ -32,29 +32,55 @@ const wire = (id: string, org: string | null, billing_hidden: boolean, reason_co
 });
 
 describe('splitBillingHidden · groups by the flag (WP8)', () => {
-	it('shown rows keep their order; flagged rows are counted per org, first seen first, linked to its Plan & billing', () => {
+	it('nothing flagged: every row shown, nothing hidden', () => {
+		const rows = [wire('a', 'acme', false), wire('n', null, false)];
+		expect(splitBillingHidden(rows)).toEqual({ shown: rows, hidden: [] });
+	});
+});
+
+// billing follow-up (user rulings 2026-11-05, reviews/Design/L4-billing-build-impl-r1.md):
+// members see NO line about hidden repositories, so nothing links to Plan & billing from
+// Sharing; admins see the org's hidden private repositories, count AND list, in Billing.
+// The group carries the repositories' names and no link. Still the flag, never a predicate.
+describe('billing follow-up · the hidden group names its repositories, and links nowhere', () => {
+	it('each org group carries its count and the hidden repositories\' names, in order, and no href', () => {
 		const { shown, hidden } = splitBillingHidden([
 			wire('a', 'acme', true),
 			wire('p', 'acme', false),
 			wire('g', 'globex', true),
-			wire('b', 'acme', true),
-			wire('n', null, false)
+			wire('b', 'acme', true)
 		]);
-		expect(shown.map((r) => r.repository_id)).toEqual(['p', 'n']);
+		expect(shown.map((r) => r.repository_id)).toEqual(['p']);
 		expect(hidden).toEqual([
-			{ org: 'acme', count: 2, href: '/org/acme/billing' },
-			{ org: 'globex', count: 1, href: '/org/globex/billing' }
+			{ org: 'acme', count: 2, repos: ['a', 'b'] },
+			{ org: 'globex', count: 1, repos: ['g'] }
 		]);
 	});
 
-	it('the flag decides, never reason_code: false + not_subscribed is shown, true + null is hidden', () => {
-		const { shown, hidden } = splitBillingHidden([wire('kept', 'acme', false, 'not_subscribed'), wire('gone', 'globex', true, null)]);
-		expect(shown.map((r) => r.repository_id)).toEqual(['kept']);
-		expect(hidden).toEqual([{ org: 'globex', count: 1, href: '/org/globex/billing' }]);
+	it('the flag decides the group: false + not_subscribed stays out, true + null is in', () => {
+		const { hidden } = splitBillingHidden([wire('kept', 'acme', false, 'not_subscribed'), wire('gone', 'globex', true, null)]);
+		expect(hidden).toEqual([{ org: 'globex', count: 1, repos: ['gone'] }]);
 	});
 
-	it('nothing flagged: every row shown, no line', () => {
-		const rows = [wire('a', 'acme', false), wire('n', null, false)];
-		expect(splitBillingHidden(rows)).toEqual({ shown: rows, hidden: [] });
+	it('orgHidden is one org\'s group, or null when none of its repositories is hidden', () => {
+		const rows = [wire('a', 'acme', true), wire('g', 'globex', true), wire('p', 'acme', false)];
+		expect(orgHidden(rows, 'acme')).toEqual({ org: 'acme', count: 1, repos: ['a'] });
+		expect(orgHidden(rows, 'initech')).toBeNull();
+		expect(orgHidden([wire('p', 'acme', false)], 'acme')).toBeNull();
+	});
+
+	it('loadOrgHidden reads the caller\'s repositories and groups that org\'s', async () => {
+		const read = async () => [wire('a', 'acme', true), wire('g', 'globex', true)];
+		expect(await loadOrgHidden('acme', read)).toEqual({ hidden: { org: 'acme', count: 1, repos: ['a'] }, error: null });
+	});
+
+	// A failed read is an error, never "nothing hidden" (D83).
+	it('a failed read is the error, never an empty group', async () => {
+		const read = async (): Promise<MyRepoWire[]> => {
+			throw new Error('boom');
+		};
+		const out = await loadOrgHidden('acme', read);
+		expect(out.hidden).toBeNull();
+		expect(out.error).toEqual({ status: 0, message: 'could not reach the dojo service' });
 	});
 });

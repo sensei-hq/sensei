@@ -2,9 +2,9 @@
 // reviews/Design/L4-billing-build-tests-r2.md H1). The server decides which rows the plan
 // hides and sends the answer as ONE flag, `MyRepoWire.billing_hidden`
 // (`isBillingHiddenRepo` in `$lib/server/repositories.ts`, pinned in repositories.spec.ts).
-// The screen reads that flag and re-derives nothing: a flagged row leaves the list, and in
-// its place ONE line per organization says private repositories are supported on paid
-// plans and links to that organization's Plan & billing. Hidden, not deleted.
+// The screen reads that flag and re-derives nothing: a flagged row leaves the list for
+// every user, and nothing on Sharing says why (user ruling 2026-11-05) — admins see the
+// hidden repositories in their org's Plan & billing.
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/svelte';
 import ScrSharing from './ScrSharing.svelte';
@@ -41,22 +41,6 @@ const lines = (c: HTMLElement) => [...c.querySelectorAll('[data-plan-hidden]')].
 describe('ScrSharing · WP8 · reads billing_hidden', () => {
 	afterEach(cleanup);
 
-	it('sharing_hides_an_org_private_repo_until_subscribed_and_links_to_billing', () => {
-		const { container } = show([
-			repo({ repository_id: 'a', name: 'core' }),
-			repo({ repository_id: 'b', name: 'portal', reason_code: 'unclaimed' }),
-			shown({ repository_id: 'p', name: 'site', forge_visibility: 'public', reason_code: null, reason: null, remedy: null, may_share: true, sync_enabled: true })
-		]);
-		expect(listed(container)).toEqual(['Share site']);
-		expect(container.textContent).not.toMatch(/\bcore\b|\bportal\b/);
-		const line = container.querySelector('[data-plan-hidden="acme"]') as HTMLElement;
-		expect(line.textContent).toMatch(/acme/);
-		expect(line.textContent).toMatch(/Private repositories are supported on paid plans/);
-		const link = line.querySelector('a') as HTMLAnchorElement;
-		expect(link.getAttribute('href')).toBe('/org/acme/billing');
-		expect(link.textContent?.trim()).toBe('Plan & billing');
-	});
-
 	// The flag is the whole decision: a flagged row is hidden whatever reason_code says.
 	it('billing_hidden true hides the row whatever reason_code says', () => {
 		const { container } = show([
@@ -64,7 +48,7 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 			repo({ repository_id: 'b', name: 'b', reason_code: 'not_elected_org' })
 		]);
 		expect(listed(container)).toEqual([]);
-		expect(lines(container)).toEqual(['acme']);
+		expect(lines(container)).toEqual([]);
 	});
 
 	// A guard (passes today, must stay): it kills a screen that re-derives the rule from
@@ -74,22 +58,6 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 		expect(listed(container)).toEqual(['Share kept']);
 		expect(getByText(/No active subscription for this organization/)).toBeTruthy();
 		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
-	});
-
-	it('one line per organization, never one per repository', () => {
-		const { container } = show([
-			repo({ repository_id: 'a', name: 'a' }),
-			repo({ repository_id: 'b', name: 'b' }),
-			repo({ repository_id: 'c', name: 'c', repo_key: 'github.com/globex/c', tenant: 'github/globex', owning_org: 'globex' })
-		]);
-		expect(lines(container)).toEqual(['acme', 'globex']);
-		expect(container.querySelector('[data-plan-hidden="globex"] a')?.getAttribute('href')).toBe('/org/globex/billing');
-	});
-
-	it('when every repository is hidden, the line shows, not "No repositories yet"', () => {
-		const { container } = show([repo()]);
-		expect(container.textContent).not.toMatch(/No repositories yet/);
-		expect(lines(container)).toEqual(['acme']);
 	});
 
 	// Guards (pass today, must stay): rows the server did not flag are listed.
@@ -108,5 +76,36 @@ describe('ScrSharing · WP8 · reads billing_hidden', () => {
 		expect(listed(container)).toEqual(['Share unknown-vis']);
 		expect(getByText(/Waiting to learn whether it is public or private/)).toBeTruthy();
 		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
+	});
+});
+
+// billing follow-up (user rulings 2026-11-05): a flagged repository is hidden for every
+// user, and members see NO line about it — no "supported on paid plans" claim (wrong for a
+// past-due org that IS on Pro) and no link to Plan & billing (an admin page a member can't
+// open). Admins see the hidden repositories in Billing instead.
+describe('ScrSharing · billing follow-up · no line about hidden repositories', () => {
+	afterEach(cleanup);
+
+	it('flagged rows leave the list with no plan line and no link to Plan & billing', () => {
+		const { container } = show([
+			repo({ repository_id: 'a', name: 'core' }),
+			repo({ repository_id: 'b', name: 'portal', repo_key: 'github.com/globex/portal', tenant: 'github/globex', owning_org: 'globex' }),
+			shown({ repository_id: 'p', name: 'site', forge_visibility: 'public', reason_code: null, reason: null, remedy: null, may_share: true, sync_enabled: true })
+		]);
+		expect(listed(container)).toEqual(['Share site']);
+		expect(container.textContent).not.toMatch(/\bcore\b|\bportal\b/);
+		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
+		expect(container.textContent).not.toMatch(/paid plans?/i);
+		expect(container.querySelector('a[href*="/billing"]')).toBeNull();
+	});
+
+	// When every repository is hidden the screen says there is nothing to share — not "No
+	// repositories yet" (they exist) and nothing about plans.
+	it('every row hidden: "none can be shared right now", no plan claim, not "No repositories yet"', () => {
+		const { container } = show([repo(), repo({ repository_id: 'b', name: 'b' })]);
+		expect(listed(container)).toEqual([]);
+		expect(container.querySelector('[data-screen-body]')?.textContent).toContain('None of your repositories can be shared right now.');
+		expect(container.textContent).not.toMatch(/No repositories yet|paid plans?/i);
+		expect(container.querySelector('a[href*="/billing"]')).toBeNull();
 	});
 });
