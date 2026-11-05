@@ -15,7 +15,7 @@
     "review",
     "commit"
   ],
-  "current_phase": "done \u2014 awaiting push / PR to develop (user)",
+  "current_phase": "PR #358 open (feature/delivery_metrics \u2192 develop), awaiting review",
   "completed": [
     "F1 (#351) committed",
     "F2 claims",
@@ -52,7 +52,7 @@
     "F2 A1: D3/D4 rewritten after the pre-build audit (21 findings): plan tenant, facts once per tick, canonical hash without history_at, attempted marks + 6 h expiry + failure backoff + sync-state record, lock skip, consistency token, removed sprints sdlc null, removed tickets not sent, membership sprints, FOR UPDATE ordering, workspace from verified repository ids, app ticket order",
     "F2a: delivery_tickets.title nullable (Jira can return no summary; D83), no column defaults on removed/sprints"
   ],
-  "next_command": "ask the user before pushing; then PR feature/delivery_metrics \u2192 develop",
+  "next_command": "watch PR #358 checks and review; address feedback on feature/delivery_metrics",
   "decisions_f3": [
     "B16 (user 2026-11-05): merged effort_cost/rework_cost and any item with <2 contributors show only to readers allowed per-person rows; F3 serves the restricted view to everyone, F4 opens it",
     "A2: effort wire shape, dojo.file_delivery wrapper (one transaction), dojo.delivery_effort_merged pure merge",
