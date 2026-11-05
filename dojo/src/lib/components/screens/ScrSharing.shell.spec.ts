@@ -83,17 +83,8 @@ describe('ScrSharing · the screen shell (D87)', () => {
 		expect(container.textContent).not.toMatch(/No repositories yet/);
 	});
 
-	// Search filters what is shown; it never brings back a row the server flagged hidden.
-	it('search never lists a billing-hidden row', async () => {
-		const hidden = repo({ repository_id: 'h', name: 'api-private', forge_visibility: 'private', authority: 'organization', billing_hidden: true, sync_enabled: false, reason_code: 'not_subscribed' });
-		const { container } = render(ScrSharing, { props: { repos: [...ROWS, hidden] } });
-		await search(container, 'api');
-		expect(listed(container)).toEqual(['Share api']);
-		expect(container.querySelector('[data-plan-hidden="acme"]')).toBeTruthy();
-	});
-
 	// billing follow-up: search over hidden rows neither lists them nor says anything about them.
-	it.skip('pending: billing-followup — search never lists a billing-hidden row, and no plan line appears', async () => {
+	it('search never lists a billing-hidden row, and no plan line appears', async () => {
 		const hidden = repo({ repository_id: 'h', name: 'api-private', forge_visibility: 'private', authority: 'organization', billing_hidden: true, sync_enabled: false, reason_code: 'not_subscribed' });
 		const { container } = render(ScrSharing, { props: { repos: [...ROWS, hidden] } });
 		await search(container, 'api');

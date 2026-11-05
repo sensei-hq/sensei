@@ -18,8 +18,9 @@
 	// PRESENTATIONAL. It renders the verdict it is handed and reports a toggle
 	// upward; it never re-derives `sync_enabled`, because the view is the single
 	// place `may_share AND elected` is decided. Nor does it decide what the plan
-	// hides (WP8): the server sends `billing_hidden`, and one line per organization
-	// replaces those rows, linking to its Plan & billing.
+	// hides (WP8): the server sends `billing_hidden`, and those rows are left out
+	// for every user with nothing said about them here (user ruling 2026-11-05) —
+	// admins see them in their org's Plan & billing.
 	//
 	// On rokkit's ScreenShell (D87, view `dojo.you.sharing`): search in the filter
 	// band narrows the listed rows by name or key; the bands remember how the user
@@ -48,11 +49,11 @@
 	let panels = $state(panelsFor(VIEW));
 	let filter = $state<{ values: Record<string, unknown>; stat?: string | null }>({ values: {}, stat: null });
 	const query = $derived(String(filter.values.q ?? '').trim().toLowerCase());
-	const split = $derived(splitBillingHidden(repos));
+	const shown = $derived(splitBillingHidden(repos).shown);
 	const visible = $derived(
 		query
-			? split.shown.filter((r) => (r.name ?? '').toLowerCase().includes(query) || r.repo_key.toLowerCase().includes(query))
-			: split.shown
+			? shown.filter((r) => (r.name ?? '').toLowerCase().includes(query) || r.repo_key.toLowerCase().includes(query))
+			: shown
 	);
 
 	let drafts = $state<Record<string, string>>({});
@@ -92,14 +93,6 @@
 			has registered it.
 		</p>
 	{:else}
-		<!-- WP8: one line per organization whose private repositories the plan hides. -->
-		{#each split.hidden as h (h.org)}
-			<p data-plan-hidden={h.org} class="m-0 flex flex-wrap items-baseline gap-1 rounded border border-line p-3 text-sm text-ink">
-				<span class="font-semibold">{h.org}</span>
-				<span class="text-ink-mute">— Private repositories are supported on paid plans.</span>
-				<a href={h.href} class="text-ink underline">Plan & billing</a>
-			</p>
-		{/each}
 		{#if visible.length > 0}
 		<ul class="flex flex-col gap-2">
 			{#each visible as r (r.repository_id)}
@@ -218,6 +211,8 @@
 		</ul>
 		{:else if query}
 			<p class="text-sm text-ink-mute">No repository matches “{filter.values.q}”.</p>
+		{:else}
+			<p class="text-sm text-ink-mute">None of your repositories can be shared right now.</p>
 		{/if}
 	{/if}
 </section>

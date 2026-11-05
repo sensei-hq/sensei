@@ -10,8 +10,8 @@ import ScrBilling from './ScrBilling.svelte';
 import { toKitBilling, noBilling } from '$lib/billing-map';
 import type { BillingResponse } from '$lib/admin-data';
 import { NAV_ORG_BASE } from '$lib/nav';
-import type { Component } from 'svelte';
-import type { ReadError } from '$lib/read-error';
+import type { ComponentProps } from 'svelte';
+import type { BillingHiddenOrg } from '$lib/billing-hidden';
 
 type Usage = BillingResponse['usage'];
 const kit = (account: BillingResponse['account'], u: Usage) => toKitBilling({ account, usage: u }, NOW);
@@ -39,7 +39,7 @@ describe('ScrBilling · billing build · the screen shell (D87)', () => {
 		const { container } = screen(acct('active'));
 		const shell = container.querySelector('[data-screen-shell]') as HTMLElement;
 		expect(shell.dataset.view).toBe('dojo.org.billing');
-		expect(shell.querySelector('[data-screen-mark]')?.textContent).toBe('円');
+		expect(shell.querySelector('[data-screen-mark]')?.textContent).toBe(navBilling.kanji);
 		expect(shell.querySelector('[data-screen-title]')?.textContent).toBe('Plan & billing');
 		expect(shell.querySelector('[data-screen-context]')?.textContent).toBe('acme · Pro');
 		expect(shell.querySelector('[data-screen-description]')?.textContent).toMatch(/public repositories/i);
@@ -223,22 +223,20 @@ describe('ScrBilling · billing build · the plan tab', () => {
 });
 
 // billing follow-up (user rulings 2026-11-05; reviews/Design/L4-billing-build-impl-r1.md L1, L2, L3).
-// ── test-local props the follow-up adds; its implementation commit deletes them ──
-type HiddenGroup = { org: string; count: number; repos: string[] };
-type NextProps = { orgName: string; billing: ReturnType<typeof toKitBilling>; error?: ReadError | string | null; hidden?: HiddenGroup | null; hiddenError?: ReadError | string | null };
-const ScrBillingNext = ScrBilling as unknown as Component<NextProps>;
+type HiddenGroup = BillingHiddenOrg;
+type NextProps = ComponentProps<typeof ScrBilling>;
 const navBilling = NAV_ORG_BASE.flatMap((g) => g.items).find((i) => i.id === 'billing')!;
 const lapsedAcct = (): NonNullable<BillingResponse['account']> => ({ ...acct('active'), period_end: '2026-11-01T00:00:00Z' });
 const twoHidden: HiddenGroup = { org: 'acme', count: 2, repos: ['core', 'portal'] };
 const withHidden = (account: BillingResponse['account'], hidden: HiddenGroup | null, extra: Partial<NextProps> = {}) =>
-	render(ScrBillingNext, { props: { orgName: 'acme', billing: kit(account, usage), hidden, ...extra } });
+	render(ScrBilling, { props: { orgName: 'acme', billing: kit(account, usage), hidden, ...extra } });
 const hiddenItems = (c: HTMLElement) => [...c.querySelectorAll('[data-billing-hidden] li')].map((li) => li.textContent?.trim());
 
 describe('ScrBilling · billing follow-up', () => {
 	afterEach(cleanup);
 
 	// User ruling (1) / L2: one glyph for one destination — the nav's.
-	it.skip('pending: billing-followup — the title mark is the nav\'s Plan & billing kanji (金), and 円 is gone from the screen', () => {
+	it('the title mark is the nav\'s Plan & billing kanji (金), and 円 is gone from the screen', () => {
 		const { container } = screen(acct('active'));
 		expect(navBilling.kanji).toBe('金');
 		expect(container.querySelector('[data-screen-shell] [data-screen-mark]')?.textContent).toBe(navBilling.kanji);
@@ -247,14 +245,14 @@ describe('ScrBilling · billing follow-up', () => {
 	});
 
 	// L1 (impl r1): over a failed read there is nothing for the info band to describe (a guard).
-	it.skip('pending: billing-followup — no info band over a failed read, even over a loaded plan', () => {
+	it('no info band over a failed read, even over a loaded plan', () => {
 		const { container } = render(ScrBilling, { props: { orgName: 'acme', billing: kit(acct('active'), usage), error: { status: 500, message: 'boom' } } });
 		expect(container.querySelector('[data-load-error]')).toBeTruthy();
 		expect(container.querySelector('[data-screen-info]')).toBeNull();
 	});
 
 	// L3 (impl r1): search acts on a VISIBLE list — a query opens "Who is counted".
-	it.skip('pending: billing-followup — a search query opens "Who is counted", so the narrowed list is visible', async () => {
+	it('a search query opens "Who is counted", so the narrowed list is visible', async () => {
 		const { container } = screen(null);
 		const who = container.querySelector('details[data-billing-counted]') as HTMLDetailsElement;
 		expect(who.open).toBe(false);
@@ -267,7 +265,7 @@ describe('ScrBilling · billing follow-up', () => {
 
 	// User ruling (2): admins see the org's hidden private repositories here — count, list and
 	// the reinstatement wording for the account's state.
-	it.skip('pending: billing-followup — past due: the hidden private repositories, counted and listed, back as they were once it is paid', () => {
+	it('past due: the hidden private repositories, counted and listed, back as they were once it is paid', () => {
 		const { container } = withHidden(acct('past_due'), twoHidden);
 		const sec = container.querySelector('[data-billing-hidden]') as HTMLElement;
 		expect(sec.textContent).toContain('2 private repositories are hidden from everyone in this organization.');
@@ -275,12 +273,12 @@ describe('ScrBilling · billing follow-up', () => {
 		expect(sec.textContent).toContain('They come back as they were once it is paid.');
 	});
 
-	it.skip('pending: billing-followup — lapsed: back as they were once Pro is renewed', () => {
+	it('lapsed: back as they were once Pro is renewed', () => {
 		const { container } = withHidden(lapsedAcct(), twoHidden);
 		expect(container.querySelector('[data-billing-hidden]')?.textContent ?? '').toContain('They come back as they were once Pro is renewed.');
 	});
 
-	it.skip('pending: billing-followup — on Free with no account: they sync once Pro is attached (never "come back")', () => {
+	it('on Free with no account: they sync once Pro is attached (never "come back")', () => {
 		const { container } = withHidden(null, { org: 'acme', count: 1, repos: ['core'] });
 		const text = container.querySelector('[data-billing-hidden]')?.textContent ?? '';
 		expect(text).toContain('1 private repository is hidden from everyone in this organization.');
@@ -288,13 +286,13 @@ describe('ScrBilling · billing follow-up', () => {
 		expect(text).not.toMatch(/come back/);
 	});
 
-	it.skip('pending: billing-followup — nothing hidden: no hidden-repositories section', () => {
+	it('nothing hidden: no hidden-repositories section', () => {
 		const { container } = withHidden(acct('active'), null);
 		expect(container.querySelector('[data-billing-hidden]')).toBeNull();
 	});
 
 	// A failed repositories read is its own error, never "nothing hidden" (D83).
-	it.skip('pending: billing-followup — a failed hidden-repositories read is an error in that section, with no count or list', () => {
+	it('a failed hidden-repositories read is an error in that section, with no count or list', () => {
 		const { container } = withHidden(acct('past_due'), null, { hiddenError: { status: 0, message: 'could not reach the dojo service' } });
 		const sec = container.querySelector('[data-billing-hidden]') as HTMLElement;
 		expect(sec.querySelector('[data-load-error]')).toBeTruthy();
@@ -303,7 +301,7 @@ describe('ScrBilling · billing follow-up', () => {
 	});
 
 	// The org page has no load spec; this ties the read to the screen so neither end is unwired.
-	it.skip('pending: billing-followup — the org page loads the hidden group for the billing section and passes it on', () => {
+	it('the org page loads the hidden group for the billing section and passes it on', () => {
 		const load = readFileSync(join(process.cwd(), 'src/routes/(app)/org/[slug]/[section]/+page.ts'), 'utf8');
 		const page = readFileSync(join(process.cwd(), 'src/routes/(app)/org/[slug]/[section]/+page.svelte'), 'utf8');
 		expect(load).toMatch(/loadOrgHidden\(\s*slug\s*,/);
@@ -311,7 +309,7 @@ describe('ScrBilling · billing follow-up', () => {
 		expect(page).toMatch(/<ScrBilling[^>]*\bhiddenError=\{data\.billingHiddenError\}/);
 	});
 
-	it.skip('pending: billing-followup — over a failed billing read, no hidden-repositories section', () => {
+	it('over a failed billing read, no hidden-repositories section', () => {
 		const { container } = withHidden(acct('past_due'), twoHidden, { error: { status: 500, message: 'boom' } });
 		expect(container.querySelector('[data-billing-hidden]')).toBeNull();
 	});
