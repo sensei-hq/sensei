@@ -76,7 +76,7 @@ and sprint from the tracker) · `state` (`'backlog','planned','closed'`) · `pos
 ### `relay.tasks`: what a lane works on
 `user_id` · `id` · `crew_id` · `item_id` null · `lane_id` null (**one active task per lane**, partial unique) · `reviewer_lane_id`
 null (never the author's lane; checked) · `title` · `phase` (`'analysis','tests','impl','docs','mockup'`) · `state`
-(`'ready','assigned','in_progress','reported','in_review','changes_requested','approved','merged','done','blocked','interrupted'`)
+(`'assigned','working','in_review','rework','approved','done','blocked','interrupted','cancelled'`; see *Stages*)
 · `round` · `owned_paths`, `acceptance`, `resources` text[] · `deps` uuid[] · `assigned_at`, `state_changed_at`,
 `completed_at` null.
 - The ticket comes through `item_id → ticket_provider / ticket_key`.
