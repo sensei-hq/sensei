@@ -16,7 +16,17 @@ import type { LogRow, ScheduledTask } from '$lib/types.js';
 vi.mock('$app/navigation', () => ({ goto: vi.fn(), invalidateAll: vi.fn() }));
 vi.mock('$app/state', () => ({ page: { url: new URL('http://localhost/activity-logs') } }));
 
+// D87 (tests r2, L1): the DOM hooks alone can't tell rokkit's shell from a
+// hand-rolled header carrying the same attributes, so the shell itself is spied
+// on and asked for this view's id. The DOM assertions stay: they pin where the
+// rows and the workers sit, which the spy can't.
+vi.mock('@rokkit/app', async (importOriginal) => {
+  const m = (await importOriginal()) as Record<string, unknown>;
+  return { ...m, ScreenShell: vi.fn(m.ScreenShell as never) };
+});
+
 import { goto } from '$app/navigation';
+import { ScreenShell } from '@rokkit/app';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -24,6 +34,7 @@ afterEach(() => {
   cleanup = [];
   vi.unstubAllGlobals();
   vi.mocked(goto).mockClear();
+  vi.mocked(ScreenShell).mockClear();
 });
 
 function logRow(over: Partial<LogRow> = {}): LogRow {
@@ -274,9 +285,10 @@ describe('Observatory · Logs — a log retry that fails again', () => {
     expect(retry).not.toBeNull();
     retry.click();
 
-    await vi.waitFor(() =>
-      expect(c.querySelector('[data-logs-error]')?.textContent).toContain('Bad Gateway'),
-    );
+    await vi.waitFor(() => {
+      expect(c.querySelector('[data-logs-error]')).not.toBeNull();
+      expect(c.querySelector('[data-logs-error]')?.textContent).toContain('Bad Gateway');
+    });
     expect(c.querySelector('[data-logs-error]')?.textContent).not.toContain('daemon unreachable');
     expect(c.textContent).not.toContain('no logs for these filters');
     expect(c.querySelector('[data-log-count]')).toBeNull();
@@ -301,9 +313,10 @@ describe('Observatory · Logs — a tasks retry that fails again', () => {
     expect(retry).not.toBeNull();
     retry.click();
 
-    await vi.waitFor(() =>
-      expect(c.querySelector('[data-tasks-error]')?.textContent).toContain('Bad Gateway'),
-    );
+    await vi.waitFor(() => {
+      expect(c.querySelector('[data-tasks-error]')).not.toBeNull();
+      expect(c.querySelector('[data-tasks-error]')?.textContent).toContain('Bad Gateway');
+    });
     expect(c.querySelector('[data-tasks-error]')?.textContent).not.toContain('daemon unreachable');
     expect(c.querySelector('[data-testid="scheduled-tasks"]')).toBeNull();
     expect(c.textContent).toContain('still here');
@@ -360,11 +373,13 @@ describe('Observatory · Logs — the shell (D87)', () => {
       'Daemon, cli, mcp and app activity',
     );
 
-    // The band: the server-side controls, and the search beside them.
+    // The band: the server-side controls, and the shell's search beside them —
+    // one search, not the shell's plus a page copy (tests r2, L2).
     const band = c.querySelector('[data-screen-filters]') as HTMLElement;
     expect(band).not.toBeNull();
     expect(band.querySelector('[data-log-filter-level]')).not.toBeNull();
-    expect(band.querySelector('[data-log-search]')).not.toBeNull();
+    expect(band.querySelector('[data-screen-search] input')).not.toBeNull();
+    expect(band.querySelectorAll('input[type="search"]').length).toBe(1);
 
     // Two scrollers: the body (the rows) and the sidebar (the workers).
     const main = c.querySelector('[data-screen-main]') as HTMLElement;
@@ -376,6 +391,37 @@ describe('Observatory · Logs — the shell (D87)', () => {
     expect(side?.getAttribute('data-side')).toBe('right');
     expect(body.querySelector('[data-log-row-header]')).not.toBeNull();
     expect(side.querySelector('[data-testid="scheduled-tasks"]')).not.toBeNull();
+
+    // And it is rokkit's shell, not a lookalike, rendered for this view (L1).
+    expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
+    expect(vi.mocked(ScreenShell).mock.calls[0][1]).toMatchObject({ viewId: 'observatory.logs' });
+  });
+});
+
+// Phase B (R8, N1): the tasks Retry writes the same guard as the log one — a
+// second press during the read joins it rather than starting another.
+describe('Observatory · Logs — a tasks retry pressed twice', () => {
+  it.skip('pending: L5 activity-logs — two presses of the tasks retry are one GET', async () => {
+    let answer: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      answer = resolve;
+    });
+    const fetchSpy = vi.fn().mockReturnValue(pending);
+    vi.stubGlobal('fetch', fetchSpy);
+    const c = await mount({
+      tasks: [],
+      tasksNotice: notice("Couldn't read the background tasks", 'daemon unreachable'),
+      tasksError: 'Could not read the background tasks: daemon unreachable',
+    });
+
+    const retry = c.querySelector('[data-tasks-error] [data-action="retry"]') as HTMLButtonElement;
+    expect(retry).not.toBeNull();
+    retry.click();
+    retry.click();
+
+    answer({ ok: true, status: 200, json: async () => ({ tasks: [task({ name: 'scanner' })] }) });
+    await vi.waitFor(() => expect(c.querySelector('[data-task-name="scanner"]')).not.toBeNull());
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });
 
