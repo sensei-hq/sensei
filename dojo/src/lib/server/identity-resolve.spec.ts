@@ -134,6 +134,22 @@ describe('resolveDisplayNames is scoped to the tenant', () => {
 	// GLOBAL identities table handed a caller in tenant A the name and email of
 	// anyone on the platform. A principal who is not a member of the tenant
 	// resolves to nothing — exactly as an unknown id does.
+	it('never resolves a principal who is not a member of the tenant', async () => {
+		const { db, calls } = makeTableDb({
+			memberships: [
+				{ tenant_id: 't1', user_id: 'member' },
+				{ tenant_id: 't2', user_id: 'outsider' }
+			],
+			identities: [
+				{ principal_id: 'member', display_name: 'Ada', email: 'ada@x.co', last_login_at: null },
+				{ principal_id: 'outsider', display_name: 'Eve', email: 'eve@y.co', last_login_at: null }
+			]
+		});
+		const names = await resolveDisplayNames(db, 't1', ['member', 'outsider']);
+		expect([...names.keys()]).toEqual(['member']);
+		const identityRead = calls.find((c) => c.table === 'identities' && c.op === 'in');
+		expect(identityRead?.args[1], 'only members are looked up').toEqual(['member']);
+	});
 	it.skip('pending: L4 member-names — the principals fallback reads tenant members only, never requested outsiders', async () => {
 		const { db, calls } = makeTableDb({
 			memberships: [
@@ -150,9 +166,6 @@ describe('resolveDisplayNames is scoped to the tenant', () => {
 			]
 		});
 		const names = await resolveDisplayNames(db, 't1', ['member', 'outsider']);
-		expect([...names.keys()]).toEqual(['member']);
-		const identityRead = calls.find((c) => c.table === 'identities' && c.op === 'in');
-		expect(identityRead?.args[1], 'only members are looked up').toEqual(['member']);
 		// F1: `principals` is global with no tenant column and service_role
 		// bypasses RLS, so the ids asked for ARE the access rule. A fallback
 		// that reads the requested ids would name Eve the outsider.

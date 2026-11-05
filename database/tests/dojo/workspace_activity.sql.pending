@@ -41,18 +41,19 @@ insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant
   ('c4444444-4444-4444-4444-444444444444', 'c8888888-8888-8888-8888-888888888888', 'c1111111-1111-1111-1111-111111111111'),
   ('c3333333-3333-3333-3333-333333333333', 'c9999999-9999-9999-9999-999999999999', 'c1111111-1111-1111-1111-111111111111');
 
--- r1 carries two readings; the crossed dates pin pushed_at over computed_on.
+-- r1 carries two readings; the workspace's newest landing sits on r1's SECOND
+-- reading, so per-repo min, latest-computed_on and computed_on all die (F1).
+-- r2's single reading sits in between.
 insert into dojo.repository_metrics (tenant_id, repository_id, metric_id, scope, computed_on, value, pushed_at)
 select 'c1111111-1111-1111-1111-111111111111', 'c6666666-6666-6666-6666-666666666666', m.id, 'repo',
        d.computed_on, 1, d.pushed_at
   from (values ('2026-11-05'::date, '2026-11-02T10:00:00Z'::timestamptz),
-               ('2026-11-01'::date, '2026-11-04T10:00:00Z'::timestamptz)) as d(computed_on, pushed_at)
+               ('2026-11-01'::date, '2026-11-06T10:00:00Z'::timestamptz)) as d(computed_on, pushed_at)
  cross join (select id from sensei.metrics order by key limit 1) m;
 
--- r2's single reading is the newest landing of all.
 insert into dojo.repository_metrics (tenant_id, repository_id, metric_id, scope, computed_on, value, pushed_at)
 select 'c1111111-1111-1111-1111-111111111111', 'c7777777-7777-7777-7777-777777777777', m.id, 'repo',
-       '2026-10-01', 1, '2026-11-06T10:00:00Z'
+       '2026-10-01', 1, '2026-11-04T10:00:00Z'
   from (select id from sensei.metrics order by key limit 1) m;
 
 -- r4 syncs graphs but pushes no readings.
@@ -65,37 +66,59 @@ insert into dojo.graph_heads (repository_id, branch, tenant_id, commit_sha, comm
 do $$
 declare
   v_act timestamptz;
+  v_tenant uuid;
   v_graph timestamptz;
   v_quiet timestamptz;
   v_empty timestamptz;
   n int;
 begin
-  -- 1. Max across readings and repositories: r2's landing wins.
-  select last_activity_at into v_act
+  -- 1. Max across readings and repositories: r1's second landing wins.
+  select count(*), max(last_activity_at) into n, v_act
     from dojo.workspace_activity
    where workspace_id = 'c2222222-2222-2222-2222-222222222222';
+  if n <> 1 then
+    raise exception 'w-act must read exactly one grouped row, saw %.', n;
+  end if;
   if v_act is distinct from '2026-11-06T10:00:00Z'::timestamptz then
-    raise exception 'w-act activity should be r2''s 11-06 landing, saw %.', v_act;
+    raise exception 'w-act activity should be r1''s 11-06 landing, saw %.', v_act;
+  end if;
+
+  -- 1b. The row carries its tenant (F4).
+  select tenant_id into v_tenant
+    from dojo.workspace_activity
+   where workspace_id = 'c2222222-2222-2222-2222-222222222222';
+  if v_tenant is distinct from 'c1111111-1111-1111-1111-111111111111'::uuid then
+    raise exception 'w-act tenant_id is wrong, saw %.', v_tenant;
   end if;
 
   -- 2. A graph sync counts as activity even with no readings (brief: "sync or reading").
-  select last_activity_at into v_graph
+  select count(*), max(last_activity_at) into n, v_graph
     from dojo.workspace_activity
    where workspace_id = 'c3333333-3333-3333-3333-333333333333';
+  if n <> 1 then
+    raise exception 'w-graph must read exactly one grouped row, saw %.', n;
+  end if;
   if v_graph is distinct from '2026-11-05T10:00:00Z'::timestamptz then
     raise exception 'w-graph activity should be the 11-05 graph sync, saw %.', v_graph;
   end if;
 
-  -- 3. Quiet workspaces read NULL: a repo with no readings, and no repos at all.
-  select last_activity_at into v_quiet
+  -- 3. Quiet workspaces read one NULL row each (left join from workspaces):
+  -- a repo with no readings, and no repos at all. Never invented, never absent.
+  select count(*), max(last_activity_at) into n, v_quiet
     from dojo.workspace_activity
    where workspace_id = 'c4444444-4444-4444-4444-444444444444';
+  if n <> 1 then
+    raise exception 'w-quiet must read exactly one row, saw %.', n;
+  end if;
   if v_quiet is not null then
     raise exception 'w-quiet must read NULL, saw %.', v_quiet;
   end if;
-  select last_activity_at into v_empty
+  select count(*), max(last_activity_at) into n, v_empty
     from dojo.workspace_activity
    where workspace_id = 'c5555555-5555-5555-5555-555555555555';
+  if n <> 1 then
+    raise exception 'w-empty must read exactly one row, saw %.', n;
+  end if;
   if v_empty is not null then
     raise exception 'w-empty must read NULL, saw %.', v_empty;
   end if;

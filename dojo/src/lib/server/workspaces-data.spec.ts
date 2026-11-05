@@ -27,16 +27,27 @@ function makeListDb(result: { data: unknown; error: unknown }) {
 }
 
 // Table-keyed mock for the activity sort: each `.from(table)` chain resolves
-// that table's canned result at its `.order()` / `.in()` terminal.
+// that table's canned result at its `.order()` / `.in()` terminal, recording
+// every call so tests can pin the read's narrowing (F3).
 function makeActivityDb(tables: Record<string, { data?: unknown; error: unknown }>) {
 	let table = '';
+	const calls: Array<{ table: string; op: string; args: unknown[] }> = [];
 	const b: Record<string, unknown> = {};
 	b.from = (t: string) => ((table = t), b);
 	b.select = () => b;
-	b.eq = () => b;
-	b.order = () => Promise.resolve(tables[table] ?? { data: [], error: null });
-	b.in = () => Promise.resolve(tables[table] ?? { data: [], error: null });
-	return b as unknown as DojoClient;
+	b.eq = (...args: unknown[]) => {
+		calls.push({ table, op: 'eq', args });
+		return b;
+	};
+	b.order = (...args: unknown[]) => {
+		calls.push({ table, op: 'order', args });
+		return Promise.resolve(tables[table] ?? { data: [], error: null });
+	};
+	b.in = (...args: unknown[]) => {
+		calls.push({ table, op: 'in', args });
+		return Promise.resolve(tables[table] ?? { data: [], error: null });
+	};
+	return { db: b as unknown as DojoClient, calls };
 }
 
 describe('listOrgWorkspaces', () => {
@@ -47,14 +58,14 @@ describe('listOrgWorkspaces', () => {
 		expect(captured.tenantEq).toBe('t1');
 	});
 	it('keeps API order when no workspace has any activity', async () => {
-		const db = makeActivityDb({
+		const { db } = makeActivityDb({
 			workspaces: { data: [{ id: 'w1' }, { id: 'w2' }], error: null },
 			workspace_activity: { data: [], error: null }
 		});
 		expect((await listOrgWorkspaces(db, 't1')).map((w) => w.id)).toEqual(['w1', 'w2']);
 	});
 	it.skip('pending: L4 workspace-sort — most recently active first, quiet workspaces last, no invented date', async () => {
-		const db = makeActivityDb({
+		const { db, calls } = makeActivityDb({
 			workspaces: {
 				data: [
 					{ id: 'w1', last_run_at: null },
@@ -75,9 +86,16 @@ describe('listOrgWorkspaces', () => {
 		const out = await listOrgWorkspaces(db, 't1');
 		expect(out.map((w) => w.id)).toEqual(['w2', 'w1', 'w3']);
 		expect(out[2]).toEqual({ id: 'w3', last_run_at: null });
+		// F3: the view read is narrowed to the listed ids — a whole-view read
+		// would hit max_rows and truncate with no error.
+		const activityRead = calls.find((c) => c.table === 'workspace_activity' && c.op === 'in');
+		expect(activityRead?.args, 'view read narrowed to listed ids').toEqual([
+			'workspace_id',
+			['w1', 'w2', 'w3']
+		]);
 	});
 	it.skip('pending: L4 workspace-sort — an activity-read error fails closed, never API order', async () => {
-		const db = makeActivityDb({
+		const { db } = makeActivityDb({
 			workspaces: { data: [{ id: 'w1' }], error: null },
 			workspace_activity: { data: null, error: { message: 'act boom' } }
 		});
@@ -111,7 +129,7 @@ function makeUserDb(result: { data: unknown; error: unknown }) {
 
 describe('listUserWorkspaces — every workspace the caller may read (RLS), across dōjōs', () => {
 	it.skip('pending: L4 workspace-sort — the personal list sorts by activity too, quiet last', async () => {
-		const db = makeActivityDb({
+		const { db, calls } = makeActivityDb({
 			workspaces: {
 				data: [
 					{ id: 'w1', last_run_at: null },
@@ -127,9 +145,11 @@ describe('listUserWorkspaces — every workspace the caller may read (RLS), acro
 		const out = await listUserWorkspaces(db);
 		expect(out.map((w) => w.id)).toEqual(['w2', 'w1']);
 		expect(out[1]).toEqual({ id: 'w1', last_run_at: null });
+		const activityRead = calls.find((c) => c.table === 'workspace_activity' && c.op === 'in');
+		expect(activityRead?.args, 'view read narrowed to listed ids').toEqual(['workspace_id', ['w1', 'w2']]);
 	});
 	it.skip('pending: L4 workspace-sort — the personal list fails closed when the activity read errors', async () => {
-		const db = makeActivityDb({
+		const { db } = makeActivityDb({
 			workspaces: { data: [{ id: 'w1' }], error: null },
 			workspace_activity: { data: null, error: { message: 'act boom' } }
 		});
