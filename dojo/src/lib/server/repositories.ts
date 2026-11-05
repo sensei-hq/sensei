@@ -273,6 +273,9 @@ export interface MyRepository {
 	name: string | null;
 	tenant: string;
 	owning_org: string | null;
+	/** The tenant's origin, as the view owns it — the billing predicate reads
+	 *  this, never a parse of `tenant`. */
+	origin: 'personal' | 'organization';
 	forge_visibility: 'public' | 'private' | null;
 	authority: 'user' | 'organization' | null;
 	may_share: boolean;
@@ -298,7 +301,7 @@ export interface MyRepository {
 /** The columns a screen needs. Named rather than `*` so a view rename fails here
  *  instead of rendering `undefined` as a missing permission. */
 const MY_REPO_COLUMNS =
-	'repository_id, repo_key, name, tenant, owning_org, forge_visibility, authority, may_share, elected, sync_enabled, configurable_by_me, entitlement_refusal, reason_code, reason, remedy, reason_actor, last_synced_at, metric_rows';
+	'repository_id, repo_key, name, tenant, owning_org, origin, forge_visibility, authority, may_share, elected, sync_enabled, configurable_by_me, entitlement_refusal, reason_code, reason, remedy, reason_actor, last_synced_at, metric_rows';
 
 /**
  * Whether Billing hides this row — and counts it on the member line instead.
@@ -315,7 +318,7 @@ const MY_REPO_COLUMNS =
  * hidden is presentation, and the count is impossible if the read drops them.
  */
 export function isBillingHiddenRepo(
-	row: Pick<MyRepository, 'tenant' | 'forge_visibility' | 'entitlement_refusal'>
+	row: Pick<MyRepository, 'origin' | 'forge_visibility' | 'entitlement_refusal'>
 ): boolean {
 	// Phase-A stub (WP8 tests r2): the spec below pins the truth table, the
 	// body lands with the phase-B implementation.

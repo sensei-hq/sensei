@@ -50,7 +50,8 @@ do $$
 declare
     r record;
 begin
-    select elected, sync_enabled, may_share, authority, configurable_by_me
+    select elected, sync_enabled, may_share, authority, configurable_by_me,
+           configured_by
       into r
       from dojo.all_my_repositories
      where principal_id = 'a3333333-3333-3333-3333-333333333333'
@@ -72,6 +73,11 @@ begin
     end if;
     if r.configurable_by_me is not false then
         raise exception 'a contributor may switch an org public repo.';
+    end if;
+    -- The seeded private-policy must not be reported as having configured a
+    -- public repository: nobody decided.
+    if r.configured_by is not null then
+        raise exception 'org public repo with no decision reports configured_by %.', r.configured_by;
     end if;
 end $$;
 

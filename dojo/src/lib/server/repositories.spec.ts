@@ -536,6 +536,31 @@ describe('listMyRepositories — what a human is shown', () => {
 		expect(out.map((r) => r.repo_key)).toEqual(['github.com/acme/secret', 'github.com/acme/api']);
 		expect(out[0].entitlement_refusal).toBe('not_subscribed');
 	});
+
+	it('selects entitlement_refusal (and origin): the predicate reads columns, not the fixture', async () => {
+		// `fakeDojoDb`'s `.select()` ignores its column argument, so the test
+		// above passes with the columns dropped from `MY_REPO_COLUMNS` — and
+		// live the predicate would then read `undefined`. Spy on what the
+		// load ASKS for, not what the fixture contains.
+		const db = fakeDojoDb(view([ROW]));
+		const selected: string[] = [];
+		const rpc = db.rpc.bind(db);
+		db.rpc = ((fn: string, args?: Record<string, unknown>) => {
+			const chain = rpc(fn, args) as unknown as {
+				select: (cols?: string, opts?: { count?: string; head?: boolean }) => unknown;
+			};
+			const select = chain.select.bind(chain);
+			chain.select = (cols?: string, opts?: { count?: string; head?: boolean }) => {
+				if (cols !== undefined) selected.push(cols);
+				return select(cols, opts);
+			};
+			return chain;
+		}) as unknown as typeof db.rpc;
+		await listMyRepositories(db as never);
+		const asked = selected.join(',');
+		expect(asked).toContain('entitlement_refusal');
+		expect(asked).toContain('origin');
+	});
 });
 
 // ── WP8 F5: one predicate hides and counts ───────────────────────────────────
@@ -550,19 +575,23 @@ describe('listMyRepositories — what a human is shown', () => {
 describe('isBillingHiddenRepo — the hidden set, decided once', () => {
 	function row(over: Record<string, unknown>) {
 		return {
-			tenant: 'organization/acme',
+			origin: 'organization',
 			forge_visibility: 'private',
 			entitlement_refusal: null,
 			...over
 		} as Parameters<typeof isBillingHiddenRepo>[0];
 	}
 
-	it.each([['unclaimed'], ['not_subscribed'], ['subscription_expired']])(
-		'hides an org-private repository refused %s',
-		(refusal) => {
-			expect(isBillingHiddenRepo(row({ entitlement_refusal: refusal }))).toBe(true);
-		}
-	);
+	// RED against the phase-A stub; step 2 implements the body and enables
+	// this block. Skipped, never live-red (G3).
+	describe.skip('pending: WP8 — hides billing-refused org-private rows', () => {
+		it.each([['unclaimed'], ['not_subscribed'], ['subscription_expired']])(
+			'hides an org-private repository refused %s',
+			(refusal) => {
+				expect(isBillingHiddenRepo(row({ entitlement_refusal: refusal }))).toBe(true);
+			}
+		);
+	});
 
 	it('shows an entitled org-private repository', () => {
 		expect(isBillingHiddenRepo(row({ entitlement_refusal: null }))).toBe(false);
@@ -576,8 +605,11 @@ describe('isBillingHiddenRepo — the hidden set, decided once', () => {
 	it('shows an entitled row even when the final reason is an election refusal', () => {
 		// The whole argument for reading `entitlement_refusal` instead of
 		// `reason_code`: this row's `reason_code` is `not_elected_org`, but
-		// its entitlement said yes.
-		expect(isBillingHiddenRepo(row({ entitlement_refusal: null }))).toBe(false);
+		// its entitlement said yes — and a predicate that also hides on a set
+		// `reason_code` must fail here.
+		expect(
+			isBillingHiddenRepo(row({ entitlement_refusal: null, reason_code: 'not_elected_org' }))
+		).toBe(false);
 	});
 
 	it('shows an org-PUBLIC repository whatever its entitlement says', () => {
@@ -588,12 +620,18 @@ describe('isBillingHiddenRepo — the hidden set, decided once', () => {
 
 	it('shows a personal repository whatever its entitlement says', () => {
 		expect(
-			isBillingHiddenRepo(row({ tenant: 'personal/alice', entitlement_refusal: 'not_subscribed' }))
+			isBillingHiddenRepo(row({ origin: 'personal', entitlement_refusal: 'not_subscribed' }))
 		).toBe(false);
 	});
 
-	it('shows a row whose tenant does not parse: hiding fails visible', () => {
-		expect(isBillingHiddenRepo(row({ tenant: 'acme', entitlement_refusal: 'not_subscribed' }))).toBe(
+	it('shows an unknown origin: hiding fails visible', () => {
+		// `origin` is a NOT NULL enum in the view, so these rows never come
+		// from it — a future origin value, or a row from elsewhere. Either
+		// way the predicate cannot prove org-private, so it shows.
+		expect(
+			isBillingHiddenRepo(row({ origin: 'syndicate', entitlement_refusal: 'not_subscribed' }))
+		).toBe(false);
+		expect(isBillingHiddenRepo(row({ origin: null, entitlement_refusal: 'not_subscribed' }))).toBe(
 			false
 		);
 	});

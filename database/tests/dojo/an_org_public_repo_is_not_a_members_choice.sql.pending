@@ -121,8 +121,10 @@ do $$
 declare
     rows text;
 begin
+    -- `authority::text`: the enum's order is {user,organization}, which would
+    -- list the member's history row first whatever the implementation does.
     select string_agg(authority || ':' || coalesce(principal_id::text, 'none') || ':' || elected, ', '
-                      order by authority, principal_id nulls first)
+                      order by authority::text, principal_id nulls first)
       into rows
       from dojo.repository_elections e
       join dojo.repositories r on r.id = e.repository_id
