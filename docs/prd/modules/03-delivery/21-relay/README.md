@@ -30,6 +30,10 @@ this as *sensei is doing the work, and I'm in the loop.*
 > routes — and is **unverified in production** (D27). The **desktop relay screen is greenfield**
 > (no test). There are no §12 gap IDs named for M21; the nearest are D-1/D-2 → T1.
 
+> **Relay lanes (requirement, 2026-11-05):** sensei as the broker between assistant sessions a person opened:
+> one coordinator plus contributors on lanes, a review-first task queue, Markdown reports with telemetry, and
+> events pushed to the dōjō. See [lanes.md](lanes.md).
+
 ## In scope / out of scope
 
 - In: the drive loop (`drive_run`) with heartbeats, progress logs, stalled
