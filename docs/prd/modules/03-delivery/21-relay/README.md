@@ -32,7 +32,7 @@ this as *sensei is doing the work, and I'm in the loop.*
 
 > **Relay lanes (requirement, 2026-11-05):** sensei as the broker between assistant sessions a person opened:
 > one coordinator plus contributors on lanes, a review-first task queue, Markdown reports with telemetry, and
-> events pushed to the dōjō. See [lanes.md](lanes.md).
+> events pushed to the dōjō. See [lanes.md](lanes.md) and its [data model](lanes-data.md).
 
 ## In scope / out of scope
 
