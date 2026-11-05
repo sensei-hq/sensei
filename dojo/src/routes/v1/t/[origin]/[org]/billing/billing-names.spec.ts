@@ -5,6 +5,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const caller: Record<string, unknown> = { tenantId: 't1', userId: 'admin-uuid', role: 'admin', access: 4, membershipId: 'm1', accessToken: 'jwt-A' };
+// The identity resolver's error (identity-resolve.ts throws AdminError(500)); hoisted for the mock.
+const { AdminError } = vi.hoisted(() => ({
+	AdminError: class AdminError extends Error {
+		constructor(
+			readonly status: number,
+			message: string
+		) {
+			super(message);
+		}
+	}
+}));
 const mocks = vi.hoisted(() => ({
 	resolveTenantAccess: vi.fn(),
 	loadActiveSeatRows: vi.fn(),
@@ -19,6 +30,7 @@ vi.mock('$lib/server/dojo-auth', () => ({
 	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/identity-resolve', () => ({ resolveDisplayNames: mocks.resolveDisplayNames }));
+vi.mock('$lib/server/admin-data', () => ({ AdminError }));
 vi.mock('$lib/server/billing-data', async (orig) => ({
 	...(await orig<typeof import('$lib/server/billing-data')>()),
 	loadActiveSeatRows: mocks.loadActiveSeatRows,
@@ -42,7 +54,8 @@ describe('GET …/billing · seat names (billing build, M3)', () => {
 		const res = await GET(ev());
 		const body = await res.json();
 		expect(mocks.resolveDisplayNames).toHaveBeenCalledWith({ client: 'user', token: 'jwt-A' }, 't1', ['u1', 'u2']);
-		expect(body.usage.billable_users.map((u: { user_id: string; display_name: string | null }) => [u.user_id, u.display_name])).toEqual([
+		const users = (body as { usage: { billable_users: { user_id: string; display_name: string | null }[] } }).usage.billable_users;
+		expect(users.map((u) => [u.user_id, u.display_name])).toEqual([
 			['u1', 'Priya K'],
 			['u2', null]
 		]);
@@ -52,5 +65,15 @@ describe('GET …/billing · seat names (billing build, M3)', () => {
 		mocks.loadActiveSeatRows.mockResolvedValue([]);
 		await GET(ev());
 		expect(mocks.resolveDisplayNames).not.toHaveBeenCalled();
+	});
+
+	// M1 (r1): a failed name read is an error, never a 200 of null names (D83).
+	it.skip('pending: billing-build — a failed identity read answers 500 with the error, and no seat list', async () => {
+		mocks.resolveDisplayNames.mockRejectedValue(new AdminError(500, 'identities: boom'));
+		const res = await GET(ev());
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as Record<string, unknown>;
+		expect(body).toEqual({ error: 'identities: boom' });
+		expect('usage' in body).toBe(false);
 	});
 });

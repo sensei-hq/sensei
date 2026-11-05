@@ -38,11 +38,13 @@ describe('toKitBilling', () => {
 		expect(out.tiers.filter((t) => t.current).map((t) => t.id)).toEqual(['free']);
 	});
 
-	it('an active Pro account inside its period: Pro, its renewal, current', () => {
+	// Superseded by billing build (r2): an active Pro now says "Pro is attached" (a normal notice).
+	it.skip('pending: billing-build — an active Pro account inside its period: Pro, its renewal, current, "Pro is attached"', () => {
 		const out = toKitBilling({ account: account('pro', '2026-08-01T00:00:00Z'), usage: usage(7) }, NOW);
 		expect(out.plan).toBe('Pro');
 		expect(out.renews).toBe('Aug 1');
-		expect(out.problem).toBeNull();
+		expect(out.problem?.title).toBe('Pro is attached');
+		expect(out.problem?.tone).toBe('normal');
 		expect(out.tiers.filter((t) => t.current).map((t) => t.id)).toEqual(['pro']);
 	});
 
@@ -58,34 +60,40 @@ describe('toKitBilling', () => {
 
 	// M5 (r1): the screen and all_my_repositories must agree — a lapsed account is
 	// not current, so its private repositories are hidden, and the screen says so.
-	it('a canceled or past-due account has lapsed: Free is current, and a refusal says why', () => {
+	// Superseded by billing build (r2): canceled keeps this shape with D88's copy and a code;
+	// past due no longer lapses to Free (it stays Pro, tagged — billing-build.spec.ts).
+	it.skip('pending: billing-build — a canceled account has lapsed: Free is current, and a refusal says why and that they come back', () => {
 		const out = toKitBilling({ account: account('pro', '2026-08-01T00:00:00Z', 'canceled'), usage: usage(2) }, NOW);
 		expect(out.plan).toBe('Free');
 		expect(out.tiers.filter((t) => t.current).map((t) => t.id)).toEqual(['free']);
 		expect(out.renews).toBeNull();
 		expect(out.problem).toEqual({
 			tone: 'refusal',
-			title: 'The Pro plan is not active',
-			detail: "The billing account is canceled, so this organization's private repositories stay hidden.",
-			remedy: 'Plan changes open once payments are connected.'
+			title: 'Pro is not active',
+			detail: "The billing account is canceled, so this organization's private repositories are hidden again. They come back as they were once Pro is renewed.",
+			remedy: 'Renew once payments are connected.',
+			code: 'not_subscribed'
 		});
 	});
 
-	it('an account past its period end has lapsed too', () => {
+	// Superseded by billing build (r2): D88's copy.
+	it.skip('pending: billing-build — an account past its period end has lapsed too', () => {
 		const out = toKitBilling({ account: account('pro', '2026-07-01T00:00:00Z'), usage: usage(2) }, NOW);
 		expect(out.plan).toBe('Free');
-		expect(out.problem?.detail).toBe("The billing period ended Jul 1, so this organization's private repositories stay hidden.");
+		expect(out.problem?.detail).toBe("The billing period ended Jul 1, so this organization's private repositories are hidden again. They come back as they were once Pro is renewed.");
 	});
 
-	it('a plan key sensei does not know is an error, never Free', () => {
+	// Superseded by billing build (r2): the mockup's copy (L3).
+	it.skip('pending: billing-build — a plan key sensei does not know is an error, never Free', () => {
 		const out = toKitBilling({ account: account('enterprise', null), usage: usage(2) }, NOW);
 		expect(out.plan).toBeNull();
 		expect(out.tiers.some((t) => t.current)).toBe(false);
 		expect(out.problem).toEqual({
 			tone: 'fault',
-			title: "This dōjō's plan isn't one sensei knows",
-			detail: 'The billing account says "enterprise".',
-			remedy: 'Update Sensei. If it still shows, the billing account needs fixing.'
+			title: "This organization's plan could not be read",
+			detail: 'The billing account says "enterprise", which isn\'t a plan sensei knows.',
+			remedy: 'Ask whoever set up billing to correct the plan key. Until then the plan is unknown.',
+			code: 'unknown_plan'
 		});
 	});
 
@@ -105,16 +113,20 @@ describe('the catalog (D52, D59, D75)', () => {
 		for (const t of BILLING_TIERS) expect(`${t.price} ${t.sub} ${t.lines.join(' ')}`).not.toMatch(/\$\s?\d/);
 	});
 
-	it('Pro lists what it unlocks: blocking targets on private repositories (D52, D86)', () => {
-		expect(pro.lines).toContain("Blocking targets on an organization's private repositories");
+	// Superseded by billing build (r2): the mockup's Pro line.
+	it.skip('pending: billing-build — Pro lists what it unlocks: blocking targets on private repositories (D52, D86)', () => {
+		expect(pro.lines).toContain('Blocking targets on those private repositories');
 		// A target that only warns is free everywhere (D86).
 		expect(BILLING_TIERS.find((t) => t.id === 'free')!.lines).toContain('Targets that warn, on every repository');
 	});
 
-	it('Pro never lists what is free: SSO, SCIM, audit, the relay queue (D59, D77)', () => {
-		for (const l of pro.lines) expect(l).not.toMatch(/audit|relay|inbox|SSO|SCIM/i);
+	// Narrowed by billing build (r2), not deleted: extended audit retention and an SLA are
+	// paid options (PRD T4); the audit trail, SSO, SCIM and the relay queue stay free.
+	it.skip('pending: billing-build — Pro never lists what is free: SSO, SCIM, the audit trail, the relay queue (D59, D77)', () => {
+		for (const l of pro.lines) expect(l).not.toMatch(/SSO|SCIM|audit trail|relay|inbox/i);
 		const free = BILLING_TIERS.find((t) => t.id === 'free')!;
-		expect(free.lines.join(' ')).toMatch(/SSO, SCIM, audit/);
+		expect(free.lines).toContain('SSO, SCIM and the audit trail');
+		expect(free.lines).toContain("The relay's team on-call queue");
 	});
 });
 
