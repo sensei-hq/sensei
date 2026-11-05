@@ -1,0 +1,154 @@
+-- `relay` schema shape — tables, keys, RLS, grants, and the two views' nature.
+--
+-- WHAT BREAKS THIS TEST: a missing table; `user_id` missing or nullable on the
+-- six; a PK that is not `(user_id, id)`; a foreign key that leaves `relay`;
+-- RLS off; `authenticated` gaining a write grant or `anon` any grant; a policy
+-- that dereferences `auth.uid` (it exists on the dōjō, not on the desktop —
+-- the same DDL deploys to both); a view that is not security-invoker.
+--
+-- Run with the table + view DDL applied (`run.sh --apply sensei
+-- ../ddl/table/relay/*.ddl ../ddl/view/relay/*.ddl relay/relay_schema.sql.pending`),
+-- or against a database the DDL has deployed to: asserts, rolls back.
+
+begin;
+
+do $$
+declare
+  n int;
+  v_ok boolean;
+begin
+  -- Seven tables: the six plus the finding-classes lookup.
+  select count(*) into n from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+   where s.nspname = 'relay' and c.relkind = 'r';
+  if n <> 7 then
+    raise exception 'relay must hold 7 tables, saw %.', n;
+  end if;
+
+  -- `user_id` uuid NOT NULL on the six (finding_classes is the shared lookup).
+  select count(*) into n
+    from information_schema.columns
+   where table_schema = 'relay' and column_name = 'user_id'
+     and data_type = 'uuid' and is_nullable = 'NO'
+     and table_name in ('crews', 'lanes', 'leases', 'items', 'tasks', 'actions');
+  if n <> 6 then
+    raise exception 'user_id uuid NOT NULL must be on all six tables, saw % of 6.', n;
+  end if;
+
+  -- ... and NOT on the lookup: one shared vocabulary, seeded identically both sides.
+  select count(*) into n
+    from information_schema.columns
+   where table_schema = 'relay' and table_name = 'finding_classes' and column_name = 'user_id';
+  if n <> 0 then
+    raise exception 'finding_classes must not carry user_id.';
+  end if;
+
+  -- PK(user_id, id): the sync's idempotent upsert key.
+  select count(*) into n from (
+    select c.relname from pg_catalog.pg_constraint con
+      join pg_catalog.pg_class c on c.oid = con.conrelid
+      join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+     where s.nspname = 'relay' and con.contype = 'p'
+       and (select array_agg(a.attname::text order by a.attname) from pg_catalog.pg_attribute a
+             where a.attrelid = c.oid and a.attnum = any (con.conkey))
+           = array['id', 'user_id']
+  ) pk where relname in ('crews', 'lanes', 'leases', 'items', 'tasks', 'actions');
+  if n <> 6 then
+    raise exception 'PK(user_id, id) must be on all six tables, saw % of 6.', n;
+  end if;
+
+  select count(*) into n from pg_catalog.pg_constraint con
+    join pg_catalog.pg_class c on c.oid = con.conrelid
+    join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+   where s.nspname = 'relay' and c.relname = 'finding_classes' and con.contype = 'p'
+     and (select array_agg(a.attname::text order by a.attname) from pg_catalog.pg_attribute a
+           where a.attrelid = c.oid and a.attnum = any (con.conkey))
+         = array['code'];
+  if n <> 1 then
+    raise exception 'finding_classes must be PK(code).';
+  end if;
+
+  -- No foreign key leaves `relay` (tickets, workspaces, principals resolve per side).
+  select count(*) into n from pg_catalog.pg_constraint con
+    join pg_catalog.pg_class c on c.oid = con.conrelid
+    join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+    join pg_catalog.pg_class fc on fc.oid = con.confrelid
+    join pg_catalog.pg_namespace fs on fs.oid = fc.relnamespace
+   where s.nspname = 'relay' and con.contype = 'f' and fs.nspname <> 'relay';
+  if n <> 0 then
+    raise exception '% relay FK(s) point outside the schema.', n;
+  end if;
+
+  -- RLS on all seven (the views inherit it through security-invoker).
+  select count(*) into n from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+   where s.nspname = 'relay' and c.relkind = 'r' and c.relrowsecurity;
+  if n <> 7 then
+    raise exception 'RLS must be on all 7 tables, saw % of 7.', n;
+  end if;
+
+  -- At least the owner-read policy per table (slice 2 adds dōjō write policies).
+  select count(*) into n from pg_catalog.pg_policy p
+    join pg_catalog.pg_class c on c.oid = p.polrelid
+    join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+   where s.nspname = 'relay';
+  if n < 7 then
+    raise exception 'relay tables must carry at least 7 policies, saw %.', n;
+  end if;
+
+  -- Portability: no policy dereferences the dōjō-only `auth` schema.
+  select count(*) into n from pg_catalog.pg_policy p
+    join pg_catalog.pg_class c on c.oid = p.polrelid
+    join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+   where s.nspname = 'relay' and pg_get_expr(p.polqual, p.polrelid) ilike '%auth.uid%';
+  if n <> 0 then
+    raise exception '% relay polic(ies) dereference auth.uid, which the desktop lacks.', n;
+  end if;
+
+  -- Grants: `authenticated` reads all seven, writes none; `anon` has nothing.
+  select bool_and(has_table_privilege('authenticated', 'relay.' || t, 'SELECT'))
+    into v_ok from (values ('crews'), ('lanes'), ('leases'), ('items'), ('tasks'), ('actions'),
+                          ('finding_classes')) v(t);
+  if v_ok is distinct from true then
+    raise exception 'authenticated must SELECT all 7 relay tables.';
+  end if;
+
+  select bool_and(not has_table_privilege('authenticated', 'relay.' || t, priv))
+    into v_ok
+    from (values ('crews'), ('lanes'), ('leases'), ('items'), ('tasks'), ('actions'),
+                 ('finding_classes')) v(t)
+   cross join (values ('INSERT'), ('UPDATE'), ('DELETE')) p(priv);
+  if v_ok is distinct from true then
+    raise exception 'authenticated must hold no write grant on any relay table.';
+  end if;
+
+  select bool_and(not has_table_privilege('anon', 'relay.' || t, priv))
+    into v_ok
+    from (values ('crews'), ('lanes'), ('leases'), ('items'), ('tasks'), ('actions'),
+                 ('finding_classes')) v(t)
+   cross join (values ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE')) p(priv);
+  if v_ok is distinct from true then
+    raise exception 'anon must hold no grant on any relay table.';
+  end if;
+
+  -- The daemon owner holds the full grant on all seven.
+  select bool_and(has_table_privilege(current_user, 'relay.' || t, 'SELECT,INSERT,UPDATE,DELETE'))
+    into v_ok from (values ('crews'), ('lanes'), ('leases'), ('items'), ('tasks'), ('actions'),
+                          ('finding_classes')) v(t);
+  if v_ok is distinct from true then
+    raise exception 'the daemon owner must hold full grants on all 7 relay tables.';
+  end if;
+
+  -- Both views exist and are security-invoker (the caller's RLS applies).
+  select count(*) into n
+    from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+   cross join pg_catalog.pg_options_to_table(c.reloptions) o
+   where s.nspname = 'relay' and c.relname in ('now', 'task_history')
+     and o.option_name = 'security_invoker' and o.option_value = 'true';
+  if n <> 2 then
+    raise exception 'relay.now and relay.task_history must both be security-invoker.';
+  end if;
+end $$;
+
+rollback;
