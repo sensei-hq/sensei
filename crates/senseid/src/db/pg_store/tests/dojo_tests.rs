@@ -807,7 +807,6 @@ async fn a_pulled_row_is_never_pushed_back() {
 // with a limit of one: without the skip the window returns it and the due
 // row behind it never comes out.
 #[tokio::test]
-#[ignore = "pending: sync-hardening"]
 async fn a_row_in_backoff_does_not_hold_the_push_window() {
     let s = pg_store().await;
     let stuck_uniq = uuid::Uuid::new_v4();

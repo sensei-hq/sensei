@@ -257,6 +257,12 @@ fn token_failure(e: AuthError) -> String {
         }
         AuthError::Unreachable(d) => d,
         AuthError::CredentialUnreadable(d) => format!("stored session unreadable: {d}"),
+        AuthError::MintedElsewhere { minted, current } => {
+            format!("session minted elsewhere, sign in again: {minted} vs {current}")
+        }
+        AuthError::Unattributed { current } => {
+            format!("legacy session, sign in again: {current}")
+        }
     }
 }
 
@@ -668,6 +674,7 @@ async fn push_planned(
         unmapped = planned.unmapped,
         pushed,
         graph_batches,
+        dojo_url = %plane.dojo_url(),
         "dojo_sync: cycle complete"
     );
     Ok(())
@@ -901,6 +908,75 @@ fn drop_colliding(
     (kept, held.len())
 }
 
+/// A pushed row's full identity for stored-echo matching: every field the
+/// dōjō echoes, as pushed. `computed_on` stays a string so a skewed echo
+/// fails matching, never decoding.
+fn echo_key(
+    m: &crate::db::pg_store::sync::PushableMetric,
+) -> (String, String, String, String, String, Option<String>) {
+    (
+        m.repo_key.clone(),
+        m.metric.clone(),
+        m.scope.clone(),
+        m.computed_on.to_string(),
+        m.grain.clone(),
+        m.commit_sha.clone(),
+    )
+}
+
+/// The pushed rows the dōjō confirmed stored, by full-row-key match — minus
+/// refused rows (rejected wins over confirmed, even when also echoed).
+/// H2/F5. Pure.
+fn confirmed_ids(
+    pushable: &[crate::db::pg_store::sync::PushableMetric],
+    stored: &[user_plane::StoredMetricKey],
+    refused: &std::collections::HashSet<(&str, &str)>,
+) -> Vec<uuid::Uuid> {
+    let echoed: std::collections::HashSet<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+    )> = stored
+        .iter()
+        .map(|s| {
+            (
+                s.repo_key.clone(),
+                s.metric.clone(),
+                s.scope.clone(),
+                s.computed_on.clone(),
+                s.grain.clone(),
+                s.commit_sha.clone(),
+            )
+        })
+        .collect();
+    pushable
+        .iter()
+        .filter(|m| {
+            !refused.contains(&(m.repo_key.as_str(), m.metric.as_str()))
+                && echoed.contains(&echo_key(m))
+        })
+        .map(|m| m.id)
+        .collect()
+}
+
+/// A pushed row's shortfall-tracker identity: the streak is per ROW, because
+/// one (repo, metric) pair holds rows at different dates.
+fn shortfall_key(
+    m: &crate::db::pg_store::sync::PushableMetric,
+) -> crate::db::pg_store::sync::ShortfallKey {
+    crate::db::pg_store::sync::ShortfallKey {
+        repo_key: m.repo_key.clone(),
+        metric: m.metric.clone(),
+        scope: m.scope.clone(),
+        computed_on: m.computed_on,
+        grain: m.grain.clone(),
+        commit_sha: m.commit_sha.clone(),
+    }
+}
+
 /// Push the metric rows the plan allows, and mark exactly those as shared.
 ///
 /// Returns how many rows the dōjō accepted.
@@ -1017,23 +1093,108 @@ async fn push_allowed(
         );
     }
 
-    // Mark every row the dōjō did NOT refuse — the COMPLEMENT of `rejected`.
+    // Mark exactly what the dōjō confirmed (H2/F5) — or, from a dōjō too old
+    // to confirm, the counted complement (F8), or nothing at all (F7).
     //
-    // This used to require an all-or-nothing batch, on the reasoning that "the
-    // response reports a count, not which rows". That was wrong: `rejected[]`
-    // carries `(repo_key, metric)`, which identifies exactly what to exclude. The
-    // consequence was a livelock — one permanently-refused row (an `unknown_metric`
-    // from version skew, say) meant NO row in the 500-row window was ever marked,
-    // so the identical batch was re-sent every cadence forever and the queue never
-    // drained.
+    // `rejected[]` carries `(repo_key, metric)` — enough to exclude, never
+    // enough to mark by. The old rule marked the complement unconditionally,
+    // which marked rows the dōjō never stored whenever the count fell short;
+    // the complement now marks only when the count corroborates it.
     let refused: std::collections::HashSet<(&str, &str)> =
         result.rejected.iter().map(|r| (r.repo_key.as_str(), r.metric.as_str())).collect();
-    let ids: Vec<uuid::Uuid> = pushable
-        .iter()
-        .filter(|m| !refused.contains(&(m.repo_key.as_str(), m.metric.as_str())))
-        .map(|m| m.id)
-        .collect();
-    pg.mark_metric_rows_shared(&ids).await?;
+    // Repositories with pushed rows still outstanding after this answer, and
+    // why — the dashboard verdict. Fed by both paths below.
+    let mut outstanding: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let marked: Vec<uuid::Uuid> = match &result.stored {
+        Some(echoed) => {
+            let ids = confirmed_ids(&pushable, echoed, &refused);
+            let marked_set: std::collections::HashSet<uuid::Uuid> = ids.iter().copied().collect();
+            // Shortfalls and cleans, per pushed row. Computed here, recorded
+            // after the mark lands, so a failed mark never resets a streak.
+            // Refused rows are answered: neither streak nor silence.
+            let mut cleans = vec![];
+            let mut shorts: Vec<&crate::db::pg_store::sync::PushableMetric> = vec![];
+            for m in &pushable {
+                if marked_set.contains(&m.id) {
+                    cleans.push(shortfall_key(m));
+                } else if !refused.contains(&(m.repo_key.as_str(), m.metric.as_str())) {
+                    shorts.push(m);
+                }
+            }
+            pg.mark_metric_rows_shared(&ids).await?;
+            for k in &cleans {
+                pg.record_clean(k);
+            }
+            let mut loud_ids = vec![];
+            let mut unconfirmed: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            for m in &shorts {
+                let n = pg.record_shortfall(&shortfall_key(m));
+                *unconfirmed.entry(m.repo_key.as_str()).or_default() += 1;
+                if n >= crate::db::pg_store::sync::ShortfallTracker::LOUD_AFTER {
+                    tracing::error!(
+                        persona,
+                        repo_key = m.repo_key,
+                        metric = m.metric,
+                        computed_on = m.computed_on.to_string(),
+                        streak = n,
+                        "dojo_sync: stored confirmation missing — the row waits its backoff"
+                    );
+                    loud_ids.push(m.id);
+                }
+            }
+            pg.set_metric_backoff(&loud_ids).await?;
+            for (repo, n) in unconfirmed {
+                outstanding
+                    .insert(repo, format!("stored confirmation missing for {n} pushed row(s)"));
+            }
+            ids
+        }
+        None => {
+            let complement: Vec<&crate::db::pg_store::sync::PushableMetric> = pushable
+                .iter()
+                .filter(|m| !refused.contains(&(m.repo_key.as_str(), m.metric.as_str())))
+                .collect();
+            // F7: the count must corroborate the complement. Accepted == the
+            // unrefused rows means the dōjō stored exactly those; anything
+            // else is unaccounted, and unaccounted rows stay queued.
+            if result.accepted as usize == complement.len() {
+                let ids: Vec<uuid::Uuid> = complement.iter().map(|m| m.id).collect();
+                pg.mark_metric_rows_shared(&ids).await?;
+                if !ids.is_empty() {
+                    // F8: old dōjōs keep working, but say so — once per push,
+                    // naming the dōjō — until the complement goes away
+                    // (backlog: remove when every supported dōjō returns
+                    // stored).
+                    tracing::warn!(
+                        persona,
+                        dojo_url = %plane.dojo_url(),
+                        marked = ids.len(),
+                        "dojo_sync: dōjō did not confirm per-row storage — marked unconfirmed rows by complement (legacy)"
+                    );
+                }
+                ids
+            } else {
+                for m in &complement {
+                    outstanding.insert(
+                        m.repo_key.as_str(),
+                        format!(
+                            "legacy answer unaccounted (accepted {} of {}) — marking nothing",
+                            result.accepted,
+                            complement.len()
+                        ),
+                    );
+                }
+                tracing::warn!(
+                    persona,
+                    accepted = result.accepted,
+                    unrefused = complement.len(),
+                    "dojo_sync: legacy count does not account for the pushed rows — marking nothing"
+                );
+                vec![]
+            }
+        }
+    };
 
     // A refusal belongs to the REPOSITORY whose row was refused. The batch is per
     // persona and spans many repositories, so marking them all `skipped` with a
@@ -1050,17 +1211,24 @@ async fn push_allowed(
             .push(format!("{}: {}", r.metric, r.reason));
     }
     for key in &repos {
-        match refusals.get(*key) {
-            // Nothing of this repository's was refused, whatever happened to the
-            // rest of the batch.
-            None => pg.mark_synced(&push_mark(key, persona), None).await?,
+        // A refusal belongs to its repository (see above); an outstanding
+        // cause joins it rather than replacing it, so a repository with a
+        // refused row AND an unconfirmed one names both.
+        let refusal_why: Option<String> = refusals
+            .get(*key)
+            .map(|reasons| reasons.iter().take(5).cloned().collect::<Vec<_>>().join("; "));
+        match (refusal_why, outstanding.remove(*key)) {
+            // Nothing of this repository's was refused or left outstanding,
+            // whatever happened to the rest of the batch.
+            (None, None) => pg.mark_synced(&push_mark(key, persona), None).await?,
             // `skipped`, not `error`: the dōjō answered, and a refusal is a
             // decision rather than a fault. Both mean "not synced", but only one
             // is a problem, and a dashboard that cannot tell them apart cries
             // wolf or stays silent.
-            Some(reasons) => {
-                let why = reasons.iter().take(5).cloned().collect::<Vec<_>>().join("; ");
-                pg.mark_sync_skipped(&push_mark(key, persona), &why).await?
+            (Some(r), None) => pg.mark_sync_skipped(&push_mark(key, persona), &r).await?,
+            (None, Some(o)) => pg.mark_sync_skipped(&push_mark(key, persona), &o).await?,
+            (Some(r), Some(o)) => {
+                pg.mark_sync_skipped(&push_mark(key, persona), &format!("{r}; {o}")).await?
             }
         }
     }
@@ -1069,10 +1237,8 @@ async fn push_allowed(
             persona,
             accepted = result.accepted,
             refused = result.rejected.len(),
-            // This used to read "nothing marked shared, the batch retries next
-            // cycle", which had been false since the complement fix above: the
-            // rows that were NOT refused are marked, which is the whole point.
-            "dojo_sync: partial acceptance — the refused rows stay queued, the rest are marked shared"
+            marked = marked.len(),
+            "dojo_sync: partial acceptance — refused rows stay queued"
         );
     }
     Ok(result.accepted)
@@ -1317,7 +1483,6 @@ mod tests {
         push: Option<Result<IngestResult, String>>,
         /// The URL this double answers for — what `dojo_url()` reports (the (a)
         /// log test pins the value end to end). Set per test; meaningless default.
-        #[allow(dead_code)] // phase A: set by tests, read in phase B
         url: String,
         /// Every `repo_key` the daemon DISCLOSED — the offer set, as it reached the
         /// wire. Recorded because B1 is invisible from the outcome: a cycle that
@@ -1387,6 +1552,9 @@ mod tests {
             _enabled: bool,
         ) -> Result<ActivationOutcome, String> {
             unreachable!("dojo_sync does not write metric activation")
+        }
+        fn dojo_url(&self) -> &str {
+            &self.url
         }
         async fn my_memberships(&self, _t: &str) -> Result<Vec<MyMembership>, String> {
             *self.membership_calls.lock().unwrap() += 1;
@@ -2130,7 +2298,6 @@ mod tests {
 
     // (a): every cycle complete names the dōjō it pushed to.
     #[test]
-    #[ignore = "pending: sync-hardening"]
     fn cycle_complete_names_the_dojo_it_pushed_to() {
         let logs = captured_logs(|| {
             current_thread_rt().block_on(async {
@@ -2159,7 +2326,6 @@ mod tests {
 
     // (c): 0 accepted with a non-empty batch and no rejections marks nothing.
     #[tokio::test]
-    #[ignore = "pending: sync-hardening"]
     async fn zero_accepted_with_an_empty_rejection_marks_nothing() {
         let pg = PgStore::connect_test().await.unwrap();
         let (pid, key, _) = seed(&pg).await;
@@ -2178,7 +2344,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending: sync-hardening"]
     fn zero_accepted_warns_that_it_marked_nothing() {
         let logs = captured_logs(|| {
             current_thread_rt().block_on(async {
@@ -2202,7 +2367,6 @@ mod tests {
 
     // H2: with per-row confirmation, only stored rows are marked.
     #[tokio::test]
-    #[ignore = "pending: sync-hardening"]
     async fn only_stored_rows_are_marked_when_the_dojo_confirms_per_row() {
         let pg = PgStore::connect_test().await.unwrap();
         let (pid_a, key_a, metric_a) = seed(&pg).await;
@@ -2244,7 +2408,6 @@ mod tests {
     // (repo, metric) on different dates, only the first echoed: a match on
     // (repo, metric) alone marks both.
     #[tokio::test]
-    #[ignore = "pending: sync-hardening"]
     async fn only_the_echoed_row_is_marked_when_a_metric_has_two_dates() {
         let pg = PgStore::connect_test().await.unwrap();
         let (pid, key, metric) = seed(&pg).await;
@@ -2282,7 +2445,6 @@ mod tests {
     // while staying queued throughout. The verdict is honest from cycle 1
     // (skipped: rows outstanding); only the error waits for N.
     #[test]
-    #[ignore = "pending: sync-hardening"]
     fn a_row_neither_confirmed_nor_rejected_is_loud_after_three_cycles() {
         let rt = current_thread_rt();
         let (pg, pid, key) = rt.block_on(async {
@@ -2334,7 +2496,6 @@ mod tests {
     // H2: a confirming cycle resets the shortfall count (consecutive means
     // consecutive).
     #[test]
-    #[ignore = "pending: sync-hardening"]
     fn a_confirming_cycle_resets_the_shortfall_count() {
         let rt = current_thread_rt();
         let (pg, pid, key, metric) = rt.block_on(async {
@@ -2427,7 +2588,6 @@ mod tests {
     // H2: a cycle that pushes nothing for a key keeps its count (nothing was
     // tried, nothing was learned) — only a pushed-clean cycle resets.
     #[test]
-    #[ignore = "pending: sync-hardening"]
     fn a_cycle_that_pushes_nothing_keeps_the_shortfall_count() {
         let rt = current_thread_rt();
         let (pg, pid, key) = rt.block_on(async {
@@ -2488,7 +2648,6 @@ mod tests {
     // implementation's — the test only pins wait-then-reoffer, moving the
     // clock with SQL rather than waiting real hours.)
     #[test]
-    #[ignore = "pending: sync-hardening"]
     fn a_loud_row_waits_its_backoff_then_is_re_offered() {
         let rt = current_thread_rt();
         let (pg, pid, key) = rt.block_on(async {
@@ -2543,7 +2702,6 @@ mod tests {
     // complement marks. Green before and after — it pins that phase B must
     // not break old dōjōs.
     #[tokio::test]
-    #[ignore = "pending: sync-hardening"]
     async fn a_dojo_without_stored_keeps_complement_marks() {
         let pg = PgStore::connect_test().await.unwrap();
         let (pid, key, _) = seed(&pg).await;
@@ -2564,7 +2722,6 @@ mod tests {
     // H2 edge: rejected wins over confirmed (a row in both lists stays queued).
     // Green before and after — it pins the new path's priority.
     #[tokio::test]
-    #[ignore = "pending: sync-hardening"]
     async fn a_rejected_row_is_not_marked_even_when_also_confirmed() {
         let pg = PgStore::connect_test().await.unwrap();
         let (pid, key, metric) = seed(&pg).await;
@@ -2600,7 +2757,6 @@ mod tests {
     // F7: a legacy shape that rejects SOME rows names the rows it kept but
     // cannot say which of the rest fell short — so it marks nothing at all.
     #[tokio::test]
-    #[ignore = "pending: sync-hardening"]
     async fn a_partially_rejected_legacy_push_marks_nothing() {
         let pg = PgStore::connect_test().await.unwrap();
         let (pid_a, key_a, metric_a) = seed(&pg).await;
@@ -2636,7 +2792,6 @@ mod tests {
     // F7: accepted < pushed - rejected is a SILENT shortfall on a legacy
     // shape — the count admits a row fell short without saying which.
     #[tokio::test]
-    #[ignore = "pending: sync-hardening"]
     async fn a_count_shortfall_on_a_legacy_push_marks_nothing() {
         let pg = PgStore::connect_test().await.unwrap();
         let (pid_a, key_a, _) = seed(&pg).await;
@@ -2663,7 +2818,6 @@ mod tests {
 
     // F7: both mark-nothing legacy shapes say so loudly.
     #[test]
-    #[ignore = "pending: sync-hardening"]
     fn legacy_mark_nothing_shapes_warn() {
         enum Shape {
             PartialRejected,
@@ -2726,7 +2880,6 @@ mod tests {
     // once per cycle (not per row), naming the dōjō — until the complement
     // goes away (backlog: remove when every supported dōjō returns stored).
     #[test]
-    #[ignore = "pending: sync-hardening"]
     fn stored_none_complement_marks_but_warns_once_naming_the_dojo() {
         let rt = current_thread_rt();
         let pg = rt.block_on(PgStore::connect_test()).unwrap();

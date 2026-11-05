@@ -374,6 +374,11 @@ pub trait UserPlane: Send + Sync {
         metric: &str,
         enabled: bool,
     ) -> Result<ActivationOutcome, String>;
+
+    /// The dōjō this plane talks to — for log lines that must name it
+    /// (sync-hardening F8: the legacy-complement warn; the cycle-complete
+    /// line). Sync, because it is configuration, not a call.
+    fn dojo_url(&self) -> &str;
 }
 
 /// What the dōjō says the ruling now is, re-read rather than echoed.
@@ -430,6 +435,9 @@ impl UserPlane for HttpUserPlane {
         enabled: bool,
     ) -> Result<ActivationOutcome, String> {
         set_metric_activation(&self.dojo_url, token, repo_key, metric, enabled).await
+    }
+    fn dojo_url(&self) -> &str {
+        &self.dojo_url
     }
     async fn provision(
         &self,

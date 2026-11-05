@@ -976,7 +976,6 @@ async fn only_rows_provably_the_persons_are_pushable_user_metrics() {
 /// provable. (So during a backoff pushed + held + waiting = every user row in
 /// play, not pushed + held.)
 #[tokio::test]
-#[ignore = "pending: sync-hardening"]
 async fn the_user_window_skips_a_row_in_backoff_and_reoffers_it_after() {
     let s = pg_store().await;
     let uniq = uuid::Uuid::new_v4();

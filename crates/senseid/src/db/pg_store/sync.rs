@@ -115,6 +115,11 @@ const PROVABLY_THEIRS: &str = "(rm.identity IS NULL AND r.repo_key = ANY($3)) \
                                WHERE e.persona_id = $1 AND e.source = 'claimed' \
                                  AND e.removed_at IS NULL)";
 
+/// A row whose backoff has elapsed (or was never backed off): the only rows a
+/// push window offers. A waiting row holds no share of the limit — it waits
+/// its turn, then is re-offered.
+const BACKOFF_ELAPSED: &str = "(rm.next_attempt_at IS NULL OR rm.next_attempt_at <= now())";
+
 /// The push read's columns and joins, shared by the repo and user queries so
 /// the carried shape — including the commits join behind `props.authored_at`
 /// — cannot drift between the two paths. The join is the commits primary key,
@@ -189,11 +194,9 @@ pub struct ShortfallKey {
 /// counting rules; phase B records into it from `push_allowed`.
 #[derive(Debug, Default)]
 pub struct ShortfallTracker {
-    #[allow(dead_code)] // phase A: counted in phase B
     strikes: std::collections::HashMap<ShortfallKey, u32>,
 }
 
-#[allow(dead_code)] // phase A: called from push_allowed in phase B
 impl ShortfallTracker {
     /// Shortfalls before a row goes loud.
     pub const LOUD_AFTER: u32 = 3;
@@ -582,6 +585,7 @@ impl PgStore {
                 AND rm.scope::text = ANY($1) \
                 AND r.repo_key = ANY($2) \
                 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at) \
+                AND {BACKOFF_ELAPSED} \
               ORDER BY rm.computed_on DESC, rm.id \
               LIMIT $3"
         ))
@@ -615,6 +619,7 @@ impl PgStore {
     ) -> Result<Vec<PushableMetric>, String> {
         let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(&format!(
             "{PUSHABLE_ROWS_FROM} WHERE {USER_ROWS_IN_PLAY} AND ({PROVABLY_THEIRS}) \
+              AND {BACKOFF_ELAPSED} \
               ORDER BY rm.computed_on DESC, rm.id \
               LIMIT $4"
         ))
@@ -688,13 +693,49 @@ impl PgStore {
         if ids.is_empty() {
             return Ok(0);
         }
+        // A fresh mark clears the backoff: it was spent waiting on an older
+        // value, and a recomputed row must re-offer at once, not wait out a
+        // stale sentence.
         let n = sqlx_core::query::query(
-            "UPDATE sensei.repository_metrics SET shared_at = now() WHERE id = ANY($1)",
+            "UPDATE sensei.repository_metrics \
+                SET shared_at = now(), next_attempt_at = NULL \
+              WHERE id = ANY($1)",
         )
         .bind(ids)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("mark_metric_rows_shared: {e}"))?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Record a stored-confirmation shortfall for one pushed row (H2);
+    /// returns the new consecutive count for the row's identity.
+    pub fn record_shortfall(&self, key: &ShortfallKey) -> u32 {
+        self.shortfalls.lock().unwrap().record_shortfall(key)
+    }
+
+    /// A pushed row was confirmed: its streak ends (H2).
+    pub fn record_clean(&self, key: &ShortfallKey) {
+        self.shortfalls.lock().unwrap().record_clean(key)
+    }
+
+    /// Hold loud rows out of the push window for an hour (H2/F4): the dōjō
+    /// is not confirming them, so re-offering every cycle is noise. The
+    /// window re-offers them once the backoff elapses.
+    pub async fn set_metric_backoff(&self, ids: &[uuid::Uuid]) -> Result<u64, String> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let n = sqlx_core::query::query(
+            "UPDATE sensei.repository_metrics \
+                SET next_attempt_at = now() + interval '1 hour' \
+              WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_metric_backoff: {e}"))?
         .rows_affected();
         Ok(n)
     }

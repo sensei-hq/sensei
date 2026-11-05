@@ -508,6 +508,9 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
             // read:org exists for — provisioning cannot list organisations
             // without it, and would report "none" rather than "never asked".
             let provider = tokens.provider_token.clone();
+            // The dōjō that minted these tokens is the one we exchanged with:
+            // record it, so the session is never presented anywhere else (M1).
+            let registry = dojo_url();
             // The user just signed in, so a Keychain prompt has someone to
             // answer it (#283) — the only kind of call that may ask.
             let stored = tokio::task::spawn_blocking(move || {
@@ -528,7 +531,7 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
                     if let Err(e) = session::discard_provider_refresh_token(&who) {
                         tracing::warn!(error = %e, "could not discard the GitHub refresh token");
                     }
-                    session::store_refresh_token(&who, &refresh)
+                    session::store_signed_in_session(&session::Keychain, &who, &refresh, &registry)
                 })
             })
             .await;
@@ -783,7 +786,7 @@ pub(crate) async fn signout(
 ///
 /// Why a persona has no usable access token right now.
 ///
-/// Three variants rather than one error string because they call for three
+/// Six variants rather than one error string because they call for three
 /// different responses: re-authenticate, wait, or nothing at all. An unattended
 /// sync that cannot tell them apart either nags about a network blip or stays
 /// quiet about a session that will never work again.
@@ -801,6 +804,14 @@ pub(crate) enum AuthError {
     /// asking (#283). The session is still there; nothing was cleared, and
     /// signing in again is not what it needs.
     CredentialUnreadable(String),
+    /// The stored session was minted by ANOTHER dōjō — the token is never
+    /// sent to this one. The stored session is left alone (it is valid,
+    /// just elsewhere): the remedy is one fresh sign-in (sync-hardening M1).
+    MintedElsewhere { minted: String, current: String },
+    /// The stored session predates minter records, so it cannot be
+    /// attributed to any dōjō and fails closed. The item is kept (there is
+    /// no reason to clear it): the remedy is one fresh sign-in.
+    Unattributed { current: String },
 }
 
 /// The detail, so callers can report the cause without destructuring.
@@ -814,6 +825,14 @@ impl std::fmt::Display for AuthError {
             Self::Rejected(d) | Self::Unreachable(d) | Self::CredentialUnreadable(d) => {
                 write!(f, "{d}")
             }
+            Self::MintedElsewhere { minted, current } => write!(
+                f,
+                "session was minted at {minted} but the dōjō is now {current} — sign in again"
+            ),
+            Self::Unattributed { current } => write!(
+                f,
+                "stored session predates minter records and cannot be attributed to {current} — sign in again"
+            ),
         }
     }
 }
@@ -821,7 +840,13 @@ impl std::fmt::Display for AuthError {
 impl AuthError {
     /// Whether the user has to sign in again, as opposed to just waiting.
     pub(crate) fn needs_sign_in(&self) -> bool {
-        matches!(self, Self::SignedOut | Self::Rejected(_))
+        matches!(
+            self,
+            Self::SignedOut
+                | Self::Rejected(_)
+                | Self::MintedElsewhere { .. }
+                | Self::Unattributed { .. }
+        )
     }
 }
 
@@ -834,6 +859,10 @@ fn status_error(e: &AuthError) -> &'static str {
         AuthError::CredentialUnreadable(_) => {
             "could not read the stored session — the keychain needs approval"
         }
+        AuthError::MintedElsewhere { .. } => {
+            "stored session was minted at another dōjō — sign in again"
+        }
+        AuthError::Unattributed { .. } => "stored session predates minter records — sign in again",
     }
 }
 
@@ -857,13 +886,11 @@ pub(crate) struct LiveSession {
     pub session: session::Session,
 }
 
-/// The stored refresh token, or why there is none. Only a miss is `SignedOut`:
+/// The stored credential, or why there is none. Only a miss is `SignedOut`:
 /// a Keychain that would not answer (#283) says nothing about the session, and
 /// reporting "signed out" for it sends the user to sign in over a session that
 /// is still there.
-fn stored_session(
-    read: Result<String, crate::gateway_keys::KeychainError>,
-) -> Result<String, AuthError> {
+fn stored_session<T>(read: Result<T, crate::gateway_keys::KeychainError>) -> Result<T, AuthError> {
     read.map_err(|e| match e {
         crate::gateway_keys::KeychainError::NotFound => AuthError::SignedOut,
         other => AuthError::CredentialUnreadable(other.to_string()),
@@ -878,22 +905,46 @@ fn stored_session(
 /// second copy that drifted — starting with the rotation below, which is easy to
 /// leave out and fails a whole session later.
 ///
-/// Three obligations, all of which have bitten:
+/// Four obligations, all of which have bitten:
 /// - **Rotate.** The dōjō issues a new refresh token on every use. Keeping the
 ///   old one invalidates the session on the NEXT call, which reads as a random
 ///   sign-out.
 /// - **Clear only on rejection.** See [`refresh_failure`].
 /// - **Never fabricate.** A persona that cannot be refreshed returns `Err`; it
 ///   never yields an empty or stale token that a caller would send as a bearer.
+/// - **Refuse foreign.** A token minted by another dōjō — or by none on
+///   record — is refused before any refresh, with the stored session left
+///   alone. A refusal is not a rejection.
 pub(crate) async fn live_session(persona: &str) -> Result<LiveSession, AuthError> {
     let who = persona.to_string();
-    let refresh = match tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await
-    {
+    let creds = match tokio::task::spawn_blocking(move || session::load_credentials(&who)).await {
         Ok(read) => stored_session(read)?,
         Err(e) => return Err(AuthError::Unreachable(format!("session read panicked: {e}"))),
     };
+    // One read serves both: the refresh token and the registry that minted
+    // it. A missing refresh is a sign-out exactly as before — the minted
+    // check below only ever sees a session that has a token.
+    let refresh = match creds.refresh_token {
+        Some(r) => r,
+        None => return Err(AuthError::SignedOut),
+    };
+    // M1: a refresh token is never sent to a registry that did not mint it.
+    // Refuse BEFORE any refresh, with the stored session left alone — a
+    // refusal is not a rejection, and the session may be perfectly valid
+    // at the dōjō that minted it.
+    let current = dojo_url();
+    match creds.minted_registry {
+        None => return Err(AuthError::Unattributed { current }),
+        Some(minter) => {
+            if !crate::dojo_client::settings::same_registry(&minter, &current) {
+                return Err(AuthError::MintedElsewhere { minted: minter, current });
+            }
+        }
+    }
 
-    let tokens = match dojo_auth::refresh(&dojo_url(), &refresh).await {
+    // The refusal above and this request agree on the dōjō by construction:
+    // both use the value that was checked, not a second read.
+    let tokens = match dojo_auth::refresh(&current, &refresh).await {
         Ok(t) => t,
         Err(e) => {
             let verdict = refresh_failure(&e);
@@ -1865,15 +1916,18 @@ mod tests {
     #[test]
     fn only_a_missing_session_reads_as_signed_out() {
         use crate::gateway_keys::KeychainError;
-        assert!(matches!(stored_session(Err(KeychainError::NotFound)), Err(AuthError::SignedOut)));
-        match stored_session(Err(KeychainError::NeedsApproval)) {
+        assert!(matches!(
+            stored_session::<String>(Err(KeychainError::NotFound)),
+            Err(AuthError::SignedOut)
+        ));
+        match stored_session::<String>(Err(KeychainError::NeedsApproval)) {
             Err(e @ AuthError::CredentialUnreadable(_)) => {
                 assert!(e.to_string().contains("needs approval"), "{e}");
                 assert!(!e.needs_sign_in());
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(stored_session(Ok("rt".into())).ok().as_deref(), Some("rt"));
+        assert_eq!(stored_session::<String>(Ok("rt".into())).ok().as_deref(), Some("rt"));
     }
 
     #[test]
@@ -2056,7 +2110,6 @@ mod tests {
     // macOS-gated, uuid persona, cleared afterwards.
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
-    #[ignore = "pending: sync-hardening"]
     #[serial(dojo_url_env)]
     async fn a_refresh_token_is_never_sent_to_a_registry_that_did_not_mint_it() {
         use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
@@ -2094,7 +2147,6 @@ mod tests {
     // macOS-gated, uuid persona, cleared afterwards.
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
-    #[ignore = "pending: sync-hardening"]
     #[serial(dojo_url_env)]
     async fn legacy_credentials_without_a_minter_ask_for_a_fresh_sign_in() {
         use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
@@ -2135,7 +2187,6 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
-    #[ignore = "pending: sync-hardening"]
     #[serial(dojo_url_env)]
     async fn status_reports_a_minted_elsewhere_session_as_needs_sign_in() {
         use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
@@ -2171,7 +2222,6 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
-    #[ignore = "pending: sync-hardening"]
     #[serial(dojo_url_env)]
     async fn status_reports_legacy_credentials_as_needs_sign_in() {
         use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
