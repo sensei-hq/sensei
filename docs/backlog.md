@@ -66,6 +66,11 @@ status — open or closed is GitHub's answer.
 
 ## Open — not yet filed
 
+- **`plan_folders` has no production caller (indexer, 2026-11-04, L1 module-tree analysis).** It says the deepest folder owns
+  a file, but the production `repo_scan` puts every file on the root. Either wire it in or delete it. The module tree doesn't
+  need it, since it joins on the fqn package.
+- **Svelte file nodes are `module`, not `component` (indexer, 2026-11-04).** It's queued after the stuck-index item.
+
 - **Drop `sensei.repositories.visibility` and `repo_visibility` (WP8, 2026-11-04).** WP8 retires the column as a gate; nothing
   reads it after L2's daemon side lands. **Trigger:** the desktop app's sync toggle reads `configurable_by_me` (L2, WP8 daemon
   side). Then drop the column and the enum in one dbd reconcile, deploying twice.
