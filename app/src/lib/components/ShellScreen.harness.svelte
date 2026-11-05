@@ -11,6 +11,8 @@
   interface ViewStateStore {
     get(viewId: string): PanelState | undefined;
     set(viewId: string, next: PanelState): Promise<void> | void;
+    /** Why the store cannot read or keep the views (appState's `viewsError`), or null. */
+    error?(): string | null;
   }
   const pending = ui as unknown as {
     ShellScreen: Component<Record<string, unknown>>;

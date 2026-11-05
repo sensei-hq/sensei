@@ -104,6 +104,8 @@ describe.skip('pending: shell-store — AppState · view panels (ui.views)', () 
     expect(state.viewPanels(STRUCTURE)).toEqual({ info: false, stats: true });
     expect(state.viewPanels(ER)).toEqual({ side: false });
     expect(told).toEqual([[VIEWS_KEY]]);
+    // The store persists through the config, never localStorage (only the migration touches it, to delete).
+    expect(storage.size).toBe(0);
   });
 
   it('a toggle replaces that view\'s whole state, not a merge into the old one', async () => {
@@ -168,6 +170,25 @@ describe.skip('pending: shell-store — AppState · view panels (ui.views)', () 
     expect(state.viewsError).toMatch(/ui\.views/);
   });
 
+  // r2 F5: the unreadable value cannot be recovered and its error was shown, so
+  // a save replaces it: the valid entries survive, the invalid ones are dropped.
+  it('a save over an unreadable ui.views lands, writes only the new view, and clears the error', async () => {
+    const state = await loaded({ [VIEWS_KEY]: '{not json' });
+    expect(state.viewsError).toMatch(/ui\.views/);
+    await state.setViewPanels(STRUCTURE, { info: false });
+    expect(lastWrittenViews()).toEqual({ [STRUCTURE]: { info: false } });
+    expect(state.viewsError).toBeNull();
+  });
+
+  it('a save over a partly invalid ui.views keeps the valid entries, drops the invalid ones, and clears the error', async () => {
+    const state = await loaded({
+      [VIEWS_KEY]: JSON.stringify({ [STRUCTURE]: { info: false, bogus: false, side: 'no' }, [ER]: 3 }),
+    });
+    await state.setViewPanels('workspace.overview', { stats: false });
+    expect(lastWrittenViews()).toEqual({ [STRUCTURE]: { info: false }, 'workspace.overview': { stats: false } });
+    expect(state.viewsError).toBeNull();
+  });
+
   it('another window\'s save reaches this one through the config re-read', async () => {
     const state = await loaded({});
     expect(state.viewPanels(ER)).toEqual({});
@@ -209,6 +230,20 @@ describe.skip('pending: shell-store — AppState · view panels (ui.views)', () 
       await state.migrateLegacyViews(IDS);
       expect(state.viewPanels(ER)).toEqual({ info: true, side: false });
       expect(state.viewPanels(STRUCTURE)).toEqual({ info: false });
+    });
+
+    // r2 F4: nothing to write is still a finished migration — the keys go, or
+    // they are re-read on every start.
+    it('when every view already has an entry, nothing is written and the legacy keys are still deleted', async () => {
+      storage.set(STORAGE_KEYS.diagramsAbout, 'closed');
+      storage.set(STORAGE_KEYS.diagramsSide, 'closed');
+      const state = await loaded({
+        [VIEWS_KEY]: JSON.stringify({ [STRUCTURE]: { info: true }, [ER]: { stats: false } }),
+      });
+      await state.migrateLegacyViews(IDS);
+      expect(apiMock.trySetConfig).not.toHaveBeenCalled();
+      for (const key of LEGACY) expect(storage.has(key), key).toBe(false);
+      expect(state.viewPanels(STRUCTURE)).toEqual({ info: true });
     });
 
     it('with no legacy keys there is nothing to migrate and nothing is written', async () => {

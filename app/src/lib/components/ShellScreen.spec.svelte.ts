@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, tick } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
 import type { PanelState } from '@rokkit/app';
@@ -27,15 +27,35 @@ const bands = (c: HTMLElement) => ({
   side: Boolean(c.querySelector('[data-screen-sidebar]')),
 });
 
-/** A host store over a reactive map, as appState's config is. */
-function makeStore(initial: Record<string, PanelState> = {}, fail = false) {
+// r2 F2: a working Map-backed localStorage (jsdom's would hide a guarded write),
+// so "the wrapper persists through the store, never localStorage" is checkable.
+const storage = new Map<string, string>();
+vi.stubGlobal('localStorage', {
+  getItem: (k: string) => storage.get(k) ?? null,
+  setItem: (k: string, v: string) => void storage.set(k, v),
+  removeItem: (k: string) => void storage.delete(k),
+  clear: () => storage.clear(),
+  key: (i: number) => [...storage.keys()][i] ?? null,
+  get length() { return storage.size; },
+});
+beforeEach(() => storage.clear());
+
+/** A host store over a reactive map, as appState's config is. `ctl.fail` refuses
+ *  saves by rejecting ONLY — it does not also report the failure through
+ *  `error()`, so the wrapper must handle the rejection itself (a wrapper that
+ *  swallows it, or never catches it, fails). `ctl.error` is the store's read
+ *  error (appState's `viewsError` for an unreadable `ui.views`). */
+function makeStore(initial: Record<string, PanelState> = {}, fail = false, error: string | null = null) {
   const views = $state<Record<string, PanelState>>(initial);
+  const ctl = $state({ fail, error });
   const set = vi.fn(async (id: string, next: PanelState) => {
-    if (fail) throw new Error('Daemon config write failed (500): boom');
+    if (ctl.fail) throw new Error('Daemon config write failed (500): boom');
     views[id] = next;
   });
-  return { views, set, store: { get: (id: string) => views[id], set } };
+  return { views, set, ctl, store: { get: (id: string) => views[id], set, error: () => ctl.error } };
 }
+
+const notice = (c: HTMLElement) => c.querySelector('[data-screen-body] [data-component="notice"]');
 
 // The `@sensei/ui` wrapper over rokkit's ScreenShell (D87, contract §8): it
 // connects the glyph mode to the marks and the view id to the host's panel store.
@@ -120,6 +140,75 @@ describe.skip('pending: shell-store — ShellScreen', () => {
     toggle(m.container, 'side').click();
     flushSync();
     expect(bands(m.container).side).toBe(false);
+  });
+
+  // ── r2 F1 (D83): a refused save, or an unreadable store, is shown ─────────
+
+  it('a refused save is shown in the body as a Notice naming the failure; the band stays as stored', async () => {
+    const { store } = makeStore({}, true);
+    const m = mountComponent(Harness, { store });
+    cleanup.push(m.destroy);
+    expect(notice(m.container)).toBeNull();
+    toggle(m.container, 'stats').click();
+    flushSync();
+    await Promise.resolve();
+    await tick();
+    flushSync();
+    expect(notice(m.container)?.textContent).toContain('boom');
+    expect(bands(m.container)).toMatchObject({ stats: true });
+    expect(m.container.querySelector('[data-testid="body"]'), 'the screen\'s body still renders').toBeTruthy();
+  });
+
+  it('the next good save clears the Notice', async () => {
+    const { store, ctl } = makeStore({}, true);
+    const m = mountComponent(Harness, { store });
+    cleanup.push(m.destroy);
+    toggle(m.container, 'stats').click();
+    flushSync();
+    await Promise.resolve();
+    await tick();
+    flushSync();
+    expect(notice(m.container)).toBeTruthy();
+    ctl.fail = false;
+    toggle(m.container, 'stats').click();
+    flushSync();
+    await Promise.resolve();
+    await tick();
+    flushSync();
+    expect(notice(m.container)).toBeNull();
+    expect(bands(m.container)).toMatchObject({ stats: false });
+  });
+
+  it('a store that could not read its views (an unreadable ui.views) shows the Notice on mount', () => {
+    const { store } = makeStore({}, false, 'ui.views could not be read: Unexpected token');
+    const m = mountComponent(Harness, { store });
+    cleanup.push(m.destroy);
+    expect(notice(m.container)?.textContent).toContain('ui.views could not be read');
+    expect(bands(m.container)).toEqual({ info: true, stats: true, filters: true, side: true });
+  });
+
+  // ── r2 F2: persistence goes through the store, never localStorage ─────────
+
+  it('with a store, toggles write nothing to localStorage', async () => {
+    const { store } = makeStore();
+    const m = mountComponent(Harness, { store });
+    cleanup.push(m.destroy);
+    for (const band of ['info', 'stats', 'filters', 'side'] as const) {
+      toggle(m.container, band).click();
+      flushSync();
+    }
+    await tick();
+    expect(storage.size).toBe(0);
+  });
+
+  it('with no provider, toggles write nothing to localStorage either: the screen alone, no persistence', () => {
+    const m = mountComponent(Harness, {});
+    cleanup.push(m.destroy);
+    toggle(m.container, 'side').click();
+    flushSync();
+    toggle(m.container, 'info').click();
+    flushSync();
+    expect(storage.size).toBe(0);
   });
 
   it('carries the view id onto the shell, so a test or a host can find the view', () => {
