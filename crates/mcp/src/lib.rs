@@ -2609,7 +2609,7 @@ mod tests {
     #[ignore = "pending:relay-item2"]
     fn relay_register_requires_role_and_family() {
         assert_eq!(missing_required("relay_register", &json!({})), vec!["role", "family"]);
-        // Q6-REC: crew_id rides along when given, but is not required yet.
+        // Q6 settled: crew_id rides along when given (contributors must give it — register_mode).
         assert!(
             missing_required("relay_register", &json!({"role": "contributor", "family": "x"}))
                 .is_empty()
@@ -2702,9 +2702,9 @@ mod tests {
 
     #[test]
     #[ignore = "pending:relay-item2"]
-    fn relay_assign_splits_caller_and_assignee_q1_q13_rec() {
-        // Q13-REC: `lane_id` is the calling coordinator, `to_lane` the
-        // assignee; both uuids (Q1-REC).
+    fn relay_assign_splits_caller_and_assignee() {
+        // Q13 settled: `lane_id` is the calling coordinator, `to_lane` the
+        // assignee; both uuids (Q1 settled).
         let to_lane = "01938931-0000-7000-8000-000000000002";
         let req = daemon_request_for(
             "relay_assign_task",
@@ -2762,6 +2762,55 @@ mod tests {
         assert_eq!(req.path, "/api/relay/messages");
         assert_eq!(req.body.as_ref().unwrap()["text"], "hi");
         assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_lane_surface_daemon_set() {
+        // Q12 settled: lanes omit `surface`; the daemon sets `lane`. The MCP
+        // schema never requires it, and forwards it verbatim when given (the
+        // daemon validates).
+        assert!(
+            missing_required(
+                "relay_send_message",
+                &lane_args(json!({"to": {"kind": "lane", "lane_id": LANE_ID}, "text": "hi"}))
+            )
+            .is_empty()
+        );
+        let req = daemon_request_for(
+            "relay_send_message",
+            &lane_args(json!({"to": {"kind": "everyone"}, "text": "hi", "surface": "desktop"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.body.as_ref().unwrap()["surface"], "desktop");
+        let req = daemon_request_for(
+            "relay_send_message",
+            &lane_args(json!({"to": {"kind": "everyone"}, "text": "hi"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert!(req.body.as_ref().unwrap().get("surface").is_none());
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_register_forwards_crew_mint_fields() {
+        // Q6 settled: a coordinator's mint carries goal/repo_key/workspace_id.
+        let req = daemon_request_for(
+            "relay_register",
+            &json!({"role": "coordinator", "family": "claude-code",
+                    "goal": "Ship it", "repo_key": "github.com/o/r", "workspace_id": "w1"}),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["goal"], "Ship it");
+        assert_eq!(body["repo_key"], "github.com/o/r");
+        assert_eq!(body["workspace_id"], "w1");
     }
 
     #[test]

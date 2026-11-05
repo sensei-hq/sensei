@@ -13,6 +13,8 @@
 // the store land in phase B. Removed then (like L4's F6 comments).
 #![allow(dead_code)]
 
+pub mod envelope;
+
 use serde::{Deserialize, Serialize};
 
 // ─── Vocabulary ───
@@ -27,7 +29,7 @@ pub enum RelayRole {
     Contributor,
 }
 
-/// `RelayTaskPhase`. No `merge` phase (Q3-REC): merging is the `merged`
+/// `RelayTaskPhase`. No `merge` phase (Q3 settled): merging is the `merged`
 /// action, `approved → done`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -113,12 +115,13 @@ pub enum ReviewVerdict {
     ChangesRequested,
 }
 
-/// `RelaySurface`. Q12 may add `lane` for lane-sent messages/answers.
+/// `RelaySurface`. `lane` for lane-sent messages/answers (Q12, settled).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelaySurface {
     Desktop,
     Dojo,
+    Lane,
 }
 
 /// `RelayFindingSeverity`.
@@ -145,7 +148,13 @@ pub enum TaskEvent {
     Reoffered,
     Cancelled,
     Blocked,
-    Unblocked { blocked_from: RelayTaskState },
+    Unblocked {
+        blocked_from: RelayTaskState,
+    },
+    /// The coordinator re-assigns the next phase (Q11, settled): an approved
+    /// task goes back to `working` and starts a new round (the round is the
+    /// store's write, part 2).
+    Reassigned,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,12 +175,12 @@ pub fn transition(
 
 // ─── wait_for_task timeout (brief §3: a wait holds at most 50 s) ───
 
-/// Default hold when the caller omits `timeout_ms` (Q10-REC).
+/// Default hold when the caller omits `timeout_ms` (Q10 settled).
 pub const WAIT_TIMEOUT_DEFAULT_MS: u64 = 25_000;
 /// The longest hold the daemon grants.
 pub const WAIT_TIMEOUT_MAX_MS: u64 = 50_000;
 
-/// Omitted → default; otherwise clamped to 1 ms – 50 s (Q10-REC).
+/// Omitted → default; otherwise clamped to 1 ms – 50 s (Q10 settled).
 pub fn clamp_wait_timeout(timeout_ms: Option<u64>) -> u64 {
     let _ = timeout_ms;
     todo!("relay item 2 phase B")
@@ -186,7 +195,7 @@ pub fn hash_lane_token(token: &str) -> String {
     todo!("relay item 2 phase B")
 }
 
-// ─── Leak guard (Q8-REC: fail-closed, kinds only) ───
+// ─── Leak guard (Q8 settled: fail-closed, kinds only) ───
 
 /// Reject text carrying a secret, surfacing kinds only — never values.
 /// Runs over `body_md`, `report_md`, and message/summary text on write.
@@ -226,8 +235,100 @@ pub struct PropsError {
 /// relay-api.ts). Unknown keys are rejected; an explicit null on a required
 /// key counts as missing (D83: null = not reported). Finding-class *existence*
 /// needs the DB (part 2); here each finding's shape is checked.
+/// Settled refinements: `message.to.kind` ∈ coordinator/lane/everyone/person
+/// (Q2), lane-carrying refs are uuids (Q1), `surface` ∈ desktop/dojo/lane (Q12).
 pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Result<(), PropsError> {
     let _ = (kind, props);
+    todo!("relay item 2 phase B")
+}
+
+// ─── Lane refs, register modes, surfaces (Q1/Q6/Q12, settled) ───
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationError {
+    pub message: String,
+}
+
+/// A `*lane_id*` wire value: a uuid (Q1). Format only, not the version — the
+/// version is a minting discipline (phase B mints v7); the wire contract is
+/// "parses as a uuid, never a code".
+pub fn parse_lane_ref(s: &str) -> Result<uuid::Uuid, uuid::Error> {
+    let _ = s;
+    todo!("relay item 2 phase B")
+}
+
+/// What a `register` call does (Q6, settled).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegisterMode {
+    /// Coordinator without `crew_id`: mints the crew (optional goal,
+    /// repo_key, workspace_id ride along; the paste line carries the id out).
+    MintCrew,
+    /// Coordinator with `crew_id`, or contributor with `crew_id`: joins.
+    /// "One coordinator per crew" is the store's check (part 2).
+    JoinCrew,
+}
+
+/// Coordinator without `crew_id` mints; a contributor without one is refused.
+pub fn register_mode(
+    role: RelayRole,
+    crew_id: Option<&str>,
+) -> Result<RegisterMode, ValidationError> {
+    let _ = (role, crew_id);
+    todo!("relay item 2 phase B")
+}
+
+/// Who performs a surfaced action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Caller {
+    Person,
+    Lane,
+}
+
+/// Settle `surface` for a message/answer (Q12, settled): the daemon sets
+/// `lane` for lane actions. Derived fail-closed edges (flagged for L0 veto):
+/// a lane claiming a person surface is spoofing (refused); a person must name
+/// a person surface (omitted or `lane` refused).
+pub fn resolve_surface(
+    caller: Caller,
+    given: Option<RelaySurface>,
+) -> Result<RelaySurface, ValidationError> {
+    let _ = (caller, given);
+    todo!("relay item 2 phase B")
+}
+
+// ─── Lease math (Q7, settled) ───
+
+/// A lane lease lives 300 s; every authenticated call renews it.
+pub const LANE_LEASE_TTL_SECS: u64 = 300;
+/// An interrupted task waits 900 s for its lane, then is re-offered.
+pub const REOFFER_GRACE_SECS: u64 = 900;
+
+/// True once `now` reaches the lease's end. Clocks are fed in (tests never
+/// read wall time).
+pub fn lease_expired(expires_at_unix: i64, now_unix: i64) -> bool {
+    let _ = (expires_at_unix, now_unix);
+    todo!("relay item 2 phase B")
+}
+
+/// True once the grace after the interrupt has run out.
+pub fn reoffer_due(interrupted_at_unix: i64, now_unix: i64) -> bool {
+    let _ = (interrupted_at_unix, now_unix);
+    todo!("relay item 2 phase B")
+}
+
+// ─── Reviewer pick (Q14, settled) ───
+
+/// Pick the reviewer at first report: the least-loaded live lane that isn't
+/// the author (ties break on the smallest lane id, deterministically), else
+/// the coordinator — unless the coordinator is the author, when there is no
+/// pick. `live` is (lane id, open review count) for the crew's live lanes;
+/// liveness itself is the store's read (part 2).
+pub fn pick_reviewer(
+    live: &[(uuid::Uuid, u64)],
+    author: &uuid::Uuid,
+    coordinator: &uuid::Uuid,
+) -> Option<uuid::Uuid> {
+    let _ = (live, author, coordinator);
     todo!("relay item 2 phase B")
 }
 
@@ -291,7 +392,7 @@ mod tests {
     #[ignore = "pending:relay-item2"]
     fn enums_reject_unknown_values() {
         assert!(serde_json::from_str::<RelayTaskState>("\"flying\"").is_err());
-        // Q3-REC: no `merge` phase.
+        // Q3 settled: no `merge` phase.
         assert!(serde_json::from_str::<RelayTaskPhase>("\"merge\"").is_err());
         assert!(serde_json::from_str::<ReviewVerdict>("\"maybe\"").is_err());
     }
@@ -394,7 +495,7 @@ mod tests {
 
     #[test]
     #[ignore = "pending:relay-item2"]
-    fn clamp_wait_timeout_defaults_and_clamps_q10_rec() {
+    fn clamp_wait_timeout_defaults_and_clamps() {
         assert_eq!(clamp_wait_timeout(None), 25_000);
         assert_eq!(clamp_wait_timeout(Some(5_000)), 5_000);
         assert_eq!(clamp_wait_timeout(Some(50_000)), 50_000);
@@ -435,8 +536,8 @@ mod tests {
 
     #[test]
     #[ignore = "pending:relay-item2"]
-    fn guard_accepts_clean_brief_q8_rec() {
-        // Q8-REC: no identifier dereference — relay text legitimately names
+    fn guard_accepts_clean_brief() {
+        // Q8 settled: no identifier dereference — relay text legitimately names
         // lanes, repos and paths, and stripping would corrupt briefs.
         assert!(
             guard_markdown(
@@ -613,5 +714,165 @@ mod tests {
         assert!(validate_props(K::Reoffered, &json!({"to_lane": null})).is_ok());
         assert!(validate_props(K::Compacted, &json!({"context_tokens_before": 1})).is_ok());
         assert!(validate_props(K::Interrupted, &json!({"bogus": 1})).is_err());
+    }
+
+    // ── Part 1b: settled rulings ──
+
+    const LANE_A: &str = "01938931-0000-7000-8000-000000000001";
+    const LANE_B: &str = "01938931-0000-7000-8000-000000000002";
+    const LANE_C: &str = "01938931-0000-7000-8000-000000000003";
+
+    fn uuid(s: &str) -> uuid::Uuid {
+        uuid::Uuid::parse_str(s).unwrap()
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn transition_reassigned_advances_phase_q11() {
+        // Q11 settled: no auto advance; the coordinator's re-assign moves an
+        // approved task back to working (and starts a new round, part 2).
+        assert_eq!(transition(S::Approved, E::Reassigned), Ok(S::Working));
+        for s in [S::Assigned, S::Working, S::InReview, S::Rework, S::Done, S::Blocked] {
+            assert!(transition(s, E::Reassigned).is_err(), "{s:?} + reassign");
+        }
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn parse_lane_ref_accepts_uuids_rejects_codes_q1() {
+        // Q1 settled: uuid on the wire, codes for display only. Any uuid
+        // version parses — the version is a minting discipline, not the wire.
+        assert!(parse_lane_ref("01938931-607b-7c71-a73b-31ddf06f228f").is_ok());
+        assert!(parse_lane_ref("11111111-1111-4111-8111-111111111111").is_ok());
+        assert!(parse_lane_ref("L1").is_err());
+        assert!(parse_lane_ref("").is_err());
+        assert!(parse_lane_ref("not-a-uuid").is_err());
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn register_mode_mint_join_refuse_q6() {
+        use RegisterMode as M;
+        use RelayRole as R;
+        assert_eq!(register_mode(R::Coordinator, None), Ok(M::MintCrew));
+        assert_eq!(register_mode(R::Coordinator, Some("c1")), Ok(M::JoinCrew));
+        assert_eq!(register_mode(R::Contributor, Some("c1")), Ok(M::JoinCrew));
+        let err = register_mode(R::Contributor, None).unwrap_err();
+        assert!(err.message.contains("crew_id"), "{}", err.message);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn resolve_surface_lane_and_person_q12() {
+        use Caller as C;
+        use RelaySurface as S;
+        // The daemon sets `lane` for lane actions (Q12 settled)…
+        assert_eq!(resolve_surface(C::Lane, None), Ok(S::Lane));
+        assert_eq!(resolve_surface(C::Lane, Some(S::Lane)), Ok(S::Lane));
+        // …and refuses the spoofing edges (derived fail-closed, L0-vetoable).
+        assert!(resolve_surface(C::Lane, Some(S::Desktop)).is_err());
+        assert_eq!(resolve_surface(C::Person, Some(S::Desktop)), Ok(S::Desktop));
+        assert_eq!(resolve_surface(C::Person, Some(S::Dojo)), Ok(S::Dojo));
+        assert!(resolve_surface(C::Person, None).is_err());
+        assert!(resolve_surface(C::Person, Some(S::Lane)).is_err());
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn lease_math_boundaries_q7() {
+        assert_eq!(LANE_LEASE_TTL_SECS, 300);
+        assert_eq!(REOFFER_GRACE_SECS, 900);
+        assert!(!lease_expired(1000, 999));
+        assert!(lease_expired(1000, 1000));
+        assert!(lease_expired(1000, 1001));
+        assert!(!reoffer_due(1000, 1899));
+        assert!(reoffer_due(1000, 1900));
+        assert!(reoffer_due(1000, 1901));
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn pick_reviewer_least_loaded_not_author_q14() {
+        let author = uuid(LANE_A);
+        let coord = uuid(LANE_B);
+        // Least-loaded other live lane wins…
+        let live = vec![(uuid(LANE_B), 2), (uuid(LANE_C), 0)];
+        assert_eq!(pick_reviewer(&live, &author, &coord), Some(uuid(LANE_C)));
+        // …even when the author is the least loaded — never the author.
+        let live = vec![(author, 0), (uuid(LANE_C), 5)];
+        assert_eq!(pick_reviewer(&live, &author, &coord), Some(uuid(LANE_C)));
+        // Ties break on the smallest lane id, deterministically.
+        let live = vec![(uuid(LANE_C), 1), (uuid(LANE_B), 1)];
+        assert_eq!(pick_reviewer(&live, &author, &coord), Some(uuid(LANE_B)));
+        // No other live lane → the coordinator…
+        assert_eq!(pick_reviewer(&[(author, 0)], &author, &coord), Some(coord));
+        assert_eq!(pick_reviewer(&[], &author, &coord), Some(coord));
+        // …unless the coordinator is the author: then no pick.
+        assert_eq!(pick_reviewer(&[(author, 0)], &author, &author), None);
+        assert_eq!(pick_reviewer(&[], &author, &author), None);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn validate_props_message_to_kinds_q1_q2() {
+        use RelayActionKind as K;
+        let msg = |to: serde_json::Value| json!({"to": to, "surface": "lane"});
+        assert!(validate_props(K::Message, &msg(json!({"kind": "person"}))).is_ok());
+        assert!(
+            validate_props(K::Message, &msg(json!({"kind": "lane", "lane_id": LANE_A}))).is_ok()
+        );
+        // A lane address without its id, or with a code, is refused.
+        assert!(validate_props(K::Message, &msg(json!({"kind": "lane"}))).is_err());
+        assert!(
+            validate_props(K::Message, &msg(json!({"kind": "lane", "lane_id": "L1"}))).is_err()
+        );
+        // Non-lane kinds carry no lane id; unknown kinds and keys are refused.
+        let desk = |to: serde_json::Value| json!({"to": to, "surface": "desktop"});
+        assert!(
+            validate_props(K::Message, &desk(json!({"kind": "everyone", "lane_id": LANE_A})))
+                .is_err()
+        );
+        assert!(validate_props(K::Message, &desk(json!({"kind": "bogus"}))).is_err());
+        assert!(
+            validate_props(
+                K::Message,
+                &msg(json!({"kind": "lane", "lane_id": LANE_A, "bogus": 1}))
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn validate_props_surface_values_q12() {
+        use RelayActionKind as K;
+        assert!(
+            validate_props(
+                K::Message,
+                &json!({"to": {"kind": "lane", "lane_id": LANE_A}, "surface": "lane"})
+            )
+            .is_ok()
+        );
+        assert!(validate_props(K::Answered, &json!({"option": "db", "surface": "dojo"})).is_ok());
+        assert!(
+            validate_props(
+                K::Message,
+                &json!({"to": {"kind": "everyone"}, "surface": "carrier-pigeon"})
+            )
+            .is_err()
+        );
+        assert!(
+            validate_props(K::Answered, &json!({"option": "db", "surface": "lane-x"})).is_err()
+        );
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn validate_props_asked_of_person_or_uuid_q1() {
+        use RelayActionKind as K;
+        let asked = |of: &str| json!({"options": [], "blocks": [], "asked_of": of});
+        assert!(validate_props(K::Asked, &asked("person")).is_ok());
+        assert!(validate_props(K::Asked, &asked(LANE_A)).is_ok());
+        assert!(validate_props(K::Asked, &asked("L1")).is_err());
     }
 }
