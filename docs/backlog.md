@@ -104,6 +104,10 @@ and file what is still true as an issue.
   repo-grain watermark engine; current spec draft at `spec/2026-08-18-…`.
   **In progress:** the sync work packages WP1–9 are this week's L1 lane
   (`plan/2026-11-03-parallel-lanes.md` §L1).
+- **Tracker delivery metrics (#351–#356)** — built on `feature/delivery_metrics`: the app's
+  Delivery Metrics section, board facts and per-person effort pushed to the Dōjō and merged
+  there, per-person visibility, withdrawal (`spec/daemon/tracker-delivery-metrics.md`,
+  decisions D87–D90). **In review:** awaiting the PR to develop.
 - **Operating-model Phase 2 (front-door intake conversation + playbook catalog).**
 - **Codebase-wide silent-error audit** (directed after the `node_kind` drop) → roadmap gaps `F-*`.
 - **Stale / orphaned project cleanup** — list endpoints + gated purge + housekeeping UI.

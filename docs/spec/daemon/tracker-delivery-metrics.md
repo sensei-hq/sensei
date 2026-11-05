@@ -1,6 +1,6 @@
 ---
 name: Tracker delivery metrics
-status: draft (round 2, after claims-verifier and spec review, 2026-11-04)
+status: built (F1–F6, #351–#356, 2026-11-05; amendments A1–A4)
 date: 2026-11-04
 analysis: none (brainstorm 2026-11-04, decisions B1–B15 below)
 parent:
@@ -48,7 +48,9 @@ only its own sessions; the Dōjō is the one place work on a shared board comes 
 - **S8 (tracker-sdlc-metrics):** the lane header's sprint/project row leaves Tickets (B3) and
   renders in Delivery Metrics (D2). `docs/spec/screen/workspace-tickets.md:58` drops the row and
   its gates in this slice.
-- **Parent "Out of scope: Dōjō rollups":** in scope here (B4).
+- **Dōjō rollups:** the parent left them unaddressed (it names no Dōjō side at all); they are
+  this spec's (B4). *(Corrected at F6: an earlier draft cited a parent out-of-scope line that
+  does not exist.)*
 - **`tracker_tasks.summary` comment:** B12.
 
 ## Data invariants
@@ -342,13 +344,19 @@ tracker and persona delete.
   stops the others.
 - A changed tenant changes the key, so nothing is suppressed after re-filing.
 
-**Withdrawal (B13).** `DELETE /v1/you/delivery/{board_key}?tenant_id=` removes everything the
-caller reported for that board. Queued in `sensei.delivery_withdrawals (board_key, tenant_id,
-persona_id, queued_at)` for **every** mark row of the tracker (attempted or acknowledged),
-written when a tracker is deleted (in the same transaction, before the cascade), or when a
-board with a mark becomes ineligible; sent next tick; deleted on 2xx or 404. Signing out
-queues nothing. When the withdrawn copy was the board's one copy, the next contributor whose
-mark expires (6 h) restores it.
+**Withdrawal (B13).** `DELETE /v1/you/delivery/{board_key}?tenant_id=&source=` removes what
+the caller's install (`source`, A3) reported for that board, and the board's kept copy when the
+caller reported it. Queued in `sensei.delivery_withdrawals (board_key, tenant_id, persona_id,
+queued_at, attempted_at, refused_at, error)` for **every** mark row of a tracker as it is deleted
+by any path — a `BEFORE DELETE` trigger on `sensei.trackers` (`queue_delivery_withdrawals`), so a
+workspace pruned or removed withdraws too; marks carry their `board_key` for it — and when a
+board with a mark becomes ineligible (its marks then go). Sent first in the next tick. Done on 204,
+or on the route's own 404 `{"withdrawn": false}`; any other 404 proves nothing and is retried. A
+refusal waits an hour, outside the tick's faults meanwhile. A board pushed and acknowledged again
+clears its queued withdrawal, so a late DELETE never removes a fresh push. A landed withdrawal
+marks the board synced. Signing out queues nothing. When the withdrawn copy was the board's one
+copy, the next contributor whose mark expires (6 h) restores it. *(As built in F5, after its
+failure-mode review.)*
 
 ### D4 · Dōjō: contract, storage and reads
 
