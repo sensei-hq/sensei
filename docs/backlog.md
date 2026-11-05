@@ -66,6 +66,10 @@ status — open or closed is GitHub's answer.
 
 ## Open — not yet filed
 
+- **Drop `sensei.repositories.visibility` and `repo_visibility` (WP8, 2026-11-04).** WP8 retires the column as a gate; nothing
+  reads it after L2's daemon side lands. **Trigger:** the desktop app's sync toggle reads `configurable_by_me` (L2, WP8 daemon
+  side). Then drop the column and the enum in one dbd reconcile, deploying twice.
+
 One-liners with prior context: [`history/backlog/writeups.md`](history/backlog/writeups.md). This list is
 a **2026-10-13 snapshot and has not been re-checked**; check the code before filing anything from it,
 and file what is still true as an issue.
