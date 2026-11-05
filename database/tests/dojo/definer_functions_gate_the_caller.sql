@@ -71,7 +71,8 @@ declare
       'revoke_workspace_viewer','set_graph_branch','set_metric_activation','set_pack_adoption',
       'set_repository_election','set_repository_role_override','team_metric_totals',
       'team_tenant_member','tenant_live_session_count','tenant_pack_rules','tenant_role_at_least',
-      'tenant_shared_rules','workspace_in_my_dojo_or_none','workspace_metric_series'];
+      'tenant_shared_rules','workspace_activity','workspace_in_my_dojo_or_none',
+      'workspace_metric_series'];
     unlisted text;
     gone text;
 begin
@@ -171,6 +172,7 @@ begin
         format('dojo.team_metric_totals(%s, array[%s], ''2000-01-01'')', t, metric_key),
         format('dojo.tenant_pack_rules(%s, null)', t),
         format('dojo.tenant_shared_rules(%s, 0)', t),
+        format('dojo.workspace_activity(array[%s])', w),
         format('dojo.workspace_metric_series(%s, ''2000-01-01'')', w)] loop
         begin
             execute format('select count(*) from %s', call) into n;
@@ -250,10 +252,12 @@ begin
             format('dojo.tenant_role_at_least(%s, ''contributor'')', t),
             format('dojo.workspace_in_my_dojo_or_none(%s)', w)],
          array[format('dojo.peer_run_status(%s)', t), 'dojo.my_repositories()',
+            format('dojo.workspace_activity(array[%s])', w),
             format('dojo.workspace_metric_series(%s, ''2000-01-01'')', w)]),
         ('a1000000-0000-4000-8000-0000000000c1', array[
             format('dojo.is_dojo_viewer(%s)', t), format('dojo.is_workspace_viewer(%s)', w)],
-         array[format('dojo.workspace_metric_series(%s, ''2000-01-01'')', w)])) as v(sub, yes, rows) loop
+         array[format('dojo.workspace_activity(array[%s])', w),
+            format('dojo.workspace_metric_series(%s, ''2000-01-01'')', w)])) as v(sub, yes, rows) loop
         perform set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', who.sub), true);
         foreach call in array who.yes loop
             execute 'select ' || call into b;
