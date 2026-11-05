@@ -314,6 +314,16 @@ describe('ensureProvisioned — the identity', () => {
 		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null });
 		expect(db.tables.identities.rows[0]).toMatchObject({ handle: 'devuser' });
 	});
+	it.skip('pending: L4 forge-handle — a first sign-in with no login stores null, never an invented handle', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: 'X', email: null });
+		expect(db.tables.identities.rows[0].handle).toBeNull();
+	});
+	it.skip('pending: L4 forge-handle — a blank login stores null, never the blank', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null, login: '   ' });
+		expect(db.tables.identities.rows[0].handle).toBeNull();
+	});
 });
 
 describe('ensureProvisioned — without forge facts', () => {
