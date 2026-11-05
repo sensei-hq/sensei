@@ -2012,7 +2012,8 @@ export interface TrackerSyncCounts {
  *  0); every sum carries the count it summed (`_n`). */
 export interface TrackerUsage {
   sessions: number;
-  by_source: { branch: number; prompt: number };
+  /** Sessions with a link of each source; `fetch` = the assistant fetched the ticket (get_ticket). */
+  by_source: { branch: number; prompt: number; fetch: number };
   /** Sessions in the set linked to two or more of the tracker's tickets. */
   shared: number;
   active_secs: number | null;

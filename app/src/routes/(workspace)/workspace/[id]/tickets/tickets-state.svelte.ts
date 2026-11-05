@@ -201,7 +201,7 @@ function apiCost(u: TrackerUsage): string {
 /** One usage object as table cells. Unknown is "—", never 0. */
 export function usageCells(u: TrackerUsage): UsageCells {
   return {
-    sessions: `${u.sessions} (${u.by_source.branch}/${u.by_source.prompt})`,
+    sessions: `${u.sessions} (${u.by_source.branch}/${u.by_source.prompt}/${u.by_source.fetch})`,
     active: compactDuration(activeMinutes(u.active_secs)),
     fresh: compactTokens(u.tokens_fresh),
     out: compactTokens(u.tokens_out),

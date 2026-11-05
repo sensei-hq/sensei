@@ -1308,7 +1308,7 @@ pub(crate) enum DojoRulesState {
 
 impl DojoRulesState {
     /// Counts and lists on the wire must not read as complete.
-    fn rules_incomplete(&self) -> bool {
+    pub(crate) fn rules_incomplete(&self) -> bool {
         matches!(self, DojoRulesState::Unavailable { .. })
     }
 }
@@ -1407,7 +1407,7 @@ pub(crate) async fn resolve_folder(
 /// A repo's full governing ruleset: local memories + every adopted pack's rules
 /// (P2 fold-in), structured strongest-first, plus the remote Dōjō leg's state.
 /// Shared by get_rules + constitution.
-async fn resolve_repo_ruleset(
+pub(crate) async fn resolve_repo_ruleset(
     state: &AppState,
     folder_id: &uuid::Uuid,
 ) -> Result<(crate::governance::ResolvedRuleset, DojoRulesState), String> {

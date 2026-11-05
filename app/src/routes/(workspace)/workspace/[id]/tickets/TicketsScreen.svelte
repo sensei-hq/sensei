@@ -221,7 +221,7 @@
                 <div class="overflow-x-auto">
                   <div class="min-w-[52rem]">
                     <div aria-hidden="true" class="{COLS} border-b border-paper-edge px-2 pb-1 text-xs text-ink-soft">
-                      <span>Ticket</span><span>Sprint</span><span>Status</span><span>Sessions (branch/prompt)</span>
+                      <span>Ticket</span><span>Sprint</span><span>Status</span><span>Sessions (branch/prompt/fetch)</span>
                       <span>Active AI time</span><span>Cycle time</span><span>Fresh tokens</span><span>Out tokens</span><span>API cost</span>
                     </div>
                     <ul class="m-0 list-none p-0">

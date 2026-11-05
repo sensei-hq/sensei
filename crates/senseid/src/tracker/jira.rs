@@ -509,6 +509,9 @@ pub fn match_keys(session: &SessionText, known: &[KnownTask]) -> Vec<Link> {
             let mentions = match source {
                 LinkSource::Branch => branch_hits.get(task).copied().unwrap_or(0),
                 LinkSource::Prompt => aliases.values().sum(),
+                // The tally above holds branch and prompt hits only: a fetch link
+                // is written by `get_ticket`, never found by key matching.
+                LinkSource::Fetch => unreachable!("key matching never tallies a fetch link"),
             };
             Link {
                 session_id: session.session_id,

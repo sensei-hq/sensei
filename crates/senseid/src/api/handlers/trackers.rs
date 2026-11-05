@@ -572,7 +572,7 @@ const LOOKUP_DISCOVERY: std::time::Duration = std::time::Duration::from_secs(30)
 /// order until one has it, all within one [`LOOKUP_DISCOVERY`]. A board that is
 /// busy or failing does not stop the others: a found ticket wins, then a board
 /// that answered it has no such ticket, then the first failure.
-async fn discover_on_miss(
+pub(crate) async fn discover_on_miss(
     state: &AppState,
     workspace: uuid::Uuid,
     key: &str,

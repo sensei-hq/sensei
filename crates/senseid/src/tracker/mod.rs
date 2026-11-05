@@ -16,6 +16,7 @@ pub mod secret;
 pub mod sprint;
 pub mod status;
 pub mod sync;
+pub mod ticket;
 pub mod transport;
 pub mod usage;
 pub mod writeback;
@@ -39,6 +40,13 @@ impl TrackerKind {
             "jira" => Some(TrackerKind::Jira),
             _ => None,
         }
+    }
+}
+
+/// On the wire a kind is its `sensei.tracker_kind` label.
+impl serde::Serialize for TrackerKind {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
     }
 }
 
@@ -375,6 +383,9 @@ pub struct ChangeRow {
 pub enum LinkSource {
     Branch,
     Prompt,
+    /// The assistant fetched the ticket through Sensei (`get_ticket`, D63): the
+    /// start of work on it. Written by the fetch, never by a sync relink.
+    Fetch,
 }
 
 impl LinkSource {
@@ -382,6 +393,7 @@ impl LinkSource {
         match self {
             LinkSource::Branch => "branch",
             LinkSource::Prompt => "prompt",
+            LinkSource::Fetch => "fetch",
         }
     }
 }
@@ -610,6 +622,21 @@ impl TrackerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TG5: every link source the daemon writes is a label of `sensei.link_source`
+    /// (a missing one is a failed insert at runtime), and `fetch` is one of them.
+    #[test]
+    fn every_link_source_is_a_label_of_the_ddl_enum() {
+        let labels = test_support::ddl_enum_labels("link_source");
+        for s in [LinkSource::Branch, LinkSource::Prompt, LinkSource::Fetch] {
+            assert!(
+                labels.iter().any(|l| l == s.as_str()),
+                "{} is not a link_source label",
+                s.as_str()
+            );
+        }
+        assert_eq!(LinkSource::Fetch.as_str(), "fetch");
+    }
 
     #[test]
     fn every_error_code_is_a_label_of_the_ddl_enum_and_vice_versa() {

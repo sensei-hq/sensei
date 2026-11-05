@@ -96,6 +96,20 @@ pub const NEEDS_WORKSPACE: &[&str] = &[
     "get_commands",
 ];
 
+/// `s` as one URL path segment: RFC 3986 unreserved characters as they are,
+/// everything else percent-encoded (so `#12` cannot end the path, and
+/// `owner/repo#12` stays one segment).
+fn path_segment(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 pub fn daemon_request_for(
     tool: &str,
     args: &Value,
@@ -229,6 +243,21 @@ pub fn daemon_request_for(
         }
 
         // ── Governance rules ────────────────────────────────────────────────
+        // ── Tickets (TG5, D63) ───────────────────────────────────────────────
+        // `get_ticket` reads the ticket live and starts work on it in the cwd's
+        // repository; the key is a path segment (`#12` → `%2312`).
+        "get_ticket" => {
+            let key = args["key"].as_str().filter(|s| !s.is_empty())?;
+            let mut body = json!({ "folder": cwd });
+            if let Some(sid) = args["session_id"].as_str().filter(|s| !s.is_empty()) {
+                body["session_id"] = json!(sid);
+            }
+            Some(DaemonRequest::post_json(
+                format!("/api/tickets/{}/fetch", path_segment(key)),
+                body,
+            ))
+        }
+
         "get_rules" => {
             let (key, val) = rules_query_param(repo_id, cwd);
             Some(DaemonRequest::get("/api/knowledge/rules").with_query(key, val))
@@ -743,6 +772,11 @@ pub fn handle_list_tools() -> Value {
                 ("task", "string", "Optional task description; a sensitive/destructive task escalates an otherwise-low change."),
             ]),
             tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization — the dōjō — / workspace / repository, where detected stacks' packs apply) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey. The response carries a `dojo_rules` marker (`not_bound` | `ok` with a count | `unavailable` with a reason) plus `rules_incomplete`, so a failed Dōjō pull reads as unavailable, never as no remote rules.", &[], &[]),
+            tool("get_ticket", "Fetch a tracker ticket by its key and start work on it: the ticket as the tracker has it now, with the repository's rules. Call this first when the user hands you a ticket.", &[
+                    ("key", "string", "The ticket's key, e.g. AUTH-420."),
+                ], &[
+                    ("session_id", "string", "Your session id, so the start of work is recorded against it."),
+                ]),
             tool("get_commands", "List the discoverable commands for this workspace — the actual `test` / `build` / `lint` / `e2e` invocations, derived from each folder's manifest (package.json scripts, etc.). Call when you need to know how to run tests, build, or lint here without guessing. Optionally filter by canonical category verb.", &[], &[
                 ("workspace",  "string", "Workspace name. Defaults to current workspace."),
                 ("category", "string", "Canonical verb filter — test | build | lint | e2e | run | format | typecheck | bench | docs | dev | start."),
@@ -1444,6 +1478,7 @@ mod tests {
         "get_pending_nudges",
         "list_playbook_rule_proposals",
         "accept_playbook_rule",
+        "get_ticket",
     ];
 
     fn tools() -> Vec<Value> {
@@ -1829,6 +1864,41 @@ mod tests {
         let fbody = fb.body.clone().unwrap();
         assert_eq!(fbody["folder"], json!("/mcp/cwd"));
         assert!(fbody.get("workspace").is_none());
+    }
+
+    /// TG5 (D63): `get_ticket` fetches the ticket through the daemon and starts work
+    /// on it — a POST carrying the caller's cwd (the repository the work is in) and,
+    /// when given, the session to link. A key is a path segment, so `#12` is encoded.
+    #[test]
+    fn get_ticket_shapes_a_post_with_the_cwd() {
+        let req = daemon_request_for(
+            "get_ticket",
+            &json!({ "key": "AUTH-7", "session_id": "s-1" }),
+            "/repo/cwd",
+            None,
+        )
+        .expect("a daemon call");
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/tickets/AUTH-7/fetch");
+        assert_eq!(req.body, Some(json!({ "folder": "/repo/cwd", "session_id": "s-1" })));
+
+        let bare = daemon_request_for("get_ticket", &json!({ "key": "#12" }), "/repo/cwd", None)
+            .expect("a daemon call");
+        assert_eq!(bare.path, "/api/tickets/%2312/fetch");
+        assert_eq!(bare.body, Some(json!({ "folder": "/repo/cwd" })), "no session: none sent");
+    }
+
+    /// TG5: `get_ticket` is advertised, needs its key, and says it starts the work.
+    #[test]
+    fn get_ticket_is_advertised_with_its_key() {
+        let ts = tools();
+        let t = tool_named(&ts, "get_ticket");
+        assert_eq!(t["inputSchema"]["required"], json!(["key"]));
+        assert!(t["inputSchema"]["properties"]["session_id"].is_object());
+        let d = t["description"].as_str().unwrap();
+        assert!(d.contains("start work"), "{d}");
+        // Targets reach the ticket with TG2–TG4; until then it promises none.
+        assert!(!d.to_lowercase().contains("target"), "{d}");
     }
 
     #[test]

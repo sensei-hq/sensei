@@ -105,7 +105,9 @@ impl PgStore {
                         'branch', count(*) FILTER (WHERE EXISTS (SELECT 1 FROM src
                                    WHERE src.g = m.g AND src.session_id = m.sid AND src.source = 'branch')),
                         'prompt', count(*) FILTER (WHERE EXISTS (SELECT 1 FROM src
-                                   WHERE src.g = m.g AND src.session_id = m.sid AND src.source = 'prompt'))),
+                                   WHERE src.g = m.g AND src.session_id = m.sid AND src.source = 'prompt')),
+                        'fetch', count(*) FILTER (WHERE EXISTS (SELECT 1 FROM src
+                                   WHERE src.g = m.g AND src.session_id = m.sid AND src.source = 'fetch'))),
                     'shared', count(*) FILTER (WHERE m.sid IN (SELECT session_id FROM multi)),
                     'active_secs', sum(extract(epoch FROM s.duration))::float8,
                     'active_n', count(s.duration),

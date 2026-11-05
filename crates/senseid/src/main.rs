@@ -54,6 +54,7 @@ mod sdlc;
 mod secret_scan;
 pub mod shutdown;
 pub mod stance;
+mod targets;
 mod tasks;
 pub mod tool_discovery;
 mod tracker;
