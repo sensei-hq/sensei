@@ -89,7 +89,8 @@ describe('ScrSharing · the screen shell (D87)', () => {
 		const { container } = render(ScrSharing, { props: { repos: [...ROWS, hidden] } });
 		await search(container, 'api');
 		expect(listed(container)).toEqual(['Share api']);
-		expect(container.querySelector('[data-plan-hidden]')).toBeNull();
+		expect(container.textContent).not.toMatch(/paid plans?/i);
+		expect(container.querySelector('a[href*="/billing"]')).toBeNull();
 	});
 
 	// Parity (CONTRACT §9): the error and empty states move into the body unchanged.

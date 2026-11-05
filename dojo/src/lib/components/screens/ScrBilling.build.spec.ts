@@ -314,3 +314,62 @@ describe('ScrBilling · billing follow-up', () => {
 		expect(container.querySelector('[data-billing-hidden]')).toBeNull();
 	});
 });
+
+// billing polish (user ruling 2026-11-05 + reviews/Design/L4-billing-followup-r1.md L1, L4):
+// the hidden list shows ONLY for an account that had Pro and lost it — past due, or lapsed
+// (canceled, unpaid, a period ended). On Free, never subscribed, unclaimed or an unknown
+// plan there is no list; the private repositories stay hidden for everyone all the same.
+const withStatus = (status: string) => ({ ...acct('active'), status });
+describe('ScrBilling · billing polish', () => {
+	afterEach(cleanup);
+
+	it.skip.each([
+		['canceled', withStatus('canceled')],
+		['unpaid', withStatus('unpaid')],
+		['incomplete_expired', withStatus('incomplete_expired')]
+	] as const)('pending: billing-polish — %s (a Pro that lapsed): listed, back as they were once Pro is renewed', (_s, account) => {
+		const { container } = withHidden(account, twoHidden);
+		const text = container.querySelector('[data-billing-hidden]')?.textContent ?? '';
+		expect(text).toContain('2 private repositories are hidden from everyone in this organization.');
+		expect(text).toContain('They come back as they were once Pro is renewed.');
+	});
+
+	it.skip.each([
+		['Free with no account', null],
+		['Free by key', acct('active', 'free')],
+		['an unknown plan key', acct('active', 'enterprise')]
+	] as const)('pending: billing-polish — %s: no hidden list, even with hidden repositories', (_s, account) => {
+		const { container } = withHidden(account, twoHidden);
+		expect(container.querySelector('[data-billing-hidden]')).toBeNull();
+		expect(container.textContent).not.toMatch(/once Pro is attached|hidden from everyone/);
+	});
+
+	// No list to show means no read failure to show either.
+	it.skip('pending: billing-polish — on Free, a failed hidden read draws no section', () => {
+		const { container } = withHidden(null, null, { hiddenError: { status: 0, message: 'could not reach the dojo service' } });
+		expect(container.querySelector('[data-billing-hidden]')).toBeNull();
+	});
+
+	// L4: clearing the search gives the disclosure back to the user — it stays as they left it.
+	it.skip('pending: billing-polish — clearing the search keeps a hand-opened "Who is counted" open', async () => {
+		const { container } = screen(null);
+		const who = container.querySelector('details[data-billing-counted]') as HTMLDetailsElement;
+		who.open = true;
+		who.dispatchEvent(new Event('toggle'));
+		const input = container.querySelector('[data-screen-filters] [data-screen-search] input') as HTMLInputElement;
+		for (const q of ['gamma', '']) {
+			await fireEvent.input(input, { target: { value: q } });
+			await new Promise((r) => setTimeout(r, 300));
+			await tick();
+		}
+		expect(who.open).toBe(true);
+	});
+
+	// L2: a real wiring check — the page hands the billing section to loadBillingSection with
+	// the caller's repositories read, so a stub like `async () => []` fails here.
+	it.skip('pending: billing-polish — the org page loads the billing section through loadBillingSection with listMyRepos', () => {
+		const load = readFileSync(join(process.cwd(), 'src/routes/(app)/org/[slug]/[section]/+page.ts'), 'utf8');
+		expect(load).toMatch(/section === 'billing'\s*\?\s*await loadBillingSection\(\s*slug\s*,[\s\S]*?\(\)\s*=>\s*listMyRepos\(opts\)\s*\)/);
+		expect(load).not.toMatch(/loadOrgHidden\(/);
+	});
+});

@@ -84,3 +84,11 @@ describe('billing follow-up · the hidden group names its repositories, and link
 		expect(out.error).toEqual({ status: 0, message: 'could not reach the dojo service' });
 	});
 });
+
+// billing polish (L4): a person reads the list, so it is in name order, not the read's uuid order.
+describe('billing polish · the hidden list reads in name order', () => {
+	it.skip('pending: billing-polish — an org group lists its repositories sorted by name', () => {
+		const { hidden } = splitBillingHidden([wire('zeta', 'acme', true), wire('alpha', 'acme', true), wire('mid', 'acme', true)]);
+		expect(hidden).toEqual([{ org: 'acme', count: 3, repos: ['alpha', 'mid', 'zeta'] }]);
+	});
+});
