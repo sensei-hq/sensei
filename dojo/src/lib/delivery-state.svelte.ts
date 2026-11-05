@@ -2,11 +2,14 @@
 // sprint selected per board, and its tickets read on demand. A failed read is an
 // error, never an empty list; a slower earlier answer is dropped.
 import type { DeliveryTicketWire } from './workspace-delivery-data';
+import { TICKET_TEAM, teamView, type TeamView } from './workspace-delivery-view';
 
-/** One ticket as the page lists it: its key and, when the tracker gave one, its title. */
+/** One ticket as the page lists it: its key, its title when the tracker gave one,
+ *  and the team's merged effort on it (B16: none from one contributor). */
 export interface DeliveryTicketView {
 	key: string;
 	title: string | null;
+	team: TeamView;
 }
 
 export type ReadTickets = (boardId: string, sprintId: string) => Promise<DeliveryTicketWire[]>;
@@ -37,7 +40,7 @@ export class DeliveryPageState {
 		try {
 			const rows = await this.#read(boardId, sprintId);
 			if (seq !== this.#seq) return;
-			this.tickets = rows.map((t) => ({ key: t.key, title: t.title }));
+			this.tickets = rows.map((t) => ({ key: t.key, title: t.title, team: teamView(t, TICKET_TEAM) }));
 		} catch (e) {
 			if (seq !== this.#seq) return;
 			this.ticketsError = e instanceof Error ? e.message : 'the request failed';

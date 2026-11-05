@@ -89,3 +89,59 @@ export function sprintSdlcFigures(s, words) {
 		sdlcFigure(key, label, s[key], format, s.reasons, words)
 	);
 }
+
+/**
+ * A duration as every screen shows it: "12m", "1h 04m", "2h", "2d 3h"; "—" when
+ * it has none.
+ * @param {number | null} mins
+ * @returns {string}
+ */
+export function compactDuration(mins) {
+	if (mins == null) return '—';
+	if (mins < 60) return `${mins}m`;
+	const h = Math.floor(mins / 60);
+	if (h >= 24) {
+		const d = Math.floor(h / 24);
+		const rest = h % 24;
+		return rest === 0 ? `${d}d` : `${d}d ${rest}h`;
+	}
+	const m = mins % 60;
+	return m === 0 ? `${h}h` : `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
+/**
+ * Compact token count: "820" / "7.7k" / "1.3M" / "—". Keeps a row legible where a
+ * raw grouped integer (132,332,559) would blow out the column.
+ * @param {number | null | undefined} tokens
+ * @returns {string}
+ */
+export function compactTokens(tokens) {
+	if (tokens == null || Number.isNaN(tokens)) return '—';
+	const n = Math.round(tokens);
+	if (n < 1_000) return `${n}`;
+	if (n < 1_000_000) return `${(n / 1_000).toFixed(n < 10_000 ? 1 : 0)}k`;
+	return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
+}
+
+/**
+ * Whole active minutes from seconds, or null when none were measured.
+ * @param {number | null | undefined} durationSecs
+ * @returns {number | null}
+ */
+export function activeMinutes(durationSecs) {
+	if (durationSecs == null || Number.isNaN(durationSecs) || durationSecs < 0) return null;
+	return Math.round(durationSecs / 60);
+}
+
+/**
+ * A list-price API cost: "$1.24", "<$0.01", with "+" when some of its work could
+ * not be priced (a lower bound); "—" when unknown.
+ * @param {number | null | undefined} cost
+ * @param {boolean} partial
+ * @returns {string}
+ */
+export function apiCostText(cost, partial) {
+	if (cost == null) return '—';
+	const shown = cost > 0 && cost < 0.005 ? '<$0.01' : `$${cost.toFixed(2)}`;
+	return partial ? `${shown}+` : shown;
+}

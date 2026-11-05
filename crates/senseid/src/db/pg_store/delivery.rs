@@ -217,6 +217,25 @@ impl PgStore {
         Ok(DeliveryToken { last_success_at, pending, history_through, issue_updated_at })
     }
 
+    /// Each of a tracker's candidate sessions and its repository's `repo_key` (`None`
+    /// when the repository has none): what proves a session a persona's (#240, A2).
+    pub async fn candidate_session_keys(
+        &self,
+        tracker_id: uuid::Uuid,
+    ) -> Result<std::collections::HashMap<uuid::Uuid, Option<String>>, String> {
+        let rows: Vec<(uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(&format!(
+            "SELECT cs.session_id, r.repo_key
+               FROM ({candidates}) cs
+               JOIN sensei.repositories r ON r.id = cs.repository_id",
+            candidates = crate::db::pg_store::trackers::candidate_sessions("$1"),
+        ))
+        .bind(tracker_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("candidate_session_keys({tracker_id}): {e}"))?;
+        Ok(rows.into_iter().collect())
+    }
+
     /// The keys of a workspace's shareable repositories (those with a `repo_key`).
     pub async fn workspace_repo_keys(
         &self,

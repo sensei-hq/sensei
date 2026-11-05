@@ -10,8 +10,14 @@ const t = (key: string, title: string | null = `${key} title`): DeliveryTicketWi
 	status_category: null,
 	points: null,
 	sprints: [],
-	issue_created_at: null
+	issue_created_at: null,
+	team: null,
+	team_words: null,
+	contributors: 0,
+	last_report: null
 });
+
+const nobody = { line: null, figures: [] };
 
 describe('DeliveryPageState', () => {
 	it('selecting a sprint reads its tickets, titled; a ticket with no title shows its key alone', async () => {
@@ -24,8 +30,8 @@ describe('DeliveryPageState', () => {
 		expect(asked).toEqual(['b1/101']);
 		expect(s.selectedFor('b1')).toBe('101');
 		expect(s.tickets).toEqual([
-			{ key: 'AUTH-2', title: 'Two' },
-			{ key: 'AUTH-3', title: null }
+			{ key: 'AUTH-2', title: 'Two', team: nobody },
+			{ key: 'AUTH-3', title: null, team: nobody }
 		]);
 		expect(s.ticketsError).toBe(null);
 	});

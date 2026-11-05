@@ -163,22 +163,224 @@ pub fn facts_json(f: &BoardFacts) -> Value {
 /// its facts — in canonical JSON, without `history_at`, which moves on every history
 /// run even one that read nothing new (D3). A renamed board hashes differently.
 pub fn facts_hash(kind: &str, board_name: &str, facts: &Value) -> String {
-    use sha2::{Digest, Sha256};
     let mut facts = facts.clone();
     if let Some(o) = facts.as_object_mut() {
         o.remove("history_at");
     }
-    let kept = json!({ "kind": kind, "board_name": board_name, "facts": facts });
-    hex::encode(Sha256::digest(crate::canonical_json::canonical_json(&kept).as_bytes()))
+    effort_hash(&json!({ "kind": kind, "board_name": board_name, "facts": facts }))
 }
 
-/// The request body (D3). The effort part is `null` until F3 sends one.
+/// One effort row (A2): the repositories its sessions came from, its values, and
+/// the reason for every value that is `null`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EffortRow {
+    pub repo_keys: Vec<String>,
+    pub values: serde_json::Map<String, Value>,
+    pub reasons: std::collections::BTreeMap<String, String>,
+}
+
+/// This persona's effort on one board (A2): the project row, each sprint's row by
+/// `external_id`, each ticket's by key.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Effort {
+    pub project: Option<EffortRow>,
+    pub sprints: Vec<(String, EffortRow)>,
+    pub tickets: Vec<(String, EffortRow)>,
+}
+
+/// The ticket wire fields, exactly (D1); nothing else of `TicketSdlc` travels.
+#[cfg(test)]
+const TICKET_WIRE: [&str; 28] = [
+    "sessions",
+    "api_cost_n",
+    "api_cost_partial",
+    "worked_ms",
+    "prompts",
+    "ai_token_cost",
+    "compile_defects",
+    "test_defects",
+    "review_fixes",
+    "escaped_task_defects",
+    "build_ok",
+    "build_fail",
+    "runs_unknown",
+    "unclassified_failures",
+    "build_unrecovered",
+    "recovery_ms_sum",
+    "recovery_n",
+    "on_hold_ms",
+    "on_hold_count",
+    "on_hold_by_reason",
+    "execution_ms",
+    "rework_ms",
+    "rework_cycles",
+    "effort_cost",
+    "rework_cost",
+    "work_started_at",
+    "submitted_at",
+    "submitted_via",
+];
+
+/// A ticket's row values from its figures over this persona's provable sessions
+/// and their usage (D1, A3): each null keeps the local reason; `no_activity`
+/// travels as 0. A null without a reason is a fault, never sent as unknown.
+pub fn ticket_effort(
+    t: &crate::sdlc::ticket::TicketSdlc,
+    u: &crate::tracker::usage::Usage,
+) -> Result<EffortRow, String> {
+    // The figures as the app serves them (timestamps RFC 3339), so a value never
+    // means one thing locally and another in the dōjō.
+    let api = serde_json::to_value(t).map_err(|e| format!("ticket figures: {e}"))?;
+    let served = |k: &str| api.get(k).filter(|v| !v.is_null()).cloned();
+    let n = &t.numerators;
+    let num = |v: Option<i64>| v.map(Value::from);
+    // (wire field, value, the local figure whose reason explains a null)
+    let fields: Vec<(&str, Option<Value>, &str)> = vec![
+        ("worked_ms", num(n.worked_ms), "worked_minutes"),
+        ("build_ok", num(n.build_ok), "build_runs"),
+        ("build_fail", num(n.build_fail), "build_runs"),
+        ("recovery_ms_sum", num(n.recovery_ms_sum), "build_unrecovered"),
+        ("recovery_n", num(n.recovery_n), "build_unrecovered"),
+        ("on_hold_ms", num(n.on_hold_ms), "on_hold_minutes"),
+        ("execution_ms", num(n.execution_ms), "execution_hours"),
+        ("rework_ms", num(n.rework_ms), "rework_minutes"),
+    ];
+    let same = [
+        "prompts",
+        "ai_token_cost",
+        "compile_defects",
+        "test_defects",
+        "review_fixes",
+        "escaped_task_defects",
+        "runs_unknown",
+        "unclassified_failures",
+        "build_unrecovered",
+        "on_hold_count",
+        "on_hold_by_reason",
+        "rework_cycles",
+        "effort_cost",
+        "rework_cost",
+        "work_started_at",
+        "submitted_at",
+        "submitted_via",
+    ];
+    let mut row = EffortRow::default();
+    row.values.insert("sessions".into(), json!(u.sessions));
+    row.values.insert("api_cost_n".into(), json!(u.api_cost_n));
+    row.values.insert("api_cost_partial".into(), json!(u.api_cost_partial));
+    for (wire, value, figure) in fields.into_iter().chain(same.iter().map(|k| (*k, served(k), *k)))
+    {
+        match value {
+            Some(v) => {
+                row.values.insert(wire.into(), v);
+            }
+            None => {
+                let why = t
+                    .reasons
+                    .get(figure)
+                    .ok_or_else(|| format!("{wire} is unknown with no reason for {figure}"))?;
+                // Measured and found none: a real zero (A3).
+                if *why == "no_activity" {
+                    row.values.insert(wire.into(), json!(0));
+                } else {
+                    row.values.insert(wire.into(), Value::Null);
+                    row.reasons.insert(wire.into(), (*why).into());
+                }
+            }
+        }
+    }
+    Ok(row)
+}
+
+/// A sprint's row values: its `linked_sprint` usage over provable sessions, whose
+/// `_n` fields carry their own coverage (A3).
+pub fn sprint_effort(u: &crate::tracker::usage::Usage) -> Result<EffortRow, String> {
+    match serde_json::to_value(u).map_err(|e| format!("sprint usage: {e}"))? {
+        Value::Object(values) => Ok(EffortRow { values, ..Default::default() }),
+        other => Err(format!("sprint usage is not an object: {other}")),
+    }
+}
+
+/// The project row (A2, A3): the provable sessions linked to the board's live
+/// tickets, their tokens (`null` `no_usage` when no session has any) and prompts.
+pub fn project_effort(
+    sessions: i64,
+    tokens: i64,
+    without_tokens: i64,
+    prompts: Result<i64, &'static str>,
+) -> EffortRow {
+    let mut row = EffortRow::default();
+    row.values.insert("sessions".into(), json!(sessions));
+    row.values.insert("sessions_without_tokens".into(), json!(without_tokens));
+    if without_tokens >= sessions {
+        row.values.insert("tokens".into(), Value::Null);
+        row.reasons.insert("tokens".into(), "no_usage".into());
+    } else {
+        row.values.insert("tokens".into(), json!(tokens));
+    }
+    match prompts {
+        Ok(p) => {
+            row.values.insert("prompts".into(), json!(p));
+        }
+        Err(why) => {
+            row.values.insert("prompts".into(), Value::Null);
+            row.reasons.insert("prompts".into(), why.into());
+        }
+    }
+    row
+}
+
+/// The effort part as JSON, in a fixed order: sprints by `external_id`, tickets by
+/// key, each row's `repo_keys` sorted. Read order never changes the bytes.
+pub fn effort_json(e: &Effort) -> Value {
+    fn row(id: Option<(&str, &str)>, r: &EffortRow) -> Value {
+        let mut keys = r.repo_keys.clone();
+        keys.sort();
+        keys.dedup();
+        let mut o = json!({ "repo_keys": keys, "values": r.values, "reasons": r.reasons });
+        if let (Some((name, id)), Some(map)) = (id, o.as_object_mut()) {
+            map.insert(name.into(), json!(id));
+        }
+        o
+    }
+    let sorted = |rows: &[(String, EffortRow)], name: &str| {
+        let mut rows: Vec<&(String, EffortRow)> = rows.iter().collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows.iter().map(|(id, r)| row(Some((name, id)), r)).collect::<Vec<_>>()
+    };
+    json!({
+        "project": e.project.as_ref().map(|r| row(None, r)),
+        "sprints": sorted(&e.sprints, "external_id"),
+        "tickets": sorted(&e.tickets, "key"),
+    })
+}
+
+/// sha256 of a part's canonical JSON: the `effort` mark's hash (A2), and the
+/// facts' once their kept fields are chosen.
+pub fn effort_hash(effort: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(crate::canonical_json::canonical_json(effort).as_bytes()))
+}
+
+/// The effort part as sent: this install's id beside the rows, so one person's two
+/// machines each replace only their own rows in the dōjō (A2). The install is the
+/// local persona's id, a random pseudonym.
+pub fn effort_from(source: uuid::Uuid, effort: &Value) -> Value {
+    let mut sent = effort.clone();
+    if let Some(o) = sent.as_object_mut() {
+        o.insert("source".into(), json!(source.to_string()));
+    }
+    sent
+}
+
+/// The request body (D3): both parts, always (A2).
 pub fn request_body(
     to: &Eligible,
     board_key: &str,
     kind: &str,
     board_name: &str,
     facts: &Value,
+    effort: &Value,
 ) -> Value {
     json!({
         "v": 1,
@@ -188,7 +390,7 @@ pub fn request_body(
         "kind": kind,
         "board_name": board_name,
         "facts": facts,
-        "effort": Value::Null,
+        "effort": effort,
     })
 }
 
@@ -443,13 +645,14 @@ mod tests {
     fn the_body_names_the_tenant_repositories_and_board_and_carries_no_url() {
         let to = Eligible { tenant_id: "t1".into(), repo_keys: vec!["github.com/acme/api".into()] };
         let key = board_key("jira", "https://acme.atlassian.net", "42");
-        let body = request_body(&to, &key, "jira", "Mobile Scrum", &facts_json(&facts()));
+        let effort = effort_json(&Effort::default());
+        let body = request_body(&to, &key, "jira", "Mobile Scrum", &facts_json(&facts()), &effort);
         assert_eq!(body["v"], json!(1));
         assert_eq!(body["tenant_id"], json!("t1"));
         assert_eq!(body["repo_keys"], json!(["github.com/acme/api"]));
         assert_eq!(body["board_key"], json!(key));
         assert_eq!(body["board_name"], json!("Mobile Scrum"));
-        assert_eq!(body["effort"], Value::Null);
+        assert_eq!(body["effort"], json!({ "project": null, "sprints": [], "tickets": [] }));
         assert!(!body.to_string().contains("atlassian"));
     }
 
@@ -484,5 +687,174 @@ mod tests {
         assert!(is_due(Some(&refused_long_ago), "h2", now));
         let attempted_only = MarkState::default();
         assert!(is_due(Some(&attempted_only), "h1", now));
+    }
+
+    fn ticket_figures() -> (crate::sdlc::ticket::TicketSdlc, crate::tracker::usage::Usage) {
+        use crate::sdlc::classify::Category;
+        use crate::sdlc::signals::{Signal, SignalKind as K};
+        let sig = |kind, min: i64, until: Option<i64>, category| Signal {
+            kind,
+            at: min * 60_000,
+            until: until.map(|m| m * 60_000),
+            category,
+            reason: None,
+            reference: None,
+        };
+        // Worked 0–2, a build failed and recovered, never submitted.
+        let sessions = [crate::sdlc::ticket::SessionSignals {
+            current: true,
+            failed: false,
+            signals: vec![
+                sig(K::CodeEdit, 0, None, None),
+                sig(K::BuildFail, 1, None, Some(Category::Build)),
+                sig(K::BuildOk, 2, None, Some(Category::Build)),
+                sig(K::Slice, 0, Some(2), None),
+            ],
+        }];
+        let usage = crate::tracker::usage::Usage {
+            sessions: 1,
+            api_cost: None,
+            api_cost_n: 0,
+            ..Default::default()
+        };
+        let settings = crate::sdlc::settings::MetricSettings {
+            idle_threshold_minutes: 15,
+            hourly_rate: Some(90.0),
+            minutes_per_point: Some(30.0),
+        };
+        let t = crate::sdlc::ticket::compute(&crate::sdlc::ticket::TicketInput {
+            sessions: &sessions,
+            usage: &usage,
+            settings: &settings,
+            issue_created_at: None,
+            estimate: crate::sdlc::ticket::Estimate::Points(3.0),
+        });
+        (t, usage)
+    }
+
+    #[test]
+    fn a_ticket_row_carries_exactly_the_wire_fields_and_a_reason_for_each_null() {
+        let (t, u) = ticket_figures();
+        let row = ticket_effort(&t, &u).unwrap();
+        let mut keys: Vec<&str> = row.values.keys().map(String::as_str).collect();
+        keys.sort();
+        let mut wire = TICKET_WIRE.to_vec();
+        wire.sort();
+        assert_eq!(keys, wire);
+        assert_eq!(row.values["worked_ms"], json!(120_000));
+        assert_eq!(
+            (row.values["build_ok"].clone(), row.values["build_fail"].clone()),
+            (json!(1), json!(1))
+        );
+        assert_eq!(row.values["recovery_ms_sum"], json!(60_000));
+        assert_eq!(row.values["work_started_at"], json!("1970-01-01T00:00:00Z"));
+        // Cost at this person's rate travels; the rate and calibration never do.
+        assert_eq!(row.values["effort_cost"], json!(3.0));
+        // Unknown, and not applicable, both keep their local reason.
+        assert_eq!(row.values["ai_token_cost"], Value::Null);
+        assert_eq!(row.reasons["ai_token_cost"], "not_priced");
+        assert_eq!(row.values["submitted_at"], Value::Null);
+        assert_eq!(row.reasons["submitted_at"], "not_submitted");
+        assert_eq!(row.reasons["execution_ms"], "not_submitted");
+        assert_eq!(row.reasons["rework_ms"], "not_submitted");
+        for (k, v) in &row.values {
+            assert_eq!(
+                v.is_null(),
+                row.reasons.contains_key(k),
+                "{k}: a null has a reason, a value none"
+            );
+        }
+        let body = serde_json::to_string(&row.values).unwrap();
+        for never in ["expected_minutes", "time_variance_minutes", "estimated_points", "90"] {
+            assert!(!body.contains(never), "{never} leaked: {body}");
+        }
+    }
+
+    #[test]
+    fn no_activity_travels_as_zero() {
+        let (mut t, u) = ticket_figures();
+        t.worked_minutes = None;
+        t.numerators.worked_ms = None;
+        t.reasons.insert("worked_minutes", "no_activity");
+        let row = ticket_effort(&t, &u).unwrap();
+        assert_eq!(row.values["worked_ms"], json!(0));
+        assert!(!row.reasons.contains_key("worked_ms"));
+    }
+
+    #[test]
+    fn a_null_without_a_reason_is_a_fault() {
+        let (mut t, u) = ticket_figures();
+        t.prompts = None;
+        t.reasons.remove("prompts");
+        assert!(ticket_effort(&t, &u).is_err());
+    }
+
+    #[test]
+    fn a_sprint_row_is_its_usage_with_coverage_in_the_n_fields() {
+        let u = crate::tracker::usage::Usage {
+            sessions: 2,
+            active_secs: Some(60.0),
+            active_n: 1,
+            ..Default::default()
+        };
+        let row = sprint_effort(&u).unwrap();
+        assert_eq!(
+            (row.values["sessions"].clone(), row.values["active_n"].clone()),
+            (json!(2), json!(1))
+        );
+        assert_eq!(row.values["tokens_fresh"], Value::Null);
+        assert!(row.reasons.is_empty(), "coverage is the _n field, never a reason");
+        assert!(row.values.contains_key("by_source") && !row.values.contains_key("linked_other"));
+    }
+
+    #[test]
+    fn a_project_row_without_any_tokens_is_unknown_not_zero() {
+        let none = project_effort(3, 0, 3, Ok(7));
+        assert_eq!(none.values["tokens"], Value::Null);
+        assert_eq!(none.reasons["tokens"], "no_usage");
+        let some = project_effort(3, 500, 1, Err("not_derived"));
+        assert_eq!(
+            (some.values["tokens"].clone(), some.values["sessions_without_tokens"].clone()),
+            (json!(500), json!(1))
+        );
+        assert_eq!(some.values["prompts"], Value::Null);
+        assert_eq!(some.reasons["prompts"], "not_derived");
+        assert_eq!(some.values["sessions"], json!(3));
+    }
+
+    #[test]
+    fn the_effort_hash_ignores_read_order() {
+        let row =
+            |k: &str| EffortRow { repo_keys: vec!["b".into(), k.into()], ..Default::default() };
+        let a = Effort {
+            project: None,
+            sprints: vec![("2".into(), row("a")), ("1".into(), row("c"))],
+            tickets: vec![("T-2".into(), row("a")), ("T-1".into(), row("c"))],
+        };
+        let b = Effort {
+            project: None,
+            sprints: vec![("1".into(), row("c")), ("2".into(), row("a"))],
+            tickets: vec![("T-1".into(), row("c")), ("T-2".into(), row("a"))],
+        };
+        assert_eq!(effort_json(&a), effort_json(&b));
+        assert_eq!(effort_hash(&effort_json(&a)), effort_hash(&effort_json(&b)));
+        let j = effort_json(&a);
+        assert_eq!(j["tickets"][0]["key"], "T-1");
+        assert_eq!(j["tickets"][0]["repo_keys"], json!(["b", "c"]));
+        assert_eq!(j["sprints"][0]["external_id"], "1");
+        assert_eq!(j["project"], Value::Null);
+        let mut c = a.clone();
+        c.tickets.pop();
+        assert_ne!(effort_hash(&effort_json(&a)), effort_hash(&effort_json(&c)));
+    }
+
+    #[test]
+    fn the_effort_sent_names_its_install_and_keeps_its_rows() {
+        let rows = effort_json(&Effort::default());
+        let id = uuid::Uuid::new_v4();
+        let sent = effort_from(id, &rows);
+        assert_eq!(sent["source"], json!(id.to_string()));
+        assert_eq!((sent["project"].clone(), sent["tickets"].clone()), (Value::Null, json!([])));
+        assert_eq!(sent.as_object().unwrap().len(), 4);
     }
 }

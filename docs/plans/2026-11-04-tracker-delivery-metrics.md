@@ -102,8 +102,9 @@ claim: two installs record the same `board_ref` for one Jira board. A `FALSE` st
   columns, "from N contributors · last report", explainers (escape limit, own-rate cost).
 - **Depends on:** F2
 - **Acceptance criteria:** gates 9, 14, 15, 16; gate 8's "no rate, no `minutes_per_point`"
-  part; gate 18 for "from 2 contributors". Reads return merged values only to every reader
-  (per-person rows come in F4).
+  part; gate 18 for "from 2 contributors". Reads return merged values only, restricted for
+  every reader per B16 (no cost, no figures from one contributor); per-person rows and the
+  unrestricted view come in F4. Merge rules as amended by A2 and A3.
 - **Test scenarios:**
   ```gherkin
   Given sessions from a repository another persona also elected, and sessions with no repository
@@ -127,7 +128,8 @@ claim: two installs record the same `board_ref` for one Jira board. A `FALSE` st
   `repository_ids` entry → 7-day staleness → view: per-person rows in an expanded ticket and
   sprint for allowed readers; "includes stale data" for others.
 - **Depends on:** F3
-- **Acceptance criteria:** gate 17 in full.
+- **Acceptance criteria:** gate 17 in full; B16's allowed readers see merged cost and
+  one-contributor figures, others still see neither.
 - **Test scenarios:**
   ```gherkin
   Given A's effort row from repository R

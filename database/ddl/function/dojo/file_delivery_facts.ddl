@@ -32,8 +32,7 @@ create or replace function dojo.file_delivery_facts(
 as $$
 declare
     v_principal  uuid := dojo.current_principal_id();
-    v_repos      uuid[];
-    v_workspaces uuid[];
+    v_workspace  uuid;
     v_facts      jsonb := p_board -> 'facts';
     v_key        text := p_board ->> 'board_key';
     v_pending    integer := (v_facts ->> 'pending_tickets')::integer;
@@ -41,12 +40,6 @@ declare
     v_board      dojo.delivery_boards%rowtype;
     v_new        uuid;
 begin
-    if v_principal is null then
-        raise exception 'no signed-in principal' using errcode = 'insufficient_privilege';
-    end if;
-    if p_repo_keys is null or cardinality(p_repo_keys) = 0 then
-        raise exception 'a board names at least one repository' using errcode = 'invalid_parameter_value';
-    end if;
     if v_key is null or v_key !~ '^[0-9a-f]{64}$' or p_board ->> 'kind' is null
        or p_board ->> 'board_name' is null or v_pending is null or v_pending < 0
        or jsonb_typeof(v_facts -> 'sprints') is distinct from 'array'
@@ -77,33 +70,14 @@ begin
         raise exception 'history_at is in the future' using errcode = 'invalid_parameter_value';
     end if;
 
-    -- Every key is the caller's own shared and elected repository in this tenant.
-    select array_agg(v.repository_id) into v_repos
-      from dojo.all_my_repositories v
-     where v.principal_id = v_principal
-       and v.tenant_id = p_tenant
-       and v.sync_enabled
-       and v.repo_key = any(p_repo_keys);
-    if v_repos is null or cardinality(v_repos) <> (select count(distinct k) from unnest(p_repo_keys) k) then
-        raise exception 'a board names a repository the caller may not sync in this dōjō'
-            using errcode = 'insufficient_privilege';
-    end if;
-
-    select array_agg(distinct riw.workspace_id) into v_workspaces
-      from dojo.repositories_in_workspaces riw
-     where riw.tenant_id = p_tenant
-       and riw.repository_id = any(v_repos);
-    if v_workspaces is null then
-        raise exception 'workspace_not_filed' using errcode = 'no_data_found';
-    end if;
-    if cardinality(v_workspaces) > 1 then
-        raise exception 'workspace_ambiguous' using errcode = 'object_not_in_prerequisite_state';
-    end if;
+    -- Consent and the workspace are the caller's own (dojo.delivery_scope).
+    select distinct sc.workspace_id into strict v_workspace
+      from dojo.delivery_scope(p_tenant, p_repo_keys) sc;
 
     insert into dojo.delivery_boards
            (tenant_id, workspace_id, board_key, kind, name, reported_by, history_at,
             pending_tickets, predictability, predictability_reason)
-    values (p_tenant, v_workspaces[1], v_key, p_board ->> 'kind', p_board ->> 'board_name', v_principal,
+    values (p_tenant, v_workspace, v_key, p_board ->> 'kind', p_board ->> 'board_name', v_principal,
             v_history, v_pending, (v_facts ->> 'predictability')::numeric, v_facts ->> 'predictability_reason')
     on conflict (workspace_id, board_key) do nothing
     returning id into v_new;
@@ -111,7 +85,7 @@ begin
     if v_new is null then
         select * into v_board
           from dojo.delivery_boards b
-         where b.workspace_id = v_workspaces[1] and b.board_key = v_key
+         where b.workspace_id = v_workspace and b.board_key = v_key
            for update;
         if (v_board.pending_tickets = 0 and v_pending > 0)
            or ((v_board.pending_tickets = 0) = (v_pending = 0)

@@ -22,8 +22,9 @@ use crate::db::pg_store::PgStore;
 use crate::db::pg_store::delivery::PartKey;
 use crate::db::pg_store::sync::SyncMark;
 use crate::dojo::delivery::{
-    BoardFacts, FactSprint, FactTicket, board_key, eligibility, facts_hash, facts_json, is_due,
-    request_body, sized_body,
+    BoardFacts, Effort, FactSprint, FactTicket, board_key, effort_from, effort_hash, effort_json,
+    eligibility, facts_hash, facts_json, is_due, project_effort, request_body, sized_body,
+    sprint_effort, ticket_effort,
 };
 use crate::dojo_client::user_plane::{DeliveryError, SyncPlan, UserPlane};
 use crate::tracker::sync::TrackerLocks;
@@ -31,8 +32,9 @@ use crate::tracker::sync::TrackerLocks;
 /// The sync-state entity a board's push is recorded under, keyed by `board_key`.
 const ENTITY: &str = "tracker_board";
 
-/// The part of a board this step sends (`effort` arrives with F3).
+/// The parts of a board this step sends, each with its own mark (A2).
 const FACTS: &str = "facts";
+const EFFORT: &str = "effort";
 
 /// A board's facts, built once per tick for every persona to push.
 #[derive(Debug, Clone)]
@@ -165,14 +167,113 @@ async fn build_one(
     }))
 }
 
+/// This persona's effort on one board (A2), and the candidate sessions held back
+/// as not provably theirs (#240).
+#[derive(Debug, Clone)]
+pub struct BuiltEffort {
+    pub json: serde_json::Value,
+    pub hash: String,
+    pub held_back_sessions: usize,
+}
+
+/// Build one persona's effort on a board over its provable sessions only: a
+/// candidate session whose repository's `repo_key` is in `exclusive` (#240). Every
+/// other candidate session linked to a live ticket is held back and counted.
+pub async fn build_effort(
+    pg: &PgStore,
+    b: &BuiltBoard,
+    exclusive: &std::collections::HashSet<String>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<BuiltEffort, String> {
+    use crate::db::pg_store::tracker_usage::{TaskScope, TicketSession};
+    use std::collections::{HashMap, HashSet};
+    let keys = pg.candidate_session_keys(b.tracker_id).await?;
+    let key_of = |s: &uuid::Uuid| keys.get(s).cloned().flatten();
+    let provable = |s: &uuid::Uuid| key_of(s).is_some_and(|k| exclusive.contains(&k));
+    let keys_of = |sessions: &mut dyn Iterator<Item = &uuid::Uuid>| {
+        let mut out: Vec<String> = sessions.filter_map(&key_of).collect();
+        out.sort();
+        out.dedup();
+        out
+    };
+    let live: HashMap<uuid::Uuid, String> = pg
+        .tracker_task_rows(b.tracker_id, TaskScope::All, false)
+        .await?
+        .into_iter()
+        .map(|t| (t.id, t.key))
+        .collect();
+    let (pairs, held): (Vec<TicketSession>, Vec<TicketSession>) = pg
+        .ticket_sessions(b.tracker_id, None)
+        .await?
+        .into_iter()
+        .filter(|p| live.contains_key(&p.task_id))
+        .partition(|p| provable(&p.session_id));
+    let held_back_sessions = held.iter().map(|p| p.session_id).collect::<HashSet<_>>().len();
+    let mut effort = Effort::default();
+
+    let mut tasks: Vec<uuid::Uuid> = pairs.iter().map(|p| p.task_id).collect();
+    tasks.sort();
+    tasks.dedup();
+    let usage = crate::tracker::usage::ticket_usages_of(pg, b.tracker_id, &pairs).await?;
+    let figures =
+        crate::sdlc::ticket::ticket_figures_of(pg, b.workspace_id, &tasks, &pairs, &usage).await?;
+    for task in &tasks {
+        let (Some(f), Some(u)) = (figures.get(task), usage.get(task)) else {
+            return Err(format!("ticket {} has no figures", live[task]));
+        };
+        let mut row = ticket_effort(f, u)?;
+        row.repo_keys =
+            keys_of(&mut pairs.iter().filter(|p| p.task_id == *task).map(|p| &p.session_id));
+        effort.tickets.push((live[task].clone(), row));
+    }
+
+    let mut sessions: Vec<uuid::Uuid> = pairs.iter().map(|p| p.session_id).collect();
+    sessions.sort();
+    sessions.dedup();
+    if !sessions.is_empty() {
+        let t = crate::sdlc::sprint_replay::session_totals(pg, &sessions).await?;
+        let mut row = project_effort(sessions.len() as i64, t.tokens, t.without_tokens, t.prompts);
+        row.repo_keys = keys_of(&mut sessions.iter());
+        effort.project = Some(row);
+    }
+
+    let external: HashMap<uuid::Uuid, String> = pg
+        .delivery_sprints(b.tracker_id)
+        .await?
+        .into_iter()
+        .map(|s| (s.id, s.external_id))
+        .collect();
+    let only: HashSet<uuid::Uuid> = keys.keys().filter(|s| provable(s)).copied().collect();
+    for su in crate::tracker::usage::sprint_usages_among(pg, b.tracker_id, now, Some(&only)).await?
+    {
+        // A sprint without a window, or without a provable session in it, sends no row.
+        let Ok(parts) = su.parts else { continue };
+        if parts.linked_sprint_sessions.is_empty() {
+            continue;
+        }
+        let id = external
+            .get(&su.sprint.id)
+            .ok_or_else(|| format!("sprint {} has no external id", su.sprint.id))?;
+        let mut row = sprint_effort(&parts.linked_sprint)?;
+        row.repo_keys = keys_of(&mut parts.linked_sprint_sessions.iter());
+        effort.sprints.push((id.clone(), row));
+    }
+
+    let json = effort_json(&effort);
+    Ok(BuiltEffort { hash: effort_hash(&json), json, held_back_sessions })
+}
+
 /// Push each built board for one persona and record each failed one; answers how
 /// many were sent, or — after every board has been tried — the boards that failed.
+/// `exclusive` is the persona's provable repositories (#240): effort comes only
+/// from their sessions.
 pub async fn push_delivery(
     pg: &PgStore,
     persona: &str,
     token: &str,
     plane: &dyn UserPlane,
     plan: &SyncPlan,
+    exclusive: &[String],
     boards: &Boards,
 ) -> Result<usize, String> {
     let mut faults = Vec::new();
@@ -186,8 +287,17 @@ pub async fn push_delivery(
             .persona_id_for_slot(persona)
             .await?
             .ok_or_else(|| format!("no persona holds the slot {persona}"))?;
+        let ctx = PushCtx {
+            pg,
+            persona,
+            persona_id,
+            token,
+            plane,
+            plan,
+            exclusive: exclusive.iter().cloned().collect(),
+        };
         for b in &boards.built {
-            match push_board(pg, persona, persona_id, token, plane, plan, b).await {
+            match push_board(&ctx, b).await {
                 Ok(true) => sent += 1,
                 Ok(false) => {}
                 Err(e) => {
@@ -204,6 +314,17 @@ pub async fn push_delivery(
     }
 }
 
+/// One persona's pass: who pushes, with what, and which repositories are theirs.
+struct PushCtx<'a> {
+    pg: &'a PgStore,
+    persona: &'a str,
+    persona_id: uuid::Uuid,
+    token: &'a str,
+    plane: &'a dyn UserPlane,
+    plan: &'a SyncPlan,
+    exclusive: std::collections::HashSet<String>,
+}
+
 /// Record a board's failure in the sync state; a failure to record is logged, the
 /// board's own failure is still reported to the tick.
 async fn record_error(pg: &PgStore, persona: &str, board_key: &str, error: &str) {
@@ -213,18 +334,12 @@ async fn record_error(pg: &PgStore, persona: &str, board_key: &str, error: &str)
     }
 }
 
-async fn push_board(
-    pg: &PgStore,
-    persona: &str,
-    persona_id: uuid::Uuid,
-    token: &str,
-    plane: &dyn UserPlane,
-    plan: &SyncPlan,
-    b: &BuiltBoard,
-) -> Result<bool, String> {
-    let mark = SyncMark { entity: ENTITY, key: &b.board_key, direction: "push", persona };
+async fn push_board(ctx: &PushCtx<'_>, b: &BuiltBoard) -> Result<bool, String> {
+    let pg = ctx.pg;
+    let mark =
+        SyncMark { entity: ENTITY, key: &b.board_key, direction: "push", persona: ctx.persona };
     let keys = pg.workspace_repo_keys(b.workspace_id).await?;
-    let to = match eligibility(&plan.allowed, &keys) {
+    let to = match eligibility(&ctx.plan.allowed, &keys) {
         Ok(to) => to,
         Err(why) => {
             pg.mark_sync_skipped(&mark, why.code()).await?;
@@ -233,7 +348,17 @@ async fn push_board(
     };
     let tenant = uuid::Uuid::parse_str(&to.tenant_id)
         .map_err(|e| format!("plan tenant {}: {e}", to.tenant_id))?;
-    let body = request_body(&to, &b.board_key, &b.kind, &b.board_name, &b.facts);
+    let effort = build_effort(pg, b, &ctx.exclusive, chrono::Utc::now()).await?;
+    if effort.held_back_sessions > 0 {
+        tracing::info!(
+            persona = ctx.persona,
+            board = %b.board_key,
+            held_back = effort.held_back_sessions,
+            "dojo_sync: sessions held back from a board's effort — not provably this person's"
+        );
+    }
+    let sent = effort_from(ctx.persona_id, &effort.json);
+    let body = request_body(&to, &b.board_key, &b.kind, &b.board_name, &b.facts, &sent);
     let bytes = match sized_body(&body, b.tickets) {
         Ok(bytes) => bytes,
         Err(t) => {
@@ -242,17 +367,32 @@ async fn push_board(
             return Ok(false);
         }
     };
-    let part = PartKey { tracker_id: b.tracker_id, persona_id, tenant_id: tenant, part: FACTS };
-    let prior = pg.push_mark(&part).await?;
-    if !is_due(prior.as_ref(), &b.hash, chrono::Utc::now()) {
+    let part = |part| PartKey {
+        tracker_id: b.tracker_id,
+        persona_id: ctx.persona_id,
+        tenant_id: tenant,
+        part,
+    };
+    // Each part keeps its own mark; one request carries both whenever either is due (A2).
+    let parts = [(part(FACTS), b.hash.as_str()), (part(EFFORT), effort.hash.as_str())];
+    let now = chrono::Utc::now();
+    let mut due = false;
+    for (key, hash) in &parts {
+        due |= is_due(pg.push_mark(key).await?.as_ref(), hash, now);
+    }
+    if !due {
         return Ok(false);
     }
     // Before sending: a push the dōjō commits but whose answer is lost still
     // leaves a row for a withdrawal to find.
-    pg.mark_push_attempt(&part).await?;
-    match plane.push_delivery(token, &bytes).await {
+    for (key, _) in &parts {
+        pg.mark_push_attempt(key).await?;
+    }
+    match ctx.plane.push_delivery(ctx.token, &bytes).await {
         Ok(_) => {
-            pg.mark_push_acknowledged(&part, &b.hash).await?;
+            for (key, hash) in &parts {
+                pg.mark_push_acknowledged(key, hash).await?;
+            }
             pg.mark_synced(&mark, None).await?;
             Ok(true)
         }
@@ -262,7 +402,9 @@ async fn push_board(
             } else {
                 format!("dōjō returned {status}: {body}")
             };
-            pg.mark_push_refused(&part, &b.hash, &why).await?;
+            for (key, hash) in &parts {
+                pg.mark_push_refused(key, hash, &why).await?;
+            }
             pg.mark_sync_error(&mark, &why).await?;
             Ok(false)
         }

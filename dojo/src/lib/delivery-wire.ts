@@ -1,5 +1,5 @@
-// A workspace's delivery facts on the wire (spec docs/spec/daemon/tracker-delivery-metrics.md
-// D3, D4, D5; #352): one declaration of each shape, for the server reads, the
+// A workspace's delivery facts and team effort on the wire (spec
+// docs/spec/daemon/tracker-delivery-metrics.md D3, D4, D5; #352, #353): one declaration of each shape, for the server reads, the
 // client fetch and the ingest alike.
 import type { SprintFigureValues } from '@sensei/sdlc-figures';
 
@@ -9,8 +9,26 @@ export interface DeliverySdlc extends SprintFigureValues {
 	facts: Record<string, number> | null;
 }
 
+/** One item's effort merged across its contributors (D1, A3): every null has its
+ *  reason; a figure some contributor did not know has its count in `partial`. */
+export interface DeliveryTeamWire {
+	values: Record<string, unknown>;
+	reasons: Record<string, string>;
+	partial: Record<string, number>;
+}
+
+/** An item's team effort as a workspace reader sees it (B16): `team` is null from
+ *  fewer than two contributors, and `last_report` too. */
+export interface DeliveryTeamFields {
+	team: DeliveryTeamWire | null;
+	/** The words of the reason codes in `team`, by code. */
+	team_words: Record<string, string> | null;
+	contributors: number;
+	last_report: string | null;
+}
+
 /** One sprint of a board's kept copy, as the reads answer it. */
-export interface DeliverySprintWire {
+export interface DeliverySprintWire extends DeliveryTeamFields {
 	external_id: string;
 	seq: number;
 	name: string;
@@ -24,7 +42,7 @@ export interface DeliverySprintWire {
 }
 
 /** One board of a workspace with its kept copy's facts and every sprint. */
-export interface DeliveryBoardWire {
+export interface DeliveryBoardWire extends DeliveryTeamFields {
 	board_id: string;
 	board_key: string;
 	kind: string;
@@ -43,7 +61,7 @@ export interface WorkspaceDeliveryWire {
 }
 
 /** One non-removed ticket: the title is its only free text (B9). */
-export interface DeliveryTicketWire {
+export interface DeliveryTicketWire extends DeliveryTeamFields {
 	key: string;
 	title: string | null;
 	status_category: string | null;

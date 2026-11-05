@@ -63,7 +63,7 @@ declare
       'add_team_member','administers_repository','administers_team','administers_workspace',
       'attach_run_to_workspace','can_read_repository','can_read_repository_metric','can_read_workspace',
       'clear_repository_role_override','create_team','current_principal_id','delete_team',
-      'file_delivery_facts','file_graph_slices','file_metric_rows','file_repository_workspace','grant_workspace_viewer',
+      'file_delivery','file_delivery_facts','file_graph_slices','file_metric_rows','file_repository_workspace','grant_workspace_viewer',
       'grant_workspace_viewer_to_team','graph_file_hashes','is_dojo_viewer','is_member',
       'is_workspace_viewer','leads_team_member','my_adopted_pack_slugs','my_graph_branches',
       'my_repositories','owns_membership','peer_run_status','register_repository',
@@ -98,6 +98,10 @@ insert into dojo.delivery_sprints (board_id, external_id, seq, name, state, remo
   ('f2000000-0000-4000-8000-0000000000a1', '1', 1, 'S', 'active', false);
 insert into dojo.delivery_tickets (board_id, key, title, sprints) values
   ('f2000000-0000-4000-8000-0000000000a1', 'A-1', 'alice''s ticket', '{1}');
+insert into dojo.delivery_effort (board_id, item_kind, item_ref, principal_id, source, repository_ids, "values", reasons) values
+  ('f2000000-0000-4000-8000-0000000000a1', 'ticket', 'A-1', 'a0000000-0000-4000-8000-0000000000a1',
+   '5a000000-0000-4000-8000-0000000000a1',
+   '{90000000-0000-4000-8000-0000000000a1}', '{"sessions": 1, "worked_ms": 60000}', '{}');
 
 -- ── A fingerprint of every dojo table, as the owner ───────────────────────
 create temp table definer_snap (phase text, tbl text, h text);
@@ -212,6 +216,8 @@ begin
         format('dojo.delete_team(%s)', tm),
         format('dojo.file_graph_slices(%s, ''{}''::jsonb, ''[]''::jsonb, ''{}''::jsonb)', r),
         format('dojo.file_delivery_facts(%s, array[%s], %s)', t, rkey, facts),
+        format('dojo.file_delivery(%s, array[%s], %s, %s)', t, rkey, facts,
+               '''{"source":"5a000000-0000-4000-8000-000000000001","project":null,"sprints":[],"tickets":[]}''::jsonb'),
         format('dojo.file_metric_rows(%s)', rows),
         format('dojo.file_repository_workspace(%s, ''bobs'', ''bobs'')', r),
         format('dojo.grant_workspace_viewer(%s, %s)', w, bob),

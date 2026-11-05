@@ -666,9 +666,16 @@ async fn push_planned(
     // Then the tracker boards; each records its own outcome (#352). A board read that
     // failed is this persona's failure too, never "no boards".
     let boards = boards.as_ref().map_err(|e| format!("boards not read: {e}"))?;
-    let boards_sent =
-        super::dojo_delivery::push_delivery(pg, persona, token, plane, &planned.plan, boards)
-            .await?;
+    let boards_sent = super::dojo_delivery::push_delivery(
+        pg,
+        persona,
+        token,
+        plane,
+        &planned.plan,
+        exclusive,
+        boards,
+    )
+    .await?;
     tracing::info!(
         persona,
         allowed = planned.plan.allowed.len(),
@@ -3261,7 +3268,9 @@ mod tests {
             let other =
                 plan(vec![mapped("github.com/ztest/elsewhere", &uuid::Uuid::new_v4().to_string())]);
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &plane, &other, &boards(&pg).await).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &plane, &other, &[], &boards(&pg).await)
+                    .await
+                    .unwrap(),
                 0
             );
             assert!(plane.delivered.lock().unwrap().is_empty());
@@ -3289,7 +3298,9 @@ mod tests {
                 mapped(&key2, &uuid::Uuid::new_v4().to_string()),
             ]);
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &plane, &split, &boards(&pg).await).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &plane, &split, &[], &boards(&pg).await)
+                    .await
+                    .unwrap(),
                 0
             );
             assert!(plane.delivered.lock().unwrap().is_empty());
@@ -3318,6 +3329,7 @@ mod tests {
                     "tok",
                     &plane,
                     &plan(vec![mapped(&key, &tenant)]),
+                    &[],
                     &boards(&pg).await
                 )
                 .await
@@ -3362,24 +3374,24 @@ mod tests {
             let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
             let plane = StubPlane::default();
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &plane, &p, &boards(&pg).await).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
                 1
             );
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &plane, &p, &boards(&pg).await).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
                 0,
                 "nothing changed"
             );
             // A history run that read nothing new moves history_at only.
             exec(&pg, "UPDATE sensei.trackers SET history_at = now() WHERE id = $1", t).await;
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &plane, &p, &boards(&pg).await).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
                 0,
                 "history_at is not hashed"
             );
             exec(&pg, "UPDATE sensei.tracker_push_marks SET pushed_at = now() - interval '7 hours' WHERE tracker_id = $1", t).await;
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &plane, &p, &boards(&pg).await).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
                 1,
                 "a mark older than 6 h re-sends"
             );
@@ -3399,21 +3411,23 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &refusing, &p, &boards(&pg).await).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &refusing, &p, &[], &boards(&pg).await)
+                    .await
+                    .unwrap(),
                 0
             );
             assert_eq!(refusing.delivered.lock().unwrap().len(), 1);
             let (state, why) = board_state(&pg).await.unwrap();
             assert_eq!(state, "error");
             assert!(why.unwrap().contains("bad shape"));
-            push_delivery(&pg, SLOT, "tok", &refusing, &p, &boards(&pg).await).await.unwrap();
+            push_delivery(&pg, SLOT, "tok", &refusing, &p, &[], &boards(&pg).await).await.unwrap();
             assert_eq!(
                 refusing.delivered.lock().unwrap().len(),
                 1,
                 "the refused hash is not re-sent within the hour"
             );
             exec(&pg, "UPDATE sensei.tracker_tasks SET summary = 'renamed' WHERE tracker_id = $1 AND key = 'A'", t).await;
-            push_delivery(&pg, SLOT, "tok", &refusing, &p, &boards(&pg).await).await.unwrap();
+            push_delivery(&pg, SLOT, "tok", &refusing, &p, &[], &boards(&pg).await).await.unwrap();
             assert_eq!(refusing.delivered.lock().unwrap().len(), 2, "a changed board goes at once");
         }
 
@@ -3430,7 +3444,7 @@ mod tests {
                 })),
                 ..Default::default()
             };
-            push_delivery(&pg, SLOT, "tok", &ambiguous, &p, &boards(&pg).await).await.unwrap();
+            push_delivery(&pg, SLOT, "tok", &ambiguous, &p, &[], &boards(&pg).await).await.unwrap();
             assert!(
                 board_state(&pg)
                     .await
@@ -3445,7 +3459,7 @@ mod tests {
                 delivery: Some(Err(DeliveryError::Failed("timed out".into()))),
                 ..Default::default()
             };
-            push_delivery(&pg, SLOT, "tok", &lost, &p, &boards(&pg).await).await.unwrap();
+            push_delivery(&pg, SLOT, "tok", &lost, &p, &[], &boards(&pg).await).await.unwrap();
             let persona = pg.persona_id_for_slot(SLOT).await.unwrap().unwrap();
             let mark = pg
                 .push_mark(&PartKey {
@@ -3461,7 +3475,7 @@ mod tests {
                 Some(crate::dojo::delivery::MarkState::default()),
                 "attempted before sending, nothing acknowledged"
             );
-            push_delivery(&pg, SLOT, "tok", &lost, &p, &boards(&pg).await).await.unwrap();
+            push_delivery(&pg, SLOT, "tok", &lost, &p, &[], &boards(&pg).await).await.unwrap();
             assert_eq!(
                 lost.delivered.lock().unwrap().len(),
                 2,
@@ -3521,7 +3535,7 @@ mod tests {
             );
             let plane = StubPlane { delivery_for, ..Default::default() };
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &plane, &p, &boards(&pg).await).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
                 1
             );
             let persona = pg.persona_id_for_slot(SLOT).await.unwrap().unwrap();
@@ -3561,7 +3575,7 @@ mod tests {
                 mapped(&key2, &uuid::Uuid::new_v4().to_string()),
             ]);
             let plane = StubPlane::default();
-            let out = push_delivery(&pg, SLOT, "tok", &plane, &p, &boards(&pg).await).await;
+            let out = push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await;
             assert!(out.is_err(), "a board's fault reaches the tick");
             assert_eq!(plane.delivered.lock().unwrap().len(), 1, "the other board is still sent");
             let (state, why) =
@@ -3582,7 +3596,7 @@ mod tests {
                 }],
             };
             let out =
-                push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &plan(vec![]), &failed)
+                push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &plan(vec![]), &[], &failed)
                     .await;
             assert!(out.is_err());
             let (state, why) = state_of(&pg, &"k".repeat(64)).await.unwrap();
@@ -3598,7 +3612,7 @@ mod tests {
             let (t, _ws, key) = fixture(&pg).await;
             let plane = StubPlane { mark_probe: Some((pg.clone(), t)), ..Default::default() };
             let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
-            push_delivery(&pg, SLOT, "tok", &plane, &p, &boards(&pg).await).await.unwrap();
+            push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap();
             assert_eq!(*plane.marks_at_send.lock().unwrap(), [true]);
         }
 
@@ -3610,7 +3624,7 @@ mod tests {
             let plane = StubPlane::default();
             let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &plane, &p, &Boards::default()).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &Boards::default()).await.unwrap(),
                 0
             );
             assert!(plane.delivered.lock().unwrap().is_empty());
@@ -3623,7 +3637,7 @@ mod tests {
             let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
             let plane = StubPlane::default();
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &plane, &p, &boards(&pg).await).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
                 1
             );
             exec(
@@ -3633,8 +3647,248 @@ mod tests {
             )
             .await;
             assert_eq!(
-                push_delivery(&pg, SLOT, "tok", &plane, &p, &boards(&pg).await).await.unwrap(),
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
                 1
+            );
+        }
+
+        /// The `repo_key` of a repository folder's repository.
+        async fn repo_key_of(pg: &PgStore, folder: uuid::Uuid) -> String {
+            sqlx_core::query_as::query_as::<_, (String,)>(
+                "SELECT r.repo_key FROM sensei.folders f JOIN sensei.repositories r ON r.id = f.repository_id WHERE f.id = $1",
+            )
+            .bind(folder)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap()
+            .0
+        }
+
+        /// Gate 9 (#240, A2): only a session from a repository this persona alone
+        /// elected reaches effort; one from a shared repository, or from one with no
+        /// key, is held back and counted.
+        #[tokio::test]
+        async fn effort_comes_only_from_provable_sessions_and_the_rest_is_held_back() {
+            use crate::tracker::sync::{SYNC_DEADLINE, sync_tracker};
+            use crate::tracker::test_support::{FakeBoard, repo_in, session_with};
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws) = crate::tracker::connect::tests::connected_tracker(&pg).await;
+            let (mine, shared, keyless) =
+                (repo_in(&pg, ws).await, repo_in(&pg, ws).await, repo_in(&pg, ws).await);
+            let (mine_key, shared_key) =
+                (repo_key_of(&pg, mine).await, repo_key_of(&pg, shared).await);
+            exec(
+                &pg,
+                "UPDATE sensei.repositories SET repo_key = NULL
+                        WHERE id = (SELECT repository_id FROM sensei.folders WHERE id = $1)",
+                keyless,
+            )
+            .await;
+            for folder in [mine, shared, keyless] {
+                session_with(&pg, Some(folder), &["fix/AUTH-2-x"], &[]).await;
+            }
+            sync_tracker(
+                &pg,
+                &TrackerLocks::default(),
+                t,
+                &crate::tracker::jira::JiraAdapter,
+                &FakeBoard::standard(),
+                SYNC_DEADLINE,
+            )
+            .await
+            .unwrap();
+            let board = crate::tasks::dojo_delivery::BuiltBoard {
+                tracker_id: t,
+                workspace_id: ws,
+                kind: "jira".into(),
+                board_name: "AUTH".into(),
+                board_key: "k".repeat(64),
+                facts: serde_json::json!({}),
+                hash: "h".into(),
+                tickets: 0,
+            };
+            let exclusive = std::collections::HashSet::from([mine_key.clone()]);
+            let e = crate::tasks::dojo_delivery::build_effort(
+                &pg,
+                &board,
+                &exclusive,
+                chrono::Utc::now(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(e.held_back_sessions, 2, "the shared and the keyless session");
+            let tickets = e.json["tickets"].as_array().unwrap();
+            assert_eq!(tickets.len(), 1);
+            assert_eq!(tickets[0]["key"], "AUTH-2");
+            assert_eq!(tickets[0]["values"]["sessions"], 1);
+            assert_eq!(tickets[0]["repo_keys"], serde_json::json!([mine_key]));
+            assert_eq!(e.json["project"]["values"]["sessions"], 1);
+            assert!(!e.json.to_string().contains(&shared_key));
+
+            // Nothing provable: no row at all, never a row of zeros.
+            let none = crate::tasks::dojo_delivery::build_effort(
+                &pg,
+                &board,
+                &Default::default(),
+                chrono::Utc::now(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                none.json,
+                serde_json::json!({ "project": null, "sprints": [], "tickets": [] })
+            );
+            assert_eq!(none.held_back_sessions, 3);
+        }
+
+        /// Gates 9 and 8 through the real push (#240): the persona's exclusive
+        /// repository alone feeds the ticket, sprint and project rows of the body
+        /// sent; a shared repository's key never travels; an unknown is null, not 0;
+        /// a refusal marks the effort part's hash as well as the facts'.
+        #[tokio::test]
+        async fn the_push_sends_effort_from_the_exclusive_repository_only_and_marks_both_parts() {
+            use crate::tracker::sync::{SYNC_DEADLINE, sync_tracker};
+            use crate::tracker::test_support::{FakeBoard, repo_in, session_with};
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws) = crate::tracker::connect::tests::connected_tracker(&pg).await;
+            let (mine, shared) = (repo_in(&pg, ws).await, repo_in(&pg, ws).await);
+            let (mine_key, shared_key) =
+                (repo_key_of(&pg, mine).await, repo_key_of(&pg, shared).await);
+            // AUTH-2 sits in the active sprint 101: both sessions fall in its window.
+            for folder in [mine, shared] {
+                session_with(&pg, Some(folder), &["fix/AUTH-2-x"], &[]).await;
+            }
+            sync_tracker(
+                &pg,
+                &TrackerLocks::default(),
+                t,
+                &crate::tracker::jira::JiraAdapter,
+                &FakeBoard::standard(),
+                SYNC_DEADLINE,
+            )
+            .await
+            .unwrap();
+            sqlx_core::query::query(
+                "INSERT INTO sensei.personas (label, session_slot, verified_at) VALUES ('ztest-delivery', $1, now())
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(SLOT)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            let mut built = boards(&pg).await;
+            built.built.retain(|b| b.tracker_id == t);
+            built.failed.clear();
+            assert_eq!(built.built.len(), 1, "the synced sprint board is built");
+            let tenant = uuid::Uuid::new_v4().to_string();
+            let p = plan(vec![mapped(&mine_key, &tenant), mapped(&shared_key, &tenant)]);
+
+            let plane = StubPlane::default();
+            assert_eq!(
+                push_delivery(
+                    &pg,
+                    SLOT,
+                    "tok",
+                    &plane,
+                    &p,
+                    std::slice::from_ref(&mine_key),
+                    &built
+                )
+                .await
+                .unwrap(),
+                1
+            );
+            let body = plane.delivered.lock().unwrap()[0].clone();
+            let effort = &body["effort"];
+            let tickets = effort["tickets"].as_array().unwrap();
+            assert_eq!(tickets.len(), 1);
+            assert_eq!(
+                (tickets[0]["key"].as_str(), tickets[0]["values"]["sessions"].as_i64()),
+                (Some("AUTH-2"), Some(1))
+            );
+            assert_eq!(tickets[0]["repo_keys"], serde_json::json!([mine_key]));
+            let sprints = effort["sprints"].as_array().unwrap();
+            assert_eq!(sprints.len(), 1, "{effort}");
+            assert_eq!(sprints[0]["external_id"], "101");
+            assert_eq!(sprints[0]["values"]["sessions"], 1);
+            assert_eq!(sprints[0]["repo_keys"], serde_json::json!([mine_key]));
+            assert_eq!(effort["project"]["values"]["tokens"], serde_json::Value::Null);
+            assert_eq!(effort["project"]["reasons"]["tokens"], "no_usage");
+            assert!(
+                !body["effort"].to_string().contains(&shared_key),
+                "a shared repository's session travelled"
+            );
+
+            // A refusal marks both parts' hashes; neither goes again within the hour.
+            exec(&pg, "DELETE FROM sensei.tracker_push_marks WHERE tracker_id = $1", t).await;
+            let refusing = StubPlane {
+                delivery: Some(Err(DeliveryError::Refused { status: 400, body: "bad".into() })),
+                ..Default::default()
+            };
+            push_delivery(&pg, SLOT, "tok", &refusing, &p, std::slice::from_ref(&mine_key), &built)
+                .await
+                .unwrap();
+            let (refused,): (Vec<String>,) = sqlx_core::query_as::query_as(
+                "SELECT array_agg(part ORDER BY part) FROM sensei.tracker_push_marks
+                  WHERE tracker_id = $1 AND failed_hash IS NOT NULL AND hash IS NULL",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(refused, ["effort", "facts"]);
+            push_delivery(&pg, SLOT, "tok", &refusing, &p, std::slice::from_ref(&mine_key), &built)
+                .await
+                .unwrap();
+            assert_eq!(
+                refusing.delivered.lock().unwrap().len(),
+                1,
+                "a refused body waits for a change"
+            );
+        }
+
+        #[tokio::test]
+        async fn the_body_carries_the_persona_effort_and_a_changed_effort_alone_is_sent() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let plane = StubPlane::default();
+            let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1
+            );
+            let body = plane.delivered.lock().unwrap()[0].clone();
+            assert_eq!(body["effort"]["tickets"], serde_json::json!([]));
+            assert_eq!(body["effort"]["project"], serde_json::Value::Null);
+            let (persona,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "SELECT id FROM sensei.personas WHERE session_slot = $1",
+            )
+            .bind(SLOT)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(
+                body["effort"]["source"],
+                serde_json::json!(persona.to_string()),
+                "the install that pushed"
+            );
+            let (parts,): (Vec<String>,) = sqlx_core::query_as::query_as(
+                "SELECT array_agg(part ORDER BY part) FROM sensei.tracker_push_marks WHERE tracker_id = $1 AND hash IS NOT NULL",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(parts, ["effort", "facts"], "each part is acknowledged under its own mark");
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                0
+            );
+            exec(&pg, "UPDATE sensei.tracker_push_marks SET hash = 'before' WHERE tracker_id = $1 AND part = 'effort'", t).await;
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1,
+                "the effort part alone was due: the board goes again"
             );
         }
     }

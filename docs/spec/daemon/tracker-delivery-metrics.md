@@ -41,6 +41,7 @@ only its own sessions; the Dōjō is the one place work on a shared board comes 
 | B13 | **Replace and withdraw.** Each push replaces everything that person reported for the board. Disconnecting the board, or the board losing consent (no allowed repository, or ambiguous), withdraws that person's data. Items removed in Jira are marked removed. Signing out keeps the data, shown as stale. |
 | B14 | **Each person's cost at their own rate, summed**, labelled so. A contributor with no rate leaves the sum partial. `expected_minutes` and `time_variance_minutes` (local calibration, S1 `minutes_per_point`) never travel. |
 | B15 | Board and sprint **names** travel, under the same decision as titles (B9). |
+| B16 | **Cost and solo values are gated** (user, 2026-11-05, after the F3 pre-build audit: `effort_cost ÷ worked time` reveals a person's rate, and one contributor's "merged" value is that person's). Merged `effort_cost` and `rework_cost`, and every merged figure of an item with fewer than **2** contributors, show only to readers allowed per-person rows (D4 "Who sees"); every other reader sees "one contributor" and no cost. F3 serves the restricted view to every reader; F4 opens it to the allowed. A contributor counts only with a row of ≥ 1 session, and the dōjō validates every row's fields and types; but the daemon's #240 filter is the **only proof** a row's figures are that person's own — a member who forges a daemon push can still pose as a second contributor and difference the merge. B16 stops a reader, not a forger. |
 
 ## Overrides of parents
 
@@ -129,6 +130,49 @@ known values, with `partial: k` naming how many contributors were unknown. A rec
 **Known limit.** An escaped defect whose tick is in one person's sessions and whose failure is
 in another's is invisible to both, so `escaped_task_defects` can undercount across people. The
 Dōjō view says so in the figure's explainer.
+
+**Amendment A3 (F3 pre-build audit, 2026-11-05)** corrects the rules above where merging
+per-person rows would not reproduce what one daemon holding every session computes:
+
+- **Submission is the first.** `submitted_at` merges as the **min** over rows with `via =
+  pr`, else the min over `push`; `via` rides with it. `execution_hours` = that − min
+  `work_started_at`; `lead_hours` = that − `issue_created_at`.
+- **Not applicable is not unknown.** Each null travels with its reason (keyed by the wire
+  field). `no_activity` is sent as `0`. `not_started` / `not_submitted` take the person out of
+  that field's population without making it partial. Only `not_derived`, `derivation_failed`,
+  `not_priced` and `no_rate` are unknowns that count toward `partial`. When every
+  contributor is unknown, the merged reason is theirs if they agree, else
+  `no_contributor_value` (a new `sdlc_metrics` code).
+- **Ratios pair their populations.** Each recomputed ratio sums numerator and denominator
+  over the **same** contributors, those with both known: `on_hold_ratio` (on_hold_ms,
+  execution_ms), `post_review_rework_ratio` (rework_ms, worked_ms), `testing_` and
+  `review_efficiency`, `build_failure_rate`, `mean_build_recovery_minutes`. It is `partial`
+  when a contributor was left out as unknown.
+- **`cost_per_prompt_cycle`** is null `partial_cost` unless every contributor's
+  `ai_token_cost` and `prompts` are known, Σ`api_cost_n` = Σ`sessions` and
+  Σ`api_cost_partial` = 0 (the local rule, summed); `no_prompts` when Σ`prompts` = 0.
+- **Person-time.** Merged `worked_minutes`, `rework_minutes` and `on_hold_minutes` are summed
+  person-time, not a union of wall-clock slices; the view labels them so.
+- **Known limits** (the view's explainer) widen: each person's work is read on its own, so
+  build recovery pairs a failure with the next success in *that person's* sessions
+  (`mean_build_recovery_minutes`, `build_unrecovered` can differ from one daemon's), an
+  escape lost across people counts as a compile or test defect (total unchanged; the
+  efficiencies shift), a submission needs that person's own first edit (a PR opened in
+  another person's session without an edit is not seen), and rework counts each person's
+  edits after their own submission.
+- **One person, two installs.** Effort rows are keyed by person **and install** (`source`, the
+  local persona's id, a random pseudonym): a push replaces only its own install's rows, the
+  merge sums every install's rows, and `contributors` counts distinct people.
+- **Project row.** Its sessions are those linked to **non-removed** tickets (the tickets that
+  get rows). `tokens` is null (`no_usage`) when no session has tokens. The Dōjō's
+  `tokens_per_ticket` = Σ`tokens` ÷ distinct ticket keys with any ticket row, null
+  `partial_tokens` when Σ`sessions_without_tokens` > 0; `prompts_per_ticket` = Σ`prompts` ÷
+  the same, null with the contributor's reason when any `prompts` is null.
+- **Sprint usage** fields carry their coverage in their `_n` (`active_n`, `claude_n`,
+  `user_n`, `wall_n`, `tokens_fresh_n`, …): summed, never marked partial.
+- **Units.** Every `_ms` field is milliseconds; `on_hold_by_reason` stays minutes per reason,
+  as locally.
+- **Reason words.** The Dōjō reads them from `dojo.reason_codes` as F2's reads do.
 
 ### D2 · App: the Delivery Metrics section
 
@@ -234,6 +278,40 @@ on one board produce one key. It is a stable pseudonym, not anonymisation: names
   not only its current sprint. Removed tickets do not travel.
 - A ticket object has exactly those keys (B9).
 
+**The effort part** (*Amendment A2, F3 pre-build, 2026-11-05*). Built per persona and board,
+after the facts, from **provable sessions only**: a candidate session (the tracker's
+`candidate_sessions`, each with exactly one repository) is provable when its repository's
+`repo_key` is in the persona's `exclusive_repos` (#240). Every other candidate session linked
+to a ticket or in a sprint's `linked_sprint` is held back: counted in `held_back_sessions`,
+logged per pass, never sent.
+
+```text
+effort: {
+  source: uuid,                             // this install: the local persona's id (A3, F3 review)
+  project: Row | null,                      // null when no provable session links any ticket
+  sprints: [{ external_id, …Row }],         // a non-removed sprint with ≥ 1 provable linked_sprint session
+  tickets: [{ key, …Row }] }                // a facts ticket with ≥ 1 provable session
+Row = { repo_keys: [text],                  // the repositories of the row's sessions, ⊆ request repo_keys
+        values: { field: number|text|null|object },
+        reasons: { field: code } }          // one code for every null value
+```
+
+- **project** `values`: `sessions` (distinct provable sessions over the board's tickets),
+  `tokens` (their summed tokens, `null` with `no_usage` only when there are none),
+  `sessions_without_tokens`, `prompts` (`null` with `not_derived` / `derivation_failed`
+  while any session's signals are not current). The Dōjō divides by the number of distinct
+  tickets that have a ticket row from anyone.
+- **sprint** `values`: D1's usage fields of `linked_sprint` over provable sessions, each with
+  its `_n` (`sessions`, `shared`, `by_source`, `active_secs`… `api_cost_partial`,
+  `first_at`, `last_at`). `linked_other` and `unlinked` never travel.
+- **ticket** `values`: exactly D1's wire fields (`worked_ms` … `submitted_via`), from
+  `TicketSdlc` computed over the ticket's provable sessions and their usage, plus the ✚
+  numerators. A `null` keeps `TicketSdlc`'s own reason. `expected_minutes`,
+  `time_variance_minutes`, `estimated_points` and the rate never travel.
+- `effort` is always an object when sent (lists may be empty): it **replaces** the caller's
+  rows for the board. Its hash is the `effort` part's mark, separate from `facts`; one request
+  carries both parts whenever either is due.
+
 Limits: at most 5 000 tickets, and a serialized body of at most 3.5 MB on the daemon (the
 Dōjō refuses over 4 MB). A bigger board is skipped and recorded `delivery_board_too_large`.
 
@@ -313,8 +391,27 @@ A lesser copy answers `stale` and changes nothing.
 `all_my_repositories` rows for `tenant_id`, through `dojo.repositories_in_workspaces` — never
 by matching `repo_key` across tenants. No workspace → 404; more than one → 409.
 
-**Effort.** The caller's rows for the board are replaced by the request's: rows absent from it
-are deleted (B13).
+**Effort.** The caller's rows for the board **from the same install** (`effort.source`) are
+replaced by the request's: rows absent from it are deleted (B13). `dojo.delivery_effort_row_ok`
+admits only the kind's D1 fields, each of its type, with ≥ 1 session; the effort part is
+bounded like the facts (5 000 tickets, 1 000 sprints, 4 MB) in the database itself. *A2:* one function, `dojo.file_delivery(p_tenant, p_repo_keys, p_board,
+p_effort)`, files the facts (as `file_delivery_facts`) and then the effort in one transaction
+and answers `{facts, effort}`; effort is filed even when the facts answer `stale` (it is the
+caller's own). A row's `repo_keys` outside the request's → 400 (`invalid_parameter_value`);
+its `repository_ids` are the verified ids of those keys.
+
+**Merge** (*A2, as built*): `dojo.delivery_effort_merged(p_kind, p_rows jsonb,
+p_issue_created_at, p_tickets)` — `p_rows` the contributors' `{values, reasons}`, `p_tickets`
+the project's per-ticket denominator — is pure (immutable), built on `delivery_merge_sum`
+(one field) and `delivery_merge_pair` (a ratio's two sides over the same contributors), and
+answers `{ values, reasons, partial }` for one item, by D1 and A3: each sum
+over known values with `partial[field]` = contributors whose value was `null`, `null` with
+`no_contributor_value` when none knew it; min / max ignore `null`; the recomputed figures
+from those sums, `partial` when any input is, `null` with the local reason when a denominator
+is 0 or `null`. Reads add `team` (that object), `contributors` (a count) and `last_report`
+(the latest `reported_at`) to each board (project), sprint and ticket, through
+`dojo.delivery_team`, which applies B16 with `dojo.delivery_team_view` and gives
+`last_report` only from two contributors on (one person's report time is theirs).
 
 **Reads** (security definer, each answering nothing unless `can_read_workspace`; the route
 answers 403 when it is false, as `getWorkspaceMetrics` does):
@@ -338,6 +435,18 @@ members' rows still count in merged values until withdrawn.
 
 **Staleness.** A contributor whose last report is older than 7 days is shown as stale to those
 who see per-person rows; others see "includes stale data" when any is.
+
+*Amendment A4 (F4 build, 2026-11-05).* `dojo.delivery_team` decides per reader, per item:
+
+- A reader **sees the people** of an item when `can_read_repository_metric(r, 'user',
+  principal, tenant)` holds for every `r` of every row on it. They get the **unrestricted**
+  merge (cost and one-contributor items included, B16 opened), `last_report`, and `people`:
+  one entry per contributor — their rows across installs merged by the same function, their
+  `display_name`, latest `reported_at` and `stale` (older than 7 days).
+- **Anyone else** keeps B16's restricted view and `people` = null; `stale` is a single
+  boolean, true when any contributor's last report is older than 7 days, never which.
+- The reads add `people jsonb` and `stale boolean` beside `team`, `contributors` and
+  `last_report`.
 
 ### D5 · Dōjō: the Delivery view
 
@@ -392,8 +501,9 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
    contains neither `acme.atlassian.net` nor any hourly rate nor `minutes_per_point`; each
    ticket object's keys are exactly D3's; a removed ticket is absent; a removed sprint has
    `sdlc: null`; a ticket in two sprints lists both.
-9. **#240 (daemon).** Sessions from a repository another persona also elected, and sessions
-   with no repository, are absent from effort and counted in `held_back_sessions`.
+9. **#240 (daemon).** Candidate sessions from a repository another persona also elected, or
+   from a repository with no `repo_key`, are absent from effort and counted in
+   `held_back_sessions` (a session with no repository is never a candidate: A2).
 10. **Watermark (daemon).** A second pass with nothing changed posts nothing, including after
     a history run that read nothing new (`history_at` moved). Two payloads equal but for key
     insertion and sprint order hash equal. A mark older than 6 h re-sends. A 400 on one board
@@ -414,10 +524,14 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
     `definer_functions_gate_the_caller.sql`, called by a non-member with alice's ids.
 14. **Merge (sql).** Fixture: A and B on `T-1`, A alone on `T-2`.
     `workspace_delivery_tickets` returns for `T-1` `worked_minutes` = A+B, `work_started_at` =
-    min, `build_failure_rate` = (fA+fB)÷(runsA+runsB)×100, `mean_build_recovery_minutes` from
-    summed sums and counts, `effort_cost` = A+B; `contributors` 2 and 1.
+    min, `submitted_at` = the earliest PR, `execution_hours` from those two,
+    `build_failure_rate` = (fA+fB)÷(runsA+runsB)×100, `mean_build_recovery_minutes` from
+    summed sums and counts; `contributors` 2 and 1. `T-2` (one contributor) and every
+    `effort_cost` show no figure to any reader in F3 (B16).
 15. **Unknown (sql).** A sends `ai_token_cost` null, B sends 3.0 → 3.0 with `partial: 1`;
-    `cost_per_prompt_cycle` null.
+    `cost_per_prompt_cycle` null. A not submitted (`rework_ms` null `not_submitted`) leaves
+    `post_review_rework_ratio` = B's alone and **not** partial; Σ`api_cost_n` < Σ`sessions`
+    → `cost_per_prompt_cycle` null `partial_cost`.
 16. **Replace (sql).** A pushes `T-1`, `T-2`, then pushes `T-1` only → A's `T-2` row is gone.
 17. **Visibility (sql).** Person A reads their own rows; a tenant admin reads A's; a plain
     workspace member and a viewer read merged values with no `principal_id` and no

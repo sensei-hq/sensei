@@ -468,26 +468,49 @@ pub async fn project_sdlc(
         return Ok(p);
     }
     let n = tickets.len() as f64;
-    let (tokens, missing) = pg.session_token_totals(&sessions).await?;
-    p.sessions_without_tokens = missing;
-    if missing > 0 {
+    let totals = session_totals(pg, &sessions).await?;
+    p.sessions_without_tokens = totals.without_tokens;
+    if totals.without_tokens > 0 {
         p.reasons.insert("tokens_per_ticket", "partial_tokens");
     } else {
-        p.tokens_per_ticket = Some(tokens as f64 / n);
+        p.tokens_per_ticket = Some(totals.tokens as f64 / n);
     }
+    match totals.prompts {
+        Err(why) => {
+            p.reasons.insert("prompts_per_ticket", why);
+        }
+        Ok(prompts) => p.prompts_per_ticket = Some(prompts as f64 / n),
+    }
+    Ok(p)
+}
+
+/// A distinct set of sessions' tokens and prompts: the project figures' inputs (S6).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SessionTotals {
+    /// Summed over the sessions that have every token field.
+    pub tokens: i64,
+    pub without_tokens: i64,
+    /// Prompts, or why the signals that count them are not current.
+    pub prompts: Result<i64, &'static str>,
+}
+
+/// The tokens and prompts of `sessions` (distinct).
+pub async fn session_totals(
+    pg: &crate::db::pg_store::PgStore,
+    sessions: &[uuid::Uuid],
+) -> Result<SessionTotals, String> {
+    let (tokens, without_tokens) = pg.session_token_totals(sessions).await?;
     let hash = pg.command_catalogue().await?.hash;
-    let signals = pg.session_signals_for(&sessions, &hash).await?;
-    if let Some(why) = crate::sdlc::ticket::underived(signals.iter().map(|(_, s)| s)) {
-        p.reasons.insert("prompts_per_ticket", why);
-    } else {
-        let prompts = signals
+    let signals = pg.session_signals_for(sessions, &hash).await?;
+    let prompts = match crate::sdlc::ticket::underived(signals.iter().map(|(_, s)| s)) {
+        Some(why) => Err(why),
+        None => Ok(signals
             .iter()
             .flat_map(|(_, s)| s.signals.iter())
             .filter(|x| x.kind == crate::sdlc::signals::SignalKind::Prompt)
-            .count();
-        p.prompts_per_ticket = Some(prompts as f64 / n);
-    }
-    Ok(p)
+            .count() as i64),
+    };
+    Ok(SessionTotals { tokens, without_tokens, prompts })
 }
 
 #[cfg(test)]

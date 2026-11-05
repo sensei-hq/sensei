@@ -57,6 +57,21 @@ const body = (over: Record<string, unknown> = {}, facts: Record<string, unknown>
 
 const refused = (r: ReturnType<typeof checkDeliveryBody>) => (r.ok ? null : r);
 
+/** One effort row (A2); `values` over a ticket's wire fields unless overridden. */
+const row = (values: Record<string, unknown> = {}) => ({
+	repo_keys: ['github.com/acme/api'],
+	values: { sessions: 1, worked_ms: 60000, prompts: null, on_hold_by_reason: { unknown: 3 }, ...values },
+	reasons: { prompts: 'not_derived' }
+});
+
+const effort = (over: Record<string, unknown> = {}) => ({
+	source: '5a000000-0000-4000-8000-000000000001',
+	project: { repo_keys: ['github.com/acme/api'], values: { sessions: 1, tokens: 900, sessions_without_tokens: 0, prompts: 4 }, reasons: {} },
+	sprints: [{ repo_keys: ['github.com/acme/api'], values: { sessions: 1, active_secs: 60, active_n: 1, by_source: { branch: 1, prompt: 0 }, first_at: null }, reasons: {}, external_id: '101' }],
+	tickets: [{ ...row(), key: 'AUTH-2' }],
+	...over
+});
+
 describe('checkDeliveryBody', () => {
 	it('accepts the D3 shape, and a removed sprint with no figures', () => {
 		expect(checkDeliveryBody(body()).ok).toBe(true);
@@ -97,8 +112,52 @@ describe('checkDeliveryBody', () => {
 		expect(refused(checkDeliveryBody(body({}, { pending_tickets: 1.5 })))?.status).toBe(400);
 	});
 
-	it('refuses an effort part until it is accepted (F3): 400', () => {
-		expect(refused(checkDeliveryBody(body({ effort: { tickets: [] } })))?.status).toBe(400);
+	it('accepts the effort part (A2): a project row, sprint rows and ticket rows', () => {
+		const r = checkDeliveryBody(body({ effort: effort() }));
+		expect(r.ok).toBe(true);
+		expect(r.ok && r.body.effort).toEqual(effort());
+		expect(checkDeliveryBody(body({ effort: { source: effort().source, project: null, sprints: [], tickets: [] } })).ok).toBe(true);
+	});
+
+	it('refuses effort with other keys, a value outside the wire, or a foreign repository: 400', () => {
+		const bad = [
+			{ ...effort(), extra: [] },
+			effort({ tickets: [{ ...row(), key: 'AUTH-2', note: 'x' }] }),
+			// The rate and the local calibration never travel (B10, B14).
+			effort({ tickets: [{ ...row({ hourly_rate: 90 }), key: 'AUTH-2' }] }),
+			effort({ tickets: [{ ...row({ expected_minutes: 30 }), key: 'AUTH-2' }] }),
+			effort({ sprints: [{ ...row({ linked_other: 1 }), external_id: '101' }] }),
+			effort({ project: row({ worked_ms: 1 }) }),
+			effort({ tickets: [{ ...row(), key: 'AUTH-2', repo_keys: ['github.com/acme/other'] }] }),
+			effort({ tickets: [{ ...row(), key: 'AUTH-2', repo_keys: [] }] }),
+			effort({ tickets: [{ ...row(), key: 'AUTH-2', reasons: { prompts: 7 } }] }),
+			effort({ tickets: [{ ...row(), key: '' }] }),
+			effort({ tickets: [{ ...row(), key: 'AUTH-2' }, { ...row(), key: 'AUTH-2' }] }),
+			// A value every reader's merge would fail on, or a row with no session (a decoy).
+			effort({ tickets: [{ ...row({ work_started_at: 'zzz' }), key: 'AUTH-2' }] }),
+			effort({ tickets: [{ ...row({ submitted_via: 'email' }), key: 'AUTH-2' }] }),
+			effort({ tickets: [{ ...row({ worked_ms: Number.NaN }), key: 'AUTH-2' }] }),
+			effort({ tickets: [{ ...row({ sessions: 0 }), key: 'AUTH-2' }] }),
+			effort({ tickets: [{ ...row({ on_hold_by_reason: { unknown: 'x' } }), key: 'AUTH-2' }] }),
+			effort({ sprints: [{ ...row(), external_id: '101', values: { sessions: 1, by_source: [1] } }] }),
+			effort({ project: { ...row(), values: { sessions: 1, tokens: 9 }, repo_keys: ['github.com/acme/other'] } }),
+			// The install that pushed is named, as a uuid.
+			effort({ source: undefined }),
+			effort({ source: 'laptop' })
+		];
+		for (const e of bad) {
+			expect(refused(checkDeliveryBody(body({ effort: e })))?.status, JSON.stringify(e)).toBe(400);
+		}
+	});
+
+	it('refuses more than 1,000 effort sprints: 413', () => {
+		const many = Array.from({ length: 1001 }, (_, i) => ({ ...row(), values: { sessions: 1 }, external_id: `${i}` }));
+		expect(refused(checkDeliveryBody(body({ effort: effort({ sprints: many }) })))?.status).toBe(413);
+	});
+
+	it('refuses more than 5,000 effort tickets: 413', () => {
+		const many = Array.from({ length: DELIVERY_MAX_TICKETS + 1 }, (_, i) => ({ ...row(), key: `A-${i}` }));
+		expect(refused(checkDeliveryBody(body({ effort: effort({ tickets: many }) })))?.status).toBe(413);
 	});
 
 	it('refuses more than 5,000 tickets: 413', () => {
@@ -123,10 +182,11 @@ describe('fileDelivery', () => {
 	const b = (ok.ok ? ok.body : null) as DeliveryBody;
 
 	it('files the board as one call, never sending the tenant inside the board', async () => {
-		const { client, calls } = db({ data: 'accepted', error: null });
+		const { client, calls } = db({ data: { facts: 'accepted' }, error: null });
 		expect(await fileDelivery(client, b)).toEqual({ facts: 'accepted' });
 		expect(calls).toHaveLength(1);
-		expect(calls[0].fn).toBe('file_delivery_facts');
+		expect(calls[0].fn).toBe('file_delivery');
+		expect(calls[0].args.p_effort).toBeNull();
 		expect(calls[0].args.p_tenant).toBe(b.tenant_id);
 		expect(calls[0].args.p_repo_keys).toEqual(b.repo_keys);
 		expect(calls[0].args.p_board).toEqual({
@@ -138,8 +198,21 @@ describe('fileDelivery', () => {
 	});
 
 	it('passes a lesser copy on as stale', async () => {
-		const { client } = db({ data: 'stale', error: null });
+		const { client } = db({ data: { facts: 'stale' }, error: null });
 		expect(await fileDelivery(client, b)).toEqual({ facts: 'stale' });
+	});
+
+	it('files both parts in one call and answers both outcomes', async () => {
+		const withEffort = checkDeliveryBody(body({ effort: effort() }));
+		const e = (withEffort.ok ? withEffort.body : null) as DeliveryBody;
+		const { client, calls } = db({ data: { facts: 'stale', effort: 'accepted' }, error: null });
+		expect(await fileDelivery(client, e)).toEqual({ facts: 'stale', effort: 'accepted' });
+		expect(calls).toHaveLength(1);
+		expect(calls[0].args.p_effort).toEqual(effort());
+		const { client: odd } = db({ data: { facts: 'accepted', effort: 'maybe' }, error: null });
+		await expect(fileDelivery(odd, e)).rejects.toMatchObject({ status: 500 });
+		const { client: missing } = db({ data: { facts: 'accepted' }, error: null });
+		await expect(fileDelivery(missing, e)).rejects.toMatchObject({ status: 500 });
 	});
 
 	it('keeps each refusal its status: 403, 404, 409; a failure is 500', async () => {
@@ -155,7 +228,9 @@ describe('fileDelivery', () => {
 	});
 
 	it('an answer that is neither accepted nor stale is a failure, not a success', async () => {
-		const { client } = db({ data: null, error: null });
-		await expect(fileDelivery(client, b)).rejects.toMatchObject({ status: 500 });
+		for (const data of [null, 'accepted', { facts: 'maybe' }]) {
+			const { client } = db({ data, error: null });
+			await expect(fileDelivery(client, b), JSON.stringify(data)).rejects.toMatchObject({ status: 500 });
+		}
 	});
 });

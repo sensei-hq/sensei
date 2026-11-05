@@ -13,6 +13,9 @@
 //          docs/spec/screen/workspace-sessions.md
 // Mockup:  docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
 import type { HourActivity, SessionRow } from '$lib/types.js';
+// Shared with the dōjō, which shows the team's figures alike.
+import { activeMinutes, compactDuration, compactTokens } from '@sensei/sdlc-figures';
+export { activeMinutes, compactDuration, compactTokens };
 
 /** The chart chips (pulse is deliberately NOT here — it is a mini-cycler-only
  *  mode, see MINI_MODES). `tokens` is the per-day token-volume bars. */
@@ -76,39 +79,6 @@ export function durationMinutes(startedAt: string, completedAt: string | null): 
 export function medianLabel(mins: number | null): string {
   if (mins == null) return '—';
   return mins < 1 ? '<1m' : compactDuration(mins);
-}
-
-/** A session's duration as every screen shows it: "12m", "1h 04m", "2h",
- *  "2d 3h"; "—" when it has none. */
-export function compactDuration(mins: number | null): string {
-  if (mins == null) return '—';
-  if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60);
-  if (h >= 24) {
-    const d = Math.floor(h / 24);
-    const rest = h % 24;
-    return rest === 0 ? `${d}d` : `${d}d ${rest}h`;
-  }
-  const m = mins % 60;
-  return m === 0 ? `${h}h` : `${h}h ${String(m).padStart(2, '0')}m`;
-}
-
-/** Compact token count: "820" / "7.7k" / "1.3M" / "—". Keeps the row legible
- *  where a raw grouped integer (132,332,559) would blow out the column. */
-export function compactTokens(tokens: number | null | undefined): string {
-  if (tokens == null || Number.isNaN(tokens)) return '—';
-  const n = Math.round(tokens);
-  if (n < 1_000) return `${n}`;
-  if (n < 1_000_000) return `${(n / 1_000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
-}
-
-/** Active-work minutes from the daemon's gap-aware `durationSecs`, or null when
- *  the session carries no measured duration. Distinct from `durationMinutes`,
- *  which is wall-clock (startedAt→completedAt). */
-export function activeMinutes(durationSecs: number | null | undefined): number | null {
-  if (durationSecs == null || Number.isNaN(durationSecs) || durationSecs < 0) return null;
-  return Math.round(durationSecs / 60);
 }
 
 /** HH:MM (24h) of the start time, in the viewer's locale/timezone. */

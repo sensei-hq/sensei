@@ -4,6 +4,7 @@
 import type { ApiResult } from '$lib/api.js';
 import { activeMinutes, compactDuration, compactTokens, durationMinutes } from '$lib/sessions-digest.js';
 import { SDLC_REASONS, sprintWindowReason, ticketSdlcRows, type SdlcRow, type Words } from '$lib/sdlc-figures.js';
+import { apiCostText } from '@sensei/sdlc-figures';
 import { errorFor } from '$lib/tracker-errors.js';
 import type {
   MetricReason,
@@ -65,10 +66,7 @@ export function failureText(error: { status: number; message: string; body?: Rec
 /** The API cost at list prices: "$1.24", "$1.24+" when some work could not be
  *  priced (a lower bound), "<$0.01" for a fraction of a cent, "—" when nothing was. */
 function apiCost(u: TrackerUsage): string {
-  if (u.api_cost == null) return '—';
-  const plus = u.api_cost_partial > 0 ? '+' : '';
-  const shown = u.api_cost > 0 && u.api_cost < 0.005 ? '<$0.01' : `$${u.api_cost.toFixed(2)}`;
-  return shown + plus;
+  return apiCostText(u.api_cost, u.api_cost_partial > 0);
 }
 
 /** One usage object as table cells. Unknown is "—", never 0. */

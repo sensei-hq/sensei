@@ -43,3 +43,8 @@ export interface SprintFigureValues {
 }
 
 export declare function sprintSdlcFigures(s: SprintFigureValues, words: Words): SdlcFigure[];
+
+export declare function compactDuration(mins: number | null): string;
+export declare function compactTokens(tokens: number | null | undefined): string;
+export declare function activeMinutes(durationSecs: number | null | undefined): number | null;
+export declare function apiCostText(cost: number | null | undefined, partial: boolean): string;

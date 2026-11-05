@@ -19,7 +19,11 @@ returns table (
     end_at      timestamptz,
     complete_at timestamptz,
     sdlc        jsonb,
-    reason_words jsonb
+    reason_words jsonb,
+    team         jsonb,
+    team_words   jsonb,
+    contributors integer,
+    last_report  timestamptz
 )
 language sql
 stable
@@ -27,14 +31,11 @@ security definer
 set search_path = dojo, pg_temp
 as $$
     select s.external_id, s.seq, s.name, s.state, s.start_at, s.end_at, s.complete_at, s.sdlc,
-           (select jsonb_object_agg(r.code, r.summary)
-              from sensei.reason_codes r
-             where r.domain = 'sdlc_metrics'
-               and r.code in (select x.value
-                                from jsonb_each_text(case when jsonb_typeof(s.sdlc -> 'reasons') = 'object'
-                                                          then s.sdlc -> 'reasons' end) x))
+           dojo.delivery_reason_words(s.sdlc -> 'reasons'),
+           t.team, dojo.delivery_reason_words(t.team -> 'reasons'), t.contributors, t.last_report
       from dojo.delivery_sprints s
       join dojo.delivery_boards b on b.id = s.board_id
+      cross join lateral dojo.delivery_team(b.id, 'sprint', s.external_id, null) t
      where b.id = p_board
        and b.workspace_id = p_workspace
        and not s.removed
@@ -47,4 +48,4 @@ revoke all on function dojo.workspace_delivery_sprints(uuid, uuid, integer, inte
 grant execute on function dojo.workspace_delivery_sprints(uuid, uuid, integer, integer) to authenticated;
 
 comment on function dojo.workspace_delivery_sprints(uuid, uuid, integer, integer) is
-'A board''s non-removed sprints from its kept copy, in the daemon''s order (start_at desc nulls last, seq desc), each with the words of the reason codes in its figures (reason_words, code → summary), for a reader of the workspace (dojo.can_read_workspace); paged (#352).';
+'A board''s non-removed sprints from its kept copy, in the daemon''s order (start_at desc nulls last, seq desc), each with the words of the reason codes in its figures (reason_words, code → summary), and the team''s merged sprint effort under B16 (team, team_words, contributors, last_report), for a reader of the workspace (dojo.can_read_workspace); paged (#352, #353).';

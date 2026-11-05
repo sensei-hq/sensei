@@ -146,10 +146,10 @@ begin
 
     -- ── First copy ──────────────────────────────────────────────────────────
     out := dojo.file_delivery_facts(t, one, base);
-    if out <> 'accepted' then raise exception 'first copy: answered %', out; end if;
+    if out is distinct from 'accepted' then raise exception 'first copy: answered %', out; end if;
     select b.board_id into board_id from dojo.workspace_delivery_boards(w1) b;
     if board_id is null then raise exception 'first copy: the board is not readable by its reporter'; end if;
-    if (select count(*) from dojo.workspace_delivery_boards(w1)) <> 1 then
+    if (select count(*) from dojo.workspace_delivery_boards(w1)) is distinct from 1 then
         raise exception 'first copy: the workspace does not hold exactly one board';
     end if;
     if (select predictability_reason from dojo.workspace_delivery_boards(w1)) is distinct from 'too_few_sprints'
@@ -170,7 +170,7 @@ begin
         raise exception 'sprints: a reason travelled without its words';
     end if;
     if (select count(*) from dojo.workspace_delivery_sprints(w1, board_id, 100, 0) s, jsonb_object_keys(s.reason_words) k
-         where s.external_id = '102') <> 1 then
+         where s.external_id = '102') is distinct from 1 then
         raise exception 'sprints: reason_words carries words for codes the sprint does not have';
     end if;
 
@@ -182,7 +182,7 @@ begin
     if keys is distinct from 'AUTH-10' then raise exception 'tickets: sprint 101 holds %', keys; end if;
     select string_agg(key, ',' order by key) into keys from dojo.workspace_delivery_tickets(w1, board_id, null, true, 100, 0);
     if keys is distinct from 'AUTH-3,AUTH-4' then raise exception 'tickets: the backlog holds % (a ticket only in a removed sprint is in the backlog)', keys; end if;
-    if (select title from dojo.workspace_delivery_tickets(w1, board_id, null, false, 100, 0) where key = 'AUTH-10') <> 'Ten' then
+    if (select title from dojo.workspace_delivery_tickets(w1, board_id, null, false, 100, 0) where key = 'AUTH-10') is distinct from 'Ten' then
         raise exception 'tickets: the title did not travel';
     end if;
 
@@ -190,33 +190,33 @@ begin
     -- An incomplete copy never replaces a complete one, however late its history.
     with_facts := jsonb_set(jsonb_set(base, '{facts,pending_tickets}', '4'), '{facts,history_at}', '"2026-11-03T10:00:00Z"');
     out := dojo.file_delivery_facts(t, one, with_facts);
-    if out <> 'stale' then raise exception 'one copy: an incomplete copy answered %', out; end if;
-    if (select pending_tickets from dojo.workspace_delivery_boards(w1)) <> 0 then
+    if out is distinct from 'stale' then raise exception 'one copy: an incomplete copy answered %', out; end if;
+    if (select pending_tickets from dojo.workspace_delivery_boards(w1)) is distinct from 0 then
         raise exception 'one copy: an incomplete copy replaced a complete one';
     end if;
 
     -- An older complete copy is stale; a null history_at loses to any.
     out := dojo.file_delivery_facts(t, one, jsonb_set(base, '{facts,history_at}', '"2026-10-01T10:00:00Z"'));
-    if out <> 'stale' then raise exception 'one copy: an older copy answered %', out; end if;
+    if out is distinct from 'stale' then raise exception 'one copy: an older copy answered %', out; end if;
     out := dojo.file_delivery_facts(t, one, jsonb_set(base, '{facts,history_at}', 'null'));
-    if out <> 'stale' then raise exception 'one copy: a null history_at answered %', out; end if;
+    if out is distinct from 'stale' then raise exception 'one copy: a null history_at answered %', out; end if;
 
     -- A later complete copy replaces it WHOLE: AUTH-3 is not in it, so it goes.
     with_facts := jsonb_set(jsonb_set(base, '{facts,history_at}', '"2026-11-02T10:00:00Z"'),
                             '{facts,tickets}', (base -> 'facts' -> 'tickets') - 2);
     out := dojo.file_delivery_facts(t, one, with_facts);
-    if out <> 'accepted' then raise exception 'one copy: a later copy answered %', out; end if;
+    if out is distinct from 'accepted' then raise exception 'one copy: a later copy answered %', out; end if;
     if exists (select 1 from dojo.workspace_delivery_tickets(w1, board_id, null, false, 100, 0) where key = 'AUTH-3') then
         raise exception 'one copy: the replaced copy''s ticket survived';
     end if;
-    if (select history_at from dojo.workspace_delivery_boards(w1)) <> '2026-11-02T10:00:00Z' then
+    if (select history_at from dojo.workspace_delivery_boards(w1)) is distinct from '2026-11-02T10:00:00Z' then
         raise exception 'one copy: history_at did not move';
     end if;
 
     -- Equal history_at: the later arrival wins.
     out := dojo.file_delivery_facts(t, one, jsonb_set(with_facts, '{board_name}', '"Renamed"'));
-    if out <> 'accepted' then raise exception 'one copy: an equal copy answered %', out; end if;
-    if (select name from dojo.workspace_delivery_boards(w1)) <> 'Renamed' then
+    if out is distinct from 'accepted' then raise exception 'one copy: an equal copy answered %', out; end if;
+    if (select name from dojo.workspace_delivery_boards(w1)) is distinct from 'Renamed' then
         raise exception 'one copy: the later of two equal copies did not win';
     end if;
 end
@@ -285,18 +285,18 @@ begin
 
     -- Complete beats incomplete, whatever the history; between incomplete copies the later history wins.
     out := dojo.file_delivery_facts(t, one, jsonb_set(jsonb_set(other, '{facts,pending_tickets}', '4'), '{facts,history_at}', '"2026-11-03T10:00:00Z"'));
-    if out <> 'accepted' then raise exception 'completeness: the first, incomplete copy answered %', out; end if;
+    if out is distinct from 'accepted' then raise exception 'completeness: the first, incomplete copy answered %', out; end if;
     out := dojo.file_delivery_facts(t, one, jsonb_set(jsonb_set(other, '{facts,pending_tickets}', '2'), '{facts,history_at}', '"2026-11-02T10:00:00Z"'));
-    if out <> 'stale' then raise exception 'completeness: an older incomplete copy answered %', out; end if;
+    if out is distinct from 'stale' then raise exception 'completeness: an older incomplete copy answered %', out; end if;
     out := dojo.file_delivery_facts(t, one, jsonb_set(jsonb_set(other, '{facts,pending_tickets}', '0'), '{facts,history_at}', '"2026-11-01T10:00:00Z"'));
-    if out <> 'accepted' then raise exception 'completeness: a complete copy with older history answered %', out; end if;
-    if (select pending_tickets from dojo.workspace_delivery_boards(w1) where board_key = repeat('ef', 32)) <> 0 then
+    if out is distinct from 'accepted' then raise exception 'completeness: a complete copy with older history answered %', out; end if;
+    if (select pending_tickets from dojo.workspace_delivery_boards(w1) where board_key = repeat('ef', 32)) is distinct from 0 then
         raise exception 'completeness: the complete copy was not kept';
     end if;
 
     -- A read answers only the board of the workspace it names.
     out := dojo.file_delivery_facts(t, array['github.com/ztest-df/two'], jsonb_set(base, '{board_key}', to_jsonb(repeat('cd', 32))));
-    if out <> 'accepted' then raise exception 'workspaces: the W2 board answered %', out; end if;
+    if out is distinct from 'accepted' then raise exception 'workspaces: the W2 board answered %', out; end if;
     select board_id into b1 from dojo.workspace_delivery_boards(w1) where board_key = repeat('ab', 32);
     select board_id into b2 from dojo.workspace_delivery_boards(w2) where board_key = repeat('cd', 32);
     if b1 is null or b2 is null then raise exception 'workspaces: a board is not readable in its own workspace'; end if;
@@ -311,19 +311,19 @@ $$;
 reset role;
 do $$
 begin
-    if (select count(*) from dojo.delivery_boards where board_key = repeat('ab', 32)) <> 1 then
+    if (select count(*) from dojo.delivery_boards where board_key = repeat('ab', 32)) is distinct from 1 then
         raise exception 'storage: not one board row';
     end if;
     if (select reported_by from dojo.delivery_boards where board_key = repeat('ab', 32))
-       <> 'a0000000-0000-4000-8000-000000000522' then
+       is distinct from 'a0000000-0000-4000-8000-000000000522' then
         raise exception 'storage: reported_by is not the caller';
     end if;
     if exists (select 1 from dojo.delivery_boards b where b.board_key = repeat('ab', 32)
-                and b.workspace_id <> 'c0000000-0000-4000-8000-000000000521') then
+                and b.workspace_id is distinct from 'c0000000-0000-4000-8000-000000000521') then
         raise exception 'storage: the board was filed outside W1';
     end if;
     if (select count(*) from dojo.delivery_sprints s join dojo.delivery_boards b on b.id = s.board_id
-         where b.board_key = repeat('ab', 32)) <> 4 then
+         where b.board_key = repeat('ab', 32)) is distinct from 4 then
         raise exception 'storage: the copy''s four sprints (one removed) are not all kept';
     end if;
 end

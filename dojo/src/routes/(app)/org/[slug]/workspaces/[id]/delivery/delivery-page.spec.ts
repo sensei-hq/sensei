@@ -12,6 +12,8 @@ const { toDeliveryView } = await import('$lib/workspace-delivery-view');
 
 afterEach(cleanup);
 
+const noTeam = { team: null, team_words: null, contributors: 0, last_report: null };
+
 const view = toDeliveryView({
 	boards: [
 		{
@@ -25,6 +27,7 @@ const view = toDeliveryView({
 			history_at: null,
 			pending_tickets: 0,
 			reported_at: '2026-11-04T10:00:00Z',
+			...noTeam,
 			sprints: [
 				{
 					external_id: '101',
@@ -35,7 +38,8 @@ const view = toDeliveryView({
 					end_at: null,
 					complete_at: null,
 					sdlc: null,
-					reason_words: null
+					reason_words: null,
+					...noTeam
 				}
 			]
 		}
