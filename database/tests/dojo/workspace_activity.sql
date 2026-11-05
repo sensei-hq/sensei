@@ -7,13 +7,12 @@
 -- instead of pushed_at, graph syncs ignored, a quiet workspace dated, or the
 -- view losing security_invoker (caller-scoped reads are the RLS rule).
 --
--- PENDING (no --apply on run.sh yet): opens its own transaction, includes the
--- phase-B DDL, asserts, rolls back. Once `run.sh --apply` lands, this becomes
--- `workspace_activity.sql` and the include goes away.
+-- Run with the view's DDL applied (`run.sh --apply dojo
+-- ../ddl/view/dojo/workspace_activity.ddl dojo/workspace_activity.sql`), or
+-- against a database the DDL has deployed to: opens its own transaction,
+-- asserts, rolls back.
 
 begin;
-
-\ir ../../ddl/view/dojo/workspace_activity.ddl
 
 insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
   ('c1111111-1111-1111-1111-111111111111', 'organization/ztest-act', 'organization', 'ztest-act',
@@ -132,12 +131,15 @@ begin
     raise exception 'workspace_activity is missing columns; matched % of 3.', n;
   end if;
 
-  -- 5. Caller-scoped reads: the view must not run as its definer.
+  -- 5. Caller-scoped reads: the view must not run as its definer. Read as a
+  -- boolean so the house `= on` spelling and `= true` both pass (a definer
+  -- view has no such option and reads NULL, which is not true).
   select count(*) into n
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace
+    join pg_options_to_table(c.reloptions) o on o.option_name = 'security_invoker'
    where n.nspname = 'dojo' and c.relname = 'workspace_activity'
-     and 'security_invoker=true' = any (c.reloptions);
+     and o.option_value::boolean is true;
   if n <> 1 then
     raise exception 'workspace_activity must be security_invoker.';
   end if;

@@ -413,7 +413,8 @@ dojo/src/lib/server/viewers-data.ts	T3	const rows = (viewers.data ?? []) as Arra
 dojo/src/lib/server/viewers-data.ts	T3	for (const g of (grants.data ?? []) as Array<{ workspace_id: string; principal_id: string }>) {	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/viewers-data.ts	T3	granted.set(g.principal_id, [...(granted.get(g.principal_id) ?? []), workspace]);	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/viewers-data.ts	T3	workspaces: (granted.get(r.principal_id) ?? []).sort((a, b) => a.name.localeCompare(b.name))	PARSE-DEFAULT	?? [] — optional names null kept	audit 2026-11-03 App. C	2026-11-03
-dojo/src/lib/server/workspaces-data.ts	T3	return (data ?? []) as unknown as WorkspaceRow[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/workspaces-data.ts	T3	for (const r of (data ?? []) as unknown as Array<{ workspace_id: string; last_activity_at: string | null }>) {	GENUINE-EMPTY	?? [] — error checked first	L4 impl r1	2026-11-04
+dojo/src/lib/server/workspaces-data.ts	T3	return sortByActivity(db, (data ?? []) as unknown as WorkspaceRow[]);	GENUINE-EMPTY	?? [] — error checked first	L4 impl r1	2026-11-04
 dojo/src/routes/v1/auth/cli/refresh/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body -> 400	audit 2026-11-03 App. C	2026-11-03
 dojo/src/routes/v1/auth/cli/token/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
 dojo/src/routes/v1/t/[origin]/[org]/artifacts/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
