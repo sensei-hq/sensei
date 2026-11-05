@@ -13,7 +13,7 @@
 // No dates: when a repository last agreed is the dōjō's business, not this
 // screen's (user, 2026-11-03).
 
-import type { DojoMembership, SyncStateRow } from '$lib/types.js';
+import type { DojoMembership, DojoRepositoryRow, SyncStateRow } from '$lib/types.js';
 import type { Identity } from '$lib/personas.svelte.js';
 import type { NoticeTone } from '$lib/notice-tone.js';
 import { kindPill } from '../../../(observatory)/dojo/connections/dojo-connections-state.svelte.js';
@@ -68,6 +68,14 @@ export interface RepoNotice {
   code: string;
 }
 
+/** The sync switch on a repository row: shown only where its dōjō says this
+ *  person may change it (`configurable_by_me`, D46) — never on an organisation's
+ *  repository for a member who is not its admin. */
+export interface RepoToggle {
+  /** Whether it is elected (sharing on) now. */
+  on: boolean;
+}
+
 export interface RepoView {
   key: string;
   name: string;
@@ -75,6 +83,8 @@ export interface RepoView {
   status: string;
   category: RepoCategory;
   notice: RepoNotice | null;
+  /** `null`: no switch (not this person's to change, or the dōjō's ruling is unknown). */
+  toggle: RepoToggle | null;
 }
 
 export interface DojoGroup {
@@ -121,7 +131,7 @@ export function repoView(row: SyncStateRow): RepoView {
   } else if (row.state === 'partial' && row.last_error) {
     notice = { tone: 'normal', title: row.last_error, code: 'partial' };
   }
-  return { key: row.entity_key, name: repoName(row.entity_key), state: row.state, status: s.status, category: s.category, notice };
+  return { key: row.entity_key, name: repoName(row.entity_key), state: row.state, status: s.status, category: s.category, notice, toggle: null };
 }
 
 const RANK: Record<RepoCategory, number> = { failing: 0, off: 1, syncing: 2 };
@@ -150,7 +160,15 @@ function tenantName(m: DojoMembership): string {
  * `filter`. `slot` null (signed out) → nothing: its dōjōs are not this
  * machine's to show until it connects again.
  */
-export function dojoGroups(memberships: DojoMembership[], rows: SyncStateRow[], slot: string | null, filter: RepoFilter): DojoGroup[] {
+/** pending: wp8-daemon — `elections` (the dōjō's rulings by repo key; `null` when
+ *  unread) decides each row's `toggle` in phase B. */
+export function dojoGroups(
+  memberships: DojoMembership[],
+  rows: SyncStateRow[],
+  slot: string | null,
+  filter: RepoFilter,
+  _elections: Map<string, DojoRepositoryRow> | null = null,
+): DojoGroup[] {
   if (!slot) return [];
   const mine = memberships.filter((m) => m.persona_slot === slot);
   const views = repositoryRows(rows, slot).map((r) => ({ view: repoView(r), owner: ownerOf(r.entity_key) }));

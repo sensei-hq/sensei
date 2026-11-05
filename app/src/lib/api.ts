@@ -30,6 +30,7 @@ import type {
   SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession, BacklogUsage,
   MetricSettings, MetricReason,
   TrackerFieldMapping,
+  DojoRepositoryRow,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -1306,6 +1307,18 @@ export function senseiApi(port: number) {
      *  registry slot. `ok` is false, with `errors`, when either half failed. */
     trySignOut: (persona: string) =>
       tryPost<{ ok: boolean; errors?: string[] }>(`/api/auth/signout?persona=${encodeURIComponent(persona)}`, {}),
+
+    // ── Repository sync elections (WP8, L2) ──────────────────────────────
+    /** One identity's repositories as its dōjō rules on them — who may change
+     *  each one's sync (`configurable_by_me`). A failed read is an error, never []. */
+    tryGetDojoRepositories: (persona: string) =>
+      tryJson<{ repositories: DojoRepositoryRow[] }>('GET', `/api/dojo/repositories?persona=${enc(persona)}`),
+    /** Turn one repository's sync on or off in its dōjō. 409 (with the dōjō's
+     *  reason) where this person may not change it. */
+    tryPatchRepositoryElection: (repoKey: string, persona: string, elected: boolean) =>
+      tryJson<{ repo_key: string; elected: boolean; sync_enabled: boolean }>(
+        'PATCH', `/api/repositories/${enc(repoKey)}`, { persona, elected },
+      ),
   };
 }
 

@@ -2139,3 +2139,16 @@ export interface TranscriptSourceConsent {
   label: string;
   consented: boolean;
 }
+
+/** One repository as the person's dōjō rules on it (`GET /api/dojo/repositories`,
+ *  from `dojo.all_my_repositories`). Only the fields the sync toggle reads. */
+export interface DojoRepositoryRow {
+  repo_key: string;
+  /** Whoever holds authority chose to share it. */
+  elected: boolean;
+  /** `may_share AND elected`: it syncs. */
+  sync_enabled: boolean;
+  /** This person may turn its sync on or off (their own repository, or an
+   *  organisation's as its admin). The toggle shows only where this is true. */
+  configurable_by_me: boolean;
+}
