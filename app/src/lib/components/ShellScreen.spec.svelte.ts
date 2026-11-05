@@ -59,7 +59,7 @@ const notice = (c: HTMLElement) => c.querySelector('[data-screen-body] [data-com
 
 // The `@sensei/ui` wrapper over rokkit's ScreenShell (D87, contract §8): it
 // connects the glyph mode to the marks and the view id to the host's panel store.
-describe.skip('pending: shell-store — ShellScreen', () => {
+describe('ShellScreen', () => {
   it('draws the kanji in kanji mode', () => {
     const m = mountComponent(Harness, { glyphs: 'kanji' });
     cleanup.push(m.destroy);

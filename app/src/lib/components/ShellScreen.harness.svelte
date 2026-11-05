@@ -2,23 +2,16 @@
   // Test wrapper: provides the glyph mode and (when given) the view-state store
   // through context, as each app's root layout does, and renders the shared
   // ShellScreen with every band, so each toggle is present.
-  import { untrack, type Component } from 'svelte';
+  import { untrack } from 'svelte';
   import type { PanelState } from '@rokkit/app';
-  import * as ui from '@sensei/ui';
+  import { setGlyphMode, setViewStates, ShellScreen } from '@sensei/ui';
 
-  // Phase A (pending: shell-store): the wrapper does not exist yet, so it is
-  // reached through the module; phase B imports it by name and drops the cast.
   interface ViewStateStore {
     get(viewId: string): PanelState | undefined;
     set(viewId: string, next: PanelState): Promise<void> | void;
     /** Why the store cannot read or keep the views (appState's `viewsError`), or null. */
     error?(): string | null;
   }
-  const pending = ui as unknown as {
-    ShellScreen: Component<Record<string, unknown>>;
-    setViewStates: (store: ViewStateStore) => void;
-  };
-  const ShellScreen = pending.ShellScreen;
 
   let {
     glyphs = 'kanji',
@@ -29,9 +22,9 @@
     store?: ViewStateStore | null;
     viewId?: string;
   } = $props();
-  ui.setGlyphMode(() => glyphs);
+  setGlyphMode(() => glyphs);
   const provided = untrack(() => store);
-  if (provided) pending.setViewStates(provided);
+  if (provided) setViewStates(provided);
 </script>
 
 <ShellScreen

@@ -70,7 +70,7 @@ async function loaded(config: Record<string, string>): Promise<AppState> {
   return state;
 }
 
-describe.skip('pending: shell-store — AppState · view panels (ui.views)', () => {
+describe('AppState · view panels (ui.views)', () => {
   beforeEach(() => {
     storage.clear();
     vi.clearAllMocks();
