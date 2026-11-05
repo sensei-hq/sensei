@@ -66,6 +66,7 @@ expect_refuse "bad plane refused" "mars" ./run.sh --apply mars "$FX/a.ddl" "$FX/
 expect_refuse "DDL with commit; refused" "txn-commit.ddl" ./run.sh --apply dojo "$FX/txn-commit.ddl" "$FX/ok.probe"
 expect_refuse "DDL with ROLLBACK; refused" "txn-rollback.ddl" ./run.sh --apply dojo "$FX/txn-rollback.ddl" "$FX/ok.probe"
 expect_refuse "DDL with commit work; refused" "txn-commit-work.ddl" ./run.sh --apply dojo "$FX/txn-commit-work.ddl" "$FX/ok.probe"
+expect_refuse "DDL with abort; refused" "txn-abort.ddl" ./run.sh --apply dojo "$FX/txn-abort.ddl" "$FX/ok.probe"
 # Test files get a commit-only guard (F5): begin;/rollback; stay allowed, and
 # noop.ddl persists nothing even if the guard is missing and it commits.
 expect_refuse "test file with commit; refused" "commits.probe" ./run.sh --apply dojo "$FX/noop.ddl" "$FX/commits.probe"
@@ -151,6 +152,7 @@ fp_before=$(fingerprint "$DOJO_URL")
 expect_refuse "DDL with commit; refused (no-trace re-run)" "txn-commit.ddl" ./run.sh --apply dojo "$FX/txn-commit.ddl" "$FX/ok.probe"
 expect_refuse "DDL with ROLLBACK; refused (no-trace re-run)" "txn-rollback.ddl" ./run.sh --apply dojo "$FX/txn-rollback.ddl" "$FX/ok.probe"
 expect_refuse "DDL with commit work; refused (no-trace re-run)" "txn-commit-work.ddl" ./run.sh --apply dojo "$FX/txn-commit-work.ddl" "$FX/ok.probe"
+expect_refuse "DDL with abort; refused (no-trace re-run)" "txn-abort.ddl" ./run.sh --apply dojo "$FX/txn-abort.ddl" "$FX/ok.probe"
 expect_refuse "test file with commit; refused (no-trace re-run)" "commits.probe" ./run.sh --apply dojo "$FX/noop.ddl" "$FX/commits.probe"
 expect_refuse "test file with COMMIT WORK; refused (no-trace re-run)" "commits-work.probe" ./run.sh --apply dojo "$FX/noop.ddl" "$FX/commits-work.probe"
 fp_guards=$(fingerprint "$DOJO_URL")
@@ -246,6 +248,32 @@ else
         *) fail "END-in-test (exit $code, want the commit-trap refusal) -- $out" ;;
     esac
 fi
+
+# --- F1: a mid-line commit in a DDL file trips the trap, not just the marker. ---
+# The trap is installed before the DDL files (L-a), so the commit aborts with
+# the trap's refusal. A trap installed after the DDL would let it commit and
+# only the marker would fire.
+out=$(./run.sh --apply dojo "$FX/midcommit.ddl" "$FX/ok.probe" 2>&1); code=$?
+if [ "$code" -eq 0 ]; then
+    fail "midline commit in DDL exited 0"
+else
+    case "$out" in
+        *"wrapper transaction was committed"*) pass "midline commit in DDL trips the trap" ;;
+        *) fail "midline commit in DDL (exit $code, want the commit-trap refusal) -- $out" ;;
+    esac
+fi
+
+# --- F2: the tail of a DDL file after a rollback stays transactional. ---
+# With AUTOCOMMIT off, psql opens an implicit transaction for the tail, so a
+# savepoint neither errors nor persists; the marker then names the file. The
+# savepoint needs a transaction block and creates nothing.
+out=$(./run.sh --apply dojo "$FX/rb-tail.ddl" "$FX/ok.probe" 2>&1); code=$?
+case "$code:$out" in
+    0:*) fail "rollback-tail DDL exited 0" ;;
+    *"can only be used in transaction blocks"*) fail "rollback tail ran outside a transaction -- $out" ;;
+    *rb-tail.ddl*) pass "rollback tail stays transactional, file named" ;;
+    *) fail "rollback tail (exit $code, want nonzero naming rb-tail.ddl) -- $out" ;;
+esac
 
 # --- L-b: the marker is checked after EACH DDL file, not once at the end. ---
 # after-midline.ddl persists nothing but announces itself; it must never run.

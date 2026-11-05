@@ -371,7 +371,7 @@ app-check:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin
+test-fast: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin test-db-apply
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -530,6 +530,17 @@ test-db-if-reachable:
 	@./database/tests/run.sh; s=$$?; \
 	if [ $$s -eq 69 ] || [ $$s -eq 127 ]; then \
 		echo "  SKIPPED SQL tests — no reachable database (run 'supabase start', then 'make test-db')"; \
+	elif [ $$s -ne 0 ]; then \
+		exit $$s; \
+	fi
+
+# run.sh --apply's self-test — same 69/127 loud-skip contract as
+# test-db-if-reachable: an unreachable database or missing psql skips, a
+# genuine failure fails the build.
+test-db-apply:
+	@./database/tests/self-test-apply.sh; s=$$?; \
+	if [ $$s -eq 69 ] || [ $$s -eq 127 ]; then \
+		echo "  SKIPPED run.sh --apply self-test — no reachable database"; \
 	elif [ $$s -ne 0 ]; then \
 		exit $$s; \
 	fi

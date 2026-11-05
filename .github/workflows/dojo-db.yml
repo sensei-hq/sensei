@@ -83,6 +83,12 @@ jobs:
         shell: bash
         run: ./database/tests/run.sh dojo 2>&1 | tee sql-tests.log
 
+      - name: Run the run.sh --apply self-test
+        # No 69-skip: CI stood the dōjō up, so an unreachable database here is
+        # a failure. The sensei-plane case skips by name inside the script.
+        shell: bash
+        run: ./database/tests/self-test-apply.sh
+
       - name: Open an issue when the nightly run fails
         if: failure() && github.event_name == 'schedule'
         env:

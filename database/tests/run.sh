@@ -61,10 +61,10 @@ if [ "${1:-}" = "--apply" ]; then
     ddl_root="$(realpath ../ddl)"
     fx_root="$(realpath fixtures)"
     # A DDL file that ends the wrapper early makes every file after it
-    # autocommit, so whole-line COMMIT/ROLLBACK (any case, COMMIT WORK and
-    # COMMIT TRANSACTION too) is refused. Whole-line BEGIN/END stays allowed:
+    # autocommit, so whole-line COMMIT/ROLLBACK/ABORT (any case, WORK and
+    # TRANSACTION forms too) is refused. Whole-line BEGIN/END stays allowed:
     # real plpgsql bodies hold them at column 0.
-    ddl_guard_re='^[[:space:]]*(commit|rollback)([[:space:]]+(work|transaction))?[[:space:]]*;[[:space:]]*$'
+    ddl_guard_re='^[[:space:]]*(commit|rollback|abort)([[:space:]]+(work|transaction))?[[:space:]]*;[[:space:]]*$'
     # Test files keep their own BEGIN/ROLLBACK (every suite file has them), but
     # a COMMIT in a test would persist the applied DDL: commit forms refused.
     test_guard_re='^[[:space:]]*commit([[:space:]]+(work|transaction))?[[:space:]]*;[[:space:]]*$'
@@ -94,7 +94,10 @@ if [ "${1:-}" = "--apply" ]; then
         echo "cannot reach $target_url" >&2
         exit 69
     fi
-    psql_args=(-X -q -v ON_ERROR_STOP=1 -c "begin" -c "select set_config('run_apply.txn','on',true)")
+    # AUTOCOMMIT=off: after a rollback inside a DDL file, psql opens an
+    # implicit transaction for the file's tail instead of autocommitting it,
+    # so the tail persists nothing and the per-file marker still fires (F2).
+    psql_args=(-X -q -v ON_ERROR_STOP=1 -v AUTOCOMMIT=off -c "begin" -c "select set_config('run_apply.txn','on',true)")
     # The commit trap (L-a): a deferred constraint trigger in pg_temp turns ANY
     # commit of the wrapper — commit, end, mid-line, in a DDL file or a test —
     # into an abort. Rolls back with the wrapper; temp-only, nothing persists.
@@ -107,7 +110,11 @@ if [ "${1:-}" = "--apply" ]; then
         # The per-file marker (L3/L-b): a ROLLBACK in a DDL file ends the
         # wrapper without firing the trap, so every file re-checks that the
         # transaction-local setting survived, naming the file that ended it.
-        psql_args+=(-f "$fa" -c "do \$\$ begin if current_setting('run_apply.txn', true) is distinct from 'on' then raise exception 'run.sh --apply: $f ended the transaction'; end if; end \$\$;")
+        # The name is spliced into a SQL literal, so a quote in it is doubled
+        # (through $q: a backslash-quote replacement stays literal in ${//}).
+        q="'"
+        f_esc="${f//$q/$q$q}"
+        psql_args+=(-f "$fa" -c "do \$\$ begin if current_setting('run_apply.txn', true) is distinct from 'on' then raise exception 'run.sh --apply: $f_esc ended the transaction'; end if; end \$\$;")
     done
     psql_args+=(-f "$ta" -c "rollback")
     psql "$target_url" "${psql_args[@]}"
