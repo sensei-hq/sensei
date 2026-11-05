@@ -32,21 +32,16 @@ const WORKSPACE_COLS = 'id, tenant_id, slug, name, classification, phase, last_r
 /**
  * Order `rows` most-recently-active first by `dojo.workspace_activity`
  * (latest reading landing or graph sync per workspace, computed in the DB).
- * One read narrowed to the listed ids (a whole-view read would hit max_rows
- * and truncate with no error); quiet workspaces keep their API order, last —
- * the sort is stable and attaches nothing to the rows, so no date is invented.
- * Fails closed (AdminError 500): a broken activity read is an error, never the
+ * One rpc carrying the listed ids (a whole-view read would hit max_rows and
+ * truncate with no error); the function answers only for workspaces the
+ * caller may read. Quiet workspaces keep their API order, last — the sort is
+ * stable and attaches nothing to the rows, so no date is invented. Fails
+ * closed (AdminError 500): a broken activity read is an error, never the
  * unsorted list. No rows, no read.
  */
 async function sortByActivity(db: DojoClient, rows: WorkspaceRow[]): Promise<WorkspaceRow[]> {
 	if (rows.length === 0) return rows;
-	const { data, error } = await db
-		.from('workspace_activity')
-		.select('workspace_id, last_activity_at')
-		.in(
-			'workspace_id',
-			rows.map((w) => w.id)
-		);
+	const { data, error } = await db.rpc('workspace_activity', { p_ids: rows.map((w) => w.id) });
 	if (error) throw new AdminError(500, error.message);
 	const at = new Map<string, number>();
 	for (const r of (data ?? []) as unknown as Array<{ workspace_id: string; last_activity_at: string | null }>) {

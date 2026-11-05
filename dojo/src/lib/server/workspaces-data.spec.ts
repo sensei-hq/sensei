@@ -60,7 +60,7 @@ describe('listOrgWorkspaces', () => {
 		const rows = [{ id: 'p1' }, { id: 'p2' }];
 		const { db, calls } = makeActivityDb({
 			workspaces: { data: rows, error: null },
-			workspace_activity: { data: [], error: null }
+			'rpc:workspace_activity': { data: [], error: null }
 		});
 		expect(await listOrgWorkspaces(db, 't1')).toEqual(rows);
 		expect(calls.find((c) => c.table === 'workspaces' && c.op === 'eq')?.args).toEqual(['tenant_id', 't1']);
@@ -68,11 +68,11 @@ describe('listOrgWorkspaces', () => {
 	it('keeps API order when no workspace has any activity', async () => {
 		const { db } = makeActivityDb({
 			workspaces: { data: [{ id: 'w1' }, { id: 'w2' }], error: null },
-			workspace_activity: { data: [], error: null }
+			'rpc:workspace_activity': { data: [], error: null }
 		});
 		expect((await listOrgWorkspaces(db, 't1')).map((w) => w.id)).toEqual(['w1', 'w2']);
 	});
-	it.skip('pending: L4 workspace-sort r4 — most recently active first, quiet last, one rpc', async () => {
+	it('L4 workspace-sort r4 — most recently active first, quiet last, one rpc', async () => {
 		const { db, calls } = makeActivityDb({
 			workspaces: {
 				data: [
@@ -99,7 +99,7 @@ describe('listOrgWorkspaces', () => {
 		const activityRead = calls.find((c) => c.table === 'workspace_activity' && c.op === 'rpc');
 		expect(activityRead?.args, 'rpc narrowed to listed ids').toEqual([{ p_ids: ['w1', 'w2', 'w3'] }]);
 	});
-	it.skip('pending: L4 workspace-sort r4 — an rpc error fails closed, never API order', async () => {
+	it('L4 workspace-sort r4 — an rpc error fails closed, never API order', async () => {
 		const { db } = makeActivityDb({
 			workspaces: { data: [{ id: 'w1' }], error: null },
 			'rpc:workspace_activity': { data: null, error: { message: 'act boom' } }
@@ -133,7 +133,7 @@ function makeUserDb(result: { data: unknown; error: unknown }) {
 }
 
 describe('listUserWorkspaces — every workspace the caller may read (RLS), across dōjōs', () => {
-	it.skip('pending: L4 workspace-sort r4 — the personal list sorts by activity too, quiet last', async () => {
+	it('L4 workspace-sort r4 — the personal list sorts by activity too, quiet last', async () => {
 		const { db, calls } = makeActivityDb({
 			workspaces: {
 				data: [
@@ -153,7 +153,7 @@ describe('listUserWorkspaces — every workspace the caller may read (RLS), acro
 		const activityRead = calls.find((c) => c.table === 'workspace_activity' && c.op === 'rpc');
 		expect(activityRead?.args, 'rpc narrowed to listed ids').toEqual([{ p_ids: ['w1', 'w2'] }]);
 	});
-	it.skip('pending: L4 workspace-sort r4 — the personal list fails closed when the rpc errors', async () => {
+	it('L4 workspace-sort r4 — the personal list fails closed when the rpc errors', async () => {
 		const { db } = makeActivityDb({
 			workspaces: { data: [{ id: 'w1' }], error: null },
 			'rpc:workspace_activity': { data: null, error: { message: 'act boom' } }
@@ -164,7 +164,7 @@ describe('listUserWorkspaces — every workspace the caller may read (RLS), acro
 		const rows = [{ id: 'p1', tenant_id: 't1' }, { id: 'p2', tenant_id: 't2' }];
 		const { db, calls } = makeActivityDb({
 			workspaces: { data: rows, error: null },
-			workspace_activity: { data: [], error: null }
+			'rpc:workspace_activity': { data: [], error: null }
 		});
 		expect(await listUserWorkspaces(db)).toEqual(rows);
 		expect(calls.filter((c) => c.table === 'workspaces' && c.op === 'eq')).toEqual([]);
