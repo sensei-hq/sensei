@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { LogRow } from '$lib/types.js';
+import type { LogRow, ScheduledTask } from '$lib/types.js';
 import {
   DEFAULT_FILTERS,
   DEFAULT_LIMIT,
@@ -7,6 +7,7 @@ import {
   filtersFromParams,
   logsPageData,
   readLogs,
+  LogsScreen,
   buildLogsQuery,
   levelTone,
   moduleOf,
@@ -272,5 +273,101 @@ describe('readLogs', () => {
       since: DEFAULT_FILTERS.since,
       limit: DEFAULT_FILTERS.limit,
     });
+  });
+});
+
+// r2 (N1, L0): the Retry state lives in the screen's class, as settings and
+// extensions keep theirs — so the two halves, the guards and the order of the
+// two writers are testable without mounting the page.
+describe('LogsScreen', () => {
+  const filters = DEFAULT_FILTERS;
+  const ok = <T>(data: T) => ({ ok: true as const, data });
+  const fail = { ok: false as const, error: { status: 502, message: 'bad gateway' } };
+  const task = (name: string): ScheduledTask => ({
+    name,
+    description: 'scans the workspace',
+    enabled: true,
+    interval_secs: 300,
+    window: null,
+    days: null,
+    last_run_at: null,
+    last_ok: true,
+    last_error: null,
+    next_run_at: null,
+    avg_ms: null,
+    running_since: null,
+  });
+  const rows = [makeRow({ id: 'a', message: 'first_read' })];
+  const screenWith = (
+    rowsResult: Parameters<typeof logsPageData>[0],
+    tasksResult: Parameters<typeof logsPageData>[1],
+  ) => new LogsScreen(logsPageData(rowsResult, tasksResult, filters));
+
+  // L2: the halves are independent — a log Retry never takes the workers away,
+  // whatever its own answer.
+  it('a log retry rewrites the log half only', async () => {
+    const good = screenWith(fail, ok({ tasks: [task('scanner')] }));
+    await good.retryLogs({ tryGetLogs: vi.fn().mockResolvedValue(ok(rows)) });
+    expect(good.shown.rows.map((r) => r.id)).toEqual(['a']);
+    expect(good.shown.rowsNotice).toBeNull();
+    expect(good.shown.tasks.map((t) => t.name)).toEqual(['scanner']);
+
+    const bad = screenWith(fail, ok({ tasks: [task('scanner')] }));
+    await bad.retryLogs({ tryGetLogs: vi.fn().mockResolvedValue(fail) });
+    expect(bad.shown.rowsNotice?.title).toBe("Couldn't read the log");
+    expect(bad.shown.tasks.map((t) => t.name)).toEqual(['scanner']);
+  });
+
+  it('a tasks retry rewrites the tasks half only', async () => {
+    const s = screenWith(ok(rows), fail);
+    await s.retryTasks({
+      tryGetScheduledTasks: vi.fn().mockResolvedValue(ok({ tasks: [task('scanner')] })),
+    });
+    expect(s.shown.tasks.map((t) => t.name)).toEqual(['scanner']);
+    expect(s.shown.tasksNotice).toBeNull();
+    expect(s.shown.rows.map((r) => r.id)).toEqual(['a']);
+  });
+
+  // R6/N1 at the class: the guard is what makes a double press one read, since
+  // both presses land before anything re-renders.
+  it('two presses of either retry are one read', async () => {
+    let release: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    const logs = screenWith(fail, ok({ tasks: [] }));
+    const tryGetLogs = vi.fn().mockReturnValue(pending);
+    const a = logs.retryLogs({ tryGetLogs });
+    const b = logs.retryLogs({ tryGetLogs });
+    release(ok(rows));
+    await Promise.all([a, b]);
+    expect(tryGetLogs).toHaveBeenCalledTimes(1);
+
+    const tasks = screenWith(ok(rows), fail);
+    const tryGetScheduledTasks = vi.fn().mockReturnValue(pending);
+    const c = tasks.retryTasks({ tryGetScheduledTasks });
+    const d = tasks.retryTasks({ tryGetScheduledTasks });
+    await Promise.all([c, d]);
+    expect(tryGetScheduledTasks).toHaveBeenCalledTimes(1);
+  });
+
+  // M2 at the class: the loader's answer is the last word — the filters live in
+  // the URL, so a navigation replaces a Retry's answer rather than the reverse.
+  it('the loader’s answer replaces what a retry read', async () => {
+    const s = screenWith(fail, ok({ tasks: [] }));
+    await s.retryLogs({ tryGetLogs: vi.fn().mockResolvedValue(ok(rows)) });
+    expect(s.shown.rows.map((r) => r.id)).toEqual(['a']);
+
+    s.setData(
+      logsPageData(
+        ok([makeRow({ id: 'n', message: 'from_the_url' })]),
+        ok({ tasks: [task('scanner')] }),
+        { ...filters, level: 'error' },
+      ),
+    );
+    expect(s.shown.rows.map((r) => r.id)).toEqual(['n']);
+    expect(s.shown.filters.level).toBe('error');
+    expect(s.shown.tasks.map((t) => t.name)).toEqual(['scanner']);
   });
 });

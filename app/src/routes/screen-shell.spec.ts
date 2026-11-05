@@ -45,11 +45,16 @@ const usesSharedLayout = (page: string) => {
 		: shared
 			? readFileSync(join('src/lib/components', shared[2], `${shared[1]}.svelte`), 'utf8')
 			: '';
-	return /<(Screen|ScreenShell)[\s>]/.test(own + delegate);
+	return /<Screen[\s>]/.test(own + delegate) || rendersRokkitShell(own);
 };
+// D87: a migrated screen renders rokkit's `ScreenShell` — imported from
+// `@rokkit/app`, not a lookalike carrying the same name.
+const rendersRokkitShell = (text: string) =>
+	/<ScreenShell[\s>]/.test(text) &&
+	/import\s*\{[^}]*\bScreenShell\b[^}]*\}\s*from\s*['"]@rokkit\/app['"]/.test(text);
 
 describe('screens use a shared screen layout (#293, D87)', () => {
-	it('every screen uses Screen or ScreenShell', () => {
+	it('every screen uses Screen, or rokkit’s ScreenShell', () => {
 		expect(all.filter((p) => !usesSharedLayout(p))).toEqual([]);
 	});
 

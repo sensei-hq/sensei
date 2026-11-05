@@ -80,7 +80,7 @@
   {#if layout === 'stack'}
     <dl class="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-3 gap-y-0.5 m-0 mt-2 text-xs">
       {#each facts as fact (fact.key)}
-        <dt class="text-[10px] uppercase tracking-wider text-ink-faint m-0">{fact.label}</dt>
+        <dt class="text-xs uppercase tracking-wider text-ink-faint m-0">{fact.label}</dt>
         <dd
           class="m-0 font-mono text-xs text-ink-soft truncate"
           {...{ [`data-task-${fact.key}`]: '' }}

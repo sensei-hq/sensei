@@ -94,8 +94,11 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
     }
 
     // Slice 4b: screens whose marks were bare kanji spans now paint icons in
-    // their main content (outside the header and rails).
-    const MAIN = '[data-component="observatory-main"] [data-component="glyph-icon"]';
+    // their main content (outside the header and rails). A screen on rokkit's
+    // shell (D87) draws its mark as `[data-screen-mark]` instead — same claim:
+    // it paints the icon, and it is not a bare kanji span.
+    const MAIN =
+      '[data-component="observatory-main"] [data-component="glyph-icon"], [data-screen-mark]';
     for (const route of ['/impact', '/activity-logs', '/consolidation', '/workspaces']) {
       await navigateToScreen(tauriPage, route, MAIN, 20_000);
       const marks = (await tauriPage.evaluate(painted(MAIN))) as { cls: string; painted: boolean }[];

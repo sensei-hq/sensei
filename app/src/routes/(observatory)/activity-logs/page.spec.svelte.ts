@@ -534,7 +534,7 @@ describe('Observatory · Logs — the mark follows the glyph preference', () => 
 // `ScreenShell` takes no rest props, so the page carries the hook on a wrapper —
 // until rokkit's shell passes attributes through (For L0 (c)).
 describe('Observatory · Logs — the e2e anchor', () => {
-  it.skip('pending: L5 activity-logs r2 — the page keeps data-screen="activity-logs"', async () => {
+  it('the page keeps data-screen="activity-logs" around the shell', async () => {
     const c = await mount({ rows: [logRow({ message: 'still here' })] });
     const anchor = c.querySelector('[data-screen="activity-logs"]');
     expect(anchor).not.toBeNull();
@@ -546,7 +546,7 @@ describe('Observatory · Logs — the e2e anchor', () => {
 // workers and no tasks error has nothing to put in it, so the page passes no
 // sidebar at all — an empty 17.5rem panel is a blank with no next step.
 describe('Observatory · Logs — no workers, no sidebar', () => {
-  it.skip('pending: L5 activity-logs r2 — no sidebar without workers', async () => {
+  it('passes no sidebar when there are no workers', async () => {
     const c = await mount({ rows: [logRow({ message: 'still here' })], tasks: [] });
     expect(c.textContent).toContain('still here');
     expect(c.querySelector('[data-screen-sidebar]')).toBeNull();

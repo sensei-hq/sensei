@@ -266,3 +266,65 @@ export function logsPageData(
 ) {
   return { ...rowsPageData(rows, filters), ...tasksPageData(scheduled) };
 }
+
+/** What the page draws: each half as its own read decided it. */
+export type LogsPageData = ReturnType<typeof logsPageData>;
+
+/** The screen's mutable state, as `ExtensionsState` keeps settings' own: what
+ *  the loader answered, and what a notice's Retry re-read since. The two reads
+ *  are independent halves — each Retry writes back only its own, so a failed
+ *  log re-read cannot take the workers away with it (or the reverse).
+ *
+ *  A navigation replaces the whole thing: the server filters live in the URL,
+ *  so the loader's answer is the last word — including over a Retry that landed
+ *  while the reader was navigating. */
+export class LogsScreen {
+  shown = $state<LogsPageData>({
+    rows: [],
+    rowsNotice: null,
+    rowsError: null,
+    filters: DEFAULT_FILTERS,
+    capped: false,
+    tasks: [],
+    tasksNotice: null,
+    tasksError: null,
+  });
+  /** A read is in flight, so a second press joins it rather than starting
+   *  another. A guard, not decoration. */
+  readingLogs = $state(false);
+  readingTasks = $state(false);
+
+  constructor(data: LogsPageData) {
+    this.setData(data);
+  }
+
+  /** The loader's answer — a navigation wins over whatever a Retry read. */
+  setData(data: LogsPageData): void {
+    this.shown = data;
+  }
+
+  /** Re-read the log through the loader's own read, with the filters the reader
+   *  chose; only the log half of what is shown changes. */
+  async retryLogs(api: Pick<LogsApi, 'tryGetLogs'>): Promise<void> {
+    if (this.readingLogs) return;
+    this.readingLogs = true;
+    try {
+      const rows = await readLogs(api, this.shown.filters);
+      this.shown = { ...this.shown, ...rowsPageData(rows, this.shown.filters) };
+    } finally {
+      this.readingLogs = false;
+    }
+  }
+
+  /** Re-read the worker registry only: the rows the reader is looking at, and
+   *  which row they expanded, stay exactly as they are. */
+  async retryTasks(api: Pick<LogsApi, 'tryGetScheduledTasks'>): Promise<void> {
+    if (this.readingTasks) return;
+    this.readingTasks = true;
+    try {
+      this.shown = { ...this.shown, ...tasksPageData(await readTasks(api)) };
+    } finally {
+      this.readingTasks = false;
+    }
+  }
+}
