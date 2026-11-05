@@ -63,6 +63,7 @@ export interface Membership {
 	 *  then `principals.display_name`, or null when nothing names them (the
 	 *  mapper says so in words). */
 	display_name: string | null;
+	handle: string | null;
 	email: string | null;
 }
 

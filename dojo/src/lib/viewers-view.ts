@@ -14,19 +14,21 @@ export interface DojoViewerView extends PersonView {
 export interface DojoViewerWire {
 	principal_id: string;
 	display_name: string | null;
+	handle: string | null;
 	email: string | null;
 	joined_at: string;
 	workspaces: ViewerWorkspaceView[];
 }
 
 export function toViewerViews(rows: DojoViewerWire[]): DojoViewerView[] {
-	return rows.map((r) => ({ principalId: r.principal_id, name: r.display_name, email: r.email, workspaces: r.workspaces }));
+	return rows.map((r) => ({ principalId: r.principal_id, name: r.display_name, handle: r.handle, email: r.email, workspaces: r.workspaces }));
 }
 
 /** Someone the admin surfaces name: a viewer, a team member. */
 export interface PersonView {
 	principalId: string;
 	name: string | null;
+	handle: string | null;
 	email: string | null;
 }
 

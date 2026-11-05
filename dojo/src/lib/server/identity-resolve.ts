@@ -21,13 +21,16 @@ import { AdminError, type DojoClient } from './admin-data';
 export interface IdentityNameRow {
 	principal_id: string;
 	display_name: string | null;
+	/** The forge login last seen at sign-in (renameable — never the identity). */
+	handle: string | null;
 	email: string | null;
 	last_login_at: string | null;
 }
 
-/** A resolved person: the best display name + email for a user_id (either may be null). */
+/** A resolved person: the best display name + handle + email for a user_id (each may be null). */
 export interface ResolvedName {
 	display_name: string | null;
+	handle: string | null;
 	email: string | null;
 }
 
@@ -45,7 +48,7 @@ function tier(r: IdentityNameRow): number {
  * Pick the best identity for one user from their identity rows (pure). Prefers a
  * row that has a display name, then one with an email; within a tier, the most
  * recently logged-in row wins (a null `last_login_at` is treated as oldest).
- * Returns null/null when `rows` is empty or every row is bare.
+ * Returns null/null/null when `rows` is empty or every row is bare.
  */
 export function pickBestIdentity(rows: IdentityNameRow[]): ResolvedName {
 	let best: IdentityNameRow | null = null;
@@ -60,9 +63,11 @@ export function pickBestIdentity(rows: IdentityNameRow[]): ResolvedName {
 			best = r;
 		}
 	}
-	if (!best) return { display_name: null, email: null };
+	if (!best) return { display_name: null, handle: null, email: null };
 	return {
 		display_name: best.display_name && best.display_name.trim() ? best.display_name : null,
+		// Tests r1 scaffold: the handle tier lands in phase B (red below).
+		handle: null,
 		email: best.email && best.email.trim() ? best.email : null
 	};
 }

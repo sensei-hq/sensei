@@ -211,7 +211,7 @@ describe('billing build · who is counted (M3)', () => {
 	it('a seat reads its name, else its email, else words, never an id fragment', () => {
 		const names = countedSeats(users).map((u) => u.name);
 		expect(names).toEqual(['Alex Doe', 'Name not shared yet', 'sam@example.com']);
-		expect(names).toEqual(users.map((u) => personLabel({ principalId: u.user_id, name: u.display_name, email: u.email })));
+		expect(names).toEqual(users.map((u) => personLabel({ principalId: u.user_id, name: u.display_name, handle: null, email: u.email })));
 		expect(names.join(' ')).not.toMatch(/0b1e2f30|5c6d7e80|7d3c9a10/);
 	});
 

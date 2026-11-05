@@ -296,6 +296,24 @@ describe('ensureProvisioned — the identity', () => {
 		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null });
 		expect(db.tables.identities.rows[0]).toMatchObject({ email: 'dev@example.com', display_name: 'Dev User' });
 	});
+	it.skip('pending: L4 forge-handle — provisioning records the forge login as the handle', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(db.tables.identities.rows[0]).toMatchObject({ subject: '4242', handle: 'devuser' });
+	});
+	it.skip('pending: L4 forge-handle — a renamed login refreshes the handle at the next sign-in', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null, login: 'oldname' });
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null, login: 'newname' });
+		expect(db.tables.identities.rows).toHaveLength(1);
+		expect(db.tables.identities.rows[0]).toMatchObject({ handle: 'newname' });
+	});
+	it.skip('pending: L4 forge-handle — a read with no login keeps the recorded handle', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null, login: 'devuser' });
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null });
+		expect(db.tables.identities.rows[0]).toMatchObject({ handle: 'devuser' });
+	});
 });
 
 describe('ensureProvisioned — without forge facts', () => {

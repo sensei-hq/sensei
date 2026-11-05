@@ -102,7 +102,7 @@ export function attachNotice(current: string) {
  *  workspaces and the role on each. */
 export function countedSeats(users: BillableUserWire[]): KitBillingSeat[] {
 	return users.map((u) => ({
-		name: personLabel({ principalId: u.user_id, name: u.display_name, email: u.email }),
+		name: personLabel({ principalId: u.user_id, name: u.display_name, handle: null, email: u.email }),
 		workspaces: u.workspaces.map((w) => `${w.name} (${w.role})`).join(', ')
 	}));
 }

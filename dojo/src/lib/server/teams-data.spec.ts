@@ -57,14 +57,28 @@ function db(over: Record<string, FakeTable> = {}) {
 }
 
 describe('listTeams', () => {
+	it.skip('pending: L4 forge-handle — team members carry the identity handle', async () => {
+		const d = db({
+			identities: {
+				rows: [{ principal_id: 'dev', display_name: null, handle: 'dev-oct', email: null, last_login_at: null }]
+			}
+		});
+		const got = await listTeams(d, T);
+		expect(got[0].members.find((m) => m.principal_id === 'dev')).toMatchObject({
+			display_name: null,
+			handle: 'dev-oct',
+			email: null
+		});
+	});
+
 	it("lists the dōjō's teams by name, each with its members named", async () => {
 		expect(await listTeams(db(), T)).toEqual([
 			{
 				id: 'tm1',
 				name: 'Payments',
 				members: [
-					{ principal_id: 'ada', display_name: 'Ada', email: 'ada@x.co' },
-					{ principal_id: 'dev', display_name: null, email: null }
+					{ principal_id: 'ada', display_name: 'Ada', handle: null, email: 'ada@x.co' },
+					{ principal_id: 'dev', display_name: null, handle: null, email: null }
 				]
 			},
 			{ id: 'tm2', name: 'Search', members: [] }

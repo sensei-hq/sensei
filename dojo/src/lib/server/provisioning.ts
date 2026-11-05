@@ -377,7 +377,8 @@ export async function ensureForgeIdentity(
 	db: DojoClient,
 	principalId: string,
 	forge: ForgeProvider,
-	user: Pick<ForgeUser, 'id' | 'name' | 'email'>
+	// The login is optional: Azure reads carry none. Persisted as the handle in phase B.
+	user: Pick<ForgeUser, 'id' | 'name' | 'email'> & { login?: string | null }
 ): Promise<void> {
 	const provider = authMethodFor(forge);
 	const now = new Date().toISOString();

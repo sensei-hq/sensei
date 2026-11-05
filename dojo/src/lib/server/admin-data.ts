@@ -48,6 +48,8 @@ export interface Membership {
 	 *  `principals.display_name` (null → the mapper says so in words; never a
 	 *  fabricated name). */
 	display_name: string | null;
+	/** The forge login last seen at sign-in (null when the identity names no handle). */
+	handle: string | null;
 	email: string | null;
 }
 
@@ -146,7 +148,7 @@ export async function listMembers(db: DojoClient, tenantId: string, nameDb: Dojo
 	);
 	return rows.map((r) => {
 		const n = names.get(r.user_id);
-		return { ...r, display_name: n?.display_name ?? null, email: n?.email ?? null };
+		return { ...r, display_name: n?.display_name ?? null, handle: n?.handle ?? null, email: n?.email ?? null };
 	});
 }
 
