@@ -9,10 +9,31 @@ the "Message the crew" addendum, settled with the user). Nothing here is built y
 - Items **reference the tracker's tickets** rather than copying them.
 - One leases table.
 
+## One `relay` schema, deployed to both the daemon and the dōjō (user, 2026-11-05)
+The same DDL runs on the desktop's sensei DB and on the dōjō, and the daemon syncs rows across (D89 targets, per-target
+marks). For that to work without breaking:
+- **Every table carries `user_id`**: the owning person's dōjō principal id, set on the desktop when the crew is created. On
+  the dōjō it is the RLS key (a row is readable by its owner, and by others only by an explicit share). On the desktop it
+  qualifies rows when more than one signed-in identity runs crews. Every unique constraint and every lookup includes it.
+- **Ids are minted on the desktop and are stable everywhere.** `uuid` v7 (time-ordered) for every table, `actions`
+  included (no `bigserial`), so a row has the same id on both sides and an upsert on `(user_id, id)` is idempotent.
+- **The crew lives in `relay.crews`, not `activity.runs`.** `activity` is desktop-only, so a shared schema can't point at it.
+  `relay.crews (user_id, id, workspace_id, goal, status, heartbeat_at, started_at, completed_at)`. The daemon may link a crew
+  to a drive run later; nothing depends on it.
+- **No foreign key leaves the `relay` schema.** The ticket is referenced by its **portable identity**,
+  `ticket_provider` + `ticket_key` (e.g. `jira` / `SEN-52`). Each side resolves it in its own tracker tables: the desktop in
+  `sensei.tracker_tasks`, the dōjō in its read-only integration. Only that identity travels, never the ticket's content.
+- **What syncs:**
+  - `crews`, `lanes` (without `token_hash` / `checkpoint`), `items`, `tasks`, `actions`. An action's `report_md` goes only
+    when sharing is on.
+  - `leases` never leave the machine: they're local resources.
+- **The dōjō is read-mostly.** The person can answer a decision and post a message there (`answered`, `message` actions).
+  Those sync back to the desktop through the existing pull path, with the same ids, so neither side ever overwrites the
+  other's rows.
+
 ## Principles
 - **Reuse.**
-  - A crew **is** an `activity.runs` row (new `kind = 'crew'`).
-  - Tickets **are** `sensei.tracker_tasks` (the TG5 integration). Sprints come from `sensei.tracker_task_sprints`, and
+    - Tickets **are** `sensei.tracker_tasks` (the TG5 integration). Sprints come from `sensei.tracker_task_sprints`, and
     "an assistant fetched this ticket" from `sensei.session_task_links`.
   - Gates stay M21's.
 - **One log for a crew: `relay.actions`.** Every hand-off, report, review, question, answer, message, merge and lease change
@@ -22,51 +43,51 @@ the "Message the crew" addendum, settled with the user). Nothing here is built y
   and validated by the daemon, and metrics read them through views.
 - **Nullable means "not reported" (D83).** A missing prop is absent, never 0. Totals say how many turns reported.
 
-## Tables (six)
+## Tables (six: crews, lanes, leases, items, tasks, actions; all with `user_id`)
 
-### `activity.runs` (existing) + `kind`
-`kind run_kind ('drive','crew')`, default `'drive'`. The crew's workspace, goal, status, heartbeat and timestamps are the
-existing columns.
+### `relay.crews`
+See the section above. `user_id`, `id` (uuid v7) · `workspace_id` · `goal` · `status` · `heartbeat_at` · `started_at` /
+`completed_at`.
 
 ### `relay.lanes`: who is registered
-`id` uuid pk · `run_id` → runs · `code` (`L1`…, unique per run) · `title` null (the objective, e.g. "Diagrams") · `role`
-(`'coordinator','contributor'`; one coordinator per run) · `family` / `version` null / `model` null · `capabilities` text[]
+`user_id` · `id` uuid v7 · `crew_id` · `code` (`L1`…, unique per crew) · `title` null (the objective, e.g. "Diagrams") · `role`
+(`'coordinator','contributor'`; one coordinator per crew) · `family` / `version` null / `model` null · `capabilities` text[]
 · `repo`, `worktree` null (the broker creates it) · `token_hash` · `checkpoint` jsonb null (for `reregister`) ·
 `registered_at` / `unregistered_at` null.
 Liveness is **not** a column here; it's the lane's lease (below).
 
 ### `relay.leases`: one table for every lease
-`id` · `run_id` · `lane_id` · `kind` (`'lane','resource'`) · `resource` text null (`rust-build`, `e2e`…; null for a lane
+`user_id` · `id` · `crew_id` · `lane_id` · `kind` (`'lane','resource'`) · `resource` text null (`rust-build`, `e2e`…; null for a lane
 lease) · `state` (`'queued','granted','released','expired','refused'`) · `expires_at` null · `granted_at`,
 `released_at` null · `props` jsonb (disk/swap at grant, refusal reason).
 - A lane lease is renewed by every MCP call. When it expires, the lane is suspended.
 - A resource lease is the build slot: at most one granted per resource, machine-wide (partial unique).
 
 ### `relay.items`: the queue (triage and backlog)
-`id` · `workspace_id` · `tracker_task_id` → `sensei.tracker_tasks` null (**the ticket; never copied**) · `title`, `kind`
+`user_id` · `id` · `workspace_id` · `ticket_provider` / `ticket_key` null (**the ticket's portable identity, resolved on each side; never its content**) · `title`, `kind`
 (`'bug','feature','gap','issue','finding'`), `tags` text[] (**only for manual items**; a ticketed item reads its title, type
 and sprint from the tracker) · `state` (`'backlog','planned','closed'`) · `position` int null (backlog order) ·
 `added_by`, `added_at`.
 - **Triage is a view, not rows:** tracker tasks in an active sprint (`tracker_task_sprints`, primary sprint) for the
   workspace's connected trackers that have no item yet, plus manual triage items (`state = 'triage'`, the one extra state).
-- **`+` (add to backlog)** creates the item with `tracker_task_id` set and `state = 'backlog'`.
+- **`+` (add to backlog)** creates the item with `ticket_provider` / `ticket_key` set and `state = 'backlog'`.
 - The ticket button is the tracker task's key and URL.
 
 ### `relay.tasks`: what a lane works on
-`id` · `run_id` · `item_id` null · `lane_id` null (**one active task per lane**, partial unique) · `reviewer_lane_id`
+`user_id` · `id` · `crew_id` · `item_id` null · `lane_id` null (**one active task per lane**, partial unique) · `reviewer_lane_id`
 null (never the author's lane; checked) · `title` · `phase` (`'tests','impl','docs','mockup','merge'`) · `state`
 (`'ready','assigned','in_progress','reported','in_review','changes_requested','approved','merged','done','blocked','interrupted'`)
 · `round` · `owned_paths`, `acceptance`, `resources` text[] · `deps` uuid[] · `assigned_at`, `state_changed_at`,
 `completed_at` null.
-- The ticket comes through `item_id → tracker_task_id`.
+- The ticket comes through `item_id → ticket_provider / ticket_key`.
 - The **brief is the `assigned` action's `body_md`**, frozen. A change is a `brief_updated` action.
 - A review is a state of the task: the reviewer's queue is `reviewer_lane_id = me and state = 'in_review'`.
 
 ### `relay.actions`: everything that happens
-`id` bigserial · `run_id` · `task_id` null (null for crew-level ones, e.g. a message "about no particular task") ·
+`user_id` · `id` uuid v7 · `crew_id` · `task_id` null (null for crew-level ones, e.g. a message "about no particular task") ·
 `lane_id` null (who acted; null = the person) · `kind` (`action_kind`, below) · `round` null · `phase` null ·
 `body_md` text null (the shared text, ≤ 600 chars for summaries, leak-guarded) · `report_md` text null (a full report;
-shared to the dōjō only when sharing is on) · `props` jsonb · `reply_to` bigint null (an answer → its question; a
+shared to the dōjō only when sharing is on) · `props` jsonb · `reply_to` uuid null (an answer → its question; a
 review → the report it reviews) · `created_at`.
 
 | `kind` | `body_md` is | `props` keys |
@@ -96,12 +117,14 @@ review → the report it reviews) · `created_at`.
   `reviewed.props.findings`), tokens, time working vs waiting for review, how accurate claims were.
 
 ## Integrity
-- One coordinator per run, one active task per lane, at most one granted lease per resource, no self-review.
+- One coordinator per crew, one active task per lane, at most one granted lease per resource, no self-review.
 - Every task state change and its action are written in **one transaction**.
 - Lane tokens are hashed. No transcript text anywhere. `body_md` and `report_md` pass the leak guard before any push.
 
 ## Decided (user, 2026-11-05)
 - Actions over separate report/review/finding/decision/message tables.
 - Markdown for what is shared; props for what metrics read.
-- Items reference tracker tickets; triage is a view over active sprints.
+- Items reference tracker tickets (by provider + key); triage is a view over active sprints.
+- One `relay` schema in both the daemon and the dōjō: `user_id` on every table, ids minted on the desktop (uuid v7),
+  no foreign key outside `relay`.
 - One `leases` table.
