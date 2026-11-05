@@ -99,6 +99,14 @@ pub struct PartKey<'a> {
     pub part: &'a str,
 }
 
+/// One queued withdrawal: a board this install pushed to a tenant (B13; #355).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WithdrawalKey {
+    pub board_key: String,
+    pub tenant_id: uuid::Uuid,
+    pub persona_id: uuid::Uuid,
+}
+
 type TokenRow = (
     Option<chrono::DateTime<chrono::Utc>>,
     i64,
@@ -255,6 +263,103 @@ impl PgStore {
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
+    /// A board that stopped being eligible for this persona: queue a withdrawal for
+    /// every tenant it was pushed to, and drop those marks, in one transaction (B13).
+    /// Answers how many were queued (0 when it was never pushed).
+    pub async fn queue_withdrawal(
+        &self,
+        tracker_id: uuid::Uuid,
+        persona_id: uuid::Uuid,
+    ) -> Result<u64, String> {
+        let err = |e: sqlx_core::Error| format!("queue_withdrawal({tracker_id}): {e}");
+        let mut tx = self.pool.begin().await.map_err(err)?;
+        let queued = sqlx_core::query::query(
+            "INSERT INTO sensei.delivery_withdrawals (board_key, tenant_id, persona_id)
+             SELECT DISTINCT m.board_key, m.tenant_id, m.persona_id
+               FROM sensei.tracker_push_marks m WHERE m.tracker_id = $1 AND m.persona_id = $2
+             ON CONFLICT (board_key, tenant_id, persona_id)
+             DO UPDATE SET queued_at = now(), refused_at = NULL, error = NULL",
+        )
+        .bind(tracker_id)
+        .bind(persona_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(err)?
+        .rows_affected();
+        sqlx_core::query::query(
+            "DELETE FROM sensei.tracker_push_marks WHERE tracker_id = $1 AND persona_id = $2",
+        )
+        .bind(tracker_id)
+        .bind(persona_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(err)?;
+        tx.commit().await.map_err(err)?;
+        Ok(queued)
+    }
+
+    /// This persona's queued withdrawals due now, oldest first: one the dōjō refused
+    /// waits an hour (B13; #355).
+    pub async fn delivery_withdrawals(
+        &self,
+        persona_id: uuid::Uuid,
+    ) -> Result<Vec<WithdrawalKey>, String> {
+        let rows: Vec<(String, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT board_key, tenant_id FROM sensei.delivery_withdrawals
+              WHERE persona_id = $1
+                AND (refused_at IS NULL OR refused_at < now() - interval '1 hour')
+              ORDER BY queued_at, board_key",
+        )
+        .bind(persona_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("delivery_withdrawals({persona_id}): {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(board_key, tenant_id)| WithdrawalKey { board_key, tenant_id, persona_id })
+            .collect())
+    }
+
+    /// A withdrawal landed, or the board was pushed and acknowledged again since it
+    /// was queued: either way it leaves the queue.
+    pub async fn withdrawal_done(&self, w: &WithdrawalKey) -> Result<(), String> {
+        sqlx_core::query::query(
+            "DELETE FROM sensei.delivery_withdrawals
+              WHERE board_key = $1 AND tenant_id = $2 AND persona_id = $3",
+        )
+        .bind(&w.board_key)
+        .bind(w.tenant_id)
+        .bind(w.persona_id)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("withdrawal_done: {e}"))
+    }
+
+    /// A withdrawal did not land: it stays queued, with why; a refusal waits an hour.
+    pub async fn withdrawal_failed(
+        &self,
+        w: &WithdrawalKey,
+        error: &str,
+        refused: bool,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.delivery_withdrawals
+                SET attempted_at = now(), error = $4,
+                    refused_at = CASE WHEN $5 THEN now() END
+              WHERE board_key = $1 AND tenant_id = $2 AND persona_id = $3",
+        )
+        .bind(&w.board_key)
+        .bind(w.tenant_id)
+        .bind(w.persona_id)
+        .bind(error)
+        .bind(refused)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("withdrawal_failed: {e}"))
+    }
+
     /// What was last recorded of a part's push, or `None` when never attempted.
     pub async fn push_mark(&self, key: &PartKey<'_>) -> Result<Option<MarkState>, String> {
         let row: Option<MarkRow> = sqlx_core::query_as::query_as(
@@ -278,16 +383,22 @@ impl PgStore {
 
     /// Record that a part is about to be sent, BEFORE sending it: a push the dōjō
     /// commits but whose answer is lost still leaves this row behind.
-    pub async fn mark_push_attempt(&self, key: &PartKey<'_>) -> Result<(), String> {
+    pub async fn mark_push_attempt(
+        &self,
+        key: &PartKey<'_>,
+        board_key: &str,
+    ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.tracker_push_marks (tracker_id, persona_id, tenant_id, part)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (tracker_id, persona_id, tenant_id, part) DO UPDATE SET attempted_at = now()",
+            "INSERT INTO sensei.tracker_push_marks (tracker_id, persona_id, tenant_id, part, board_key)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (tracker_id, persona_id, tenant_id, part)
+             DO UPDATE SET attempted_at = now(), board_key = EXCLUDED.board_key",
         )
         .bind(key.tracker_id)
         .bind(key.persona_id)
         .bind(key.tenant_id)
         .bind(key.part)
+        .bind(board_key)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("mark_push_attempt: {e}"))?;

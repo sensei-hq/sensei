@@ -19,7 +19,7 @@
 //! board has been tried (D3). A failed read is an error, never "no boards" (D83).
 
 use crate::db::pg_store::PgStore;
-use crate::db::pg_store::delivery::PartKey;
+use crate::db::pg_store::delivery::{PartKey, WithdrawalKey};
 use crate::db::pg_store::sync::SyncMark;
 use crate::dojo::delivery::{
     BoardFacts, Effort, FactSprint, FactTicket, board_key, effort_from, effort_hash, effort_json,
@@ -282,11 +282,14 @@ pub async fn push_delivery(
         faults.push(format!("{}: {}", f.board_key, f.error));
     }
     let mut sent = 0;
+    let persona_id = pg.persona_id_for_slot(persona).await?;
+    // Withdrawals first: a board that left is gone before any other is sent (B13).
+    if let Some(persona_id) = persona_id {
+        faults.extend(send_withdrawals(pg, persona, persona_id, token, plane).await?);
+    }
     if !boards.built.is_empty() {
-        let persona_id = pg
-            .persona_id_for_slot(persona)
-            .await?
-            .ok_or_else(|| format!("no persona holds the slot {persona}"))?;
+        let persona_id =
+            persona_id.ok_or_else(|| format!("no persona holds the slot {persona}"))?;
         let ctx = PushCtx {
             pg,
             persona,
@@ -325,6 +328,40 @@ struct PushCtx<'a> {
     exclusive: std::collections::HashSet<String>,
 }
 
+/// Send this persona's due withdrawals; each that lands leaves the queue and marks
+/// its board synced; each that does not stays with its error — a refusal waiting an
+/// hour, out of the tick's faults meanwhile — and is answered as a fault after every
+/// one has been tried. A failed queue read is an error, never "nothing to withdraw".
+async fn send_withdrawals(
+    pg: &PgStore,
+    persona: &str,
+    persona_id: uuid::Uuid,
+    token: &str,
+    plane: &dyn UserPlane,
+) -> Result<Vec<String>, String> {
+    let mut faults = Vec::new();
+    for w in pg.delivery_withdrawals(persona_id).await? {
+        let mark = SyncMark { entity: ENTITY, key: &w.board_key, direction: "push", persona };
+        let sent = plane.withdraw_delivery(token, &w.board_key, w.tenant_id, persona_id).await;
+        let outcome = match sent {
+            Ok(()) => match pg.withdrawal_done(&w).await {
+                Ok(()) => pg.mark_synced(&mark, None).await,
+                Err(e) => Err(e),
+            },
+            Err(e) => {
+                let refused = matches!(e, DeliveryError::Refused { .. });
+                let why = format!("withdrawal not sent: {e}");
+                record_error(pg, persona, &w.board_key, &why).await;
+                pg.withdrawal_failed(&w, &why, refused).await.and(Err(why))
+            }
+        };
+        if let Err(e) = outcome {
+            faults.push(format!("{}: {e}", w.board_key));
+        }
+    }
+    Ok(faults)
+}
+
 /// Record a board's failure in the sync state; a failure to record is logged, the
 /// board's own failure is still reported to the tick.
 async fn record_error(pg: &PgStore, persona: &str, board_key: &str, error: &str) {
@@ -342,6 +379,11 @@ async fn push_board(ctx: &PushCtx<'_>, b: &BuiltBoard) -> Result<bool, String> {
     let to = match eligibility(&ctx.plan.allowed, &keys) {
         Ok(to) => to,
         Err(why) => {
+            // A board that was pushed and is no longer shared is withdrawn (B13).
+            let queued = pg.queue_withdrawal(b.tracker_id, ctx.persona_id).await?;
+            if queued > 0 {
+                tracing::info!(persona = ctx.persona, board = %b.board_key, "dojo_sync: board no longer shared; withdrawal queued");
+            }
             pg.mark_sync_skipped(&mark, why.code()).await?;
             return Ok(false);
         }
@@ -386,13 +428,21 @@ async fn push_board(ctx: &PushCtx<'_>, b: &BuiltBoard) -> Result<bool, String> {
     // Before sending: a push the dōjō commits but whose answer is lost still
     // leaves a row for a withdrawal to find.
     for (key, _) in &parts {
-        pg.mark_push_attempt(key).await?;
+        pg.mark_push_attempt(key, &b.board_key).await?;
     }
     match ctx.plane.push_delivery(ctx.token, &bytes).await {
         Ok(_) => {
             for (key, hash) in &parts {
                 pg.mark_push_acknowledged(key, hash).await?;
             }
+            // Pushed again since a withdrawal was queued: the push stands, and the
+            // withdrawal must never later remove it.
+            let w = WithdrawalKey {
+                board_key: b.board_key.clone(),
+                tenant_id: tenant,
+                persona_id: ctx.persona_id,
+            };
+            pg.withdrawal_done(&w).await?;
             pg.mark_synced(&mark, None).await?;
             Ok(true)
         }

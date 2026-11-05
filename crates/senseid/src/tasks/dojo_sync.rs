@@ -1336,6 +1336,10 @@ mod tests {
     /// still passed.
     #[derive(Default)]
     struct StubPlane {
+        /// Every withdrawal asked: (board_key, tenant_id, source).
+        withdrawn: Mutex<Vec<(String, uuid::Uuid, uuid::Uuid)>>,
+        /// What a withdrawal answers; `None` removes it.
+        withdrawal: Option<Result<(), user_plane::DeliveryError>>,
         /// Every board body the daemon sent to `POST /v1/you/delivery`, parsed.
         delivered: Mutex<Vec<serde_json::Value>>,
         /// What the board push answers; `None` accepts every board.
@@ -1496,6 +1500,17 @@ mod tests {
                 .cloned()
                 .or_else(|| self.delivery.clone())
                 .unwrap_or(Ok(user_plane::DeliveryOutcome { facts: "accepted".into() }))
+        }
+
+        async fn withdraw_delivery(
+            &self,
+            _t: &str,
+            board_key: &str,
+            tenant_id: uuid::Uuid,
+            source: uuid::Uuid,
+        ) -> Result<(), user_plane::DeliveryError> {
+            self.withdrawn.lock().unwrap().push((board_key.to_string(), tenant_id, source));
+            self.withdrawal.clone().unwrap_or(Ok(()))
         }
 
         async fn push_metrics(
@@ -3650,6 +3665,250 @@ mod tests {
                 push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
                 1
             );
+        }
+
+        async fn persona_of(pg: &PgStore) -> uuid::Uuid {
+            sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+                "SELECT id FROM sensei.personas WHERE session_slot = $1",
+            )
+            .bind(SLOT)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap()
+            .0
+        }
+
+        /// Every queued withdrawal of this persona, due or backing off: (board_key, tenant).
+        async fn queued(pg: &PgStore, persona: uuid::Uuid) -> Vec<(String, uuid::Uuid)> {
+            sqlx_core::query_as::query_as(
+                "SELECT board_key, tenant_id FROM sensei.delivery_withdrawals WHERE persona_id = $1 ORDER BY queued_at",
+            )
+            .bind(persona)
+            .fetch_all(pg.pool())
+            .await
+            .unwrap()
+        }
+
+        /// Gate 11 (B13): deleting a pushed tracker queues one withdrawal in the same
+        /// transaction, and the next pass sends it, signed as this install.
+        #[tokio::test]
+        async fn deleting_a_pushed_tracker_queues_one_withdrawal_and_the_next_pass_sends_it() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            let p = plan(vec![mapped(&key, &tenant.to_string())]);
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &p, &[], &boards(&pg).await)
+                .await
+                .unwrap();
+            let board = key_of(&pg, t).await;
+            let persona = persona_of(&pg).await;
+            assert!(
+                queued(&pg, persona).await.is_empty(),
+                "nothing queued while the board is shared"
+            );
+
+            assert!(pg.delete_tracker(ws, t).await.unwrap());
+            assert_eq!(
+                queued(&pg, persona).await,
+                [(board.clone(), tenant)],
+                "one, though two parts were marked"
+            );
+
+            let plane = StubPlane::default();
+            push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &Boards::default()).await.unwrap();
+            assert_eq!(*plane.withdrawn.lock().unwrap(), [(board, tenant, persona)]);
+            assert!(queued(&pg, persona).await.is_empty(), "a landed withdrawal leaves the queue");
+            let withdrawn = plane.withdrawn.lock().unwrap()[0].0.clone();
+            let (state, _) = state_of(&pg, &withdrawn).await.unwrap();
+            assert_eq!(state, "synced", "a withdrawn board does not stay in error");
+            push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &Boards::default()).await.unwrap();
+            assert_eq!(plane.withdrawn.lock().unwrap().len(), 1, "sent once");
+        }
+
+        #[tokio::test]
+        async fn a_withdrawal_that_fails_stays_queued_with_why_and_goes_next_pass() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            let p = plan(vec![mapped(&key, &tenant.to_string())]);
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &p, &[], &boards(&pg).await)
+                .await
+                .unwrap();
+            let board = key_of(&pg, t).await;
+            let persona = persona_of(&pg).await;
+            pg.delete_tracker(ws, t).await.unwrap();
+            let down = StubPlane {
+                withdrawal: Some(Err(DeliveryError::Failed("unreachable".into()))),
+                ..Default::default()
+            };
+            let out = push_delivery(&pg, SLOT, "tok", &down, &p, &[], &Boards::default()).await;
+            assert!(out.is_err(), "a withdrawal not sent is the tick's failure");
+            let (error,): (Option<String>,) = sqlx_core::query_as::query_as(
+                "SELECT error FROM sensei.delivery_withdrawals WHERE board_key = $1 AND persona_id = $2",
+            )
+            .bind(&board)
+            .bind(persona)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert!(error.unwrap().contains("unreachable"));
+            let (state, _) = state_of(&pg, &board).await.expect("recorded in the sync state");
+            assert_eq!(state, "error");
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &p, &[], &Boards::default())
+                .await
+                .unwrap();
+            assert!(queued(&pg, persona).await.is_empty());
+        }
+
+        /// A workspace removed (pruned or deleted) takes its trackers by cascade: the
+        /// trigger still queues their withdrawals.
+        #[tokio::test]
+        async fn a_workspace_removed_with_its_tracker_queues_the_withdrawal() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            push_delivery(
+                &pg,
+                SLOT,
+                "tok",
+                &StubPlane::default(),
+                &plan(vec![mapped(&key, &tenant.to_string())]),
+                &[],
+                &boards(&pg).await,
+            )
+            .await
+            .unwrap();
+            let board = key_of(&pg, t).await;
+            exec(&pg, "DELETE FROM sensei.workspaces WHERE id = $1", ws).await;
+            assert_eq!(queued(&pg, persona_of(&pg).await).await, [(board, tenant)]);
+        }
+
+        /// A refused withdrawal waits an hour, and meanwhile fails no tick.
+        #[tokio::test]
+        async fn a_refused_withdrawal_backs_off_and_does_not_fail_every_tick() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            let p = plan(vec![mapped(&key, &tenant.to_string())]);
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &p, &[], &boards(&pg).await)
+                .await
+                .unwrap();
+            pg.delete_tracker(ws, t).await.unwrap();
+            let refusing = StubPlane {
+                withdrawal: Some(Err(DeliveryError::Refused { status: 403, body: "no".into() })),
+                ..Default::default()
+            };
+            assert!(
+                push_delivery(&pg, SLOT, "tok", &refusing, &p, &[], &Boards::default())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &refusing, &p, &[], &Boards::default())
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                refusing.withdrawn.lock().unwrap().len(),
+                1,
+                "not tried again within the hour"
+            );
+            assert_eq!(queued(&pg, persona_of(&pg).await).await.len(), 1, "still queued");
+            exec(&pg, "UPDATE sensei.delivery_withdrawals SET refused_at = now() - interval '61 minutes' WHERE persona_id = (SELECT id FROM sensei.personas WHERE session_slot = 'ztest-delivery-slot') AND $1 IS NOT NULL", t).await;
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &p, &[], &Boards::default())
+                .await
+                .unwrap();
+            assert!(
+                queued(&pg, persona_of(&pg).await).await.is_empty(),
+                "tried again after the hour"
+            );
+        }
+
+        /// A board pushed and acknowledged again clears a withdrawal still queued for
+        /// it, so the withdrawal can never later remove the fresh push.
+        #[tokio::test]
+        async fn a_board_pushed_again_clears_its_queued_withdrawal() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            let shared = plan(vec![mapped(&key, &tenant.to_string())]);
+            let mut built = boards(&pg).await;
+            built.built.retain(|b| b.tracker_id == t);
+            built.failed.clear();
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &shared, &[], &built)
+                .await
+                .unwrap();
+            // Unshared: a withdrawal is queued; shared again while it keeps failing.
+            push_delivery(
+                &pg,
+                SLOT,
+                "tok",
+                &StubPlane {
+                    withdrawal: Some(Err(DeliveryError::Failed("down".into()))),
+                    ..Default::default()
+                },
+                &plan(vec![]),
+                &[],
+                &built,
+            )
+            .await
+            .ok();
+            assert_eq!(queued(&pg, persona_of(&pg).await).await.len(), 1);
+            let flaky = StubPlane {
+                withdrawal: Some(Err(DeliveryError::Failed("down".into()))),
+                ..Default::default()
+            };
+            let out = push_delivery(&pg, SLOT, "tok", &flaky, &shared, &[], &built).await;
+            assert!(out.is_err(), "the failed withdrawal is still this tick's fault");
+            assert_eq!(flaky.delivered.lock().unwrap().len(), 1, "the board is pushed");
+            assert!(
+                queued(&pg, persona_of(&pg).await).await.is_empty(),
+                "and its acknowledged push clears the withdrawal"
+            );
+        }
+
+        /// Gate 11: a pushed board whose workspace loses its shared repository is
+        /// withdrawn, and its marks go so it is queued once.
+        #[tokio::test]
+        async fn a_pushed_board_that_is_no_longer_shared_is_withdrawn() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            push_delivery(
+                &pg,
+                SLOT,
+                "tok",
+                &StubPlane::default(),
+                &plan(vec![mapped(&key, &tenant.to_string())]),
+                &[],
+                &boards(&pg).await,
+            )
+            .await
+            .unwrap();
+            let board = key_of(&pg, t).await;
+            let persona = persona_of(&pg).await;
+            let mut built = boards(&pg).await;
+            built.built.retain(|b| b.tracker_id == t);
+            built.failed.clear();
+            let plane = StubPlane::default();
+            push_delivery(&pg, SLOT, "tok", &plane, &plan(vec![]), &[], &built).await.unwrap();
+            assert_eq!(queued(&pg, persona).await, [(board.clone(), tenant)]);
+            let (marks,): (i64,) = sqlx_core::query_as::query_as(
+                "SELECT count(*) FROM sensei.tracker_push_marks WHERE tracker_id = $1",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(marks, 0);
+            push_delivery(&pg, SLOT, "tok", &plane, &plan(vec![]), &[], &built).await.unwrap();
+            assert_eq!(
+                *plane.withdrawn.lock().unwrap(),
+                [(board, tenant, persona)],
+                "sent once, next pass"
+            );
+            assert!(plane.delivered.lock().unwrap().is_empty());
         }
 
         /// The `repo_key` of a repository folder's repository.

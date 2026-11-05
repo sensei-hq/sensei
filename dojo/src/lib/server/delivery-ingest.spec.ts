@@ -8,6 +8,7 @@ import {
 	DELIVERY_MAX_TICKETS,
 	checkDeliveryBody,
 	fileDelivery,
+	withdrawDelivery,
 	type DeliveryBody
 } from './delivery-ingest';
 import type { DojoClient } from './admin-data';
@@ -232,5 +233,24 @@ describe('fileDelivery', () => {
 			const { client } = db({ data, error: null });
 			await expect(fileDelivery(client, b), JSON.stringify(data)).rejects.toMatchObject({ status: 500 });
 		}
+	});
+});
+
+describe('withdrawDelivery', () => {
+	const key = 'ab'.repeat(32);
+	const tenant = 'b0000000-0000-4000-8000-00000000052a';
+	const source = '5a000000-0000-4000-8000-000000000001';
+
+	it('withdraws as the caller, naming the install; answers whether anything went', async () => {
+		const { client, calls } = db({ data: true, error: null });
+		expect(await withdrawDelivery(client, tenant, key, source)).toBe(true);
+		expect(calls).toEqual([{ fn: 'withdraw_delivery', args: { p_tenant: tenant, p_board_key: key, p_source: source } }]);
+		const { client: none } = db({ data: false, error: null });
+		expect(await withdrawDelivery(none, tenant, key, source)).toBe(false);
+	});
+
+	it('an answer that is not a yes or no is a failure', async () => {
+		const { client } = db({ data: null, error: null });
+		await expect(withdrawDelivery(client, tenant, key, source)).rejects.toMatchObject({ status: 500 });
 	});
 });

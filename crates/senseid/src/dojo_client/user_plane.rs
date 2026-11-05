@@ -383,6 +383,17 @@ pub trait UserPlane: Send + Sync {
         token: &str,
         body: &[u8],
     ) -> Result<DeliveryOutcome, DeliveryError>;
+
+    /// `DELETE /v1/you/delivery/{board_key}?tenant_id=&source=` — withdraw what this
+    /// install reported for a board (tracker-delivery-metrics B13; #355). `Ok` when
+    /// the dōjō removed it or had nothing of it (204 or 404).
+    async fn withdraw_delivery(
+        &self,
+        token: &str,
+        board_key: &str,
+        tenant_id: uuid::Uuid,
+        source: uuid::Uuid,
+    ) -> Result<(), DeliveryError>;
 }
 
 /// What the dōjō did with a board's facts: `accepted`, or `stale` (it keeps a
@@ -432,6 +443,52 @@ pub fn delivery_answer(status: u16, text: &str) -> Result<DeliveryOutcome, Deliv
         )));
     }
     Ok(out)
+}
+
+/// What a withdrawal's answer means: removed (204), or the withdrawal route's own
+/// "nothing of yours" (404 `{"withdrawn": false}`), are done. Any other 404 — a dōjō
+/// without the route, a proxy — proves nothing and is tried again; any other 4xx is
+/// refused as sent; anything else is tried again.
+pub fn withdrawal_answer(status: u16, text: &str) -> Result<(), DeliveryError> {
+    let nothing_there = || {
+        serde_json::from_str::<serde_json::Value>(text)
+            .is_ok_and(|v| v.get("withdrawn") == Some(&serde_json::Value::Bool(false)))
+    };
+    match status {
+        204 => Ok(()),
+        404 if nothing_there() => Ok(()),
+        404 => Err(DeliveryError::Failed(format!(
+            "dōjō answered 404 without a withdrawal's answer: {text}"
+        ))),
+        400..=499 => Err(DeliveryError::Refused { status, body: text.to_string() }),
+        _ => {
+            Err(DeliveryError::Failed(format!("dōjō returned {status} for the withdrawal: {text}")))
+        }
+    }
+}
+
+/// `DELETE /v1/you/delivery/{board_key}?tenant_id=&source=`.
+pub async fn withdraw_delivery(
+    dojo_url: &str,
+    token: &str,
+    board_key: &str,
+    tenant_id: uuid::Uuid,
+    source: uuid::Uuid,
+) -> Result<(), DeliveryError> {
+    let r = crate::federation::http_client()
+        .delete(endpoint(dojo_url, &format!("delivery/{board_key}")))
+        .query(&[("tenant_id", tenant_id.to_string()), ("source", source.to_string())])
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| {
+            DeliveryError::Failed(format!("could not reach dōjō for the withdrawal: {e}"))
+        })?;
+    let status = r.status().as_u16();
+    let text = r.text().await.map_err(|e| {
+        DeliveryError::Failed(format!("dōjō's answer to the withdrawal could not be read: {e}"))
+    })?;
+    withdrawal_answer(status, &text)
 }
 
 /// `POST /v1/you/delivery` with a serialized, size-checked body.
@@ -533,6 +590,16 @@ impl UserPlane for HttpUserPlane {
         body: &[u8],
     ) -> Result<DeliveryOutcome, DeliveryError> {
         push_delivery(&self.dojo_url, token, body).await
+    }
+
+    async fn withdraw_delivery(
+        &self,
+        token: &str,
+        board_key: &str,
+        tenant_id: uuid::Uuid,
+        source: uuid::Uuid,
+    ) -> Result<(), DeliveryError> {
+        withdraw_delivery(&self.dojo_url, token, board_key, tenant_id, source).await
     }
     async fn graph_hashes(
         &self,
@@ -1319,5 +1386,26 @@ mod repo_input_workspace_tests {
         )
         .unwrap();
         assert_eq!(r.mapped[0].workspace_error.as_deref(), Some("not a member"));
+    }
+
+    #[test]
+    fn a_withdrawal_is_done_when_removed_or_already_gone() {
+        assert_eq!(withdrawal_answer(204, ""), Ok(()));
+        assert_eq!(withdrawal_answer(404, r#"{"withdrawn": false}"#), Ok(()));
+        // A 404 that is not the route's own answer proves nothing.
+        assert!(matches!(withdrawal_answer(404, "Not Found"), Err(DeliveryError::Failed(_))));
+        assert!(matches!(
+            withdrawal_answer(404, r#"{"error": "x"}"#),
+            Err(DeliveryError::Failed(_))
+        ));
+        assert!(matches!(
+            withdrawal_answer(400, "bad"),
+            Err(DeliveryError::Refused { status: 400, .. })
+        ));
+        assert!(
+            matches!(withdrawal_answer(200, "{}"), Err(DeliveryError::Failed(_))),
+            "only 204 says removed"
+        );
+        assert!(matches!(withdrawal_answer(503, ""), Err(DeliveryError::Failed(_))));
     }
 }

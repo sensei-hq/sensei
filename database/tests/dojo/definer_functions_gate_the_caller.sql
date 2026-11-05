@@ -72,7 +72,7 @@ declare
       'set_repository_election','set_repository_role_override','team_metric_totals',
       'team_tenant_member','tenant_live_session_count','tenant_pack_rules','tenant_role_at_least',
       'tenant_shared_rules','workspace_delivery_boards','workspace_delivery_sprints',
-      'workspace_delivery_tickets','workspace_in_my_dojo_or_none','workspace_metric_series'];
+      'workspace_delivery_tickets','withdraw_delivery','workspace_in_my_dojo_or_none','workspace_metric_series'];
     unlisted text;
     gone text;
 begin
@@ -216,6 +216,8 @@ begin
         format('dojo.delete_team(%s)', tm),
         format('dojo.file_graph_slices(%s, ''{}''::jsonb, ''[]''::jsonb, ''{}''::jsonb)', r),
         format('dojo.file_delivery_facts(%s, array[%s], %s)', t, rkey, facts),
+        -- alice's board and install: bob removes nothing of hers
+        format('dojo.withdraw_delivery(%s, %L, %L)', t, repeat('a1', 32), '5a000000-0000-4000-8000-0000000000a1'),
         format('dojo.file_delivery(%s, array[%s], %s, %s)', t, rkey, facts,
                '''{"source":"5a000000-0000-4000-8000-000000000001","project":null,"sprints":[],"tickets":[]}''::jsonb'),
         format('dojo.file_metric_rows(%s)', rows),

@@ -176,12 +176,10 @@ async fn a_mark_records_attempts_acknowledgements_and_refusals() {
             .unwrap(),
         None
     );
-    s.mark_push_attempt(&PartKey {
-        tracker_id: t,
-        persona_id: p,
-        tenant_id: tenant,
-        part: "facts",
-    })
+    s.mark_push_attempt(
+        &PartKey { tracker_id: t, persona_id: p, tenant_id: tenant, part: "facts" },
+        &"ab".repeat(32),
+    )
     .await
     .unwrap();
     assert_eq!(

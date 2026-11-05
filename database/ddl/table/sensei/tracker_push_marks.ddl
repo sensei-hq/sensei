@@ -6,6 +6,7 @@ create table if not exists tracker_push_marks (
   tracker_id    uuid          not null references sensei.trackers(id) on delete cascade
 , persona_id    uuid          not null references sensei.personas(id) on delete cascade
 , tenant_id     uuid          not null
+, board_key     text          not null check (board_key ~ '^[0-9a-f]{64}$')
 , part          text          not null check (part in ('facts', 'effort'))
 , attempted_at  timestamptz   not null default now()
 , hash          text
@@ -21,6 +22,8 @@ comment on table tracker_push_marks is
 
 comment on column tracker_push_marks.persona_id
      is 'The signed-in persona whose session pushed; a persona''s marks go with it.';
+comment on column tracker_push_marks.board_key
+     is 'The board''s key as pushed: what a withdrawal names once the tracker itself is gone (sensei.queue_delivery_withdrawals).';
 comment on column tracker_push_marks.tenant_id
      is 'The dōjō tenant (dojo.tenants.id) the part went to; a re-filed workspace in another tenant starts afresh.';
 comment on column tracker_push_marks.part

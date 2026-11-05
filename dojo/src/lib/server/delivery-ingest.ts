@@ -279,3 +279,17 @@ export async function fileDelivery(db: DojoClient, body: DeliveryBody): Promise<
 	}
 	return body.effort === null ? { facts } : { facts, effort: 'accepted' };
 }
+
+/** Withdraw what the caller's install reported for a board in a tenant (B13): its
+ *  effort, and the board's copy when the caller reported it. True when anything
+ *  went; an answer that is not a yes or no is a failure. */
+export async function withdrawDelivery(
+	db: DojoClient,
+	tenantId: string,
+	boardKey: string,
+	source: string
+): Promise<boolean> {
+	const out = await callFn<unknown>(db, 'withdraw_delivery', { p_tenant: tenantId, p_board_key: boardKey, p_source: source });
+	if (typeof out !== 'boolean') throw new AdminError(500, `withdraw_delivery answered ${JSON.stringify(out)}`);
+	return out;
+}

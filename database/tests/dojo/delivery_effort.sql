@@ -450,4 +450,48 @@ end
 $$;
 reset role;
 
+
+-- ── F5: withdrawal (B13, gate 11's dōjō half) ─────────────────────────────────
+set local role authenticated;
+
+do $$
+declare
+    t     constant uuid := 'b0000000-0000-4000-8000-00000000053a';
+    w1    constant uuid := 'c0000000-0000-4000-8000-000000000531';
+    key   constant text := repeat('ab', 32);
+    board uuid;
+    r     record;
+begin
+    -- bob reported nothing: nothing to withdraw.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000533"}', true);
+    if dojo.withdraw_delivery(t, key, '5b000000-0000-4000-8000-000000000001') then
+        raise exception 'bob withdrew someone else''s rows'; end if;
+
+    -- ada withdraws her install: her rows go; the copy (ola's report) stays.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000531"}', true);
+    if not dojo.withdraw_delivery(t, key, '5b000000-0000-4000-8000-000000000001') then
+        raise exception 'ada''s withdrawal found nothing'; end if;
+    select b.board_id into board from dojo.workspace_delivery_boards(w1) b;
+    if board is null then raise exception 'a contributor''s withdrawal took the copy someone else reported'; end if;
+    select * into r from dojo.workspace_delivery_tickets(w1, board, null, false, 100, 0) x where x.key = 'AUTH-10';
+    if r.contributors is distinct from 1 then raise exception 'ada''s rows stayed: %', r; end if;
+    if dojo.withdraw_delivery(t, key, '5b000000-0000-4000-8000-000000000001') then
+        raise exception 'a second withdrawal found something'; end if;
+
+    -- ola withdraws her second install: its rows go, the first install's stay;
+    -- she reported the copy, so it goes too.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000532"}', true);
+    if not dojo.withdraw_delivery(t, key, '5a000000-0000-4000-8000-000000000002') then
+        raise exception 'ola''s withdrawal found nothing'; end if;
+    if exists (select 1 from dojo.workspace_delivery_boards(w1)) then
+        raise exception 'the copy ola reported stayed after her withdrawal'; end if;
+    begin
+        perform dojo.withdraw_delivery(t, 'not-a-key', '5a000000-0000-4000-8000-000000000002');
+        raise exception 'a malformed board key was taken';
+    exception when invalid_parameter_value then null;
+    end;
+end
+$$;
+reset role;
+
 rollback;
