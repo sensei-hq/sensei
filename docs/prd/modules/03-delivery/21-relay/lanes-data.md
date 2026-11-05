@@ -97,9 +97,10 @@ review → the report it reviews) · `created_at`.
 | `started` | — | — |
 | `reported` | the summary sent with the request for review | `look_at`, `flags`, `base`, `branch`, `commits[]`, `files[{path,added,removed,outside_owned}]`, `gates[{cmd,exit,counts}]`, `family`, `version`, `model`, `tokens_in`, `tokens_out`, `tokens_cache`, `started_at`, `ended_at`, `context_tokens`, `compactions`, `peak_memory_mb`, `subagents[{role,model}]` |
 | `reviewed` | the review summary | `verdict` (`approved` / `changes_requested`), `findings[{severity,class,text,file,line}]`, `probes`, `subagents[]`, the same telemetry keys |
-| `asked` | the question | `options[{id,label,detail}]`, `recommended`, `blocks[task_id]`, `asked_of` (`person` / lane) |
+| `asked` | the question | `context` (one line: what is waiting on it), `options[{id,label,detail}]`, `recommended`, `blocks[task_id]`, `asked_of` (`person` / lane id) |
 | `answered` | an optional note | `option`, `surface` (`desktop` / `dojo`) |
-| `message` | the message | `to` (`coordinator` / lane / `everyone`), `surface`; delivery is tracked by `delivered` / `read` actions with `reply_to` |
+| `message` | the message | `to` = `{kind: 'coordinator' \| 'lane' \| 'everyone', lane_id?}` (a lane by its **uuid**; the screen shows its code), `surface` |
+| `delivered` / `read` | — | none; `reply_to` = the message (receipts, one per recipient) |
 | `merged` | the merge note | `commits[]`, `into`, `gates[]` |
 | `interrupted` / `reoffered` | — | `checkpoint`, `to_lane` |
 | `compacted` | — | `context_tokens_before`, `context_tokens_after` |
