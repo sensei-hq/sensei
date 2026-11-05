@@ -230,23 +230,26 @@ describe('ScrBilling — Free and Pro, no price, an honest attach', () => {
 		expect(queryByText(/Renews/)).toBeNull();
 	});
 
+	// billing build: the current plan's tag reads "Current plan" (mockup).
 	it('shows both plans, Pro priced "to be announced", and no dollar amount anywhere (D75)', () => {
 		const { container, getByText, getAllByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
 		expect(getAllByText('Pro').length).toBeGreaterThanOrEqual(1);
 		expect(getByText('To be announced')).toBeTruthy();
-		expect(getByText('current')).toBeTruthy();
+		expect(container.querySelector('[data-tier="free"] [data-plan-tag]')?.textContent?.trim()).toBe('Current plan');
 		expect(container.textContent).not.toMatch(/\$\s?\d/);
 	});
 
+	// billing build: the mockup's lines.
 	it('says what is always free, and that Pro is what targets on private repositories need', () => {
 		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
-		expect(container.textContent).toMatch(/SSO, SCIM, audit/);
-		expect(container.textContent).toContain("Blocking targets on an organization's private repositories");
+		expect(container.textContent).toContain('SSO, SCIM and the audit trail');
+		expect(container.textContent).toContain('Blocking targets on those private repositories');
 	});
 
+	// billing build: the seats section's label (SEAT_COPY.label).
 	it('the seat card says what it counts (L2)', () => {
 		const { getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: free() } });
-		expect(getByText('seats on private workspaces')).toBeTruthy();
+		expect(getByText('active relay seats on private workspaces')).toBeTruthy();
 	});
 
 	it('Attach Pro is offered but cannot run until payments are connected — and says so', () => {
@@ -259,9 +262,12 @@ describe('ScrBilling — Free and Pro, no price, an honest attach', () => {
 		expect(getByText('Plan changes open once payments are connected')).toBeTruthy();
 	});
 
-	it('on Pro: its renewal, no attach, and the disabled Move to Free says why (M6)', () => {
-		const { container, getByText } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing } });
-		expect(getByText(/Renews Aug 1/)).toBeTruthy();
+	// billing build: the approved
+	// mockup has no summary card, so the renewal is said inside the "Pro is attached" notice (M2, r3).
+	it('on Pro: its renewal in the notice, no attach, and the disabled Move to Free says why (M6)', () => {
+		const pro = toKitBilling({ account: { plan: 'pro', status: 'active', seats_included: 0, seats_used: 0, seats_computed_at: null, period_start: null, period_end: '2026-08-01T00:00:00Z' }, usage }, new Date('2026-07-15T00:00:00Z'));
+		const { container } = render(ScrBilling, { props: { orgName: 'Acme Corp', billing: pro } });
+		expect(container.querySelector('[data-billing-problem] [data-component="notice"]')?.textContent ?? '').toContain('Renews Aug 1.');
 		expect(container.querySelector('[data-action="attach-pro"]')).toBeNull();
 		expect((container.querySelector('[data-action="move-free"]') as HTMLButtonElement).disabled).toBe(true);
 		expect(container.querySelector('[data-attach-notice]')!.textContent).toContain('Until then this plan stays as it is.');

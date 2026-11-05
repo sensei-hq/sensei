@@ -1,8 +1,12 @@
 <script lang="ts">
 	import { dojoLoadNotice } from '$lib/dojo-notices';
 	import type { ReadError } from '$lib/read-error';
-	import { Screen, Notice } from '@sensei/ui';
-	import { SectionHead } from '$lib/components/kit';
+	import { Notice } from '@sensei/ui';
+	import { ScreenShell } from '@rokkit/app';
+	import { NAV_YOU } from '$lib/nav';
+	import { glyphs } from '$lib/glyphs.svelte';
+	import { splitBillingHidden } from '$lib/billing-hidden';
+	import { panelsFor, savePanels } from '$lib/view-states.svelte';
 	// Sharing — the DECISION surface for `dojo.all_my_repositories`.
 	//
 	// Every other consumer of that view reads it: the daemon through
@@ -13,7 +17,13 @@
 	//
 	// PRESENTATIONAL. It renders the verdict it is handed and reports a toggle
 	// upward; it never re-derives `sync_enabled`, because the view is the single
-	// place `may_share AND elected` is decided.
+	// place `may_share AND elected` is decided. Nor does it decide what the plan
+	// hides (WP8): the server sends `billing_hidden`, and one line per organization
+	// replaces those rows, linking to its Plan & billing.
+	//
+	// On rokkit's ScreenShell (D87, view `dojo.you.sharing`): search in the filter
+	// band narrows the listed rows by name or key; the bands remember how the user
+	// left them (view-states).
 	import type { MyRepoWire } from '$lib/client-data';
 	import { authorityLabel, visibilityLabel } from '$lib/you-state.svelte';
 	import { GRAPH_LABELS } from '$lib/graph-labels';
@@ -33,6 +43,18 @@
 
 	// Draft branch names and labels, per repository. The input starts EMPTY —
 	// pre-filling `main` would be the guess the plan refuses to make.
+	const VIEW = 'dojo.you.sharing';
+	const nav = NAV_YOU.flatMap((g) => g.items).find((i) => i.id === 'sharing');
+	let panels = $state(panelsFor(VIEW));
+	let filter = $state<{ values: Record<string, unknown>; stat?: string | null }>({ values: {}, stat: null });
+	const query = $derived(String(filter.values.q ?? '').trim().toLowerCase());
+	const split = $derived(splitBillingHidden(repos));
+	const visible = $derived(
+		query
+			? split.shown.filter((r) => (r.name ?? '').toLowerCase().includes(query) || r.repo_key.toLowerCase().includes(query))
+			: split.shown
+	);
+
 	let drafts = $state<Record<string, string>>({});
 	let labels = $state<Record<string, string>>({});
 	// The `repoKey branch` awaiting its in-page confirmation, if any.
@@ -48,16 +70,17 @@
 
 </script>
 
-<Screen>
-	{#snippet header()}
-		<div class="px-4 pt-4 md:px-8 md:pt-8">
-			<SectionHead
-				eyebrow="You · sharing"
-				title="Sharing"
-				description="Which repositories send metrics to a dōjō. A repository syncs only when it is permitted and whoever holds the choice has made it."
-			/>
-		</div>
-	{/snippet}
+<ScreenShell
+	viewId={VIEW}
+	mark={{ kanji: nav?.kanji ?? '', icon: nav?.icon }}
+	glyphs={glyphs.mode === 'icon' ? 'icon' : 'text'}
+	title="Sharing"
+	description="Which repositories send metrics to a dōjō. A repository syncs only when it is permitted and whoever holds the choice has made it."
+	search={{ placeholder: 'Search repositories' }}
+	bind:filter
+	bind:panels
+	onpanels={(next) => savePanels(VIEW, next)}
+>
 <section class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 
 	{#if error}
@@ -69,8 +92,17 @@
 			has registered it.
 		</p>
 	{:else}
+		<!-- WP8: one line per organization whose private repositories the plan hides. -->
+		{#each split.hidden as h (h.org)}
+			<p data-plan-hidden={h.org} class="m-0 flex flex-wrap items-baseline gap-1 rounded border border-line p-3 text-sm text-ink">
+				<span class="font-semibold">{h.org}</span>
+				<span class="text-ink-mute">— Private repositories are supported on paid plans.</span>
+				<a href={h.href} class="text-ink underline">Plan & billing</a>
+			</p>
+		{/each}
+		{#if visible.length > 0}
 		<ul class="flex flex-col gap-2">
-			{#each repos as r (r.repository_id)}
+			{#each visible as r (r.repository_id)}
 				<li class="flex flex-col gap-2 rounded border border-line p-3 md:flex-row md:items-center md:justify-between">
 					<div class="flex flex-col gap-1">
 						<span class="text-sm text-ink">{r.name ?? r.repo_key}</span>
@@ -184,6 +216,9 @@
 				</li>
 			{/each}
 		</ul>
+		{:else if query}
+			<p class="text-sm text-ink-mute">No repository matches “{filter.values.q}”.</p>
+		{/if}
 	{/if}
 </section>
-</Screen>
+</ScreenShell>

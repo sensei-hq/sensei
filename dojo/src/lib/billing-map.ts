@@ -1,17 +1,21 @@
 // Map the live `/v1/…/billing` response onto the Plan & billing screen's
-// KitBilling shape. Only what the billing plane knows is shown: the billable seat
-// count (dojo.tenant_seat_usage) and, when a billing account exists, its plan and
-// renewal date. With no account the org is on Free (D46). There is no price until
-// a payment provider exists (D75), and no read-only count or invoice (D-BILLING) —
-// never a mockup's (#106).
+// KitBilling shape, as the approved mockup (coord/mockups/L4-billing-r3) draws it.
+// Only what the billing plane knows is shown: the billable seats with their names
+// (dojo.tenant_seat_usage + the identity join) and, when a billing account exists,
+// its plan and state. With no account the org is on Free (D46). There is no price
+// until a payment provider exists (D75), and no invoice (D-BILLING) — never a
+// mockup's (#106).
 //
-// An account counts only while it is current — status active or trialing and
-// inside its period, the rule dojo.all_my_repositories applies — so this screen
-// and the repositories it governs never disagree (M5). A plan key sensei does not
-// know is said as an error, never shown as Free. Pure, so it unit-tests without a DOM.
+// Each account state carries one notice with its next step, and agrees with
+// dojo.all_my_repositories (M5): the status is checked before the period, so past
+// due stays Pro (tagged) while its private repositories are hidden; canceled or a
+// lapsed period is Free again, and both say the repositories come back as they were
+// (D88). A plan key sensei does not know is said as an error, never shown as Free.
+// Pure, so it unit-tests without a DOM.
 import type { KitBilling, KitBillingProblem } from './components/kit/types';
 import type { BillingResponse } from './admin-data';
 import { BILLING_TIERS } from './billing-catalog';
+import { countedSeats } from './billing-view';
 
 /** ISO date → a short "Aug 1" renewal label; passthrough if unparseable.
  *  Formatted in UTC so the label matches the stored calendar day regardless of
@@ -30,54 +34,108 @@ function planId(plan: string): 'free' | 'pro' | null {
 	return null;
 }
 
-const CURRENT = new Set(['active', 'trialing']);
-const HIDDEN = "this organization's private repositories stay hidden.";
+type PlanId = 'free' | 'pro';
 
-/** Why a paid account is not current, or `null` when it is (all_my_repositories' rule). */
-function lapse(account: NonNullable<BillingResponse['account']>, now: Date): string | null {
-	if (!CURRENT.has(account.status)) return `The billing account is ${account.status.replace(/_/g, ' ')}, so ${HIDDEN}`;
-	const start = account.period_start ? new Date(account.period_start) : null;
-	const end = account.period_end ? new Date(account.period_end) : null;
-	if (start && now < start) return `The billing period starts ${shortDate(account.period_start!)}, so until then ${HIDDEN}`;
-	if (end && now > end) return `The billing period ended ${shortDate(account.period_end!)}, so ${HIDDEN}`;
-	return null;
-}
+const BACK = 'They come back as they were once Pro is renewed.';
+const RENEW = 'Renew once payments are connected.';
+const HIDDEN_AGAIN = "this organization's private repositories are hidden again.";
 
-/** The screen built from the live response: the seat count always, the plan,
- *  its renewal and the current plan from the account — Free without one, or
- *  when a paid account has lapsed. Pure; `now` for the period check. */
-export function toKitBilling(res: BillingResponse, now: Date = new Date()): KitBilling {
-	const account = res.account;
-	let id: 'free' | 'pro' | null = account ? planId(account.plan) : 'free';
-	let problem: KitBillingProblem | null = null;
-	if (account && id === null) {
-		problem = {
-			tone: 'fault',
-			title: "This dōjō's plan isn't one sensei knows",
-			detail: `The billing account says "${account.plan}".`,
-			remedy: 'Update Sensei. If it still shows, the billing account needs fixing.'
-		};
-	} else if (account && id === 'pro') {
-		const why = lapse(account, now);
-		if (why) {
-			id = 'free';
-			problem = { tone: 'refusal', title: 'The Pro plan is not active', detail: why, remedy: 'Plan changes open once payments are connected.' };
-		}
-	}
-	const current = id !== null && !(problem && problem.tone === 'refusal');
+const tierName = (id: PlanId) => BILLING_TIERS.find((t) => t.id === id)?.name ?? null;
+
+/** One state of the screen: which plan is current, its tag and notice. */
+function screenFor(
+	res: BillingResponse,
+	id: PlanId | null,
+	tag: KitBilling['tag'],
+	problem: KitBillingProblem | null,
+	renews: string | null = null
+): KitBilling {
 	return {
-		plan: id === null ? null : (BILLING_TIERS.find((t) => t.id === id)?.name ?? null),
+		plan: id === null ? null : tierName(id),
 		seatsActive: res.usage.seats_used,
 		seatsReadonly: null,
-		renews: current && account?.period_end ? shortDate(account.period_end) : null,
+		renews,
 		tiers: BILLING_TIERS.map((t) => ({ ...t, current: t.id === id })),
 		invoices: [],
-		problem
+		problem,
+		tag,
+		badge: id === null ? 'Plan unknown' : tierName(id),
+		showPlans: id !== null,
+		seats: countedSeats(res.usage.billable_users)
 	};
 }
 
+/** Why a Pro account with a current status is outside its period, or `null`. */
+function outsidePeriod(account: NonNullable<BillingResponse['account']>, now: Date): string | null {
+	if (account.period_start && now < new Date(account.period_start)) return `The billing period starts ${shortDate(account.period_start)}`;
+	if (account.period_end && now > new Date(account.period_end)) return `The billing period ended ${shortDate(account.period_end)}`;
+	return null;
+}
+
+/** The lapsed notice (canceled, or out of period): Free again, back as they were. */
+function lapsed(why: string, code: string): KitBillingProblem {
+	return { tone: 'refusal', title: 'Pro is not active', detail: `${why}, so ${HIDDEN_AGAIN} ${BACK}`, remedy: RENEW, code };
+}
+
+/** The screen built from the live response. Pure; `now` for the period check. */
+export function toKitBilling(res: BillingResponse, now: Date = new Date()): KitBilling {
+	const account = res.account;
+	if (!account) return screenFor(res, 'free', 'Current plan', null);
+	const id = planId(account.plan);
+	if (id === null) {
+		return screenFor(res, null, null, {
+			tone: 'fault',
+			title: "This organization's plan could not be read",
+			detail: `The billing account says "${account.plan}", which isn't a plan sensei knows.`,
+			remedy: 'Ask whoever set up billing to correct the plan key. Until then the plan is unknown.',
+			code: 'unknown_plan'
+		});
+	}
+	if (id === 'free') return screenFor(res, 'free', 'Current plan', null);
+	// The status first, as all_my_repositories checks it: past due is still Pro.
+	if (account.status === 'past_due') {
+		return screenFor(res, 'pro', 'Past due', {
+			tone: 'refusal',
+			title: 'Pro payment is past due',
+			detail: "This organization's private repositories are hidden until the payment is settled. They come back as they were once it is paid.",
+			remedy: 'Settle the payment once payments are connected.',
+			code: 'not_subscribed'
+		});
+	}
+	if (account.status !== 'active' && account.status !== 'trialing') {
+		return screenFor(res, 'free', 'Current plan', lapsed(`The billing account is ${account.status.replace(/_/g, ' ')}`, 'not_subscribed'));
+	}
+	const out = outsidePeriod(account, now);
+	if (out) return screenFor(res, 'free', 'Current plan', lapsed(out, 'subscription_expired'));
+	if (account.status === 'trialing') {
+		// A trial ends; it never "renews" (L4).
+		const ends = account.period_end ? ` — ends ${shortDate(account.period_end)}` : '';
+		return screenFor(res, 'pro', 'Trial', {
+			tone: 'normal',
+			title: `Pro trial${ends}`,
+			detail: 'Private repositories sync during the trial.',
+			remedy: 'Nothing to do now. Plan changes open once payments are connected.',
+			code: 'trialing'
+		});
+	}
+	const renews = account.period_end ? shortDate(account.period_end) : null;
+	return screenFor(
+		res,
+		'pro',
+		'Current plan',
+		{
+			tone: 'normal',
+			title: 'Pro is attached',
+			detail: `Private repositories are on and sync at each member's next sync pass.${renews ? ` Renews ${renews}.` : ''}`,
+			remedy: 'Nothing to do.',
+			code: 'active'
+		},
+		renews
+	);
+}
+
 /** The screen with nothing loaded (another section, or a failed read whose
- *  error the page shows): no plan, no seats, no invoices. */
+ *  error the page shows): no plan, no tag, no seats, no plan cards — never Free. */
 export function noBilling(): KitBilling {
 	return {
 		plan: null,
@@ -86,6 +144,10 @@ export function noBilling(): KitBilling {
 		renews: null,
 		tiers: BILLING_TIERS,
 		invoices: [],
-		problem: null
+		problem: null,
+		tag: null,
+		badge: null,
+		showPlans: false,
+		seats: []
 	};
 }
