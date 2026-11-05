@@ -82,6 +82,8 @@ export interface RelayFilter {
 
 export interface RelayCrew {
   id: string;
+  /** The crew's repository; the main window groups its rows under it (L0 ruling, r2). */
+  repo_key: string;
   /** Optional: a crew may work on repositories that belong to no workspace. */
   workspace_id: string | null;
   goal: string | null;
@@ -343,13 +345,15 @@ export interface RelayFinding {
   line: number | null;
 }
 
-/** `message.props.to` (L0 ruling 3): a lane by its uuid; the screen shows its code. */
+/** `message.props.to` (L0 ruling 3; Q2's person target is accepted for slice 2). */
 export type RelayMessageTo =
   | { kind: 'coordinator' }
   | { kind: 'lane'; lane_id: string }
-  | { kind: 'everyone' };
+  | { kind: 'everyone' }
+  | { kind: 'person' };
 
-export type RelaySurface = 'desktop' | 'dojo';
+/** Where an action was taken: the desktop, the dōjō, or a lane (Q12). */
+export type RelaySurface = 'desktop' | 'dojo' | 'lane';
 
 /** Props by action kind, exactly the lanes-data table. */
 export interface RelayActionProps {

@@ -136,6 +136,7 @@ export function completed(over: Partial<RelayCompletedTask> = {}): RelayComplete
 export function crew(over: Partial<RelayCrew> = {}): RelayCrew {
   return {
     id: CREW_ID,
+    repo_key: REPO,
     workspace_id: 'w1',
     goal: 'Ship relay slice 1',
     status: 'running',
@@ -222,7 +223,7 @@ export const fiveLaneCrew = () =>
  *  belongs to no workspace. Lane codes differ so each row is addressable. */
 export const mainNow = (): RelayNow =>
   now({
-    crews: [crew(), crew({ id: LOOSE_CREW_ID, workspace_id: null, goal: 'Try the scratch idea' })],
+    crews: [crew(), crew({ id: LOOSE_CREW_ID, repo_key: LOOSE_REPO, workspace_id: null, goal: 'Try the scratch idea' })],
     facets: { repos: [REPO, LOOSE_REPO], workspaces: [{ id: 'w1', name: 'Sensei' }] },
     lanes: [
       coordinatorLane(),

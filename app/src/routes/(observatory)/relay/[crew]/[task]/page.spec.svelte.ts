@@ -60,6 +60,7 @@ const looseTask = (): RelayTaskView => {
       workspace_id: null,
       ticket: null,
     },
+    run: { ...view.run, repository: 'jerrythomas/scratch' },
   };
 };
 
@@ -97,7 +98,8 @@ describe('Observatory · Relay · task', () => {
   it.skip('pending: relay-screen — a task on a repository with no workspace draws, naming its repository', async () => {
     const { c } = await open(F.LOOSE_CREW_ID, 't-scratch', F.ok(looseTask()));
     expect(text(one(c, '[data-task-title]'))).toBe('Prototype the scratch parser');
-    expect(text(one(c, '[data-task-facts]'))).toContain('jerrythomas/scratch');
+    // The repository is in Run details (CONTRACT §1e.3), not the facts line (§1e.2).
+    expect(text(c)).toContain('jerrythomas/scratch');
     expect(text(c)).not.toMatch(/undefined|null/);
   });
 });

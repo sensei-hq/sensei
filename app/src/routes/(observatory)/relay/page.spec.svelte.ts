@@ -110,9 +110,24 @@ describe('Observatory · Relay — every crew, workspace or not', () => {
     expect(all(lanes, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L0', 'L1', 'L8', 'L9']);
     const loose = need(one(lanes, '[data-lane-row="L9"]'), 'the L9 row');
     expect(text(loose)).toContain('Prototype the scratch parser');
-    expect(text(one(loose, '[data-lane-repo]'))).toContain('jerrythomas/scratch');
+    const looseGroup = need(one(c, `[data-crew-group="${F.LOOSE_CREW_ID}"]`), 'the loose crew’s group');
+    expect(text(one(looseGroup, '[data-crew-heading]'))).toContain('jerrythomas/scratch');
     expect(one(loose, `a[href="/relay/${F.LOOSE_CREW_ID}/t-scratch"]`)).not.toBeNull();
     expect(one(c, `[data-lane-row="L1"] a[href="/relay/${F.CREW_ID}/t-structure"]`)).not.toBeNull();
+  });
+
+  it.skip('pending: relay-screen — lane rows are grouped by crew, and each group’s heading names its repository', async () => {
+    const { c } = await open();
+    const groups = all(c, '[data-crew-group]');
+    expect(groups.map((g) => g.getAttribute('data-crew-group'))).toEqual([F.CREW_ID, F.LOOSE_CREW_ID]);
+
+    const sensei = need(one(c, `[data-crew-group="${F.CREW_ID}"]`), 'the workspace crew’s group');
+    expect(text(one(sensei, '[data-crew-heading]'))).toContain('github.com/sensei-hq/sensei');
+    expect(all(sensei, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L0', 'L1']);
+
+    const loose = need(one(c, `[data-crew-group="${F.LOOSE_CREW_ID}"]`), 'the loose crew’s group');
+    expect(text(one(loose, '[data-crew-heading]'))).toContain('github.com/jerrythomas/scratch');
+    expect(all(loose, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L8', 'L9']);
   });
 
   it.skip('pending: relay-screen — the context counts the crews it shows', async () => {
