@@ -969,6 +969,52 @@ async fn only_rows_provably_the_persons_are_pushable_user_metrics() {
     );
 }
 
+/// F-E: the user window skips a row whose backoff has not elapsed — a waiting
+/// row holds no share of the push limit — and offers it again once the backoff
+/// elapses. The held-back count does NOT count waiting rows: it counts rows
+/// that are not provably the person's, and a waiting row may be perfectly
+/// provable. (So during a backoff pushed + held + waiting = every user row in
+/// play, not pushed + held.)
+#[tokio::test]
+#[ignore = "pending: sync-hardening"]
+async fn the_user_window_skips_a_row_in_backoff_and_reoffers_it_after() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture_at(&s, &uniq, "private").await; // one no-identity user row
+    let key = format!("test/bare-{uniq}");
+    let persona = s.upsert_persona(&format!("_test:userbackoff:{uniq}"), true).await.unwrap();
+    // Backoff: not yet elapsed.
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics SET next_attempt_at = now() + interval '1 hour' \
+          WHERE repository_id = $1",
+    )
+    .bind(rid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let waiting = s.unpushed_user_metric_rows(&persona, &[&key], &[&key], 500).await.unwrap();
+    let held = s.unprovable_user_metric_count(&persona, &[&key], &[&key]).await.unwrap();
+    assert!(waiting.is_empty(), "a row in backoff waits its turn, offered: {waiting:?}");
+    assert_eq!(held, 0, "a waiting-but-provable row is not held back as unprovable");
+    // The backoff elapses: the row is offered again.
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics SET next_attempt_at = now() - interval '1 minute' \
+          WHERE repository_id = $1",
+    )
+    .bind(rid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let offered = s.unpushed_user_metric_rows(&persona, &[&key], &[&key], 500).await.unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(persona)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+    assert_eq!(offered.len(), 1, "elapsed backoff re-offers the user row");
+}
+
 /// #290: a workspace's file count is the distinct files its nodes sit in. It
 /// counted `kind = 'file'` nodes, which the indexer no longer writes — 0 files,
 /// so `rework_density` had no denominator and stopped being written.

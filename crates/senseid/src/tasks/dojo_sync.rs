@@ -2669,9 +2669,9 @@ mod tests {
             PartialRejected,
             CountShortfall,
         }
-        async fn run_shape(pg: &PgStore, shape: Shape) -> String {
-            let (pid_a, key_a, metric_a) = seed(pg).await;
-            let (pid_b, key_b, _) = seed(pg).await;
+        fn run_shape(rt: &tokio::runtime::Runtime, pg: &PgStore, shape: Shape) -> String {
+            let (pid_a, key_a, metric_a) = rt.block_on(seed(pg));
+            let (pid_b, key_b, _) = rt.block_on(seed(pg));
             let push = match shape {
                 Shape::PartialRejected => IngestResult {
                     accepted: 0,
@@ -2697,7 +2697,6 @@ mod tests {
                 push: Some(Ok(push)),
                 ..Default::default()
             };
-            let rt = current_thread_rt();
             let logs = captured_logs(|| {
                 rt.block_on(sync_persona(pg, "ztest-slot", SECRET_TOK, &plane)).unwrap();
             });
@@ -2711,14 +2710,14 @@ mod tests {
 
         let rt = current_thread_rt();
         let pg = rt.block_on(PgStore::connect_test()).unwrap();
-        let partial = rt.block_on(run_shape(&pg, Shape::PartialRejected));
+        let partial = run_shape(&rt, &pg, Shape::PartialRejected);
         assert!(
-            partial.contains("marking nothing"),
+            partial.contains(" WARN ") && partial.contains("marking nothing"),
             "partial-rejected legacy must warn; logs:\n{partial}"
         );
-        let shortfall = rt.block_on(run_shape(&pg, Shape::CountShortfall));
+        let shortfall = run_shape(&rt, &pg, Shape::CountShortfall);
         assert!(
-            shortfall.contains("marking nothing"),
+            shortfall.contains(" WARN ") && shortfall.contains("marking nothing"),
             "count shortfall must warn; logs:\n{shortfall}"
         );
     }

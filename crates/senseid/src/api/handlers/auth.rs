@@ -1560,6 +1560,7 @@ mod account_guard_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     // #294: two sign-ins in flight (two personas, or a retry) each keep their own
     // verifier and are finished by their own callback, in either order.
@@ -2048,13 +2049,21 @@ mod tests {
 
     // F2/M1: a refresh token is never sent to a registry that did not mint
     // it. Credentials minted at A while the dōjō is now B fail BEFORE any
-    // refresh request — a refresh outcome (Network, Rejected) could never
-    // name both registries, so the message proves no request went out.
-    // Real keychain: macOS-gated, uuid persona, cleared afterwards.
+    // refresh request — with a distinct sign-in-needed error, and the stored
+    // session left alone (a refusal is not a rejection: the session is valid,
+    // just not for this dōjō). The stub proves no request went out, on
+    // loopback, so the test never touches a real dōjō. Real keychain:
+    // macOS-gated, uuid persona, cleared afterwards.
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     #[ignore = "pending: sync-hardening"]
+    #[serial(dojo_url_env)]
     async fn a_refresh_token_is_never_sent_to_a_registry_that_did_not_mint_it() {
+        use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
+        // 500: an unwell dōjō, never a dead credential — so today this reads
+        // Unreachable (transient), which is exactly the misclassification.
+        let stub = StubDojo::start(500, r#"{"error":"stub"}"#);
+        let _ambient = TestDojoUrl::set(&stub.url);
         let persona = uuid::Uuid::new_v4().to_string();
         session::store_test_credentials(
             &persona,
@@ -2063,35 +2072,131 @@ mod tests {
         )
         .unwrap();
         let err = live_access_token(&persona).await.unwrap_err();
+        // Kept, not cleared: the session is good, only elsewhere.
+        let kept = session::load_refresh_token(&persona);
         session::clear_session(&persona).unwrap();
         let msg = err.to_string();
-        let current = crate::dojo_client::settings::dojo_url();
+        assert_eq!(stub.hits(), 0, "the refusal happens before any refresh");
         assert!(
-            msg.contains("https://minted.invalid") && msg.contains(&current),
+            err.needs_sign_in(),
+            "minted-elsewhere asks for a sign-in, never a retry, got: {msg}"
+        );
+        assert!(
+            msg.contains("https://minted.invalid") && msg.contains(&stub.url),
             "the refusal must name the minter AND the current dōjō, got: {msg}"
         );
-        assert!(
-            !matches!(err, AuthError::SignedOut),
-            "a minted-elsewhere session is not a silent sign-out: {msg}"
-        );
+        assert!(kept.is_ok(), "the stored session is left alone");
     }
 
     // F2/M1 legacy: credentials stored before registries were recorded fail
-    // closed — a distinct sign-in-again error, never a refresh attempt, never
-    // a silent SignedOut. Real keychain: macOS-gated, uuid persona, cleared.
+    // closed — a distinct sign-in-again error, never a refresh attempt, and
+    // the item kept (there is no reason to clear it). Real keychain:
+    // macOS-gated, uuid persona, cleared afterwards.
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
     #[ignore = "pending: sync-hardening"]
+    #[serial(dojo_url_env)]
     async fn legacy_credentials_without_a_minter_ask_for_a_fresh_sign_in() {
+        use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
+        let stub = StubDojo::start(500, r#"{"error":"stub"}"#);
+        let _ambient = TestDojoUrl::set(&stub.url);
         let persona = uuid::Uuid::new_v4().to_string();
         session::store_test_credentials(&persona, "rt-fake-not-a-token", None).unwrap();
         let err = live_access_token(&persona).await.unwrap_err();
+        let kept = session::load_refresh_token(&persona);
         session::clear_session(&persona).unwrap();
         let msg = err.to_string();
-        assert!(
-            !matches!(err, AuthError::SignedOut),
-            "legacy credentials fail closed with a distinct error, got: {msg}"
-        );
+        assert_eq!(stub.hits(), 0, "the refusal happens before any refresh");
+        assert!(err.needs_sign_in(), "legacy credentials fail closed with a sign-in, got: {msg}");
         assert!(msg.contains("sign in"), "the remedy is one fresh sign-in, got: {msg}");
+        assert!(kept.is_ok(), "the legacy item is kept, not cleared");
+    }
+
+    // F-B status pin: `GET /api/auth/status` reports the refusal as
+    // needs-sign-in with the remedy, naming the current dōjō — the daemon
+    // half of "Settings · Dōjō says so" (the screen itself is Design's).
+    // State construction mirrors tasks::handlers::scan::make_ctx.
+    async fn status_state() -> AppState {
+        use crate::api::state::SharedState;
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        std::sync::Arc::new(SharedState {
+            task_queue: std::sync::Arc::new(crate::tasks::queue::TaskQueue::new()),
+            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
+            gateway: crate::api::gateway_init::init_gateway_test().await,
+            event_tx,
+            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            provisioning: None,
+            diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+                crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+            )),
+            trackers: Default::default(),
+        })
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[ignore = "pending: sync-hardening"]
+    #[serial(dojo_url_env)]
+    async fn status_reports_a_minted_elsewhere_session_as_needs_sign_in() {
+        use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
+        let stub = StubDojo::start(500, r#"{"error":"stub"}"#);
+        let _ambient = TestDojoUrl::set(&stub.url);
+        let persona = uuid::Uuid::new_v4().to_string();
+        session::store_test_credentials(
+            &persona,
+            "rt-fake-not-a-token",
+            Some("https://minted.invalid"),
+        )
+        .unwrap();
+        let state = status_state().await;
+        let got = status(
+            State(state),
+            Query(PersonaQuery { persona: Some(persona.clone()), github_login: None }),
+        )
+        .await
+        .0;
+        session::clear_session(&persona).unwrap();
+        assert_eq!(stub.hits(), 0, "status must not send the token elsewhere either");
+        assert_eq!(
+            got["needsSignIn"],
+            serde_json::json!(true),
+            "status asks for a sign-in, got: {got}"
+        );
+        assert!(
+            got["error"].as_str().unwrap_or_default().contains("sign in"),
+            "status names the remedy, got: {got}"
+        );
+        assert_eq!(got["dojo"], serde_json::json!(stub.url), "status names the current dōjō");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[ignore = "pending: sync-hardening"]
+    #[serial(dojo_url_env)]
+    async fn status_reports_legacy_credentials_as_needs_sign_in() {
+        use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
+        let stub = StubDojo::start(500, r#"{"error":"stub"}"#);
+        let _ambient = TestDojoUrl::set(&stub.url);
+        let persona = uuid::Uuid::new_v4().to_string();
+        session::store_test_credentials(&persona, "rt-fake-not-a-token", None).unwrap();
+        let state = status_state().await;
+        let got = status(
+            State(state),
+            Query(PersonaQuery { persona: Some(persona.clone()), github_login: None }),
+        )
+        .await
+        .0;
+        session::clear_session(&persona).unwrap();
+        assert_eq!(stub.hits(), 0, "status must not send the token elsewhere either");
+        assert_eq!(
+            got["needsSignIn"],
+            serde_json::json!(true),
+            "status asks for a sign-in, got: {got}"
+        );
+        assert!(
+            got["error"].as_str().unwrap_or_default().contains("sign in"),
+            "status names the remedy, got: {got}"
+        );
+        assert_eq!(got["dojo"], serde_json::json!(stub.url), "status names the current dōjō");
     }
 }

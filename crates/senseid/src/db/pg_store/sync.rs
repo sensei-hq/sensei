@@ -997,3 +997,32 @@ mod offered_workspace_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod shortfall_tracker_tests {
+    use super::*;
+
+    // L2: the shortfall streak is per ROW, not per (repo, metric) pair — one
+    // date confirmed every cycle must not clear another date's streak. (Not
+    // moot under F-E's backoff: the backoff skips re-offering a loud row,
+    // while the tracker counts unconfirmed cycles — orthogonal mechanisms.)
+    #[test]
+    fn a_confirmed_date_does_not_clear_another_dates_streak() {
+        let day = |d: u32| ShortfallKey {
+            repo_key: "r".into(),
+            metric: "m".into(),
+            scope: "repo".into(),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap(),
+            grain: "daily".into(),
+            commit_sha: None,
+        };
+        let (confirmed, never) = (day(1), day(2));
+        let mut t = ShortfallTracker::default();
+        let mut n = 0;
+        for _ in 0..ShortfallTracker::LOUD_AFTER {
+            t.record_clean(&confirmed);
+            n = t.record_shortfall(&never);
+        }
+        assert_eq!(n, ShortfallTracker::LOUD_AFTER, "the unconfirmed date still goes loud at 3");
+    }
+}
