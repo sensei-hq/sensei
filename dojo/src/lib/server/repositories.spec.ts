@@ -436,6 +436,7 @@ describe('listMyRepositories — what a human is shown', () => {
 		name: 'api',
 		tenant: 'organization/acme',
 		owning_org: 'acme',
+		origin: 'organization',
 		principal_id: ALICE,
 		forge_visibility: 'public',
 		authority: 'user',
@@ -535,6 +536,10 @@ describe('listMyRepositories — what a human is shown', () => {
 		const out = await listMyRepositories(db as never);
 		expect(out.map((r) => r.repo_key)).toEqual(['github.com/acme/secret', 'github.com/acme/api']);
 		expect(out[0].entitlement_refusal).toBe('not_subscribed');
+		// And the one load marks them: the hidden row carries the flag, the
+		// visible one does not. Both screens read this flag.
+		expect(out[0].billing_hidden).toBe(true);
+		expect(out[1].billing_hidden).toBe(false);
 	});
 
 	it('selects entitlement_refusal (and origin): the predicate reads columns, not the fixture', async () => {
@@ -582,9 +587,7 @@ describe('isBillingHiddenRepo — the hidden set, decided once', () => {
 		} as Parameters<typeof isBillingHiddenRepo>[0];
 	}
 
-	// RED against the phase-A stub; step 2 implements the body and enables
-	// this block. Skipped, never live-red (G3).
-	describe.skip('pending: WP8 — hides billing-refused org-private rows', () => {
+	describe('hides billing-refused org-private rows', () => {
 		it.each([['unclaimed'], ['not_subscribed'], ['subscription_expired']])(
 			'hides an org-private repository refused %s',
 			(refusal) => {

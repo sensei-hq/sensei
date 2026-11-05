@@ -28,6 +28,7 @@ function repo(over: Partial<MyRepoWire> = {}): MyRepoWire {
 		last_synced_at: null,
 		metric_rows: 0,
 		graph_branches: [],
+		billing_hidden: false,
 		...over
 	};
 }

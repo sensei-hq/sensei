@@ -296,6 +296,10 @@ export interface MyRepository {
 	/** The branches whose code graph this repository shares. Empty → the graph
 	 *  does not sync, never a guessed `main`. */
 	graph_branches: GraphBranch[];
+	/** Billing hides this row AND counts it on the member line (WP8 F5).
+	 *  Computed here, at the one load, by `isBillingHiddenRepo` — no screen
+	 *  re-derives the set, so the list and the count cannot disagree. */
+	billing_hidden: boolean;
 }
 
 /** The columns a screen needs. Named rather than `*` so a view rename fails here
@@ -317,12 +321,25 @@ const MY_REPO_COLUMNS =
  * Hidden rows still reach the load (`listMyRepositories` filters nothing):
  * hidden is presentation, and the count is impossible if the read drops them.
  */
+/** The entitlement refusals that hide an org-private repository from Billing's
+ *  list and count it on the member line instead (D88: no grace — a lapsed
+ *  period hides the day it lapses). Capture refusals are not billing states
+ *  and never hide. */
+const BILLING_HIDDEN_REFUSALS: ReadonlySet<string> = new Set([
+	'unclaimed',
+	'not_subscribed',
+	'subscription_expired'
+]);
+
 export function isBillingHiddenRepo(
 	row: Pick<MyRepository, 'origin' | 'forge_visibility' | 'entitlement_refusal'>
 ): boolean {
-	// Phase-A stub (WP8 tests r2): the spec below pins the truth table, the
-	// body lands with the phase-B implementation.
-	return false;
+	return (
+		row.origin === 'organization' &&
+		row.forge_visibility === 'private' &&
+		row.entitlement_refusal !== null &&
+		BILLING_HIDDEN_REFUSALS.has(row.entitlement_refusal)
+	);
 }
 
 /**
@@ -377,7 +394,11 @@ export async function listMyRepositories(db: DojoClient): Promise<MyRepository[]
 		),
 		graphBranchesByRepo(db)
 	]);
-	return repos.map((r) => ({ ...r, graph_branches: branchesOf.get(r.repository_id) ?? [] }));
+	return repos.map((r) => ({
+		...r,
+		graph_branches: branchesOf.get(r.repository_id) ?? [],
+		billing_hidden: isBillingHiddenRepo(r)
+	}));
 }
 
 /** What `dojo.set_graph_branch` reports — the branch's tracking after the write. */

@@ -17,9 +17,9 @@ set search_path to dojo, extensions;
 -- SHARING IS TWO QUESTIONS, AND THIS VIEW ANSWERS BOTH.
 --
 --   may_share  ENTITLEMENT — may it be shared at all? Keys on the FORGE's
---              visibility and the tenant's subscription. Never on who owns the
---              tenant: `public` is free for anyone, `private` is paid for by
---              everyone, including a solo developer's own repository.
+--              visibility, the tenant's subscription, and OWNERSHIP: a
+--              personal tenant's repositories are free (D46). `public` is
+--              free for anyone; `private` is paid for by organisations.
 --   elected    ELECTION — did whoever holds authority actually choose it?
 --   sync_enabled = may_share AND elected
 --
@@ -172,15 +172,12 @@ axes as (
     select mr.*
 
          -- AUTHORITY — derived from (origin, forge visibility), never stored on
-         -- the repository. Authority follows who owns the code and who pays: an
-         -- organisation's PRIVATE repositories are its own, on its own
-         -- subscription; everything else — personal repos of either visibility,
-         -- and an organisation's PUBLIC repos — is the member's call, because the
-         -- org is not paying for open source and a contributor's metrics are their
-         -- own.
+         -- the repository. Authority follows who owns the code: an
+         -- organisation's repositories are its own, public or private (D46 —
+         -- an admin's election on a public repo binds every member); a
+         -- personal tenant's are the member's call.
          , case when mr.forge_visibility is null then null::dojo.share_authority
-                when mr.origin = 'organization'
-                 and mr.forge_visibility <> 'public' then 'organization'::dojo.share_authority
+                when mr.origin = 'organization'  then 'organization'::dojo.share_authority
                 else 'user'::dojo.share_authority
            end as authority
 
@@ -202,11 +199,11 @@ axes as (
          --    Verified live: 3 tenants, 0 billing rows, and the composite ALLOWED
          --    an org-mandated private repository on no subscription at all.
          --
-         -- NOTE what is NOT here: no `origin = 'personal' → ALLOW`. Entitlement
-         -- keys on VISIBILITY, not on who owns the tenant. An earlier draft's
-         -- unconditional personal-ALLOW would have hosted every personal private
-         -- repository free — the common case, since no personal tenant carries a
-         -- billing row.
+         -- NOTE what IS here: `origin = 'personal' → ALLOW`, below the capture
+         -- term and above billing (D46). Entitlement keys on visibility for
+         -- organisations, on ownership for personal tenants: a solo
+         -- developer's own private repository is free, and a personal billing
+         -- row — present or not, in any state — refuses nothing.
          --
          -- PHASE 2 terms sit COMMENTED at their precedence positions.
          -- `claimed_at` is now live and its term is enabled below. The seat term
@@ -216,6 +213,12 @@ axes as (
          , case
              when mr.forge_visibility is null              then mr.capture_refusal
              when mr.forge_visibility = 'public'           then null   -- entitled, free
+             -- A personal dōjō is free (D46): the person IS the tenant, so no
+             -- subscription is owed. BELOW the capture term — a stale or
+             -- unknown capture refuses whoever owns the tenant — and above
+             -- everything billing: a personal billing row in any state
+             -- refuses nothing.
+             when mr.origin = 'personal'                   then null   -- entitled, free
              -- ABOVE the billing terms, and that ordering is the point: an
              -- unclaimed tenant CANNOT hold a billing account, so testing billing
              -- first would always answer `not_subscribed` — telling the reader to
@@ -285,38 +288,51 @@ axes as (
          --   * the ORGANISATION's (private org code): absent is NOT ELECTED — an
          --     org that has not decided has not mandated, and an individual may
          --     not publish the company's private code by default;
-         --   * the USER's (public code, and everything personal): absent is
-         --     ELECTED. A connected identity's repositories sync without a step
-         --     (#301, user decision 2026-10-20); an explicit `elected = false` row
-         --     is the opt-out, and it holds.
+         --   * the ORGANISATION's PUBLIC code: absent is ELECTED
+         --     (`coalesce(org_elected, true)`, D46) — the org's own election,
+         --     never a member's, and never the private share policy;
+         --   * the USER's (everything personal): absent is ELECTED. A connected
+         --     identity's repositories sync without a step (#301, user decision
+         --     2026-10-20); an explicit `elected = false` row is the opt-out,
+         --     and it holds.
          , case when mr.forge_visibility is null then false
                 when mr.origin = 'organization' and mr.forge_visibility <> 'public'
                      then coalesce(mr.org_elected, mr.private_repos_shared, false)
+                when mr.origin = 'organization'
+                     then coalesce(mr.org_elected, true)
                 else coalesce(mr.user_elected, true)
            end as elected
 
          -- May THIS member change it, right now? The view is already
          -- per-principal, so this answers "should the UI show a toggle" directly.
          --
-         -- ADMIN ONLY on org-private, not lead: what would be changed is the
-         -- organisation's POLICY, and `dojo.member_role` assigns policy, identity
-         -- and provisioning to `admin`, not to a lead. Every seeded remedy for an org-authority refusal reads "ask
-         -- an admin"; letting a lead flip it would make that copy a lie.
+         -- ADMIN ONLY on organisation repositories, not lead (D46): what would
+         -- be changed is the organisation's election or policy, and
+         -- `dojo.member_role` assigns policy, identity and provisioning to
+         -- `admin`, not to a lead. Every seeded remedy for an org-authority
+         -- refusal reads "ask an admin"; letting a lead flip it would make
+         -- that copy a lie. Personal repositories are always the member's.
          , case when mr.forge_visibility is null                          then false
-                when mr.origin = 'personal'
-                  or mr.forge_visibility = 'public'                       then true
-                when mr.role = 'admin'                                    then true
+                when mr.origin = 'personal'                               then true
+                when mr.origin = 'organization' and mr.role = 'admin'      then true
                 else false
            end as configurable_by_me
 
          -- WHO decided, and WHEN — for the authority that actually applies. A row
          -- recording `elected = false` is still a decision, and saying so is the
          -- difference between "your org turned this off" and "nobody has looked".
+         -- On an org PUBLIC repository only the org's own election counts: a
+         -- policy about private repositories never configured a public one.
          , case when mr.forge_visibility is null then null::dojo.share_authority
                 when mr.origin = 'organization' and mr.forge_visibility <> 'public'
                      then case when mr.org_elected          is not null
                                     then 'organization'::dojo.share_authority
                                when mr.private_repos_shared is not null
+                                    then 'organization'::dojo.share_authority
+                               else null::dojo.share_authority
+                          end
+                when mr.origin = 'organization'
+                     then case when mr.org_elected is not null
                                     then 'organization'::dojo.share_authority
                                else null::dojo.share_authority
                           end
@@ -329,6 +345,10 @@ axes as (
                 when mr.origin = 'organization' and mr.forge_visibility <> 'public'
                      then case when mr.org_elected          is not null then mr.org_elected_at
                                when mr.private_repos_shared is not null then mr.policy_set_at
+                               else null
+                          end
+                when mr.origin = 'organization'
+                     then case when mr.org_elected is not null then mr.org_elected_at
                                else null
                           end
                 else case when mr.user_elected is not null then mr.user_elected_at else null end
@@ -418,16 +438,16 @@ A DISABLED membership yields nothing: losing access to a tenant must remove its
 repositories from your list, not merely stop new ones appearing.
 
 TWO VERDICTS, never one boolean. may_share is ENTITLEMENT (may it be shared —
-forge visibility and subscription, never who owns the tenant); elected is
+forge visibility, subscription, and ownership: personal is free); elected is
 ELECTION (did whoever holds authority choose it); sync_enabled is both. A refusal
 always names refused_by (entitlement | election) and a reason_code, because "off"
 that does not say which question refused sends the reader hunting for the wrong
 fix.
 
-AUTHORITY is derived, never stored: an organisation''s PRIVATE repositories are
-the organisation''s (mandatory — the member cannot override it in either
-direction); everything else is the member''s. An uncaptured or expired forge
-visibility yields NO authority, NO election and NO sync.
+AUTHORITY is derived, never stored: an organisation''s repositories are the
+organisation''s, public or private (mandatory — the member cannot override it
+in either direction); a personal tenant''s are the member''s. An uncaptured or
+expired forge visibility yields NO authority, NO election and NO sync.
 
 reason/remedy/reason_actor are joined LEFT from dojo.reason_codes and are
 REPORTING ONLY — no verdict here reads the registry, so deleting every row
@@ -436,13 +456,13 @@ changes the prose and nothing else.';
 comment on column dojo.all_my_repositories.forge_visibility
      is 'The forge''s answer, or NULL when it was never captured, carries no capture timestamp, or is older than the capture TTL. All three mean the same thing to every consumer: no authority, no election, no sync.';
 comment on column dojo.all_my_repositories.may_share
-     is 'ENTITLEMENT. Keys on forge visibility and subscription — never on tenant origin. Public is free for anyone; private is subscription-gated for everyone, including a solo developer''s own repository.';
+     is 'ENTITLEMENT. Keys on forge visibility, subscription, and tenant origin (D46: personal is free). Public is free for anyone; private is subscription-gated for organisations.';
 comment on column dojo.all_my_repositories.elected
-     is 'ELECTION. The organisation''s policy where it holds authority, this member''s own election everywhere else. Absent row = not elected.';
+     is 'ELECTION. The organisation''s policy or own election where it holds authority, this member''s own election everywhere else. An absent row means not elected on private org code, elected everywhere else (an org-public absent decision is ELECTED, D46).';
 comment on column dojo.all_my_repositories.refused_by
      is 'entitlement | election | NULL — which of the two questions said no. A column rather than an inference from the reason string, so a reason added later cannot land on the wrong side of the split.';
 comment on column dojo.all_my_repositories.configurable_by_me
-     is 'May THIS member change it right now? Admin-only on org-private repositories, because what changes is the organisation''s policy and member_role assigns policy to admin.';
+     is 'May THIS member change it right now? Admin-only on organisation repositories (D46), because what changes is the organisation''s election or policy and member_role assigns policy to admin; always the member''s on personal repositories.';
 comment on column dojo.all_my_repositories.last_synced_at
      is 'Latest push for this repository that THIS member may see: repo-scoped rows, plus their own user-scoped rows. Not every row — service_role bypasses the RLS on repository_metrics, so this predicate is the boundary.';
 comment on column dojo.all_my_repositories.denied_reason

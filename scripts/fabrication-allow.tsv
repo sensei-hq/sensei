@@ -396,7 +396,7 @@ dojo/src/lib/server/repositories.ts	T3	for (const b of branchRows ?? []) {	GENUI
 dojo/src/lib/server/repositories.ts	T3	for (const row of (data ?? []) as {	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/repositories.ts	T3	graph_branches: branchesOf.get(row.repository_id) ?? []	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/repositories.ts	T3	out.set(k, [...(out.get(k) ?? []), key]);	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
-dojo/src/lib/server/repositories.ts	T3	return repos.map((r) => ({ ...r, graph_branches: branchesOf.get(r.repository_id) ?? [] }));	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/repositories.ts	T3	graph_branches: branchesOf.get(r.repository_id) ?? [],	GENUINE-EMPTY	?? [] — from throwing paged helper / map lookup	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/rulepacks-data.ts	T3	return (data ?? []) as string[];	GENUINE-EMPTY	?? [] — error checked first / optional arg	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/rulepacks-data.ts	T3	return shapeLibraryPacks((data ?? []) as unknown as LibraryPackRow[]);	GENUINE-EMPTY	?? [] — error checked first / optional arg	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/rules-data.ts	T3	return ((data ?? []) as TenantPackRuleRow[]).map(({ attribution, ...r }) => ({ ...r, source: attribution }));	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
