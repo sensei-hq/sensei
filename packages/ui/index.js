@@ -1,6 +1,7 @@
 // packages/ui — Svelte components shared by the desktop app and the dōjō (#293).
 // Reached through each app's `@sensei/ui` alias, as @sensei/glyphs is.
 export { default as Screen } from './Screen.svelte';
+export { default as ShellScreen } from './ShellScreen.svelte';
 export { default as Notice } from './Notice.svelte';
 export { default as Eyebrow } from './Eyebrow.svelte';
 export { default as EmptyState } from './EmptyState.svelte';
@@ -24,3 +25,4 @@ export {
 } from './notice.js';
 export { setStateDefaults, useStateDefaults } from './state-defaults.js';
 export { setGlyphMode, useGlyphMode } from './glyph-mode.js';
+export { setViewStates, useViewStates } from './view-states.js';

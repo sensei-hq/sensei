@@ -9,7 +9,7 @@
     import { daemonHealth } from "$lib/daemon-health.svelte.js";
     import { glyphMode, setGlyphMode } from "$lib/glyphs";
     import { personaList } from "$lib/personas.svelte.js";
-    import { Banner, setStateDefaults } from "@sensei/ui";
+    import { Banner, setStateDefaults, setViewStates } from "@sensei/ui";
     import { daemonBanner } from "$lib/daemon-banner";
     import { windowDuties } from "$lib/window-duties.js";
     import { openSettingsWindow } from "$lib/stores/windows.svelte.js";
@@ -20,6 +20,12 @@
 
     // The glyph preference, for every mark below (#133).
     setGlyphMode(() => glyphMode(appState.config));
+    // Every screen's open bands, kept in the daemon's `ui.views` (D87 §4).
+    setViewStates({
+        get: (id) => appState.viewPanels(id),
+        set: (id, next) => appState.setViewPanels(id, next),
+        error: () => appState.viewsError,
+    });
     // Every screen's failure names the daemon — the one thing every sensei screen depends on.
     setStateDefaults({
       remedy: "Check that the sensei daemon is running, then retry. Health shows which part is down.",
