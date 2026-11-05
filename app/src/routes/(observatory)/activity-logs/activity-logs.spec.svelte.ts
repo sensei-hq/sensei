@@ -352,6 +352,46 @@ describe('LogsScreen', () => {
     expect(tryGetScheduledTasks).toHaveBeenCalledTimes(1);
   });
 
+  // M1 (r2 review): a Retry still in flight when a navigation lands is reading
+  // under filters the reader has left. Its answer is stale — the navigation is
+  // what the reader is looking at, and its labels must match its rows.
+  it('a log retry that lands after a navigation is dropped', async () => {
+    const s = screenWith(fail, ok({ tasks: [] }));
+    let release: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    const inflight = s.retryLogs({ tryGetLogs: vi.fn().mockReturnValue(pending) });
+    s.setData(
+      logsPageData(ok([makeRow({ id: 'n', message: 'from_the_url' })]), ok({ tasks: [] }), {
+        ...filters,
+        level: 'error',
+      }),
+    );
+    release(ok([makeRow({ id: 'r', message: 'retried_unfiltered' })]));
+    await inflight;
+    expect(s.shown.rows.map((r) => r.id)).toEqual(['n']);
+    expect(s.shown.rowsNotice).toBeNull();
+  });
+
+  // The tasks read doesn't depend on the filters, but a stale *failure* would
+  // still put an error over a fresh good answer.
+  it('a tasks retry that lands after a navigation is dropped', async () => {
+    const s = screenWith(ok(rows), fail);
+    let release: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    const inflight = s.retryTasks({ tryGetScheduledTasks: vi.fn().mockReturnValue(pending) });
+    s.setData(logsPageData(ok(rows), ok({ tasks: [task('scanner')] }), filters));
+    release(fail);
+    await inflight;
+    expect(s.shown.tasks.map((t) => t.name)).toEqual(['scanner']);
+    expect(s.shown.tasksNotice).toBeNull();
+  });
+
   // M2 at the class: the loader's answer is the last word — the filters live in
   // the URL, so a navigation replaces a Retry's answer rather than the reverse.
   it('the loader’s answer replaces what a retry read', async () => {

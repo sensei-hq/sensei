@@ -275,9 +275,11 @@ export type LogsPageData = ReturnType<typeof logsPageData>;
  *  are independent halves — each Retry writes back only its own, so a failed
  *  log re-read cannot take the workers away with it (or the reverse).
  *
- *  A navigation replaces the whole thing: the server filters live in the URL,
- *  so the loader's answer is the last word — including over a Retry that landed
- *  while the reader was navigating. */
+ *  A navigation replaces the whole thing, and it is the last word: the filters
+ *  live in the URL, so a Retry that was still reading when the reader navigated
+ *  is reading under filters they have left. `setData` bumps a generation and
+ *  each Retry throws its own answer away if the generation moved while it was
+ *  out — otherwise the old rows would land under the new filters' labels. */
 export class LogsScreen {
   shown = $state<LogsPageData>({
     rows: [],
@@ -293,13 +295,18 @@ export class LogsScreen {
    *  another. A guard, not decoration. */
   readingLogs = $state(false);
   readingTasks = $state(false);
+  /** Bumped by every navigation; a read captured an older one is stale. Not
+   *  `$state`: nothing draws it, it only decides who may write. */
+  #gen = 0;
 
   constructor(data: LogsPageData) {
     this.setData(data);
   }
 
-  /** The loader's answer — a navigation wins over whatever a Retry read. */
+  /** The loader's answer — a navigation wins over whatever a Retry has in
+   *  flight, not only over one that already landed. */
   setData(data: LogsPageData): void {
+    this.#gen += 1;
     this.shown = data;
   }
 
@@ -308,8 +315,10 @@ export class LogsScreen {
   async retryLogs(api: Pick<LogsApi, 'tryGetLogs'>): Promise<void> {
     if (this.readingLogs) return;
     this.readingLogs = true;
+    const gen = this.#gen;
     try {
       const rows = await readLogs(api, this.shown.filters);
+      if (gen !== this.#gen) return;
       this.shown = { ...this.shown, ...rowsPageData(rows, this.shown.filters) };
     } finally {
       this.readingLogs = false;
@@ -321,8 +330,11 @@ export class LogsScreen {
   async retryTasks(api: Pick<LogsApi, 'tryGetScheduledTasks'>): Promise<void> {
     if (this.readingTasks) return;
     this.readingTasks = true;
+    const gen = this.#gen;
     try {
-      this.shown = { ...this.shown, ...tasksPageData(await readTasks(api)) };
+      const tasks = await readTasks(api);
+      if (gen !== this.#gen) return;
+      this.shown = { ...this.shown, ...tasksPageData(tasks) };
     } finally {
       this.readingTasks = false;
     }
