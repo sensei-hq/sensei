@@ -16,6 +16,7 @@ import {
   matchesFilter,
 } from './dojo-connection.js';
 import { identity, membership, repo } from './dojo-connection.fixtures.js';
+import type { DojoRepositoryRow } from '$lib/types.js';
 
 describe('what travels between sensei and the dōjō', () => {
   it('names the three directions, trackers read-only', () => {
@@ -139,6 +140,37 @@ describe('dojoGroups — the selected identity’s dōjōs and their repositorie
 
   it('a signed-out identity (no slot) has no dōjōs to show', () => {
     expect(dojoGroups([org], [repo()], null, 'all')).toEqual([]);
+  });
+});
+
+// WP8 (D46; L0 ruling: the app toggle is L2's): a repository row carries the
+// sync switch only where its dōjō says this person may change it.
+describe('the sync switch on a repository row', () => {
+  const personal = membership({ id: 'p', kind: 'personal', tenant_key: 'github/jerrythomas', org_slugs: ['jerrythomas'] });
+  const org = membership({ id: 'o', kind: 'employer', tenant_key: 'github/sensei-hq', org_slugs: ['sensei-hq'] });
+  const rows = [repo({ entity_key: 'github.com/jerrythomas/burn-e' }), repo({ entity_key: 'github.com/sensei-hq/sensei' })];
+  const ruling = (key: string, configurable_by_me: boolean, elected = true) =>
+    [key, { repo_key: key, elected, sync_enabled: elected, configurable_by_me }] as const;
+  const toggles = (elections: Map<string, DojoRepositoryRow> | null) =>
+    dojoGroups([personal, org], rows, 'jerrythomas', 'all', elections).flatMap((d) => d.repos.map((r) => [r.key, r.toggle]));
+
+  it.skip('pending: wp8-daemon — shows where the person may change it, showing whether it is on', () => {
+    const elections = new Map([
+      ruling('github.com/jerrythomas/burn-e', true, false),
+      ruling('github.com/sensei-hq/sensei', false),
+    ]);
+    expect(toggles(elections)).toEqual([
+      ['github.com/jerrythomas/burn-e', { on: false }],
+      ['github.com/sensei-hq/sensei', null],
+    ]);
+  });
+
+  it('is absent where the dōjō has no ruling, or the rulings could not be read', () => {
+    expect(toggles(new Map())).toEqual([
+      ['github.com/jerrythomas/burn-e', null],
+      ['github.com/sensei-hq/sensei', null],
+    ]);
+    expect(toggles(null).every(([, t]) => t === null)).toBe(true);
   });
 });
 

@@ -5,8 +5,20 @@
   import { Notice } from '@sensei/ui';
   import { Kanji } from '$lib/components';
   import type { DojoGroup } from './dojo-connection.js';
+  import type { ScreenNoticeProps } from './dojo-connection-state.svelte.js';
 
-  let { dojos }: { dojos: DojoGroup[] } = $props();
+  // pending: wp8-daemon — `ontoggle` and `electionNotice` are rendered in phase B.
+  let {
+    dojos,
+    ontoggle: _ontoggle,
+    electionNotice: _electionNotice = null,
+  }: {
+    dojos: DojoGroup[];
+    /** Turn a repository's sync on or off (only rows with a `toggle` offer it). */
+    ontoggle?: (key: string, elected: boolean) => void;
+    /** What the last change could not do, and why. */
+    electionNotice?: ScreenNoticeProps | null;
+  } = $props();
   const DOT = { syncing: 'bg-success', off: 'border border-ink-faint', failing: 'bg-danger' } as const;
 </script>
 

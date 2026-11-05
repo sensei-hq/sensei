@@ -103,10 +103,14 @@ pub(crate) enum ElectionOutcome {
     Unavailable(String),
 }
 
-/// The one dōjō call the election makes — a seam, so a test can script the dōjō.
-#[allow(dead_code)] // pending: wp8-daemon (used by patch_repository in phase B)
+/// The two dōjō calls the repository surface makes — a seam, so a test can
+/// script the dōjō: the person's repositories as the dōjō rules on them
+/// (`GET /v1/you/repositories`: `elected`, `sync_enabled`, `configurable_by_me`, …)
+/// and one election (`PATCH /v1/you/repositories/election`).
+#[allow(dead_code)] // pending: wp8-daemon (used by the handlers in phase B)
 #[async_trait::async_trait]
-pub(crate) trait ElectionPlane: Send + Sync {
+pub(crate) trait RepositoryPlane: Send + Sync {
+    async fn list(&self, token: &str) -> Result<Vec<serde_json::Value>, String>;
     async fn set_election(&self, token: &str, repo_key: &str, elected: bool) -> ElectionOutcome;
 }
 
@@ -121,10 +125,20 @@ pub(crate) fn classify_election(_status: u16, _body: &str) -> ElectionOutcome {
 #[allow(dead_code)] // pending: wp8-daemon (used by patch_repository in phase B)
 pub(crate) async fn elect(
     _pg: &crate::db::pg_store::PgStore,
-    _plane: &dyn ElectionPlane,
+    _plane: &dyn RepositoryPlane,
     _token: &str,
     _repo_key: &str,
     _elected: bool,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(err(StatusCode::NOT_IMPLEMENTED, "pending: wp8-daemon"))
+}
+
+/// The person's repositories as the dōjō rules on them, for the app's sync
+/// toggle (shown only where `configurable_by_me`). pending: wp8-daemon
+#[allow(dead_code)] // pending: wp8-daemon (used by GET /api/dojo/repositories in phase B)
+pub(crate) async fn my_repositories(
+    _plane: &dyn RepositoryPlane,
+    _token: &str,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     Err(err(StatusCode::NOT_IMPLEMENTED, "pending: wp8-daemon"))
 }
@@ -311,12 +325,16 @@ mod tests {
     /// A scripted dōjō: answers every election with `answer`, and records each call.
     struct ScriptedPlane {
         answer: ElectionOutcome,
+        listed: Result<Vec<serde_json::Value>, String>,
         calls: std::sync::Mutex<Vec<(String, String, bool)>>,
     }
 
     impl ScriptedPlane {
         fn answering(answer: ElectionOutcome) -> Self {
-            Self { answer, calls: Default::default() }
+            Self { answer, listed: Ok(vec![]), calls: Default::default() }
+        }
+        fn listing(listed: Result<Vec<serde_json::Value>, String>) -> Self {
+            Self { listed, ..Self::answering(ElectionOutcome::Unavailable("not asked".into())) }
         }
         fn calls(&self) -> Vec<(String, String, bool)> {
             self.calls.lock().unwrap().clone()
@@ -324,7 +342,10 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl ElectionPlane for ScriptedPlane {
+    impl RepositoryPlane for ScriptedPlane {
+        async fn list(&self, _token: &str) -> Result<Vec<serde_json::Value>, String> {
+            self.listed.clone()
+        }
         async fn set_election(
             &self,
             token: &str,
@@ -495,5 +516,31 @@ mod tests {
             "private",
             "a refused body writes nothing"
         );
+    }
+
+    /// The person's repositories, as the dōjō rules on them, reach the app as they
+    /// are — `configurable_by_me` included, which is what shows or hides the
+    /// toggle (L0 ruling: the app toggle is L2's, inside WP8).
+    #[tokio::test]
+    #[ignore = "pending: wp8-daemon"]
+    async fn the_dojo_s_repositories_reach_the_app_with_who_may_change_them() {
+        let rows = vec![
+            serde_json::json!({"repo_key": "github.com/acme/web", "elected": true, "sync_enabled": true, "configurable_by_me": false}),
+            serde_json::json!({"repo_key": "github.com/me/notes", "elected": false, "sync_enabled": false, "configurable_by_me": true}),
+        ];
+        let plane = ScriptedPlane::listing(Ok(rows.clone()));
+        let Json(out) = my_repositories(&plane, "TOKEN").await.expect("200");
+        assert_eq!(out, serde_json::json!({ "repositories": rows }));
+    }
+
+    /// A list the dōjō could not give is a 502 — never an empty list, which would
+    /// read as "nothing to share" and hide every toggle.
+    #[tokio::test]
+    #[ignore = "pending: wp8-daemon"]
+    async fn an_unreadable_repository_list_is_502_not_empty() {
+        let plane = ScriptedPlane::listing(Err("dōjō returned 500".into()));
+        let (status, Json(b)) = my_repositories(&plane, "TOKEN").await.expect_err("502");
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(b["error"], serde_json::json!("dōjō returned 500"));
     }
 }
