@@ -33,6 +33,22 @@
 	<span data-sdlc={f.key} class={f.reason ? 'text-ink-soft' : 'text-ink'}>{f.text}</span>
 {/snippet}
 
+{#snippet people(t: TeamView)}
+	{#if t.people.length}
+		<ul class="m-0 flex list-none flex-col gap-1 p-0" aria-label="Contributors">
+			{#each t.people as p (p.id)}
+				<li data-person={p.id} class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+					<span class="text-ink">{p.name}</span>
+					<span class="text-ink-soft">{p.line}</span>
+					{#each p.figures as f (f.key)}
+						<span class="text-ink-mute">{f.label} {@render figure(f)}</span>
+					{/each}
+				</li>
+			{/each}
+		</ul>
+	{/if}
+{/snippet}
+
 {#snippet teamFigures(t: TeamView)}
 	{#if t.line}<span data-team-line class="text-ink-soft">{t.line}</span>{/if}
 	{#each t.figures as f (f.key)}
@@ -127,6 +143,9 @@
 
 					{#if state.selectedFor(board.id)}
 						<div class="flex flex-col gap-2 rounded border border-paper-edge p-4">
+							{#each board.sprints.filter((s) => s.id === state.selectedFor(board.id)) as chosen (chosen.id)}
+								<div data-sprint-people={chosen.id}>{@render people(chosen.team)}</div>
+							{/each}
 							{#if state.ticketsError}
 								<p role="alert" class="m-0 text-sm text-danger">{state.ticketsError}</p>
 							{:else if state.tickets === null}
@@ -149,6 +168,7 @@
 															<span class="text-ink-mute">{f.label} {@render figure(f)}</span>
 														{/each}
 													</div>
+													<div class="pl-6">{@render people(t.team)}</div>
 												{/if}
 											</details>
 										</li>

@@ -23,7 +23,9 @@ returns table (
     team             jsonb,
     team_words       jsonb,
     contributors     integer,
-    last_report      timestamptz
+    last_report      timestamptz,
+    people           jsonb,
+    stale            boolean
 )
 language sql
 stable
@@ -31,7 +33,8 @@ security definer
 set search_path = dojo, pg_temp
 as $$
     select t.key, t.title, t.status_category, t.points, t.sprints, t.issue_created_at,
-           m.team, dojo.delivery_reason_words(m.team -> 'reasons'), m.contributors, m.last_report
+           m.team, dojo.delivery_reason_words(m.team -> 'reasons'), m.contributors, m.last_report,
+           m.people, m.stale
       from dojo.delivery_tickets t
       join dojo.delivery_boards b on b.id = t.board_id
       cross join lateral dojo.delivery_team(b.id, 'ticket', t.key, t.issue_created_at) m
@@ -53,4 +56,4 @@ revoke all on function dojo.workspace_delivery_tickets(uuid, uuid, text, boolean
 grant execute on function dojo.workspace_delivery_tickets(uuid, uuid, text, boolean, integer, integer) to authenticated;
 
 comment on function dojo.workspace_delivery_tickets(uuid, uuid, text, boolean, integer, integer) is
-'A board''s tickets from its kept copy — all, one sprint''s, or the backlog''s — with their titles and the team''s merged effort under B16 (team, team_words, contributors, last_report), in the app''s key order, for a reader of the workspace (dojo.can_read_workspace); paged (#352, #353).';
+'A board''s tickets from its kept copy — all, one sprint''s, or the backlog''s — with their titles and the team''s merged effort under B16 (team, team_words, contributors, last_report; people and stale per A4), in the app''s key order, for a reader of the workspace (dojo.can_read_workspace); paged (#352, #353, #354).';

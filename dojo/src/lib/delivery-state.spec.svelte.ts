@@ -14,10 +14,12 @@ const t = (key: string, title: string | null = `${key} title`): DeliveryTicketWi
 	team: null,
 	team_words: null,
 	contributors: 0,
-	last_report: null
+	last_report: null,
+	people: null,
+	stale: false
 });
 
-const nobody = { line: null, figures: [] };
+const nobody = { line: null, figures: [], people: [] };
 
 describe('DeliveryPageState', () => {
 	it('selecting a sprint reads its tickets, titled; a ticket with no title shows its key alone', async () => {

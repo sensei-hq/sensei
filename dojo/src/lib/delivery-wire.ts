@@ -17,14 +17,29 @@ export interface DeliveryTeamWire {
 	partial: Record<string, number>;
 }
 
-/** An item's team effort as a workspace reader sees it (B16): `team` is null from
- *  fewer than two contributors, and `last_report` too. */
+/** One contributor's own figures on an item, for a reader allowed them (A4). */
+export interface DeliveryPersonWire {
+	principal_id: string;
+	display_name: string | null;
+	team: DeliveryTeamWire;
+	reported_at: string;
+	/** Their last report is more than 7 days old. */
+	stale: boolean;
+}
+
+/** An item's team effort as this reader sees it (B16, A4). A reader allowed every
+ *  contributor's own numbers gets the full merge and `people`; anyone else gets
+ *  `team` null from fewer than two contributors, and `last_report` too. */
 export interface DeliveryTeamFields {
 	team: DeliveryTeamWire | null;
 	/** The words of the reason codes in `team`, by code. */
 	team_words: Record<string, string> | null;
 	contributors: number;
 	last_report: string | null;
+	/** Each contributor's own figures; null for a reader not allowed them. */
+	people: DeliveryPersonWire[] | null;
+	/** Some contributor's last report is more than 7 days old. */
+	stale: boolean;
 }
 
 /** One sprint of a board's kept copy, as the reads answer it. */

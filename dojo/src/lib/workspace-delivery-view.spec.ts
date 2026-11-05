@@ -19,7 +19,7 @@ const sdlc = (over: Record<string, unknown> = {}) => ({
 });
 
 /** Nobody reported effort on the item. */
-const noTeam = { team: null, team_words: null, contributors: 0, last_report: null };
+const noTeam = { team: null, team_words: null, contributors: 0, last_report: null, people: null, stale: false };
 
 const wire = (): WorkspaceDeliveryWire => ({
 	boards: [
@@ -130,7 +130,9 @@ describe('teamView', () => {
 		},
 		team_words: { partial_cost: 'Cost is incomplete' },
 		contributors: 2,
-		last_report: '2026-11-04T10:30:00Z'
+		last_report: '2026-11-04T10:30:00Z',
+		people: null,
+		stale: false
 	};
 
 	it('names how many contributed and when last, and words each figure: a partial with "+", a null by its reason', () => {
@@ -142,6 +144,39 @@ describe('teamView', () => {
 		expect(text.cost_per_prompt_cycle).toBe('Cost is incomplete');
 		expect(text.total_defects).toBe('0');
 		expect(text.build_failure_rate).toBe('50%');
+	});
+
+	it('a reader allowed the people sees each named, their own figures and cost, and who is stale (A4)', () => {
+		const person = (name: string, worked: number, cost: number, stale: boolean) => ({
+			principal_id: `p-${name}`,
+			display_name: name,
+			team: { values: { worked_minutes: worked, effort_cost: cost }, reasons: {}, partial: {} },
+			reported_at: '2026-11-04T10:30:00Z',
+			stale
+		});
+		const t = teamView(
+			{
+				...ticketTeam,
+				contributors: 1,
+				team: { values: { worked_minutes: 60, effort_cost: 50 }, reasons: {}, partial: {} },
+				people: [person('ola', 60, 50, false)]
+			},
+			TICKET_TEAM
+		);
+		expect(t.line).toBe('from 1 contributor · last report Nov 4, 10:30 UTC');
+		expect(t.figures.find((f) => f.key === 'effort_cost')!.text).toBe('$50.00');
+		expect(t.people).toHaveLength(1);
+		expect(t.people[0].name).toBe('ola');
+		expect(t.people[0].figures.find((f) => f.key === 'worked_minutes')!.text).toBe('1h');
+		const stale = teamView({ ...ticketTeam, people: [person('ada', 30, 70, true)] }, TICKET_TEAM);
+		expect(stale.people[0].line).toBe('last report Nov 4, 10:30 UTC · stale');
+	});
+
+	it('a reader not allowed the people sees “includes stale data” and no one', () => {
+		const t = teamView({ ...ticketTeam, stale: true }, TICKET_TEAM);
+		expect(t.line).toBe('from 2 contributors · last report Nov 4, 10:30 UTC · includes stale data');
+		expect(t.people).toEqual([]);
+		expect(t.figures.map((f) => f.key)).not.toContain('effort_cost');
 	});
 
 	it('never shows a cost at the contributors’ own rates (B16)', () => {
@@ -156,9 +191,9 @@ describe('teamView', () => {
 	});
 
 	it('one contributor shows no figure even when a merge is handed over; nobody, no line at all', () => {
-		expect(teamView({ ...ticketTeam, contributors: 1 }, TICKET_TEAM)).toEqual({ line: 'one contributor', figures: [] });
-		expect(teamView({ ...noTeam, contributors: 1 }, TICKET_TEAM)).toEqual({ line: 'one contributor', figures: [] });
-		expect(teamView(noTeam, TICKET_TEAM)).toEqual({ line: null, figures: [] });
+		expect(teamView({ ...ticketTeam, contributors: 1 }, TICKET_TEAM)).toEqual({ line: 'one contributor', figures: [], people: [] });
+		expect(teamView({ ...noTeam, contributors: 1 }, TICKET_TEAM)).toEqual({ line: 'one contributor', figures: [], people: [] });
+		expect(teamView(noTeam, TICKET_TEAM)).toEqual({ line: null, figures: [], people: [] });
 	});
 
 	it('a sprint shows the team’s AI time and API cost; a board its tokens and prompts per ticket', () => {
@@ -171,6 +206,6 @@ describe('teamView', () => {
 		const b = toDeliveryView(w).boards[0];
 		expect(b.team.figures.map((f) => f.text)).toEqual(['1.5k', '2.5']);
 		expect(b.sprints[0].team.figures.map((f) => f.text)).toEqual(['1h 30m', '$1.24+']);
-		expect(b.sprints[1].team).toEqual({ line: null, figures: [] });
+		expect(b.sprints[1].team).toEqual({ line: null, figures: [], people: [] });
 	});
 });

@@ -9,8 +9,8 @@ import { toDeliveryView } from '$lib/workspace-delivery-view';
 
 afterEach(cleanup);
 
-const noTeam = { team: null, team_words: null, contributors: 0, last_report: null };
-const twoReported = { contributors: 2, team_words: null, last_report: '2026-11-04T10:30:00Z' };
+const noTeam = { team: null, team_words: null, contributors: 0, last_report: null, people: null, stale: false };
+const twoReported = { contributors: 2, team_words: null, last_report: '2026-11-04T10:30:00Z', people: null, stale: false };
 
 const view = toDeliveryView({
 	boards: [
@@ -112,6 +112,29 @@ describe('ScrWorkspaceDelivery', () => {
 		const t2 = container.querySelector('[data-ticket="T-2"]')!;
 		expect(t2.querySelector('[data-team-line]')!.textContent).toBe('one contributor');
 		expect(t2.querySelector('[data-team="ticket"]')).toBeNull();
+	});
+
+	it('gate 17: a reader allowed the people sees each contributor’s own row on a ticket', async () => {
+		const state = new DeliveryPageState(async () => [
+			{
+				key: 'T-1', title: 'Checkout', status_category: null, points: null, sprints: ['101'], issue_created_at: null,
+				...twoReported,
+				team: { values: { worked_minutes: 90, effort_cost: 120 }, reasons: {}, partial: {} },
+				people: [
+					{ principal_id: 'p-ola', display_name: 'ola', team: { values: { worked_minutes: 60 }, reasons: {}, partial: {} }, reported_at: '2026-11-04T10:30:00Z', stale: false },
+					{ principal_id: 'p-ada', display_name: 'ada', team: { values: { worked_minutes: 30 }, reasons: {}, partial: {} }, reported_at: '2026-10-01T10:30:00Z', stale: true }
+				]
+			}
+		]);
+		const { container } = render(ScrWorkspaceDelivery, { props: { workspaceName: 'API', view, error: null, state } });
+		await fireEvent.click(container.querySelector('[data-sprint="101"] [data-action="select"]')!);
+		await tick();
+		const t1 = container.querySelector('[data-ticket="T-1"]')!;
+		expect(t1.querySelector('[data-sdlc="effort_cost"]')!.textContent).toBe('$120.00');
+		const people = [...t1.querySelectorAll('[data-person]')];
+		expect(people.map((p) => p.getAttribute('data-person'))).toEqual(['p-ola', 'p-ada']);
+		expect(people[1].textContent).toContain('stale');
+		expect(people[0].querySelector('[data-sdlc="worked_minutes"]')!.textContent).toBe('1h');
 	});
 
 	it('a failed tickets read is an alert', async () => {

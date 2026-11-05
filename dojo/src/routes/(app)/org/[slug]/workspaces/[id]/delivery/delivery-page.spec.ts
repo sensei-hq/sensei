@@ -12,7 +12,7 @@ const { toDeliveryView } = await import('$lib/workspace-delivery-view');
 
 afterEach(cleanup);
 
-const noTeam = { team: null, team_words: null, contributors: 0, last_report: null };
+const noTeam = { team: null, team_words: null, contributors: 0, last_report: null, people: null, stale: false };
 
 const view = toDeliveryView({
 	boards: [

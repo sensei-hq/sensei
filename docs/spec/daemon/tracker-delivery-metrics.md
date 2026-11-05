@@ -444,7 +444,8 @@ who see per-person rows; others see "includes stale data" when any is.
   one entry per contributor — their rows across installs merged by the same function, their
   `display_name`, latest `reported_at` and `stale` (older than 7 days).
 - **Anyone else** keeps B16's restricted view and `people` = null; `stale` is a single
-  boolean, true when any contributor's last report is older than 7 days, never which.
+  boolean, true when any contributor's last report is older than 7 days, never which — and
+  only from two contributors on, since one person's report age is theirs (F4 review).
 - The reads add `people jsonb` and `stale boolean` beside `team`, `contributors` and
   `last_report`.
 

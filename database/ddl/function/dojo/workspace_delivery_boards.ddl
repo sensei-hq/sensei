@@ -18,7 +18,9 @@ returns table (
     team                  jsonb,
     team_words            jsonb,
     contributors          integer,
-    last_report           timestamptz
+    last_report           timestamptz,
+    people                jsonb,
+    stale                 boolean
 )
 language sql
 stable
@@ -29,7 +31,8 @@ as $$
            b.history_at, b.pending_tickets, b.reported_at,
            (select r.summary from sensei.reason_codes r
              where r.domain = 'sdlc_metrics' and r.code = b.predictability_reason),
-           t.team, dojo.delivery_reason_words(t.team -> 'reasons'), t.contributors, t.last_report
+           t.team, dojo.delivery_reason_words(t.team -> 'reasons'), t.contributors, t.last_report,
+           t.people, t.stale
       from dojo.delivery_boards b
       cross join lateral dojo.delivery_team(b.id, 'project', '', null) t
      where b.workspace_id = p_workspace
@@ -41,4 +44,4 @@ revoke all on function dojo.workspace_delivery_boards(uuid) from public;
 grant execute on function dojo.workspace_delivery_boards(uuid) to authenticated;
 
 comment on function dojo.workspace_delivery_boards(uuid) is
-'A workspace''s tracker boards with their kept copy''s facts (name, predictability with its reason''s words, history, completeness), and the team''s merged project effort under B16 (team, its reason words, contributors, last_report), for a reader of the workspace (dojo.can_read_workspace); nothing for anyone else (#352, #353).';
+'A workspace''s tracker boards with their kept copy''s facts (name, predictability with its reason''s words, history, completeness), and the team''s merged project effort under B16 (team, its reason words, contributors, last_report; people and stale per A4), for a reader of the workspace (dojo.can_read_workspace); nothing for anyone else (#352, #353, #354).';

@@ -23,7 +23,9 @@ returns table (
     team         jsonb,
     team_words   jsonb,
     contributors integer,
-    last_report  timestamptz
+    last_report  timestamptz,
+    people       jsonb,
+    stale        boolean
 )
 language sql
 stable
@@ -32,7 +34,8 @@ set search_path = dojo, pg_temp
 as $$
     select s.external_id, s.seq, s.name, s.state, s.start_at, s.end_at, s.complete_at, s.sdlc,
            dojo.delivery_reason_words(s.sdlc -> 'reasons'),
-           t.team, dojo.delivery_reason_words(t.team -> 'reasons'), t.contributors, t.last_report
+           t.team, dojo.delivery_reason_words(t.team -> 'reasons'), t.contributors, t.last_report,
+           t.people, t.stale
       from dojo.delivery_sprints s
       join dojo.delivery_boards b on b.id = s.board_id
       cross join lateral dojo.delivery_team(b.id, 'sprint', s.external_id, null) t
@@ -48,4 +51,4 @@ revoke all on function dojo.workspace_delivery_sprints(uuid, uuid, integer, inte
 grant execute on function dojo.workspace_delivery_sprints(uuid, uuid, integer, integer) to authenticated;
 
 comment on function dojo.workspace_delivery_sprints(uuid, uuid, integer, integer) is
-'A board''s non-removed sprints from its kept copy, in the daemon''s order (start_at desc nulls last, seq desc), each with the words of the reason codes in its figures (reason_words, code → summary), and the team''s merged sprint effort under B16 (team, team_words, contributors, last_report), for a reader of the workspace (dojo.can_read_workspace); paged (#352, #353).';
+'A board''s non-removed sprints from its kept copy, in the daemon''s order (start_at desc nulls last, seq desc), each with the words of the reason codes in its figures (reason_words, code → summary), and the team''s merged sprint effort under B16 (team, team_words, contributors, last_report; people and stale per A4), for a reader of the workspace (dojo.can_read_workspace); paged (#352, #353, #354).';

@@ -12,9 +12,10 @@ import {
 	points,
 	sdlcFigure,
 	sprintSdlcFigures,
-	type SdlcFigure
+	type SdlcFigure,
+	type Words
 } from '@sensei/sdlc-figures';
-import type { DeliveryTeamFields } from './delivery-wire';
+import type { DeliveryTeamFields, DeliveryTeamWire } from './delivery-wire';
 import type { DeliveryBoardWire, DeliverySprintWire, WorkspaceDeliveryWire } from './workspace-delivery-data';
 
 /** An item's team effort as shown: who contributed and the merged figures (B16:
@@ -22,6 +23,17 @@ import type { DeliveryBoardWire, DeliverySprintWire, WorkspaceDeliveryWire } fro
 export interface TeamView {
 	/** "from 3 contributors · last report …", "one contributor", or null when nobody reported. */
 	line: string | null;
+	figures: SdlcFigure[];
+	/** Each contributor, named, for a reader allowed them (A4); empty otherwise. */
+	people: PersonView[];
+}
+
+/** One contributor's own figures. */
+export interface PersonView {
+	id: string;
+	name: string;
+	/** "last report …", and "· stale" when it is more than 7 days old. */
+	line: string;
 	figures: SdlcFigure[];
 }
 
@@ -56,7 +68,10 @@ export const TICKET_TEAM: readonly TeamFigure[] = [
 	['on_hold_ratio', 'on hold', pct],
 	['post_review_rework_ratio', 'rework after review', pct],
 	['execution_hours', 'execution', (h) => minutes(h * 60)],
-	['lead_hours', 'lead time', (h) => minutes(h * 60)]
+	['lead_hours', 'lead time', (h) => minutes(h * 60)],
+	// Served only to a reader allowed the people (B16, A4); each at the person's own rate (B14).
+	['effort_cost', 'cost at each person’s rate', (x) => apiCostText(x, false)],
+	['rework_cost', 'rework cost', (x) => apiCostText(x, false)]
 ];
 
 /** How a team figure is read (D5): summed person-time, and its known limits. */
@@ -66,24 +81,46 @@ export const TEAM_EXPLAINER =
 const dayTime = (iso: string) =>
 	new Date(iso).toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'UTC' }) + ' UTC';
 
-/** An item's team effort, worded: a partial figure ends in "+", a null shows its
- *  reason's words, never 0. */
+/** A merge's figures, worded: a partial one ends in "+", a null shows its reason's
+ *  words, never 0; a figure the dōjō did not serve this reader is left out. */
+function teamFigures(team: DeliveryTeamWire, words: Words, defs: readonly TeamFigure[]): SdlcFigure[] {
+	return defs
+		.filter(([key]) => key in team.values)
+		.map(([key, label, format]) => {
+			const raw = team.values[key];
+			const value = typeof raw === 'number' ? raw : null;
+			const f = sdlcFigure(key, label, value, (x) => format(x, team.values), team.reasons, words);
+			return value !== null && (team.partial[key] ?? 0) > 0 && !f.text.endsWith('+') ? { ...f, text: `${f.text}+` } : f;
+		});
+}
+
+/** The figures priced at a contributor's own rate (B14): never without the people (B16). */
+const RATE_COSTS = new Set(['effort_cost', 'rework_cost']);
+
+const contributorsLine = (n: number) => `from ${n} contributor${n === 1 ? '' : 's'}`;
+
+/** An item's team effort as this reader may see it (B16, A4). */
 export function teamView(t: DeliveryTeamFields, defs: readonly TeamFigure[]): TeamView {
+	if (t.contributors === 0) return { line: null, figures: [], people: [] };
+	const allowed = t.people !== null;
+	const shown = t.team !== null && (allowed || t.contributors >= 2);
+	if (!shown || !t.team) {
+		return { line: 'one contributor', figures: [], people: [] };
+	}
+	const w = words(t.team_words);
 	const line =
-		t.contributors === 0
-			? null
-			: t.contributors === 1 || !t.team
-				? 'one contributor'
-				: `from ${t.contributors} contributors` + (t.last_report ? ` · last report ${dayTime(t.last_report)}` : '');
-	if (!t.team || t.contributors < 2) return { line, figures: [] };
-	const team = t.team;
-	const figures = defs.map(([key, label, format]) => {
-		const raw = team.values[key];
-		const value = typeof raw === 'number' ? raw : null;
-		const f = sdlcFigure(key, label, value, (x) => format(x, team.values), team.reasons, words(t.team_words));
-		return value !== null && (team.partial[key] ?? 0) > 0 && !f.text.endsWith('+') ? { ...f, text: `${f.text}+` } : f;
-	});
-	return { line, figures };
+		contributorsLine(t.contributors) +
+		(t.last_report ? ` · last report ${dayTime(t.last_report)}` : '') +
+		(t.stale && !allowed ? ' · includes stale data' : '');
+	const people = (t.people ?? []).map((p) => ({
+		id: p.principal_id,
+		name: p.display_name ?? 'unnamed',
+		line: `last report ${dayTime(p.reported_at)}` + (p.stale ? ' · stale' : ''),
+		figures: teamFigures(p.team, w, defs)
+	}));
+	// Cost at a person's rate is theirs: only beside the people, whatever is served (B16).
+	const visible = allowed ? defs : defs.filter(([key]) => !RATE_COSTS.has(key));
+	return { line, figures: teamFigures(t.team, w, visible), people };
 }
 
 export interface DeliverySprintView {

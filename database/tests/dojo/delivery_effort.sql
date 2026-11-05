@@ -63,6 +63,10 @@ insert into dojo.repository_roles (repository_id, principal_id, forge_permission
   ('91000000-0000-4000-8000-000000000531', 'a0000000-0000-4000-8000-000000000532', 'write', 'contributor'),
   ('91000000-0000-4000-8000-000000000532', 'a0000000-0000-4000-8000-000000000532', 'write', 'contributor');
 
+-- bob views W1 (dojo.can_read_workspace) and is allowed no one's own numbers.
+insert into dojo.workspace_viewers (workspace_id, principal_id) values
+  ('c0000000-0000-4000-8000-000000000531', 'a0000000-0000-4000-8000-000000000533');
+
 -- The board as the daemon sends it (D3), with its facts varied per call below.
 create temp table fixture (board jsonb);
 insert into fixture values (jsonb_build_object(
@@ -323,6 +327,8 @@ begin
         jsonb_build_object('source', src, 'project', proj_b, 'sprints', jsonb_build_array(spr || '{"external_id": "101"}'),
             'tickets', jsonb_build_array(row_b || '{"key": "AUTH-10"}')));
     if out is distinct from '{"facts": "stale", "effort": "accepted"}'::jsonb then raise exception 'B: %', out; end if;
+    -- Read as bob, a viewer of the workspace who may see no one's own rows.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000533"}', true);
 
     select b.board_id into board from dojo.workspace_delivery_boards(w1) b;
 
@@ -353,6 +359,8 @@ begin
     src := ola_2;
     perform dojo.file_delivery(t, one, base, jsonb_build_object('source', src, 'project', null, 'sprints', '[]'::jsonb,
         'tickets', jsonb_build_array(row_a || '{"key": "AUTH-10"}')));
+    -- Read as bob, a viewer of the workspace who may see no one's own rows.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000533"}', true);
     select * into r from dojo.workspace_delivery_tickets(w1, board, null, false, 100, 0) x where x.key = 'AUTH-10';
     if r.contributors is distinct from 2 or (r.team #>> '{values,worked_minutes}')::numeric is distinct from 150 then
         raise exception 'a second install: %', r; end if;
@@ -360,22 +368,84 @@ begin
     if r.contributors is distinct from 1 or r.team is not null then raise exception 'ola alone on AUTH-2 is one contributor: %', r; end if;
 
     -- Gate 16: A pushes AUTH-10 only from the first machine → its AUTH-2 row is gone.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000532"}', true);
     src := ola_1;
     perform dojo.file_delivery(t, one, base, jsonb_build_object('source', src, 'project', proj_a, 'sprints', '[]'::jsonb,
         'tickets', jsonb_build_array(row_a || '{"key": "AUTH-10"}')));
+    -- Read as bob, a viewer of the workspace who may see no one's own rows.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000533"}', true);
     select * into r from dojo.workspace_delivery_tickets(w1, board, null, false, 100, 0) x where x.key = 'AUTH-2';
     if r.contributors is distinct from 0 then raise exception 'a replaced push kept A''s AUTH-2 row: %', r; end if;
     select * into r from dojo.workspace_delivery_tickets(w1, board, null, false, 100, 0) x where x.key = 'AUTH-10';
     if (r.team #>> '{values,worked_minutes}')::numeric is distinct from 150 then
         raise exception 'one install''s push replaced the other''s rows: %', r; end if;
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000532"}', true);
     begin
         perform dojo.file_delivery(t, one, base, jsonb_build_object('project', null, 'sprints', '[]'::jsonb, 'tickets', '[]'::jsonb));
         raise exception 'effort without its install was filed';
     exception when invalid_parameter_value then null;
     end;
+    -- Read as bob, a viewer of the workspace who may see no one's own rows.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000533"}', true);
     select * into r from dojo.workspace_delivery_sprints(w1, board, 100, 0) x where x.external_id = '101';
     if r.contributors is distinct from 1 or r.team is not null or r.last_report is not null then
         raise exception 'a replaced push kept A''s sprint row, or one contributor''s sprint is shown: %', r; end if;
+end
+$$;
+reset role;
+
+
+-- ── F4: who sees the people behind a figure (gate 17, A4) ─────────────────────
+-- Now: AUTH-10 has ola (two installs) and ada; sprint 101 has ada alone.
+-- ada's rows are aged past 7 days to read staleness.
+update dojo.delivery_effort set reported_at = now() - interval '8 days'
+ where principal_id = 'a0000000-0000-4000-8000-000000000531';
+
+set local role authenticated;
+
+do $$
+declare
+    w1    constant uuid := 'c0000000-0000-4000-8000-000000000531';
+    ola   constant text := 'a0000000-0000-4000-8000-000000000532';
+    ada   constant text := 'a0000000-0000-4000-8000-000000000531';
+    board uuid;
+    r     record;
+    p     jsonb;
+begin
+    -- ada, a tenant admin, may see everyone's: the people, cost, and who is stale.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000531"}', true);
+    select b.board_id into board from dojo.workspace_delivery_boards(w1) b;
+    select * into r from dojo.workspace_delivery_tickets(w1, board, null, false, 100, 0) x where x.key = 'AUTH-10';
+    if jsonb_array_length(r.people) is distinct from 2 or not r.team -> 'values' ? 'effort_cost'
+       or (r.team #>> '{values,effort_cost}')::numeric is distinct from 170 then
+        raise exception 'an admin sees the people and the cost: %', r; end if;
+    select x into p from jsonb_array_elements(r.people) x where x ->> 'principal_id' = ola;
+    if p ->> 'display_name' is distinct from 'ola' or (p #>> '{team,values,worked_minutes}')::numeric is distinct from 120
+       or (p ->> 'stale')::boolean is distinct from false then
+        raise exception 'ola''s two installs are one person, fresh: %', p; end if;
+    select x into p from jsonb_array_elements(r.people) x where x ->> 'principal_id' = ada;
+    if (p ->> 'stale')::boolean is distinct from true or (p #>> '{team,values,effort_cost}')::numeric is distinct from 70 then
+        raise exception 'ada is stale, with her own cost: %', p; end if;
+    select * into r from dojo.workspace_delivery_sprints(w1, board, 100, 0) x where x.external_id = '101';
+    if r.team is null or jsonb_array_length(r.people) is distinct from 1 or r.last_report is null then
+        raise exception 'an admin sees a one-contributor sprint: %', r; end if;
+
+    -- ola sees her own, never ada's: AUTH-10 stays restricted, ada's sprint hidden.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000532"}', true);
+    select * into r from dojo.workspace_delivery_tickets(w1, board, null, false, 100, 0) x where x.key = 'AUTH-10';
+    if r.people is not null or r.team -> 'values' ? 'effort_cost' or r.team is null then
+        raise exception 'ola sees ada''s row or cost: %', r; end if;
+    select * into r from dojo.workspace_delivery_sprints(w1, board, 100, 0) x where x.external_id = '101';
+    if r.team is not null or r.people is not null then raise exception 'ola sees ada''s solo sprint: %', r; end if;
+    -- One contributor's report age is theirs too: never flagged to a restricted reader.
+    if r.stale is distinct from false then raise exception 'a solo contributor''s staleness leaked: %', r; end if;
+
+    -- bob, a viewer: merged only, no people, no per-contributor time; stale said once.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000533"}', true);
+    select * into r from dojo.workspace_delivery_tickets(w1, board, null, false, 100, 0) x where x.key = 'AUTH-10';
+    if r.people is not null or r.stale is distinct from true or r.team -> 'values' ? 'effort_cost'
+       or r.team::text like '%' || ola || '%' or r.team::text like '%' || ada || '%' then
+        raise exception 'a viewer sees a person: %', r; end if;
 end
 $$;
 reset role;
