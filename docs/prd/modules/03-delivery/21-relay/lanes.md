@@ -140,8 +140,12 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
 - **Reuse, don't duplicate.** A crew is a relay run (`activity.runs`), tasks are segments, events are
   `activity.run_events`, gates stay M21's, and the dōjō side extends `dojo.relay_*`. New tables only where the
   run model has no equivalent (lanes and leases; typed findings).
-- **Dōjō views.** A board of lanes (who, family/version/model, current task, state, lease); a task timeline
-  (report → review → rulings → merge); the decision inbox; and per-workspace and per-sprint roll-ups.
+- **One UI, two places (user, 2026-11-05).** The desktop app's **Relay screen replaces Intake**. It shows everything:
+  the lane board (who, family/version/model, current task, state, lease), the task timeline (report → review →
+  rulings → merge), the decision inbox, and per-workspace and per-sprint roll-ups. The **dōjō renders the same
+  screen from the same components**. It receives task-level outlines (titles, states, rounds, verdicts, timings,
+  telemetry numbers) by default, and **report and review bodies only when the person allows it** (daemon-controlled,
+  per crew/workspace). Anything not exposed reads as "not shared", never as empty.
 
 ## 10. Metrics (what this makes measurable)
 
@@ -172,11 +176,16 @@ The existing `start_run` / `register_plan` / `update_task_status` / `report_run_
 
 ## 13. Gaps and open questions
 
-1. **Push vs pull.** MCP is pull. Without push, a lane must poll, and idle sessions don't poll. So: SessionStart
-   and prompt hooks inject the queue (Claude Code); a "check sensei" convention for the rest; the desktop app
-   notifies the person. Whether to add a long-poll `wait_for_task`?
-2. **Worktrees.** Does the broker create and assign worktrees (one per lane), or does the person? We recommend
-   the broker, from the lane's repo plus branch, inside the disk floor.
+1. **Pull, with a bounded long-poll (user, 2026-11-05).** Not every assistant gives MCP a push hook, so lanes pull.
+   `wait_for_task(lane_token, timeout_s)` centralises the polling loop. The daemon holds the call open on its
+   internal event bus and answers **at once** when work arrives (returning the work), or answers "nothing yet, call
+   again" when `timeout_s` runs out. MCP tool calls are request/response, and clients time out a long call, by
+   default and per client. So `timeout_s` is short (≤ 50 s by default) and the assistant simply calls again. Where a
+   client resets its timeout on MCP progress notifications, the daemon may send keep-alive progress and allow a longer
+   hold. SessionStart and prompt hooks (Claude Code) still inject the queue on start. A session that idles is told to
+   loop on `wait_for_task`.
+2. **Worktrees: the broker creates and assigns them** (user, 2026-11-05): one per lane, from the lane's repo plus
+   branch, inside the disk floor.
 3. **Base drift.** When develop moves, the broker tells affected lanes to rebase before they report.
 4. **Trust.** Can a contributor's claimed telemetry be trusted? We reconcile with transcript scanning where
    possible; family/version are self-reported.
