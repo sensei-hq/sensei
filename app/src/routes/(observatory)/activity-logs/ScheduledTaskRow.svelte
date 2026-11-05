@@ -19,8 +19,11 @@
     now: number;
     /** The worker's log tail (#96); absent where no tail is offered. */
     log?: TaskLog;
+    /** `row`: the seven-column table line. `stack`: one narrow block, for the
+     *  shell's 17.5rem sidebar, where seven columns cannot fit. */
+    layout?: 'row' | 'stack';
   }
-  let { task, now, log }: Props = $props();
+  let { task, now, log, layout = 'row' }: Props = $props();
   const failure = $derived(taskFailureNotice(task));
 
   const lastRun = $derived(taskLastRun(now, task));
@@ -30,10 +33,23 @@
   const nextRun = $derived(taskNextRun(now, task));
   const avg = $derived(taskAvg(task));
   const running = $derived(taskRunning(now, task));
+
+  // The facts a stacked block names each with its own label; the row mode
+  // relies on the column headings instead.
+  const facts = $derived([
+    { key: 'last-run', label: 'last run', value: lastRun },
+    { key: 'interval', label: 'interval', value: interval },
+    { key: 'next-run', label: 'next run', value: nextRun },
+    { key: 'schedule', label: 'schedule', value: schedule },
+    { key: 'avg', label: 'avg', value: avg },
+    { key: 'health', label: 'health', value: health },
+  ]);
 </script>
 
 <div
-  class="grid grid-cols-[minmax(0,1fr)_96px_84px_84px_128px_56px_72px] items-baseline gap-3 py-2 px-6 border-b border-paper-edge"
+  class={layout === 'stack'
+    ? 'py-3 px-4 border-b border-paper-edge'
+    : 'grid grid-cols-[minmax(0,1fr)_96px_84px_84px_128px_56px_72px] items-baseline gap-3 py-2 px-6 border-b border-paper-edge'}
   data-testid="scheduled-task"
   data-task-name={task.name}
 >
@@ -61,33 +77,46 @@
     {/if}
   </div>
 
-  <span class="font-mono text-xs text-ink-soft truncate" data-task-last-run>
-    {lastRun}
-  </span>
+  {#if layout === 'stack'}
+    <dl class="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-3 gap-y-0.5 m-0 mt-2 text-xs">
+      {#each facts as fact (fact.key)}
+        <dt class="text-[10px] uppercase tracking-wider text-ink-faint m-0">{fact.label}</dt>
+        <dd
+          class="m-0 font-mono text-xs text-ink-soft truncate"
+          {...{ [`data-task-${fact.key}`]: '' }}
+          title={fact.key === 'schedule' ? schedule : undefined}
+        >{fact.value}</dd>
+      {/each}
+    </dl>
+  {:else}
+    <span class="font-mono text-xs text-ink-soft truncate" data-task-last-run>
+      {lastRun}
+    </span>
 
-  <span class="font-mono text-xs text-ink-soft truncate" data-task-interval>
-    {interval}
-  </span>
+    <span class="font-mono text-xs text-ink-soft truncate" data-task-interval>
+      {interval}
+    </span>
 
-  <span class="font-mono text-xs text-ink-soft truncate" data-task-next-run>
-    {nextRun}
-  </span>
+    <span class="font-mono text-xs text-ink-soft truncate" data-task-next-run>
+      {nextRun}
+    </span>
 
-  <span class="font-mono text-xs text-ink-soft truncate" data-task-schedule title={schedule}>
-    {schedule}
-  </span>
+    <span class="font-mono text-xs text-ink-soft truncate" data-task-schedule title={schedule}>
+      {schedule}
+    </span>
 
-  <span class="font-mono text-xs text-ink-soft truncate" data-task-avg>
-    {avg}
-  </span>
+    <span class="font-mono text-xs text-ink-soft truncate" data-task-avg>
+      {avg}
+    </span>
 
-  <span class="font-mono text-xs text-ink-soft truncate" data-task-health>
-    {health}
-  </span>
+    <span class="font-mono text-xs text-ink-soft truncate" data-task-health>
+      {health}
+    </span>
+  {/if}
 </div>
 
 {#if log?.open}
-  <div class="px-6 pb-3 border-b border-paper-edge" data-task-log>
+  <div class={layout === 'stack' ? 'px-4 pb-3 border-b border-paper-edge' : 'px-6 pb-3 border-b border-paper-edge'} data-task-log>
     {#if log.loading}
       <p class="text-xs text-ink-faint m-0">Reading the log…</p>
     {:else if log.notice}

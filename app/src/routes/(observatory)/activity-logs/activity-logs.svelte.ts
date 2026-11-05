@@ -12,6 +12,19 @@ import { failureNotice } from '@sensei/ui';
 import type { LogRow, LogLevel, ScheduledTask } from '$lib/types.js';
 import { failureReason, type ApiResult } from '$lib/api.js';
 
+/** The two reads this screen makes, as the page needs them — structural, so the
+ *  loader and the notices' Retry can share one read without the whole api. */
+export interface LogsApi {
+  tryGetLogs: (q: {
+    level?: string;
+    source?: string;
+    module?: string;
+    since?: string;
+    limit?: number;
+  }) => Promise<ApiResult<LogRow[]>>;
+  tryGetScheduledTasks: () => Promise<ApiResult<{ tasks: ScheduledTask[] }>>;
+}
+
 /** Known severity levels, most→least severe last for the picker order. */
 export const LEVELS: LogLevel[] = ['trace', 'debug', 'info', 'warn', 'error'];
 
@@ -185,10 +198,10 @@ export function distinctModules(rows: LogRow[], active: string): string[] {
   return [...set].sort();
 }
 
-/** Client-only view state: the search box + which row's payload is expanded.
- *  All server filters live in the URL, not here. */
+/** Client-only view state: which row's payload is expanded. The search is the
+ *  shell's own field (D87, contract §6), so it lives in the shell's filter;
+ *  the server filters live in the URL. */
 export class ActivityLogsView {
-  search = $state('');
   expandedId = $state<string | null>(null);
 
   toggle(id: string): void {
@@ -200,25 +213,56 @@ export class ActivityLogsView {
   }
 }
 
-/** The Logs page's data from its two reads. A failed read carries its error —
- *  "could not read" — instead of an empty list that reads as "there is none". */
+/** The log read, from the filters the URL carries. The loader (`+page.ts`) and
+ *  the log notice's Retry both call this, so the filters→query mapping exists
+ *  once: a Retry asks for exactly what the loader asked for. */
+export function readLogs(api: Pick<LogsApi, 'tryGetLogs'>, filters: LogFilters) {
+  return api.tryGetLogs({
+    level: filters.level || undefined,
+    source: filters.source || undefined,
+    module: filters.module || undefined,
+    since: filters.since,
+    limit: filters.limit,
+  });
+}
+
+/** The background-worker registry (#96) — the loader's second read, and the
+ *  tasks notice's Retry, which re-reads only this (not the log). */
+export function readTasks(api: Pick<LogsApi, 'tryGetScheduledTasks'>) {
+  return api.tryGetScheduledTasks();
+}
+
+/** What one log read decides, and only that: a failed read carries its error —
+ *  "could not read" — instead of an empty list that reads as "there is none".
+ *  The Retry writes this half back over the page's data. */
+export function rowsPageData(rows: ApiResult<LogRow[]>, filters: LogFilters) {
+  const logRows = rows.ok ? rows.data : [];
+  const why = rows.ok ? null : failureReason(rows.error);
+  return {
+    // Rendered through the shared Notice (packages/ui/notice.js).
+    rowsNotice: failureNotice("Couldn't read the log", why),
+    rows: logRows,
+    rowsError: rows.ok ? null : `Could not read the log: ${why}`,
+    filters,
+    capped: logRows.length >= filters.limit,
+  };
+}
+
+/** The tasks half, for the loader and for the tasks notice's own Retry. */
+export function tasksPageData(scheduled: ApiResult<{ tasks: ScheduledTask[] }>) {
+  const why = scheduled.ok ? null : failureReason(scheduled.error);
+  return {
+    tasksNotice: failureNotice("Couldn't read the background tasks", why),
+    tasks: scheduled.ok ? scheduled.data.tasks : [],
+    tasksError: scheduled.ok ? null : `Could not read the background tasks: ${why}`,
+  };
+}
+
+/** The Logs page's data from its two reads. */
 export function logsPageData(
   rows: ApiResult<LogRow[]>,
   scheduled: ApiResult<{ tasks: ScheduledTask[] }>,
   filters: LogFilters,
 ) {
-  const logRows = rows.ok ? rows.data : [];
-  const rowsWhy = rows.ok ? null : failureReason(rows.error);
-  const tasksWhy = scheduled.ok ? null : failureReason(scheduled.error);
-  return {
-    // Rendered through the shared Notice (packages/ui/notice.js).
-    rowsNotice: failureNotice("Couldn't read the log", rowsWhy),
-    tasksNotice: failureNotice("Couldn't read the background tasks", tasksWhy),
-    rows: logRows,
-    rowsError: rows.ok ? null : `Could not read the log: ${failureReason(rows.error)}`,
-    filters,
-    capped: logRows.length >= filters.limit,
-    tasks: scheduled.ok ? scheduled.data.tasks : [],
-    tasksError: scheduled.ok ? null : `Could not read the background tasks: ${failureReason(scheduled.error)}`,
-  };
+  return { ...rowsPageData(rows, filters), ...tasksPageData(scheduled) };
 }

@@ -152,9 +152,13 @@ describe('Observatory · Logs — the client-side search', () => {
     const c = await mount({
       rows: [logRow({ id: 'a', message: 'scan_started' }), logRow({ id: 'b', message: 'task_completed' })],
     });
-    const search = c.querySelector('[data-log-search]') as HTMLInputElement;
+    // L0 (tests r2): the screen searches through the shell's own field — the
+    // one search every screen has (contract §6). The claim is unchanged and
+    // only the selector moves; the shell debounces (so the waitFor waits) and
+    // delegates `input` (so the event has to bubble).
+    const search = c.querySelector('[data-screen-search] input') as HTMLInputElement;
     search.value = 'scan';
-    search.dispatchEvent(new Event('input'));
+    search.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
     await vi.waitFor(() => expect(rowHeaders(c).length).toBe(1));
     expect(c.textContent).toContain('scan_started');
@@ -222,7 +226,7 @@ describe('Observatory · Logs — the background tasks', () => {
 // that failed has no count — "showing 0 logs" beside an error notice says the
 // log is empty when nobody could read it (D83).
 describe('Observatory · Logs — a failed read does not count rows', () => {
-  it.skip('pending: L5 activity-logs — no row count from a failed read', async () => {
+  it('no row count from a failed read', async () => {
     const c = await mount({
       rows: [],
       rowsNotice: notice("Couldn't read the log", 'daemon unreachable'),
@@ -238,7 +242,7 @@ describe('Observatory · Logs — a failed read does not count rows', () => {
 // says "Retry" today with nothing to press, so a daemon hiccup is a dead end
 // until the page is reloaded — the filters the reader chose must survive it.
 describe('Observatory · Logs — a failed log read can be retried', () => {
-  it.skip('pending: L5 activity-logs — the log notice re-reads the rows with the same filters', async () => {
+  it('the log notice re-reads the rows with the same filters', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -272,7 +276,7 @@ describe('Observatory · Logs — a failed log read can be retried', () => {
 // stale reason — a failed retry that reads as an empty log is the same D83
 // claim as the count strip (settings/extensions tests r1, M2).
 describe('Observatory · Logs — a log retry that fails again', () => {
-  it.skip('pending: L5 activity-logs — a failed log retry is the new reason, not an empty log', async () => {
+  it('a failed log retry is the new reason, not an empty log', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 502, statusText: 'Bad Gateway' });
     vi.stubGlobal('fetch', fetchSpy);
     const c = await mount({
@@ -299,7 +303,7 @@ describe('Observatory · Logs — a log retry that fails again', () => {
 // Phase B (R5): the same for the tasks — a panel that quietly disappears on a
 // failed retry hides the failure just as an empty log does.
 describe('Observatory · Logs — a tasks retry that fails again', () => {
-  it.skip('pending: L5 activity-logs — a failed tasks retry is the new reason, not a missing panel', async () => {
+  it('a failed tasks retry is the new reason, not a missing panel', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 502, statusText: 'Bad Gateway' });
     vi.stubGlobal('fetch', fetchSpy);
     const c = await mount({
@@ -327,7 +331,7 @@ describe('Observatory · Logs — a tasks retry that fails again', () => {
 // Phase B (R6): a retry in flight is not a stampede — the second press during
 // the read joins it instead of starting another (the `reading` guard).
 describe('Observatory · Logs — a retry pressed twice', () => {
-  it.skip('pending: L5 activity-logs — two presses of the log retry are one GET', async () => {
+  it('two presses of the log retry are one GET', async () => {
     let answer: (v: unknown) => void = () => {};
     const pending = new Promise((resolve) => {
       answer = resolve;
@@ -357,7 +361,7 @@ describe('Observatory · Logs — a retry pressed twice', () => {
 // (#293): "the header, the workers, the filters and the column headings stay in
 // place; the rows scroll".
 describe('Observatory · Logs — the shell (D87)', () => {
-  it.skip('pending: L5 activity-logs — the shell draws the header, the band and the two scrollers', async () => {
+  it('the shell draws the header, the band and the two scrollers', async () => {
     const c = await mount({
       rows: [logRow({ message: 'still here' })],
       tasks: [task({ name: 'scanner' })],
@@ -401,7 +405,7 @@ describe('Observatory · Logs — the shell (D87)', () => {
 // Phase B (R8, N1): the tasks Retry writes the same guard as the log one — a
 // second press during the read joins it rather than starting another.
 describe('Observatory · Logs — a tasks retry pressed twice', () => {
-  it.skip('pending: L5 activity-logs — two presses of the tasks retry are one GET', async () => {
+  it('two presses of the tasks retry are one GET', async () => {
     let answer: (v: unknown) => void = () => {};
     const pending = new Promise((resolve) => {
       answer = resolve;
@@ -428,7 +432,7 @@ describe('Observatory · Logs — a tasks retry pressed twice', () => {
 // Phase B (R2): a tasks read that failed is retryable where it failed — the
 // log rows stay, one request goes out, and the answer replaces the notice.
 describe('Observatory · Logs — a failed tasks read can be retried', () => {
-  it.skip('pending: L5 activity-logs — the tasks notice re-reads the tasks in place', async () => {
+  it('the tasks notice re-reads the tasks in place', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,

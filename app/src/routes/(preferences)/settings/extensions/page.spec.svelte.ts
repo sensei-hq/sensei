@@ -233,7 +233,7 @@ describe('Settings · Extensions — a refused toggle on an unknown row', () => 
 // Review impl r1 (L1): the read in flight is a guard, not decoration — a second
 // press while it is in flight must not start a second read.
 describe('Settings · Extensions — Retry pressed twice', () => {
-  it.skip('pending: L5 settings-extensions — two presses in one read are one GET', async () => {
+  it('two presses in one read are one GET', async () => {
     let answer: (v: unknown) => void = () => {};
     const pending = new Promise((resolve) => {
       answer = resolve;
