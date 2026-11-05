@@ -308,17 +308,18 @@ describe('ScrBilling · billing follow-up', () => {
 
 // billing polish (user ruling 2026-11-05 + reviews/Design/L4-billing-followup-r1.md L1, L4):
 // the hidden list shows ONLY for an account that had Pro and lost it — past due, or lapsed
-// (canceled, unpaid, a period ended). On Free, never subscribed, unclaimed or an unknown
+// (canceled, or a period ended). On Free, never subscribed, unclaimed or an unknown
 // plan there is no list; the private repositories stay hidden for everyone all the same.
+// L4: the statuses are the schema's own (dojo.billing_status: trialing, active, past_due,
+// canceled). A lapsed period is `active` with a period_end in the past — not a made-up key.
 const withStatus = (status: string) => ({ ...acct('active'), status });
 describe('ScrBilling · billing polish', () => {
 	afterEach(cleanup);
 
 	it.each([
-		['canceled', withStatus('canceled')],
-		['unpaid', withStatus('unpaid')],
-		['incomplete_expired', withStatus('incomplete_expired')]
-	] as const)('%s (a Pro that lapsed): listed, back as they were once Pro is renewed', (_s, account) => {
+		['canceled (not_subscribed)', withStatus('canceled')],
+		['a period that ended (subscription_expired)', lapsedAcct()]
+	] as const)('%s: listed, back as they were once Pro is renewed', (_s, account) => {
 		const { container } = withHidden(account, twoHidden);
 		const text = container.querySelector('[data-billing-hidden]')?.textContent ?? '';
 		expect(text).toContain('2 private repositories are hidden from everyone in this organization.');
@@ -356,11 +357,30 @@ describe('ScrBilling · billing polish', () => {
 		expect(who.open).toBe(true);
 	});
 
+	// L2: a browser fires `toggle` when a search opens the disclosure. That is not the
+	// user's choice, so it must not be recorded — clearing the search closes it again.
+	it('a toggle during a search is not recorded: clearing the search closes "Who is counted"', async () => {
+		const { container } = screen(null);
+		const who = container.querySelector('details[data-billing-counted]') as HTMLDetailsElement;
+		const input = container.querySelector('[data-screen-filters] [data-screen-search] input') as HTMLInputElement;
+		await fireEvent.input(input, { target: { value: 'gamma' } });
+		await new Promise((r) => setTimeout(r, 300));
+		await tick();
+		expect(who.open).toBe(true);
+		who.dispatchEvent(new Event('toggle'));
+		await fireEvent.input(input, { target: { value: '' } });
+		await new Promise((r) => setTimeout(r, 300));
+		await tick();
+		expect(who.open).toBe(false);
+	});
+
 	// L2: a real wiring check — the page hands the billing section to loadBillingSection with
-	// the caller's repositories read, so a stub like `async () => []` fails here.
+	// the caller's repositories read, so a stub like `async () => []` fails here. The billing
+	// read itself must stay guarded for the 'billing' section, not another one.
 	it('the org page loads the billing section through loadBillingSection with listMyRepos', () => {
 		const load = readFileSync(join(process.cwd(), 'src/routes/(app)/org/[slug]/[section]/+page.ts'), 'utf8');
 		expect(load).toMatch(/section === 'billing'\s*\?\s*await loadBillingSection\(\s*slug\s*,[\s\S]*?\(\)\s*=>\s*listMyRepos\(opts\)\s*\)/);
+		expect(load).toMatch(/guardedFor<\s*BillingResponse\s*,\s*KitBilling\s*>\s*\(\s*'billing'/);
 		expect(load).not.toMatch(/loadOrgHidden\(/);
 	});
 });

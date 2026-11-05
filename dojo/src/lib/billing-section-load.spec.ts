@@ -4,7 +4,7 @@
 // is its own error; the billing read stands on its own.
 import { describe, it, expect, vi } from 'vitest';
 import type { MyRepoWire } from './client-data';
-import { noBilling } from './billing-map';
+import { toKitBilling, noBilling } from './billing-map';
 
 import { loadBillingSection } from './billing-section-load';
 
@@ -29,14 +29,48 @@ const repo = (id: string, org: string, billing_hidden: boolean): MyRepoWire => (
 	graph_branches: [],
 	billing_hidden
 });
-const billingOk = async () => ({ value: noBilling(), error: null });
+// L1 (reviews/Design/L4-billing-polish-r1.md): a REAL billing value, not
+// `noBilling()` — that default is exactly what a loader that drops the read would
+// substitute, so matching it proves nothing. A Pro account with seats is distinctive.
+const NOW = new Date('2026-11-04T00:00:00Z');
+const loadedBilling = () =>
+	toKitBilling(
+		{
+			account: {
+				plan: 'pro',
+				status: 'active',
+				seats_included: 4,
+				seats_used: 2,
+				seats_computed_at: null,
+				period_start: null,
+				period_end: '2026-12-01T00:00:00Z'
+			},
+			usage: {
+				seats_used: 2,
+				total_active_seats: 4,
+				billable_users: [
+					{
+						user_id: '7d3c9a10-0000-0000-0000-000000000001',
+						display_name: 'Alex Doe',
+						email: 'alex@example.com',
+						workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }]
+					}
+				]
+			}
+		},
+		NOW
+	);
+const billingOk = async () => ({ value: loadedBilling(), error: null });
 
 describe('loadBillingSection (billing polish, L2)', () => {
 	it('the billing read and this org\'s hidden group from the caller\'s repositories', async () => {
 		const readRepos = vi.fn(async () => [repo('core', 'acme', true), repo('site', 'acme', false), repo('g', 'globex', true)]);
 		const out = await loadBillingSection('acme', billingOk, readRepos);
 		expect(readRepos).toHaveBeenCalledOnce();
-		expect(out.billing).toEqual(noBilling());
+		// The loader hands on the billing read's value, not the empty default.
+		expect(loadedBilling()).not.toEqual(noBilling());
+		expect(out.billing).toEqual(loadedBilling());
+		expect(out.billing.plan).toBe('Pro');
 		expect(out.billingError).toBeNull();
 		expect(out.billingHidden).toEqual({ org: 'acme', count: 1, repos: ['core'] });
 		expect(out.billingHiddenError).toBeNull();
@@ -69,7 +103,9 @@ describe('loadBillingSection (billing polish, L2)', () => {
 		const out = await loadBillingSection('acme', billingOk, async () => {
 			throw new Error('boom');
 		});
-		expect(out.billing).toEqual(noBilling());
+		// Billing stands on its own: the real value, not the empty fallback.
+		expect(out.billing).toEqual(loadedBilling());
+		expect(out.billing.plan).toBe('Pro');
 		expect(out.billingError).toBeNull();
 		expect(out.billingHidden).toBeNull();
 		expect(out.billingHiddenError).toEqual({ status: 0, message: 'could not reach the dojo service' });
