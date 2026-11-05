@@ -140,4 +140,36 @@ describe('ScheduledTaskRow', () => {
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[data-task-schedule]')?.textContent).toContain('off');
   });
+
+  // D87: the shell's sidebar is 17.5rem wide, where the seven-column line
+  // cannot fit, so the page asks for the stacked block. It names each fact
+  // itself; every value is the one the row mode shows (r2, N1 — the stacked
+  // `last run` was unpinned and could show `next run` instead).
+  describe('stacked', () => {
+    it('names each fact, and each holds its own value', () => {
+      const m = mountComponent(ScheduledTaskRowHarness, {
+        task: makeTask({
+          last_run_at: '2026-07-13T02:17:29Z',
+          next_run_at: '2026-07-13T02:49:30Z',
+          interval_secs: 1800,
+          avg_ms: 1400,
+          enabled: true,
+        }),
+        now: NOW,
+        layout: 'stack',
+      });
+      cleanup.push(m.destroy);
+      const read = (key: string) =>
+        m.container.querySelector(`[data-task-${key}]`)?.textContent?.trim();
+      expect(read('last-run')).toBe('2m ago');
+      expect(read('next-run')).toBe('in 30m');
+      expect(read('interval')).toBe('every 30m');
+      expect(read('avg')).toBe('1.4s');
+      expect(read('health')).toBe('—');
+      // The labels are the block's own — the row mode relies on the column
+      // headings, which the sidebar does not draw.
+      const labels = Array.from(m.container.querySelectorAll('dt')).map((d) => d.textContent?.trim());
+      expect(labels).toEqual(['last run', 'interval', 'next run', 'schedule', 'avg', 'health']);
+    });
+  });
 });
