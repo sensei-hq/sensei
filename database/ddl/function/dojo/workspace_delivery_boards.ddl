@@ -13,7 +13,8 @@ returns table (
     predictability_reason text,
     history_at            timestamptz,
     pending_tickets       integer,
-    reported_at           timestamptz
+    reported_at           timestamptz,
+    predictability_words  text
 )
 language sql
 stable
@@ -21,7 +22,9 @@ security definer
 set search_path = dojo, pg_temp
 as $$
     select b.id, b.board_key, b.kind, b.name, b.predictability, b.predictability_reason,
-           b.history_at, b.pending_tickets, b.reported_at
+           b.history_at, b.pending_tickets, b.reported_at,
+           (select r.summary from sensei.reason_codes r
+             where r.domain = 'sdlc_metrics' and r.code = b.predictability_reason)
       from dojo.delivery_boards b
      where b.workspace_id = p_workspace
        and dojo.can_read_workspace(p_workspace)
@@ -32,4 +35,4 @@ revoke all on function dojo.workspace_delivery_boards(uuid) from public;
 grant execute on function dojo.workspace_delivery_boards(uuid) to authenticated;
 
 comment on function dojo.workspace_delivery_boards(uuid) is
-'A workspace''s tracker boards with their kept copy''s facts (name, predictability, history, completeness), for a reader of the workspace (dojo.can_read_workspace); nothing for anyone else (#352).';
+'A workspace''s tracker boards with their kept copy''s facts (name, predictability with its reason''s words, history, completeness), for a reader of the workspace (dojo.can_read_workspace); nothing for anyone else (#352).';

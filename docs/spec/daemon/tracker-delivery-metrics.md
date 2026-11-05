@@ -258,7 +258,9 @@ tracker and persona delete.
   transport error → nothing but `attempted_at`; re-sent next tick.
 - Each board's outcome is also recorded in the sync state (`mark_synced` / `mark_sync_error` /
   `mark_sync_skipped`, entity `tracker_board`, key `board_key`), so a failing board is visible
-  outside the log. One board's failure, including a database error writing its mark, never
+  outside the log: Settings → Dōjō lists it under its day as a board (named by its key's
+  start, never as a repository). A board that fails to build, or a board read that fails, is
+  recorded too and reaches the tick's failures, after every board has been tried. One board's failure, including a database error writing its mark, never
   stops the others.
 - A changed tenant changes the key, so nothing is suppressed after re-filing.
 
@@ -471,6 +473,6 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
 | C19 | `history_through` is per ticket only; trackers have `history_at` | `tracker_tasks.ddl:26`; `trackers.ddl:30` | CONFIRMED (new) |
 | C20 | `tracker_tasks.summary` is documented as never leaving the machine | `tracker_tasks.ddl:44-45` | CONFIRMED (B12 overrides) |
 | C21 | `納` is not in `KANJI_ICONS` | `packages/glyphs/index.js` | CONFIRMED |
-| C22 | The Dōjō workspace route has one page, no sub-routes | `+page.svelte`, `+page.ts`, `metrics-load.spec.ts` | CONFIRMED (corrected) |
+| C22 | The Dōjō workspace route had one page, no sub-routes | `+page.svelte`, `+page.ts`, `metrics-load.spec.ts` | CONFIRMED (corrected); superseded by F2, which adds `workspaces/[id]/delivery` |
 | C23 | `GET /api/reason-codes/{domain}` serves `sdlc_metrics` | `routes.rs:491` | CONFIRMED |
-| — | Two installs produce the same `board_ref` for one board | not checked | **verify at build start** |
+| C24 | Two installs produce the same `board_ref` for one board | `canonical_board_id` (`tracker/jira.rs:27`) for typed and pasted board ids; `normalize_base_url` | CONFIRMED (F2 build start) |

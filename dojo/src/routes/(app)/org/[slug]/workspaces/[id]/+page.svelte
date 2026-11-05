@@ -26,5 +26,6 @@
 	error={data.constitutionError}
 	metrics={data.metricsView}
 	metricsError={data.metricsError}
+	deliveryHref={orgHref(data.slug, `workspaces/${data.workspace.id}/delivery`)}
 	onBack={back}
 />

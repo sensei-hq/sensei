@@ -205,6 +205,14 @@
         {/each}
       </div>
     {/each}
+    {#each d.boards as b (b.name)}
+      <div class="px-4 py-2 border-t border-paper-edge" data-board={b.name}>
+        <div class="text-sm text-ink truncate">{b.name}</div>
+        {#each b.items as item (item.row.entity_key + item.row.entity + item.row.direction)}
+          <div class="pl-3 mt-1">{@render syncLine(item)}</div>
+        {/each}
+      </div>
+    {/each}
   {/each}
 {/snippet}
 

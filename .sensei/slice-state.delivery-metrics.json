@@ -15,20 +15,24 @@
     "review",
     "commit"
   ],
-  "current_phase": "F2c daemon push",
+  "current_phase": "F2 review fixes \u2014 verifying",
   "completed": [
     "F1 (#351) committed",
     "F2 claims",
     "F2 locate",
     "F2 spec-audit (A1)",
     "F2a dojo DDL + SQL tests",
-    "F2b dojo endpoints (POST /v1/you/delivery, GET \u2026/delivery, \u2026/delivery/tickets)"
+    "F2b dojo endpoints (POST /v1/you/delivery, GET \u2026/delivery, \u2026/delivery/tickets)",
+    "F2c daemon push (DDL tracker_push_marks + sync_entity tracker_board; dojo/delivery.rs; pg_store/delivery.rs; board_figures; UserPlane::push_delivery; tasks/dojo_delivery.rs; tick wiring) \u2014 108 Rust tests green",
+    "F2d dojo view (packages/sdlc-figures shared; workspace-delivery-data/view; delivery-state; ScrWorkspaceDelivery; route; preview link) \u2014 dojo 2173 tests green, check clean",
+    "F2 review swarm (5 agents): fixed A (SQL shape/bounds/history, reader-safe reasons, tests for sync_enabled, completeness, workspace binding, reason_words, backlog), B (streamed byte cap, list guards, reported_at consistency + 409, one wire-types module, view length, page wiring), C (hash name+kind, Result + sync-state on every board failure, two-board/mark-before-send/refused-not-acked tests, ORDER BY replay), D (Settings\u2192D\u014dj\u014d boards group), E (dbml, marks comment, plan, claims, spec D3)"
   ],
   "gate_status": "pass",
   "open_questions": [],
   "known_broken": [
     "app sessions-digest 'local day' tests fail in IST (pre-existing, #357)",
-    "dojo SQL advisor_guards (staging.metric_gating no RLS) and repository_metric_series (permission denied for schema sensei) fail on develop's schema too (pre-existing)"
+    "dojo SQL advisor_guards (staging.metric_gating no RLS) and repository_metric_series (permission denied for schema sensei) fail on develop's schema too (pre-existing)",
+    "shared dojo readAllPages turns a null answer into [] for every caller (pre-existing; delivery reads guard their own)"
   ],
   "amendments": [
     "Gate 5 is an allow-list of four daemon reads, never /api/dojo/* (audit HIGH)",
@@ -42,5 +46,5 @@
     "F2 A1: D3/D4 rewritten after the pre-build audit (21 findings): plan tenant, facts once per tick, canonical hash without history_at, attempted marks + 6 h expiry + failure backoff + sync-state record, lock skip, consistency token, removed sprints sdlc null, removed tickets not sent, membership sprints, FOR UPDATE ordering, workspace from verified repository ids, app ticket order",
     "F2a: delivery_tickets.title nullable (Jira can return no summary; D83), no column defaults on removed/sprints"
   ],
-  "next_command": "/sensei:build #352 (unattended) \u2014 resume at F2c: sensei.tracker_push_marks DDL, dojo/delivery.rs pure fns, pg_store reads, UserPlane::push_delivery, dojo_sync step"
+  "next_command": "read scratch-f2/mut-rust2.log and js-gates.log (both end with DONE); then cargo clippy -p senseid -- -D warnings and the senseid test suite; commit F2c+F2d+fixes; then /sensei:build #353"
 }

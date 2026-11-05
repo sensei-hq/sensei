@@ -543,6 +543,7 @@ pub struct MetricMeaning {
 mod command_catalogue;
 mod commands;
 mod config;
+pub(crate) mod delivery;
 mod dojo;
 mod extensions;
 pub(crate) mod folders;

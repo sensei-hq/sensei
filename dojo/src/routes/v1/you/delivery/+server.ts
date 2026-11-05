@@ -10,20 +10,14 @@ import type { RequestHandler } from './$types';
 import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { AdminError } from '$lib/server/admin-data';
+import { readCapped } from '$lib/server/body-cap';
 import { DELIVERY_MAX_BYTES, checkDeliveryBody, fileDelivery } from '$lib/server/delivery-ingest';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
 		const caller = await resolveCaller(request, locals);
-		const declared = Number(request.headers.get('content-length') ?? '0');
-		if (Number.isFinite(declared) && declared > DELIVERY_MAX_BYTES) {
-			return apiError(413, `body over ${DELIVERY_MAX_BYTES} bytes`);
-		}
-		// A body sent without a declared length is measured as read.
-		const raw = await request.text();
-		if (new TextEncoder().encode(raw).length > DELIVERY_MAX_BYTES) {
-			return apiError(413, `body over ${DELIVERY_MAX_BYTES} bytes`);
-		}
+		const raw = await readCapped(request, DELIVERY_MAX_BYTES);
+		if (raw === null) return apiError(413, `body over ${DELIVERY_MAX_BYTES} bytes`);
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(raw);

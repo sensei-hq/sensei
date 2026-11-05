@@ -178,6 +178,8 @@ export type SyncDay = {
   /** The identity's own entities that day (its sync plan, forge mirror). */
   own: SyncItem[];
   repositories: { name: string; items: SyncItem[] }[];
+  /** Tracker boards' delivery pushes, keyed by their board key (tracker-delivery-metrics D3). */
+  boards: { name: string; items: SyncItem[] }[];
 };
 export type SyncIdentity = {
   /** The identity's NAME; `null` for rows no sync has attributed yet. */
@@ -209,9 +211,17 @@ export function groupSync(rows: SyncStateRow[], identities: { slot: string | nul
     groups.set(key, identity);
     const day = isoDay(row.synced_at) ?? isoDay(row.attempted_at) ?? null;
     let d = identity.days.find((x) => x.day === day);
-    if (!d) identity.days.push((d = { day, own: [], repositories: [] }));
+    if (!d) identity.days.push((d = { day, own: [], repositories: [], boards: [] }));
     if (IDENTITY_ENTITIES.has(row.entity)) {
       d.own.push({ row, branch: null });
+      continue;
+    }
+    // A board travels under a pseudonymous key, never a URL: named by its key's start.
+    if (row.entity === 'tracker_board') {
+      const name = `board ${row.entity_key.slice(0, 8)}`;
+      let b = d.boards.find((x) => x.name === name);
+      if (!b) d.boards.push((b = { name, items: [] }));
+      b.items.push({ row, branch: null });
       continue;
     }
     const at = row.entity_key.lastIndexOf('@');
@@ -223,7 +233,10 @@ export function groupSync(rows: SyncStateRow[], identities: { slot: string | nul
   const out = [...groups.values()];
   for (const g of out) {
     g.days.sort((a, b) => (a.day === b.day ? 0 : a.day === null ? 1 : b.day === null ? -1 : a.day < b.day ? 1 : -1));
-    for (const d of g.days) d.repositories.sort((a, b) => a.name.localeCompare(b.name));
+    for (const d of g.days) {
+      d.repositories.sort((a, b) => a.name.localeCompare(b.name));
+      d.boards.sort((a, b) => a.name.localeCompare(b.name));
+    }
   }
   return out.sort((a, b) => (a.label === null ? 1 : b.label === null ? -1 : a.label.localeCompare(b.label)));
 }

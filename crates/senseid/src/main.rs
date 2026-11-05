@@ -3,6 +3,7 @@ pub mod agent_spawn;
 mod analysis;
 mod api;
 pub mod assistants;
+mod canonical_json;
 pub mod checker;
 mod classifiers;
 mod collective;

@@ -54,6 +54,17 @@ describe('ScrWorkspacePreview — the resolved-constitution drill-in', () => {
 		expect(queryByText("This workspace's constitution resolves in your editor.")).toBeNull();
 	});
 
+	it("links to the workspace's delivery when the page gives the way (tracker-delivery-metrics D5)", () => {
+		const { container } = render(ScrWorkspacePreview, {
+			props: { workspace: workspaces[0], ladder: [], conflicts: [], deliveryHref: '/org/acme/workspaces/w1/delivery' }
+		});
+		const link = container.querySelector('a[data-link="delivery"]');
+		expect(link?.getAttribute('href')).toBe('/org/acme/workspaces/w1/delivery');
+		cleanup();
+		const without = render(ScrWorkspacePreview, { props: { workspace: workspaces[0], ladder: [], conflicts: [] } });
+		expect(without.container.querySelector('a[data-link="delivery"]')).toBeNull();
+	});
+
 	const company = workspaces[0]; // lumen-auth (company)
 	const personal = workspaces[2]; // personal-site (personal)
 

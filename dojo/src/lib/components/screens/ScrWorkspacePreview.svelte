@@ -30,6 +30,7 @@
 		error = null,
 		metrics = null,
 		metricsError = null,
+		deliveryHref = null,
 		onBack
 	}: {
 		workspace: KitWorkspace;
@@ -42,6 +43,8 @@
 		metrics?: WorkspaceMetricsView | null;
 		/** A failed metrics read — shown instead of empty charts (#109). */
 		metricsError?: string | null;
+		/** Where the workspace's delivery (its tracker boards' sprints) opens (#352). */
+		deliveryHref?: string | null;
 		onBack?: () => void;
 	} = $props();
 
@@ -72,6 +75,9 @@
 			<SectionHead kanji="件" eyebrow={'Before you start · ' + workspace.repo} title={workspace.name}>
 				{#snippet right()}
 					<div class="flex items-center gap-2">
+						{#if deliveryHref}
+							<a data-link="delivery" href={deliveryHref} class="text-sm text-primary underline">Delivery</a>
+						{/if}
 						<ClassChip kind={workspace.classification} />
 						<PhasePill phase={workspace.phase} />
 					</div>

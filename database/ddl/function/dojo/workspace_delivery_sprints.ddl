@@ -18,14 +18,21 @@ returns table (
     start_at    timestamptz,
     end_at      timestamptz,
     complete_at timestamptz,
-    sdlc        jsonb
+    sdlc        jsonb,
+    reason_words jsonb
 )
 language sql
 stable
 security definer
 set search_path = dojo, pg_temp
 as $$
-    select s.external_id, s.seq, s.name, s.state, s.start_at, s.end_at, s.complete_at, s.sdlc
+    select s.external_id, s.seq, s.name, s.state, s.start_at, s.end_at, s.complete_at, s.sdlc,
+           (select jsonb_object_agg(r.code, r.summary)
+              from sensei.reason_codes r
+             where r.domain = 'sdlc_metrics'
+               and r.code in (select x.value
+                                from jsonb_each_text(case when jsonb_typeof(s.sdlc -> 'reasons') = 'object'
+                                                          then s.sdlc -> 'reasons' end) x))
       from dojo.delivery_sprints s
       join dojo.delivery_boards b on b.id = s.board_id
      where b.id = p_board
@@ -40,4 +47,4 @@ revoke all on function dojo.workspace_delivery_sprints(uuid, uuid, integer, inte
 grant execute on function dojo.workspace_delivery_sprints(uuid, uuid, integer, integer) to authenticated;
 
 comment on function dojo.workspace_delivery_sprints(uuid, uuid, integer, integer) is
-'A board''s non-removed sprints from its kept copy, in the daemon''s order (start_at desc nulls last, seq desc), for a reader of the workspace (dojo.can_read_workspace); paged (#352).';
+'A board''s non-removed sprints from its kept copy, in the daemon''s order (start_at desc nulls last, seq desc), each with the words of the reason codes in its figures (reason_words, code → summary), for a reader of the workspace (dojo.can_read_workspace); paged (#352).';

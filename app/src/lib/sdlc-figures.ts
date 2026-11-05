@@ -2,22 +2,21 @@
 // Shared by Tickets (a ticket's group) and Delivery Metrics (sprint and board rows).
 // Spec: docs/spec/daemon/tracker-sdlc-metrics.md S6, S8; tracker-delivery-metrics.md D2.
 import { compactDuration, compactTokens } from '$lib/sessions-digest.js';
-import type { MetricReason, ProjectSdlc, SdlcReasons, SprintSdlc, TicketSdlc } from '$lib/types.js';
+import type { MetricReason, ProjectSdlc, TicketSdlc } from '$lib/types.js';
+import {
+  SDLC_REASONS,
+  points,
+  pct,
+  reasonText,
+  sdlcFigure,
+  sprintSdlcFigures,
+  type SdlcFigure,
+} from '@sensei/sdlc-figures';
 
-/** The reason domain the SDLC figures' codes live in (tracker-sdlc-metrics S6). */
-export const SDLC_REASONS = 'sdlc_metrics';
+export { SDLC_REASONS, reasonText, sprintSdlcFigures, type SdlcFigure };
 
 /** Reason codes' words, by code. */
 export type Words = Record<string, MetricReason>;
-
-/** One SDLC figure as shown: its value, or (when null) its reason's summary. */
-export interface SdlcFigure {
-  key: string;
-  label: string;
-  text: string;
-  /** The text is a reason's summary, not a value. */
-  reason: boolean;
-}
 
 export interface SdlcRow {
   id: 'cost' | 'defects' | 'timing' | 'rework';
@@ -26,39 +25,15 @@ export interface SdlcRow {
   note: string | null;
 }
 
-const pct = (x: number) => `${Math.round(x)}%`;
 const money = (x: number) => `$${x.toFixed(2)}`;
 const count = (x: number) => String(x);
-const points = (x: number) => `${Number(x.toFixed(1))} pts`;
 const hoursText = (h: number) => compactDuration(Math.round(h * 60));
 const minutesText = (m: number) => compactDuration(Math.round(m));
-
-/** A figure's value, or its reason's summary. A code the vocabulary has no words for
- *  is a fault and says so, never passing for "no data". */
-function figure(
-  key: string,
-  label: string,
-  value: number | null,
-  format: (x: number) => string,
-  reasons: SdlcReasons,
-  words: Words,
-): SdlcFigure {
-  if (value != null) return { key, label, text: format(value), reason: false };
-  const code = reasons[key];
-  if (code == null) return { key, label, text: '—', reason: false };
-  return { key, label, text: reasonText(code, words), reason: true };
-}
-
-/** A reason code's summary, for a figure that is not one of a row's (a sprint's
- *  missing replay). A code with no words says so. */
-export function reasonText(code: string, words: Words): string {
-  return words[code]?.summary ?? 'Reason not recognised';
-}
 
 /** A ticket's SDLC group (S8): cost, defects, timing, rework. */
 export function ticketSdlcRows(s: TicketSdlc, words: Words): SdlcRow[] {
   const f = (key: keyof TicketSdlc & string, label: string, format: (x: number) => string) =>
-    figure(key, label, s[key] as number | null, format, s.reasons, words);
+    sdlcFigure(key, label, s[key] as number | null, format, s.reasons, words);
   const unknown = s.runs_unknown ?? 0;
   // While runs are unknown every defect count is a lower bound (S6): an unknown run can
   // hide a build or test failure, an escape needs one, and review defects include escapes.
@@ -110,25 +85,10 @@ export function ticketSdlcRows(s: TicketSdlc, words: Words): SdlcRow[] {
   ];
 }
 
-/** A sprint's seven figures (S6): six percents, and velocity in points. */
-export function sprintSdlcFigures(s: SprintSdlc, words: Words): SdlcFigure[] {
-  const f = (key: keyof SprintSdlc & string, label: string, format: (x: number) => string) =>
-    figure(key, label, s[key] as number | null, format, s.reasons, words);
-  return [
-    f('commitment_reliability', 'commitment reliability', pct),
-    f('total_completion', 'total completion', pct),
-    f('scope_change', 'scope change', pct),
-    f('carry_over_rate', 'carry-over', pct),
-    f('unplanned_work_ratio', 'unplanned work', pct),
-    f('velocity', 'velocity', points),
-    f('points_commitment_reliability', 'points commitment', pct),
-  ];
-}
-
 /** A board's project figures (S6). */
 export function projectSdlcFigures(p: ProjectSdlc, words: Words): SdlcFigure[] {
   const f = (key: keyof ProjectSdlc & string, label: string, format: (x: number) => string) =>
-    figure(key, label, p[key] as number | null, format, p.reasons, words);
+    sdlcFigure(key, label, p[key] as number | null, format, p.reasons, words);
   return [
     f('predictability', 'predictability', points),
     f('tokens_per_ticket', 'tokens per ticket', compactTokens),

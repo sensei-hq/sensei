@@ -29,7 +29,8 @@ function makeDb(opts: {
 		if (fn === 'workspace_delivery_sprints') {
 			if (opts.sprintsError) return Promise.resolve({ data: null, error: opts.sprintsError });
 			const page = Math.floor((args.p_offset as number) / (args.p_limit as number));
-			return Promise.resolve({ data: opts.sprintPages?.[page] ?? [], error: null });
+			const pages = opts.sprintPages ?? [];
+			return Promise.resolve({ data: page < pages.length ? pages[page] : [], error: null });
 		}
 		if (fn === 'workspace_delivery_tickets') return Promise.resolve(opts.tickets ?? { data: [], error: null });
 		throw new Error(`unexpected rpc ${fn}`);
@@ -104,6 +105,39 @@ describe('getWorkspaceDelivery', () => {
 		await expect(getWorkspaceDelivery(db, T, W)).rejects.toMatchObject({ status: 500 });
 	});
 
+	it('a sprints read that answers no list is an error, not "no sprints"', async () => {
+		const { db } = makeDb({ boards: { data: [board], error: null }, sprintPages: [null as unknown as unknown[]] });
+		await expect(getWorkspaceDelivery(db, T, W)).rejects.toMatchObject({ status: 500 });
+	});
+
+	it('a board replaced while its sprints are read is read again; one that keeps changing is 409', async () => {
+		let boardsReads = 0;
+		const changing = { ...makeDb({ sprintPages: [[sprintRow('7')]] }) };
+		const rpc = (changing.db as unknown as { rpc: (fn: string, a: Record<string, unknown>) => unknown }).rpc;
+		(changing.db as unknown as { rpc: unknown }).rpc = (fn: string, args: Record<string, unknown>) => {
+			if (fn === 'workspace_delivery_boards') {
+				boardsReads += 1;
+				// Reads 1–2 see report A, reads 3–4 report B: the second attempt is consistent.
+				const at = boardsReads <= 1 ? '2026-11-04T10:00:00Z' : '2026-11-04T11:00:00Z';
+				return Promise.resolve({ data: [{ ...board, reported_at: at }], error: null });
+			}
+			return rpc(fn, args);
+		};
+		const out = await getWorkspaceDelivery(changing.db, T, W);
+		expect(out.boards[0].reported_at).toBe('2026-11-04T11:00:00Z');
+		expect(boardsReads).toBe(4);
+
+		let n = 0;
+		(changing.db as unknown as { rpc: unknown }).rpc = (fn: string, args: Record<string, unknown>) => {
+			if (fn === 'workspace_delivery_boards') {
+				n += 1;
+				return Promise.resolve({ data: [{ ...board, reported_at: `2026-11-04T10:00:${String(n).padStart(2, '0')}Z` }], error: null });
+			}
+			return rpc(fn, args);
+		};
+		await expect(getWorkspaceDelivery(changing.db, T, W)).rejects.toMatchObject({ status: 409 });
+	});
+
 	it('a failed read is an error, never "no boards"', async () => {
 		const failedBoards = makeDb({ boards: { data: null, error: { message: 'reset' } } });
 		await expect(getWorkspaceDelivery(failedBoards.db, T, W)).rejects.toMatchObject({ status: 500 });
@@ -114,7 +148,7 @@ describe('getWorkspaceDelivery', () => {
 
 describe('getDeliveryTickets', () => {
 	it('reads one sprint’s tickets, gated like the boards', async () => {
-		const { db, calls } = makeDb({ tickets: { data: [{ key: 'AUTH-2', title: 'Two' }], error: null } });
+		const { db, calls } = makeDb({ boards: { data: [board], error: null }, tickets: { data: [{ key: 'AUTH-2', title: 'Two' }], error: null } });
 		const out = await getDeliveryTickets(db, T, W, B, { sprint: '101' });
 		expect(out).toEqual([{ key: 'AUTH-2', title: 'Two' }]);
 		expect(calls[0].fn).toBe('can_read_workspace');
@@ -127,14 +161,34 @@ describe('getDeliveryTickets', () => {
 	});
 
 	it('reads the backlog', async () => {
-		const { db, calls } = makeDb({});
+		const { db, calls } = makeDb({ boards: { data: [board], error: null } });
 		await getDeliveryTickets(db, T, W, B, { backlog: true });
 		expect(calls.find((c) => c.fn === 'workspace_delivery_tickets')!.args).toMatchObject({ p_sprint: null, p_backlog: true });
 	});
 
+	it('a tickets read that answers no list is an error, not "no tickets"', async () => {
+		const { db } = makeDb({ boards: { data: [board], error: null }, tickets: { data: null, error: null } });
+		await expect(getDeliveryTickets(db, T, W, B, { sprint: '101' })).rejects.toMatchObject({ status: 500 });
+	});
+
+	it('tickets read across a replacement of their board are read again, then 409', async () => {
+		let n = 0;
+		const base = makeDb({ tickets: { data: [{ key: 'AUTH-2', title: 'Two' }], error: null } });
+		const rpc = (base.db as unknown as { rpc: (fn: string, a: Record<string, unknown>) => unknown }).rpc;
+		(base.db as unknown as { rpc: unknown }).rpc = (fn: string, args: Record<string, unknown>) => {
+			if (fn === 'workspace_delivery_boards') {
+				n += 1;
+				return Promise.resolve({ data: [{ ...board, reported_at: `2026-11-04T10:00:${String(n).padStart(2, '0')}Z` }], error: null });
+			}
+			return rpc(fn, args);
+		};
+		await expect(getDeliveryTickets(base.db, T, W, B, { sprint: '101' })).rejects.toMatchObject({ status: 409 });
+	});
+
 	it('a non-reader is 403; a failed read is 500', async () => {
 		await expect(getDeliveryTickets(makeDb({ canRead: false }).db, T, W, B, {})).rejects.toMatchObject({ status: 403 });
-		const failed = makeDb({ tickets: { data: null, error: { message: 'reset' } } });
+		const failed = makeDb({ boards: { data: [board], error: null }, tickets: { data: null, error: { message: 'reset' } } });
 		await expect(getDeliveryTickets(failed.db, T, W, B, {})).rejects.toMatchObject({ status: 500 });
+		await expect(getDeliveryTickets(makeDb({}).db, T, W, B, {})).rejects.toMatchObject({ status: 404 });
 	});
 });

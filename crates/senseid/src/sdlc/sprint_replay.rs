@@ -405,6 +405,40 @@ fn figures_by_sprint(
         .collect()
 }
 
+/// Every non-removed sprint's figures and the board's predictability, from ONE
+/// replay read (tracker-delivery-metrics D3): what a board's delivery facts carry.
+pub struct BoardFigures {
+    pub by_sprint: HashMap<uuid::Uuid, SprintSdlc>,
+    /// Predictability, or the reason it has none.
+    pub predictability: Result<f64, &'static str>,
+}
+
+/// A board's sprint figures and predictability, read once (S5, S6).
+pub async fn board_figures(
+    pg: &crate::db::pg_store::PgStore,
+    tracker_id: uuid::Uuid,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<BoardFigures, String> {
+    let inputs = pg.replay_inputs(tracker_id).await?;
+    let by_sprint = figures_by_sprint(&inputs, now)?;
+    let predictability = board_predictability(&inputs, &by_sprint);
+    Ok(BoardFigures { by_sprint, predictability })
+}
+
+/// Predictability over the board's closed sprints' commitment reliability (S6).
+fn board_predictability(
+    inputs: &crate::db::pg_store::tracker_history::ReplayInputs,
+    by_sprint: &HashMap<uuid::Uuid, SprintSdlc>,
+) -> Result<f64, &'static str> {
+    let closed: Vec<Option<f64>> = inputs
+        .sprints
+        .iter()
+        .filter(|s| s.state == "closed")
+        .map(|s| by_sprint.get(&s.id).and_then(|f| f.commitment_reliability))
+        .collect();
+    predictability(&closed)
+}
+
 /// The tracker's project figures (S6): predictability over its last six closed
 /// sprints, and tokens and prompts per ticket over the distinct union of its
 /// tickets' sessions (a session shared by two tickets counts once).
@@ -416,13 +450,7 @@ pub async fn project_sdlc(
     let mut p = ProjectSdlc::default();
     let inputs = pg.replay_inputs(tracker_id).await?;
     let by_sprint = figures_by_sprint(&inputs, now)?;
-    let closed: Vec<Option<f64>> = inputs
-        .sprints
-        .iter()
-        .filter(|s| s.state == "closed")
-        .map(|s| by_sprint.get(&s.id).and_then(|f| f.commitment_reliability))
-        .collect();
-    match predictability(&closed) {
+    match board_predictability(&inputs, &by_sprint) {
         Ok(v) => p.predictability = Some(v),
         Err(why) => {
             p.reasons.insert("predictability", why);
@@ -709,7 +737,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod store_tests {
+pub(crate) mod store_tests {
     use super::*;
     use crate::db::pg_store::PgStore;
 
@@ -724,7 +752,7 @@ mod store_tests {
     /// Sprint 100 (closed): A committed and done, B added and carried into 101.
     /// Sprint 101 (closed): C and D committed, C done; B added, not done.
     /// Sprint 102 is in the future. Points: A 3, C 5, B and D none.
-    async fn seeded(pg: &PgStore) -> uuid::Uuid {
+    pub(crate) async fn seeded(pg: &PgStore) -> uuid::Uuid {
         let t = crate::tracker::history::test_tracker(pg).await;
         for sql in [
             "UPDATE sensei.trackers SET estimation_field = 'customfield_10016',

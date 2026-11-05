@@ -90,6 +90,44 @@ describe('POST /v1/you/delivery', () => {
 		expect(mocks.fileDelivery).not.toHaveBeenCalled();
 	});
 
+	it('a streamed body with no declared length is cut off at 4 MB, not read whole', async () => {
+		let pulled = 0;
+		let cancelled = false;
+		const chunk = new Uint8Array(256 * 1024).fill(0x61);
+		const stream = new ReadableStream<Uint8Array>({
+			pull(c) {
+				if (pulled >= 40 * 1024 * 1024) return c.close();
+				pulled += chunk.length;
+				c.enqueue(chunk);
+			},
+			cancel() {
+				cancelled = true;
+			}
+		});
+		const request = new Request('http://x/', {
+			method: 'POST',
+			headers: { authorization: 'Bearer jwt', 'content-type': 'application/json' },
+			body: stream,
+			duplex: 'half'
+		} as RequestInit);
+		const res = await route.POST({ request, locals: {}, url: new URL('http://x/') } as never);
+		expect(res.status).toBe(413);
+		expect(cancelled).toBe(true);
+		expect(pulled).toBeLessThan(6 * 1024 * 1024);
+		expect(mocks.fileDelivery).not.toHaveBeenCalled();
+	});
+
+	it('the cap counts bytes, not characters: 2.2 million é is over 4 MB', async () => {
+		const res = await route.POST(post(JSON.stringify({ ...valid, board_name: 'é'.repeat(2_200_000) })));
+		expect(res.status).toBe(413);
+	});
+
+	it('exactly 4 MiB is let through to the shape check; one byte more is 413', async () => {
+		const at = 'x'.repeat(4 * 1024 * 1024);
+		expect((await route.POST(post(at))).status).toBe(400);
+		expect((await route.POST(post(at + 'x'))).status).toBe(413);
+	});
+
 	it('malformed JSON or a wrong shape is 400 and never reaches the database', async () => {
 		for (const raw of ['not json', JSON.stringify({ ...valid, v: 2 })]) {
 			const res = await route.POST(post(raw));

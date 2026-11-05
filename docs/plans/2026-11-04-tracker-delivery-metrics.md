@@ -65,11 +65,11 @@ claim: two installs record the same `board_ref` for one Jira board. A `FALSE` st
 - **Layers:** DDL (`dojo.delivery_boards|sprints|tickets`, `sensei.tracker_push_marks`;
   `tracker_tasks.summary` comment, B12) → daemon (eligibility, `board_key`, facts payload,
   watermark, new step in the `dojo_sync` tick) → Dōjō `POST /v1/you/delivery` (contract, consent
-  re-check via `my_repositories`, workspace resolution, one-copy order) → reads
+  re-check via `dojo.all_my_repositories.sync_enabled`, workspace resolution, one-copy order) → reads
   `workspace_delivery_boards|sprints|tickets` (facts only) → Dōjō Delivery view (facts columns,
   titles) and a link from the workspace page.
 - **Depends on:** none (F1 independent)
-- **Acceptance criteria:** gates 6, 7, 8, 10, 12, 13; gate 17's 403 part; gate 18 for facts and
+- **Acceptance criteria:** gates 6, 7, 8, 10, 10a, 12, 13; gate 17's 403 part; gate 18 for facts and
   titles. The effort part of the payload is sent empty (`effort: null`) until F3.
 - **Test scenarios:**
   ```gherkin

@@ -374,6 +374,87 @@ pub trait UserPlane: Send + Sync {
         metric: &str,
         enabled: bool,
     ) -> Result<ActivationOutcome, String>;
+
+    /// Push one tracker board's delivery facts (`POST /v1/you/delivery`,
+    /// tracker-delivery-metrics D3/D4). `body` is the serialized request, already
+    /// size-checked.
+    async fn push_delivery(
+        &self,
+        token: &str,
+        body: &[u8],
+    ) -> Result<DeliveryOutcome, DeliveryError>;
+}
+
+/// What the dōjō did with a board's facts: `accepted`, or `stale` (it keeps a
+/// better copy).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct DeliveryOutcome {
+    pub facts: String,
+}
+
+/// Why a board push did not land.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeliveryError {
+    /// The dōjō answered and refused (4xx): the same body would be refused again,
+    /// so it waits for a change or the backoff. A 409 is `workspace_ambiguous`.
+    Refused { status: u16, body: String },
+    /// Not reached, a 5xx, or an answer that cannot be read: tried again next tick.
+    Failed(String),
+}
+
+impl std::fmt::Display for DeliveryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeliveryError::Refused { status, body } => {
+                write!(f, "dōjō returned {status} for the board push: {body}")
+            }
+            DeliveryError::Failed(e) => f.write_str(e),
+        }
+    }
+}
+
+/// Read a board push's answer: a 4xx is a refusal, any other failure or an answer
+/// that is neither `accepted` nor `stale` is a failure. Pure.
+pub fn delivery_answer(status: u16, text: &str) -> Result<DeliveryOutcome, DeliveryError> {
+    if (400..500).contains(&status) {
+        return Err(DeliveryError::Refused { status, body: text.to_string() });
+    }
+    if !(200..300).contains(&status) {
+        return Err(DeliveryError::Failed(format!(
+            "dōjō returned {status} for the board push: {text}"
+        )));
+    }
+    let out: DeliveryOutcome = decode("board push result", text).map_err(DeliveryError::Failed)?;
+    if out.facts != "accepted" && out.facts != "stale" {
+        return Err(DeliveryError::Failed(format!(
+            "dōjō answered the board push with facts = {}",
+            out.facts
+        )));
+    }
+    Ok(out)
+}
+
+/// `POST /v1/you/delivery` with a serialized, size-checked body.
+pub async fn push_delivery(
+    dojo_url: &str,
+    token: &str,
+    body: &[u8],
+) -> Result<DeliveryOutcome, DeliveryError> {
+    let r = crate::federation::http_client()
+        .post(endpoint(dojo_url, "delivery"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body.to_vec())
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| {
+            DeliveryError::Failed(format!("could not reach dōjō for the board push: {e}"))
+        })?;
+    let status = r.status().as_u16();
+    let text = r.text().await.map_err(|e| {
+        DeliveryError::Failed(format!("dōjō's answer to the board push could not be read: {e}"))
+    })?;
+    delivery_answer(status, &text)
 }
 
 /// What the dōjō says the ruling now is, re-read rather than echoed.
@@ -444,6 +525,14 @@ impl UserPlane for HttpUserPlane {
         metrics: &[MetricPush<'_>],
     ) -> Result<IngestResult, String> {
         push_metrics(&self.dojo_url, token, metrics).await
+    }
+
+    async fn push_delivery(
+        &self,
+        token: &str,
+        body: &[u8],
+    ) -> Result<DeliveryOutcome, DeliveryError> {
+        push_delivery(&self.dojo_url, token, body).await
     }
     async fn graph_hashes(
         &self,
@@ -693,6 +782,38 @@ pub async fn provision(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_board_push_answer_is_a_refusal_a_failure_or_an_outcome() {
+        assert_eq!(
+            delivery_answer(200, r#"{"facts":"accepted"}"#),
+            Ok(DeliveryOutcome { facts: "accepted".into() })
+        );
+        assert_eq!(
+            delivery_answer(200, r#"{"facts":"stale"}"#),
+            Ok(DeliveryOutcome { facts: "stale".into() })
+        );
+        assert_eq!(
+            delivery_answer(409, r#"{"error":"workspace_ambiguous"}"#),
+            Err(DeliveryError::Refused {
+                status: 409,
+                body: r#"{"error":"workspace_ambiguous"}"#.into()
+            })
+        );
+        assert!(matches!(
+            delivery_answer(403, "no"),
+            Err(DeliveryError::Refused { status: 403, .. })
+        ));
+        assert!(
+            matches!(delivery_answer(500, "boom"), Err(DeliveryError::Failed(_))),
+            "a 5xx is tried again"
+        );
+        assert!(matches!(
+            delivery_answer(200, r#"{"facts":"maybe"}"#),
+            Err(DeliveryError::Failed(_))
+        ));
+        assert!(matches!(delivery_answer(200, "not json"), Err(DeliveryError::Failed(_))));
+    }
 
     fn input(key: &str) -> RepoInput<'_> {
         RepoInput { repo_key: key, remote_url: None, name: key, workspace: None }

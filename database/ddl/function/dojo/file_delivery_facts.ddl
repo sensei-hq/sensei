@@ -54,6 +54,28 @@ begin
         raise exception 'a board needs board_key, kind, board_name and facts with pending_tickets, sprints and tickets'
             using errcode = 'invalid_parameter_value';
     end if;
+    -- The bounds hold here, whoever calls: at most 5 000 tickets and 4 MB (D3).
+    if jsonb_array_length(v_facts -> 'tickets') > 5000 or octet_length(p_board::text) > 4 * 1024 * 1024 then
+        raise exception 'a board carries at most 5000 tickets and 4 MB' using errcode = 'invalid_parameter_value';
+    end if;
+    -- Every sprint's figures are an object whose reasons map figure keys to codes
+    -- (or null, for a sprint with no replay): every reader expands them.
+    if exists (
+        select 1 from jsonb_array_elements(v_facts -> 'sprints') x
+         where jsonb_typeof(x) <> 'object'
+            or (x -> 'sdlc' is not null and jsonb_typeof(x -> 'sdlc') not in ('object', 'null'))
+            or (jsonb_typeof(x -> 'sdlc') = 'object'
+                and case when jsonb_typeof(x -> 'sdlc' -> 'reasons') = 'object'
+                         then exists (select 1 from jsonb_each(x -> 'sdlc' -> 'reasons') r
+                                       where jsonb_typeof(r.value) <> 'string')
+                         else true end)) then
+        raise exception 'a sprint''s figures are an object whose reasons map figure keys to codes'
+            using errcode = 'invalid_parameter_value';
+    end if;
+    -- A history from the future would win every comparison and never be replaced.
+    if v_history > now() + interval '1 day' then
+        raise exception 'history_at is in the future' using errcode = 'invalid_parameter_value';
+    end if;
 
     -- Every key is the caller's own shared and elected repository in this tenant.
     select array_agg(v.repository_id) into v_repos

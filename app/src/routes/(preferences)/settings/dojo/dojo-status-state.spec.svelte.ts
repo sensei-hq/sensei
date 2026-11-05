@@ -232,6 +232,17 @@ describe('groupSync', () => {
     expect(g[1].days[0].own.map((i) => i.row.entity)).toEqual(['forge_mirror']);
   });
 
+  it("files a tracker board's push under its boards, never as a repository (tracker-delivery-metrics D3)", () => {
+    const key = 'ab'.repeat(32);
+    const g = groupSync(
+      [row({ entity: 'tracker_board', entity_key: key, state: 'skipped', last_error: 'tracker_not_shared', synced_at: null, attempted_at: '2026-11-04T10:00:00Z', persona: 'default' })],
+      who,
+    );
+    const day = g[0].days[0];
+    expect(day.repositories).toEqual([]);
+    expect(day.boards.map((b) => [b.name, b.items[0].row.last_error])).toEqual([['board abababab', 'tracker_not_shared']]);
+  });
+
   it('keeps rows no identity has written yet, in a group of their own, last', () => {
     const g = groupSync([row({ persona: null }), row({ entity_key: 'x', persona: 'jerrythomas' })], who);
     expect(g.map((i) => i.label)).toEqual(['jerrythomas', null]);

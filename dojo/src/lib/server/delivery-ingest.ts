@@ -7,6 +7,7 @@
 // workspace and which copy wins are the database's (dojo.file_delivery_facts),
 // decided as the caller; its refusals keep their status (db-refusal).
 import { AdminError, type DojoClient } from './admin-data';
+import type { DeliveryTicketWire } from '$lib/delivery-wire';
 import { isUuid } from './ids';
 import { callFn } from './tenant-rows';
 
@@ -29,14 +30,8 @@ export interface DeliverySprint {
 	sdlc: Record<string, unknown> | null;
 }
 
-export interface DeliveryTicket {
-	key: string;
-	title: string | null;
-	status_category: string | null;
-	points: number | null;
-	sprints: string[];
-	issue_created_at: string | null;
-}
+/** One non-removed ticket as pushed: the wire's own shape. */
+export type DeliveryTicket = DeliveryTicketWire;
 
 export interface DeliveryFacts {
 	history_at: string | null;
