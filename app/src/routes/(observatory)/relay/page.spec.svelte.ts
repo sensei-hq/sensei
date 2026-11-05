@@ -83,7 +83,7 @@ function setValue(el: HTMLElement, value: string, event = 'change') {
 const shellProps = () => vi.mocked(ScreenShell).mock.calls[0][1] as unknown as Record<string, unknown>;
 
 describe('Observatory · Relay — the loader’s read', () => {
-  it.skip('pending: relay-screen — with no filter it reads every crew, and the page reads nothing of its own', async () => {
+  it('with no filter it reads every crew, and the page reads nothing of its own', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const { api } = await open();
@@ -93,7 +93,7 @@ describe('Observatory · Relay — the loader’s read', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it.skip('pending: relay-screen — the URL’s repository or workspace narrows the read', async () => {
+  it('the URL’s repository or workspace narrows the read', async () => {
     const byRepo = await open({ search: `?repo=${encodeURIComponent(F.LOOSE_REPO)}` });
     expect(byRepo.api.tryGetNow).toHaveBeenCalledWith({ repo_key: F.LOOSE_REPO });
     expect(byRepo.api.tryGetQueue).toHaveBeenCalledWith({ repo_key: F.LOOSE_REPO });
@@ -104,7 +104,7 @@ describe('Observatory · Relay — the loader’s read', () => {
 });
 
 describe('Observatory · Relay — every crew, workspace or not', () => {
-  it.skip('pending: relay-screen — a task on a repository with no workspace appears, with its repository, and opens by its crew', async () => {
+  it('a task on a repository with no workspace appears, with its repository, and opens by its crew', async () => {
     const { c } = await open();
     const lanes = need(one(c, '[data-relay-section="lanes"]'), 'the lanes section');
     expect(all(lanes, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L0', 'L1', 'L8', 'L9']);
@@ -116,7 +116,7 @@ describe('Observatory · Relay — every crew, workspace or not', () => {
     expect(one(c, `[data-lane-row="L1"] a[href="/relay/${F.CREW_ID}/t-structure"]`)).not.toBeNull();
   });
 
-  it.skip('pending: relay-screen — lane rows are grouped by crew, and each group’s heading names its repository', async () => {
+  it('lane rows are grouped by crew, and each group’s heading names its repository', async () => {
     const { c } = await open();
     const groups = all(c, '[data-crew-group]');
     expect(groups.map((g) => g.getAttribute('data-crew-group'))).toEqual([F.CREW_ID, F.LOOSE_CREW_ID]);
@@ -130,14 +130,14 @@ describe('Observatory · Relay — every crew, workspace or not', () => {
     expect(all(loose, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L8', 'L9']);
   });
 
-  it.skip('pending: relay-screen — the context counts the crews it shows', async () => {
+  it('the context counts the crews it shows', async () => {
     const { c } = await open();
     expect(text(one(c, '[data-screen-context]'))).toContain('2 crews');
   });
 });
 
 describe('Observatory · Relay — the shell (D87)', () => {
-  it.skip('pending: relay-screen — rokkit’s shell for observatory.relay: mark 継, title Relay, search off, no stats', async () => {
+  it('rokkit’s shell for observatory.relay: mark 継, title Relay, search off, no stats', async () => {
     const { c } = await open();
     expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
     const props = shellProps();
@@ -149,7 +149,7 @@ describe('Observatory · Relay — the shell (D87)', () => {
     expect(one(anchor, '[data-screen-shell]')).not.toBeNull();
   });
 
-  it.skip('pending: relay-screen — the header’s controls: Now, Queue, Message the crew, the info and the filters toggles', async () => {
+  it('the header’s controls: Now, Queue, Message the crew, the info and the filters toggles', async () => {
     const { c } = await open();
     const header = need(one(c, '[data-screen-header]'), 'the shell header');
     const controls = all(header, 'button, a, [role="tab"]')
@@ -162,7 +162,7 @@ describe('Observatory · Relay — the shell (D87)', () => {
 });
 
 describe('Observatory · Relay — the filter band: repository and workspace', () => {
-  it.skip('pending: relay-screen — lists the repositories and workspaces the crews work in', async () => {
+  it('lists the repositories and workspaces the crews work in', async () => {
     const { c } = await open();
     const band = need(one(c, '[data-screen-filters]'), 'the filter band');
     const repo = need(one(band, 'select[data-relay-filter-repo]'), 'the repository filter') as HTMLSelectElement;
@@ -172,7 +172,7 @@ describe('Observatory · Relay — the filter band: repository and workspace', (
     expect(ws.options[1].textContent?.trim()).toBe('Sensei');
   });
 
-  it.skip('pending: relay-screen — choosing one navigates with it in the URL; All clears it', async () => {
+  it('choosing one navigates with it in the URL; All clears it', async () => {
     const { c } = await open({ search: '?workspace=w1' });
     const band = need(one(c, '[data-screen-filters]'), 'the filter band');
     setValue(need(one(band, 'select[data-relay-filter-repo]'), 'the repository filter'), F.LOOSE_REPO);
@@ -193,7 +193,7 @@ describe('Observatory · Relay — the filter band: repository and workspace', (
 });
 
 describe('Observatory · Relay — Message the crew across crews', () => {
-  it.skip('pending: relay-screen — with two crews the person picks the crew; To and About are that crew’s; the message is for it', async () => {
+  it('with two crews the person picks the crew; To and About are that crew’s; the message is for it', async () => {
     const { c, api } = await open();
     need(one(c, '[data-screen-tools] [aria-label="Message the crew"]'), 'the Message the crew action').click();
     await tick();

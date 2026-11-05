@@ -75,15 +75,14 @@ describe('workspace-sidebar-view', () => {
     });
 
     describe('SECTIONS', () => {
-        it('leads with intake then overview and includes about', () => {
-            expect(SECTIONS[0].id).toBe('intake');
+        it('includes overview and about', () => {
             expect(SECTIONS.some((s) => s.id === 'overview')).toBe(true);
             expect(SECTIONS.some((s) => s.id === 'about')).toBe(true);
         });
         // D90 (relay slice 1 item 4): Relay replaces Intake in the workspace window —
         // the same first place, mark 継 (to pass on) instead of 門 (the gate). Phase B
         // rewrites the Intake test above to this one.
-        it.skip('pending: relay-screen — leads with Relay (継) where Intake was, and Intake is gone', () => {
+        it('leads with Relay (継) where Intake was, and Intake is gone', () => {
             expect(SECTIONS[0]).toEqual({ id: 'relay', kanji: '継', label: 'Relay' });
             expect(SECTIONS.some((s) => s.id === 'intake')).toBe(false);
             const [sections] = buildWorkspaceNav('w');

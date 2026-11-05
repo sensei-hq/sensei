@@ -23,13 +23,17 @@
     viewId,
     children,
     filter = $bindable<FilterState>({ values: {}, stat: null }),
+    // A screen that draws marks of its own (lane role marks, row marks) reads the
+    // mode itself; it passes what it read here, so the title bar and the rows
+    // cannot disagree. Absent, the mode comes from the context as usual.
+    glyphs: modeGiven,
     ...rest
-  }: ShellProps & { viewId: string } = $props();
+  }: ShellProps & { viewId: string; glyphs?: 'kanji' | 'icon' } = $props();
 
   const store = useViewStates();
   const mode = useGlyphMode();
   // Sensei's mode is `kanji | icon`; rokkit draws kanji as `text`.
-  const shellGlyphs = $derived(mode() === 'icon' ? 'icon' : 'text');
+  const shellGlyphs = $derived((modeGiven ?? mode()) === 'icon' ? 'icon' : 'text');
 
   // The shell's panels follow the store. They are the wrapper's own state so a
   // refused save can put them back: rokkit flips its copy before we hear of it.

@@ -40,18 +40,29 @@ const usesSharedLayout = (page: string) => {
 	const own = source(page);
 	const local = own.match(/import \w+ from '\.\/(\w+Screen\.svelte)'/);
 	const shared = own.match(/import \{[^}]*\b(\w+Screen)\b[^}]*\} from '\$lib\/components\/(\w+)'/);
+	// A screen shared from a feature directory (`$lib/relay/RelayScreen.svelte`), for a
+	// screen two windows render.
+	const feature = own.match(/import \w+ from '\$lib\/([\w-]+)\/(\w+\.svelte)'/);
 	const delegate = local
 		? source(join(dirname(page), local[1]))
 		: shared
 			? readFileSync(join('src/lib/components', shared[2], `${shared[1]}.svelte`), 'utf8')
-			: '';
-	return /<Screen[\s>]/.test(own + delegate) || rendersRokkitShell(own);
+			: feature
+				? readFileSync(join('src/lib', feature[1], feature[2]), 'utf8')
+				: '';
+	const text = own + delegate;
+	return /<Screen[\s>]/.test(text) || rendersRokkitShell(text) || rendersSharedShell(text);
 };
 // D87: a migrated screen renders rokkit's `ScreenShell` — imported from
 // `@rokkit/app`, not a lookalike carrying the same name.
 const rendersRokkitShell = (text: string) =>
 	/<ScreenShell[\s>]/.test(text) &&
 	/import\s*\{[^}]*\bScreenShell\b[^}]*\}\s*from\s*['"]@rokkit\/app['"]/.test(text);
+// D87: `@sensei/ui`'s ShellScreen is rokkit's shell with the host's glyph mode and
+// panel store wired in — the shared layout a screen renders instead of rokkit's own.
+const rendersSharedShell = (text: string) =>
+	/<ShellScreen[\s>]/.test(text) &&
+	/import\s*\{[^}]*\bShellScreen\b[^}]*\}\s*from\s*['"]@sensei\/ui['"]/.test(text);
 
 describe('screens use a shared screen layout (#293, D87)', () => {
 	it('every screen uses Screen, or rokkit’s ScreenShell', () => {

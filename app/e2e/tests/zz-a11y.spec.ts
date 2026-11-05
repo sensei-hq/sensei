@@ -117,7 +117,7 @@ test.describe('accessibility (axe) — light + dark', () => {
     const workspaceScreens = pid
       ? [
           { route: `/workspace/${pid}/overview`, sel: '[data-component="workspace-sidebar"]' },
-          { route: `/workspace/${pid}/intake`,   sel: '[data-testid="intake-input"]' },
+          { route: `/workspace/${pid}/relay`,    sel: '[data-screen="relay"]' },
           { route: `/workspace/${pid}/diagrams/structure`, sel: '[data-testid="codemap-screen"]' },
           { route: `/workspace/${pid}/libraries`, sel: '[data-testid="library-search"]' },
           { route: `/workspace/${pid}/about`,    sel: 'main' },

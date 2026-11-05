@@ -145,7 +145,7 @@ const shellProps = () => vi.mocked(ScreenShell).mock.calls[0][1] as unknown as R
 // ─── The loader's read ──────────────────────────────────────────────────────
 
 describe('Relay — the loader’s read', () => {
-  it.skip('pending: relay-screen — reads this workspace’s crew and queue, and the page reads nothing of its own', async () => {
+  it('reads this workspace’s crew and queue, and the page reads nothing of its own', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const { api } = await open({ workspace: 'w2' });
@@ -162,14 +162,14 @@ describe('Relay — the loader’s read', () => {
 // ─── Now · Needs you ────────────────────────────────────────────────────────
 
 describe('Relay · Now — Needs you', () => {
-  it.skip('pending: relay-screen — is absent when nothing needs the person', async () => {
+  it('is absent when nothing needs the person', async () => {
     // r2 L6: the default crew has triage (as the default queue does), so this one has none.
     const { c } = await open({ now: F.ok(F.now({ triage: [], decisions: [] })), queue: F.ok(F.queue({ triage: [] })) });
     expect(section(c, 'lanes')).not.toBeNull();
     expect(section(c, 'needs-you')).toBeNull();
   });
 
-  it.skip('pending: relay-screen — each decision: question, context, options with its own recommended one marked, Answer, and its task', async () => {
+  it('each decision: question, context, options with its own recommended one marked, Answer, and its task', async () => {
     const { c } = await open({
       now: F.ok(
         F.now({
@@ -209,7 +209,7 @@ describe('Relay · Now — Needs you', () => {
     expect(one(second, `a[href="/workspace/w1/relay/${F.CREW_ID}/t-billing"]`)).not.toBeNull();
   });
 
-  it.skip('pending: relay-screen — "N to triage — from …" counts every source, names them, and opens Queue', async () => {
+  it('"N to triage — from …" counts every source, names them, and opens Queue', async () => {
     const { c } = await open({
       now: F.ok(
         F.now({
@@ -234,7 +234,7 @@ describe('Relay · Now — Needs you', () => {
     expect(isActive(tab(c, 'Queue'))).toBe(true);
   });
 
-  it.skip('pending: relay-screen — Answer sends the option the person picked, and the decision leaves Needs you', async () => {
+  it('Answer sends the option the person picked, and the decision leaves Needs you', async () => {
     const { c, api } = await open({ now: F.ok(F.now({ decisions: [F.decision()] })) });
     api.tryGetNow.mockResolvedValue(F.ok(F.now({ decisions: [] })));
 
@@ -255,7 +255,7 @@ describe('Relay · Now — Needs you', () => {
     expect(api.tryGetNow).toHaveBeenCalledTimes(2);
   });
 
-  it.skip('pending: relay-screen — a refused answer says why, keeps the decision, and can be sent again', async () => {
+  it('a refused answer says why, keeps the decision, and can be sent again', async () => {
     const { c, api } = await open({ now: F.ok(F.now({ decisions: [F.decision()] })) });
     api.tryAnswerDecision.mockResolvedValue(F.fail(409, 'already answered on the dōjō'));
 
@@ -276,7 +276,7 @@ describe('Relay · Now — Needs you', () => {
 describe('Relay · Now — Lanes', () => {
   const crew = F.fiveLaneCrew;
 
-  it.skip('pending: relay-screen — one row per lane: its objective, member, the one task, its state and the time on it', async () => {
+  it('one row per lane: its objective, member, the one task, its state and the time on it', async () => {
     const { c } = await open({ now: F.ok(crew()) });
     const lanes = need(section(c, 'lanes'), 'the lanes section');
     expect(lanes).not.toBeNull();
@@ -304,13 +304,13 @@ describe('Relay · Now — Lanes', () => {
     expect(text(one(idle, '[data-state]'))).toBe('idle');
   });
 
-  it.skip('pending: relay-screen — the role mark: 指 for the coordinator, 手 for a contributor', async () => {
+  it('the role mark: 指 for the coordinator, 手 for a contributor', async () => {
     const { c } = await open({ now: F.ok(crew()) });
     expect(text(one(c, '[data-lane-row="L0"] [data-lane-role]'))).toBe('指');
     expect(text(one(c, '[data-lane-row="L1"] [data-lane-role]'))).toBe('手');
   });
 
-  it.skip('pending: relay-screen — a model the lane did not report reads "model not reported", never blank', async () => {
+  it('a model the lane did not report reads "model not reported", never blank', async () => {
     const { c } = await open({
       now: F.ok(F.now({ lanes: [F.lane({ code: 'L3', family: 'muse', version: null, model: null })] })),
     });
@@ -319,7 +319,7 @@ describe('Relay · Now — Lanes', () => {
     expect(text(row)).not.toMatch(/null|undefined/);
   });
 
-  it.skip('pending: relay-screen — a lane on a task opens the task view; an idle lane opens nothing', async () => {
+  it('a lane on a task opens the task view; an idle lane opens nothing', async () => {
     const { c } = await open({ now: F.ok(crew()) });
     expect(one(c, `[data-lane-row="L1"] a[href="/workspace/w1/relay/${F.CREW_ID}/t-structure"]`)).not.toBeNull();
     expect(one(c, '[data-lane-row="L5"] a')).toBeNull();
@@ -329,7 +329,7 @@ describe('Relay · Now — Lanes', () => {
 // ─── Now · Completed today ──────────────────────────────────────────────────
 
 describe('Relay · Now — Completed today', () => {
-  it.skip('pending: relay-screen — one row each: title, lane, merged or approved, and it opens the task', async () => {
+  it('one row each: title, lane, merged or approved, and it opens the task', async () => {
     const { c } = await open();
     const done = need(section(c, 'completed'), 'the completed section');
     expect(done).not.toBeNull();
@@ -347,7 +347,7 @@ describe('Relay · Now — Completed today', () => {
 // ─── Queue ──────────────────────────────────────────────────────────────────
 
 describe('Relay · Queue', () => {
-  it.skip('pending: relay-screen — the Queue tab shows its count, and opens Triage, then Backlog', async () => {
+  it('the Queue tab shows its count, and opens Triage, then Backlog', async () => {
     const { c } = await open();
     const queueTab = tab(c, 'Queue');
     expect(queueTab).not.toBeNull();
@@ -366,7 +366,7 @@ describe('Relay · Queue', () => {
     expect(isActive(tab(c, 'Now'))).toBe(false);
   });
 
-  it.skip('pending: relay-screen — a triage row: title, kind first then tags, the ticket button, and +', async () => {
+  it('a triage row: title, kind first then tags, the ticket button, and +', async () => {
     const { c } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
@@ -388,7 +388,7 @@ describe('Relay · Queue', () => {
     expect(one(manual, '[data-add-to-backlog]')).not.toBeNull();
   });
 
-  it.skip('pending: relay-screen — + adds a tracker task by its identity, then the re-read queue shows it in Backlog', async () => {
+  it('+ adds a tracker task by its identity, then the re-read queue shows it in Backlog', async () => {
     const { c, api } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
@@ -413,7 +413,7 @@ describe('Relay · Queue', () => {
     expect(all(need(section(c, 'triage'), 'the triage section'), '[data-queue-row]')).toHaveLength(1);
   });
 
-  it.skip('pending: relay-screen — + adds a manual item by its id', async () => {
+  it('+ adds a manual item by its id', async () => {
     const { c, api } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
@@ -423,7 +423,7 @@ describe('Relay · Queue', () => {
     expect(api.tryAddToBacklog).toHaveBeenCalledWith({ item_id: 'item-manual' });
   });
 
-  it.skip('pending: relay-screen — a refused + says why and keeps the row in Triage', async () => {
+  it('a refused + says why and keeps the row in Triage', async () => {
     const { c, api } = await open();
     api.tryAddToBacklog.mockResolvedValue(F.fail(500, 'Internal Server Error'));
     need(tab(c, 'Queue'), 'the Queue tab').click();
@@ -435,7 +435,7 @@ describe('Relay · Queue', () => {
     expect(all(need(section(c, 'triage'), 'the triage section'), '[data-queue-row]')).toHaveLength(2);
   });
 
-  it.skip('pending: relay-screen — Backlog is in backlog order (position), with no + and no rank numbers', async () => {
+  it('Backlog is in backlog order (position), with no + and no rank numbers', async () => {
     const { c } = await open({
       queue: F.ok(
         F.queue({
@@ -457,7 +457,7 @@ describe('Relay · Queue', () => {
     expect(text(backlog)).not.toMatch(/waiting|#1\b|\b1\./);
   });
 
-  it.skip('pending: relay-screen — a failed queue read is its error on Queue, never an empty queue or a 0 count', async () => {
+  it('a failed queue read is its error on Queue, never an empty queue or a 0 count', async () => {
     const { c } = await open({ queue: F.fail(503, 'Service Unavailable') });
     // Now still draws: only the queue's half failed.
     expect(section(c, 'lanes')).not.toBeNull();
@@ -472,7 +472,7 @@ describe('Relay · Queue', () => {
     expect(text(c)).not.toContain('Triage · 0');
   });
 
-  it.skip('pending: relay-screen — the queue’s Retry re-reads the queue only, and recovers', async () => {
+  it('the queue’s Retry re-reads the queue only, and recovers', async () => {
     const { c, api } = await open({ queue: F.fail(503, 'Service Unavailable') });
     api.tryGetQueue.mockResolvedValue(F.ok(F.queue()));
     api.tryGetNow.mockClear();
@@ -498,7 +498,7 @@ describe('Relay — Message the crew', () => {
   }
   const field = (c: HTMLElement, name: 'to' | 'about' | 'text' | 'send') => one(c, `[data-compose-${name}]`);
 
-  it.skip('pending: relay-screen — a labelled toolbar action opens the compose band', async () => {
+  it('a labelled toolbar action opens the compose band', async () => {
     const { c } = await open();
     expect(one(c, '[data-compose]')).toBeNull();
     const button = toolbarButton(c, 'Message the crew');
@@ -513,7 +513,7 @@ describe('Relay — Message the crew', () => {
     expect(text(field(c, 'send'))).toBe('Queue message');
   });
 
-  it.skip('pending: relay-screen — To: the coordinator, each contributor lane, everyone; About: no particular task, or a crew task', async () => {
+  it('To: the coordinator, each contributor lane, everyone; About: no particular task, or a crew task', async () => {
     const { c } = await compose();
     const to = field(c, 'to') as HTMLSelectElement;
     expect([...to.options].map((o) => o.value)).toEqual(['coordinator', F.LANE.L1, 'everyone']);
@@ -523,7 +523,7 @@ describe('Relay — Message the crew', () => {
     expect(about.options[0].textContent?.trim()).toBe('No particular task');
   });
 
-  it.skip('pending: relay-screen — Queue message sends To, About and the text for this crew, then says it is queued', async () => {
+  it('Queue message sends To, About and the text for this crew, then says it is queued', async () => {
     const { c, api } = await compose();
     setValue(field(c, 'to'), F.LANE.L1, 'change');
     setValue(field(c, 'about'), 't-structure', 'change');
@@ -543,7 +543,7 @@ describe('Relay — Message the crew', () => {
     expect((field(c, 'text') as HTMLTextAreaElement).value).toBe('');
   });
 
-  it.skip('pending: relay-screen — to the coordinator or everyone, about no particular task', async () => {
+  it('to the coordinator or everyone, about no particular task', async () => {
     const { c, api } = await compose();
     setValue(field(c, 'to'), 'coordinator', 'change');
     setValue(field(c, 'about'), '', 'change');
@@ -564,7 +564,7 @@ describe('Relay — Message the crew', () => {
     expect(api.trySendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ to: { kind: 'everyone' } }));
   });
 
-  it.skip('pending: relay-screen — an empty message, or one over 600 characters, cannot be queued', async () => {
+  it('an empty message, or one over 600 characters, cannot be queued', async () => {
     const { c } = await compose();
     const send = () => need(field(c, 'send'), 'Queue message') as HTMLButtonElement;
     expect(send().disabled).toBe(true);
@@ -579,7 +579,7 @@ describe('Relay — Message the crew', () => {
     expect(send().disabled).toBe(false);
   });
 
-  it.skip('pending: relay-screen — a refused message says why and keeps the text', async () => {
+  it('a refused message says why and keeps the text', async () => {
     const { c, api } = await compose();
     api.trySendMessage.mockResolvedValue(F.fail(503, 'daemon busy'));
     setValue(field(c, 'text'), 'Keep the shortcut.');
@@ -591,7 +591,7 @@ describe('Relay — Message the crew', () => {
     expect((field(c, 'text') as HTMLTextAreaElement).value).toBe('Keep the shortcut.');
   });
 
-  it.skip('pending: relay-screen — two presses of Queue message send one message', async () => {
+  it('two presses of Queue message send one message', async () => {
     const { c, api } = await compose();
     const pending = F.deferred<ApiResult<{ message_id: string }>>();
     api.trySendMessage.mockReturnValue(pending.promise);
@@ -611,7 +611,7 @@ describe('Relay — Message the crew', () => {
 describe('Relay — a failed read', () => {
   const down = () => F.fail(0, 'connection refused');
 
-  it.skip('pending: relay-screen — is the fault Notice with its code, never "No crew yet" and never empty lanes', async () => {
+  it('is the fault Notice with its code, never "No crew yet" and never empty lanes', async () => {
     const { c } = await open({ now: down() });
     const notice = one(c, '[data-relay-error]');
     expect(notice).not.toBeNull();
@@ -627,7 +627,7 @@ describe('Relay — a failed read', () => {
     expect(toolbarButton(c, 'Message the crew')).toBeNull();
   });
 
-  it.skip('pending: relay-screen — Retry reads once for this workspace, and the lanes replace the notice', async () => {
+  it('Retry reads once for this workspace, and the lanes replace the notice', async () => {
     const { c, api } = await open({ now: down(), workspace: 'w2' });
     api.tryGetNow.mockClear();
     api.tryGetNow.mockResolvedValue(F.ok(F.now()));
@@ -639,7 +639,7 @@ describe('Relay — a failed read', () => {
     expect(api.tryGetNow).toHaveBeenCalledWith({ workspace_id: 'w2' });
   });
 
-  it.skip('pending: relay-screen — a Retry that fails again shows the new reason, not the old one, and not an empty crew', async () => {
+  it('a Retry that fails again shows the new reason, not the old one, and not an empty crew', async () => {
     const { c, api } = await open({ now: down() });
     api.tryGetNow.mockResolvedValue(F.fail(502, 'Bad Gateway'));
 
@@ -650,7 +650,7 @@ describe('Relay — a failed read', () => {
     expect(text(c)).not.toContain('No crew yet');
   });
 
-  it.skip('pending: relay-screen — two presses of Retry are one read', async () => {
+  it('two presses of Retry are one read', async () => {
     const { c, api } = await open({ now: down() });
     const pending = F.deferred<ApiResult<RelayNow>>();
     api.tryGetNow.mockClear();
@@ -664,7 +664,7 @@ describe('Relay — a failed read', () => {
     expect(api.tryGetNow).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('pending: relay-screen — while the Retry reads, the body shows the loading skeleton', async () => {
+  it('while the Retry reads, the body shows the loading skeleton', async () => {
     const { c, api } = await open({ now: down() });
     const pending = F.deferred<ApiResult<RelayNow>>();
     api.tryGetNow.mockReturnValue(pending.promise);
@@ -680,7 +680,7 @@ describe('Relay — a failed read', () => {
 });
 
 describe('Relay — a navigation replaces what is shown', () => {
-  it.skip('pending: relay-screen — the loader’s new answer replaces the old crew', async () => {
+  it('the loader’s new answer replaces the old crew', async () => {
     const api = F.fakeRelayApi();
     api.tryGetNow.mockResolvedValue(F.ok(F.now({ lanes: [F.lane({ code: 'L1', title: 'Diagrams' })] })));
     const first = await loadFor('w1', api);
@@ -701,7 +701,7 @@ describe('Relay — a navigation replaces what is shown', () => {
 });
 
 describe('Relay — no crew yet', () => {
-  it.skip('pending: relay-screen — the info band frames it: the two paste lines, and "Listening · 0 of 2 to start"; the body is empty', async () => {
+  it('the info band frames it: the two paste lines, and "Listening · 0 of 2 to start"; the body is empty', async () => {
     const { c } = await open({ now: F.ok(F.noCrew()) });
     const info = need(one(c, '[data-screen-info]'), '[data-screen-info]');
     expect(info).not.toBeNull();
@@ -719,7 +719,7 @@ describe('Relay — no crew yet', () => {
     expect(toolbarButton(c, 'Message the crew')).toBeNull();
   });
 
-  it.skip('pending: relay-screen — Copy puts its line on the clipboard', async () => {
+  it('Copy puts its line on the clipboard', async () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     const { c } = await open({ now: F.ok(F.noCrew()) });
@@ -730,7 +730,7 @@ describe('Relay — no crew yet', () => {
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('register with sensei as contributor'));
   });
 
-  it.skip('pending: relay-screen — with no crew the info band cannot be closed', async () => {
+  it('with no crew the info band cannot be closed', async () => {
     const { c } = await open({ now: F.ok(F.noCrew()) });
     expect(one(c, '[data-screen-info]')).not.toBeNull();
     expect(toolbarButton(c, 'What it’s for')).toBeNull();
@@ -740,7 +740,7 @@ describe('Relay — no crew yet', () => {
 // ─── The shell (D87) ────────────────────────────────────────────────────────
 
 describe('Relay — the shell (D87)', () => {
-  it.skip('pending: relay-screen — rokkit’s shell for workspace.relay: mark 継, title Relay, no stats band', async () => {
+  it('rokkit’s shell for workspace.relay: mark 継, title Relay, no stats band', async () => {
     const { c } = await open();
     expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
     const props = shellProps();
@@ -751,7 +751,7 @@ describe('Relay — the shell (D87)', () => {
     expect(one(c, '[data-screen-stats]')).toBeNull();
   });
 
-  it.skip('pending: relay-screen — the context names this crew by the end of its id (a uuid v7 starts with the clock)', async () => {
+  it('the context names this crew by the end of its id (a uuid v7 starts with the clock)', async () => {
     const { c } = await open({
       workspace: 'w2',
       now: F.ok(F.now({ crews: [F.crew({ id: F.OTHER_CREW_ID, workspace_id: 'w2' })] })),
@@ -761,7 +761,7 @@ describe('Relay — the shell (D87)', () => {
     expect(context).not.toContain(F.CREW_ID.slice(-4));
   });
 
-  it.skip('pending: relay-screen — the info band with a crew: what Relay is, three steps, and Today with first-pass approval', async () => {
+  it('the info band with a crew: what Relay is, three steps, and Today with first-pass approval', async () => {
     const { c } = await open();
     const info = need(one(c, '[data-screen-info]'), '[data-screen-info]');
     expect(info).not.toBeNull();
@@ -773,7 +773,7 @@ describe('Relay — the shell (D87)', () => {
     expect(one(info, '[data-paste-line]')).toBeNull();
   });
 
-  it.skip('pending: relay-screen — first-pass approval nobody reported reads "not reported", never "0 of"', async () => {
+  it('first-pass approval nobody reported reads "not reported", never "0 of"', async () => {
     const { c } = await open({
       now: F.ok(F.now({ today: { completed: 2, reviewed: null, first_pass_approved: null } })),
     });
@@ -782,7 +782,7 @@ describe('Relay — the shell (D87)', () => {
     expect(info).not.toMatch(/0 of/);
   });
 
-  it.skip('pending: relay-screen — the marks follow the glyph mode: kanji, or the vocabulary’s icon', async () => {
+  it('the marks follow the glyph mode: kanji, or the vocabulary’s icon', async () => {
     glyphs.mode = 'kanji';
     const kanji = await open();
     expect(text(one(kanji.c, '[data-screen-mark]'))).toBe('継');
@@ -795,7 +795,7 @@ describe('Relay — the shell (D87)', () => {
     expect(text(one(icon.c, '[data-lane-row="L0"] [data-lane-role]'))).not.toBe('指');
   });
 
-  it.skip('pending: relay-screen — the e2e anchor: data-screen="relay" around the shell', async () => {
+  it('the e2e anchor: data-screen="relay" around the shell', async () => {
     const { c } = await open();
     const anchor = one(c, '[data-screen="relay"]');
     expect(anchor).not.toBeNull();
@@ -806,7 +806,7 @@ describe('Relay — the shell (D87)', () => {
 // ─── Footer: resources (lanes.md §8) ────────────────────────────────────────
 
 describe('Relay — the footer resource line', () => {
-  it.skip('pending: relay-screen — the build lease holder and its time, disk free, and swap free against its floor', async () => {
+  it('the build lease holder and its time, disk free, and swap free against its floor', async () => {
     const { c } = await open();
     const footer = text(one(c, '[data-screen-footer]'));
     expect(footer).toContain('Rust build');
@@ -816,7 +816,7 @@ describe('Relay — the footer resource line', () => {
     expect(footer).toContain('Swap 1.2 GB free (floor 1 GB)');
   });
 
-  it.skip('pending: relay-screen — unreported disk or swap reads "not reported"; no lease reads as no build', async () => {
+  it('unreported disk or swap reads "not reported"; no lease reads as no build', async () => {
     const { c } = await open({
       now: F.ok(
         F.now({
@@ -835,7 +835,7 @@ describe('Relay — the footer resource line', () => {
 // ─── Phone width (CONTRACT §1f), where jsdom can tell ───────────────────────
 
 describe('Relay — rows at phone width', () => {
-  it.skip('pending: relay-screen — a lane row: mark, lane and state on line 1; the task and its time on line 2', async () => {
+  it('a lane row: mark, lane and state on line 1; the task and its time on line 2', async () => {
     const { c } = await open();
     const row = need(one(c, '[data-lane-row="L1"]'), '[data-lane-row="L1"]');
     const line1 = need(one(row, '[data-row-line="1"]'), '[data-row-line="1"]');
@@ -849,7 +849,7 @@ describe('Relay — rows at phone width', () => {
     expect(text(line2)).toContain('38 min');
   });
 
-  it.skip('pending: relay-screen — a queue row keeps its buttons beside the title; the ticket button can drop the provider', async () => {
+  it('a queue row keeps its buttons beside the title; the ticket button can drop the provider', async () => {
     const { c } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
@@ -873,7 +873,7 @@ const hhmm = (iso: string) => {
 };
 
 describe('Relay r2 — the header (F1, F2, L4)', () => {
-  it.skip('pending: relay-screen — search is off on Relay (L0 ruling): no search field, no filters band', async () => {
+  it('search is off on Relay (L0 ruling): no search field, no filters band', async () => {
     const { c } = await open();
     expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
     expect(shellProps().search).toBe(false);
@@ -881,7 +881,7 @@ describe('Relay r2 — the header (F1, F2, L4)', () => {
     expect(one(c, '[data-screen-filters]')).toBeNull();
   });
 
-  it.skip('pending: relay-screen — the header’s controls are exactly Now, Queue, Message the crew and the info toggle', async () => {
+  it('the header’s controls are exactly Now, Queue, Message the crew and the info toggle', async () => {
     const { c } = await open();
     const header = need(one(c, '[data-screen-header]'), 'the shell header');
     const controls = all(header, 'button, a, [role="tab"]')
@@ -892,7 +892,7 @@ describe('Relay r2 — the header (F1, F2, L4)', () => {
     expect(controls).toEqual(['Message the crew', 'Now', 'Queue', 'What it’s for']);
   });
 
-  it.skip('pending: relay-screen — the context is the workspace, then the crew', async () => {
+  it('the context is the workspace, then the crew', async () => {
     const { c } = await open({
       workspace: 'w2',
       layout: { workspace: { id: 'w2', name: 'Billing service' }, workspaceId: 'w2' },
@@ -903,7 +903,7 @@ describe('Relay r2 — the header (F1, F2, L4)', () => {
 });
 
 describe('Relay r2 — one write per press (F4)', () => {
-  it.skip('pending: relay-screen — two presses of Answer answer once', async () => {
+  it('two presses of Answer answer once', async () => {
     const { c, api } = await open({ now: F.ok(F.now({ decisions: [F.decision()] })) });
     const pending = F.deferred<ApiResult<{ action_id: string }>>();
     api.tryAnswerDecision.mockReturnValue(pending.promise);
@@ -919,7 +919,7 @@ describe('Relay r2 — one write per press (F4)', () => {
     expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('pending: relay-screen — two presses of + add once', async () => {
+  it('two presses of + add once', async () => {
     const { c, api } = await open();
     const pending = F.deferred<ApiResult<{ item_id: string }>>();
     api.tryAddToBacklog.mockReturnValue(pending.promise);
@@ -936,7 +936,7 @@ describe('Relay r2 — one write per press (F4)', () => {
 });
 
 describe('Relay r2 — Message the crew across five lanes (F6)', () => {
-  it.skip('pending: relay-screen — To lists every contributor lane in the view’s order; About skips the idle lane', async () => {
+  it('To lists every contributor lane in the view’s order; About skips the idle lane', async () => {
     const { c } = await open({ now: F.ok(F.fiveLaneCrew()) });
     need(toolbarButton(c, 'Message the crew'), 'the Message the crew action').click();
     await tick();
@@ -969,7 +969,7 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
     ...over,
   });
 
-  it.skip('pending: relay-screen — blocked on a dependency reads "blocked"; only an open decision reads "needs your answer"', async () => {
+  it('blocked on a dependency reads "blocked"; only an open decision reads "needs your answer"', async () => {
     const { c } = await open({
       now: F.ok(
         F.now({
@@ -984,7 +984,7 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
     expect(text(one(c, '[data-lane-row="L3"] [data-state]'))).toBe('needs your answer');
   });
 
-  it.skip('pending: relay-screen — the lane lease drives "lease lost", with the time it expired; a task interrupted under a live lease reads "interrupted"', async () => {
+  it('the lane lease drives "lease lost", with the time it expired; a task interrupted under a live lease reads "interrupted"', async () => {
     const expired = new Date(Date.now() - 20 * 60_000).toISOString();
     const { c } = await open({
       now: F.ok(
@@ -1004,7 +1004,7 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
 });
 
 describe('Relay r2 — Completed today rows (L1)', () => {
-  it.skip('pending: relay-screen — each row leads with its time, and "done" (nothing to merge) has its own label', async () => {
+  it('each row leads with its time, and "done" (nothing to merge) has its own label', async () => {
     const at = F.minutesAgo(90);
     const { c } = await open({
       now: F.ok(

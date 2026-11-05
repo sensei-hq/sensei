@@ -86,7 +86,7 @@ const one = (root: ParentNode, sel: string) => root.querySelector(sel) as HTMLEl
 const text = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 describe('Observatory · Relay · task', () => {
-  it.skip('pending: relay-screen — reads by (crew, task), on observatory.relay.task, back to the main Relay', async () => {
+  it('reads by (crew, task), on observatory.relay.task, back to the main Relay', async () => {
     const { c, api } = await open(F.LOOSE_CREW_ID, 't-scratch', F.ok(looseTask()));
     expect(api.tryGetTask).toHaveBeenCalledTimes(1);
     expect(api.tryGetTask).toHaveBeenCalledWith(F.LOOSE_CREW_ID, 't-scratch');
@@ -95,7 +95,7 @@ describe('Observatory · Relay · task', () => {
     expect(one(c, 'a[data-back]')?.getAttribute('href')).toBe('/relay');
   });
 
-  it.skip('pending: relay-screen — a task on a repository with no workspace draws, naming its repository', async () => {
+  it('a task on a repository with no workspace draws, naming its repository', async () => {
     const { c } = await open(F.LOOSE_CREW_ID, 't-scratch', F.ok(looseTask()));
     expect(text(one(c, '[data-task-title]'))).toBe('Prototype the scratch parser');
     // The repository is in Run details (CONTRACT §1e.3), not the facts line (§1e.2).

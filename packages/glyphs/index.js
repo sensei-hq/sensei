@@ -83,6 +83,8 @@ export const KANJI_ICONS = {
   '更': 'i-solar-refresh-bold-duotone',
   '修': 'i-solar-sledgehammer-bold-duotone',
   '手': 'i-solar-hand-stars-bold-duotone',
+  // Relay's coordinator mark (D90): the hand that points, beside the hand that works.
+  '指': 'i-solar-cursor-square-bold-duotone',
   '支': 'i-solar-pulse-2-bold-duotone',
   '導': 'i-solar-compass-bold-duotone',
   '礼': 'i-solar-hand-heart-bold-duotone',

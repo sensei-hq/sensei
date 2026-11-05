@@ -95,7 +95,7 @@ function need<T extends Element>(el: T | null | undefined, what: string): T {
 const entry = (c: HTMLElement, id: string) => one(c, `[data-history-entry="${id}"]`);
 
 describe('Relay · task — the loader’s read', () => {
-  it.skip('pending: relay-screen — reads this task’s history, and the page reads nothing of its own', async () => {
+  it('reads this task’s history, and the page reads nothing of its own', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const { api } = await open({ taskId: 't-billing', crewId: F.OTHER_CREW_ID, workspace: 'w2' });
@@ -107,7 +107,7 @@ describe('Relay · task — the loader’s read', () => {
 });
 
 describe('Relay · task — the header', () => {
-  it.skip('pending: relay-screen — rokkit’s shell for workspace.relay.task, mark 継, no stats band', async () => {
+  it('rokkit’s shell for workspace.relay.task, mark 継, no stats band', async () => {
     const { c } = await open();
     expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
     expect(vi.mocked(ScreenShell).mock.calls[0][1]).toMatchObject({
@@ -118,7 +118,7 @@ describe('Relay · task — the header', () => {
     expect(one(c, '[data-screen="relay"]')).not.toBeNull();
   });
 
-  it.skip('pending: relay-screen — back to Relay, the title, its state, and the ticket button (provider + key, external)', async () => {
+  it('back to Relay, the title, its state, and the ticket button (provider + key, external)', async () => {
     const { c } = await open({ workspace: 'w2' });
     expect(one(c, 'a[data-back]')?.getAttribute('href')).toBe('/workspace/w2/relay');
     expect(text(one(c, '[data-task-title]'))).toBe('Diagrams header on ScreenShell');
@@ -130,14 +130,14 @@ describe('Relay · task — the header', () => {
     expect(text(ticket)).toContain('SEN-52');
   });
 
-  it.skip('pending: relay-screen — a task with no ticket has no ticket button', async () => {
+  it('a task with no ticket has no ticket button', async () => {
     const view = F.taskView();
     const { c } = await open({ task: F.ok({ ...view, task: { ...view.task, ticket: null } }) });
     expect(one(c, '[data-task-title]')).not.toBeNull();
     expect(one(c, '[data-ticket]')).toBeNull();
   });
 
-  it.skip('pending: relay-screen — one facts line: lane, member, assistant and model, and rounds by phase', async () => {
+  it('one facts line: lane, member, assistant and model, and rounds by phase', async () => {
     const { c } = await open();
     const facts = text(one(c, '[data-task-facts]'));
     expect(facts).toContain('Diagrams');
@@ -150,7 +150,7 @@ describe('Relay · task — the header', () => {
 });
 
 describe('Relay · task — Run details', () => {
-  it.skip('pending: relay-screen — are folded until opened', async () => {
+  it('are folded until opened', async () => {
     const { c } = await open();
     const details = one(c, 'details[data-run-details]') as HTMLDetailsElement | null;
     expect(details).not.toBeNull();
@@ -158,7 +158,7 @@ describe('Relay · task — Run details', () => {
     expect(text(one(details!, 'summary'))).toContain('Run details');
   });
 
-  it.skip('pending: relay-screen — a number nobody reported reads "not reported"; a reported zero reads 0', async () => {
+  it('a number nobody reported reads "not reported"; a reported zero reads 0', async () => {
     const { c } = await open();
     const detail = (key: string) => text(one(c, `[data-run-detail="${key}"]`));
     // tokens_cache and peak_memory_mb are null in the fixture; compactions is 0.
@@ -170,14 +170,14 @@ describe('Relay · task — Run details', () => {
     expect(detail('repository')).toContain('sensei-hq/sensei');
   });
 
-  it.skip('pending: relay-screen — the totals say how many turns reported', async () => {
+  it('the totals say how many turns reported', async () => {
     const { c } = await open();
     expect(text(one(c, 'details[data-run-details]'))).toContain('2 of 4 reported');
   });
 });
 
 describe('Relay · task — Handed off', () => {
-  it.skip('pending: relay-screen — the frozen brief, and the files it was handed', async () => {
+  it('the frozen brief, and the files it was handed', async () => {
     const { c } = await open();
     const handoff = need(one(c, '[data-handoff]'), '[data-handoff]');
     expect(text(handoff)).toContain('Move the diagrams header onto ScreenShell; behaviour unchanged.');
@@ -189,7 +189,7 @@ describe('Relay · task — Handed off', () => {
 });
 
 describe('Relay · task — History', () => {
-  it.skip('pending: relay-screen — newest first, as the view orders it, down to Assigned', async () => {
+  it('newest first, as the view orders it, down to Assigned', async () => {
     const { c } = await open();
     const ids = all(c, '[data-history-entry]').map((e) => e.getAttribute('data-history-entry'));
     expect(ids).toEqual([
@@ -205,7 +205,7 @@ describe('Relay · task — History', () => {
     expect(text(one(need(entry(c, 'act-assigned'), 'history entry act-assigned'), '[data-entry-title]'))).toBe('Assigned');
   });
 
-  it.skip('pending: relay-screen — a work turn: the summary sent with the request for review, what to look at, the flags', async () => {
+  it('a work turn: the summary sent with the request for review, what to look at, the flags', async () => {
     const { c } = await open();
     const first = need(entry(c, 'act-report-1'), 'history entry act-report-1');
     expect(text(one(first, '[data-entry-title]'))).toBe('Work · impl r1');
@@ -217,7 +217,7 @@ describe('Relay · task — History', () => {
     expect(text(rework)).toContain('One file outside my paths (view-states) needed a one-line export.');
   });
 
-  it.skip('pending: relay-screen — a turn’s fold: files with +/−, the outside-owned flag on that file only, gates, telemetry', async () => {
+  it('a turn’s fold: files with +/−, the outside-owned flag on that file only, gates, telemetry', async () => {
     const { c } = await open();
     const more = need(one(need(entry(c, 'act-report-2'), 'history entry act-report-2'), '[data-turn-more]'), 'the turn fold');
     expect(more).not.toBeNull();
@@ -236,7 +236,7 @@ describe('Relay · task — History', () => {
     expect(text(one(more, '[data-turn-telemetry]'))).toContain('not reported');
   });
 
-  it.skip('pending: relay-screen — a review turn: its outcome, its summary, and its comments', async () => {
+  it('a review turn: its outcome, its summary, and its comments', async () => {
     const { c } = await open();
     const r1 = need(entry(c, 'act-review-1'), 'history entry act-review-1');
     expect(text(one(r1, '[data-entry-title]'))).toBe('Review · impl r1');
@@ -251,7 +251,7 @@ describe('Relay · task — History', () => {
     expect(text(one(need(entry(c, 'act-review-2'), 'history entry act-review-2'), '[data-entry-outcome]'))).toBe('approved');
   });
 
-  it.skip('pending: relay-screen — the merge shows its note', async () => {
+  it('the merge shows its note', async () => {
     const { c } = await open();
     const merged = need(entry(c, 'act-merged'), 'history entry act-merged');
     expect(text(one(merged, '[data-entry-title]'))).toBe('Merged');
@@ -259,7 +259,7 @@ describe('Relay · task — History', () => {
     expect(text(merged)).toContain('Merged the two reviewed commits into develop.');
   });
 
-  it.skip('pending: relay-screen — Message from you: to whom, and sent / delivered / read; the receipts are not entries', async () => {
+  it('Message from you: to whom, and sent / delivered / read; the receipts are not entries', async () => {
     const receipts = (kinds: Array<'delivered' | 'read'>): RelayAction[] =>
       F.history().filter(
         (a) => !(a.kind === 'delivered' || a.kind === 'read') || kinds.includes(a.kind as 'delivered' | 'read'),
@@ -283,7 +283,7 @@ describe('Relay · task — History', () => {
 });
 
 describe('Relay · task — its open decision', () => {
-  it.skip('pending: relay-screen — shows with Answer, and the answer goes to the daemon from the desktop', async () => {
+  it('shows with Answer, and the answer goes to the daemon from the desktop', async () => {
     const view = F.taskView({ decision: F.decision({ task_id: 't-header' }) });
     const { c, api } = await open({ task: F.ok(view) });
     const row = need(one(c, '[data-decision]'), '[data-decision]');
@@ -304,7 +304,7 @@ describe('Relay · task — its open decision', () => {
 describe('Relay · task — a failed read', () => {
   const down = () => F.fail(0, 'connection refused');
 
-  it.skip('pending: relay-screen — is the fault Notice with Retry, never an empty history', async () => {
+  it('is the fault Notice with Retry, never an empty history', async () => {
     const { c } = await open({ task: down() });
     const notice = need(one(c, '[data-relay-error]'), '[data-relay-error]');
     expect(notice).not.toBeNull();
@@ -315,7 +315,7 @@ describe('Relay · task — a failed read', () => {
     expect(one(c, '[data-run-details]')).toBeNull();
   });
 
-  it.skip('pending: relay-screen — Retry reads this task once, and recovers', async () => {
+  it('Retry reads this task once, and recovers', async () => {
     const { c, api } = await open({ task: down(), taskId: 't-billing' });
     api.tryGetTask.mockClear();
     api.tryGetTask.mockResolvedValue(F.ok(F.taskView()));
@@ -326,7 +326,7 @@ describe('Relay · task — a failed read', () => {
     expect(api.tryGetTask).toHaveBeenCalledWith(F.CREW_ID, 't-billing');
   });
 
-  it.skip('pending: relay-screen — a Retry that fails again shows the new reason', async () => {
+  it('a Retry that fails again shows the new reason', async () => {
     const { c, api } = await open({ task: down() });
     api.tryGetTask.mockResolvedValue(F.fail(502, 'Bad Gateway'));
     need(one(c, '[data-relay-error] [data-action="retry"]'), '[data-relay-error] [data-action="retry"]').click();
@@ -335,7 +335,7 @@ describe('Relay · task — a failed read', () => {
     expect(one(c, '[data-history-entry]')).toBeNull();
   });
 
-  it.skip('pending: relay-screen — two presses of Retry are one read', async () => {
+  it('two presses of Retry are one read', async () => {
     const { c, api } = await open({ task: down() });
     const pending = F.deferred<ApiResult<RelayTaskView>>();
     api.tryGetTask.mockClear();
@@ -357,7 +357,7 @@ const hhmm = (iso: string) => {
 };
 
 describe('Relay · task r2 — the shell (F1)', () => {
-  it.skip('pending: relay-screen — search is off on the task view too', async () => {
+  it('search is off on the task view too', async () => {
     const { c } = await open();
     expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
     expect((vi.mocked(ScreenShell).mock.calls[0][1] as unknown as Record<string, unknown>).search).toBe(false);
@@ -373,7 +373,7 @@ describe('Relay · task r2 — scoped by the crew and the user (F3, repository r
       crewId === F.CREW_ID && taskId === 't-header' ? F.ok(F.taskView()) : F.fail(404, 'task not found'),
     );
 
-  it.skip('pending: relay-screen — a task from another crew, or another user’s, is "not found": no header, history or Retry', async () => {
+  it('a task from another crew, or another user’s, is "not found": no header, history or Retry', async () => {
     const cases: Array<[string, string, string]> = [
       ['another crew', F.OTHER_CREW_ID, 't-header'],
       ['another user', F.CREW_ID, 't-someone-elses'],
@@ -393,7 +393,7 @@ describe('Relay · task r2 — scoped by the crew and the user (F3, repository r
     }
   });
 
-  it.skip('pending: relay-screen — the same task under its own crew draws', async () => {
+  it('the same task under its own crew draws', async () => {
     const { c, api } = await open({ crewId: F.CREW_ID, taskId: 't-header', setup: perCrew });
     expect(api.tryGetTask).toHaveBeenCalledWith(F.CREW_ID, 't-header');
     expect(text(one(c, '[data-task-title]'))).toBe('Diagrams header on ScreenShell');
@@ -404,7 +404,7 @@ describe('Relay · task r2 — scoped by the crew and the user (F3, repository r
 describe('Relay · task r2 — its decision (F4, L3)', () => {
   const withDecision = () => F.ok(F.taskView({ decision: F.decision({ task_id: 't-header' }) }));
 
-  it.skip('pending: relay-screen — two presses of Answer answer once', async () => {
+  it('two presses of Answer answer once', async () => {
     const { c, api } = await open({ task: withDecision() });
     const pending = F.deferred<ApiResult<{ action_id: string }>>();
     api.tryAnswerDecision.mockReturnValue(pending.promise);
@@ -420,7 +420,7 @@ describe('Relay · task r2 — its decision (F4, L3)', () => {
     expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('pending: relay-screen — an answer re-reads the task, and the decision leaves', async () => {
+  it('an answer re-reads the task, and the decision leaves', async () => {
     const { c, api } = await open({ task: withDecision() });
     api.tryGetTask.mockResolvedValue(F.ok(F.taskView({ decision: null })));
     const row = need(one(c, '[data-decision]'), 'the decision');
@@ -432,7 +432,7 @@ describe('Relay · task r2 — its decision (F4, L3)', () => {
     expect(api.tryGetTask).toHaveBeenLastCalledWith(F.CREW_ID, 't-header');
   });
 
-  it.skip('pending: relay-screen — a refused answer says why and keeps the decision', async () => {
+  it('a refused answer says why and keeps the decision', async () => {
     const { c, api } = await open({ task: withDecision() });
     api.tryAnswerDecision.mockResolvedValue(F.fail(409, 'already answered on the dōjō'));
     const row = need(one(c, '[data-decision]'), 'the decision');
@@ -445,7 +445,7 @@ describe('Relay · task r2 — its decision (F4, L3)', () => {
 });
 
 describe('Relay · task r2 — receipts fold per message (F5)', () => {
-  it.skip('pending: relay-screen — each message carries its own receipts: one read, one only delivered', async () => {
+  it('each message carries its own receipts: one read, one only delivered', async () => {
     const { c } = await open();
     const first = need(one(c, '[data-history-entry="act-msg"]'), 'history entry act-msg');
     const second = need(one(c, '[data-history-entry="act-msg-2"]'), 'history entry act-msg-2');
@@ -467,7 +467,7 @@ describe('Relay · task r2 — the steps beyond the turns (F8)', () => {
       handoff: { body_md: 'Also keep the old keyboard shortcut working.', docs: ['coord/briefs/L1-diagrams-r2.md'], at: F.minutesAgo(120) },
     });
 
-  it.skip('pending: relay-screen — a brief update is its own step, and Handed off shows the latest brief', async () => {
+  it('a brief update is its own step, and Handed off shows the latest brief', async () => {
     const { c } = await open({ task: F.ok(stepsView()) });
     const updated = need(one(c, '[data-history-entry="act-brief-2"]'), 'history entry act-brief-2');
     expect(text(one(updated, '[data-entry-title]'))).toBe('Brief updated');
@@ -477,7 +477,7 @@ describe('Relay · task r2 — the steps beyond the turns (F8)', () => {
     expect(text(handoff)).not.toContain('Move the diagrams header onto ScreenShell');
   });
 
-  it.skip('pending: relay-screen — a lost lease and its re-offer: "Lease lost", then "Re-offered to L3"', async () => {
+  it('a lost lease and its re-offer: "Lease lost", then "Re-offered to L3"', async () => {
     const { c } = await open({ task: F.ok(stepsView()) });
     expect(text(one(need(one(c, '[data-history-entry="act-interrupted"]'), 'the lease-lost step'), '[data-entry-title]'))).toBe('Lease lost');
     const reoffered = need(one(c, '[data-history-entry="act-reoffered"]'), 'the re-offer step');
@@ -485,7 +485,7 @@ describe('Relay · task r2 — the steps beyond the turns (F8)', () => {
     expect(text(c)).not.toContain(F.LANE.L3);
   });
 
-  it.skip('pending: relay-screen — started, asked, answered and compacted are plain one-line steps, never blank', async () => {
+  it('started, asked, answered and compacted are plain one-line steps, never blank', async () => {
     const { c } = await open({ task: F.ok(stepsView()) });
     for (const id of ['act-started', 'act-asked', 'act-answered', 'act-compacted']) {
       const step = need(one(c, `[data-history-entry="${id}"]`), `history entry ${id}`);
@@ -508,7 +508,7 @@ describe('Relay · task r2 — the steps beyond the turns (F8)', () => {
 });
 
 describe('Relay · task r2 — the facts line (L2)', () => {
-  it.skip('pending: relay-screen — names the member and the time, assigned → completed', async () => {
+  it('names the member and the time, assigned → completed', async () => {
     const view = F.taskView();
     const { c } = await open({ task: F.ok(view) });
     const facts = text(one(c, '[data-task-facts]'));
