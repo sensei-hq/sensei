@@ -75,13 +75,13 @@ and sprint from the tracker) · `state` (`'backlog','planned','closed'`) · `pos
 
 ### `relay.tasks`: what a lane works on
 `user_id` · `id` · `crew_id` · `item_id` null · `lane_id` null (**one active task per lane**, partial unique) · `reviewer_lane_id`
-null (never the author's lane; checked) · `title` · `phase` (`'tests','impl','docs','mockup','merge'`) · `state`
+null (never the author's lane; checked) · `title` · `phase` (`'analysis','tests','impl','docs','mockup'`) · `state`
 (`'ready','assigned','in_progress','reported','in_review','changes_requested','approved','merged','done','blocked','interrupted'`)
 · `round` · `owned_paths`, `acceptance`, `resources` text[] · `deps` uuid[] · `assigned_at`, `state_changed_at`,
 `completed_at` null.
 - The ticket comes through `item_id → ticket_provider / ticket_key`.
 - The **brief is the `assigned` action's `body_md`**, frozen. A change is a `brief_updated` action.
-- A review is a state of the task: the reviewer's queue is `reviewer_lane_id = me and state = 'in_review'`.
+- A review is a stage of the task: the reviewer's queue is `reviewer_lane_id = me and state = 'in_review'`.
 
 ### `relay.actions`: everything that happens
 `user_id` · `id` uuid v7 · `crew_id` · `task_id` null (null for crew-level ones, e.g. a message "about no particular task") ·
@@ -108,6 +108,24 @@ review → the report it reviews) · `created_at`.
   and its task reads "needs your answer" while it is open. The same applies to messages.
 - **Finding classes:** a lookup table `relay.finding_classes (code, label, added_by)`, seeded from the README checklist. The
   daemon rejects an unknown class in `props.findings`. The learning loop adds classes.
+
+## Stages of a task (user question, 2026-11-05)
+`assigned → working → in_review → (rework → in_review)* → approved → done`
+- **assigned:** handed to a lane. The brief is frozen.
+- **working:** the lane has started. On `report`, it goes to in_review.
+- **in_review:** a reviewer lane (never the author) holds it.
+- **rework:** changes were requested. The round increments, and the next report returns it to in_review.
+- **approved:** the review passed, waiting for the coordinator's merge with gates. This is its own stage because this week
+  "approved, not yet merged" was a real wait.
+- **done:** merged, or completed with nothing to merge (a mockup, an analysis).
+- **Side states:**
+  - **blocked**, on a decision or a dependency; it resumes where it was;
+  - **interrupted**, when the lane's lease is lost; after the grace period it goes back to the backlog;
+  - **cancelled**, by the coordinator, with a reason.
+- **Phases ride inside one task:** `phase` goes `tests → impl` (or `analysis`, `mockup`, `docs`). Each phase runs its own
+  work → review → rework loop, and the task's round counts per phase. Approval of the tests phase moves it to impl with
+  state `working`. Approval of the last phase moves it to approved. So one ticket is one task, and "rounds by phase" is one
+  query.
 
 ## Derived reads (security-invoker views; the screen never adds up numbers itself)
 - `relay.now`: open `asked` actions for the person · the triage count by tracker and sprint · one row per lane with its
