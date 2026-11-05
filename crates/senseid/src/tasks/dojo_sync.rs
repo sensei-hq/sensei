@@ -1162,7 +1162,8 @@ async fn push_allowed(
                 let ids: Vec<uuid::Uuid> = complement.iter().map(|m| m.id).collect();
                 pg.mark_metric_rows_shared(&ids).await?;
                 if !ids.is_empty() {
-                    // F8: old dōjōs keep working, but say so — once per push,
+                    // F8: old dōjōs keep working, but say so — once per push
+                    // (one `push_allowed` call, i.e. per persona per cycle),
                     // naming the dōjō — until the complement goes away
                     // (backlog: remove when every supported dōjō returns
                     // stored).
@@ -2361,7 +2362,12 @@ mod tests {
                 crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
             })
         });
-        assert!(logs.contains("marking nothing"), "0 accepted must say so loudly; logs:\n{logs}");
+        // T2: level and phrase on ONE line — a WARN anywhere plus the phrase
+        // on an INFO line must not pass.
+        assert!(
+            logs.lines().any(|l| l.contains(" WARN ") && l.contains("marking nothing")),
+            "0 accepted must warn, on one line; logs:\n{logs}"
+        );
         assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
     }
 
@@ -2642,6 +2648,78 @@ mod tests {
         assert_eq!(loud, vec![false, false, false, true], "the gap keeps the count");
     }
 
+    // L1: the streak is keyed per ROW at the call site, not just in the
+    // tracker — one date confirmed every cycle must not clear another date's
+    // streak through `push_allowed`. (Kills the computed_on-constant mutant
+    // in `shortfall_key`: with a pair key the shared streak never passes 1.)
+    #[test]
+    fn a_confirmed_date_does_not_clear_another_dates_streak_through_push() {
+        let rt = current_thread_rt();
+        let (pg, pid, key, metric) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, metric) = seed(&pg).await;
+            (pg, pid, key, metric)
+        });
+        let seed_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
+        let other_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap();
+        rt.block_on(seed_sibling_row(&pg, &key, &metric, other_day));
+        // Every cycle confirms the seed date and never the other one.
+        let confirming_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 1,
+                rejected: vec![],
+                stored: Some(vec![StoredMetricKey {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    scope: "repo".to_string(),
+                    computed_on: "2026-08-27".to_string(),
+                    grain: "daily".to_string(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        for _ in 0..3 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &confirming_plane()).await.unwrap();
+                    // Recompute the confirmed date so it is offered — and
+                    // confirmed — again next cycle.
+                    sqlx_core::query::query(
+                        "UPDATE sensei.repository_metrics rm SET modified_at = now() \
+                          WHERE rm.repository_id = (SELECT id FROM sensei.repositories \
+                                                     WHERE repo_key = $1) \
+                            AND rm.computed_on = date '2026-08-27'",
+                    )
+                    .bind(&key)
+                    .execute(pg.pool())
+                    .await
+                    .unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the Bearer [REDACTED] never reach the logs");
+        }
+        let (confirmed, unconfirmed) = rt.block_on(async {
+            let c = shared_on(&pg, &key, seed_day).await;
+            let u = shared_on(&pg, &key, other_day).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            (c, u)
+        });
+        assert_eq!(
+            loud,
+            vec![false, false, true],
+            "the never-confirmed date goes loud at 3 while the other confirms"
+        );
+        assert!(confirmed, "the echoed date is marked");
+        assert!(!unconfirmed, "the never-confirmed date stays queued");
+    }
+
     // H2/F4: a loud row waits its backoff, then is re-offered. Three
     // shortfall cycles go loud; the fourth offers nothing for it; once the
     // backoff has elapsed it is pushed again. (The backoff length is the
@@ -2864,14 +2942,16 @@ mod tests {
 
         let rt = current_thread_rt();
         let pg = rt.block_on(PgStore::connect_test()).unwrap();
+        // T2: level and phrase on ONE line — a WARN anywhere plus the phrase
+        // on an INFO line must not pass.
         let partial = run_shape(&rt, &pg, Shape::PartialRejected);
         assert!(
-            partial.contains(" WARN ") && partial.contains("marking nothing"),
+            partial.lines().any(|l| l.contains(" WARN ") && l.contains("marking nothing")),
             "partial-rejected legacy must warn; logs:\n{partial}"
         );
         let shortfall = run_shape(&rt, &pg, Shape::CountShortfall);
         assert!(
-            shortfall.contains(" WARN ") && shortfall.contains("marking nothing"),
+            shortfall.lines().any(|l| l.contains(" WARN ") && l.contains("marking nothing")),
             "count shortfall must warn; logs:\n{shortfall}"
         );
     }

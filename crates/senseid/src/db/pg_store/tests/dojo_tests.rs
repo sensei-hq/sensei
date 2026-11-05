@@ -836,6 +836,40 @@ async fn a_row_in_backoff_does_not_hold_the_push_window() {
     assert_eq!(rows[0].repo_key, fresh_key, "the due row, not the stuck one");
 }
 
+/// T3: a fresh mark clears the backoff. Without the clear, a row that is
+/// marked and then recomputed waits out a stale backoff, up to 1 h.
+#[tokio::test]
+async fn a_fresh_mark_clears_the_backoff() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "SELECT id FROM sensei.repository_metrics WHERE repository_id = $1",
+    )
+    .bind(rid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics SET next_attempt_at = now() + interval '1 hour' WHERE id = $1",
+    )
+    .bind(id)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let n = s.mark_metric_rows_shared(&[id]).await.unwrap();
+    let (backoff,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+        "SELECT next_attempt_at FROM sensei.repository_metrics WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+    assert_eq!(n, 1);
+    assert!(backoff.is_none(), "a fresh mark clears the backoff, got {backoff:?}");
+}
+
 #[tokio::test]
 async fn a_pushed_commit_row_carries_its_authored_time_and_an_unknown_sha_does_not() {
     // F4 phase B: per-commit rows carry props.authored_at from sensei.commits

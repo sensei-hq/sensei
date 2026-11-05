@@ -478,7 +478,10 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
         });
     };
 
-    match dojo_auth::exchange(&dojo_url(), &code, &verifier).await {
+    // Read once: the exchange and the minter record below must agree on the
+    // dōjō — a settings change between two reads would record the wrong one.
+    let registry = dojo_url();
+    match dojo_auth::exchange(&registry, &code, &verifier).await {
         Ok(tokens) => {
             // #300: the sign-in ran in the system browser, which may be signed in
             // to GitHub as someone else. Decide BEFORE anything is stored: a
@@ -508,9 +511,9 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
             // read:org exists for — provisioning cannot list organisations
             // without it, and would report "none" rather than "never asked".
             let provider = tokens.provider_token.clone();
-            // The dōjō that minted these tokens is the one we exchanged with:
-            // record it, so the session is never presented anywhere else (M1).
-            let registry = dojo_url();
+            // The dōjō that minted these tokens is the one we exchanged with
+            // (`registry`, read once above): record it, so the session is
+            // never presented anywhere else (M1).
             // The user just signed in, so a Keychain prompt has someone to
             // answer it (#283) — the only kind of call that may ask.
             let stored = tokio::task::spawn_blocking(move || {
@@ -2135,6 +2138,10 @@ mod tests {
             "minted-elsewhere asks for a sign-in, never a retry, got: {msg}"
         );
         assert!(
+            matches!(err, AuthError::MintedElsewhere { .. }),
+            "the refusal is the distinct variant, got: {msg}"
+        );
+        assert!(
             msg.contains("https://minted.invalid") && msg.contains(&stub.url),
             "the refusal must name the minter AND the current dōjō, got: {msg}"
         );
@@ -2160,6 +2167,10 @@ mod tests {
         let msg = err.to_string();
         assert_eq!(stub.hits(), 0, "the refusal happens before any refresh");
         assert!(err.needs_sign_in(), "legacy credentials fail closed with a sign-in, got: {msg}");
+        assert!(
+            matches!(err, AuthError::Unattributed { .. }),
+            "the refusal is the distinct variant, got: {msg}"
+        );
         assert!(msg.contains("sign in"), "the remedy is one fresh sign-in, got: {msg}");
         assert!(kept.is_ok(), "the legacy item is kept, not cleared");
     }
@@ -2248,5 +2259,46 @@ mod tests {
             "status names the remedy, got: {got}"
         );
         assert_eq!(got["dojo"], serde_json::json!(stub.url), "status names the current dōjō");
+    }
+
+    // T1: the sign-in records the dōjō it exchanged with. The seam tests pin
+    // `store_signed_in_session`, but nothing drove the callback — a sign-in
+    // that went back to `store_refresh_token` passed the whole suite, and in
+    // production every fresh sign-in would be `Unattributed`: a total sync
+    // outage. Drives the real callback against the loopback stub (nothing
+    // leaves loopback; no user in the body, so the GitHub guard is skipped).
+    // Real keychain: macOS-gated, uuid persona, cleared afterwards.
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[serial(dojo_url_env)]
+    async fn a_sign_in_records_the_dojo_it_exchanged_with() {
+        use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
+        let stub = StubDojo::start(
+            200,
+            r#"{"access_token":"at-T1","refresh_token":"rt-T1","expires_in":3600}"#,
+        );
+        let _ambient = TestDojoUrl::set(&stub.url);
+        let persona = uuid::Uuid::new_v4().to_string();
+        let flow = PENDING.lock().unwrap_or_else(|e| e.into_inner()).start(
+            PendingFlow { persona: persona.clone(), verifier: "v".into(), expected_login: None },
+            std::time::Instant::now(),
+        );
+        let state = status_state().await;
+        let body = callback_body(
+            state,
+            CallbackQuery {
+                code: Some("c".into()),
+                flow: Some(flow),
+                error: None,
+                error_description: None,
+            },
+        )
+        .await;
+        let creds = session::load_credentials(&persona);
+        let _ = session::clear_session(&persona);
+        let creds = creds.unwrap_or_else(|e| panic!("nothing stored ({e}): {body}"));
+        assert!(stub.hits() >= 1, "the exchange went to the stub");
+        assert_eq!(creds.refresh_token.as_deref(), Some("rt-T1"));
+        assert_eq!(creds.minted_registry.as_deref(), Some(stub.url.as_str()), "{body}");
     }
 }
