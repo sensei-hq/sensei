@@ -5,7 +5,6 @@
 // in one place; and every one of them says "not reported" rather than inventing a
 // zero (D83).
 import type {
-  RelayCompletedTask,
   RelayCrew,
   RelayLane,
   RelayLaneRef,
@@ -100,6 +99,3 @@ export function todayLine(today: { completed: number; reviewed: number | null; f
   }
   return { value, text: `${today.first_pass_approved} of ${today.reviewed} passed review first time` };
 }
-
-/** The completed rows a person reads: time, title, lane, outcome. */
-export const completedAt = (row: RelayCompletedTask): string => hhmm(row.completed_at);

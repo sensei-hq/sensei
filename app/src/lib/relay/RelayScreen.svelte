@@ -98,7 +98,9 @@
     const url = new URL(page.url);
     if (value) url.searchParams.set(key, value);
     else url.searchParams.delete(key);
-    void goto(`${url.pathname}${url.search}`, { invalidateAll: true });
+    // The search change is this route's to answer: `goto` re-runs its load, and
+    // nothing above it depends on the filter (N9).
+    void goto(`${url.pathname}${url.search}`);
   }
 
   const shortRepo = (repo: string) => repo.replace(/^github\.com\//, '');

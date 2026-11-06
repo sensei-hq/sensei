@@ -172,17 +172,22 @@ describe('Observatory · Relay — the filter band: repository and workspace', (
   });
 
   it('choosing one navigates with it in the URL; All clears it', async () => {
-    const { c } = await open({ search: '?workspace=w1' });
+    const { c, api } = await open({ search: '?workspace=w1' });
     const band = need(one(c, '[data-screen-filters]'), 'the filter band');
     setValue(need(one(band, 'select[data-relay-filter-repo]'), 'the repository filter'), F.LOOSE_REPO);
     await tick();
     expect(vi.mocked(goto)).toHaveBeenCalledTimes(1);
-    const [href, opts] = vi.mocked(goto).mock.calls[0];
+    const [href, ...rest] = vi.mocked(goto).mock.calls[0];
     const url = new URL(String(href), 'http://localhost');
     expect(url.pathname).toBe('/relay');
     expect(url.searchParams.get('repo')).toBe(F.LOOSE_REPO);
     expect(url.searchParams.get('workspace')).toBe('w1');
-    expect(opts).toMatchObject({ invalidateAll: true });
+    // N9: goto re-runs this route's load on a search change, and nothing above it
+    // depends on the filter — invalidateAll would refetch every parent load too.
+    expect(rest).toEqual([]);
+    // One load for the narrow: the page fetches nothing of its own.
+    expect(api.tryGetNow).toHaveBeenCalledTimes(1);
+    expect(api.tryGetQueue).toHaveBeenCalledTimes(1);
 
     setValue(need(one(band, 'select[data-relay-filter-workspace]'), 'the workspace filter'), '');
     await tick();

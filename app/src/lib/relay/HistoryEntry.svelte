@@ -100,7 +100,9 @@
     <p class="text-sm font-medium m-0" data-entry-title>Lease lost</p>
 
   {:else if action.kind === 'reoffered'}
-    <p class="text-sm font-medium m-0" data-entry-title>Re-offered to {codeOf(lanes, action.props.to_lane)}</p>
+    <p class="text-sm font-medium m-0" data-entry-title>
+      {action.props.to_lane ? `Re-offered to ${codeOf(lanes, action.props.to_lane)}` : 'Returned to the queue'}
+    </p>
 
   {:else if action.kind === 'started'}
     <p class="text-sm font-medium m-0" data-entry-title>Started</p>
