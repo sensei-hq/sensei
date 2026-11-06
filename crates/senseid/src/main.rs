@@ -43,6 +43,7 @@ pub mod planner;
 pub mod playbook;
 mod qlty;
 pub mod ranking;
+mod relay;
 pub mod relay_drivers;
 pub mod resolution;
 mod review;

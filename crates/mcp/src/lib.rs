@@ -31,24 +31,45 @@ pub enum HttpMethod {
 ///
 /// `query` is an ordered list of key/value pairs (some daemon handlers read
 /// several, e.g. `?workspace=…&limit=…&tags=…`); `body` is the JSON payload for
-/// `POST`/`PUT` tools (`None` for plain `GET`s).
+/// `POST`/`PUT` tools (`None` for plain `GET`s). `headers` carries request
+/// headers — relay lane calls authenticate over the Authorization header
+/// (never the query: tokens must not land in access logs).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DaemonRequest {
     pub method: HttpMethod,
     pub path: String,
     pub query: Vec<(String, String)>,
     pub body: Option<Value>,
+    pub headers: Vec<(String, String)>,
 }
 
 impl DaemonRequest {
     fn get(path: impl Into<String>) -> Self {
-        Self { method: HttpMethod::Get, path: path.into(), query: Vec::new(), body: None }
+        Self {
+            method: HttpMethod::Get,
+            path: path.into(),
+            query: Vec::new(),
+            body: None,
+            headers: Vec::new(),
+        }
     }
     fn post_json(path: impl Into<String>, body: Value) -> Self {
-        Self { method: HttpMethod::Post, path: path.into(), query: Vec::new(), body: Some(body) }
+        Self {
+            method: HttpMethod::Post,
+            path: path.into(),
+            query: Vec::new(),
+            body: Some(body),
+            headers: Vec::new(),
+        }
     }
     fn put_json(path: impl Into<String>, body: Value) -> Self {
-        Self { method: HttpMethod::Put, path: path.into(), query: Vec::new(), body: Some(body) }
+        Self {
+            method: HttpMethod::Put,
+            path: path.into(),
+            query: Vec::new(),
+            body: Some(body),
+            headers: Vec::new(),
+        }
     }
     fn with_query(mut self, key: impl Into<String>, val: impl Into<String>) -> Self {
         self.query.push((key.into(), val.into()));
@@ -476,6 +497,175 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json(format!("/api/playbook/rule/{id}/accept"), json!({})))
         }
 
+        // ── Relay lanes (L3, slice 1 item 2) ───────────────────────────────
+        // `relay_wait_for_task` is inline (a hold of up to 50 s outlives the
+        // default client); the binary shapes it with `build_relay_wait_request`.
+        "relay_wait_for_task" => None,
+        "relay_register" => {
+            let mut body = serde_json::Map::new();
+            for k in [
+                "role",
+                "family",
+                "version",
+                "model",
+                "capabilities",
+                "repo",
+                "worktree",
+                "crew_id",
+                "goal",
+                "repo_key",
+                "workspace_id",
+            ] {
+                if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
+                    body.insert(k.into(), v.clone());
+                }
+            }
+            // Register MINTS the token: no auth header.
+            Some(DaemonRequest::post_json("/api/relay/register", Value::Object(body)))
+        }
+        "relay_heartbeat" | "relay_reregister" | "relay_unregister" => {
+            let op = tool.strip_prefix("relay_").unwrap_or(tool);
+            let lane_id = args["lane_id"].as_str().unwrap_or("");
+            Some(relay_authed(
+                DaemonRequest::post_json(format!("/api/relay/{op}"), json!({ "lane_id": lane_id })),
+                args,
+            ))
+        }
+        "relay_get_tasks" => {
+            let lane_id = args["lane_id"].as_str().unwrap_or("");
+            Some(relay_authed(
+                DaemonRequest::get("/api/relay/tasks").with_query("lane_id", lane_id),
+                args,
+            ))
+        }
+        "relay_report_task" => {
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let mut body = relay_lane_body(args);
+            relay_forward(
+                &mut body,
+                args,
+                &[
+                    "phase",
+                    "round",
+                    "summary",
+                    "report_md",
+                    "base",
+                    "branch",
+                    "commits",
+                    "files",
+                    "gates",
+                    "telemetry",
+                ],
+            );
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/tasks/{}/report", path_segment(task_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
+        "relay_submit_review" => {
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let mut body = relay_lane_body(args);
+            relay_forward(
+                &mut body,
+                args,
+                &["verdict", "summary", "findings", "probes", "telemetry"],
+            );
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/tasks/{}/review", path_segment(task_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
+        "relay_ask_decision" => {
+            let mut body = relay_lane_body(args);
+            relay_forward(
+                &mut body,
+                args,
+                &["task_id", "question", "context", "options", "recommended", "blocks", "asked_of"],
+            );
+            Some(relay_authed(
+                DaemonRequest::post_json("/api/relay/decisions", Value::Object(body)),
+                args,
+            ))
+        }
+        "relay_answer_decision" => {
+            let decision_id = args["decision_id"].as_str().unwrap_or("");
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, &["option", "note"]);
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/decisions/{}/answer", path_segment(decision_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
+        "relay_send_message" => {
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, &["to", "task_id", "text", "surface"]);
+            Some(relay_authed(
+                DaemonRequest::post_json("/api/relay/messages", Value::Object(body)),
+                args,
+            ))
+        }
+        "relay_plan_item" => {
+            let mut body = relay_lane_body(args);
+            relay_forward(
+                &mut body,
+                args,
+                &["item_id", "title", "phase", "repo_key", "workspace_id"],
+            );
+            Some(relay_authed(
+                DaemonRequest::post_json("/api/relay/tasks/plan", Value::Object(body)),
+                args,
+            ))
+        }
+        "relay_assign_task" => {
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let mut body = relay_lane_body(args);
+            relay_forward(
+                &mut body,
+                args,
+                &[
+                    "to_lane",
+                    "title",
+                    "phase",
+                    "ticket",
+                    "tags",
+                    "brief",
+                    "acceptance",
+                    "owned_paths",
+                    "deps",
+                    "resources",
+                    "reviewer_lane",
+                    "lane_title",
+                ],
+            );
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/tasks/{}/assign", path_segment(task_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
+        "relay_merge_task" => {
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, &["commits", "into", "gates", "note"]);
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/tasks/{}/merge", path_segment(task_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
         // ── Everything else → the daemon mcp proxy ──────────────────────────
         _ => {
             let mut params = build_daemon_params(args, repo_id);
@@ -497,6 +687,48 @@ pub fn daemon_request_for(
             ))
         }
     }
+}
+
+/// Shape the inline `relay_wait_for_task` daemon call (the binary sends it on
+/// a longer-timeout client — a hold of up to 50 s outlives the default one).
+/// Pure so the reds pin it: GET + `lane_id`/`timeout_ms` query, authenticating
+/// over the Authorization header. `timeout_ms` passes through verbatim; the
+/// daemon clamps.
+pub fn build_relay_wait_request(
+    lane_id: &str,
+    lane_token: &str,
+    timeout_ms: Option<u64>,
+) -> DaemonRequest {
+    let mut req = DaemonRequest::get("/api/relay/tasks/wait").with_query("lane_id", lane_id);
+    if let Some(ms) = timeout_ms {
+        req = req.with_query("timeout_ms", ms.to_string());
+    }
+    req.headers.push(("authorization".into(), format!("Bearer {lane_token}")));
+    req
+}
+
+/// A lane-call body starts with the caller; `lane_token` never joins it.
+fn relay_lane_body(args: &Value) -> serde_json::Map<String, Value> {
+    let mut body = serde_json::Map::new();
+    body.insert("lane_id".into(), json!(args["lane_id"].as_str().unwrap_or("")));
+    body
+}
+
+/// Forward the named args verbatim when present and non-null (absent stays
+/// absent — never null-filled; the daemon defaults and validates).
+fn relay_forward(body: &mut serde_json::Map<String, Value>, args: &Value, keys: &[&str]) {
+    for k in keys {
+        if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
+            body.insert((*k).into(), v.clone());
+        }
+    }
+}
+
+/// Lane auth rides the Authorization header, never path/query/body.
+fn relay_authed(mut req: DaemonRequest, args: &Value) -> DaemonRequest {
+    let token = args["lane_token"].as_str().unwrap_or("");
+    req.headers.push(("authorization".into(), format!("Bearer {token}")));
+    req
 }
 
 /// Pure: build the JSON body for `propose_memory` / `save_memory`. Both tools
@@ -1025,6 +1257,181 @@ pub fn handle_list_tools() -> Value {
                 "Accept a §9 learned-rule proposal, flipping it enabled so the recommender starts using it.",
                 &[("id", "string", "The proposal's rule UUID (from list_playbook_rule_proposals)")],
                 &[]),
+            // ── Relay lanes (L3, slice 1 item 2) ─────────────────────────────
+            // Lane calls authenticate over the Authorization header (never the
+            // query); `lane_token` never appears in a path, query or body.
+            tool("relay_register",
+                "Register a relay lane: join a crew with its crew_id, or mint a crew as a coordinator (goal/repo_key/workspace_id ride the mint). Answers the lane token — every other lane call authenticates with it.",
+                &[
+                    ("role", "string", "coordinator (mint or join) | contributor (join: crew_id required)"),
+                    ("family", "string", "Lane family, e.g. claude-code"),
+                ],
+                &[
+                    ("version", "string", "Lane version"),
+                    ("model", "string", "Model the lane runs"),
+                    ("capabilities", "array", "What the lane can do"),
+                    ("repo", "string", "The lane's checkout"),
+                    ("worktree", "string", "The lane's worktree"),
+                    ("crew_id", "string", "Crew to join (contributors must give it; coordinators mint without it)"),
+                    ("goal", "string", "Crew goal (mint only)"),
+                    ("repo_key", "string", "Crew repository, owner/repo#12 form (mint only)"),
+                    ("workspace_id", "string", "Crew workspace uuid (mint only)"),
+                ]),
+            tool("relay_heartbeat",
+                "Renew the lane lease (300 s) and stamp the crew heartbeat.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                ],
+                &[]),
+            tool("relay_reregister",
+                "Resume after unregister (or a lapsed lease): clears the leave, grants a fresh lease, returns the checkpoint.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                ],
+                &[]),
+            tool("relay_unregister",
+                "Leave the crew voluntarily: releases the lease and suspends the lane's task (resume with relay_reregister).",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                ],
+                &[]),
+            tool("relay_get_tasks",
+                "Read the lane envelope: messages, answers, reviews (both directions), and the one assignment. Delivery marks the assignment started.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                ],
+                &[]),
+            tool("relay_wait_for_task",
+                "Hold the envelope open until something lands (message, answer, review, assignment) or the hold elapses — then an empty envelope. Handled inline on a longer-timeout client.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                ],
+                &[
+                    ("timeout_ms", "integer", "Hold length, clamped to 1..=50000 (default 25000)"),
+                ]),
+            tool("relay_report_task",
+                "Report a work or rework turn: moves the task to review (first report picks the reviewer, least-loaded live lane).",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                ],
+                &[
+                    ("task_id", "string", "Task uuid"),
+                    ("phase", "string", "analysis | tests | impl | docs | mockup"),
+                    ("round", "integer", "Must be the task's current round"),
+                    ("summary", "object", "{changed, look_at?, flags?} — the ≤600-char turn summary"),
+                    ("report_md", "string", "The full report markdown"),
+                    ("base", "string", "Base ref the turn builds on"),
+                    ("branch", "string", "Branch the turn lives on"),
+                    ("commits", "array", "Commit shas the turn produced"),
+                    ("files", "array", "[{path, added, removed}]"),
+                    ("gates", "array", "[{cmd, exit, counts?}]"),
+                    ("telemetry", "object", "Turn telemetry (tokens_*, started/ended_at, subagents, …)"),
+                ]),
+            tool("relay_submit_review",
+                "Review as the picked reviewer: approved holds the task for merge; changes_requested sends it back and bumps the round.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                    ("verdict", "string", "approved | changes_requested"),
+                    ("summary", "string", "The ≤600-char verdict summary"),
+                ],
+                &[
+                    ("findings", "array", "[{severity, class, text, file?, line?}] (class must exist)"),
+                    ("probes", "integer", "How many probes the review ran"),
+                    ("telemetry", "object", "Review telemetry"),
+                ]),
+            tool("relay_ask_decision",
+                "Ask a decision of the person or a lane, blocking tasks until it answers (their states are remembered).",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("question", "string", "The ≤600-char question"),
+                    ("options", "array", "[{id, label, detail?}]"),
+                    ("asked_of", "string", "\"person\" or a lane uuid"),
+                ],
+                &[
+                    ("task_id", "string", "Task uuid the question belongs to"),
+                    ("context", "string", "Extra context for the decider"),
+                    ("recommended", "string", "Recommended option id (must name an option)"),
+                    ("blocks", "array", "Task uuids this decision blocks"),
+                ]),
+            tool("relay_answer_decision",
+                "Answer a decision asked of this lane: records the pick and resumes what the ask blocked.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("decision_id", "string", "Decision uuid"),
+                    ("option", "string", "Chosen option id (must name an option)"),
+                ],
+                &[
+                    ("note", "string", "The ≤600-char answer note"),
+                ]),
+            tool("relay_send_message",
+                "Message the crew: the addressed lane, the coordinator, everyone, or the person. Lanes omit surface (the daemon sets lane).",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("to", "object", "{kind: coordinator|lane|everyone|person, lane_id?}"),
+                    ("text", "string", "The ≤600-char message text"),
+                ],
+                &[
+                    ("task_id", "string", "Task uuid the message belongs to"),
+                    ("surface", "string", "Forwarded verbatim when given (the daemon validates); omit it"),
+                ]),
+            tool("relay_plan_item",
+                "Plan a queue item (or a manual title) into an unassigned task. Coordinator only.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                ],
+                &[
+                    ("item_id", "string", "Queue item uuid (moves it to planned)"),
+                    ("title", "string", "Task title (manual plans must name it)"),
+                    ("phase", "string", "analysis | tests | impl | docs | mockup"),
+                    ("repo_key", "string", "Task repository (manual plans must name it)"),
+                    ("workspace_id", "string", "Task workspace uuid"),
+                ]),
+            tool("relay_assign_task",
+                "Hand a task to a lane: the authoritative hand-off (title/phase/brief/acceptance/paths), frozen into the brief. Coordinator only. lane_id is the calling coordinator, to_lane the assignee.",
+                &[
+                    ("lane_id", "string", "The calling coordinator's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                    ("to_lane", "string", "Assignee lane uuid"),
+                    ("title", "string", "Task title"),
+                    ("phase", "string", "analysis | tests | impl | docs | mockup"),
+                    ("brief", "object", "{summary, docs[]} — the frozen hand-off"),
+                ],
+                &[
+                    ("ticket", "object", "{provider, key, url?}"),
+                    ("tags", "array", "Hand-off tags (manual tasks only)"),
+                    ("acceptance", "array", "Acceptance lines"),
+                    ("owned_paths", "array", "Owned path globs"),
+                    ("deps", "array", "Task uuids this one waits on"),
+                    ("resources", "array", "Named resources (item 3 leases them)"),
+                    ("reviewer_lane", "string", "Explicit reviewer (else the broker picks at first report)"),
+                    ("lane_title", "string", "Sets the assignee's objective"),
+                ]),
+            tool("relay_merge_task",
+                "Merge an approved task: stamps completion, records the merge. Coordinator only.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                    ("into", "string", "Where it merged"),
+                    ("note", "string", "The ≤600-char merge note"),
+                ],
+                &[
+                    ("commits", "array", "Merged shas (empty means nothing to merge)"),
+                    ("gates", "array", "[{cmd, exit, counts?}] re-run on the merged tree"),
+                ]),
         ]
     })
 }
@@ -1479,6 +1886,20 @@ mod tests {
         "list_playbook_rule_proposals",
         "accept_playbook_rule",
         "get_ticket",
+        "relay_register",
+        "relay_heartbeat",
+        "relay_reregister",
+        "relay_unregister",
+        "relay_get_tasks",
+        "relay_wait_for_task",
+        "relay_report_task",
+        "relay_submit_review",
+        "relay_ask_decision",
+        "relay_answer_decision",
+        "relay_send_message",
+        "relay_plan_item",
+        "relay_assign_task",
+        "relay_merge_task",
     ];
 
     fn tools() -> Vec<Value> {
@@ -1986,7 +2407,7 @@ mod tests {
         .unwrap();
         assert_eq!(req.method, HttpMethod::Post);
         assert_eq!(req.path, "/api/runs/plan");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["goal"], "ship it");
         assert_eq!(body["workspace"], "sensei", "unset workspace defaults to the resolved repo");
         assert_eq!(body["plan_ref"], "docs/plan/x/plan.md");
@@ -2114,7 +2535,7 @@ mod tests {
             .unwrap();
         assert_eq!(req.method, HttpMethod::Post);
         assert_eq!(req.path, "/api/mcp/call");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["tool"], "search");
         assert_eq!(body["params"]["repoId"], "sensei", "resolved name injected as repoId");
         assert_eq!(body["params"]["q"], "foo");
@@ -2130,7 +2551,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(req.path, "/api/mcp/call");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["tool"], "get_file_tags", "daemon-side tool name");
         assert_eq!(body["params"]["tag"], "hook", "pattern renamed to tag");
         assert_eq!(body["params"]["repoId"], "sensei");
@@ -2141,7 +2562,7 @@ mod tests {
         let req = daemon_request_for("get_workspace_summary", &json!({}), "/cwd", Some("sensei"))
             .unwrap();
         assert_eq!(req.path, "/api/mcp/call");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["tool"], "get_workspace_summary");
         assert_eq!(body["params"]["repoId"], "sensei");
     }
@@ -2200,7 +2621,7 @@ mod tests {
             Some("sensei"),
         )
         .unwrap();
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["gov_scope"], "organization");
         assert_eq!(body["folder"], "/proj/cwd", "cwd forwarded as governing folder");
         assert_eq!(body["enforcement"], "mandatory");
@@ -2220,7 +2641,7 @@ mod tests {
             Some("sensei"),
         )
         .unwrap();
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["spine_slot"], "brief");
         assert_eq!(body["feature"], "auth");
 
@@ -2315,7 +2736,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(req.path, "/api/knowledge/outcomes");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["outcomes"][0]["memory_id"], "m1");
         assert_eq!(body["outcomes"][0]["outcome"], "applied");
     }
@@ -2404,7 +2825,7 @@ mod tests {
                 .unwrap();
         assert_eq!(req.method, HttpMethod::Post);
         assert_eq!(req.path, "/api/stance");
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["under"], json!("/my/cwd"), "under defaults to cwd");
         assert_eq!(body["autonomy"], json!("run_freely"));
         assert!(
@@ -2423,7 +2844,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let body = req.body.unwrap();
+        let body = req.body.as_ref().unwrap();
         assert_eq!(body["under"], json!("/repo"), "explicit under overrides cwd");
         assert_eq!(body["scope"], json!("workspace"));
         assert_eq!(body["review"], json!("quorum"));
@@ -2507,5 +2928,445 @@ mod tests {
             resolved(resolve_default_workspace(Some(""), Some(&empty), "cwdname")),
             ("cwdname".into(), "cwd", None)
         );
+    }
+
+    // ── Relay lanes (slice 1, item 2) ───────────────────────────────────────
+    // Phase A pins the shapes; the schemas, arms and sender loop are phase-B
+    // implementation. Tool names carry the `relay_` prefix (no contract fixes
+    // MCP names; the prefix avoids collisions with future unprefixed tools).
+    // Q-marked tests encode a recommendation, not a settled reading.
+
+    const RELAY_TOOLS: &[&str] = &[
+        "relay_register",
+        "relay_heartbeat",
+        "relay_reregister",
+        "relay_unregister",
+        "relay_get_tasks",
+        "relay_wait_for_task",
+        "relay_report_task",
+        "relay_submit_review",
+        "relay_ask_decision",
+        "relay_answer_decision",
+        "relay_send_message",
+        "relay_plan_item",
+        "relay_assign_task",
+        "relay_merge_task",
+    ];
+
+    const LANE_ID: &str = "01938931-0000-7000-8000-000000000001";
+    const TOKEN: &str = "tok-test-1";
+
+    fn auth_header(token: &str) -> (String, String) {
+        ("authorization".into(), ["Bearer", token].join(" "))
+    }
+
+    fn lane_args(extra: Value) -> Value {
+        let mut obj = extra.as_object().cloned().unwrap_or_default();
+        obj.insert("lane_id".into(), json!(LANE_ID));
+        obj.insert("lane_token".into(), json!(TOKEN));
+        Value::Object(obj)
+    }
+
+    /// The request carries the token ONLY in the headers — never the path,
+    /// query or body (tokens must not land in access logs).
+    fn assert_token_only_in_headers(req: &DaemonRequest, token: &str) {
+        assert!(!req.path.contains(token), "token in path: {}", req.path);
+        for (k, v) in &req.query {
+            assert!(!k.contains(token) && !v.contains(token), "token in query: {k}={v}");
+        }
+        if let Some(body) = &req.body {
+            assert!(!body.to_string().contains(token), "token in body: {body}");
+        }
+        assert!(req.headers.contains(&auth_header(token)), "no auth header: {req:?}");
+    }
+
+    #[test]
+    fn relay_tools_are_listed() {
+        let tools = handle_list_tools();
+        let names: Vec<&str> =
+            tools["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        for tool in RELAY_TOOLS {
+            assert!(names.contains(tool), "{tool} is listed");
+        }
+    }
+
+    #[test]
+    fn relay_register_requires_role_and_family() {
+        assert_eq!(missing_required("relay_register", &json!({})), vec!["role", "family"]);
+        // Q6 settled: crew_id rides along when given (contributors must give it — register_mode).
+        assert!(
+            missing_required("relay_register", &json!({"role": "contributor", "family": "x"}))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn relay_lane_calls_require_identity() {
+        for tool in ["relay_heartbeat", "relay_get_tasks", "relay_report_task"] {
+            assert_eq!(
+                missing_required(tool, &json!({})),
+                vec!["lane_id", "lane_token"],
+                "{tool} requires identity"
+            );
+        }
+    }
+
+    #[test]
+    fn relay_register_posts_lane_shape_unauthenticated() {
+        // Register MINTS the token, so it carries no auth header (consistent
+        // with the daemon's localhost trust: tokens bind lane identity, not
+        // machine access).
+        let req = daemon_request_for(
+            "relay_register",
+            &json!({"role": "contributor", "family": "claude-code",
+                    "crew_id": "c1", "capabilities": ["rust"]}),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/register");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["role"], "contributor");
+        assert_eq!(body["family"], "claude-code");
+        assert_eq!(body["crew_id"], "c1");
+        assert_eq!(body["capabilities"], json!(["rust"]));
+        assert!(req.headers.is_empty());
+    }
+
+    #[test]
+    fn relay_heartbeat_posts_with_auth() {
+        let req =
+            daemon_request_for("relay_heartbeat", &lane_args(json!({})), "/cwd", None).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/heartbeat");
+        assert_eq!(req.body.as_ref().unwrap()["lane_id"], LANE_ID);
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_get_tasks_gets_with_auth() {
+        let req =
+            daemon_request_for("relay_get_tasks", &lane_args(json!({})), "/cwd", None).unwrap();
+        assert_eq!(req.method, HttpMethod::Get);
+        assert_eq!(req.path, "/api/relay/tasks");
+        assert!(req.query.contains(&("lane_id".to_string(), LANE_ID.to_string())));
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_wait_is_inline_for_the_long_hold() {
+        // A hold of up to 50 s needs the binary's longer-timeout client, so
+        // `daemon_request_for` returns None (the infer/embed pattern, Q10).
+        assert!(
+            daemon_request_for("relay_wait_for_task", &lane_args(json!({})), "/cwd", None)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn relay_wait_builder_shapes_hold_open() {
+        let req = build_relay_wait_request(LANE_ID, TOKEN, Some(5_000));
+        assert_eq!(req.method, HttpMethod::Get);
+        assert_eq!(req.path, "/api/relay/tasks/wait");
+        assert!(req.query.contains(&("lane_id".to_string(), LANE_ID.to_string())));
+        assert!(req.query.contains(&("timeout_ms".to_string(), "5000".to_string())));
+        assert_token_only_in_headers(&req, TOKEN);
+        // Omitted → the key is absent (never null-filled); the daemon
+        // applies its default.
+        let req = build_relay_wait_request(LANE_ID, TOKEN, None);
+        assert!(!req.query.iter().any(|(k, _)| k == "timeout_ms"));
+    }
+
+    #[test]
+    fn relay_assign_splits_caller_and_assignee() {
+        // Q13 settled: `lane_id` is the calling coordinator, `to_lane` the
+        // assignee; both uuids (Q1 settled).
+        let to_lane = "01938931-0000-7000-8000-000000000002";
+        let req = daemon_request_for(
+            "relay_assign_task",
+            &lane_args(json!({"task_id": "t1", "to_lane": to_lane,
+                              "title": "T", "phase": "tests"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/t1/assign");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["to_lane"], to_lane);
+        assert_eq!(body["phase"], "tests");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_report_forwards_turn_shape() {
+        let req = daemon_request_for(
+            "relay_report_task",
+            &lane_args(json!({"task_id": "t1", "phase": "impl", "round": 2,
+                              "summary": {"changed": "c", "look_at": "l", "flags": null},
+                              "files": [{"path": "a", "added": 1, "removed": 0}]})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.path, "/api/relay/tasks/t1/report");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["phase"], "impl");
+        assert_eq!(body["round"], 2);
+        assert_eq!(body["summary"]["changed"], "c");
+        assert_eq!(body["files"][0]["path"], "a");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_message_requires_to_and_text() {
+        assert_eq!(
+            missing_required("relay_send_message", &lane_args(json!({}))),
+            vec!["to", "text"]
+        );
+        let req = daemon_request_for(
+            "relay_send_message",
+            &lane_args(json!({"to": {"kind": "everyone"}, "text": "hi"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/messages");
+        assert_eq!(req.body.as_ref().unwrap()["text"], "hi");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_lane_surface_daemon_set() {
+        // Q12 settled: lanes omit `surface`; the daemon sets `lane`. The MCP
+        // schema never requires it, and forwards it verbatim when given (the
+        // daemon validates).
+        assert!(
+            missing_required(
+                "relay_send_message",
+                &lane_args(json!({"to": {"kind": "lane", "lane_id": LANE_ID}, "text": "hi"}))
+            )
+            .is_empty()
+        );
+        let req = daemon_request_for(
+            "relay_send_message",
+            &lane_args(json!({"to": {"kind": "everyone"}, "text": "hi", "surface": "desktop"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.body.as_ref().unwrap()["surface"], "desktop");
+        let req = daemon_request_for(
+            "relay_send_message",
+            &lane_args(json!({"to": {"kind": "everyone"}, "text": "hi"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert!(req.body.as_ref().unwrap().get("surface").is_none());
+    }
+
+    #[test]
+    fn relay_register_forwards_crew_mint_fields() {
+        // Q6 settled: a coordinator's mint carries goal/repo_key/workspace_id.
+        let req = daemon_request_for(
+            "relay_register",
+            &json!({"role": "coordinator", "family": "claude-code",
+                    "goal": "Ship it", "repo_key": "github.com/o/r", "workspace_id": "w1"}),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["goal"], "Ship it");
+        assert_eq!(body["repo_key"], "github.com/o/r");
+        assert_eq!(body["workspace_id"], "w1");
+    }
+
+    // ── Part 2: the remaining tools' request shapes ──
+
+    #[test]
+    fn relay_reregister_and_unregister_post_with_auth() {
+        for tool in ["relay_reregister", "relay_unregister"] {
+            let req = daemon_request_for(tool, &lane_args(json!({})), "/cwd", None).unwrap();
+            assert_eq!(req.method, HttpMethod::Post);
+            assert_eq!(req.path, format!("/api/relay/{}", tool.strip_prefix("relay_").unwrap()));
+            assert_eq!(req.body.as_ref().unwrap()["lane_id"], LANE_ID);
+            assert_token_only_in_headers(&req, TOKEN);
+        }
+    }
+
+    #[test]
+    fn relay_submit_review_posts_turn_shape() {
+        let req = daemon_request_for(
+            "relay_submit_review",
+            &lane_args(json!({"task_id": "t1", "verdict": "approved", "summary": "Clean."})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/t1/review");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["verdict"], "approved");
+        assert_eq!(body["summary"], "Clean.");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_ask_posts_decision_shape() {
+        let req = daemon_request_for(
+            "relay_ask_decision",
+            &lane_args(json!({"question": "Where?",
+                              "options": [{"id": "db", "label": "Db"}],
+                              "blocks": ["t1"], "asked_of": "person"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/decisions");
+        assert_eq!(req.body.as_ref().unwrap()["asked_of"], "person");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_answer_posts_to_decision() {
+        let req = daemon_request_for(
+            "relay_answer_decision",
+            &lane_args(json!({"decision_id": "d1", "option": "db"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/decisions/d1/answer");
+        assert_eq!(req.body.as_ref().unwrap()["option"], "db");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_plan_posts_item_shape() {
+        let req = daemon_request_for(
+            "relay_plan_item",
+            &lane_args(json!({"title": "T", "phase": "tests", "repo_key": "github.com/o/r"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/plan");
+        assert_eq!(req.body.as_ref().unwrap()["phase"], "tests");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_merge_posts_merge_shape() {
+        let req = daemon_request_for(
+            "relay_merge_task",
+            &lane_args(json!({"task_id": "t1", "commits": ["abc"], "into": "develop"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/t1/merge");
+        assert_eq!(req.body.as_ref().unwrap()["into"], "develop");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_required_args_per_tool() {
+        // to_lane is required: unassigned tasks are plan's, not assign's.
+        assert!(
+            missing_required("relay_assign_task", &lane_args(json!({"task_id": "t1"})))
+                .contains(&"to_lane".to_string())
+        );
+        assert_eq!(
+            missing_required("relay_submit_review", &lane_args(json!({"task_id": "t1"}))),
+            vec!["verdict", "summary"]
+        );
+        assert_eq!(
+            missing_required("relay_ask_decision", &lane_args(json!({}))),
+            vec!["question", "options", "asked_of"]
+        );
+        assert_eq!(
+            missing_required("relay_answer_decision", &lane_args(json!({}))),
+            vec!["decision_id", "option"]
+        );
+    }
+
+    #[test]
+    fn relay_existing_tools_unaffected() {
+        // Guard: the phase-B match insertion must not move existing arms.
+        let req = daemon_request_for(
+            "update_phase",
+            &json!({ "phase": "build", "workspace": "torii" }),
+            "/cwd",
+            Some("sensei"),
+        )
+        .unwrap();
+        assert_eq!(req.path, "/api/state/torii");
+        let req = daemon_request_for("search", &json!({ "query": "foo" }), "/cwd", Some("sensei"))
+            .unwrap();
+        assert_eq!(req.path, "/api/mcp/call");
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item3"]
+    fn relay_resource_tools_are_listed() {
+        let tools = handle_list_tools();
+        let names: Vec<&str> =
+            tools["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        for tool in ["relay_request_resource", "relay_release_resource"] {
+            assert!(names.contains(&tool), "{tool} is listed");
+        }
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item3"]
+    fn relay_request_resource_posts_shape() {
+        assert_eq!(
+            missing_required("relay_request_resource", &lane_args(json!({}))),
+            vec!["resource"]
+        );
+        let req = daemon_request_for(
+            "relay_request_resource",
+            &lane_args(json!({"resource": "rust-build"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/resources/request");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["resource"], "rust-build");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item3"]
+    fn relay_release_resource_posts_shape() {
+        assert_eq!(
+            missing_required("relay_release_resource", &lane_args(json!({}))),
+            vec!["resource"]
+        );
+        let req = daemon_request_for(
+            "relay_release_resource",
+            &lane_args(json!({"resource": "rust-build"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/resources/release");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["resource"], "rust-build");
+        assert_token_only_in_headers(&req, TOKEN);
     }
 }
