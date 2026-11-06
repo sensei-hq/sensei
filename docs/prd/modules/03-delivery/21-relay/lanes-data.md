@@ -18,8 +18,9 @@ marks). For that to work without breaking:
 - **Ids are minted on the desktop and are stable everywhere.** `uuid` v7 (time-ordered) for every table, `actions`
   included (no `bigserial`), so a row has the same id on both sides and an upsert on `(user_id, id)` is idempotent.
 - **The crew lives in `relay.crews`, not `activity.runs`.** `activity` is desktop-only, so a shared schema can't point at it.
-  `relay.crews (user_id, id, workspace_id null, goal, status, heartbeat_at, started_at, completed_at)`. The daemon may link a crew
-  to a drive run later; nothing depends on it.
+  `relay.crews (user_id, id, workspace_id null, repo_key null, goal, status, heartbeat_at, started_at, completed_at)`. A crew
+  may name no repository (Q6): every **task** carries its own, so one crew can span repos, and a crew whose `repo_key` is null
+  reads "no repository" on screen (Q18). The daemon may link a crew to a drive run later; nothing depends on it.
 - **No foreign key leaves the `relay` schema.** The ticket is referenced by its **portable identity**,
   `ticket_provider` + `ticket_key` (e.g. `jira` / `SEN-52`). Each side resolves it in its own tracker tables: the desktop in
   `sensei.tracker_tasks`, the dōjō in its read-only integration. Only that identity travels, never the ticket's content.
@@ -58,8 +59,9 @@ key, or work on those repositories would never appear:
 ## Tables (six: crews, lanes, leases, items, tasks, actions; all with `user_id`)
 
 ### `relay.crews`
-See the section above. `user_id`, `id` (uuid v7) · `workspace_id` · `goal` · `status` · `heartbeat_at` · `started_at` /
-`completed_at`.
+See the section above. `user_id` · `id` (uuid v7) · `workspace_id` null · `repo_key` null (**the founding repository**, Q6; tasks
+carry their own, so a crew spans repos, and null is read as "no repository", Q18) · `goal` · `status` · `heartbeat_at` ·
+`started_at` / `completed_at`.
 
 ### `relay.lanes`: who is registered
 `user_id` · `id` uuid v7 · `crew_id` · `code` (`L1`…, unique per crew) · `title` null (the objective, e.g. "Diagrams") · `role`
@@ -95,6 +97,41 @@ null (never the author's lane; checked) · `title` · `phase` (`'analysis','test
 - The **brief is the `assigned` action's `body_md`**, frozen. A change is a `brief_updated` action.
 - A review is a stage of the task: the reviewer's queue is `reviewer_lane_id = me and state = 'in_review'`.
 
+### Waiting on a task (lanes.md §15, user 2026-11-06)
+Waiting is a record beside a task's state, not a seventh state: a task is `in_review` **and** waiting on a reviewer,
+`approved` **and** waiting on a merge. §15 gives it `task.waiting {since, reason, waiting_on}`, closed on resume into
+`task.waiting_ended {at, by}`; CONTRACT §3f-bis fixes the six reasons and who each one waits on. (`no_work` is the one
+case with no task: a lane idle with nothing assigned, `task_id` null.)
+
+| `reason` | opens when | `waiting_on` |
+|---|---|---|
+| `review_unassigned` | a report lands with no reviewer assigned | `{role: 'coordinator'}` |
+| `merge_pending` | approved, not yet merged | `{role: 'coordinator'}` |
+| `no_work` | a lane is idle with nothing assigned (`task_id` null: a lane fact) | `{role: 'coordinator'}` |
+| `verdict_unread` | a verdict is filed and its author has not picked it up | `{lane_id}` (the author's, a uuid) |
+| `decision` | an `asked` is open | `{person: true}` |
+| `resource` | a resource lease is queued | `{broker: true}` |
+
+- **The clock** starts at `since` and stops at `waiting_ended.at`; `by` names the action that closed it (`review.assigned`,
+  `verdict.read`, `merge.done`, `task.assigned`, …), so "waited 47 min for a reviewer" stays a fact in the history instead
+  of a recalculation.
+- **One threshold per crew** (`wait_threshold_min`, default **15**, §15): at or past it (`>=`) the screen marks the wait and
+  the broker sends the nudge itself (`auto_nudge`, on by default); the person may nudge at any time.
+- **A nudge is a `message`**, not a new kind: `props.nudge = true` with `reason` and `waiting_min`, to the party being waited
+  on, delivered first by that party's next `wait_for_task` / `get_tasks`. The coordinator's queue lists unreviewed reports
+  before new assignments.
+- **De-duplication:** a lane re-sending a status it already sent is a no-op — the broker drops it on
+  `(lane, task, kind, round)`. "Standing by" is a `message` with `props.standing_by`, a history row like any other.
+
+**Stored or derived — for L0 and L4, not decided here.** §15 says the task *carries* the record; it does not say where it
+lives, and no `waiting_*` column (nor the crew's threshold) exists in the DDL today. Stored on `relay.tasks`, the screen
+reads it without a join, but the row holds a second truth beside `state` / `state_changed_at`. Derived in `relay.now` from
+state and the last action, nothing new to keep in sync, but `no_work` is a lane fact and `resource` a lease fact, so the
+view also reads `lanes` and `leases`. A `waiting` / `waiting_ended` action pair puts it in `relay.actions`, where
+the history already is, and the open record is "an unclosed `waiting` action". I do not choose: the DDL is L4's and the
+model is L0's. Whichever lands, this file and `relay-api.ts` change in the same round, and no `waiting_*` column goes into
+the DDL before the ruling.
+
 ### `relay.actions`: everything that happens
 `user_id` · `id` uuid v7 · `crew_id` · `task_id` null (null for crew-level ones, e.g. a message "about no particular task") ·
 `lane_id` null (who acted; null = the person) · `kind` (`action_kind`, below) · `round` null · `phase` null ·
@@ -110,8 +147,8 @@ review → the report it reviews) · `created_at`.
 | `reported` | the summary sent with the request for review | `look_at`, `flags`, `base`, `branch`, `commits[]`, `files[{path,added,removed,outside_owned}]`, `gates[{cmd,exit,counts}]`, `family`, `version`, `model`, `tokens_in`, `tokens_out`, `tokens_cache`, `started_at`, `ended_at`, `context_tokens`, `compactions`, `peak_memory_mb`, `subagents[{role,model}]` |
 | `reviewed` | the review summary | `verdict` (`approved` / `changes_requested`), `findings[{severity,class,text,file,line}]`, `probes`, `subagents[]`, the same telemetry keys |
 | `asked` | the question | `context` (one line: what is waiting on it), `options[{id,label,detail}]`, `recommended`, `blocks[task_id]`, `asked_of` (`person` / lane id) |
-| `answered` | an optional note | `option`, `surface` (`desktop` / `dojo`) |
-| `message` | the message | `to` = `{kind: 'coordinator' \| 'lane' \| 'everyone', lane_id?}` (a lane by its **uuid**; the screen shows its code), `surface` |
+| `answered` | an optional note | `option`, `surface` (`desktop` / `dojo` / `lane`; `lane` is the daemon's on a lane-sent answer and is never sent, Q12) |
+| `message` | the message | `to` = `{kind: 'coordinator' \| 'lane' \| 'everyone' \| 'person', lane_id?}` (a lane by its **uuid**; the screen shows its code; `person` is Q2's target, slice 2), `surface` (`desktop` / `dojo` / `lane`, same split), and for a nudge `nudge` (`true`) + `reason` + `waiting_min`, or `standing_by` (`true`) (§15) |
 | `delivered` / `read` | — | none; `reply_to` = the message (receipts, one per recipient) |
 | `merged` | the merge note | `commits[]`, `into`, `gates[]` |
 | `interrupted` / `reoffered` | — | `checkpoint`, `to_lane` |
@@ -142,7 +179,8 @@ review → the report it reviews) · `created_at`.
 
 ## Derived reads (security-invoker views; the screen never adds up numbers itself)
 - `relay.now`: open `asked` actions for the person · the triage count by tracker and sprint · one row per lane with its
-  active task and lease · today's completed tasks.
+  active task and lease · the waiting tasks, oldest first, with who each waits on and for how long (the **Waiting** stat's
+  filter, §15; this section lands with the waiting ruling) · today's completed tasks.
 - `relay.task_history`: a task's actions, newest first, with props unpacked for the folds.
 - `relay.lane_metrics`: per family/version/model: rounds, first-pass approval, finding classes (unnested from
   `reviewed.props.findings`), tokens, time working vs waiting for review, how accurate claims were.
