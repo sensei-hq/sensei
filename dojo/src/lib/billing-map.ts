@@ -9,9 +9,10 @@
 // Each account state carries one notice with its next step, and agrees with
 // dojo.all_my_repositories (M5): the status is checked before the period, so past
 // due stays Pro (tagged) while its private repositories are hidden; canceled or a
-// lapsed period is Free again, and both say the repositories come back as they were
-// (D88). A plan key sensei does not know is said as an error, never shown as Free.
-// Pure, so it unit-tests without a DOM.
+// lapsed period is Free again. Pro that ran and ended says it has lapsed; a Pro
+// plan that never ran (a future start, or never active) is not enabled (user
+// ruling 2026-11-06). A plan key sensei does not know is said as an error, never
+// shown as Free. Pure, so it unit-tests without a DOM.
 import type { KitBilling, KitBillingProblem } from './components/kit/types';
 import type { BillingResponse } from './admin-data';
 import { BILLING_TIERS } from './billing-catalog';
@@ -36,7 +37,8 @@ function planId(plan: string): 'free' | 'pro' | null {
 
 type PlanId = 'free' | 'pro';
 
-const BACK = 'They come back as they were once Pro is renewed.';
+const LAPSED = 'Pro has lapsed.';
+const NOT_ENABLED = 'Pro is not enabled.';
 const RENEW = 'Renew once payments are connected.';
 const HIDDEN_AGAIN = "this organization's private repositories are hidden again.";
 
@@ -65,16 +67,27 @@ function screenFor(
 	};
 }
 
-/** Why a Pro account with a current status is outside its period, or `null`. */
-function outsidePeriod(account: NonNullable<BillingResponse['account']>, now: Date): string | null {
-	if (account.period_start && now < new Date(account.period_start)) return `The billing period starts ${shortDate(account.period_start)}`;
-	if (account.period_end && now > new Date(account.period_end)) return `The billing period ended ${shortDate(account.period_end)}`;
+/** Why a Pro account with a current status is outside its period, or `null`.
+ *  `lapsed` tells Pro that ran and ended from a period that has not started. */
+function outsidePeriod(
+	account: NonNullable<BillingResponse['account']>,
+	now: Date
+): { why: string; lapsed: boolean } | null {
+	if (account.period_start && now < new Date(account.period_start))
+		return { why: `The billing period starts ${shortDate(account.period_start)}`, lapsed: false };
+	if (account.period_end && now > new Date(account.period_end))
+		return { why: `The billing period ended ${shortDate(account.period_end)}`, lapsed: true };
 	return null;
 }
 
-/** The lapsed notice (canceled, or out of period): Free again, back as they were. */
+/** The lapsed notice (Pro ran and ended): Free again, and it says so plainly. */
 function lapsed(why: string, code: string): KitBillingProblem {
-	return { tone: 'refusal', title: 'Pro is not active', detail: `${why}, so ${HIDDEN_AGAIN} ${BACK}`, remedy: RENEW, code };
+	return { tone: 'refusal', title: 'Pro is not active', detail: `${why}, so ${HIDDEN_AGAIN} ${LAPSED}`, remedy: RENEW, code };
+}
+
+/** The not-enabled notice (Pro never ran: a future start, or never active). */
+function notEnabled(why: string, code: string): KitBillingProblem {
+	return { tone: 'refusal', title: 'Pro is not active', detail: `${why}, so ${HIDDEN_AGAIN} ${NOT_ENABLED}`, remedy: RENEW, code };
 }
 
 /** The screen built from the live response. Pure; `now` for the period check. */
@@ -103,10 +116,22 @@ export function toKitBilling(res: BillingResponse, now: Date = new Date()): KitB
 		});
 	}
 	if (account.status !== 'active' && account.status !== 'trialing') {
-		return screenFor(res, 'free', 'Current plan', lapsed(`The billing account is ${account.status.replace(/_/g, ' ')}`, 'not_subscribed'));
+		const why = `The billing account is ${account.status.replace(/_/g, ' ')}`;
+		// Canceled is Pro that ran and ended; any other status has never been active.
+		return account.status === 'canceled'
+			? screenFor(res, 'free', 'Current plan', lapsed(why, 'not_subscribed'))
+			: screenFor(res, 'free', 'Current plan', notEnabled(why, 'not_enabled'));
 	}
 	const out = outsidePeriod(account, now);
-	if (out) return screenFor(res, 'free', 'Current plan', lapsed(out, 'subscription_expired'));
+	if (out) {
+		return screenFor(
+			res,
+			'free',
+			'Current plan',
+			// An ended period or trial lapsed; a period that has not started is not enabled.
+			out.lapsed ? lapsed(out.why, 'subscription_expired') : notEnabled(out.why, 'not_enabled')
+		);
+	}
 	if (account.status === 'trialing') {
 		// A trial ends; it never "renews" (L4).
 		const ends = account.period_end ? ` — ends ${shortDate(account.period_end)}` : '';
