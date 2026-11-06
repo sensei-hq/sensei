@@ -40,8 +40,9 @@ export function since(iso: string, now = Date.now()): string {
 /** A crew's id, by the part that tells it apart (a uuid v7 starts with its clock). */
 export const crewTail = (id: string): string => id.slice(-4);
 
-/** A crew's repository as the screen writes it: the key, or "no repository" (Q18). */
-export const crewRepoLabel = (crew: Pick<RelayCrew, 'repo_key'>): string => crew.repo_key ?? 'no repository';
+/** A crew's repository as the screen writes it: the key, or "no repository · crew XXXX" when null (Q18 L1) so two repo-less crews stay distinct. */
+export const crewRepoLabel = (crew: Pick<RelayCrew, 'repo_key' | 'id'>): string =>
+  crew.repo_key ?? `no repository · crew ${crewTail(crew.id)}`;
 
 /** One lane's state pill: the lease first, then the person's open question, then the task. */
 export function laneState(lane: RelayLane): string {

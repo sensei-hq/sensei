@@ -129,19 +129,21 @@ describe('Observatory · Relay — every crew, workspace or not', () => {
     expect(all(loose, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L8', 'L9']);
   });
 
-  it('a crew with no repository heads its group "no repository" (Q18)', async () => {
+  it('two crews with no repository head distinct "no repository · crew XXXX" groups (Q18 L1)', async () => {
     const base = F.mainNow();
     const { c } = await open({
       now: F.ok({
         ...base,
         crews: [
-          F.crew(),
+          F.crew({ repo_key: null }),
           F.crew({ id: F.LOOSE_CREW_ID, repo_key: null, workspace_id: null, goal: 'Try the scratch idea' }),
         ],
       }),
     });
-    const loose = need(one(c, `[data-crew-group="${F.LOOSE_CREW_ID}"]`), 'the repo-less crew’s group');
-    expect(text(one(loose, '[data-crew-heading]'))).toContain('no repository');
+    const sensei = need(one(c, `[data-crew-group="${F.CREW_ID}"]`), 'the first repo-less crew’s group');
+    expect(text(one(sensei, '[data-crew-heading]'))).toBe('no repository · crew c7f3');
+    const loose = need(one(c, `[data-crew-group="${F.LOOSE_CREW_ID}"]`), 'the second repo-less crew’s group');
+    expect(text(one(loose, '[data-crew-heading]'))).toBe('no repository · crew b10c');
   });
 
   it('the context counts the crews it shows', async () => {
@@ -241,7 +243,7 @@ describe('Observatory · Relay — Message the crew across crews', () => {
     });
   });
 
-  it('a crew with no repository reads "no repository" in the Crew field (Q18)', async () => {
+  it('repo-less crews read distinct "no repository · crew XXXX" in the Crew field (Q18 L1)', async () => {
     const base = F.mainNow();
     const { c } = await open({
       now: F.ok({
@@ -249,12 +251,17 @@ describe('Observatory · Relay — Message the crew across crews', () => {
         crews: [
           F.crew(),
           F.crew({ id: F.LOOSE_CREW_ID, repo_key: null, workspace_id: null, goal: 'Try the scratch idea' }),
+          F.crew({ id: F.OTHER_CREW_ID, repo_key: null, workspace_id: null, goal: 'Another scratch' }),
         ],
       }),
     });
     need(one(c, '[data-screen-tools] [aria-label="Message the crew"]'), 'the Message the crew action').click();
     await tick();
     const crewField = need(one(c, 'select[data-compose-crew]'), 'the Crew field') as HTMLSelectElement;
-    expect([...crewField.options].map((o) => o.text)).toEqual(['github.com/sensei-hq/sensei', 'no repository']);
+    expect([...crewField.options].map((o) => o.text)).toEqual([
+      'github.com/sensei-hq/sensei',
+      'no repository · crew b10c',
+      'no repository · crew 99aa',
+    ]);
   });
 });
