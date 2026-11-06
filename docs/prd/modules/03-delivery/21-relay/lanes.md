@@ -203,7 +203,10 @@ The existing `start_run` / `register_plan` / `update_task_status` / `report_run_
 2. Coordinator tools: `plan_item` (with the depth gate checklist recorded) and `assign_task`.
 3. The event log in the daemon; a minimal desktop board (crew, lanes, queue). The dōjō push comes in slice 2.
 4. A resource lease for heavy builds.
-5. Dogfood: run this repository's next item through it, with one coordinator and two contributors.
+5. Dogfood: run this repository's next item through it, with one coordinator and two contributors. First dogfood
+   item (user, 2026-11-06): first-class Muse support in Sensei — an assistant adapter for Muse (MCP registration,
+   sensei-skills install and peers of the existing adapters' duties), using the direct session connection where
+   available, plus transcript scan and/or a background sensei↔Muse channel. Decomposed when slice 1 lands.
 
 ## 15. Waiting, nudges and the hand-off trail (user, 2026-11-06)
 Today the person carries every hand-off between lanes by pasting messages. Relay must make each of those hand-offs a
