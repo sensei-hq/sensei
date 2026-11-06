@@ -17,7 +17,7 @@ create table if not exists relay.actions (
   report_md  text,
   props      jsonb             not null default '{}',
   reply_to   uuid,
-  created_at timestamptz       not null default now(),
+  created_at timestamptz       not null default current_timestamp,
   constraint actions_pkey primary key (user_id, id),
   constraint actions_id_v7 check (substring(id::text from 15 for 1) = '7'),
   constraint actions_crew_fk foreign key (user_id, crew_id) references relay.crews (user_id, id),

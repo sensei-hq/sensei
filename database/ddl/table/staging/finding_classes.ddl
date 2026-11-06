@@ -1,3 +1,5 @@
+set search_path to staging, extensions;
+
 -- Scratch buffer for the finding-classes seed: rebuilt by dbd import from
 -- database/import/staging/finding_classes.jsonl, then merged by
 -- staging.import_finding_classes(). No guard needed: the merge upserts on

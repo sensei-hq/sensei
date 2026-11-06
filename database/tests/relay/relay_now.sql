@@ -23,6 +23,11 @@
 
 begin;
 
+-- Pin the session zone: the window is the session-local day. Pacific is always
+-- UTC-negative, so T12 (a second before local midnight) still falls on the same
+-- UTC date — only a session-local window excludes it.
+set local timezone to 'America/Los_Angeles';
+
 -- The real DDL, in this transaction, rolled back with it.
 \ir ../fixtures/relay_apply.ddl
 
@@ -98,8 +103,9 @@ insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, workspace_id, 
    '22222222-2222-7000-8000-00000000f909', '22222222-2222-7000-8000-00000000f919',
    'github.com/sensei-hq/other', null, 'Their working', 'tests', 'working', 1, now(), null);
 
--- T10: done today on L1 (a titled lane in completed_today). T11/T12: the UTC
--- day boundary — midnight sharp reads completed, a second before does not.
+-- T10: done today on L1 (a titled lane in completed_today). T11/T12: the
+-- session-local day boundary — midnight sharp reads completed, a second before
+-- does not.
 insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, workspace_id, title, phase, state, round, state_changed_at, completed_at) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f930',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f911',
@@ -107,13 +113,13 @@ insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, workspace_id, 
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f93a',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f912',
    'github.com/sensei-hq/sensei', null, 'Midnight sharp', 'impl', 'done', 1,
-   date_trunc('day', now() at time zone 'UTC') at time zone 'UTC',
-   date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'),
+   date_trunc('day', now()),
+   date_trunc('day', now())),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f93b',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f912',
    'github.com/sensei-hq/sensei', null, 'Second before', 'impl', 'done', 1,
-   date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' - interval '1 second',
-   date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' - interval '1 second');
+   date_trunc('day', now()) - interval '1 second',
+   date_trunc('day', now()) - interval '1 second');
 
 -- A1: open, asked of the person, blocking T1. A2: open, asked of a lane (out).
 -- A3: asked of the person, answered (out). A5: T3's merge. A6/A7: T8's asked
@@ -328,11 +334,11 @@ begin
      or v_json->>'lane_title' is distinct from 'Diagrams' then
     raise exception 'T10 completed payload wrong: %.', v_json;
   end if;
-  -- T11: midnight sharp UTC reads completed; T12, a second before, does not.
+  -- T11: midnight sharp reads completed; T12, a second before, does not.
   select count(*) into n from relay.now where section = 'completed_today'
     and payload->>'task_id' = '11111111-1111-7000-8000-00000000f93a';
   if n <> 1 then
-    raise exception 'midnight-sharp UTC should read completed.';
+    raise exception 'midnight-sharp should read completed.';
   end if;
   select count(*) into n from relay.now where section = 'completed_today'
     and payload->>'task_id' in ('11111111-1111-7000-8000-00000000f935', '11111111-1111-7000-8000-00000000f936',

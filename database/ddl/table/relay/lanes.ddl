@@ -17,7 +17,7 @@ create table if not exists relay.lanes (
   worktree        text,
   token_hash      text            not null,
   checkpoint      jsonb,
-  registered_at   timestamptz     not null default now(),
+  registered_at   timestamptz     not null default current_timestamp,
   unregistered_at timestamptz,
   constraint lanes_pkey primary key (user_id, id),
   constraint lanes_id_v7 check (substring(id::text from 15 for 1) = '7'),

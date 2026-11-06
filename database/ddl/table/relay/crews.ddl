@@ -12,7 +12,7 @@ create table if not exists relay.crews (
   goal          text,
   status        text        not null,
   heartbeat_at  timestamptz,
-  started_at    timestamptz not null default now(),
+  started_at    timestamptz not null default current_timestamp,
   completed_at  timestamptz,
   constraint crews_pkey primary key (user_id, id),
   constraint crews_id_v7 check (substring(id::text from 15 for 1) = '7')

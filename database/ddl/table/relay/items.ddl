@@ -16,7 +16,7 @@ create table if not exists relay.items (
   state            relay.item_state not null,
   position         int,
   added_by         uuid,
-  added_at         timestamptz      not null default now(),
+  added_at         timestamptz      not null default current_timestamp,
   constraint items_pkey primary key (user_id, id),
   constraint items_id_v7 check (substring(id::text from 15 for 1) = '7'),
   constraint items_ticket_atomic check ((ticket_provider is null) = (ticket_key is null)),

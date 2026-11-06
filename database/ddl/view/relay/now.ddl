@@ -69,8 +69,9 @@ select t.user_id, 'completed_today', t.crew_id, t.id,
 from relay.tasks t
 left join relay.lanes l on l.user_id = t.user_id and l.id = t.lane_id
 where t.state in ('approved', 'done')
+  -- current_timestamp, never now(): dbd resolves now() to this view.
   and coalesce(t.completed_at, t.state_changed_at)
-      >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC';
+      >= date_trunc('day', current_timestamp);
 
 comment on view relay.now is
-'Now grain: lane rows, open person decisions, manual triage count, UTC-day completions. Approved tasks fall back to state_changed_at for the stamp.';
+'Now grain: lane rows, open person decisions, manual triage count, session-local-day completions. Approved tasks fall back to state_changed_at for the stamp.';
