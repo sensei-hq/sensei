@@ -161,11 +161,7 @@ impl ReqwestRaw {
 impl ReqwestRaw {
     /// Authenticate and send `req`, reading as much of the response as the policy needs.
     async fn execute(&self, req: reqwest::RequestBuilder) -> Result<RawResponse, ()> {
-        let req = match &self.auth {
-            crate::tracker::AuthScheme::Basic { user, token } => {
-                req.basic_auth(user, Some(&token.0))
-            }
-        };
+        let req = authenticate(req, &self.auth)?;
         let resp = req.send().await.map_err(|_| ())?;
         let status = resp.status().as_u16();
         let retry_after = resp
@@ -175,6 +171,24 @@ impl ReqwestRaw {
             .map(String::from);
         let body = resp.bytes().await.map_err(|_| ())?.to_vec();
         Ok(RawResponse { status, retry_after, body })
+    }
+}
+
+/// `req` carrying `auth`. A token header is marked sensitive, so it never reaches a
+/// `Debug` of the request (§G2).
+fn authenticate(
+    req: reqwest::RequestBuilder,
+    auth: &crate::tracker::AuthScheme,
+) -> Result<reqwest::RequestBuilder, ()> {
+    match auth {
+        crate::tracker::AuthScheme::Basic { user, token } => {
+            Ok(req.basic_auth(user, Some(&token.0)))
+        }
+        crate::tracker::AuthScheme::Header { name, token } => {
+            let mut value = reqwest::header::HeaderValue::from_str(&token.0).map_err(|_| ())?;
+            value.set_sensitive(true);
+            Ok(req.header(*name, value))
+        }
     }
 }
 
@@ -617,5 +631,53 @@ mod tests {
         );
         assert_eq!(echo["auth"], serde_json::json!(expected));
         assert_eq!(echo["query"], serde_json::json!("startAt=100"));
+    }
+
+    fn private_token(token: &str) -> crate::tracker::AuthScheme {
+        crate::tracker::AuthScheme::Header {
+            name: "PRIVATE-TOKEN",
+            token: crate::tracker::ApiToken(token.into()),
+        }
+    }
+
+    #[test]
+    fn a_header_token_is_sensitive_and_absent_from_the_request_debug() {
+        let client = reqwest::Client::new();
+        let req =
+            authenticate(client.get("https://gitlab.example.com/x"), &private_token("glpat-xyz"))
+                .unwrap()
+                .build()
+                .unwrap();
+        let value = req.headers().get("PRIVATE-TOKEN").expect("the header is set");
+        assert_eq!(value.to_str().unwrap(), "glpat-xyz");
+        assert!(value.is_sensitive());
+        let shown = format!("{req:?}");
+        assert!(!shown.contains("glpat-xyz"), "{shown}");
+    }
+
+    #[test]
+    fn a_header_token_that_is_not_a_header_value_is_refused() {
+        let client = reqwest::Client::new();
+        assert!(
+            authenticate(client.get("https://gitlab.example.com/x"), &private_token("a\nb"))
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_header_token_reaches_the_wire() {
+        let base = serve(axum::Router::new().route(
+            "/echo",
+            axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                axum::Json(serde_json::json!({
+                    "token": headers.get("private-token").and_then(|v| v.to_str().ok()),
+                    "authorization": headers.get("authorization").is_some(),
+                }))
+            }),
+        ))
+        .await;
+        let raw = ReqwestRaw::new(&base, private_token("glpat-xyz")).unwrap();
+        let echo = map_response(&raw.get("/echo", &[]).await.unwrap()).unwrap();
+        assert_eq!(echo, serde_json::json!({"token": "glpat-xyz", "authorization": false}));
     }
 }

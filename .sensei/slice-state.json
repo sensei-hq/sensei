@@ -19,13 +19,16 @@
     "3 Validated/Snapshot fields + owner-after-validate + params_extra",
     "4 capabilities + guards + unsupported_by_tracker"
   ],
-  "current_phase": "F1 #364, commit 2 (Header auth + trailing dot)",
+  "current_phase": "F1 #364, commit 3 (Validated/Snapshot fields; shared FakeAdapter in tracker::test_support)",
   "completed": [
-    "F1.1 address check: net::addr::is_public_ip (moved, stricter), net::resolver::PublicOnly, ReqwestRaw resolver + no_proxy (D13)"
+    "F1.1 address check: net::addr::is_public_ip (moved, stricter), net::resolver::PublicOnly, ReqwestRaw resolver + no_proxy (D13)",
+    "F1.2 Header auth (sensitive, redacted) + trailing-dot refusal in normalize_base_url (D19)"
   ],
   "gate_status": "pass",
   "open_questions": [],
-  "known_broken": [],
+  "known_broken": [
+    "AuthScheme::Header carries #[allow(dead_code)] until F3 (#366) constructs it: remove it there"
+  ],
   "blocked_on_human": [
     "P1 fixtures (gitlab.com Free + Premium trial) block F3"
   ],

@@ -159,13 +159,24 @@ pub fn needs_owner_backfill(owner_ref: Option<&str>, owner_state: Option<&str>) 
 /// How the shared transport authenticates, chosen by the adapter.
 #[derive(Clone, PartialEq, Eq)]
 pub enum AuthScheme {
-    Basic { user: String, token: ApiToken },
+    Basic {
+        user: String,
+        token: ApiToken,
+    },
+    /// The token as the whole value of one header (GitLab: `PRIVATE-TOKEN`, §G2).
+    // The shared half of #364 lands ahead of the GitLab adapter (#366) that constructs it.
+    #[allow(dead_code)]
+    Header {
+        name: &'static str,
+        token: ApiToken,
+    },
 }
 
 impl std::fmt::Debug for AuthScheme {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AuthScheme::Basic { user, .. } => write!(f, "Basic({user}, ***)"),
+            AuthScheme::Header { name, .. } => write!(f, "Header({name}, ***)"),
         }
     }
 }
@@ -622,6 +633,17 @@ impl TrackerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_header_scheme_never_prints_its_token() {
+        let auth = AuthScheme::Header {
+            name: "PRIVATE-TOKEN",
+            token: ApiToken("glpat-secret-value".into()),
+        };
+        let shown = format!("{auth:?}");
+        assert!(!shown.contains("glpat-secret-value"), "{shown}");
+        assert_eq!(shown, "Header(PRIVATE-TOKEN, ***)");
+    }
 
     /// TG5: every link source the daemon writes is a label of `sensei.link_source`
     /// (a missing one is a failed insert at runtime), and `fetch` is one of them.
