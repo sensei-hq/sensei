@@ -82,7 +82,7 @@ export interface RelayFilter {
 
 export interface RelayCrew {
   id: string;
-  /** The crew's repository (`null` = none — Q18; the screen reads it as "no repository"); the main window groups its rows under it (L0 ruling, r2). */
+  /** The crew's repository (`null` = none — Q18; the screen reads it as "no repository · crew XXXX"); the main window groups its rows under it (L0 ruling, r2). */
   repo_key: string | null;
   /** Optional: a crew may work on repositories that belong to no workspace. */
   workspace_id: string | null;
