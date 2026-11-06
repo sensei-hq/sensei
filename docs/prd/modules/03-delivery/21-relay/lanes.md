@@ -231,3 +231,10 @@ row, and must make waiting visible.
 - **Coordinator hand-off.** The coordinator role must be transferable mid-crew: `reregister` as coordinator with the
   crew's checkpoint, for example when one assistant's quota runs out. Until Relay ships,
   `coord/HANDOFF-COORDINATOR.md` is the manual form.
+
+## 16. Lane codenames (slice 2; user, 2026-11-06)
+Lanes read better as names than as codes. The broker mints each lane a stable codename at register, in the
+"colour + celestial" style the sessions already use (e.g. "Beige Aster", "Gold Antares"), unique per crew. Screens
+show the codename as the primary human handle next to the objective title ("Beige Aster · Diagrams"); the code (L1)
+stays for compact and technical contexts. Slice 1 ships code + objective title as contracted; codenames land as a
+tests-first slice-2 item (model column + minting rule + uniqueness, in `lanes-data.md` and `relay-api.ts` then).
