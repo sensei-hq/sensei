@@ -37,6 +37,28 @@ fn normalize(url: &str) -> String {
     url.trim().trim_end_matches('/').to_string()
 }
 
+/// Whether two registry URLs name the same dōjō: the exact origin (scheme +
+/// host + port, default ports implied, case-insensitive) with nothing else —
+/// no path, query, or fragment. A registry carrying more than a bare root is
+/// not a root, and anything unparseable is unprovable: both read as a
+/// DIFFERENT dōjō, never the same one (sync-hardening M1 — fail closed).
+pub(crate) fn same_registry(a: &str, b: &str) -> bool {
+    fn root(url: &str) -> Option<reqwest::Url> {
+        let parsed = reqwest::Url::parse(url.trim().trim_end_matches('/')).ok()?;
+        if !parsed.path().is_empty() && parsed.path() != "/" {
+            return None;
+        }
+        if parsed.query().is_some() || parsed.fragment().is_some() {
+            return None;
+        }
+        Some(parsed)
+    }
+    match (root(a), root(b)) {
+        (Some(x), Some(y)) => x.origin() == y.origin(),
+        _ => false,
+    }
+}
+
 /// Load the persisted local config.
 fn local() -> sensei_bootstrap::SenseiLocalConfig {
     sensei_bootstrap::SenseiLocalConfig::load(

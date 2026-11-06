@@ -7,6 +7,7 @@ import { tabForSection } from '$lib/role-surfaces-view';
 import { guardTenantScope } from '$lib/org-guard';
 import {
 	getKnowledge,
+	listMyRepos,
 	listWorkspaces,
 	type KnowledgeLibraryWire,
 	type WorkspaceRow
@@ -36,6 +37,7 @@ import {
 	type BillingResponse
 } from '$lib/admin-data';
 import { toKitBilling, noBilling } from '$lib/billing-map';
+import { loadBillingSection, type BillingSection } from '$lib/billing-section-load';
 import {
 	toKitTriageGroups,
 	toKitApprovals,
@@ -209,12 +211,17 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 
 	// Billing (admin) — the LIVE billable seat count (dojo.tenant_seat_usage) and
 	// the account's plan + renewal; nothing a payment provider would supply (#106).
-	const billingRes = await guardedFor<BillingResponse, KitBilling>(
-		'billing',
-		noBilling(),
-		(tk) => getBilling(tk, opts),
-		toKitBilling
-	);
+	// Beside it, in parallel, the org's private repositories the plan hides, from
+	// the caller's own repositories (a tenant's repository appears for each member)
+	// grouped by the server's `billing_hidden` flag; each read fails on its own.
+	const billingSection: BillingSection =
+		section === 'billing'
+			? await loadBillingSection(
+					slug,
+					() => guardedFor<BillingResponse, KitBilling>('billing', noBilling(), (tk) => getBilling(tk, opts), toKitBilling),
+					() => listMyRepos(opts)
+				)
+			: { billing: noBilling(), billingError: null, billingHidden: null, billingHiddenError: null };
 
 	// Workspaces (org) — the tenant's dojo.workspaces (daemon-populated on relay runs).
 	// Real read; honest-empty until populated — NOT the orgWorkspacesFor(slug) fixture.
@@ -275,7 +282,9 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		identityError: identityRes.error,
 		health: healthRes.value,
 		healthError: healthRes.error,
-		billing: billingRes.value,
-		billingError: billingRes.error
+		billing: billingSection.billing,
+		billingError: billingSection.billingError,
+		billingHidden: billingSection.billingHidden,
+		billingHiddenError: billingSection.billingHiddenError
 	};
 };

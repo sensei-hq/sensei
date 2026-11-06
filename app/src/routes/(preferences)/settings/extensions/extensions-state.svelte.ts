@@ -46,6 +46,8 @@ export class ExtensionsState {
   /** Re-read the list through the page's own read. A failed re-read stays the
    *  error — the empty list is only ever a read that said there is nothing. */
   async load(api: { tryGetInstalledItems: Parameters<typeof readExtensions>[0]['tryGetInstalledItems'] }): Promise<void> {
+    // A read in flight is a guard, not decoration: a second press joins it.
+    if (this.reading) return;
     this.reading = true;
     try {
       this.setRead(await readExtensions(api));

@@ -267,6 +267,12 @@ fn token_failure(e: AuthError) -> String {
         }
         AuthError::Unreachable(d) => d,
         AuthError::CredentialUnreadable(d) => format!("stored session unreadable: {d}"),
+        AuthError::MintedElsewhere { minted, current } => {
+            format!("session minted elsewhere, sign in again: {minted} vs {current}")
+        }
+        AuthError::Unattributed { current } => {
+            format!("legacy session, sign in again: {current}")
+        }
     }
 }
 
@@ -693,6 +699,7 @@ async fn push_planned(
         pushed,
         graph_batches,
         boards_sent,
+        dojo_url = %plane.dojo_url(),
         "dojo_sync: cycle complete"
     );
     Ok(())
@@ -932,6 +939,75 @@ fn drop_colliding(
     (kept, held.len())
 }
 
+/// A pushed row's full identity for stored-echo matching: every field the
+/// dōjō echoes, as pushed. `computed_on` stays a string so a skewed echo
+/// fails matching, never decoding.
+fn echo_key(
+    m: &crate::db::pg_store::sync::PushableMetric,
+) -> (String, String, String, String, String, Option<String>) {
+    (
+        m.repo_key.clone(),
+        m.metric.clone(),
+        m.scope.clone(),
+        m.computed_on.to_string(),
+        m.grain.clone(),
+        m.commit_sha.clone(),
+    )
+}
+
+/// The pushed rows the dōjō confirmed stored, by full-row-key match — minus
+/// refused rows (rejected wins over confirmed, even when also echoed).
+/// H2/F5. Pure.
+fn confirmed_ids(
+    pushable: &[crate::db::pg_store::sync::PushableMetric],
+    stored: &[user_plane::StoredMetricKey],
+    refused: &std::collections::HashSet<(&str, &str)>,
+) -> Vec<uuid::Uuid> {
+    let echoed: std::collections::HashSet<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+    )> = stored
+        .iter()
+        .map(|s| {
+            (
+                s.repo_key.clone(),
+                s.metric.clone(),
+                s.scope.clone(),
+                s.computed_on.clone(),
+                s.grain.clone(),
+                s.commit_sha.clone(),
+            )
+        })
+        .collect();
+    pushable
+        .iter()
+        .filter(|m| {
+            !refused.contains(&(m.repo_key.as_str(), m.metric.as_str()))
+                && echoed.contains(&echo_key(m))
+        })
+        .map(|m| m.id)
+        .collect()
+}
+
+/// A pushed row's shortfall-tracker identity: the streak is per ROW, because
+/// one (repo, metric) pair holds rows at different dates.
+fn shortfall_key(
+    m: &crate::db::pg_store::sync::PushableMetric,
+) -> crate::db::pg_store::sync::ShortfallKey {
+    crate::db::pg_store::sync::ShortfallKey {
+        repo_key: m.repo_key.clone(),
+        metric: m.metric.clone(),
+        scope: m.scope.clone(),
+        computed_on: m.computed_on,
+        grain: m.grain.clone(),
+        commit_sha: m.commit_sha.clone(),
+    }
+}
+
 /// Push the metric rows the plan allows, and mark exactly those as shared.
 ///
 /// Returns how many rows the dōjō accepted.
@@ -1048,23 +1124,109 @@ async fn push_allowed(
         );
     }
 
-    // Mark every row the dōjō did NOT refuse — the COMPLEMENT of `rejected`.
+    // Mark exactly what the dōjō confirmed (H2/F5) — or, from a dōjō too old
+    // to confirm, the counted complement (F8), or nothing at all (F7).
     //
-    // This used to require an all-or-nothing batch, on the reasoning that "the
-    // response reports a count, not which rows". That was wrong: `rejected[]`
-    // carries `(repo_key, metric)`, which identifies exactly what to exclude. The
-    // consequence was a livelock — one permanently-refused row (an `unknown_metric`
-    // from version skew, say) meant NO row in the 500-row window was ever marked,
-    // so the identical batch was re-sent every cadence forever and the queue never
-    // drained.
+    // `rejected[]` carries `(repo_key, metric)` — enough to exclude, never
+    // enough to mark by. The old rule marked the complement unconditionally,
+    // which marked rows the dōjō never stored whenever the count fell short;
+    // the complement now marks only when the count corroborates it.
     let refused: std::collections::HashSet<(&str, &str)> =
         result.rejected.iter().map(|r| (r.repo_key.as_str(), r.metric.as_str())).collect();
-    let ids: Vec<uuid::Uuid> = pushable
-        .iter()
-        .filter(|m| !refused.contains(&(m.repo_key.as_str(), m.metric.as_str())))
-        .map(|m| m.id)
-        .collect();
-    pg.mark_metric_rows_shared(&ids).await?;
+    // Repositories with pushed rows still outstanding after this answer, and
+    // why — the dashboard verdict. Fed by both paths below.
+    let mut outstanding: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let marked: Vec<uuid::Uuid> = match &result.stored {
+        Some(echoed) => {
+            let ids = confirmed_ids(&pushable, echoed, &refused);
+            let marked_set: std::collections::HashSet<uuid::Uuid> = ids.iter().copied().collect();
+            // Shortfalls and cleans, per pushed row. Computed here, recorded
+            // after the mark lands, so a failed mark never resets a streak.
+            // Refused rows are answered: neither streak nor silence.
+            let mut cleans = vec![];
+            let mut shorts: Vec<&crate::db::pg_store::sync::PushableMetric> = vec![];
+            for m in &pushable {
+                if marked_set.contains(&m.id) {
+                    cleans.push(shortfall_key(m));
+                } else if !refused.contains(&(m.repo_key.as_str(), m.metric.as_str())) {
+                    shorts.push(m);
+                }
+            }
+            pg.mark_metric_rows_shared(&ids).await?;
+            for k in &cleans {
+                pg.record_clean(k);
+            }
+            let mut loud_ids = vec![];
+            let mut unconfirmed: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            for m in &shorts {
+                let n = pg.record_shortfall(&shortfall_key(m));
+                *unconfirmed.entry(m.repo_key.as_str()).or_default() += 1;
+                if n >= crate::db::pg_store::sync::ShortfallTracker::LOUD_AFTER {
+                    tracing::error!(
+                        persona,
+                        repo_key = m.repo_key,
+                        metric = m.metric,
+                        computed_on = m.computed_on.to_string(),
+                        streak = n,
+                        "dojo_sync: stored confirmation missing — the row waits its backoff"
+                    );
+                    loud_ids.push(m.id);
+                }
+            }
+            pg.set_metric_backoff(&loud_ids).await?;
+            for (repo, n) in unconfirmed {
+                outstanding
+                    .insert(repo, format!("stored confirmation missing for {n} pushed row(s)"));
+            }
+            ids
+        }
+        None => {
+            let complement: Vec<&crate::db::pg_store::sync::PushableMetric> = pushable
+                .iter()
+                .filter(|m| !refused.contains(&(m.repo_key.as_str(), m.metric.as_str())))
+                .collect();
+            // F7: the count must corroborate the complement. Accepted == the
+            // unrefused rows means the dōjō stored exactly those; anything
+            // else is unaccounted, and unaccounted rows stay queued.
+            if result.accepted as usize == complement.len() {
+                let ids: Vec<uuid::Uuid> = complement.iter().map(|m| m.id).collect();
+                pg.mark_metric_rows_shared(&ids).await?;
+                if !ids.is_empty() {
+                    // F8: old dōjōs keep working, but say so — once per push
+                    // (one `push_allowed` call, i.e. per persona per cycle),
+                    // naming the dōjō — until the complement goes away
+                    // (backlog: remove when every supported dōjō returns
+                    // stored).
+                    tracing::warn!(
+                        persona,
+                        dojo_url = %plane.dojo_url(),
+                        marked = ids.len(),
+                        "dojo_sync: dōjō did not confirm per-row storage — marked unconfirmed rows by complement (legacy)"
+                    );
+                }
+                ids
+            } else {
+                for m in &complement {
+                    outstanding.insert(
+                        m.repo_key.as_str(),
+                        format!(
+                            "legacy answer unaccounted (accepted {} of {}) — marking nothing",
+                            result.accepted,
+                            complement.len()
+                        ),
+                    );
+                }
+                tracing::warn!(
+                    persona,
+                    accepted = result.accepted,
+                    unrefused = complement.len(),
+                    "dojo_sync: legacy count does not account for the pushed rows — marking nothing"
+                );
+                vec![]
+            }
+        }
+    };
 
     // A refusal belongs to the REPOSITORY whose row was refused. The batch is per
     // persona and spans many repositories, so marking them all `skipped` with a
@@ -1081,17 +1243,24 @@ async fn push_allowed(
             .push(format!("{}: {}", r.metric, r.reason));
     }
     for key in &repos {
-        match refusals.get(*key) {
-            // Nothing of this repository's was refused, whatever happened to the
-            // rest of the batch.
-            None => pg.mark_synced(&push_mark(key, persona), None).await?,
+        // A refusal belongs to its repository (see above); an outstanding
+        // cause joins it rather than replacing it, so a repository with a
+        // refused row AND an unconfirmed one names both.
+        let refusal_why: Option<String> = refusals
+            .get(*key)
+            .map(|reasons| reasons.iter().take(5).cloned().collect::<Vec<_>>().join("; "));
+        match (refusal_why, outstanding.remove(*key)) {
+            // Nothing of this repository's was refused or left outstanding,
+            // whatever happened to the rest of the batch.
+            (None, None) => pg.mark_synced(&push_mark(key, persona), None).await?,
             // `skipped`, not `error`: the dōjō answered, and a refusal is a
             // decision rather than a fault. Both mean "not synced", but only one
             // is a problem, and a dashboard that cannot tell them apart cries
             // wolf or stays silent.
-            Some(reasons) => {
-                let why = reasons.iter().take(5).cloned().collect::<Vec<_>>().join("; ");
-                pg.mark_sync_skipped(&push_mark(key, persona), &why).await?
+            (Some(r), None) => pg.mark_sync_skipped(&push_mark(key, persona), &r).await?,
+            (None, Some(o)) => pg.mark_sync_skipped(&push_mark(key, persona), &o).await?,
+            (Some(r), Some(o)) => {
+                pg.mark_sync_skipped(&push_mark(key, persona), &format!("{r}; {o}")).await?
             }
         }
     }
@@ -1100,10 +1269,8 @@ async fn push_allowed(
             persona,
             accepted = result.accepted,
             refused = result.rejected.len(),
-            // This used to read "nothing marked shared, the batch retries next
-            // cycle", which had been false since the complement fix above: the
-            // rows that were NOT refused are marked, which is the whole point.
-            "dojo_sync: partial acceptance — the refused rows stay queued, the rest are marked shared"
+            marked = marked.len(),
+            "dojo_sync: partial acceptance — refused rows stay queued"
         );
     }
     Ok(result.accepted)
@@ -1333,7 +1500,7 @@ mod tests {
     use crate::dojo_client::user_plane::{
         ActivationOutcome, DeniedRepo, GraphHashes, GraphPush, GraphPushResult, IngestResult,
         MappedRepo, MetricPush, MyMembership, ProvisionOutcome, RegisterResult, RejectedMetric,
-        SyncPlan, UnmappedRepo, VisibilityCounts,
+        StoredMetricKey, SyncPlan, UnmappedRepo, VisibilityCounts,
     };
     use std::sync::Mutex;
 
@@ -1364,6 +1531,9 @@ mod tests {
         register: Option<RegisterResult>,
         plan: Option<SyncPlan>,
         push: Option<Result<IngestResult, String>>,
+        /// The URL this double answers for — what `dojo_url()` reports (the (a)
+        /// log test pins the value end to end). Set per test; meaningless default.
+        url: String,
         /// Every `repo_key` the daemon DISCLOSED — the offer set, as it reached the
         /// wire. Recorded because B1 is invisible from the outcome: a cycle that
         /// never asks looks exactly like a cycle the dōjō answered "nothing".
@@ -1432,6 +1602,9 @@ mod tests {
             _enabled: bool,
         ) -> Result<ActivationOutcome, String> {
             unreachable!("dojo_sync does not write metric activation")
+        }
+        fn dojo_url(&self) -> &str {
+            &self.url
         }
         async fn my_memberships(&self, _t: &str) -> Result<Vec<MyMembership>, String> {
             *self.membership_calls.lock().unwrap() += 1;
@@ -1531,9 +1704,11 @@ mod tests {
                 .lock()
                 .unwrap()
                 .extend(m.iter().map(|x| (x.repo_key.to_string(), x.metric.to_string())));
-            self.push
-                .clone()
-                .unwrap_or(Ok(IngestResult { accepted: m.len() as u32, rejected: vec![] }))
+            self.push.clone().unwrap_or(Ok(IngestResult {
+                accepted: m.len() as u32,
+                rejected: vec![],
+                stored: None,
+            }))
         }
         async fn graph_hashes(
             &self,
@@ -1811,6 +1986,75 @@ mod tests {
         n.0
     }
 
+    /// Rows still queued: never marked, or recomputed since the mark. A
+    /// re-pushed row that is never confirmed stays pending WITHOUT being
+    /// un-marked — marks stand, staleness re-queues.
+    async fn pending_count(pg: &PgStore, repo_key: &str) -> i64 {
+        let n: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.repository_metrics rm \
+               JOIN sensei.repositories r ON r.id = rm.repository_id \
+              WHERE r.repo_key = $1 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at)",
+        )
+        .bind(repo_key)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        n.0
+    }
+
+    /// Whether the row for one date is marked — the per-row verdict a
+    /// same-(repo, metric) sibling needs.
+    async fn shared_on(pg: &PgStore, repo_key: &str, computed_on: chrono::NaiveDate) -> bool {
+        let n: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.repository_metrics rm \
+               JOIN sensei.repositories r ON r.id = rm.repository_id \
+              WHERE r.repo_key = $1 AND rm.computed_on = $2 AND rm.shared_at IS NOT NULL",
+        )
+        .bind(repo_key)
+        .bind(computed_on)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        n.0 > 0
+    }
+
+    /// A second row for the seed's (repo, metric) at another date — same
+    /// identity except `computed_on`, so a stored match on (repo, metric)
+    /// alone cannot tell them apart.
+    async fn seed_sibling_row(
+        pg: &PgStore,
+        repo_key: &str,
+        metric_key: &str,
+        computed_on: chrono::NaiveDate,
+    ) {
+        let rid: (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.repositories WHERE repo_key = $1")
+                .bind(repo_key)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        let mid: (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.metrics WHERE key = $1")
+                .bind(metric_key)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        pg.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid.0,
+            repository_id: &rid.0,
+            scope: "repo",
+            identity: None,
+            commit_sha: None,
+            computed_on,
+            grain: "daily",
+            value: 2.0,
+            props: &serde_json::json!({}),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+
     async fn push_state(pg: &PgStore, repo_key: &str) -> Option<(String, Option<String>)> {
         sqlx_core::query_as::query_as(
             "SELECT state, last_error FROM sensei.sync_state \
@@ -2023,6 +2267,7 @@ mod tests {
                     metric: metric_key.clone(),
                     reason: "unknown_metric".into(),
                 }],
+                stored: None,
             })),
             ..Default::default()
         };
@@ -2064,6 +2309,7 @@ mod tests {
                     metric: metric_a.clone(),
                     reason: "unknown_metric".into(),
                 }],
+                stored: None,
             })),
             ..Default::default()
         };
@@ -2084,6 +2330,759 @@ mod tests {
         let (state_b, why_b) = b.expect("the accepted repository is recorded too");
         assert_eq!(state_b, "synced", "a repository nothing was refused for is not skipped");
         assert_eq!(why_b, None, "and it is not annotated with another repository's refusal");
+    }
+
+    /// Capture everything `f` logs (lib-test twin of main.rs's helper). Tests
+    /// that assert on logs run a current-thread runtime INSIDE the capture: a
+    /// multi-threaded runtime would hop threads and escape the thread-local
+    /// subscriber.
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Capture;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    fn captured_logs(f: impl FnOnce()) -> String {
+        use tracing_subscriber::layer::SubscriberExt as _;
+        let cap = Capture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(cap.clone()).with_ansi(false));
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = cap.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        String::from_utf8(bytes).expect("utf8 logs")
+    }
+
+    /// Lines logged AT ERROR carrying `msg`. "Loud" is the error level, not a
+    /// substring anywhere — an `info!` with the same words must not pass.
+    fn error_lines_with<'l>(logs: &'l str, msg: &str) -> Vec<&'l str> {
+        logs.lines().filter(|l| l.contains(" ERROR ") && l.contains(msg)).collect()
+    }
+
+    /// The bearer the log tests sync with: distinctive, so an assertion that
+    /// it never appears in captured logs proves the token is never logged.
+    const SECRET_TOK: &str = "tok-SECRET-ztest";
+
+    fn current_thread_rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+    }
+
+    // (a): every cycle complete names the dōjō it pushed to.
+    #[test]
+    fn cycle_complete_names_the_dojo_it_pushed_to() {
+        let logs = captured_logs(|| {
+            current_thread_rt().block_on(async {
+                let pg = PgStore::connect_test().await.unwrap();
+                let (pid, key, _) = seed(&pg).await;
+                let plane = StubPlane {
+                    url: "http://stub.invalid".into(),
+                    plan: Some(SyncPlan {
+                        allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                        denied: vec![],
+                    }),
+                    push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: None })),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
+                crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            })
+        });
+        assert!(logs.contains("dojo_sync: cycle complete"), "no complete line; logs:\n{logs}");
+        assert!(
+            logs.contains("dojo_url=http://stub.invalid"),
+            "complete line names no dōjō; logs:\n{logs}"
+        );
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+    }
+
+    // (c): 0 accepted with a non-empty batch and no rejections marks nothing.
+    #[tokio::test]
+    async fn zero_accepted_with_an_empty_rejection_marks_nothing() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 0, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared = shared_count(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert_eq!(shared, 0, "0 accepted must mark nothing, not the complement");
+    }
+
+    #[test]
+    fn zero_accepted_warns_that_it_marked_nothing() {
+        let logs = captured_logs(|| {
+            current_thread_rt().block_on(async {
+                let pg = PgStore::connect_test().await.unwrap();
+                let (pid, key, _) = seed(&pg).await;
+                let plane = StubPlane {
+                    plan: Some(SyncPlan {
+                        allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                        denied: vec![],
+                    }),
+                    push: Some(Ok(IngestResult { accepted: 0, rejected: vec![], stored: None })),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
+                crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            })
+        });
+        // T2: level and phrase on ONE line — a WARN anywhere plus the phrase
+        // on an INFO line must not pass.
+        assert!(
+            logs.lines().any(|l| l.contains(" WARN ") && l.contains("marking nothing")),
+            "0 accepted must warn, on one line; logs:\n{logs}"
+        );
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+    }
+
+    // H2: with per-row confirmation, only stored rows are marked.
+    #[tokio::test]
+    async fn only_stored_rows_are_marked_when_the_dojo_confirms_per_row() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid_a, key_a, metric_a) = seed(&pg).await;
+        let (pid_b, key_b, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 2,
+                rejected: vec![],
+                stored: Some(vec![StoredMetricKey {
+                    // The seed's fixed row identity (seed_at): repo scope,
+                    // 2026-08-27, daily, no commit.
+                    repo_key: key_a.clone(),
+                    metric: metric_a.clone(),
+                    scope: "repo".into(),
+                    computed_on: "2026-08-27".into(),
+                    grain: "daily".into(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared_a = shared_count(&pg, &key_a).await;
+        let shared_b = shared_count(&pg, &key_b).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        assert_eq!(shared_a, 1, "the confirmed row is marked");
+        assert_eq!(shared_b, 0, "the unconfirmed row stays queued");
+    }
+
+    // H2/F5: the stored match is the FULL row key. Two rows of one
+    // (repo, metric) on different dates, only the first echoed: a match on
+    // (repo, metric) alone marks both.
+    #[tokio::test]
+    async fn only_the_echoed_row_is_marked_when_a_metric_has_two_dates() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, metric) = seed(&pg).await;
+        let seed_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
+        let other_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap();
+        seed_sibling_row(&pg, &key, &metric, other_day).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 2,
+                rejected: vec![],
+                stored: Some(vec![StoredMetricKey {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    scope: "repo".to_string(),
+                    computed_on: "2026-08-27".to_string(),
+                    grain: "daily".to_string(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let first = shared_on(&pg, &key, seed_day).await;
+        let second = shared_on(&pg, &key, other_day).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert!(first, "the echoed row is marked");
+        assert!(!second, "the unconfirmed date stays queued");
+    }
+
+    // H2: a row neither confirmed nor rejected is quiet twice, then loud —
+    // while staying queued throughout. The verdict is honest from cycle 1
+    // (skipped: rows outstanding); only the error waits for N.
+    #[test]
+    fn a_row_neither_confirmed_nor_rejected_is_loud_after_three_cycles() {
+        let rt = current_thread_rt();
+        let (pg, pid, key) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, _) = seed(&pg).await;
+            (pg, pid, key)
+        });
+        let shortfall_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        let mut first_verdict = None;
+        for i in 0..3 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &shortfall_plane()).await.unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+            if i == 0 {
+                first_verdict = rt.block_on(async { push_state(&pg, &key).await });
+            }
+        }
+        let (shared, state) = rt.block_on(async {
+            let s = shared_count(&pg, &key).await;
+            let st = push_state(&pg, &key).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            (s, st)
+        });
+        assert_eq!(shared, 0, "unconfirmed rows stay queued");
+        assert_eq!(loud, vec![false, false, true], "quiet twice, then loud");
+        let (st1, why1) = first_verdict.expect("a verdict is recorded from cycle 1");
+        assert_eq!(st1, "skipped", "the dashboard is honest while the log stays quiet");
+        assert!(why1.unwrap_or_default().contains("stored confirmation"));
+        let (st, why) = state.expect("a verdict is recorded");
+        assert_eq!(st, "skipped");
+        assert!(
+            why.unwrap_or_default().contains("stored confirmation"),
+            "the verdict must carry the cause"
+        );
+    }
+
+    // H2: a confirming cycle resets the shortfall count (consecutive means
+    // consecutive).
+    #[test]
+    fn a_confirming_cycle_resets_the_shortfall_count() {
+        let rt = current_thread_rt();
+        let (pg, pid, key, metric) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, metric) = seed(&pg).await;
+            (pg, pid, key, metric)
+        });
+        let plan_for = || {
+            Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            })
+        };
+        let short_plane = || StubPlane {
+            plan: plan_for(),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        // Cycles 1-2: shortfall.
+        for _ in 0..2 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        }
+        // Cycle 3: clean — the row is confirmed and marked.
+        let logs = captured_logs(|| {
+            rt.block_on(async {
+                let plane = StubPlane {
+                    plan: plan_for(),
+                    push: Some(Ok(IngestResult {
+                        accepted: 1,
+                        rejected: vec![],
+                        stored: Some(vec![StoredMetricKey {
+                            repo_key: key.clone(),
+                            metric: metric.clone(),
+                            scope: "repo".into(),
+                            computed_on: "2026-08-27".into(),
+                            grain: "daily".into(),
+                            commit_sha: None,
+                        }]),
+                    })),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
+                // Recompute re-queues the same (repo, metric): the mark is
+                // older than the row again.
+                sqlx_core::query::query(
+                    "UPDATE sensei.repository_metrics rm SET modified_at = now() \
+                       FROM sensei.repositories r \
+                      WHERE r.id = rm.repository_id AND r.repo_key = $1",
+                )
+                .bind(&key)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            })
+        });
+        loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        // Cycles 4-6: shortfall again — the count restarted.
+        for _ in 0..3 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        }
+        let (shared, pending) = rt.block_on(async {
+            let s = shared_count(&pg, &key).await;
+            let p = pending_count(&pg, &key).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            (s, p)
+        });
+        assert_eq!(shared, 1, "cycle 3's mark stands — marks are never un-made");
+        assert_eq!(pending, 1, "the recomputed row is queued again, never confirmed");
+        assert_eq!(
+            loud,
+            vec![false, false, false, false, false, true],
+            "reset, then loud at 3 again"
+        );
+    }
+
+    // H2: a cycle that pushes nothing for a key keeps its count (nothing was
+    // tried, nothing was learned) — only a pushed-clean cycle resets.
+    #[test]
+    fn a_cycle_that_pushes_nothing_keeps_the_shortfall_count() {
+        let rt = current_thread_rt();
+        let (pg, pid, key) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, _) = seed(&pg).await;
+            (pg, pid, key)
+        });
+        let short_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        for _ in 0..2 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        }
+        // Gap cycle: the plan allows nothing, so nothing is pushed.
+        let logs = captured_logs(|| {
+            rt.block_on(async {
+                let plane = StubPlane {
+                    plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
+            })
+        });
+        loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        // Third shortfall: loud, because the gap did not reset.
+        let logs = captured_logs(|| {
+            rt.block_on(async {
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
+            })
+        });
+        loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        let shared = rt.block_on(async {
+            let s = shared_count(&pg, &key).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            s
+        });
+        assert_eq!(shared, 0, "unconfirmed rows stay queued");
+        assert_eq!(loud, vec![false, false, false, true], "the gap keeps the count");
+    }
+
+    // L1: the streak is keyed per ROW at the call site, not just in the
+    // tracker — one date confirmed every cycle must not clear another date's
+    // streak through `push_allowed`. (Kills the computed_on-constant mutant
+    // in `shortfall_key`: with a pair key the shared streak never passes 1.)
+    #[test]
+    fn a_confirmed_date_does_not_clear_another_dates_streak_through_push() {
+        let rt = current_thread_rt();
+        let (pg, pid, key, metric) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, metric) = seed(&pg).await;
+            (pg, pid, key, metric)
+        });
+        let seed_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
+        let other_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap();
+        rt.block_on(seed_sibling_row(&pg, &key, &metric, other_day));
+        // Every cycle confirms the seed date and never the other one.
+        let confirming_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 1,
+                rejected: vec![],
+                stored: Some(vec![StoredMetricKey {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    scope: "repo".to_string(),
+                    computed_on: "2026-08-27".to_string(),
+                    grain: "daily".to_string(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        for _ in 0..3 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &confirming_plane()).await.unwrap();
+                    // Recompute the confirmed date so it is offered — and
+                    // confirmed — again next cycle.
+                    sqlx_core::query::query(
+                        "UPDATE sensei.repository_metrics rm SET modified_at = now() \
+                          WHERE rm.repository_id = (SELECT id FROM sensei.repositories \
+                                                     WHERE repo_key = $1) \
+                            AND rm.computed_on = date '2026-08-27'",
+                    )
+                    .bind(&key)
+                    .execute(pg.pool())
+                    .await
+                    .unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the Bearer [REDACTED] never reach the logs");
+        }
+        let (confirmed, unconfirmed) = rt.block_on(async {
+            let c = shared_on(&pg, &key, seed_day).await;
+            let u = shared_on(&pg, &key, other_day).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            (c, u)
+        });
+        assert_eq!(
+            loud,
+            vec![false, false, true],
+            "the never-confirmed date goes loud at 3 while the other confirms"
+        );
+        assert!(confirmed, "the echoed date is marked");
+        assert!(!unconfirmed, "the never-confirmed date stays queued");
+    }
+
+    // H2/F4: a loud row waits its backoff, then is re-offered. Three
+    // shortfall cycles go loud; the fourth offers nothing for it; once the
+    // backoff has elapsed it is pushed again. (The backoff length is the
+    // implementation's — the test only pins wait-then-reoffer, moving the
+    // clock with SQL rather than waiting real hours.)
+    #[test]
+    fn a_loud_row_waits_its_backoff_then_is_re_offered() {
+        let rt = current_thread_rt();
+        let (pg, pid, key) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, _) = seed(&pg).await;
+            (pg, pid, key)
+        });
+        let short_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            rt.block_on(sync_persona(&pg, "ztest-slot", "tok", &short_plane())).unwrap();
+        }
+        // Still queued — never confirmed, never marked. (Pre-implementation
+        // this is where the test fails: the complement marks it in cycle 1,
+        // which is exactly the bug the backoff builds on.)
+        let pending = rt.block_on(pending_count(&pg, &key));
+        assert_eq!(pending, 1, "the unconfirmed row stays queued through the loud cycles");
+        // Fourth cycle: the loud row waits.
+        let waiting = short_plane();
+        rt.block_on(sync_persona(&pg, "ztest-slot", "tok", &waiting)).unwrap();
+        let waited = waiting.pushed_rows.lock().unwrap().clone();
+        // The backoff elapses: the row is offered again.
+        rt.block_on(async {
+            sqlx_core::query::query(
+                "UPDATE sensei.repository_metrics rm SET next_attempt_at = now() - interval '1 minute'
+                  FROM sensei.repositories r
+                 WHERE r.id = rm.repository_id AND r.repo_key = $1",
+            )
+            .bind(&key)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        });
+        let reoffered = short_plane();
+        rt.block_on(sync_persona(&pg, "ztest-slot", "tok", &reoffered)).unwrap();
+        let offered_again = reoffered.pushed_rows.lock().unwrap().clone();
+        rt.block_on(async {
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        });
+        assert!(waited.is_empty(), "the loud row waits its backoff, offered: {waited:?}");
+        assert_eq!(offered_again.len(), 1, "elapsed backoff re-offers the row");
+        assert_eq!(offered_again[0].0, key);
+    }
+
+    // H2 version gate: a dōjō that predates per-row confirmation keeps the
+    // complement marks. Green before and after — it pins that phase B must
+    // not break old dōjōs.
+    #[tokio::test]
+    async fn a_dojo_without_stored_keeps_complement_marks() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared = shared_count(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert_eq!(shared, 1, "legacy shape still marks the complement");
+    }
+
+    // H2 edge: rejected wins over confirmed (a row in both lists stays queued).
+    // Green before and after — it pins the new path's priority.
+    #[tokio::test]
+    async fn a_rejected_row_is_not_marked_even_when_also_confirmed() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, metric) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 1,
+                rejected: vec![RejectedMetric {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    reason: "unknown_metric".into(),
+                }],
+                stored: Some(vec![StoredMetricKey {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    scope: "repo".into(),
+                    computed_on: "2026-08-27".into(),
+                    grain: "daily".into(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared = shared_count(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert_eq!(shared, 0, "rejected wins");
+    }
+
+    // F7: a legacy shape that rejects SOME rows names the rows it kept but
+    // cannot say which of the rest fell short — so it marks nothing at all.
+    #[tokio::test]
+    async fn a_partially_rejected_legacy_push_marks_nothing() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid_a, key_a, metric_a) = seed(&pg).await;
+        let (pid_b, key_b, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 0,
+                rejected: vec![RejectedMetric {
+                    repo_key: key_a.clone(),
+                    metric: metric_a.clone(),
+                    reason: "unknown_metric".into(),
+                }],
+                stored: None,
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared_a = shared_count(&pg, &key_a).await;
+        let shared_b = shared_count(&pg, &key_b).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        assert_eq!(shared_a, 0, "the rejected row stays queued");
+        assert_eq!(shared_b, 0, "the unaccounted row stays queued too");
+    }
+
+    // F7: accepted < pushed - rejected is a SILENT shortfall on a legacy
+    // shape — the count admits a row fell short without saying which.
+    #[tokio::test]
+    async fn a_count_shortfall_on_a_legacy_push_marks_nothing() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid_a, key_a, _) = seed(&pg).await;
+        let (pid_b, key_b, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared_a = shared_count(&pg, &key_a).await;
+        let shared_b = shared_count(&pg, &key_b).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        assert_eq!(shared_a, 0, "a silent shortfall marks nothing");
+        assert_eq!(shared_b, 0, "a silent shortfall marks nothing");
+    }
+
+    // F7: both mark-nothing legacy shapes say so loudly.
+    #[test]
+    fn legacy_mark_nothing_shapes_warn() {
+        enum Shape {
+            PartialRejected,
+            CountShortfall,
+        }
+        fn run_shape(rt: &tokio::runtime::Runtime, pg: &PgStore, shape: Shape) -> String {
+            let (pid_a, key_a, metric_a) = rt.block_on(seed(pg));
+            let (pid_b, key_b, _) = rt.block_on(seed(pg));
+            let push = match shape {
+                Shape::PartialRejected => IngestResult {
+                    accepted: 0,
+                    rejected: vec![RejectedMetric {
+                        repo_key: key_a.clone(),
+                        metric: metric_a.clone(),
+                        reason: "unknown_metric".into(),
+                    }],
+                    stored: None,
+                },
+                Shape::CountShortfall => {
+                    IngestResult { accepted: 1, rejected: vec![], stored: None }
+                }
+            };
+            let plane = StubPlane {
+                plan: Some(SyncPlan {
+                    allowed: vec![
+                        mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                        mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                    ],
+                    denied: vec![],
+                }),
+                push: Some(Ok(push)),
+                ..Default::default()
+            };
+            let logs = captured_logs(|| {
+                rt.block_on(sync_persona(pg, "ztest-slot", SECRET_TOK, &plane)).unwrap();
+            });
+            rt.block_on(async {
+                crate::tasks::test_support::cleanup_metrics_fixture(pg, &pid_a, None, &[]).await;
+                crate::tasks::test_support::cleanup_metrics_fixture(pg, &pid_b, None, &[]).await;
+            });
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+            logs
+        }
+
+        let rt = current_thread_rt();
+        let pg = rt.block_on(PgStore::connect_test()).unwrap();
+        // T2: level and phrase on ONE line — a WARN anywhere plus the phrase
+        // on an INFO line must not pass.
+        let partial = run_shape(&rt, &pg, Shape::PartialRejected);
+        assert!(
+            partial.lines().any(|l| l.contains(" WARN ") && l.contains("marking nothing")),
+            "partial-rejected legacy must warn; logs:\n{partial}"
+        );
+        let shortfall = run_shape(&rt, &pg, Shape::CountShortfall);
+        assert!(
+            shortfall.lines().any(|l| l.contains(" WARN ") && l.contains("marking nothing")),
+            "count shortfall must warn; logs:\n{shortfall}"
+        );
+    }
+
+    // F8: the stored:None complement keeps old dōjōs working, but says so —
+    // once per cycle (not per row), naming the dōjō — until the complement
+    // goes away (backlog: remove when every supported dōjō returns stored).
+    #[test]
+    fn stored_none_complement_marks_but_warns_once_naming_the_dojo() {
+        let rt = current_thread_rt();
+        let pg = rt.block_on(PgStore::connect_test()).unwrap();
+        let (pid_a, key_a, _) = rt.block_on(seed(&pg));
+        let (pid_b, key_b, _) = rt.block_on(seed(&pg));
+        let plane = StubPlane {
+            url: "http://stub.invalid".into(),
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 2, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        let logs = captured_logs(|| {
+            rt.block_on(sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane)).unwrap();
+        });
+        let (shared_a, shared_b) = rt
+            .block_on(async { (shared_count(&pg, &key_a).await, shared_count(&pg, &key_b).await) });
+        rt.block_on(async {
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        });
+        assert_eq!(shared_a, 1, "the legacy complement still marks");
+        assert_eq!(shared_b, 1, "the legacy complement still marks");
+        let warns: Vec<_> = logs
+            .lines()
+            .filter(|l| {
+                l.contains(" WARN ")
+                    && l.contains("unconfirmed")
+                    && l.contains("dojo_url=http://stub.invalid")
+            })
+            .collect();
+        assert_eq!(warns.len(), 1, "one complement warn per cycle, naming the dōjō; logs:\n{logs}");
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
     }
 
     #[tokio::test]

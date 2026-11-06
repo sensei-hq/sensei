@@ -44,8 +44,9 @@ export interface Membership {
 	last_heartbeat_at: string | null;
 	disabled_at: string | null;
 	created_at: string;
-	/** WS-1: best display name resolved from `dojo.identities` (null → the caller
-	 *  falls back to a shortId; never a fabricated name). */
+	/** WS-1: best display name resolved from `dojo.identities` then
+	 *  `principals.display_name` (null → the mapper says so in words; never a
+	 *  fabricated name). */
 	display_name: string | null;
 	email: string | null;
 }
@@ -122,9 +123,15 @@ const POLICY_COLS =
 const AUDIT_COLS = 'id, ts, actor_id, action, target, detail';
 
 /** List the tenant's memberships, most recent first, each enriched with the
- *  member's display name + email resolved from `dojo.identities` (WS-1). A member
- *  with no identity row resolves to null/null (the mapper falls back to a shortId). */
-export async function listMembers(db: DojoClient, tenantId: string): Promise<Membership[]> {
+ *  member's display name + email resolved from `dojo.identities` then
+ *  `principals.display_name` (WS-1). A member nothing names resolves to
+ *  null/null (the mapper says so in words). The rows are read as `db` (the
+ *  caller); the names through `nameDb` — the service client when the caller
+ *  may read the ids but not the name tables (the access matrix's
+ *  `resolveDisplayNames` exception: names for ids the caller already read).
+ *  `principals` admits no client reads at all, so a caller `nameDb` fails the
+ *  whole list the first time an unnamed member needs the fallback. */
+export async function listMembers(db: DojoClient, tenantId: string, nameDb: DojoClient = db): Promise<Membership[]> {
 	const { data, error } = await db
 		.from('memberships')
 		.select(MEMBER_COLS)
@@ -133,7 +140,7 @@ export async function listMembers(db: DojoClient, tenantId: string): Promise<Mem
 	if (error) throw new AdminError(500, error.message);
 	const rows = (data ?? []) as unknown as Membership[];
 	const names = await resolveDisplayNames(
-		db,
+		nameDb,
 		tenantId,
 		rows.map((r) => r.user_id)
 	);

@@ -49,6 +49,13 @@ pub enum TenantCredential {
     /// No signed-in persona has claimed this membership. Presents nothing: it
     /// joins a persona when that persona's sync lists it.
     Unbound,
+    /// Bound to a signed-in persona, but the membership's registry is not the
+    /// current dōjō: presents nothing (sync-hardening M1). `session_registry`
+    /// is the ambient dōjō the session is for — `of()` never sees the
+    /// credential, so the minted-vs-ambient half of the check lives in
+    /// `live_session`, and a token reaches a membership only when
+    /// membership == ambient == minted.
+    ForeignRegistry { membership_registry: String, session_registry: String },
     /// A test's fixed bearer — see [`test_bearers`].
     #[cfg(test)]
     Fixed { bearer: String },
@@ -62,7 +69,20 @@ impl TenantCredential {
         }
         match &m.persona {
             Some(p) => match &p.session_slot {
-                Some(slot) => TenantCredential::Session { slot: slot.clone() },
+                Some(slot) => {
+                    // Pure: the membership's registry against the ambient
+                    // dōjō, no Keychain read (F-D). A session minted elsewhere
+                    // is refused later, at presentation, by `live_session`.
+                    let ambient = crate::dojo_client::settings::dojo_url();
+                    if crate::dojo_client::settings::same_registry(&m.registry_url, &ambient) {
+                        TenantCredential::Session { slot: slot.clone() }
+                    } else {
+                        TenantCredential::ForeignRegistry {
+                            membership_registry: m.registry_url.clone(),
+                            session_registry: ambient,
+                        }
+                    }
+                }
                 None => TenantCredential::SignedOut { persona_id: p.persona_id },
             },
             None => TenantCredential::Unbound,
@@ -86,6 +106,12 @@ impl TenantCredential {
             }
             TenantCredential::SignedOut { .. } | TenantCredential::Unbound => {
                 Err(DojoClientError::SignedOut)
+            }
+            TenantCredential::ForeignRegistry { membership_registry, session_registry } => {
+                Err(DojoClientError::ForeignRegistry {
+                    membership_registry: membership_registry.clone(),
+                    session_registry: session_registry.clone(),
+                })
             }
             #[cfg(test)]
             TenantCredential::Fixed { bearer } => Ok(bearer.clone()),
@@ -124,6 +150,9 @@ pub enum DojoClientError {
     /// The membership has no live session — its persona must sign in (again),
     /// or no signed-in persona has claimed it. Nothing was sent.
     SignedOut,
+    /// The membership's registry is not the dōjō the persona's session was
+    /// minted for — the token is never presented there. Nothing was sent.
+    ForeignRegistry { membership_registry: String, session_registry: String },
 }
 
 impl DojoClientError {
@@ -135,7 +164,9 @@ impl DojoClientError {
         match self {
             DojoClientError::Network(_) => true,
             DojoClientError::Status(code) => (500..=599).contains(code),
-            DojoClientError::Decode(_) | DojoClientError::SignedOut => false,
+            DojoClientError::Decode(_)
+            | DojoClientError::SignedOut
+            | DojoClientError::ForeignRegistry { .. } => false,
         }
     }
 }
@@ -148,6 +179,12 @@ impl std::fmt::Display for DojoClientError {
             DojoClientError::Decode(m) => write!(f, "dojo response decode error: {m}"),
             DojoClientError::SignedOut => {
                 write!(f, "no signed-in session for this dōjō membership — sign in")
+            }
+            DojoClientError::ForeignRegistry { membership_registry, session_registry } => {
+                write!(
+                    f,
+                    "membership's dōjō {membership_registry} is not the signed-in dōjō {session_registry} — token never presented"
+                )
             }
         }
     }
@@ -599,6 +636,7 @@ struct ResolvedRulesResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn membership(dojo_url: &str) -> DojoMembership {
         DojoMembership {
@@ -632,9 +670,17 @@ mod tests {
     // #236 step 4: the membership decides the credential — the person's session
     // when bound to a signed-in persona, nothing otherwise.
     #[test]
+    #[serial(dojo_url_env)]
     fn a_bound_membership_presents_its_persona_session() {
+        // Phase B: `of()` compares against the ambient dōjō — the membership
+        // is at it, so the session presents. (The foreign case is pinned by
+        // `a_membership_on_another_registry_presents_no_session`.)
+        let mut m = bound(Some("acme-slot"));
+        let registry = crate::dojo_client::settings::dojo_url();
+        m.registry_url = registry.clone();
+        m.dojo_url = format!("{registry}/organization/acme");
         assert_eq!(
-            TenantCredential::of(&bound(Some("acme-slot"))),
+            TenantCredential::of(&m),
             TenantCredential::Session { slot: "acme-slot".into() }
         );
     }
@@ -688,15 +734,218 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[serial(dojo_url_env)]
     async fn a_session_with_nothing_stored_is_signed_out_not_a_network_fault() {
         // A retryable fault here would queue the call forever behind a sign-in
         // nobody was asked for.
-        let c = DojoClient::for_membership(&bound(Some(&format!(
-            "no-such-slot-{}",
-            uuid::Uuid::new_v4()
-        ))));
+        // Phase B: the membership lives at the ambient dōjō, so `of()` still
+        // presents the session and the Keychain miss is what reads SignedOut.
+        let mut m = bound(Some(&format!("no-such-slot-{}", uuid::Uuid::new_v4())));
+        let registry = crate::dojo_client::settings::dojo_url();
+        m.registry_url = registry.clone();
+        m.dojo_url = format!("{registry}/organization/acme");
+        let c = DojoClient::for_membership(&m);
         let err = c.bearer_async().await.unwrap_err();
         assert!(matches!(err, DojoClientError::SignedOut), "got {err:?}");
+    }
+
+    fn foreign_bound() -> DojoMembership {
+        let mut m = bound(Some("acme-slot"));
+        // RFC 2606: never a real registry, so independent of ambient settings.
+        m.registry_url = "https://foreign.invalid/".into();
+        m.dojo_url = "https://foreign.invalid/organization/acme".into();
+        m
+    }
+
+    // M1: a session token is presented only to the registry that minted it.
+    #[test]
+    fn a_membership_on_another_registry_presents_no_session() {
+        assert!(
+            matches!(
+                TenantCredential::of(&foreign_bound()),
+                TenantCredential::ForeignRegistry { .. }
+            ),
+            "a foreign membership must not resolve to a session"
+        );
+    }
+
+    // (The matching-registry positive is the existing
+    // `a_bound_membership_presents_its_persona_session`, which phase B re-points
+    // at the signed-in registry when `of()` learns the check — not duplicated
+    // here.)
+
+    #[test]
+    #[serial(dojo_url_env)]
+    fn a_trailing_slash_does_not_make_a_registry_foreign() {
+        let url = format!("{}/", crate::dojo_client::settings::dojo_url());
+        let mut m = bound(Some("acme-slot"));
+        m.registry_url = url.clone();
+        m.dojo_url = format!("{url}organization/acme");
+        assert_eq!(
+            TenantCredential::of(&m),
+            TenantCredential::Session { slot: "acme-slot".into() }
+        );
+    }
+
+    // F3: the registry match is the EXACT origin (scheme+host+port) — a shared
+    // prefix is not a match, and a registry root carrying a path is not a root.
+    #[test]
+    #[serial(dojo_url_env)]
+    fn a_registry_that_only_shares_a_prefix_is_foreign() {
+        let base = crate::dojo_client::settings::dojo_url();
+        for suffix in [".evil.invalid", "/extra/path"] {
+            let registry = format!("{base}{suffix}");
+            let mut m = bound(Some("acme-slot"));
+            m.registry_url = registry.clone();
+            m.dojo_url = format!("{registry}/organization/acme");
+            assert!(
+                matches!(TenantCredential::of(&m), TenantCredential::ForeignRegistry { .. }),
+                "{registry} shares only a prefix and must be foreign"
+            );
+        }
+    }
+
+    // F3: the normalization in force — scheme and host lowercase (URL
+    // semantics; DNS is case-insensitive too, so no attacker mints a case
+    // variant), default ports implied, one trailing slash trimmed, path must
+    // be empty. Green before and after: it pins what "same registry" means.
+    #[test]
+    #[serial(dojo_url_env)]
+    fn same_registry_normalizations_present_a_session() {
+        let base = crate::dojo_client::settings::dojo_url();
+        let upper = base.to_uppercase();
+        let mut m = bound(Some("acme-slot"));
+        m.registry_url = upper.clone();
+        m.dojo_url = format!("{upper}/organization/acme");
+        assert_eq!(
+            TenantCredential::of(&m),
+            TenantCredential::Session { slot: "acme-slot".into() }
+        );
+        // L3: default ports spelled out — the ambient with its implied port
+        // made explicit (https → :443, http → :80) is still the ambient.
+        let mut explicit = reqwest::Url::parse(&base).expect("the ambient is a URL");
+        if explicit.port().is_none() {
+            let default = match explicit.scheme() {
+                "https" => 443,
+                "http" => 80,
+                other => panic!("unexpected ambient scheme: {other}"),
+            };
+            explicit.set_port(Some(default)).expect("a default port is a port");
+        }
+        let with_port = explicit.to_string().trim_end_matches('/').to_string();
+        let mut m = bound(Some("acme-slot"));
+        m.registry_url = with_port.clone();
+        m.dojo_url = format!("{with_port}/organization/acme");
+        assert_eq!(
+            TenantCredential::of(&m),
+            TenantCredential::Session { slot: "acme-slot".into() }
+        );
+    }
+
+    // L3: `localhost` and `127.0.0.1` are different hosts — a normalizer that
+    // equates them would present the session to the wrong loopback. The swap
+    // is derived from the ambient, so it differs only in spelling, always.
+    #[test]
+    #[serial(dojo_url_env)]
+    fn localhost_and_127_0_0_1_stay_foreign_to_each_other() {
+        let base = crate::dojo_client::settings::dojo_url();
+        let mut swapped = reqwest::Url::parse(&base).expect("the ambient is a URL");
+        let other = if swapped.host_str() == Some("127.0.0.1") { "localhost" } else { "127.0.0.1" };
+        swapped.set_host(Some(other)).expect("loopback is a host");
+        let registry = swapped.to_string().trim_end_matches('/').to_string();
+        let mut m = bound(Some("acme-slot"));
+        m.registry_url = registry.clone();
+        m.dojo_url = format!("{registry}/organization/acme");
+        assert!(
+            matches!(TenantCredential::of(&m), TenantCredential::ForeignRegistry { .. }),
+            "a registry spelled on the other loopback is foreign: {registry}"
+        );
+    }
+
+    // F2/M1, F-D: the minted-registry check lives in `live_session`, not
+    // `of()` — `of()` stays pure (membership vs ambient), and the bearer
+    // refuses a session minted for another registry: non-retryable, before
+    // any refresh. Real keychain: macOS-gated, uuid persona, cleared
+    // afterwards.
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[serial(dojo_url_env)]
+    async fn a_bearer_for_a_session_minted_at_another_registry_refuses() {
+        use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
+        use crate::dojo_client::session;
+        let stub = StubDojo::start(500, r#"{"error":"stub"}"#);
+        let _ambient = TestDojoUrl::set(&stub.url);
+        let persona = uuid::Uuid::new_v4().to_string();
+        session::store_test_credentials(
+            &persona,
+            "rt-fake-not-a-token",
+            Some("https://minted.invalid"),
+        )
+        .unwrap();
+        // The membership is AT the current dōjō — only the session's minter
+        // differs, so `of()` still presents the session and the bearer is
+        // what refuses.
+        let mut m = bound(Some(&persona));
+        m.registry_url = stub.url.clone();
+        m.dojo_url = format!("{}/organization/acme", stub.url);
+        let cred = TenantCredential::of(&m);
+        assert!(matches!(cred, TenantCredential::Session { .. }), "of() stays pure: {cred:?}");
+        let err = cred.bearer().await.unwrap_err();
+        session::clear_session(&persona).unwrap();
+        assert_eq!(stub.hits(), 0, "the refusal happens before any refresh");
+        assert!(
+            matches!(err, DojoClientError::SignedOut),
+            "a minted-elsewhere bearer asks for a sign-in, got {err:?}"
+        );
+        assert!(!err.is_retryable(), "no retry can mint a session for another dōjō");
+    }
+
+    // F2/M1 legacy, F-D: credentials with no minter recorded refuse the
+    // bearer — non-retryable, before any refresh. The distinct error lives in
+    // `live_session`; `bearer()` surfaces it as a sign-in, never a network
+    // fault. Real keychain: macOS-gated, uuid persona, cleared afterwards.
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[serial(dojo_url_env)]
+    async fn a_bearer_for_legacy_credentials_without_a_minter_refuses() {
+        use crate::dojo_client::dojo_auth::stub::{StubDojo, TestDojoUrl};
+        use crate::dojo_client::session;
+        let stub = StubDojo::start(500, r#"{"error":"stub"}"#);
+        let _ambient = TestDojoUrl::set(&stub.url);
+        let persona = uuid::Uuid::new_v4().to_string();
+        session::store_test_credentials(&persona, "rt-fake-not-a-token", None).unwrap();
+        let mut m = bound(Some(&persona));
+        m.registry_url = stub.url.clone();
+        m.dojo_url = format!("{}/organization/acme", stub.url);
+        let cred = TenantCredential::of(&m);
+        assert!(matches!(cred, TenantCredential::Session { .. }), "of() stays pure: {cred:?}");
+        let err = cred.bearer().await.unwrap_err();
+        session::clear_session(&persona).unwrap();
+        assert_eq!(stub.hits(), 0, "the refusal happens before any refresh");
+        assert!(
+            matches!(err, DojoClientError::SignedOut),
+            "a legacy bearer asks for a sign-in, got {err:?}"
+        );
+        assert!(!err.is_retryable(), "no retry can attribute a legacy session");
+    }
+
+    #[tokio::test]
+    async fn a_foreign_membership_fails_before_any_call_without_a_token() {
+        // Port 9 (discard) is never answered: a Network error here would mean
+        // the call went out. SignedOut would mean it tried the session first.
+        // Only ForeignRegistry proves the token was never minted for this
+        // registry.
+        let mut m = bound(Some("acme-slot"));
+        m.registry_url = "http://127.0.0.1:9/".into();
+        m.dojo_url = "http://127.0.0.1:9/organization/acme".into();
+        let c = DojoClient::for_membership(&m);
+        let err = c.poll_inbox(0).await.unwrap_err();
+        assert!(matches!(err, DojoClientError::ForeignRegistry { .. }), "got {err:?}");
+        assert!(
+            err.to_string().contains("127.0.0.1:9"),
+            "the refusal must name the registry, got: {err}"
+        );
+        assert!(!err.is_retryable(), "no retry can mint a session for another dōjō");
     }
 
     #[test]

@@ -30,8 +30,38 @@ export interface WorkspaceRow {
 const WORKSPACE_COLS = 'id, tenant_id, slug, name, classification, phase, last_run_at, runs_week';
 
 /**
- * List the tenant's workspaces, most-recently-run first (rows never run sort last
- * by created order). Tenant-scoped; fails closed (AdminError 500).
+ * Order `rows` most-recently-active first by `dojo.workspace_activity`
+ * (latest reading landing or graph sync per workspace, computed in the DB).
+ * One rpc carrying the listed ids (a whole-view read would hit max_rows and
+ * truncate with no error); the function answers only for workspaces the
+ * caller may read. Quiet workspaces keep their API order, last — the sort is
+ * stable and attaches nothing to the rows, so no date is invented. Fails
+ * closed (AdminError 500): a broken activity read is an error, never the
+ * unsorted list. No rows, no read.
+ */
+async function sortByActivity(db: DojoClient, rows: WorkspaceRow[]): Promise<WorkspaceRow[]> {
+	if (rows.length === 0) return rows;
+	const { data, error } = await db.rpc('workspace_activity', { p_ids: rows.map((w) => w.id) });
+	if (error) throw new AdminError(500, error.message);
+	const at = new Map<string, number>();
+	for (const r of (data ?? []) as unknown as Array<{ workspace_id: string; last_activity_at: string | null }>) {
+		const t = r.last_activity_at ? Date.parse(r.last_activity_at) : NaN;
+		if (!Number.isNaN(t)) at.set(r.workspace_id, t);
+	}
+	return [...rows].sort((a, b) => {
+		const ta = at.get(a.id);
+		const tb = at.get(b.id);
+		if (ta === undefined && tb === undefined) return 0;
+		if (ta === undefined) return 1;
+		if (tb === undefined) return -1;
+		return tb - ta;
+	});
+}
+
+/**
+ * List the tenant's workspaces, most-recently-active first (a workspace whose
+ * repositories pushed nothing sorts last, by API order). Tenant-scoped; fails
+ * closed (AdminError 500).
  */
 export async function listOrgWorkspaces(db: DojoClient, tenantId: string): Promise<WorkspaceRow[]> {
 	const { data, error } = await db
@@ -40,14 +70,14 @@ export async function listOrgWorkspaces(db: DojoClient, tenantId: string): Promi
 		.eq('tenant_id', tenantId)
 		.order('last_run_at', { ascending: false, nullsFirst: false });
 	if (error) throw new AdminError(500, error.message);
-	return (data ?? []) as unknown as WorkspaceRow[];
+	return sortByActivity(db, (data ?? []) as unknown as WorkspaceRow[]);
 }
 
 /**
  * Every workspace the caller may read, across every dōjō they belong to — the
  * personal `/you/workspaces` list. No owner filter: RLS (dojo.can_read_workspace)
  * is the authorization, so this needs the CALLER's client, never the service
- * role. Most-recently-run first. Fails closed (AdminError 500) — never a
+ * role. Most-recently-active first. Fails closed (AdminError 500) — never a
  * fabricated empty list on a query error.
  */
 export async function listUserWorkspaces(db: DojoClient): Promise<WorkspaceRow[]> {
@@ -56,7 +86,7 @@ export async function listUserWorkspaces(db: DojoClient): Promise<WorkspaceRow[]
 		.select(WORKSPACE_COLS)
 		.order('last_run_at', { ascending: false, nullsFirst: false });
 	if (error) throw new AdminError(500, error.message);
-	return (data ?? []) as unknown as WorkspaceRow[];
+	return sortByActivity(db, (data ?? []) as unknown as WorkspaceRow[]);
 }
 
 /**

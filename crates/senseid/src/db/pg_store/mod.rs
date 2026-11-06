@@ -21,6 +21,10 @@ use std::time::Duration;
 #[derive(Clone)]
 pub struct PgStore {
     pool: PgPool,
+    /// H2 shortfall counts (phase B records; see [`sync::ShortfallTracker`]).
+    /// `Arc` so clones share one worker's counting.
+    #[allow(dead_code)] // phase A: constructed, read in phase B
+    shortfalls: std::sync::Arc<std::sync::Mutex<sync::ShortfallTracker>>,
 }
 
 /// The most connections one test's pool may hold ([`PgStore::connect_test`]).
@@ -683,7 +687,7 @@ impl PgStore {
             .connect(database_url)
             .await
             .map_err(|e| format!("PgStore connect: {}", e))?;
-        Ok(Self { pool })
+        Ok(Self { pool, shortfalls: Default::default() })
     }
 
     /// Connect to the test database — the ONLY constructor tests should use.

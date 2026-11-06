@@ -15,7 +15,9 @@ export interface SidebarSection {
 
 /** The workspace window's sections, in nav order. */
 export const SECTIONS: SidebarSection[] = [
-    { id: 'intake', kanji: '門', label: 'Intake' },
+    // Relay took Intake's place (D90): 継 (to pass on) where 門 (the gate) was — the
+    // work still enters here, but it enters as a hand-off to a crew.
+    { id: 'relay', kanji: '継', label: 'Relay' },
     { id: 'overview', kanji: '見', label: 'Overview' },
     { id: 'metrics', kanji: '計', label: 'Metrics' },
     { id: 'sessions', kanji: '録', label: 'Sessions' },

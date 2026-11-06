@@ -134,7 +134,7 @@ describe('ScrRoleSurfaces — wired members / audit', () => {
 				audit: toKitAuditThread([wireAudit], NOW)
 			}
 		});
-		expect(getByText('aaaaaaaa')).toBeTruthy(); // short-id fallback name
+		expect(getByText('Name not shared yet')).toBeTruthy(); // honest words, never an id fragment
 	});
 
 	it('renders the audit thread on the audit tab', () => {

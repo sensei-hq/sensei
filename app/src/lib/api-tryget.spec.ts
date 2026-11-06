@@ -91,7 +91,6 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   // #288 — the last five.
   { name: 'tryGetHealth', call: () => api().tryGetHealth(), body: { daemonDbMode: 'full' } },
   { name: 'tryGetWorkspaceTools', call: () => api().tryGetWorkspaceTools('p1'), body: { tools: [], count: 0 } },
-  { name: 'tryGetIntakeGuide', call: () => api().tryGetIntakeGuide(), body: { frame: '', axes: [], playbooks: [] } },
   { name: 'tryListMemories', call: () => api().tryListMemories({ status: 'active' }), body: { memories: [] } },
   { name: 'tryListKnowledgeSources', call: () => api().tryListKnowledgeSources(), body: { sources: [] } },
 ];

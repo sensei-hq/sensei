@@ -41,7 +41,7 @@ const config = {
 			// exports. Relative to .svelte-kit/, where the generated tsconfig is written.
 			config: (tsconfig) => {
 				const paths = (tsconfig.compilerOptions.paths ??= {});
-				for (const name of ['@rokkit/ui', '@rokkit/states', '@rokkit/core']) paths[name] = [`../node_modules/${name}`];
+				for (const name of ['@rokkit/ui', '@rokkit/states', '@rokkit/core', '@rokkit/app']) paths[name] = [`../node_modules/${name}`];
 				return tsconfig;
 			}
 		}

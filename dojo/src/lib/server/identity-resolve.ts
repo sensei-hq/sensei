@@ -12,9 +12,9 @@
 // caller: the principal ids handed in are already the tenant's members.
 //
 // Fail-closed: a query error throws AdminError(500) — never a fabricated name. A
-// principal with no identity row (or only nameless ones) resolves to null/null,
-// and the caller falls back to a stable shortId (an honest label, not an
-// invented name).
+// principal the identities still leave unnamed falls back to
+// `principals.display_name`; one nothing names resolves to null/null, and the
+// mapper says so in words (an honest label, not an invented name).
 import { AdminError, type DojoClient } from './admin-data';
 
 /** The columns this resolver needs off `dojo.identities`. */
@@ -68,11 +68,11 @@ export function pickBestIdentity(rows: IdentityNameRow[]): ResolvedName {
 }
 
 /**
- * Resolve a set of PRINCIPAL ids to their best display name + email, from
- * `dojo.identities`. Returns a Map keyed by principal id — only principals that
- * HAVE an identity row appear; the caller treats a missing key (or null name) as
- * "fall back to shortId". A query error throws AdminError(500) (fail-closed, no
- * fabrication).
+ * Resolve a set of PRINCIPAL ids to their best display name + email: the best
+ * `dojo.identities` row first, then `principals.display_name` for ids the
+ * identities still leave unnamed. Returns a Map keyed by principal id with an
+ * entry per scoped id; null names stay null and the mapper says so in words.
+ * A query error throws AdminError(500) (fail-closed, no fabrication).
  *
  * Only principals who are MEMBERS of `tenantId` are resolved. Identities carry
  * no tenant, and an id can come straight from a request body, so "the caller
@@ -140,6 +140,20 @@ async function namesOf(db: DojoClient, principalIds: string[]): Promise<Map<stri
 		else byPrincipal.set(r.principal_id, [r]);
 	}
 	const out = new Map<string, ResolvedName>();
-	for (const [pid, rows] of byPrincipal) out.set(pid, pickBestIdentity(rows));
+	for (const pid of principalIds) out.set(pid, pickBestIdentity(byPrincipal.get(pid) ?? []));
+	// Principals fallback (brief item 1): ids the identities still leave
+	// unnamed take `principals.display_name`. Same scoped ids — never the raw
+	// requested ones (`principals` is global, no tenant column). Identity
+	// names win (refreshed at each sign-in); emails stay the identity's;
+	// whitespace-only counts as absent, like `pickBestIdentity`.
+	const unnamed = [...out.entries()].filter(([, n]) => !n.display_name).map(([pid]) => pid);
+	if (unnamed.length > 0) {
+		const prof = await db.from('principals').select('id, display_name').in('id', unnamed);
+		if (prof.error) throw new AdminError(500, prof.error.message);
+		for (const p of (prof.data ?? []) as unknown as Array<{ id: string; display_name: string | null }>) {
+			const cur = out.get(p.id);
+			if (cur && p.display_name && p.display_name.trim()) cur.display_name = p.display_name;
+		}
+	}
 	return out;
 }

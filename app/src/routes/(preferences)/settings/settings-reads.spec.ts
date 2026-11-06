@@ -90,4 +90,11 @@ describe('readExtensions', () => {
     expect(d.extensions).toEqual([]);
     expect(d.skipped).toEqual([{ name: '', reason: 'name not reported' }]);
   });
+
+  // Review r1, N1: both missing is one reason, not "kind" alone.
+  it('names both when the row reports neither', async () => {
+    const d = await readExtensions({ tryGetInstalledItems: async () => ok([{ path: '/x', enabled: true }]) });
+    expect(d.extensions).toEqual([]);
+    expect(d.skipped).toEqual([{ name: '', reason: 'name and kind not reported' }]);
+  });
 });

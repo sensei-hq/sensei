@@ -371,6 +371,8 @@ dojo/src/lib/server/health-series.ts	T3	return bucketContribApprove((data ?? [])
 dojo/src/lib/server/identity-resolve.ts	T3	...new Set(((members.data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id))	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/identity-resolve.ts	T3	for (const r of (data ?? []) as unknown as IdentityNameRow[]) {	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/identity-resolve.ts	T3	return namesOf(db, ((viewers.data ?? []) as Array<{ principal_id: string }>).map((v) => v.principal_id));	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/identity-resolve.ts	T3	for (const pid of principalIds) out.set(pid, pickBestIdentity(byPrincipal.get(pid) ?? []));	GENUINE-EMPTY	?? [] — map miss means no rows (error checked first)	L4 impl r1	2026-11-04
+dojo/src/lib/server/identity-resolve.ts	T3	for (const p of (prof.data ?? []) as unknown as Array<{ id: string; display_name: string | null }>) {	GENUINE-EMPTY	?? [] — error checked first	L4 impl r1	2026-11-04
 dojo/src/lib/server/integrations-data.ts	T1	return ((await request.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body -> empty, validated	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/integrations-data.ts	T3	return (data ?? []) as T[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/knowledge-data.ts	T3	(artifactsRes.data ?? []) as unknown as KnowledgeArtifact[],	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
@@ -411,7 +413,8 @@ dojo/src/lib/server/viewers-data.ts	T3	const rows = (viewers.data ?? []) as Arra
 dojo/src/lib/server/viewers-data.ts	T3	for (const g of (grants.data ?? []) as Array<{ workspace_id: string; principal_id: string }>) {	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/viewers-data.ts	T3	granted.set(g.principal_id, [...(granted.get(g.principal_id) ?? []), workspace]);	GENUINE-EMPTY	?? [] — error checked first / map	audit 2026-11-03 App. C	2026-11-03
 dojo/src/lib/server/viewers-data.ts	T3	workspaces: (granted.get(r.principal_id) ?? []).sort((a, b) => a.name.localeCompare(b.name))	PARSE-DEFAULT	?? [] — optional names null kept	audit 2026-11-03 App. C	2026-11-03
-dojo/src/lib/server/workspaces-data.ts	T3	return (data ?? []) as unknown as WorkspaceRow[];	GENUINE-EMPTY	?? [] — error checked first	audit 2026-11-03 App. C	2026-11-03
+dojo/src/lib/server/workspaces-data.ts	T3	for (const r of (data ?? []) as unknown as Array<{ workspace_id: string; last_activity_at: string | null }>) {	GENUINE-EMPTY	?? [] — error checked first	L4 impl r1	2026-11-04
+dojo/src/lib/server/workspaces-data.ts	T3	return sortByActivity(db, (data ?? []) as unknown as WorkspaceRow[]);	GENUINE-EMPTY	?? [] — error checked first	L4 impl r1	2026-11-04
 dojo/src/routes/v1/auth/cli/refresh/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body -> 400	audit 2026-11-03 App. C	2026-11-03
 dojo/src/routes/v1/auth/cli/token/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
 dojo/src/routes/v1/t/[origin]/[org]/artifacts/+server.ts	T1	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;	PARSE-DEFAULT	.catch( — non-JSON body, validated	audit 2026-11-03 App. C	2026-11-03
@@ -458,3 +461,5 @@ database/ddl/procedure/staging/import_command_patterns.ddl	S1	, coalesce(stg.wra
 database/ddl/procedure/staging/import_command_patterns.ddl	S1	, coalesce(stg.compiles, false)	PARSE-DEFAULT	coalesce( — seed key omitted = does not compile (catalogue data, S3)	sdlc-metrics merge review	2026-11-04
 database/ddl/procedure/staging/import_command_patterns.ddl	S1	, coalesce(stg.priority, 0)	PARSE-DEFAULT	coalesce( — seed key omitted = base priority (catalogue data, S3)	sdlc-metrics merge review	2026-11-04
 database/ddl/procedure/staging/import_command_patterns.ddl	S1	, coalesce(stg.modified_at, now())	PARSE-DEFAULT	coalesce( — seed row without a stamp gets the import time	sdlc-metrics merge review	2026-11-04
+app/src/routes/(workspace)/workspace/[id]/tickets/tickets-state.svelte.ts	T3	const unknown = s.runs_unknown ?? 0;	GENUINE-EMPTY	?? 0 — only picks the ≥ prefix; runs_unknown is null only when every defect count is null too (not_derived)	sdlc-metrics merge review	2026-11-04
+dojo/src/lib/view-states.svelte.ts	T2	} catch {	PARSE-DEFAULT	catch {} — remembered panels are a per-browser convenience; a failed or unreadable localStorage read is a first visit (all open), never an error (D87 CONTRACT §4, user-final 2026-11-04)	billing-build impl r1 (Design)	2026-11-05

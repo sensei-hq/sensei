@@ -1,8 +1,14 @@
 /**
- * #293 against the REAL app: a screen on the shared `Screen` layout reaches the
- * bottom of its window's <main> (a layout may keep tabs above it), <main> itself never scrolls, and the header stays in place
- * while the body scrolls. The body is made taller than the window first, so the
- * probe holds even for a screen with little data.
+ * #293 against the REAL app: a screen on a shared layout reaches the bottom of
+ * its window's <main> (a layout may keep tabs above it), <main> itself never
+ * scrolls, and the header stays in place while the body scrolls. The body is
+ * made taller than the window first, so the probe holds even for a screen with
+ * little data.
+ *
+ * Two layouts satisfy that: @sensei/ui's `Screen` (`data-component="screen…"`)
+ * and, since D87, rokkit's `ScreenShell` (`data-screen…`). L0 sanctioned this
+ * one edit, so a migrated screen is measured by the same probe; later
+ * migrations inherit it unedited.
  * Run: `bun run test:inspect -- screen-shell`.
  */
 import { expect, test } from '../fixtures';
@@ -13,7 +19,7 @@ const WORKSPACE_SCREENS = [
   'traceability', 'instruments', 'libraries', 'memories',
   'diagrams/structure', 'diagrams/wheel', 'diagrams/zones', 'diagrams/matrix', 'diagrams/cycles',
   'diagrams/coupling', 'diagrams/complexity', 'diagrams/schema',
-  'overview', 'about', 'patterns', 'impact', 'intake', 'metrics', 'sessions',
+  'overview', 'about', 'patterns', 'impact', 'relay', 'metrics', 'sessions',
 ];
 
 /** Observatory screens on `Screen`, by path; grows as screens move (#293). */
@@ -22,7 +28,7 @@ const OBSERVATORY_SCREENS = [
     .map((s) => `/settings/${s}`),
   '/dojo/connections', '/dojo/sharing', '/help', '/knowledge-sources', '/libraries', '/traceability', '/upgrades',
   '/', '/impact', '/learnings', '/share-review',
-  '/activity-logs', '/consolidation', '/insights', '/instruments', '/workspaces', '/sessions',
+  '/activity-logs', '/consolidation', '/insights', '/instruments', '/workspaces', '/sessions', '/relay',
 ];
 
 type Probe = { fills: boolean; mainScrolls: boolean; headerMoved: number; bodyScrolled: number; fill: boolean } | null;
@@ -31,8 +37,9 @@ type Probe = { fills: boolean; mainScrolls: boolean; headerMoved: number; bodySc
  *  body is not scrolled; any other body scrolls under a header that stays put. */
 const expected = (fill: boolean) => ({ fills: true, mainScrolls: false, headerMoved: 0, bodyScrolled: fill ? 0 : 1500, fill });
 
-/** A body not yet probed: the screen just navigated to, not the one before it. */
-const FRESH_BODY = '[data-component="screen-body"]:not([data-probed])';
+/** A body not yet probed: the screen just navigated to, not the one before it —
+ *  on either shared layout (`Screen`'s body, or the shell's). */
+const FRESH_BODY = '[data-component="screen-body"]:not([data-probed]), [data-screen-body]:not([data-probed])';
 
 type Page = { evaluate: (script: string) => Promise<unknown> };
 
@@ -56,15 +63,18 @@ async function openScreen(page: Page, route: string) {
     await new Promise((r) => setTimeout(r, 250));
   }
   const where = await page.evaluate(
-    `JSON.stringify({ at: location.pathname, bodies: document.querySelectorAll('[data-component="screen-body"]').length, probed: document.querySelectorAll('[data-probed]').length, dialog: !!document.querySelector('[role="dialog"], dialog[open]') })`,
+    `JSON.stringify({ at: location.pathname, bodies: document.querySelectorAll('[data-component="screen-body"], [data-screen-body]').length, probed: document.querySelectorAll('[data-probed]').length, dialog: !!document.querySelector('[role="dialog"], dialog[open]') })`,
   );
   throw new Error(`${route} never mounted a new screen body within 120s: ${where}`);
 }
 
 const PROBE = `(() => {
-  const body = document.querySelector('[data-component="screen-body"]:not([data-probed])');
-  const screen = body?.closest('[data-component="screen"]');
-  const header = screen?.querySelector(':scope > [data-component="screen-header"]');
+  const body = document.querySelector('[data-component="screen-body"]:not([data-probed]), [data-screen-body]:not([data-probed])');
+  // Whichever shared layout drew this screen: the shell is its own root, and its
+  // header is the title bar's band.
+  const screen = body?.closest('[data-component="screen"]') ?? body?.closest('[data-screen-shell]');
+  const header = screen?.querySelector(':scope > [data-component="screen-header"]')
+    ?? screen?.querySelector(':scope > [data-screen-header]');
   const main = screen?.closest('main');
   // Marked even when it fails, so the next screen is probed rather than this one again.
   body?.setAttribute('data-probed', '');

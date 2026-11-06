@@ -193,7 +193,7 @@ test.describe('Workspace window — chrome', () => {
     ) as Array<{ kanji: string; label: string }>;
 
     const expected = [
-      { kanji: '門', label: 'Intake'       },
+      { kanji: '継', label: 'Relay'        },
       { kanji: '見', label: 'Overview'     },
       { kanji: '計', label: 'Metrics'      },
       { kanji: '録', label: 'Sessions'     },
