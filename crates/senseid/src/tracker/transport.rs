@@ -138,8 +138,20 @@ pub struct ReqwestRaw {
 
 impl ReqwestRaw {
     pub fn new(base_url: &str, auth: crate::tracker::AuthScheme) -> Result<Self, TrackerError> {
+        Self::with_resolver(base_url, auth, crate::net::resolver::PublicOnly::system())
+    }
+
+    /// The one constructor: `new` passes the system resolver, a test a stub lookup.
+    /// No proxy, so `resolver` decides every address the client connects to (§G5.4).
+    pub(crate) fn with_resolver(
+        base_url: &str,
+        auth: crate::tracker::AuthScheme,
+        resolver: crate::net::resolver::PublicOnly,
+    ) -> Result<Self, TrackerError> {
         let client = crate::http::bounded_builder()
             .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .dns_resolver(std::sync::Arc::new(resolver))
             .build()
             .map_err(|_| TrackerError::Transport)?;
         Ok(ReqwestRaw { client, base_url: base_url.trim_end_matches('/').to_string(), auth })
@@ -366,6 +378,92 @@ mod tests {
             user: user.into(),
             token: crate::tracker::ApiToken(token.into()),
         }
+    }
+
+    // ── §G5: the resolver and no-proxy are on the production client's path ──
+
+    use crate::net::resolver::{PublicOnly, tests::StubLookup};
+    use std::sync::Arc;
+
+    /// A TCP listener that counts the connections it accepts and answers `{}`.
+    async fn counting_listener() -> (u16, std::sync::Arc<std::sync::atomic::AtomicU32>) {
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let h = hits.clone();
+        let app = axum::Router::new().route("/x", axum::routing::get(|| async { "{}" })).layer(
+            axum::middleware::from_fn(move |req, next: axum::middleware::Next| {
+                h.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move { next.run(req).await }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (port, hits)
+    }
+
+    #[tokio::test]
+    async fn a_hostname_resolving_to_a_refused_address_is_never_connected() {
+        let (port, hits) = counting_listener().await;
+        let base = format!("http://tracker.example.test:{port}");
+        let stub = StubLookup::answering(&["127.0.0.1"]);
+        let resolver = PublicOnly::new(Arc::clone(&stub) as _, crate::net::addr::is_public_ip);
+        let raw = ReqwestRaw::with_resolver(&base, basic("u", "t"), resolver).unwrap();
+        assert!(raw.get("/x", &[]).await.is_err());
+        assert_eq!(stub.asked.lock().unwrap().as_slice(), ["tracker.example.test"]);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn the_same_request_connects_when_the_rule_allows_it() {
+        // Proves the resolver is what decided above, not some unrelated failure.
+        let (port, hits) = counting_listener().await;
+        let base = format!("http://tracker.example.test:{port}");
+        let resolver = PublicOnly::new(StubLookup::answering(&["127.0.0.1"]), |_| true);
+        let raw = ReqwestRaw::with_resolver(&base, basic("u", "t"), resolver).unwrap();
+        assert_eq!(raw.get("/x", &[]).await.unwrap().status, 200);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// Sets `HTTPS_PROXY` for one test. Callers MUST be `#[serial(https_proxy_env)]`.
+    struct TestHttpsProxy {
+        prev: Option<String>,
+    }
+
+    impl TestHttpsProxy {
+        fn set(url: &str) -> Self {
+            let prev = std::env::var("HTTPS_PROXY").ok();
+            // SAFETY: test-only; `#[serial(https_proxy_env)]` keeps overrides from
+            // overlapping, and the value is restored on drop.
+            unsafe { std::env::set_var("HTTPS_PROXY", url) };
+            TestHttpsProxy { prev }
+        }
+    }
+
+    impl Drop for TestHttpsProxy {
+        fn drop(&mut self) {
+            // SAFETY: same serial discipline as `set`.
+            unsafe {
+                match self.prev.take() {
+                    Some(v) => std::env::set_var("HTTPS_PROXY", v),
+                    None => std::env::remove_var("HTTPS_PROXY"),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(https_proxy_env)]
+    async fn a_proxy_in_the_environment_is_ignored() {
+        let (proxy_port, proxy_hits) = counting_listener().await;
+        let _proxy = TestHttpsProxy::set(&format!("http://127.0.0.1:{proxy_port}"));
+        let stub = StubLookup::answering(&["10.0.0.5"]);
+        let resolver = PublicOnly::new(Arc::clone(&stub) as _, crate::net::addr::is_public_ip);
+        let raw =
+            ReqwestRaw::with_resolver("https://gitlab.example.test", basic("u", "t"), resolver)
+                .unwrap();
+        assert!(raw.get("/x", &[]).await.is_err());
+        assert_eq!(proxy_hits.load(std::sync::atomic::Ordering::SeqCst), 0, "went via the proxy");
+        assert_eq!(stub.asked.lock().unwrap().as_slice(), ["gitlab.example.test"]);
     }
 
     #[tokio::test]
