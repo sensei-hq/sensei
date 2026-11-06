@@ -148,10 +148,7 @@ async fn run(
             }
         };
     // 4. Apply in one short transaction; success is recorded inside it.
-    let patch = match &snapshot.board_name {
-        Some(name) => serde_json::json!({ "board_name": name }),
-        None => serde_json::json!({}),
-    };
+    let patch = params_patch(&snapshot);
     match pg
         .apply_tracker_snapshot(
             tracker_id,
@@ -288,12 +285,23 @@ async fn record_failure(
     SyncError::Failed(e)
 }
 
+/// Pure: what a snapshot writes into the row's `params`: the adapter's
+/// `params_extra`, with `board_name` beside it when the snapshot read one.
+fn params_patch(snapshot: &crate::tracker::Snapshot) -> serde_json::Value {
+    let mut patch = snapshot.params_extra.clone();
+    if let Some(name) = &snapshot.board_name {
+        patch.insert("board_name".into(), serde_json::json!(name));
+    }
+    serde_json::Value::Object(patch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tracker::connect::tests::connected_tracker;
     use crate::tracker::jira::JiraAdapter;
     use crate::tracker::test_support::FakeBoard;
+    use crate::tracker::test_support::fake_adapter;
     use serde_json::json;
 
     async fn rows(
@@ -617,182 +625,6 @@ mod tests {
         assert_eq!(removed_at().await, Some(first), "a sprint's removed_at is never advanced");
     }
 
-    /// A second, non-Jira adapter: GitLab-like `#12` keys relative to a project
-    /// scope, and iteration-named sprints. The coordinator must handle it unchanged
-    /// (gate 1l). Leaked so it is `'static`, like a registered adapter.
-    struct FakeAdapter {
-        scopes: [String; 2],
-    }
-
-    fn fake_adapter(scopes: [String; 2]) -> &'static FakeAdapter {
-        Box::leak(Box::new(FakeAdapter { scopes }))
-    }
-
-    #[async_trait::async_trait]
-    impl crate::tracker::TrackerAdapter for FakeAdapter {
-        fn kind(&self) -> crate::tracker::TrackerKind {
-            crate::tracker::TrackerKind::Jira
-        }
-        fn connect_params(
-            &self,
-            _body: &serde_json::Value,
-        ) -> Result<crate::tracker::ConnectParams, crate::tracker::ParamError> {
-            Err(crate::tracker::ParamError::InvalidBaseUrl)
-        }
-        fn auth(
-            &self,
-            account: &str,
-            token: &crate::tracker::ApiToken,
-        ) -> crate::tracker::AuthScheme {
-            crate::tracker::AuthScheme::Basic { user: account.into(), token: token.clone() }
-        }
-        async fn owner(
-            &self,
-            _t: &dyn GetTransport,
-        ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
-            Ok(crate::tracker::OwnerLookup::Unknown)
-        }
-        async fn find_comment(
-            &self,
-            _t: &dyn GetTransport,
-            _task: &str,
-            _owner: &crate::tracker::AccountRef,
-        ) -> Result<Option<String>, TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn create_comment(
-            &self,
-            _w: &dyn crate::tracker::WriteTransport,
-            _task: &str,
-            _report: &crate::tracker::writeback::Report,
-        ) -> Result<String, TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn update_comment(
-            &self,
-            _w: &dyn crate::tracker::WriteTransport,
-            _task: &str,
-            _comment: &str,
-            _report: &crate::tracker::writeback::Report,
-        ) -> Result<(), TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn issue_exists(
-            &self,
-            _t: &dyn GetTransport,
-            _task: &str,
-        ) -> Result<bool, TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        fn field_ref_shape(&self, _f: &str) -> bool {
-            false
-        }
-        async fn check_fields(
-            &self,
-            _t: &dyn GetTransport,
-            _f: &[String],
-        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn field_in_use(
-            &self,
-            _t: &dyn GetTransport,
-            _b: &BoardScope,
-            _f: &str,
-        ) -> Result<bool, TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn write_fields(
-            &self,
-            _w: &dyn crate::tracker::WriteTransport,
-            _task: &str,
-            _f: &[(String, crate::tracker::FieldValue)],
-        ) -> Result<(), TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn validate(
-            &self,
-            _t: &dyn GetTransport,
-            _p: &crate::tracker::ConnectParams,
-        ) -> Result<crate::tracker::Validated, crate::tracker::ValidateError> {
-            Err(crate::tracker::ValidateError::BoardNotFound)
-        }
-        async fn fetch_snapshot(
-            &self,
-            _t: &dyn GetTransport,
-            _board: &BoardScope,
-            _prev: &crate::tracker::PrevState,
-        ) -> Result<crate::tracker::Snapshot, TrackerError> {
-            use crate::tracker::sprint::SprintState;
-            use crate::tracker::{Snapshot, SprintRow, TaskRow};
-            let task = |id: &str, key: &str, scope: &str| TaskRow {
-                external_id: id.into(),
-                key: key.into(),
-                scope: Some(scope.into()),
-                summary: None,
-                issue_type: None,
-                status: Some("opened".into()),
-                assignee: None,
-                ..Default::default()
-            };
-            let iteration = |id: &str, seq: i64, state| SprintRow {
-                external_id: id.into(),
-                seq,
-                name: format!("Iteration {seq}"),
-                state,
-                start_at: None,
-                end_at: None,
-                complete_at: None,
-            };
-            Ok(Snapshot {
-                board_name: Some("Group board".into()),
-                sprints: vec![iteration("gid://iteration/7", 7, SprintState::Active)],
-                tasks: vec![
-                    task("gid://issue/1", "#12", &self.scopes[0]),
-                    task("gid://issue/2", "#12", &self.scopes[1]),
-                ],
-                members: vec![("gid://iteration/7".into(), Some(vec!["gid://issue/1".into()]))],
-                points_field: None,
-            })
-        }
-        /// `#N` in a prompt, for the task of that key whose scope is the session's repo.
-        fn match_links(
-            &self,
-            session: &crate::tracker::SessionText,
-            known: &[crate::tracker::KnownTask],
-        ) -> Vec<crate::tracker::Link> {
-            known
-                .iter()
-                .filter(|k| k.scope.is_some() && k.scope == session.repo_key)
-                .filter_map(|k| {
-                    let n: usize = session.prompts.iter().map(|p| p.matches(&k.key).count()).sum();
-                    (n > 0).then(|| crate::tracker::Link {
-                        session_id: session.session_id,
-                        task_external_id: k.external_id.clone(),
-                        source: crate::tracker::LinkSource::Prompt,
-                        matched_key: k.key.clone(),
-                        mentions: n as u32,
-                    })
-                })
-                .collect()
-        }
-        fn unknown_keys(
-            &self,
-            _session: &crate::tracker::SessionText,
-            _known: &[crate::tracker::KnownTask],
-        ) -> Vec<String> {
-            Vec::new()
-        }
-        async fn fetch_tasks(
-            &self,
-            _t: &dyn GetTransport,
-            _board: &BoardScope,
-            _keys: &[String],
-        ) -> Result<crate::tracker::Discovered, TrackerError> {
-            Ok(Default::default())
-        }
-    }
-
     #[tokio::test]
     async fn the_coordinator_handles_a_non_jira_adapter_unchanged() {
         let pg = PgStore::test_store().await;
@@ -822,6 +654,48 @@ mod tests {
         assert_eq!(scope.as_deref(), Some("gitlab.com/group/a"));
         assert_eq!(sprint.as_deref(), Some("gid://iteration/7"));
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        assert_eq!(row.params["board_name"], json!("Group board"));
+    }
+
+    #[test]
+    fn the_params_patch_is_the_adapters_extra_with_the_board_name() {
+        let extra: serde_json::Map<String, serde_json::Value> = serde_json::from_value(
+            json!({"full_path": "acme/platform", "sprint_source": "milestone"}),
+        )
+        .unwrap();
+        let with_name = crate::tracker::Snapshot {
+            board_name: Some("Platform".into()),
+            params_extra: extra.clone(),
+            ..Default::default()
+        };
+        assert_eq!(
+            params_patch(&with_name),
+            json!({"board_name": "Platform", "full_path": "acme/platform", "sprint_source": "milestone"})
+        );
+        let without_name = crate::tracker::Snapshot { params_extra: extra, ..Default::default() };
+        assert_eq!(
+            params_patch(&without_name),
+            json!({"full_path": "acme/platform", "sprint_source": "milestone"})
+        );
+        assert_eq!(params_patch(&Default::default()), json!({}));
+    }
+
+    #[tokio::test]
+    async fn a_snapshots_params_extra_reaches_the_row_and_keeps_what_it_does_not_name() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        let adapter =
+            crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
+                scopes: ["gitlab.com/group/a".into(), "gitlab.com/group/b".into()],
+                validated: None,
+                params_extra: serde_json::from_value(json!({"full_path": "acme/platform"}))
+                    .unwrap(),
+            });
+        sync_tracker(&pg, &TrackerLocks::default(), t, adapter, &FakeBoard::empty(), SYNC_DEADLINE)
+            .await
+            .unwrap();
+        let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        assert_eq!(row.params["full_path"], json!("acme/platform"));
         assert_eq!(row.params["board_name"], json!("Group board"));
     }
 

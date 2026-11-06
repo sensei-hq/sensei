@@ -278,6 +278,10 @@ impl TrackerAdapter for JiraAdapter {
             external_scope: board_project.unwrap_or(board_name).to_string(),
             board_name: board_name.to_string(),
             owner,
+            // Jira keeps the connect body's email and typed board id.
+            account: None,
+            board_ref: None,
+            params: Default::default(),
         })
     }
 
@@ -342,7 +346,14 @@ impl TrackerAdapter for JiraAdapter {
             crate::tracker::Estimation::NoField => Some("none".to_string()),
             crate::tracker::Estimation::Field(f) => Some(f.clone()),
         };
-        Ok(Snapshot { board_name, sprints, tasks, members, points_field })
+        Ok(Snapshot {
+            board_name,
+            sprints,
+            tasks,
+            members,
+            points_field,
+            params_extra: Default::default(),
+        })
     }
 
     async fn board_terms(
@@ -1051,6 +1062,9 @@ mod adapter_tests {
                 external_scope: "AUTH".into(),
                 board_name: "AUTH Scrum".into(),
                 owner: OwnerLookup::Person(AccountRef::new("A1")),
+                account: None,
+                board_ref: None,
+                params: Default::default(),
             }
         );
         assert_eq!(

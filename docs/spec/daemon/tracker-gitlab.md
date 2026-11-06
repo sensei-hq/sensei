@@ -67,7 +67,7 @@ segment** (`acme/platform` → `acme%2Fplatform`), as GitLab requires:
 2. `GET /api/v4/projects/:path` → 200 means a **project** board with `board_ref = project:<id>`. On 404, `GET /api/v4/groups/:path` → 200 means a **group** board with `board_ref = group:<id>`. 404 on both → `board_not_found`.
 3. The probes of §G3 (`/version`, iterations).
 
-The handler's copy of the provisional `board_ref` (`api/handlers/trackers.rs:169`, used by `connect_failure` at `:185` for the `board_already_connected` body) is replaced by the validated one, carried on the error.
+The handler's copy of the provisional `board_ref` (`api/handlers/trackers.rs:169`) needs no change: `connect_failure` puts it only in the `board_not_found` body, which fires before validate succeeds, and the `board_already_connected` body carries no `board_ref` (`:252-257`). (Corrected at build, F1.3.)
 `connect()` runs its board-owner check **after** validate, with the validated
 `board_ref`, and uses the validated `account` for **all three** of its uses: the
 pending tombstone, the keyring entry and the row (`connect.rs:61, :66-68, :77`).

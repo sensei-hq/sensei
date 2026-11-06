@@ -283,6 +283,14 @@ pub struct Validated {
     pub board_name: String,
     /// Who the token belongs to (W1).
     pub owner: OwnerLookup,
+    /// The account the provider names for the token, replacing the connect body's
+    /// (GitLab: `/user`'s username). `None` keeps the body's (Jira's email).
+    pub account: Option<String>,
+    /// The board's stable identity, replacing the typed one (GitLab: `project:<id>`,
+    /// so a rename can never connect one board twice). `None` keeps the typed one.
+    pub board_ref: Option<String>,
+    /// Settings stored with the row beside `board_name` (no secrets).
+    pub params: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Why `validate` refused.
@@ -346,6 +354,9 @@ pub struct Snapshot {
     /// The estimation field this snapshot read points under (S4, A6): its id, or
     /// `none` when it cleared them; `None` when it asked for no points.
     pub points_field: Option<String>,
+    /// Settings this sync learned (GitLab: the current `full_path`, the sprint
+    /// source), merged into the row's `params` beside `board_name`.
+    pub params_extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// What the previous sync stored, so an adapter can skip immutable data.
@@ -743,6 +754,9 @@ mod tests {
             external_scope: "AUTH".into(),
             board_name: "AUTH Scrum".into(),
             owner: OwnerLookup::Person(AccountRef::new("SENTINEL-ACCOUNT-ID")),
+            account: None,
+            board_ref: None,
+            params: Default::default(),
         };
         for printed in [format!("{id:?}"), format!("{task:?}"), format!("{validated:?}")] {
             assert!(!printed.contains("SENTINEL-ACCOUNT-ID"), "{printed}");
@@ -755,6 +769,192 @@ mod tests {
 pub mod test_support {
     use super::*;
     use std::sync::Mutex;
+
+    /// A second, non-Jira adapter: GitLab-like `#12` keys relative to a project
+    /// scope, and iteration-named sprints. The coordinator must handle it unchanged
+    /// (gate 1l). Leaked so it is `'static`, like a registered adapter.
+    pub struct FakeAdapter {
+        pub scopes: [String; 2],
+        /// What `validate` returns; `None` is `BoardNotFound`.
+        pub validated: Option<Validated>,
+        /// What `fetch_snapshot` reports in `params_extra`.
+        pub params_extra: serde_json::Map<String, serde_json::Value>,
+    }
+
+    pub fn fake_adapter(scopes: [String; 2]) -> &'static FakeAdapter {
+        leak(FakeAdapter { scopes, validated: None, params_extra: Default::default() })
+    }
+
+    /// `'static`, like a registered adapter.
+    pub fn leak(a: FakeAdapter) -> &'static FakeAdapter {
+        Box::leak(Box::new(a))
+    }
+
+    #[async_trait::async_trait]
+    impl crate::tracker::TrackerAdapter for FakeAdapter {
+        fn kind(&self) -> crate::tracker::TrackerKind {
+            crate::tracker::TrackerKind::Jira
+        }
+        fn connect_params(
+            &self,
+            _body: &serde_json::Value,
+        ) -> Result<crate::tracker::ConnectParams, crate::tracker::ParamError> {
+            Err(crate::tracker::ParamError::InvalidBaseUrl)
+        }
+        fn auth(
+            &self,
+            account: &str,
+            token: &crate::tracker::ApiToken,
+        ) -> crate::tracker::AuthScheme {
+            crate::tracker::AuthScheme::Basic { user: account.into(), token: token.clone() }
+        }
+        async fn owner(
+            &self,
+            _t: &dyn GetTransport,
+        ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
+            Ok(crate::tracker::OwnerLookup::Unknown)
+        }
+        async fn find_comment(
+            &self,
+            _t: &dyn GetTransport,
+            _task: &str,
+            _owner: &crate::tracker::AccountRef,
+        ) -> Result<Option<String>, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn create_comment(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _report: &crate::tracker::writeback::Report,
+        ) -> Result<String, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn update_comment(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _comment: &str,
+            _report: &crate::tracker::writeback::Report,
+        ) -> Result<(), TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn issue_exists(
+            &self,
+            _t: &dyn GetTransport,
+            _task: &str,
+        ) -> Result<bool, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        fn field_ref_shape(&self, _f: &str) -> bool {
+            false
+        }
+        async fn check_fields(
+            &self,
+            _t: &dyn GetTransport,
+            _f: &[String],
+        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn field_in_use(
+            &self,
+            _t: &dyn GetTransport,
+            _b: &BoardScope,
+            _f: &str,
+        ) -> Result<bool, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn write_fields(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _f: &[(String, crate::tracker::FieldValue)],
+        ) -> Result<(), TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn validate(
+            &self,
+            _t: &dyn GetTransport,
+            _p: &crate::tracker::ConnectParams,
+        ) -> Result<crate::tracker::Validated, crate::tracker::ValidateError> {
+            self.validated.clone().ok_or(crate::tracker::ValidateError::BoardNotFound)
+        }
+        async fn fetch_snapshot(
+            &self,
+            _t: &dyn GetTransport,
+            _board: &BoardScope,
+            _prev: &crate::tracker::PrevState,
+        ) -> Result<crate::tracker::Snapshot, TrackerError> {
+            use crate::tracker::sprint::SprintState;
+            use crate::tracker::{Snapshot, SprintRow, TaskRow};
+            let task = |id: &str, key: &str, scope: &str| TaskRow {
+                external_id: id.into(),
+                key: key.into(),
+                scope: Some(scope.into()),
+                summary: None,
+                issue_type: None,
+                status: Some("opened".into()),
+                assignee: None,
+                ..Default::default()
+            };
+            let iteration = |id: &str, seq: i64, state| SprintRow {
+                external_id: id.into(),
+                seq,
+                name: format!("Iteration {seq}"),
+                state,
+                start_at: None,
+                end_at: None,
+                complete_at: None,
+            };
+            Ok(Snapshot {
+                board_name: Some("Group board".into()),
+                sprints: vec![iteration("gid://iteration/7", 7, SprintState::Active)],
+                tasks: vec![
+                    task("gid://issue/1", "#12", &self.scopes[0]),
+                    task("gid://issue/2", "#12", &self.scopes[1]),
+                ],
+                members: vec![("gid://iteration/7".into(), Some(vec!["gid://issue/1".into()]))],
+                points_field: None,
+                params_extra: self.params_extra.clone(),
+            })
+        }
+        /// `#N` in a prompt, for the task of that key whose scope is the session's repo.
+        fn match_links(
+            &self,
+            session: &crate::tracker::SessionText,
+            known: &[crate::tracker::KnownTask],
+        ) -> Vec<crate::tracker::Link> {
+            known
+                .iter()
+                .filter(|k| k.scope.is_some() && k.scope == session.repo_key)
+                .filter_map(|k| {
+                    let n: usize = session.prompts.iter().map(|p| p.matches(&k.key).count()).sum();
+                    (n > 0).then(|| crate::tracker::Link {
+                        session_id: session.session_id,
+                        task_external_id: k.external_id.clone(),
+                        source: crate::tracker::LinkSource::Prompt,
+                        matched_key: k.key.clone(),
+                        mentions: n as u32,
+                    })
+                })
+                .collect()
+        }
+        fn unknown_keys(
+            &self,
+            _session: &crate::tracker::SessionText,
+            _known: &[crate::tracker::KnownTask],
+        ) -> Vec<String> {
+            Vec::new()
+        }
+        async fn fetch_tasks(
+            &self,
+            _t: &dyn GetTransport,
+            _board: &BoardScope,
+            _keys: &[String],
+        ) -> Result<crate::tracker::Discovered, TrackerError> {
+            Ok(Default::default())
+        }
+    }
 
     /// A scripted Jira board served over [`GetTransport`]: responses keyed by
     /// `(path, startAt)`, with failure injection and a call log. Shapes follow the
