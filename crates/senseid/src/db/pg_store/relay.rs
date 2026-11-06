@@ -21,12 +21,14 @@ use crate::relay::envelope::{
     EnvelopeTicket, LaneEnvelope, ReviewDirection,
 };
 use crate::relay::{
-    Caller, DISK_FLOOR_GB, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS, RegisterMode, RelayActionKind,
-    RelayError, RelayFindingSeverity, RelayFloors, RelayItemKind, RelayLeaseState, RelayRole,
-    RelaySurface, RelayTaskPhase, RelayTaskState, RelayTicketProvider, ReviewVerdict,
-    SWAP_FLOOR_GB, TaskEvent, check_summary_len, guard_markdown, hash_lane_token, pick_reviewer,
-    register_mode, resolve_surface, transition, validate_props,
+    Caller, DISK_FLOOR_GB, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS, RESOURCE_LEASE_TTL_SECS,
+    RegisterMode, RelayActionKind, RelayError, RelayFindingSeverity, RelayFloors, RelayItemKind,
+    RelayLeaseState, RelayRole, RelaySurface, RelayTaskPhase, RelayTaskState, RelayTicketProvider,
+    ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent, check_summary_len,
+    decide_resource_grant, guard_markdown, hash_lane_token, pick_reviewer, register_mode,
+    resolve_surface, transition, validate_props,
 };
+use serde_json::json;
 
 // ─── Inputs / outputs ───
 
@@ -343,6 +345,11 @@ pub struct RelayResourceRelease {
     pub granted_next: Option<Uuid>,
 }
 
+/// A live resource row for the idempotent re-request path (Q3): id,
+/// state, props, and the stamp pair.
+type LiveResourceRow =
+    (Uuid, String, serde_json::Value, Option<DateTime<Utc>>, Option<DateTime<Utc>>);
+
 /// A manual triage item, as the person adds it.
 #[derive(Debug, Clone)]
 pub struct RelayTriageInput {
@@ -384,6 +391,64 @@ fn violated_constraint(e: &sqlx_core::Error) -> Option<&str> {
 /// Mint a v7 id (the DDL's `*_id_v7` checks require position 15 = `7`).
 fn new_id() -> Uuid {
     Uuid::now_v7()
+}
+
+// ─── Resource-lease props (item 3, decision 8) ───
+
+/// The ruled floors, when no override applies.
+fn ruled_floors() -> RelayFloors {
+    RelayFloors { disk_gb: DISK_FLOOR_GB, swap_gb: SWAP_FLOOR_GB }
+}
+
+/// The floor override a row persists, if it carries a well-formed one
+/// (`props.floors`, present only when the request carried an override).
+fn floors_from_props(props: &serde_json::Value) -> Option<RelayFloors> {
+    let disk = props.get("floors")?.get("disk_gb")?.as_u64()?;
+    let swap = props.get("floors")?.get("swap_gb")?.as_u64()?;
+    Some(RelayFloors { disk_gb: disk, swap_gb: swap })
+}
+
+/// The grant-time numbers a row persists (`None` each on a queued row —
+/// unjudged, Q9 — or when the reading was unknown, Q6).
+fn numbers_from_props(props: &serde_json::Value) -> (Option<u64>, Option<u64>) {
+    (
+        props.get("disk_free_gb").and_then(serde_json::Value::as_u64),
+        props.get("swap_free_gb").and_then(serde_json::Value::as_u64),
+    )
+}
+
+fn some_or_null(n: Option<u64>) -> serde_json::Value {
+    n.map(serde_json::Value::from).unwrap_or(serde_json::Value::Null)
+}
+
+/// A queued row's props: the persisted override only (no numbers — the
+/// floors gate the grant, never the queue).
+fn queued_resource_props(floors: Option<RelayFloors>) -> serde_json::Value {
+    let mut props = serde_json::Map::new();
+    if let Some(f) = floors {
+        props.insert("floors".into(), json!({"disk_gb": f.disk_gb, "swap_gb": f.swap_gb}));
+    }
+    serde_json::Value::Object(props)
+}
+
+/// A judged row's props: the persisted override plus the grant-time
+/// numbers and, on refusal, the reason.
+fn judged_resource_props(
+    floors: Option<RelayFloors>,
+    disk_free_gb: Option<u64>,
+    swap_free_gb: Option<u64>,
+    reason: Option<&str>,
+) -> serde_json::Value {
+    let mut props = serde_json::Map::new();
+    if let Some(f) = floors {
+        props.insert("floors".into(), json!({"disk_gb": f.disk_gb, "swap_gb": f.swap_gb}));
+    }
+    props.insert("disk_free_gb".into(), some_or_null(disk_free_gb));
+    props.insert("swap_free_gb".into(), some_or_null(swap_free_gb));
+    if let Some(reason) = reason {
+        props.insert("reason".into(), serde_json::Value::from(reason));
+    }
+    serde_json::Value::Object(props)
 }
 
 /// A relay enum as its DB/JSON word, reusing the serde spelling
@@ -506,6 +571,81 @@ async fn relay_pick_reviewer(q: RelayPickQuery<'_, '_>) -> Result<Option<Uuid>, 
     let live_loads: Vec<(Uuid, u64)> =
         live.into_iter().map(|id| (id, loads.get(&id).copied().unwrap_or(0))).collect();
     Ok(pick_reviewer(&live_loads, &author, &coordinator))
+}
+
+/// A waiter's 1-based position among the slot's queued rows, FIFO by
+/// broker-minted id (Q1).
+async fn queue_position(
+    tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+    resource: &str,
+    id: Uuid,
+) -> Result<u64, RelayError> {
+    let rank: i64 = sqlx_core::query_scalar::query_scalar(
+        "select count(*) + 1 from relay.leases
+         where kind = 'resource' and resource = $1 and state = 'queued' and id < $2",
+    )
+    .bind(resource)
+    .bind(id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    Ok(rank as u64)
+}
+
+/// Grant a freed slot to its first waiter (item 3, Q1): FIFO by
+/// broker-minted id, floors re-checked per waiter against fresh
+/// machine numbers — a waiter that now fails is refused instead and
+/// the broker tries the next. Returns the granted row's id, if any.
+async fn grant_next_waiter(
+    tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+    resource: &str,
+    now: DateTime<Utc>,
+) -> Result<Option<Uuid>, RelayError> {
+    loop {
+        let waiter: Option<(Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select id, props from relay.leases
+             where kind = 'resource' and resource = $1 and state = 'queued'
+             order by id limit 1",
+        )
+        .bind(resource)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        let Some((id, props)) = waiter else {
+            return Ok(None);
+        };
+        let floors = floors_from_props(&props).unwrap_or_else(ruled_floors);
+        let disk = disk_free_gb();
+        let swap = swap_free_gb();
+        match decide_resource_grant(disk, swap, &floors) {
+            ResourceGrant::Granted => {
+                sqlx_core::query::query(
+                    "update relay.leases set state = 'granted'::relay.lease_state,
+                            granted_at = $1, expires_at = $2, props = $3
+                     where id = $4",
+                )
+                .bind(now)
+                .bind(now + Duration::seconds(RESOURCE_LEASE_TTL_SECS as i64))
+                .bind(judged_resource_props(floors_from_props(&props), disk, swap, None))
+                .bind(id)
+                .execute(&mut **tx)
+                .await
+                .map_err(db_err)?;
+                return Ok(Some(id));
+            }
+            ResourceGrant::Refused { reason } => {
+                sqlx_core::query::query(
+                    "update relay.leases set state = 'refused'::relay.lease_state, props = $1
+                     where id = $2",
+                )
+                .bind(judged_resource_props(floors_from_props(&props), disk, swap, Some(&reason)))
+                .bind(id)
+                .execute(&mut **tx)
+                .await
+                .map_err(db_err)?;
+            }
+        }
+    }
 }
 
 /// Free disk on `/`, in GiB (`df -g` units). Null when unreadable — the
@@ -920,6 +1060,18 @@ impl PgStore {
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
+        // Item 3 (Q4): the heartbeat renews the lane's held resource
+        // grants alongside its lane lease. Queued rows claim no grant,
+        // so they are untouched.
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = $1
+             where lane_id = $2 and kind = 'resource' and state = 'granted'",
+        )
+        .bind(now + Duration::seconds(RESOURCE_LEASE_TTL_SECS as i64))
+        .bind(lane_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         Ok(RelayHeartbeatOutput { expires_at: expires })
     }
@@ -1049,32 +1201,270 @@ impl PgStore {
             .await
             .map_err(db_err)?;
         }
+        // Item 3 (Q7): the lane's held resource grants release with it
+        // (DB clock, like the lane stamps above), and each freed slot
+        // auto-grants its next waiter. `current_timestamp` is the
+        // transaction's clock, so the grant stamps match the release.
+        let freed: Vec<String> = sqlx_core::query_scalar::query_scalar(
+            "update relay.leases set state = 'released'::relay.lease_state,
+                    released_at = current_timestamp
+             where lane_id = $1 and kind = 'resource' and state = 'granted'
+             returning resource",
+        )
+        .bind(lane_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if !freed.is_empty() {
+            let now: DateTime<Utc> =
+                sqlx_core::query_scalar::query_scalar("select current_timestamp")
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+            for resource in &freed {
+                grant_next_waiter(&mut tx, resource, now).await?;
+            }
+        }
         tx.commit().await.map_err(db_err)?;
         Ok(())
     }
 
-    /// Request a resource lease (item 3, Q1–Q3/Q5/Q6): grant when free and
-    /// the floors pass, queue behind the holder, refuse below the floors.
+    /// Request a resource lease (item 3, Q1–Q3/Q5/Q6): the lane's live
+    /// row comes back as-is (Q3), else a free slot grants when the floors
+    /// pass and refuses below them, and a held slot queues (floors gate
+    /// the grant, never the queue — the re-check runs at auto-grant).
     pub async fn relay_request_resource(
         &self,
-        _user_id: Uuid,
-        _caller_lane: Uuid,
-        _input: RelayResourceRequest,
-        _now: DateTime<Utc>,
+        user_id: Uuid,
+        caller_lane: Uuid,
+        input: RelayResourceRequest,
+        now: DateTime<Utc>,
     ) -> Result<RelayResourceGrant, RelayError> {
-        todo!("relay item 3: request resource")
+        let resource = input.resource.trim();
+        if resource.is_empty() {
+            return Err(RelayError::Validation("resource names the slot".into()));
+        }
+        let lane: Option<(Uuid, Uuid, Option<DateTime<Utc>>)> = sqlx_core::query_as::query_as(
+            "select user_id, crew_id, unregistered_at from relay.lanes where id = $1",
+        )
+        .bind(caller_lane)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((_, crew_id, unregistered_at)) = lane else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        if unregistered_at.is_some() {
+            return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // One broker per slot: concurrent requests for the same resource
+        // serialize here, so the loser queues instead of racing the
+        // one-grant-per-resource unique.
+        sqlx_core::query::query("select pg_advisory_xact_lock(hashtext($1))")
+            .bind(resource)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        // The lane's live row comes back as-is (Q3); terminal rows do not
+        // match, so a post-terminal re-request mints below.
+        let mine: Option<LiveResourceRow> = sqlx_core::query_as::query_as(
+            "select id, state::text, props, granted_at, expires_at from relay.leases
+                 where user_id = $1 and lane_id = $2 and kind = 'resource' and resource = $3
+                   and state in ('queued', 'granted')
+                 order by id limit 1",
+        )
+        .bind(user_id)
+        .bind(caller_lane)
+        .bind(resource)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let out = if let Some((id, state, props, granted_at, expires_at)) = mine {
+            let floors = floors_from_props(&props).unwrap_or_else(ruled_floors);
+            let (disk, swap) = numbers_from_props(&props);
+            let position = if state == "granted" {
+                None
+            } else {
+                Some(queue_position(&mut tx, resource, id).await?)
+            };
+            RelayResourceGrant {
+                lease_id: id,
+                state: if state == "granted" {
+                    RelayLeaseState::Granted
+                } else {
+                    RelayLeaseState::Queued
+                },
+                resource: resource.to_string(),
+                disk_free_gb: disk,
+                swap_free_gb: swap,
+                disk_floor_gb: floors.disk_gb,
+                swap_floor_gb: floors.swap_gb,
+                granted_at,
+                expires_at,
+                position,
+            }
+        } else {
+            // The slot is machine-wide: any crew's grant blocks (Q1).
+            let held: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                "select id from relay.leases
+                 where kind = 'resource' and resource = $1 and state = 'granted' limit 1",
+            )
+            .bind(resource)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if held.is_some() {
+                let id = new_id();
+                sqlx_core::query::query(
+                    "insert into relay.leases
+                       (user_id, id, crew_id, lane_id, kind, resource, state, props)
+                     values ($1, $2, $3, $4, 'resource'::relay.lease_kind, $5,
+                             'queued'::relay.lease_state, $6)",
+                )
+                .bind(user_id)
+                .bind(id)
+                .bind(crew_id)
+                .bind(caller_lane)
+                .bind(resource)
+                .bind(queued_resource_props(input.floors))
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                let position = queue_position(&mut tx, resource, id).await?;
+                let floors = input.floors.unwrap_or_else(ruled_floors);
+                RelayResourceGrant {
+                    lease_id: id,
+                    state: RelayLeaseState::Queued,
+                    resource: resource.to_string(),
+                    disk_free_gb: None,
+                    swap_free_gb: None,
+                    disk_floor_gb: floors.disk_gb,
+                    swap_floor_gb: floors.swap_gb,
+                    granted_at: None,
+                    expires_at: None,
+                    position: Some(position),
+                }
+            } else {
+                let disk = disk_free_gb();
+                let swap = swap_free_gb();
+                let floors = input.floors.unwrap_or_else(ruled_floors);
+                let id = new_id();
+                match decide_resource_grant(disk, swap, &floors) {
+                    ResourceGrant::Granted => {
+                        let expires = now + Duration::seconds(RESOURCE_LEASE_TTL_SECS as i64);
+                        sqlx_core::query::query(
+                            "insert into relay.leases
+                               (user_id, id, crew_id, lane_id, kind, resource, state, props,
+                                granted_at, expires_at)
+                             values ($1, $2, $3, $4, 'resource'::relay.lease_kind, $5,
+                                     'granted'::relay.lease_state, $6, $7, $8)",
+                        )
+                        .bind(user_id)
+                        .bind(id)
+                        .bind(crew_id)
+                        .bind(caller_lane)
+                        .bind(resource)
+                        .bind(judged_resource_props(input.floors, disk, swap, None))
+                        .bind(now)
+                        .bind(expires)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db_err)?;
+                        RelayResourceGrant {
+                            lease_id: id,
+                            state: RelayLeaseState::Granted,
+                            resource: resource.to_string(),
+                            disk_free_gb: disk,
+                            swap_free_gb: swap,
+                            disk_floor_gb: floors.disk_gb,
+                            swap_floor_gb: floors.swap_gb,
+                            granted_at: Some(now),
+                            expires_at: Some(expires),
+                            position: None,
+                        }
+                    }
+                    ResourceGrant::Refused { reason } => {
+                        sqlx_core::query::query(
+                            "insert into relay.leases
+                               (user_id, id, crew_id, lane_id, kind, resource, state, props)
+                             values ($1, $2, $3, $4, 'resource'::relay.lease_kind, $5,
+                                     'refused'::relay.lease_state, $6)",
+                        )
+                        .bind(user_id)
+                        .bind(id)
+                        .bind(crew_id)
+                        .bind(caller_lane)
+                        .bind(resource)
+                        .bind(judged_resource_props(input.floors, disk, swap, Some(&reason)))
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db_err)?;
+                        RelayResourceGrant {
+                            lease_id: id,
+                            state: RelayLeaseState::Refused,
+                            resource: resource.to_string(),
+                            disk_free_gb: disk,
+                            swap_free_gb: swap,
+                            disk_floor_gb: floors.disk_gb,
+                            swap_floor_gb: floors.swap_gb,
+                            granted_at: None,
+                            expires_at: None,
+                            position: None,
+                        }
+                    }
+                }
+            }
+        };
+        tx.commit().await.map_err(db_err)?;
+        Ok(out)
     }
 
     /// Release a held resource lease (item 3, Q7): the holder's release
-    /// auto-grants the next queued request.
+    /// auto-grants the next queued request (floors re-checked). Only a
+    /// granted row releases — a queued waiter holds no grant.
     pub async fn relay_release_resource(
         &self,
         _user_id: Uuid,
-        _caller_lane: Uuid,
-        _resource: &str,
-        _now: DateTime<Utc>,
+        caller_lane: Uuid,
+        resource: &str,
+        now: DateTime<Utc>,
     ) -> Result<RelayResourceRelease, RelayError> {
-        todo!("relay item 3: release resource")
+        // `_user_id` is auth-bound but unused: the grant is machine-wide,
+        // so the lane alone identifies the holder.
+        let resource = resource.trim();
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        sqlx_core::query::query("select pg_advisory_xact_lock(hashtext($1))")
+            .bind(resource)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let live: Option<(Uuid, Uuid)> = sqlx_core::query_as::query_as(
+            "select id, lane_id from relay.leases
+             where kind = 'resource' and resource = $1 and state = 'granted' limit 1",
+        )
+        .bind(resource)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let Some((id, holder)) = live else {
+            return Err(RelayError::NotFound("no live grant for resource".into()));
+        };
+        if holder != caller_lane {
+            return Err(RelayError::Forbidden("only the holder releases".into()));
+        }
+        sqlx_core::query::query(
+            "update relay.leases set state = 'released'::relay.lease_state, released_at = $1
+             where id = $2",
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let granted_next = grant_next_waiter(&mut tx, resource, now).await?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayResourceRelease { lease_id: id, resource: resource.to_string(), granted_next })
     }
 
     /// Plan an item into an unassigned task (coordinator only). From an item,
@@ -2841,15 +3231,49 @@ impl PgStore {
             .map_err(db_err)?;
             repicked_reviewers += 1;
         }
+        // Item 3: expire stale resource grants (the same `<=` comparison
+        // as lane leases), then release grants held by lanes with no live
+        // lease (the lane-death cascade, Q7 — a release, not an expiry).
+        let freed_expired: Vec<String> = sqlx_core::query_scalar::query_scalar(
+            "update relay.leases set state = 'expired'::relay.lease_state
+             where kind = 'resource' and state = 'granted' and expires_at <= $1
+             returning resource",
+        )
+        .bind(now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let expired_resource_leases = freed_expired.len() as u64;
+        let freed_dead: Vec<String> = sqlx_core::query_scalar::query_scalar(
+            "update relay.leases r set state = 'released'::relay.lease_state, released_at = $1
+             where r.kind = 'resource' and r.state = 'granted'
+               and not exists (
+                 select 1 from relay.leases l
+                 where l.lane_id = r.lane_id and l.kind = 'lane'
+                   and l.state = 'granted' and l.expires_at > $1)
+             returning resource",
+        )
+        .bind(now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        // Every freed slot auto-grants its first waiter (floors
+        // re-checked); an expiry and a cascade never free the same slot
+        // (a grant is either stale or live).
+        let mut granted_from_queue = 0u64;
+        for resource in freed_expired.iter().chain(freed_dead.iter()) {
+            if grant_next_waiter(&mut tx, resource, now).await?.is_some() {
+                granted_from_queue += 1;
+            }
+        }
         tx.commit().await.map_err(db_err)?;
         Ok(RelaySweepReport {
             expired_leases,
             interrupted_tasks,
             reoffered_tasks,
             repicked_reviewers,
-            // Item 3 (phase A): the sweep ignores resources until phase B.
-            expired_resource_leases: 0,
-            granted_from_queue: 0,
+            expired_resource_leases,
+            granted_from_queue,
         })
     }
 
@@ -3923,6 +4347,34 @@ mod tests {
         .bind(state)
         .bind(granted_at)
         .bind(expires_at)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        id
+    }
+
+    /// A queued waiter fixture with explicit floors: the sweep's auto-grant
+    /// re-checks waiters, so judged waiters carry zero floors (deterministic
+    /// grant on any machine) instead of the ambient consts path.
+    async fn fx_queued_waiter(
+        pg: &PgStore,
+        user: Uuid,
+        crew: Uuid,
+        lane: Uuid,
+        resource: &str,
+        floors: RelayFloors,
+    ) -> Uuid {
+        let id = fxid();
+        sqlx_core::query::query(
+            "insert into relay.leases (user_id, id, crew_id, lane_id, kind, resource, state, props) \
+             values ($1, $2, $3, $4, 'resource', $5, 'queued'::relay.lease_state, $6)",
+        )
+        .bind(user)
+        .bind(id)
+        .bind(crew)
+        .bind(lane)
+        .bind(resource)
+        .bind(json!({"floors": {"disk_gb": floors.disk_gb, "swap_gb": floors.swap_gb}}))
         .execute(pg.pool())
         .await
         .unwrap();
@@ -6200,8 +6652,54 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_request_grants_first_come_reports_numbers() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, _a2, _b1, u1) = fx_two_crews(&pg).await;
+        let now = t0();
+        let out = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest {
+                    resource: "rust-build".into(),
+                    // Zero floors: the grant is deterministic on any machine
+                    // (no ambient reading can sit below zero); the None path
+                    // is pinned separately below.
+                    floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.state, RelayLeaseState::Granted);
+        assert_eq!(out.resource, "rust-build");
+        // The broker mints the id (L0 note 1): v7, position 15 reads `7`.
+        assert_eq!(&out.lease_id.to_string()[14..15], "7");
+        assert_eq!(out.disk_floor_gb, 0);
+        assert_eq!(out.swap_floor_gb, 0);
+        assert!(out.disk_free_gb.is_some(), "disk always reads");
+        assert_eq!(out.granted_at, Some(now));
+        assert_eq!(out.expires_at, Some(now + chrono::Duration::seconds(3600)));
+        assert_eq!(out.position, None);
+        let (state, resource, props, granted_at, expires_at, _) =
+            resource_row(&pg, u1, out.lease_id).await;
+        assert_eq!(state, "granted");
+        assert_eq!(resource.as_deref(), Some("rust-build"));
+        // The carried override persists (decision 8).
+        assert_eq!(props["floors"]["disk_gb"].as_u64(), Some(0));
+        assert_eq!(props["floors"]["swap_gb"].as_u64(), Some(0));
+        assert_eq!(props.get("disk_free_gb"), Some(&json!(out.disk_free_gb)));
+        assert_eq!(props.get("swap_free_gb"), Some(&json!(out.swap_free_gb)));
+        assert_eq!(granted_at, Some(now));
+        assert_eq!(expires_at, out.expires_at);
+    }
+
+    #[tokio::test]
+    async fn resource_request_without_override_echoes_ruled_floors() {
+        // The None path: the verdict follows the machine (ambient readings
+        // vs the ruled floors), so the test pins everything around it — the
+        // ruled-floors echo, the v7 mint, the absence of a floors key, and
+        // the row shape matching whichever verdict came back.
         let pg = PgStore::test_store().await;
         let (_c1, _c3, a1, _a2, _b1, u1) = fx_two_crews(&pg).await;
         let now = t0();
@@ -6214,28 +6712,37 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(out.state, RelayLeaseState::Granted);
-        assert_eq!(out.resource, "rust-build");
-        // The broker mints the id (L0 note 1): v7, position 15 reads `7`.
-        assert_eq!(&out.lease_id.to_string()[14..15], "7");
+        assert!(matches!(out.state, RelayLeaseState::Granted | RelayLeaseState::Refused));
         assert_eq!(out.disk_floor_gb, 25);
         assert_eq!(out.swap_floor_gb, 1);
-        assert!(out.disk_free_gb.is_some(), "disk always reads");
-        assert_eq!(out.granted_at, Some(now));
-        assert_eq!(out.expires_at, Some(now + chrono::Duration::seconds(3600)));
-        assert_eq!(out.position, None);
+        // The broker mints the id (L0 note 1): v7, position 15 reads `7`.
+        assert_eq!(&out.lease_id.to_string()[14..15], "7");
         let (state, resource, props, granted_at, expires_at, _) =
             resource_row(&pg, u1, out.lease_id).await;
-        assert_eq!(state, "granted");
         assert_eq!(resource.as_deref(), Some("rust-build"));
+        // N3: no override carried, so no floors key persists (decision 8).
+        assert!(props.get("floors").is_none(), "floors absent: {props}");
         assert_eq!(props.get("disk_free_gb"), Some(&json!(out.disk_free_gb)));
         assert_eq!(props.get("swap_free_gb"), Some(&json!(out.swap_free_gb)));
-        assert_eq!(granted_at, Some(now));
-        assert_eq!(expires_at, out.expires_at);
+        match out.state {
+            RelayLeaseState::Granted => {
+                assert_eq!(state, "granted");
+                assert_eq!(out.granted_at, Some(now));
+                assert_eq!(out.expires_at, Some(now + chrono::Duration::seconds(3600)));
+                assert_eq!(granted_at, Some(now));
+                assert_eq!(expires_at, out.expires_at);
+            }
+            RelayLeaseState::Refused => {
+                assert_eq!(state, "refused");
+                assert_eq!(out.granted_at, None);
+                assert_eq!(out.expires_at, None);
+                assert!(!props.get("reason").and_then(|r| r.as_str()).unwrap_or("").is_empty());
+            }
+            _ => panic!("a free slot never queues: {:?}", out.state),
+        }
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_request_while_held_queues_fifo() {
         let pg = PgStore::test_store().await;
         let (c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
@@ -6243,7 +6750,10 @@ mod tests {
         fx_lane(&pg, u1, a3, c1, "L3", "contributor", "tok-a3").await;
         fx_lease(&pg, u1, c1, a3, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
         let now = t0();
-        let req = RelayResourceRequest { resource: "rust-build".into(), floors: None };
+        let req = RelayResourceRequest {
+            resource: "rust-build".into(),
+            floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+        };
         let held = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
         assert_eq!(held.state, RelayLeaseState::Granted);
         let q1 = pg.relay_request_resource(u1, a2, req.clone(), now).await.unwrap();
@@ -6260,7 +6770,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_request_cross_crew_excludes_machine_wide() {
         let pg = PgStore::test_store().await;
         let (_c1, _c3, a1, _a2, b1, u1) = fx_two_crews(&pg).await;
@@ -6269,7 +6778,10 @@ mod tests {
             .relay_request_resource(
                 u1,
                 a1,
-                RelayResourceRequest { resource: "e2e".into(), floors: None },
+                RelayResourceRequest {
+                    resource: "e2e".into(),
+                    floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
                 now,
             )
             .await
@@ -6298,12 +6810,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_request_same_lane_twice_returns_existing() {
         let pg = PgStore::test_store().await;
         let (_c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
         let now = t0();
-        let req = RelayResourceRequest { resource: "rust-build".into(), floors: None };
+        let req = RelayResourceRequest {
+            resource: "rust-build".into(),
+            floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+        };
         let g1 = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
         let g2 = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
         assert_eq!(g2.lease_id, g1.lease_id);
@@ -6326,7 +6840,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_request_refused_below_floors_writes_row() {
         let pg = PgStore::test_store().await;
         let (_c1, _c3, a1, _a2, _b1, u1) = fx_two_crews(&pg).await;
@@ -6360,7 +6873,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_request_empty_resource_is_validation() {
         let pg = PgStore::test_store().await;
         let (_c1, _c3, a1, _a2, _b1, u1) = fx_two_crews(&pg).await;
@@ -6377,7 +6889,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_release_grants_next_queued_auto() {
         let pg = PgStore::test_store().await;
         let (c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
@@ -6385,7 +6896,10 @@ mod tests {
         fx_lane(&pg, u1, a3, c1, "L3", "contributor", "tok-a3").await;
         fx_lease(&pg, u1, c1, a3, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
         let now = t0();
-        let req = RelayResourceRequest { resource: "rust-build".into(), floors: None };
+        let req = RelayResourceRequest {
+            resource: "rust-build".into(),
+            floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+        };
         let held = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
         let q1 = pg.relay_request_resource(u1, a2, req.clone(), now).await.unwrap();
         sqlx_core::query::query("select pg_sleep(0.012)").execute(pg.pool()).await.unwrap();
@@ -6410,7 +6924,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_release_rules_holder_only_and_unknown() {
         let pg = PgStore::test_store().await;
         let (_c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
@@ -6419,7 +6932,10 @@ mod tests {
             .relay_request_resource(
                 u1,
                 a1,
-                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                RelayResourceRequest {
+                    resource: "rust-build".into(),
+                    floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
                 now,
             )
             .await
@@ -6434,7 +6950,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_heartbeat_renews_held_resource_leases() {
         let pg = PgStore::test_store().await;
         let (_c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
@@ -6443,7 +6958,10 @@ mod tests {
             .relay_request_resource(
                 u1,
                 a1,
-                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                RelayResourceRequest {
+                    resource: "rust-build".into(),
+                    floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
                 now,
             )
             .await
@@ -6469,7 +6987,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_sweep_expires_and_grants_next() {
         let pg = PgStore::test_store().await;
         let (c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
@@ -6486,7 +7003,9 @@ mod tests {
             Some(now - chrono::Duration::seconds(100)),
         )
         .await;
-        let waiter = fx_resource_lease(&pg, u1, c1, a2, "rust-build", "queued", None, None).await;
+        let waiter =
+            fx_queued_waiter(&pg, u1, c1, a2, "rust-build", RelayFloors { disk_gb: 0, swap_gb: 0 })
+                .await;
         let solo = fx_resource_lease(
             &pg,
             u1,
@@ -6516,7 +7035,8 @@ mod tests {
             Some(now + chrono::Duration::seconds(3500)),
         )
         .await;
-        let heir = fx_resource_lease(&pg, u1, c1, a2, "gpu", "queued", None, None).await;
+        let heir =
+            fx_queued_waiter(&pg, u1, c1, a2, "gpu", RelayFloors { disk_gb: 0, swap_gb: 0 }).await;
         let report = pg.relay_sweep_leases(now).await.unwrap();
         assert_eq!(report.expired_resource_leases, 2);
         assert_eq!(report.granted_from_queue, 2);
@@ -6539,7 +7059,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_unregister_releases_held() {
         let pg = PgStore::test_store().await;
         let (_c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
@@ -6548,7 +7067,10 @@ mod tests {
             .relay_request_resource(
                 u1,
                 a1,
-                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                RelayResourceRequest {
+                    resource: "rust-build".into(),
+                    floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
                 now,
             )
             .await
@@ -6557,7 +7079,10 @@ mod tests {
             .relay_request_resource(
                 u1,
                 a2,
-                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                RelayResourceRequest {
+                    resource: "rust-build".into(),
+                    floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
                 now,
             )
             .await
@@ -6572,7 +7097,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_auto_grant_rechecks_floors_per_waiter() {
         let pg = PgStore::test_store().await;
         let (c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
@@ -6584,7 +7108,10 @@ mod tests {
             .relay_request_resource(
                 u1,
                 a1,
-                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                RelayResourceRequest {
+                    resource: "rust-build".into(),
+                    floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
                 now,
             )
             .await
@@ -6615,7 +7142,10 @@ mod tests {
             .relay_request_resource(
                 u1,
                 a3,
-                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                RelayResourceRequest {
+                    resource: "rust-build".into(),
+                    floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
                 now,
             )
             .await
@@ -6655,12 +7185,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item3"]
     async fn resource_rerequest_after_terminal_mints_fresh() {
         let pg = PgStore::test_store().await;
         let (c1, _c3, a1, _a2, _b1, u1) = fx_two_crews(&pg).await;
         let now = t0();
-        let req = RelayResourceRequest { resource: "rust-build".into(), floors: None };
+        let req = RelayResourceRequest {
+            resource: "rust-build".into(),
+            floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+        };
         // Released → fresh.
         let g1 = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
         let rel = pg.relay_release_resource(u1, a1, "rust-build", now).await.unwrap();
@@ -6688,7 +7220,10 @@ mod tests {
             .relay_request_resource(
                 u1,
                 a1,
-                RelayResourceRequest { resource: "e2e".into(), floors: None },
+                RelayResourceRequest {
+                    resource: "e2e".into(),
+                    floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
                 now,
             )
             .await
@@ -6716,7 +7251,10 @@ mod tests {
             .relay_request_resource(
                 u1,
                 a1,
-                RelayResourceRequest { resource: "gpu".into(), floors: None },
+                RelayResourceRequest {
+                    resource: "gpu".into(),
+                    floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
                 now,
             )
             .await

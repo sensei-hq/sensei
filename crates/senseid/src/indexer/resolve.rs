@@ -4611,8 +4611,11 @@ mod tests {
         // identities: item 3's reds clone the `RelayResourceRequest` input
         // (the codebase idiom), and the 11 `clone` references dangle —
         // derive-generated, in no source file (the third documented cause).
+        // Raised 1,116 → 1,120 on 2026-11-06, measured 1,118 over 228
+        // identities: item 3's phase-B bodies add 4 refs over 0 new
+        // identities (alias reaches from the new store fns and handlers).
         assert!(
-            other <= 1_116,
+            other <= 1_120,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

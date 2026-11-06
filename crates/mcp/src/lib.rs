@@ -666,6 +666,22 @@ pub fn daemon_request_for(
                 args,
             ))
         }
+        "relay_request_resource" => {
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, &["resource"]);
+            Some(relay_authed(
+                DaemonRequest::post_json("/api/relay/resources/request", Value::Object(body)),
+                args,
+            ))
+        }
+        "relay_release_resource" => {
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, &["resource"]);
+            Some(relay_authed(
+                DaemonRequest::post_json("/api/relay/resources/release", Value::Object(body)),
+                args,
+            ))
+        }
         // ── Everything else → the daemon mcp proxy ──────────────────────────
         _ => {
             let mut params = build_daemon_params(args, repo_id);
@@ -1432,6 +1448,22 @@ pub fn handle_list_tools() -> Value {
                     ("commits", "array", "Merged shas (empty means nothing to merge)"),
                     ("gates", "array", "[{cmd, exit, counts?}] re-run on the merged tree"),
                 ]),
+            tool("relay_request_resource",
+                "Request a machine-wide resource slot (rust-build, e2e): grants when free and the floors pass, queues behind the holder, refuses below the floors.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("resource", "string", "The slot to request"),
+                ],
+                &[]),
+            tool("relay_release_resource",
+                "Release a held resource slot; the next queued waiter auto-grants. Holder only.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("resource", "string", "The slot to release"),
+                ],
+                &[]),
         ]
     })
 }
@@ -1900,6 +1932,8 @@ mod tests {
         "relay_plan_item",
         "relay_assign_task",
         "relay_merge_task",
+        "relay_request_resource",
+        "relay_release_resource",
     ];
 
     fn tools() -> Vec<Value> {
@@ -2951,6 +2985,8 @@ mod tests {
         "relay_plan_item",
         "relay_assign_task",
         "relay_merge_task",
+        "relay_request_resource",
+        "relay_release_resource",
     ];
 
     const LANE_ID: &str = "01938931-0000-7000-8000-000000000001";
@@ -3316,7 +3352,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item3"]
     fn relay_resource_tools_are_listed() {
         let tools = handle_list_tools();
         let names: Vec<&str> =
@@ -3327,7 +3362,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item3"]
     fn relay_request_resource_posts_shape() {
         assert_eq!(
             missing_required("relay_request_resource", &lane_args(json!({}))),
@@ -3349,7 +3383,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item3"]
     fn relay_release_resource_posts_shape() {
         assert_eq!(
             missing_required("relay_release_resource", &lane_args(json!({}))),
