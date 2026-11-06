@@ -1842,6 +1842,8 @@ export interface SprintFacts {
   completed_committed: number;
   completed_added: number;
   carried_over: number;
+  /** Tickets whose status category is unknown at the sprint's end (a data-quality count). */
+  unknown_status: number;
 }
 
 /** A sprint's SDLC figures (S6); `facts` is `null` when the sprint has no replay. */

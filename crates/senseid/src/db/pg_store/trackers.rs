@@ -1548,6 +1548,8 @@ impl PgStore {
     }
 
     /// Delete one of the workspace's trackers. `false` when the workspace has no such tracker.
+    /// Its board pushes are queued for withdrawal by the delete itself
+    /// (`sensei.queue_delivery_withdrawals`, B13; #355).
     pub async fn delete_tracker(
         &self,
         workspace_id: uuid::Uuid,

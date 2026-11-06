@@ -16,6 +16,7 @@ mod activity_tests;
 mod api_cost_tests;
 mod command_catalogue_tests;
 mod config_tests;
+mod delivery_tests;
 mod dojo_tests;
 mod gateway_tests;
 mod graph_tests;

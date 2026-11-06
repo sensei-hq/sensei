@@ -8,7 +8,7 @@
 - `app/src/routes/(workspace)/workspace/[id]/tickets/+page.svelte`
 - `tickets-state.svelte.ts` (state, words, actions) and `TicketsScreen.svelte` (template)
 - the sidebar entry `{ id: 'tickets', kanji: '札', label: 'Tickets' }` in
-  `workspace-sidebar-view.ts` `SECTIONS`, after `impact` and before `integrations`
+  `workspace-sidebar-view.ts` `SECTIONS`, after `impact` and before `delivery` (Delivery Metrics)
 - `app/src/lib/api.ts` wrappers: `tryListTrackers`, `tryListSprints`, `tryListTrackerTasks`,
   `tryGetBacklog`, `tryListBacklogTasks`, `tryGetTrackerTask`, `tryListUnlinkedSessions`,
   `tryGetReasonCodes` (SDLC figures, below)
@@ -55,13 +55,12 @@ or the code. "—" is only for a null with no reason at all.
   - **Timing:** execution time and lead time (hours as `compactDuration`); on hold (minutes,
     with "×n" holds); on-hold ratio (`33%`).
   - **Rework:** rework time, rework cycles, post-review rework (`12%`).
-- **Lane header row** (`data-sdlc-lane`), under the toolbar:
-  - With the filter on one sprint, that sprint's row: commitment reliability, scope change,
-    carry-over, unplanned work (percents) and velocity ("8 pts").
-  - With All tickets or the Backlog, the board's row: predictability ("12.5 pts", the spread
-    of commitment reliability), tokens per ticket (`compactTokens`) and prompts per ticket
-    (one decimal).
-  - Each null shows its reason's summary, as in the ticket's group.
+- **No lane header row.** Each sprint's and board's own figures moved to Delivery Metrics
+  (`docs/spec/daemon/tracker-delivery-metrics.md` D2, B3, 2026-11-04); a lane shows no
+  `[data-sdlc-lane]`.
+- **A link opens one ticket:** `/workspace/[id]/tickets?board=<tracker id>&ticket=<key>` opens
+  that ticket after load, from its board's lane (else the first lane); Back names that lane. An
+  unknown key shows the ticket error. Delivery Metrics' ticket rows link here.
 - Percents round to a whole number and points to one decimal. A real `0` shows as `0%`,
   `0 pts` or `0`; it is never confused with a null.
 
@@ -82,7 +81,7 @@ assigned to you, sensei writes these numbers back, as set on Integrations." (Sup
 
 **Loading.** "Reading tickets…".
 
-**Not connected** (`GET …/sprints` → 404 `not_connected`): "This workspace has no tracker
+**Not connected** (`GET …/sprints` → 404 `not_connected`): "This workspace has no sprint board
 connected." and a link **Connect one in Integrations** → `/workspace/[id]/integrations`.
 Never shown for a failed read.
 
@@ -137,7 +136,7 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 
 ## Done gate
 
-1. Sidebar shows **Tickets** (札) between Impact and Integrations; the route renders.
+1. Sidebar shows **Tickets** (札) between Impact and Delivery Metrics; the route renders.
 2. A connected project lists every ticket first, each naming its sprint (or Backlog);
    the sprint filter offers All tickets, each sprint and Backlog, searchable by typing;
    choosing one loads its tickets and its usage strip; the AI-only switch narrows the list.
@@ -160,8 +159,9 @@ message (same words as the Integrations screen's table; one shared mapping) and 
    - With `runs_unknown = 2`, each of the four defect counts shows "≥ n" (`compile_defects = 1`
      shows "≥ 1") and the row says "2 runs with unknown outcome". With `runs_unknown = 0`,
      there is no "≥" and no note.
-   - A lane on one sprint shows that sprint's row; on All tickets or the Backlog, the board's
-     project row. A `history_pending` sprint shows that reason's summary.
+   - No lane shows an SDLC row (moved to Delivery Metrics).
+   - `?board=t-1&ticket=AUTH-2` opens AUTH-2 with "Back to …"; an unknown key shows the
+     ticket error.
    - The reason vocabulary failing to load is the daemon-error state with Retry.
    - Tests: state spec and component spec.
 
@@ -175,8 +175,7 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 - Any assignee, author or other person attribute shown. (`assigned_to_me` and the write-back state are not person data; showing them is allowed.)
 - Any request that changes Jira, or any write route called from this screen.
 - An SDLC figure shown as `0`, `0%` or "—" when the daemon gave a reason. A reason shown
-  as its raw code. A defect count without "≥" while runs are unknown. A sprint row built from its tickets' figures. A project row when a
-  sprint is chosen.
+  as its raw code. A defect count without "≥" while runs are unknown. A sprint or board SDLC row on this screen.
 
 ## Related
 

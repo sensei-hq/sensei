@@ -13,6 +13,12 @@ pub struct HistoryCandidate {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// A ticket whose history the history task must still read (S4): not removed, given
+/// an `updated` by the tracker, and not read through it. The one predicate both the
+/// task (`history_candidates`) and the delivery push's pending count use.
+pub(crate) const HISTORY_DUE: &str = "removed_at IS NULL AND issue_updated_at IS NOT NULL \
+     AND (history_through IS NULL OR issue_updated_at > history_through)";
+
 impl PgStore {
     /// Store what the board estimates in, its site's Sprint field and its statuses
     /// (S4), replacing the statuses in one transaction.
@@ -66,21 +72,20 @@ impl PgStore {
         tracker_id: uuid::Uuid,
         limit: i64,
     ) -> Result<Vec<HistoryCandidate>, String> {
-        let rows: Vec<(uuid::Uuid, String, chrono::DateTime<chrono::Utc>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, external_id, issue_updated_at
+        let sql = format!(
+            "SELECT id, external_id, issue_updated_at
                FROM sensei.tracker_tasks
-              WHERE tracker_id = $1 AND removed_at IS NULL
-                AND issue_updated_at IS NOT NULL
-                AND (history_through IS NULL OR issue_updated_at > history_through)
+              WHERE tracker_id = $1 AND {HISTORY_DUE}
               ORDER BY issue_updated_at, id
-              LIMIT $2",
-            )
-            .bind(tracker_id)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| format!("history_candidates({tracker_id}): {e}"))?;
+              LIMIT $2"
+        );
+        let rows: Vec<(uuid::Uuid, String, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(&sql)
+                .bind(tracker_id)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| format!("history_candidates({tracker_id}): {e}"))?;
         Ok(rows
             .into_iter()
             .map(|(task_id, external_id, updated_at)| HistoryCandidate {
@@ -233,7 +238,8 @@ impl PgStore {
                LEFT JOIN sensei.tracker_task_sprints m ON m.task_id = t.id
                LEFT JOIN sensei.sprints s ON s.id = m.sprint_id AND s.removed_at IS NULL
               WHERE t.tracker_id = $1 AND t.removed_at IS NULL
-              GROUP BY t.id",
+              GROUP BY t.id
+              ORDER BY t.id",
         )
         .bind(tracker_id)
         .fetch_all(&self.pool)

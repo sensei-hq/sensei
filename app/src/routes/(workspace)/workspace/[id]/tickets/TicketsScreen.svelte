@@ -7,7 +7,8 @@
   import { Select } from '@rokkit/ui';
   import { PageHeader, Screen } from '$lib/components';
   import { replayHref } from '$lib/sessions-digest.js';
-  import { usageCells, type SdlcFigure, type TicketsState } from './tickets-state.svelte.js';
+  import type { SdlcFigure } from '$lib/sdlc-figures.js';
+  import { usageCells, type TicketsState } from './tickets-state.svelte.js';
 
   let { screen, workspaceId }: { screen: TicketsState; workspaceId: string } = $props();
 
@@ -160,11 +161,6 @@
                   <label for="tickets-ai-only-{lane.id}">Only tickets with AI sessions</label>
                 </span>
                 <p data-count class="m-0 text-sm text-ink-soft">{lane.countLine}</p>
-              </div>
-
-              <div data-sdlc-lane={lane.sdlcRow.kind} class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-                <span class="text-ink">{lane.sdlcRow.kind === 'sprint' ? 'This sprint' : 'This board'}</span>
-                {@render sdlcFigures(lane.sdlcRow.figures)}
               </div>
 
               {#if lane.strip}

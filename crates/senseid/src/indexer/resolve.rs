@@ -4598,6 +4598,10 @@ mod tests {
         // unchanged — `AppState·pg` (484) through the alias, `task_queue`
         // (31), `gateway` (26) — plus macro-declared items. The cure is still
         // following the alias (backlog), not a lower number.
+        //
+        // Merged with the delivery-metrics slice on 2026-11-05/06: there,
+        // `AppState·pg` grew 481 → 484 and `AppState·trackers` (the tick takes
+        // the tracker runtime) joined the list. Same class; same cure.
         assert!(
             other <= 1_080,
             "{other} of {resolved} first-party references ({} distinct identities) name an \

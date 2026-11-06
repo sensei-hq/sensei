@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-11-03
+updated: 2026-11-05
 ---
 
 # Decisions
@@ -9,6 +9,21 @@ updated: 2026-11-03
 > The anti-rework memory — never re-derive a settled choice.
 > The **design journey** (approaches tried, what worked, what didn't) lives in
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
+
+---
+
+## 2026-11-05 — Tracker delivery metrics: what leaves the machine, and who sees it (user)
+
+Decided over the delivery-metrics slice (`docs/spec/daemon/tracker-delivery-metrics.md`, #351–#356).
+
+| # | Decision |
+|---|---|
+| D87 | **Ticket titles, board and sprint names travel to the Dōjō for every classification** (B9, B12, B15), overriding `tracker_tasks.summary`'s "never leaves the machine". A title is the only ticket free text that travels: never a description, comment, assignee, attachment or URL. |
+| D88 | **Replace and withdraw** (B13): each push replaces everything that install reported for the board; deleting the tracker, or the board losing consent, withdraws it. Signing out keeps the data, shown as stale. |
+| D89 | **Each person's cost at their own rate, summed** (B14); the rate itself, `minutes_per_point`, `expected_minutes` and `time_variance_minutes` never travel. |
+| D90 | **Cost and one-contributor figures are gated** (B16): merged cost at the contributors' rates, and every figure of an item with one contributor (its report time and staleness included), show only to readers allowed per-person rows (`can_read_repository_metric` over every source repository). Known limit, accepted: the daemon's #240 filter is the only proof a row is that person's own, so a member forging a push can still difference the merge. |
+
+Alternatives weighed: not sending cost at all (loses B14's team cost), and showing every merged value to every workspace reader (exposes a solo contributor's numbers and, through cost ÷ time, their rate).
 
 ---
 

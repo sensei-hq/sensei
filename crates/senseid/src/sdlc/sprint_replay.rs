@@ -405,6 +405,40 @@ fn figures_by_sprint(
         .collect()
 }
 
+/// Every non-removed sprint's figures and the board's predictability, from ONE
+/// replay read (tracker-delivery-metrics D3): what a board's delivery facts carry.
+pub struct BoardFigures {
+    pub by_sprint: HashMap<uuid::Uuid, SprintSdlc>,
+    /// Predictability, or the reason it has none.
+    pub predictability: Result<f64, &'static str>,
+}
+
+/// A board's sprint figures and predictability, read once (S5, S6).
+pub async fn board_figures(
+    pg: &crate::db::pg_store::PgStore,
+    tracker_id: uuid::Uuid,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<BoardFigures, String> {
+    let inputs = pg.replay_inputs(tracker_id).await?;
+    let by_sprint = figures_by_sprint(&inputs, now)?;
+    let predictability = board_predictability(&inputs, &by_sprint);
+    Ok(BoardFigures { by_sprint, predictability })
+}
+
+/// Predictability over the board's closed sprints' commitment reliability (S6).
+fn board_predictability(
+    inputs: &crate::db::pg_store::tracker_history::ReplayInputs,
+    by_sprint: &HashMap<uuid::Uuid, SprintSdlc>,
+) -> Result<f64, &'static str> {
+    let closed: Vec<Option<f64>> = inputs
+        .sprints
+        .iter()
+        .filter(|s| s.state == "closed")
+        .map(|s| by_sprint.get(&s.id).and_then(|f| f.commitment_reliability))
+        .collect();
+    predictability(&closed)
+}
+
 /// The tracker's project figures (S6): predictability over its last six closed
 /// sprints, and tokens and prompts per ticket over the distinct union of its
 /// tickets' sessions (a session shared by two tickets counts once).
@@ -416,13 +450,7 @@ pub async fn project_sdlc(
     let mut p = ProjectSdlc::default();
     let inputs = pg.replay_inputs(tracker_id).await?;
     let by_sprint = figures_by_sprint(&inputs, now)?;
-    let closed: Vec<Option<f64>> = inputs
-        .sprints
-        .iter()
-        .filter(|s| s.state == "closed")
-        .map(|s| by_sprint.get(&s.id).and_then(|f| f.commitment_reliability))
-        .collect();
-    match predictability(&closed) {
+    match board_predictability(&inputs, &by_sprint) {
         Ok(v) => p.predictability = Some(v),
         Err(why) => {
             p.reasons.insert("predictability", why);
@@ -440,26 +468,49 @@ pub async fn project_sdlc(
         return Ok(p);
     }
     let n = tickets.len() as f64;
-    let (tokens, missing) = pg.session_token_totals(&sessions).await?;
-    p.sessions_without_tokens = missing;
-    if missing > 0 {
+    let totals = session_totals(pg, &sessions).await?;
+    p.sessions_without_tokens = totals.without_tokens;
+    if totals.without_tokens > 0 {
         p.reasons.insert("tokens_per_ticket", "partial_tokens");
     } else {
-        p.tokens_per_ticket = Some(tokens as f64 / n);
+        p.tokens_per_ticket = Some(totals.tokens as f64 / n);
     }
+    match totals.prompts {
+        Err(why) => {
+            p.reasons.insert("prompts_per_ticket", why);
+        }
+        Ok(prompts) => p.prompts_per_ticket = Some(prompts as f64 / n),
+    }
+    Ok(p)
+}
+
+/// A distinct set of sessions' tokens and prompts: the project figures' inputs (S6).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SessionTotals {
+    /// Summed over the sessions that have every token field.
+    pub tokens: i64,
+    pub without_tokens: i64,
+    /// Prompts, or why the signals that count them are not current.
+    pub prompts: Result<i64, &'static str>,
+}
+
+/// The tokens and prompts of `sessions` (distinct).
+pub async fn session_totals(
+    pg: &crate::db::pg_store::PgStore,
+    sessions: &[uuid::Uuid],
+) -> Result<SessionTotals, String> {
+    let (tokens, without_tokens) = pg.session_token_totals(sessions).await?;
     let hash = pg.command_catalogue().await?.hash;
-    let signals = pg.session_signals_for(&sessions, &hash).await?;
-    if let Some(why) = crate::sdlc::ticket::underived(signals.iter().map(|(_, s)| s)) {
-        p.reasons.insert("prompts_per_ticket", why);
-    } else {
-        let prompts = signals
+    let signals = pg.session_signals_for(sessions, &hash).await?;
+    let prompts = match crate::sdlc::ticket::underived(signals.iter().map(|(_, s)| s)) {
+        Some(why) => Err(why),
+        None => Ok(signals
             .iter()
             .flat_map(|(_, s)| s.signals.iter())
             .filter(|x| x.kind == crate::sdlc::signals::SignalKind::Prompt)
-            .count();
-        p.prompts_per_ticket = Some(prompts as f64 / n);
-    }
-    Ok(p)
+            .count() as i64),
+    };
+    Ok(SessionTotals { tokens, without_tokens, prompts })
 }
 
 #[cfg(test)]
@@ -709,7 +760,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod store_tests {
+pub(crate) mod store_tests {
     use super::*;
     use crate::db::pg_store::PgStore;
 
@@ -724,7 +775,7 @@ mod store_tests {
     /// Sprint 100 (closed): A committed and done, B added and carried into 101.
     /// Sprint 101 (closed): C and D committed, C done; B added, not done.
     /// Sprint 102 is in the future. Points: A 3, C 5, B and D none.
-    async fn seeded(pg: &PgStore) -> uuid::Uuid {
+    pub(crate) async fn seeded(pg: &PgStore) -> uuid::Uuid {
         let t = crate::tracker::history::test_tracker(pg).await;
         for sql in [
             "UPDATE sensei.trackers SET estimation_field = 'customfield_10016',

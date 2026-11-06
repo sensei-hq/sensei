@@ -76,7 +76,12 @@ export interface IdentityHeader {
 const DAEMON_REMEDY = 'Check that the sensei daemon is running, then retry.';
 
 /** An identity's own sync entities — about the identity, not a repository. */
-const IDENTITY_ENTITIES = new Set(['forge_mirror', 'dojo_sync_plan']);
+const IDENTITY_ENTITIES = new Set(['forge_mirror', 'dojo_sync_plan', 'tracker_board']);
+
+/** An own row's name: a tracker board travels under a pseudonymous key, never a
+ *  URL, so it is named by the key's start (tracker-delivery-metrics D3). */
+const ownName = (r: SyncStateRow) =>
+  r.entity === 'tracker_board' ? `board ${r.entity_key.slice(0, 8)}` : entityLabel(r.entity);
 
 export interface ActivityLine {
   key: string;
@@ -268,7 +273,7 @@ export class DojoConnectionScreen {
     return out;
   }
 
-  /** The selected identity's own rows (its sync plans, its forge mirror),
+  /** The selected identity's own rows (its sync plans, its forge mirror, its board pushes),
    *  keyed by entity · key · direction — two dōjōs' plans share an entity. */
   get #ownRows(): SyncStateRow[] {
     const slot = this.selected?.sessionSlot;
@@ -282,7 +287,7 @@ export class DojoConnectionScreen {
       .sort((a, b) => rank(a) - rank(b))
       .map((r) => ({
         key: `${r.entity}:${r.entity_key}:${r.direction}`,
-        label: `${entityLabel(r.entity)} · ${r.direction}`,
+        label: `${ownName(r)} · ${r.direction}`,
         line: agreementLine(r),
         toneClass: syncToneClass(r.state),
       }));
@@ -295,7 +300,7 @@ export class DojoConnectionScreen {
       .map((r) => ({
         key: `${r.entity}:${r.entity_key}:${r.direction}`,
         tone: 'fault' as const,
-        title: `${entityLabel(r.entity)} is failing`,
+        title: `${ownName(r)} is failing`,
         detail: r.last_error ?? undefined,
         code: r.entity,
         remedy: 'It retries on the next sync. If it keeps failing, sign this identity out and in again.',

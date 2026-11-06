@@ -46,6 +46,7 @@ export default defineConfig({
       '$lib': '/src/lib',
       // Mirrors svelte.config.js: the vocabulary shared with the dōjō (#133).
       '@sensei/glyphs': fileURLToPath(new URL('../packages/glyphs/index.js', import.meta.url)),
+      '@sensei/sdlc-figures': fileURLToPath(new URL('../packages/sdlc-figures/index.js', import.meta.url)),
       '@sensei/ui': fileURLToPath(new URL('../packages/ui/index.js', import.meta.url)),
       '@sensei/codemap': fileURLToPath(new URL('../packages/codemap/index.ts', import.meta.url)),
 
