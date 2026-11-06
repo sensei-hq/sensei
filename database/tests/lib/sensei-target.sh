@@ -17,11 +17,13 @@
 # This file is sourced, never executed.
 #
 # Boundary (documented, not silent): the live check covers literal loopback
-# hosts (localhost, 127/8, [::1]), empty/unix-socket hosts incl. the %2F
-# form, and ports 5432 (incl. default) + 7744. A DHCP hostname resolving to
-# localhost, double-encoded hosts, or dbname defaulting from a user literally
-# named `sensei` are out of scope: lanes are cooperating agents, and the
-# refusal targets accidental routing, not deliberate evasion.
+# hosts (localhost, localhost., 0.0.0.0, 127/8, [::1]), empty/unix-socket
+# hosts incl. the %2F form, ports 5432 (incl. default) + 7744, and dbname
+# defaulting through libpq's PGDATABASE → PGUSER → USER chain. A DHCP
+# hostname resolving to localhost, double-encoded hosts, or non-canonical
+# IPv6 loopback spellings ([0:0:0:0:0:0:0:1], [::ffff:127.0.0.1]) are out of
+# scope: lanes are cooperating agents, and the refusal targets accidental
+# routing, not deliberate evasion.
 
 # Lowercase via tr (bash 3.2 has no ${var,,}).
 _sensei_lower() {
@@ -34,7 +36,8 @@ _sensei_lower() {
 # - userinfo: stripped on the LAST @ (a password may hold one)
 # - host: [bracketed] or up to the last : (numeric tail = port); %2F-decoded
 # - port: empty means the 5432 default
-# - dbname: first path segment, trailing slashes stripped, empty means $USER
+# - dbname: first path segment, trailing slashes stripped, empty means
+#   libpq's PGDATABASE → PGUSER → USER chain
 sensei_split_url() {
     local rest auth path hostport host tail port dbname
     rest="$1"
@@ -85,16 +88,17 @@ sensei_split_url() {
     # First path segment, trailing slashes stripped.
     dbname="${path%%/*}"
     while [ "${dbname%/}" != "$dbname" ]; do dbname="${dbname%/}"; done
-    [ -z "$dbname" ] && dbname="${USER:-}"
+    [ -z "$dbname" ] && dbname="${PGDATABASE:-${PGUSER:-${USER:-}}}"
     printf '%s|%s|%s' "$host" "$port" "$dbname"
 }
 
-# Exit 0 iff the URL targets the live daemon DB: dbname `sensei` (any case —
-# libpq matches it exactly, so a differently-cased name fails closed at
-# connect time either way) on a local transport (loopback, empty/socket
-# host) at port 5432 (incl. default) or the daemon's own 7744. Unparsable
-# URLs are not live (psql reports them); remote hosts are the caller's
-# deliberate target, not the local daemon DB.
+# Exit 0 iff the URL targets the live daemon DB: dbname `sensei`,
+# case-insensitive — Postgres folds unquoted dbnames, so `…/SENSEI` connects
+# to the live DB and the downcased match is load-bearing, not belt-and-braces
+# — on a local transport (loopback, empty/socket host) at port 5432 (incl.
+# default) or the daemon's own 7744. Unparsable URLs are not live (psql
+# reports them); remote hosts are the caller's deliberate target, not the
+# local daemon DB.
 sensei_is_live() {
     local parts host rest port dbname
     parts="$(sensei_split_url "$1")" || return 1
@@ -105,7 +109,7 @@ sensei_is_live() {
         *) return 1 ;;
     esac
     case "$host" in
-        localhost|127.*|::1|""|/*) : ;;
+        localhost|localhost.|0.0.0.0|127.*|::1|""|/*) : ;;
         *) return 1 ;;
     esac
     case "$port" in
@@ -152,8 +156,12 @@ sensei_ensure_db() {
     dbname="${url##*/}"; dbname="${dbname%%\?*}"
     echo "run.sh: creating lane database $dbname from the DDL tree…" >&2
     createdb -h localhost "$dbname" >/dev/null 2>&1 || {
-        echo "run.sh: cannot create lane database $dbname (createdb failed)." >&2
-        return 69
+        # Another run.sh may have won the race: re-probe before giving up,
+        # then proceed to deploy (idempotent) rather than failing the loser.
+        if ! psql "$url" -X -q -c 'select 1' >/dev/null 2>&1; then
+            echo "run.sh: cannot create lane database $dbname (createdb failed)." >&2
+            return 69
+        fi
     }
     libdir="$(dirname "${BASH_SOURCE[0]:-$0}")"
     (cd "$libdir/../.." && DATABASE_URL="$url" dbd deploy --scope default >/dev/null 2>&1) || {

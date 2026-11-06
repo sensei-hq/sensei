@@ -10,7 +10,7 @@
 # positive with a negative, so a probe that never runs cannot pass.
 set -uo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 FX=fixtures/run-apply
 USAGE='usage: run.sh --apply'
@@ -119,6 +119,15 @@ unit "live: encoded socket host" sensei_is_live 0 'postgresql://%2Fvar%2Frun%2Fp
 unit "live: daemon port" sensei_is_live 0 'postgresql://localhost:7744/sensei'
 unit "live: trailing slash" sensei_is_live 0 'postgresql://localhost:5432/sensei/'
 unit "live: bracket ipv6 loopback" sensei_is_live 0 'postgresql://[::1]:5432/sensei'
+unit "live: 0.0.0.0 routes to localhost" sensei_is_live 0 'postgresql://0.0.0.0:5432/sensei'
+unit "live: trailing-dot localhost" sensei_is_live 0 'postgresql://localhost.:5432/sensei'
+unit "live: dbname case folds" sensei_is_live 0 'postgresql://localhost:5432/SENSEI'
+# N2: libpq's dbname chain PGDATABASE → PGUSER → USER (characterization +
+# new pins; subshells unset first so the runner's env can't leak in).
+if ( unset PGDATABASE PGUSER; USER=sensei sensei_is_live 'postgresql://localhost:5432/' ); then pass "live: USER names sensei"; else fail "live: USER names sensei"; fi
+if ( unset PGDATABASE PGUSER; USER=nobody PGUSER=sensei sensei_is_live 'postgresql://localhost:5432/' ); then pass "live: PGUSER names sensei"; else fail "live: PGUSER names sensei"; fi
+if ( unset PGDATABASE PGUSER; USER=nobody PGDATABASE=sensei sensei_is_live 'postgresql://localhost:5432/' ); then pass "live: PGDATABASE names sensei"; else fail "live: PGDATABASE names sensei"; fi
+if ( unset PGDATABASE PGUSER; USER=sensei PGDATABASE=other sensei_is_live 'postgresql://localhost:5432/' ); then fail "not live: PGDATABASE wins over USER"; else pass "not live: PGDATABASE wins over USER"; fi
 unit "not live: lane db name" sensei_is_live 1 'postgresql://localhost:5432/sensei_test_l3'
 unit "not live: other port" sensei_is_live 1 'postgresql://localhost:5433/sensei'
 unit "not live: remote host" sensei_is_live 1 'postgresql://db.internal:5432/sensei'
@@ -491,6 +500,26 @@ else
     fi
     dropdb --if-exists -h localhost "$AUTODB" >/dev/null 2>&1 || true
     rm -rf "$(dirname "$fakerepo")"
+    # N1: a lost createdb race is rescued — the loser re-probes and proceeds
+    # instead of exiting 69. Deterministic: a fake createdb that creates the
+    # DB (as the race winner did) yet exits 1.
+    racedb="sensei_test_selfapply_race$$"
+    case "$racedb" in
+        sensei_test_selfapply_*) : ;;
+        *) echo "self-test-apply: refusing to use race name $racedb" >&2; exit 1 ;;
+    esac
+    dropdb --if-exists -h localhost "$racedb" >/dev/null 2>&1 || true
+    fakebin=$(mktemp -d)
+    printf '#!/usr/bin/env bash\npsql -h localhost postgres -qc "CREATE DATABASE \\"$3\\"" >/dev/null 2>&1\nexit 1\n' > "$fakebin/createdb"
+    chmod +x "$fakebin/createdb"
+    if PATH="$fakebin:$PATH" sensei_ensure_db "postgresql://localhost:5432/$racedb" >/dev/null 2>&1 \
+        && psql -h localhost -X -q -c 'select count(*) from relay.crews' "postgresql://localhost:5432/$racedb" >/dev/null 2>&1; then
+        pass "lost createdb race rescued and deployed on $racedb"
+    else
+        fail "lost createdb race not rescued on $racedb"
+    fi
+    dropdb --if-exists -h localhost "$racedb" >/dev/null 2>&1 || true
+    rm -rf "$fakebin"
     # Detached HEAD derives nothing: refuse, naming TEST_DATABASE_URL.
     fakerepo2=$(mktemp -d)/repo
     mkdir -p "$fakerepo2" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init -qb main "$fakerepo2" >/dev/null 2>&1 \

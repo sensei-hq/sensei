@@ -11,7 +11,7 @@ set -uo pipefail
 # `--apply` resolves its paths against the caller's cwd, so this is captured
 # before the cd below.
 caller_pwd="$PWD"
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 # shellcheck disable=SC1091
 . ./lib/sensei-target.sh
