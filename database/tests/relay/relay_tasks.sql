@@ -6,12 +6,10 @@
 -- itself; a blocked task with no memory of where it was (or any other state
 -- carrying one); a non-v7 id; a non-owner reading a row.
 --
--- Run with the task DDL applied (`run.sh --apply sensei
--- ../ddl/enum/relay/task_phase.ddl ../ddl/enum/relay/task_state.ddl
--- ../ddl/table/relay/crews.ddl ../ddl/table/relay/lanes.ddl
--- ../ddl/table/relay/items.ddl ../ddl/table/relay/tasks.ddl
--- relay/relay_tasks.sql.pending`), or against a database the DDL has deployed
--- to: asserts, rolls back.
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_tasks.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_tasks.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
 --
 -- NOTE (for L0): "active" is assigned/working/in_review/rework/blocked —
 -- approved, done, cancelled and interrupted release the lane. `state`
@@ -19,6 +17,9 @@
 -- `blocked_from_state` is ruled (Q5): set on block, cleared on resume.
 
 begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
 
 insert into relay.crews (user_id, id, status) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f601', 'active'),
@@ -294,7 +295,8 @@ begin
   end;
 
   -- The daemon owner sees all twelve tasks (8 fixtures + 3 coexists + defaults).
-  select count(*) into n from relay.tasks;
+  select count(*) into n from relay.tasks
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
   if n <> 12 then
     raise exception 'the owner should see 12 tasks, saw %.', n;
   end if;

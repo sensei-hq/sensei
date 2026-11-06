@@ -4,13 +4,15 @@
 -- naming none); a second granted lease on one resource — even across users
 -- (the slot is machine-wide); a non-v7 id; a non-owner reading a row.
 --
--- Run with the lease DDL applied (`run.sh --apply sensei
--- ../ddl/enum/relay/lease_kind.ddl ../ddl/enum/relay/lease_state.ddl
--- ../ddl/table/relay/crews.ddl ../ddl/table/relay/lanes.ddl
--- ../ddl/table/relay/leases.ddl relay/relay_leases.sql.pending`), or against
--- a database the DDL has deployed to: asserts, rolls back.
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_leases.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_leases.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
 
 begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
 
 insert into relay.crews (user_id, id, status) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f401', 'active'),
@@ -162,7 +164,8 @@ begin
   end;
 
   -- The daemon owner sees all seven leases.
-  select count(*) into n from relay.leases;
+  select count(*) into n from relay.leases
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
   if n <> 7 then
     raise exception 'the owner should see 7 leases, saw %.', n;
   end if;

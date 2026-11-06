@@ -6,11 +6,15 @@
 -- that dereferences `auth.uid` (it exists on the dōjō, not on the desktop —
 -- the same DDL deploys to both); a view that is not security-invoker.
 --
--- Run with the table + view DDL applied (`run.sh --apply sensei
--- ../ddl/table/relay/*.ddl ../ddl/view/relay/*.ddl relay/relay_schema.sql.pending`),
--- or against a database the DDL has deployed to: asserts, rolls back.
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_schema.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_schema.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
 
 begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
 
 do $$
 declare

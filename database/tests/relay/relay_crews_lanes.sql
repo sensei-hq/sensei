@@ -5,16 +5,19 @@
 -- per crew; a duplicate code per crew; a lane on a missing crew; a non-v7 id;
 -- a non-owner reading or writing a row.
 --
--- Run with the crews + lanes DDL applied (`run.sh --apply sensei
--- ../ddl/enum/relay/lane_role.ddl ../ddl/table/relay/crews.ddl
--- ../ddl/table/relay/lanes.ddl relay/relay_crews_lanes.sql.pending`), or
--- against a database the DDL has deployed to: asserts, rolls back.
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_crews_lanes.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_crews_lanes.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
 --
 -- NOTE (Q6 ruling): a coordinator minting a crew may name no repository, so
 -- both `crews.repo_key` and the coordinator lane's `repo` are nullable — a
 -- lane with no checkout yet, honestly null. Contributors register with one.
 
 begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
 
 -- U1 owns C1 (workspace W1, founded on a repo) and C2 (neither); U2 owns C3.
 insert into relay.crews (user_id, id, workspace_id, repo_key, goal, status) values
@@ -197,11 +200,13 @@ begin
   end;
 
   -- The daemon owner sees every row (3 crews, 7 lanes: six fixtures + L4).
-  select count(*) into n from relay.crews;
+  select count(*) into n from relay.crews
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
   if n <> 3 then
     raise exception 'the owner should see 3 crews, saw %.', n;
   end if;
-  select count(*) into n from relay.lanes;
+  select count(*) into n from relay.lanes
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
   if n <> 7 then
     raise exception 'the owner should see 7 lanes, saw %.', n;
   end if;

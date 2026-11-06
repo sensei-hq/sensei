@@ -5,16 +5,19 @@
 -- files/gates, options, to); a lane shown by id instead of code; the person
 -- shown as anything but null; another task's or user's rows leaking in.
 --
--- Run with the full relay DDL applied (`run.sh --apply sensei
--- ../ddl/enum/relay/*.ddl ../ddl/table/relay/*.ddl
--- ../ddl/view/relay/task_history.ddl relay/relay_task_history.sql.pending`),
--- or against a database the DDL has deployed to: asserts, rolls back.
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_task_history.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_task_history.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
 --
 -- NOTE (for L0): the unpacked set is verdict/findings/files/gates/options/to
 -- (the folds' primary structures); context/recommended/blocks ride in `props`.
 -- Run totals (RelayRunDetails) are daemon-computed over this view. Rule if otherwise.
 
 begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
 
 insert into relay.crews (user_id, id, status) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa01', 'active'),
@@ -185,10 +188,11 @@ begin
     raise exception 'another task''s action leaked into the history.';
   end if;
 
-  -- The daemon owner sees all ten rows.
-  select count(*) into n from relay.task_history;
-  if n <> 10 then
-    raise exception 'the owner should see 10 history rows, saw %.', n;
+  -- The daemon owner sees all nine rows (H1..H7 + H8 + H9).
+  select count(*) into n from relay.task_history
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
+  if n <> 9 then
+    raise exception 'the owner should see 9 history rows, saw %.', n;
   end if;
 end $$;
 

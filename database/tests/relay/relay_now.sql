@@ -8,10 +8,10 @@
 -- completed row for yesterday's or a working task; an `approved` task without
 -- its fallback stamp; a section outside the four; a non-owner reading a row.
 --
--- Run with the full relay DDL applied (`run.sh --apply sensei
--- ../ddl/enum/relay/*.ddl ../ddl/table/relay/*.ddl ../ddl/view/relay/now.ddl
--- relay/relay_now.sql.pending`), or against a database the DDL has deployed
--- to: asserts, rolls back.
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_now.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_now.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
 --
 -- NOTE (for L0): the sectioned shape (section + id + payload) is proposed —
 -- one view, four grains, the daemon selects and shapes. Each section carries
@@ -22,6 +22,9 @@
 -- counts manual triage items only. Rule if otherwise.
 
 begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
 
 insert into relay.crews (user_id, id, workspace_id, goal, status) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f901',
@@ -232,7 +235,8 @@ begin
   end if;
 
   -- The open person ask reads whole; the lane-directed and answered ones are out.
-  select count(*) into n from relay.now where section = 'open_asked';
+  select count(*) into n from relay.now where section = 'open_asked'
+    and user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
   if n <> 2 then
     raise exception 'open_asked should hold A1 + A9, saw % row(s).', n;
   end if;
@@ -261,7 +265,8 @@ begin
   end if;
 
   -- Triage: one row per user, manual items only, both nulls honest.
-  select count(*) into n from relay.now where section = 'triage_count';
+  select count(*) into n from relay.now where section = 'triage_count'
+    and user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
   if n <> 2 then
     raise exception 'triage_count should hold 2 rows, saw %.', n;
   end if;
@@ -275,7 +280,8 @@ begin
   -- Completed today: the approved (fallback stamp), the merged, the plain done,
   -- the done-on-L1, the midnight-sharp — and nothing older, earlier, or
   -- still working.
-  select count(*) into n from relay.now where section = 'completed_today';
+  select count(*) into n from relay.now where section = 'completed_today'
+    and user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
   if n <> 5 then
     raise exception 'completed_today should hold 5 rows, saw %.', n;
   end if;
@@ -350,7 +356,8 @@ begin
   end if;
 
   -- The daemon owner sees all fourteen rows (5 lanes + 2 asks + 2 triage + 5 completed).
-  select count(*) into n from relay.now;
+  select count(*) into n from relay.now
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
   if n <> 14 then
     raise exception 'the owner should see 14 now rows, saw %.', n;
   end if;

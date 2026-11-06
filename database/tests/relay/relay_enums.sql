@@ -3,15 +3,19 @@
 -- WHAT BREAKS THIS TEST: a renamed/reordered/dropped label; a ninth enum in
 -- `relay`; `item_state` losing `triage` (lanes-data's "one extra state").
 --
--- Run with the enum DDL applied (`run.sh --apply sensei
--- ../ddl/enum/relay/*.ddl relay/relay_enums.sql.pending`), or against a
--- database the DDL has deployed to: asserts, rolls back.
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_enums.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_enums.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
 --
 -- NOTE (for L0): `item_state` leads with `triage` (lifecycle order:
 -- triage → backlog → planned → closed). The rest follow lanes-data's listed
 -- order. Rule if otherwise.
 
 begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
 
 do $$
 declare

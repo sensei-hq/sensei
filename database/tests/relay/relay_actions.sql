@@ -4,17 +4,18 @@
 -- shared text stays short); a dangling crew/task/lane/reply_to; kind or crew
 -- turning nullable; a non-v7 id; a non-owner reading a row.
 --
--- Run with the action DDL applied (`run.sh --apply sensei
--- ../ddl/enum/relay/action_kind.ddl ../ddl/enum/relay/task_phase.ddl
--- ../ddl/table/relay/crews.ddl ../ddl/table/relay/lanes.ddl
--- ../ddl/table/relay/tasks.ddl ../ddl/table/relay/actions.ddl
--- relay/relay_actions.sql.pending`), or against a database the DDL has
--- deployed to: asserts, rolls back.
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_actions.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_actions.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
 --
 -- NOTE (for L0): the 600-char cap binds reported/reviewed only (lanes-data's
 -- "summaries"); questions and messages are daemon-validated. Rule if otherwise.
 
 begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
 
 insert into relay.crews (user_id, id, status) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f701', 'active'),
@@ -208,7 +209,8 @@ begin
   end;
 
   -- The daemon owner sees all ten actions (7 fixtures + 2 long + started).
-  select count(*) into n from relay.actions;
+  select count(*) into n from relay.actions
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
   if n <> 10 then
     raise exception 'the owner should see 10 actions, saw %.', n;
   end if;

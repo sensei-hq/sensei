@@ -5,16 +5,27 @@
 -- `user_id` (it is one vocabulary, seeded identically both sides); anyone but
 -- the daemon owner writing it; anyone unable to read it.
 --
--- Run with the lookup DDL applied (`run.sh --apply sensei
--- ../ddl/table/relay/finding_classes.ddl
--- relay/relay_finding_classes.sql.pending`), or against a database the DDL
--- has deployed to: asserts, rolls back.
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_finding_classes.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_finding_classes.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
 --
 -- NOTE (for L0): the ten classes are proposed from the README test-design
 -- checklist. The daemon rejects unknown classes (item 2); the learning loop
 -- adds rows with `added_by` set. Rule on the set if otherwise.
 
 begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
+
+-- The seed through the real path: the JSONL into staging, then the proc.
+-- (\copy resolves from the psql cwd: run from database/tests/.)
+create temp table fc_seed (line text);
+\copy fc_seed from '../import/staging/finding_classes.jsonl'
+insert into staging.finding_classes (code, label)
+  select line::jsonb->>'code', line::jsonb->>'label' from fc_seed;
+call staging.import_finding_classes();
 
 do $$
 declare
@@ -24,7 +35,7 @@ declare
 begin
   -- The seed: exactly the ten proposed classes, code and label pinned.
   select array_agg(code order by code), array_agg(label order by code)
-    into v_codes, v_labels from relay.finding_classes;
+    into v_codes, v_labels from relay.finding_classes where added_by is null;
   if v_codes is distinct from
       array['fabricated_default', 'flaky_time', 'missing_failure_test', 'role_gap', 'secret_leak',
             'silent_drop', 'skipped_live', 'surviving_mutant', 'tenant_leak', 'unverified_claim'] then
@@ -38,9 +49,10 @@ begin
   end if;
 
   -- Seeded rows name no adder; the loop's rows will.
-  select count(*) into n from relay.finding_classes where added_by is not null;
-  if n <> 0 then
-    raise exception 'seeded classes must leave added_by null, saw % set.', n;
+  select count(*) into n from relay.finding_classes
+   where added_by is null and code = any (v_codes);
+  if n <> 10 then
+    raise exception 'the ten seeded classes must leave added_by null, saw % null.', n;
   end if;
 
   -- The code is the key; the label is required.
@@ -65,9 +77,18 @@ begin
   delete from relay.finding_classes where code = 'stale_mock';
 
   -- The daemon owner sees the ten.
-  select count(*) into n from relay.finding_classes;
+  select count(*) into n from relay.finding_classes where added_by is null;
   if n <> 10 then
     raise exception 'the owner should see 10 classes, saw %.', n;
+  end if;
+
+  -- A re-run over doubled staging rows is a no-op, not an error.
+  insert into staging.finding_classes (code, label)
+    select code, label from staging.finding_classes;
+  call staging.import_finding_classes();
+  select count(*) into n from relay.finding_classes where added_by is null;
+  if n <> 10 then
+    raise exception 'a seed re-run should keep 10 classes, saw %.', n;
   end if;
 end $$;
 
@@ -79,7 +100,7 @@ do $$
 declare
   n int;
 begin
-  select count(*) into n from relay.finding_classes;
+  select count(*) into n from relay.finding_classes where added_by is null;
   if n <> 10 then
     raise exception 'U1 should read 10 classes, saw %.', n;
   end if;
@@ -98,7 +119,7 @@ do $$
 declare
   n int;
 begin
-  select count(*) into n from relay.finding_classes;
+  select count(*) into n from relay.finding_classes where added_by is null;
   if n <> 10 then
     raise exception 'U2 should read 10 classes, saw %.', n;
   end if;
