@@ -1,7 +1,7 @@
 # Relay lanes · data model (proposal r2 for discussion, 2026-11-05)
 
 **For:** [lanes.md](lanes.md). **Screen and interaction contract:** `coord/mockups/relay-lanes/CONTRACT.md` (Design r1, with
-the "Message the crew" addendum, settled with the user). Nothing here is built yet.
+the "Message the crew" addendum, settled with the user). Relay DDL merged; the daemon store and screens are under construction (slice 1).
 
 **r2 (user, 2026-11-05):**
 - Reports, reviews, findings, decisions and messages are all **actions on a task**: one table, categorised by kind.
