@@ -125,6 +125,17 @@ export const DIAGRAM_VIEWS: DiagramView[] = VIEWS.map((v) => ({ ...v, icon: KANJ
 /** The view a `diagrams/` URL opens on: Structure, modules first (M17). */
 export const DEFAULT_VIEW = DIAGRAM_VIEWS[0].id;
 
+/** The view id a diagram keeps its open bands under: one per kind of view, not
+ *  per workspace (D87 §3). The seven lenses are their own kinds; the database
+ *  is the one diagram that is not a lens, so it is `er`. */
+export function viewIdOf(view: DiagramView): string {
+  return `workspace.diagrams.${view.lens ? view.id : 'er'}`;
+}
+
+/** Every diagram's view id: the pages key their bands by one, and the legacy
+ *  header's single choice migrates into all of them (D87 §9). */
+export const DIAGRAM_VIEW_IDS: string[] = DIAGRAM_VIEWS.map(viewIdOf);
+
 /** The Code map lens a route segment draws, or null when it is not one. */
 export function lensOf(id: string): Lens | null {
   return DIAGRAM_VIEWS.find((v) => v.id === id)?.lens ?? null;
