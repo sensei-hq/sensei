@@ -45,8 +45,10 @@ describe('Database · ER', () => {
     render();
     await settle();
     expect(q('[data-graph-design-overview]')).not.toBeNull();
-    const layout = q('[data-testid="schema-layout"]') as HTMLElement;
-    const [main, side] = [...layout.children] as HTMLElement[];
+    // D87 §9: the design is the shell's body, its sidebar the shell's sidebar
+    // slot — so the design pane and the sidebar are read apart, not as siblings.
+    const main = q('[data-screen-body] [data-testid="schema-layout"]') as HTMLElement;
+    const side = q('[data-screen-sidebar] [data-testid="schema-sidebar"]') as HTMLElement;
     // Only the tabs head the design: its name and counts are the page header's already.
     const tabs = [...main.querySelectorAll('[data-testid="schema-tabs"] [role="tab"]')].map((t) => t.textContent?.trim());
     expect(tabs).toEqual(['Overview', 'Diagram', 'Entities']);

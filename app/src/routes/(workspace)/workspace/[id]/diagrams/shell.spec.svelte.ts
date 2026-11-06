@@ -31,6 +31,12 @@ const port = (): CodeMapPort => ({
   level0: vi.fn(() => ok(L0)), module: vi.fn(() => ok(L1)), file: vi.fn(),
   zones: vi.fn(() => ok({ points: [], meanDistance: 0, coverage: { points: 0, unplaceable: 0 } })),
   cochange: vi.fn(() => ok({ hidden: [], pairs: 0, commits: 0, minTogether: 5 })),
+  // One row above iterates every lens, Complexity among them (#1).
+  complexity: vi.fn(() => ok({
+    total: { functions: 0, complex: 0, maxCyclo: 0, files: 0, tier: 'none' },
+    maintainability: { score: 100, tier: 'none' },
+    modules: [],
+  })),
 } as unknown as CodeMapPort);
 
 // The two host-wide contracts a screen reads from context (packages/ui): the store
@@ -86,7 +92,14 @@ function renderLens(lens: Lens, opts: { glyphs?: 'kanji' | 'icon'; store?: Store
   return { ...mountPage(LensPage, data, host, opts), data, map: host };
 }
 
-const PAYLOAD = { version: 3, tables: [], refs: [], entities: [], deps: [], enums: [] };
+// A design, however small: every assertion in #15 is about a page that drew one
+// (an empty payload is the `schema-none` state, which is #15's sibling in the
+// page's own spec).
+const PAYLOAD = {
+  version: 3,
+  tables: [{ schema: 'app', name: 'customers', kind: 'table', columns: [{ name: 'id', type: 'uuid', pk: true, nn: true }] }],
+  refs: [], entities: [], deps: [], enums: [],
+};
 function renderSchema(opts: { store?: Store } = {}) {
   vi.stubGlobal('fetch', vi.fn(async () =>
     ({ ok: true, status: 200, statusText: 'OK', json: async () => PAYLOAD }) as Response));
@@ -94,7 +107,7 @@ function renderSchema(opts: { store?: Store } = {}) {
   return mountPage(SchemaPage, data, new CodeMapHost(() => 'w', port()), opts);
 }
 
-describe.skip('pending: diagrams-shell — the diagrams render on the ScreenShell', () => {
+describe('diagrams-shell — the diagrams render on the ScreenShell', () => {
   it('one id per kind of view: workspace.diagrams.<lens>, and Database · ER as workspace.diagrams.er', async () => {
     for (const view of DIAGRAM_VIEWS.filter((v) => v.lens)) {
       drop();
@@ -233,6 +246,30 @@ describe.skip('pending: diagrams-shell — the diagrams render on the ScreenShel
     expect(q('[data-screen-body] [data-testid="schema-layout"]')).not.toBeNull();
     expect(q('[data-screen-body] [data-testid="schema-tabs"]')).not.toBeNull();
     expect(q('[data-screen-footer] [data-testid="diagram-budget"]')?.textContent).toBe('schema model v3');
+  });
+
+  // The inspect specs keep their selectors: rokkit 1.15.2 hands the hooks back
+  // (per-band toggle attrs, band attrs, stat attrs), so the pages carry the old
+  // `data-testid`s instead of every spec learning a role and an accessible name.
+  it('the inspect specs’ hooks come from the shell’s passthrough, untouched by the migration', async () => {
+    renderLens('structure');
+    await settle();
+    const lens = [
+      'diagram-about-toggle', 'diagram-stats-toggle', 'diagram-controls-toggle', 'diagram-side-toggle',
+      'diagram-stats', 'diagram-budget', 'diagram-stat-Modules', 'diagram-stat-Cycles',
+      'diagram-controls', 'codemap-screen', 'codemap-side',
+    ];
+    expect(lens.filter((h) => !q(`[data-testid="${h}"]`))).toEqual([]);
+    // The toggle the spec clicks is the one that says whether its band is open.
+    expect(['diagram-about-toggle', 'diagram-stats-toggle', 'diagram-controls-toggle', 'diagram-side-toggle']
+      .map((h) => q(`[data-testid="${h}"]`)?.getAttribute('aria-pressed'))).toEqual(['true', 'true', 'true', 'true']);
+
+    drop();
+    renderSchema();
+    await settle();
+    expect(['diagram-stats-toggle', 'diagram-side-toggle', 'diagram-stats', 'diagram-budget',
+      'schema-screen', 'schema-layout', 'schema-sidebar', 'schema-tabs']
+      .filter((h) => !q(`[data-testid="${h}"]`))).toEqual([]);
   });
 
   it('the legacy diagram keys migrate once, into every diagram’s view id — after the views are read', () => {

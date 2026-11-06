@@ -5,6 +5,7 @@
     import { goto } from "$app/navigation";
     import { hasTauri } from "$lib/bootstrap.js";
     import { appState } from "$lib/appstate.svelte.js";
+    import { DIAGRAM_VIEW_IDS } from "./(workspace)/workspace/[id]/diagrams/diagrams-nav.js";
     import { healthState } from "$lib/health-state.svelte.js";
     import { daemonHealth } from "$lib/daemon-health.svelte.js";
     import { glyphMode, setGlyphMode } from "$lib/glyphs";
@@ -25,6 +26,13 @@
         get: (id) => appState.viewPanels(id),
         set: (id, next) => appState.setViewPanels(id, next),
         error: () => appState.viewsError,
+    });
+    // The diagrams' four legacy localStorage toggles become `ui.views`, in every
+    // diagram's view id — the old header was one header for all of them (D87 §9).
+    // After the config read, not before: `migrateLegacyViews` refuses an unread
+    // map, and `loaded` is also true when the read failed.
+    $effect(() => {
+        if (appState.loaded && !appState.configError) void appState.migrateLegacyViews(DIAGRAM_VIEW_IDS);
     });
     // Every screen's failure names the daemon — the one thing every sensei screen depends on.
     setStateDefaults({

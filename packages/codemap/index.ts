@@ -1,6 +1,8 @@
 // @sensei/codemap — the Code map (M17), shared by the desktop app and the dōjō.
 export { default as CodeMap } from './CodeMap.svelte';
 export { default as CodeMapControls } from './CodeMapControls.svelte';
+/** The side panel alone, for a host that lays it out in its own slot (D87 §9). */
+export { default as CodeMapSide } from './CodeMapSide.svelte';
 export { CodeMapState, ROLES } from './state.svelte';
 export type { Level, Lens, Crumb } from './state.svelte';
 export { layoutLevel0, groupOrder } from './layout';
