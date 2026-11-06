@@ -362,16 +362,14 @@ pub(crate) async fn put_tracker_fields(
         Ok(row) => row,
         Err(r) => return r.into_response(),
     };
-    match writeback_refusal(&row.kind, true) {
-        Ok(None) => {}
-        Ok(Some(r)) => return r.into_response(),
-        Err(_) => return internal().into_response(),
-    }
     let Some(adapter) =
         crate::tracker::TrackerKind::parse(&row.kind).and_then(crate::tracker::adapter_for_kind)
     else {
         return fail(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_tracker").into_response();
     };
+    if let Some(r) = refusal_for(adapter.capabilities(), true) {
+        return r.into_response();
+    }
     if let Some((_, bad)) = entries.iter().find(|(_, r)| !adapter.field_ref_shape(r)) {
         return refuse("invalid_field_ref", "field_ref", bad);
     }
@@ -454,8 +452,12 @@ pub(crate) async fn disconnect_tracker(
 /// §G8: turning write-back on, or mapping its fields, on a tracker whose adapter cannot
 /// write back is a 409. Turning it off is always allowed.
 fn writeback_refusal(kind: &str, enabling: bool) -> Result<Option<ApiErr>, String> {
-    let caps = crate::tracker::capabilities_of_kind(kind)?;
-    Ok((enabling && !caps.writeback).then(|| fail(StatusCode::CONFLICT, "writeback_unsupported")))
+    Ok(refusal_for(crate::tracker::capabilities_of_kind(kind)?, enabling))
+}
+
+/// Pure: the 409 for turning write-back on with an adapter that cannot.
+fn refusal_for(caps: crate::tracker::Capabilities, enabling: bool) -> Option<ApiErr> {
+    (enabling && !caps.writeback).then(|| fail(StatusCode::CONFLICT, "writeback_unsupported"))
 }
 
 /// `PATCH /api/workspaces/{id}/trackers/{tracker}` — exactly `{"writeback_enabled": bool}` (W8).
@@ -862,13 +864,19 @@ mod tests {
 
     #[test]
     fn write_back_is_refused_only_when_enabling_it_on_an_adapter_that_cannot() {
-        // Jira can; GitLab's {false,false} is asserted end to end in F3 (D10).
-        assert!(super::writeback_refusal("jira", true).unwrap().is_none());
-        assert!(super::writeback_refusal("jira", false).unwrap().is_none());
+        use crate::tracker::Capabilities;
+        let cannot = Capabilities { history: false, writeback: false };
+        let (status, body) = super::refusal_for(cannot, true).expect("refused");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body.0, json!({"error": "writeback_unsupported"}));
+        assert!(super::refusal_for(cannot, false).is_none(), "turning it off is allowed");
         assert!(
-            super::writeback_refusal("not-a-kind", true).is_err(),
-            "an unknown kind is an error"
+            super::refusal_for(Capabilities { history: true, writeback: true }, true).is_none()
         );
+        // Through the registry: Jira can, an unknown kind is an error. The HTTP 409 on a
+        // real GitLab tracker is F3's (D10).
+        assert!(super::writeback_refusal("jira", true).unwrap().is_none());
+        assert!(super::writeback_refusal("not-a-kind", true).is_err());
     }
 
     use crate::tracker::TrackerError;

@@ -589,12 +589,34 @@ mod store_tests {
             Option<chrono::DateTime<chrono::Utc>>,
             Option<chrono::DateTime<chrono::Utc>>,
         ) = sqlx_core::query_as::query_as(
-            "SELECT history_error, history_at, terms_at FROM sensei.trackers WHERE id = $1",
+            "SELECT history_error::text, history_at, terms_at FROM sensei.trackers WHERE id = $1",
         )
         .bind(t)
         .fetch_one(pg.pool())
         .await
         .unwrap();
         assert_eq!((err, at, terms), (None, None, None));
+        // Control: a capable adapter on the same tracker gets past the guard and
+        // fails at the (empty) keyring, recording it.
+        let capable = crate::tracker::test_support::fake_adapter([String::new(), String::new()]);
+        let out = run(
+            &pg,
+            &io,
+            t,
+            &row.secret_service,
+            capable,
+            std::time::Duration::from_secs(5),
+            &guard,
+        )
+        .await;
+        assert!(matches!(out, HistoryOutcome::Failed(_)), "{out:?}");
+        let (err,): (Option<String>,) = sqlx_core::query_as::query_as(
+            "SELECT history_error::text FROM sensei.trackers WHERE id = $1",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!(err.is_some(), "the capable run recorded its failure");
     }
 }

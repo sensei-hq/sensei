@@ -54,7 +54,12 @@ pub struct PublicOnly {
 impl PublicOnly {
     /// The production resolver: the system lookup and [`crate::net::addr::is_public_ip`].
     pub fn system() -> Self {
-        Self::new(Arc::new(SystemLookup), crate::net::addr::is_public_ip)
+        Self::public(Arc::new(SystemLookup))
+    }
+
+    /// `lookup` under the production rule, [`crate::net::addr::is_public_ip`].
+    pub fn public(lookup: Arc<dyn Lookup>) -> Self {
+        Self::new(lookup, crate::net::addr::is_public_ip)
     }
 
     pub fn new(lookup: Arc<dyn Lookup>, allowed: fn(IpAddr) -> bool) -> Self {
@@ -118,7 +123,7 @@ pub(crate) mod tests {
     }
 
     fn production_rule(stub: Arc<StubLookup>) -> PublicOnly {
-        PublicOnly::new(stub, crate::net::addr::is_public_ip)
+        PublicOnly::public(stub)
     }
 
     #[tokio::test]

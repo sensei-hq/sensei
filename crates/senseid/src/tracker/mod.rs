@@ -666,6 +666,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn jira_reads_history_and_writes_back_and_an_unknown_kind_is_an_error() {
+        assert_eq!(
+            capabilities_of_kind("jira"),
+            Ok(Capabilities { history: true, writeback: true })
+        );
+        assert!(capabilities_of_kind("not-a-kind").is_err());
+    }
+
+    #[test]
     fn a_header_scheme_never_prints_its_token() {
         let auth = AuthScheme::Header {
             name: "PRIVATE-TOKEN",

@@ -420,7 +420,7 @@ mod tests {
         let (port, hits) = counting_listener().await;
         let base = format!("http://tracker.example.test:{port}");
         let stub = StubLookup::answering(&["127.0.0.1"]);
-        let resolver = PublicOnly::new(Arc::clone(&stub) as _, crate::net::addr::is_public_ip);
+        let resolver = PublicOnly::public(Arc::clone(&stub) as _);
         let raw = ReqwestRaw::with_resolver(&base, basic("u", "t"), resolver).unwrap();
         assert!(raw.get("/x", &[]).await.is_err());
         assert_eq!(stub.asked.lock().unwrap().as_slice(), ["tracker.example.test"]);
@@ -471,7 +471,7 @@ mod tests {
         let (proxy_port, proxy_hits) = counting_listener().await;
         let _proxy = TestHttpsProxy::set(&format!("http://127.0.0.1:{proxy_port}"));
         let stub = StubLookup::answering(&["10.0.0.5"]);
-        let resolver = PublicOnly::new(Arc::clone(&stub) as _, crate::net::addr::is_public_ip);
+        let resolver = PublicOnly::public(Arc::clone(&stub) as _);
         let raw =
             ReqwestRaw::with_resolver("https://gitlab.example.test", basic("u", "t"), resolver)
                 .unwrap();

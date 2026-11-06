@@ -32,3 +32,14 @@ pub(crate) fn registered_reasons() -> std::collections::HashSet<String> {
         .map(|v| v["code"].as_str().unwrap().to_string())
         .collect()
 }
+
+#[cfg(test)]
+mod capability_tests {
+    #[tokio::test]
+    async fn a_jira_tracker_reads_history_and_a_missing_tracker_is_an_error() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let (t, _p) = crate::tracker::connect::tests::connected_tracker(&pg).await;
+        assert_eq!(super::reads_history(&pg, t).await, Ok(true));
+        assert!(super::reads_history(&pg, uuid::Uuid::new_v4()).await.is_err());
+    }
+}
