@@ -204,3 +204,30 @@ The existing `start_run` / `register_plan` / `update_task_status` / `report_run_
 3. The event log in the daemon; a minimal desktop board (crew, lanes, queue). The dōjō push comes in slice 2.
 4. A resource lease for heavy builds.
 5. Dogfood: run this repository's next item through it, with one coordinator and two contributors.
+
+## 15. Waiting, nudges and the hand-off trail (user, 2026-11-06)
+Today the person carries every hand-off between lanes by pasting messages. Relay must make each of those hand-offs a
+row, and must make waiting visible.
+- **Every hand-off is an action in the task's history.** A report, a review assigned, a verdict, a rebase note, a
+  merge, and a "standing by" are all actions on the timeline (`reported`, `reviewed`, `message`, `merged` …). The person
+  never relays a status line by hand. A lane re-sending a status it has already sent is a no-op: the broker
+  de-duplicates on (lane, task, kind, round).
+- **Waiting is a state with a clock.** Each task shows how long it has waited and on whom. The cases:
+  - a report with no reviewer assigned;
+  - a verdict the author has not picked up;
+  - an approval not yet merged;
+  - a lane idle with nothing assigned.
+- **"Waiting" is a stat on the Relay screen** (ShellStat). Clicking it filters to the waiting tasks, oldest first.
+- **Nudge.** The person, or the broker after a threshold (default 15 min, per crew), nudges the party being waited on:
+  - the coordinator, for an unassigned report or an unmerged approval;
+  - a lane, for an unread verdict.
+
+  A nudge is a `message` action with `props.nudge = true`, delivered on the lane's next `wait_for_task`. The
+  coordinator's queue lists unreviewed reports **before** new assignments.
+- **Why (observed 2026-11-05/06):** four reports sat without a reviewer for 30 min to 3 h, because the coordinator
+  scanned by time instead of matching reports to reviews. Two lanes idled on verdicts that had already been filed. One
+  lane got a stale review of a round it had already replaced. Each was a lost hand-off that a row and a clock would have
+  shown.
+- **Coordinator hand-off.** The coordinator role must be transferable mid-crew: `reregister` as coordinator with the
+  crew's checkpoint, for example when one assistant's quota runs out. Until Relay ships,
+  `coord/HANDOFF-COORDINATOR.md` is the manual form.
