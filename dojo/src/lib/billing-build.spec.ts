@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { toKitBilling, noBilling } from './billing-map';
 import { BILLING_TIERS } from './billing-catalog';
-import { countedSeats, SEAT_COPY, type BillableUserWire } from './billing-view';
+import { countedSeats, SEAT_COPY, nameSeatHolders, type BillableUserWire } from './billing-view';
 import type { KitBilling } from './components/kit/types';
 import type { BillingResponse } from './admin-data';
 import { personLabel } from './viewers-view';
@@ -201,18 +201,36 @@ describe('billing build · the plan cards are the mockup\'s (D46, D52, D59, D85,
 
 describe('billing build · who is counted (M3)', () => {
 	const users: BillableUserWire[] = [
-		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', email: 'alex@example.com', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
-		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, email: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] },
-		{ user_id: '5c6d7e80-0000-0000-0000-000000000003', display_name: null, email: 'sam@example.com', workspaces: [{ name: 'ws-delta', slug: 'ws-delta', role: 'contributor' }] }
+		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', handle: null, email: 'alex@example.com', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
+		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, handle: null, email: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] },
+		{ user_id: '5c6d7e80-0000-0000-0000-000000000003', display_name: null, handle: null, email: 'sam@example.com', workspaces: [{ name: 'ws-delta', slug: 'ws-delta', role: 'contributor' }] }
 	];
 
-	// L9's rule (develop 91dc59735; L0 ruling r3): name, then email, then words — the same
+	// L9's rule (L0 rulings r3/r4): name, then handle, then email, then words — the same
 	// personLabel Members and Viewers use; never an id fragment, never an invented handle.
 	it('a seat reads its name, else its email, else words, never an id fragment', () => {
 		const names = countedSeats(users).map((u) => u.name);
 		expect(names).toEqual(['Alex Doe', 'Name not shared yet', 'sam@example.com']);
-		expect(names).toEqual(users.map((u) => personLabel({ principalId: u.user_id, name: u.display_name, email: u.email })));
+		expect(names).toEqual(users.map((u) => personLabel({ principalId: u.user_id, name: u.display_name, handle: u.handle, email: u.email })));
 		expect(names.join(' ')).not.toMatch(/0b1e2f30|5c6d7e80|7d3c9a10/);
+	});
+	it('L4 forge-handle — a handle-only seat-holder is labelled by the handle', () => {
+		const seat = countedSeats([
+			{ user_id: '9d8e7f60-0000-0000-0000-000000000009', display_name: null, handle: 'seat-oct', email: null, workspaces: [] }
+		])[0];
+		expect(seat.name).toBe('seat-oct');
+		expect(seat.name).not.toContain('9d8e7f60');
+	});
+	it('L4 forge-handle — the seat-holder join carries the handle', () => {
+		const out = nameSeatHolders(
+			{
+				seats_used: 1,
+				total_active_seats: 1,
+				billable_users: [{ user_id: 'u1', workspaces: [] }]
+			},
+			new Map([['u1', { display_name: null, handle: 'seat-oct', email: null }]])
+		);
+		expect(out.billable_users[0]).toMatchObject({ user_id: 'u1', display_name: null, handle: 'seat-oct', email: null });
 	});
 
 	it('the role is shown per workspace', () => {

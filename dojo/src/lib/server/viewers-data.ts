@@ -53,6 +53,7 @@ export async function listDojoViewers(db: DojoClient, tenantId: string, nameDb: 
 		return {
 			principal_id: r.principal_id,
 			display_name: n?.display_name ?? null,
+			handle: n?.handle ?? null,
 			// The forge identity's email, else the one they were invited at.
 			email: n?.email ?? r.email ?? null,
 			joined_at: r.joined_at,

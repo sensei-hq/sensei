@@ -21,8 +21,8 @@ const usage: Usage = {
 	seats_used: 2,
 	total_active_seats: 4,
 	billable_users: [
-		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', email: 'alex@example.com', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
-		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, email: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] }
+		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', handle: null, email: 'alex@example.com', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
+		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, handle: null, email: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] }
 	]
 };
 const acct = (status: string, plan = 'pro'): NonNullable<BillingResponse['account']> => ({
@@ -191,7 +191,7 @@ describe('ScrBilling · billing build · the plan tab', () => {
 		const emailOnly: Usage = {
 			seats_used: 1,
 			total_active_seats: 1,
-			billable_users: [{ user_id: '5c6d7e80-0000-0000-0000-000000000003', display_name: null, email: 'sam@example.com', workspaces: [{ name: 'ws-delta', slug: 'ws-delta', role: 'contributor' }] }]
+			billable_users: [{ user_id: '5c6d7e80-0000-0000-0000-000000000003', display_name: null, handle: null, email: 'sam@example.com', workspaces: [{ name: 'ws-delta', slug: 'ws-delta', role: 'contributor' }] }]
 		};
 		const { container } = screen(null, emailOnly);
 		const items = [...container.querySelectorAll('details[data-billing-counted] li')].map((li) => li.textContent?.replace(/\s+/g, ' ').trim());

@@ -17,9 +17,10 @@ export interface SeatHolderWire {
 
 /** A billable user as the route answers it: named through the identity join
  *  (`resolveDisplayNames`, as the system — the access-matrix exception). `null`
- *  name and email when the person shared neither; never an invented label. */
+ *  name, handle and email when the person shared nothing; never an invented label. */
 export interface BillableUserWire extends SeatHolderWire {
 	display_name: string | null;
+	handle: string | null;
 	email: string | null;
 }
 
@@ -36,18 +37,20 @@ export interface SeatUsageWire {
 /** The seat count before names (`summarizeSeatUsage`): seat-holders only. */
 export type SeatCountWire = Omit<SeatUsageWire, 'billable_users'> & { billable_users: SeatHolderWire[] };
 
-/** The seat usage as the route answers it: each seat-holder with the name and
- *  email the identity join found. An id the join left unnamed is `null` — the
- *  screen says so in words (`personLabel`); nothing here invents a name. Pure. */
+/** The seat usage as the route answers it: each seat-holder with the name,
+ *  handle and email the identity join found. An id the join left unnamed is
+ *  `null` — the screen says so in words (`personLabel`); nothing here invents
+ *  a name. Pure. */
 export function nameSeatHolders(
 	count: SeatCountWire,
-	names: ReadonlyMap<string, { display_name: string | null; email: string | null }>
+	names: ReadonlyMap<string, { display_name: string | null; handle: string | null; email: string | null }>
 ): SeatUsageWire {
 	return {
 		...count,
 		billable_users: count.billable_users.map((u) => ({
 			...u,
 			display_name: names.get(u.user_id)?.display_name ?? null,
+			handle: names.get(u.user_id)?.handle ?? null,
 			email: names.get(u.user_id)?.email ?? null
 		}))
 	};
@@ -98,11 +101,11 @@ export function attachNotice(current: string) {
 }
 
 /** "Who is counted": each seat as the admin surfaces name a person
- *  (`personLabel`: name, then email, then words — never an id fragment), with its
- *  workspaces and the role on each. */
+ *  (`personLabel`: name, then handle, then email, then words — never an id
+ *  fragment), with its workspaces and the role on each. */
 export function countedSeats(users: BillableUserWire[]): KitBillingSeat[] {
 	return users.map((u) => ({
-		name: personLabel({ principalId: u.user_id, name: u.display_name, email: u.email }),
+		name: personLabel({ principalId: u.user_id, name: u.display_name, handle: u.handle, email: u.email }),
 		workspaces: u.workspaces.map((w) => `${w.name} (${w.role})`).join(', ')
 	}));
 }

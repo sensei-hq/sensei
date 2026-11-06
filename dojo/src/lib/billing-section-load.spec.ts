@@ -52,6 +52,7 @@ const loadedBilling = () =>
 					{
 						user_id: '7d3c9a10-0000-0000-0000-000000000001',
 						display_name: 'Alex Doe',
+						handle: null,
 						email: 'alex@example.com',
 						workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }]
 					}

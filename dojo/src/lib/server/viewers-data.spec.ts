@@ -49,12 +49,37 @@ function db(over: Record<string, FakeTable> = {}) {
 const asClient = (f: ReturnType<typeof fakeDojoDb>) => f as unknown as DojoClient & typeof f;
 
 describe('listDojoViewers', () => {
+	it('L4 forge-handle — viewers carry the identity handle', async () => {
+		const got = await listDojoViewers(
+			db({
+				identities: {
+					rows: [
+						{
+							principal_id: 'boss',
+							display_name: null,
+							handle: 'boss-oct',
+							email: 'boss@example.com',
+							last_login_at: null
+						}
+					]
+				}
+			}),
+			T
+		);
+		expect(got.find((v) => v.principal_id === 'boss')).toMatchObject({
+			display_name: null,
+			handle: 'boss-oct',
+			email: 'boss@example.com'
+		});
+	});
+
 	it("lists the dōjō's viewers with their names and the dōjō's workspaces granted to each", async () => {
 		const got = await listDojoViewers(db(), T);
 		expect(got).toEqual([
 			{
 				principal_id: 'boss',
 				display_name: 'The Boss',
+				handle: null,
 				email: 'boss@example.com',
 				joined_at: '2026-10-20T00:00:00Z',
 				workspaces: [
@@ -63,7 +88,7 @@ describe('listDojoViewers', () => {
 				]
 			},
 			// No identity: named by the email they were invited at.
-			{ principal_id: 'client', display_name: null, email: 'client@example.com', joined_at: '2026-10-21T00:00:00Z', workspaces: [] }
+			{ principal_id: 'client', display_name: null, handle: null, email: 'client@example.com', joined_at: '2026-10-21T00:00:00Z', workspaces: [] }
 		]);
 	});
 

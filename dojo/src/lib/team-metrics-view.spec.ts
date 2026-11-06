@@ -33,6 +33,7 @@ const wire: TeamMetricsWire = {
 				{
 					principal_id: 'lena-0000-uuid',
 					display_name: 'Lena',
+					handle: null,
 					email: null,
 					you: true,
 					metrics: {
@@ -41,7 +42,7 @@ const wire: TeamMetricsWire = {
 						tokens_per_day: agg(1_250_000, null, '2026-10-20')
 					}
 				},
-				{ principal_id: 'mo-00000-uuid', display_name: null, email: 'mo@x.co', you: false, metrics: {} }
+				{ principal_id: 'mo-00000-uuid', display_name: null, handle: null, email: 'mo@x.co', you: false, metrics: {} }
 			]
 		}
 	]
@@ -96,5 +97,19 @@ describe('toTeamMetricsView', () => {
 		expect(view.window).toBe('last 7 days, since 2026-10-16');
 		expect(view.perPerson).toBe(true);
 		expect(toTeamMetricsView({ ...wire, per_person: false }).perPerson).toBe(false);
+	});
+	it('L4 forge-handle — a handle-only member is labeled by the handle', () => {
+		const w: TeamMetricsWire = {
+			...wire,
+			teams: [
+				{
+					...wire.teams[0],
+					members: [
+						{ principal_id: 'mo', display_name: null, handle: 'mo-dev', email: null, you: false, metrics: {} }
+					]
+				}
+			]
+		};
+		expect(toTeamMetricsView(w).teams[0].members[0].label).toBe('mo-dev');
 	});
 });

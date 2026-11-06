@@ -182,6 +182,16 @@ describe('listMembers (principals fallback)', () => {
 		const out = await listMembers(db, 't1');
 		expect(out[0]).toMatchObject({ id: 'm1', display_name: null, email: null });
 	});
+	it('L4 forge-handle — members carry the identity handle', async () => {
+		const db = makeMembersDbTables(
+			{ data: [{ id: 'm1', user_id: 'u1' }], error: null },
+			{ data: [{ user_id: 'u1' }], error: null },
+			{ data: [{ principal_id: 'u1', display_name: null, handle: 'octocat', email: null }], error: null },
+			{ data: [], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: null, handle: 'octocat', email: null });
+	});
 });
 
 describe('listAudit', () => {

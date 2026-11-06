@@ -6,13 +6,13 @@ describe('teams view', () => {
 	it('maps the wire rows', () => {
 		expect(
 			toTeamViews([
-				{ id: 't1', name: 'Payments', members: [{ principal_id: 'u1', display_name: 'Ada', email: null }] }
+				{ id: 't1', name: 'Payments', members: [{ principal_id: 'u1', display_name: 'Ada', handle: null, email: null }] }
 			])
-		).toEqual([{ id: 't1', name: 'Payments', members: [{ principalId: 'u1', name: 'Ada', email: null }] }]);
+		).toEqual([{ id: 't1', name: 'Payments', members: [{ principalId: 'u1', name: 'Ada', handle: null, email: null }] }]);
 	});
 
 	it("offers the dōjō's members not yet on the team", () => {
-		const team = { id: 't1', name: 'P', members: [{ principalId: 'u1', name: 'Ada', email: null }] };
+		const team = { id: 't1', name: 'P', members: [{ principalId: 'u1', name: 'Ada', handle: null, email: null }] };
 		const members = [
 			{ name: 'Ada', userId: 'u1', git: '', role: 'admin', scopes: '', active: '' },
 			{ name: 'Dev', userId: 'u2', git: '', role: 'contributor', scopes: '', active: '' },
