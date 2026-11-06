@@ -141,10 +141,10 @@ mod tests {
     /// with) must come back clean, and the daemon's own `deploy_to` must
     /// land it on a scratch database the test creates and drops.
     ///
-    /// Red on 0.27.8 at the report assert (reconcile/apply alone never
-    /// gated it — verified: the deploy half passes on both pins, so the
-    /// report half is the discriminator and the deploy half the daemon-path
-    /// proof).
+    /// Red on 0.27.8 at both halves: the load half reports the cycle and
+    /// `deploy_to` (which opens with the same loader) gates on it too —
+    /// the report assert fires first, then the deploy assert would. Green
+    /// on 0.27.9 both ways (L4 probe, dbd-pin impl r1 F1).
     #[tokio::test]
     async fn deploy_accepts_a_view_named_like_a_function() {
         use dbd_core::Design;
