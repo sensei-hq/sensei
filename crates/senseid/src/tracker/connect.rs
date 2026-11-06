@@ -378,7 +378,7 @@ pub(crate) mod tests {
                 params: serde_json::from_value(serde_json::json!({"full_path": "acme/platform"}))
                     .unwrap(),
             }),
-            params_extra: Default::default(),
+            ..crate::tracker::test_support::FakeAdapter::gitlab_like()
         })
     }
 

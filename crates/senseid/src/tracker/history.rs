@@ -42,6 +42,10 @@ pub async fn run(
     deadline: Duration,
     _guard: &tokio::sync::OwnedMutexGuard<()>,
 ) -> HistoryOutcome {
+    // §G8: an adapter that reads no history leaves the tracker's history state NULL.
+    if !adapter.capabilities().history {
+        return HistoryOutcome::Skipped;
+    }
     let until = tokio::time::Instant::now() + deadline;
     let row = match pg.tracker_by_id(tracker_id).await {
         Ok(Some(row)) if row.secret_service == secret_service => row,
@@ -554,5 +558,43 @@ mod store_tests {
         assert_eq!(reason().await, (Some(3.0), None));
         set("UPDATE sensei.trackers SET estimation_field = NULL, points_field = 'none' WHERE id = $1").await;
         assert_eq!(reason().await.1, Some("no_estimation_field".into()));
+    }
+
+    #[tokio::test]
+    async fn a_tracker_whose_adapter_reads_no_history_is_skipped_untouched() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = crate::tracker::connect::tests::connected_tracker(&pg).await;
+        let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        let adapter =
+            crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
+                capabilities: crate::tracker::Capabilities { history: false, writeback: false },
+                ..crate::tracker::test_support::FakeAdapter::gitlab_like()
+            });
+        let io = crate::tracker::test_support::empty_pass_io();
+        let locks = crate::tracker::sync::TrackerLocks::default();
+        let guard = locks.try_lock(t).expect("the guard is free");
+        let out = run(
+            &pg,
+            &io,
+            t,
+            &row.secret_service,
+            adapter,
+            std::time::Duration::from_secs(5),
+            &guard,
+        )
+        .await;
+        assert_eq!(out, HistoryOutcome::Skipped);
+        let (err, at, terms): (
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ) = sqlx_core::query_as::query_as(
+            "SELECT history_error, history_at, terms_at FROM sensei.trackers WHERE id = $1",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!((err, at, terms), (None, None, None));
     }
 }

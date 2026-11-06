@@ -513,6 +513,9 @@ pub async fn run(
     deadline: Duration,
     _guard: &tokio::sync::OwnedMutexGuard<()>,
 ) -> PassOutcome {
+    if !adapter.capabilities().writeback {
+        return PassOutcome::Skipped;
+    }
     // Read at pass start: the sync may have just found the owner (W1). The sync's
     // token binds every record, this failure's included (W2).
     let row = match pg.tracker_by_id(tracker_id).await {
@@ -2500,5 +2503,36 @@ mod pass_tests {
         // The bullets the pass sends are the rendered lines, through the adapter's document.
         let r = render(&Usage::default(), chrono::Utc::now());
         assert_eq!(lines_of(&json!({"body": adf(&r)})), r.lines);
+    }
+
+    #[tokio::test]
+    async fn a_tracker_whose_adapter_cannot_write_back_is_skipped() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = crate::tracker::connect::tests::connected_tracker(&pg).await;
+        // Enabled and owned, so only the capability can make the pass skip.
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET writeback_enabled = true, owner_ref = 'A1' WHERE id = $1",
+        )
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let service = pg.tracker_by_id(t).await.unwrap().unwrap().secret_service;
+        let io = crate::tracker::test_support::empty_pass_io();
+        let locks = crate::tracker::sync::TrackerLocks::default();
+        let pass = |writeback: bool| {
+            let adapter =
+                crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
+                    capabilities: crate::tracker::Capabilities { history: false, writeback },
+                    ..crate::tracker::test_support::FakeAdapter::gitlab_like()
+                });
+            let (pg, io, service, locks) = (pg.clone(), io.clone(), service.clone(), &locks);
+            async move {
+                let guard = locks.try_lock(t).expect("the guard is free");
+                run(&pg, &io, t, &service, adapter, WRITEBACK_DEADLINE, &guard).await
+            }
+        };
+        assert_eq!(pass(false).await, PassOutcome::Skipped);
+        assert_ne!(pass(true).await, PassOutcome::Skipped, "control: a capable adapter proceeds");
     }
 }

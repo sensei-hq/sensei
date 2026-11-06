@@ -687,9 +687,9 @@ mod tests {
         let adapter =
             crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
                 scopes: ["gitlab.com/group/a".into(), "gitlab.com/group/b".into()],
-                validated: None,
                 params_extra: serde_json::from_value(json!({"full_path": "acme/platform"}))
                     .unwrap(),
+                ..crate::tracker::test_support::FakeAdapter::gitlab_like()
             });
         sync_tracker(&pg, &TrackerLocks::default(), t, adapter, &FakeBoard::empty(), SYNC_DEADLINE)
             .await
@@ -1155,6 +1155,9 @@ mod tests {
     impl crate::tracker::TrackerAdapter for BrokenLinks {
         fn kind(&self) -> crate::tracker::TrackerKind {
             JiraAdapter.kind()
+        }
+        fn capabilities(&self) -> crate::tracker::Capabilities {
+            JiraAdapter.capabilities()
         }
         fn connect_params(
             &self,

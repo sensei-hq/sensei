@@ -156,6 +156,24 @@ pub fn needs_owner_backfill(owner_ref: Option<&str>, owner_state: Option<&str>) 
     owner_ref.is_none() && owner_state != Some(TrackerOwnerState::NotAPerson.as_str())
 }
 
+/// What an adapter can do beyond sync (§G8). Guards read this, never the kind's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capabilities {
+    /// It reads ticket history (S4): the history task and the SDLC figures built on it.
+    pub history: bool,
+    /// It writes figures back to tickets (D50).
+    pub writeback: bool,
+}
+
+/// The capabilities of the adapter registered for `kind`. An unregistered kind is an
+/// error, never a guess.
+pub fn capabilities_of_kind(kind: &str) -> Result<Capabilities, String> {
+    TrackerKind::parse(kind)
+        .and_then(adapter_for_kind)
+        .map(|a| a.capabilities())
+        .ok_or_else(|| format!("no adapter registered for tracker kind {kind:?}"))
+}
+
 /// How the shared transport authenticates, chosen by the adapter.
 #[derive(Clone, PartialEq, Eq)]
 pub enum AuthScheme {
@@ -464,6 +482,8 @@ pub struct Link {
 #[async_trait::async_trait]
 pub trait TrackerAdapter: Send + Sync {
     fn kind(&self) -> TrackerKind;
+    /// What this adapter supports beyond sync (§G8).
+    fn capabilities(&self) -> Capabilities;
     /// Parse and canonicalise the connect body.
     fn connect_params(&self, body: &serde_json::Value) -> Result<ConnectParams, ParamError>;
     /// The auth scheme the transport uses for this account.
@@ -779,10 +799,35 @@ pub mod test_support {
         pub validated: Option<Validated>,
         /// What `fetch_snapshot` reports in `params_extra`.
         pub params_extra: serde_json::Map<String, serde_json::Value>,
+        pub capabilities: Capabilities,
     }
 
     pub fn fake_adapter(scopes: [String; 2]) -> &'static FakeAdapter {
-        leak(FakeAdapter { scopes, validated: None, params_extra: Default::default() })
+        leak(FakeAdapter { scopes, ..FakeAdapter::gitlab_like() })
+    }
+
+    impl FakeAdapter {
+        /// No scopes, no validate result, no extra params, and every capability.
+        pub fn gitlab_like() -> Self {
+            FakeAdapter {
+                scopes: [String::new(), String::new()],
+                validated: None,
+                params_extra: Default::default(),
+                capabilities: Capabilities { history: true, writeback: true },
+            }
+        }
+    }
+
+    /// A pass's IO with nothing behind it: a run that reaches the keyring fails.
+    pub fn empty_pass_io() -> crate::tracker::writeback::PassIo {
+        crate::tracker::writeback::PassIo {
+            secrets: std::sync::Arc::new(
+                crate::tracker::secret::test_support::MemoryStore::default(),
+            ),
+            transports: std::sync::Arc::new(
+                crate::tracker::runtime::test_support::FakeFactory::default(),
+            ),
+        }
     }
 
     /// `'static`, like a registered adapter.
@@ -794,6 +839,9 @@ pub mod test_support {
     impl crate::tracker::TrackerAdapter for FakeAdapter {
         fn kind(&self) -> crate::tracker::TrackerKind {
             crate::tracker::TrackerKind::Jira
+        }
+        fn capabilities(&self) -> Capabilities {
+            self.capabilities
         }
         fn connect_params(
             &self,

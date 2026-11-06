@@ -73,6 +73,10 @@ impl TrackerAdapter for JiraAdapter {
         TrackerKind::Jira
     }
 
+    fn capabilities(&self) -> crate::tracker::Capabilities {
+        crate::tracker::Capabilities { history: true, writeback: true }
+    }
+
     fn connect_params(&self, body: &serde_json::Value) -> Result<ConnectParams, ParamError> {
         let text =
             |k: &str| body.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|v| !v.is_empty());

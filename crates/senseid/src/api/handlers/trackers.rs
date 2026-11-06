@@ -362,6 +362,11 @@ pub(crate) async fn put_tracker_fields(
         Ok(row) => row,
         Err(r) => return r.into_response(),
     };
+    match writeback_refusal(&row.kind, true) {
+        Ok(None) => {}
+        Ok(Some(r)) => return r.into_response(),
+        Err(_) => return internal().into_response(),
+    }
     let Some(adapter) =
         crate::tracker::TrackerKind::parse(&row.kind).and_then(crate::tracker::adapter_for_kind)
     else {
@@ -446,6 +451,13 @@ pub(crate) async fn disconnect_tracker(
     }
 }
 
+/// §G8: turning write-back on, or mapping its fields, on a tracker whose adapter cannot
+/// write back is a 409. Turning it off is always allowed.
+fn writeback_refusal(kind: &str, enabling: bool) -> Result<Option<ApiErr>, String> {
+    let caps = crate::tracker::capabilities_of_kind(kind)?;
+    Ok((enabling && !caps.writeback).then(|| fail(StatusCode::CONFLICT, "writeback_unsupported")))
+}
+
 /// `PATCH /api/workspaces/{id}/trackers/{tracker}` — exactly `{"writeback_enabled": bool}` (W8).
 pub(crate) async fn patch_tracker(
     State(state): State<AppState>,
@@ -463,6 +475,11 @@ pub(crate) async fn patch_tracker(
         Ok(row) => row,
         Err(r) => return r.into_response(),
     };
+    match writeback_refusal(&row.kind, enabled) {
+        Ok(None) => {}
+        Ok(Some(r)) => return r.into_response(),
+        Err(_) => return internal().into_response(),
+    }
     let pg = &state.pg;
     match pg.set_writeback_enabled(row.id, enabled).await {
         Ok(true) => {}
@@ -842,6 +859,17 @@ mod tests {
     use serde_json::{Value, json};
     use std::sync::Arc;
     use tower::ServiceExt;
+
+    #[test]
+    fn write_back_is_refused_only_when_enabling_it_on_an_adapter_that_cannot() {
+        // Jira can; GitLab's {false,false} is asserted end to end in F3 (D10).
+        assert!(super::writeback_refusal("jira", true).unwrap().is_none());
+        assert!(super::writeback_refusal("jira", false).unwrap().is_none());
+        assert!(
+            super::writeback_refusal("not-a-kind", true).is_err(),
+            "an unknown kind is an error"
+        );
+    }
 
     use crate::tracker::TrackerError;
     use crate::tracker::runtime::test_support::{FakeFactory, fake_runtime};

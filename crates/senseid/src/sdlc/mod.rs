@@ -8,6 +8,19 @@ pub mod signals;
 pub mod sprint_replay;
 pub mod ticket;
 
+/// Whether `tracker_id`'s adapter reads ticket history (§G8). A missing tracker or an
+/// unregistered kind is an error.
+pub(crate) async fn reads_history(
+    pg: &crate::db::pg_store::PgStore,
+    tracker_id: uuid::Uuid,
+) -> Result<bool, String> {
+    let row = pg
+        .tracker_by_id(tracker_id)
+        .await?
+        .ok_or_else(|| format!("tracker {tracker_id} not found"))?;
+    crate::tracker::capabilities_of_kind(&row.kind).map(|c| c.history)
+}
+
 /// The `sdlc_metrics` reason codes the datafile registers, for tests that check
 /// every reason a figure gives is one of them.
 #[cfg(test)]

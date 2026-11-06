@@ -120,7 +120,11 @@ build.
   - D15 (pagination cap at 201 pages).
   - D12, Rust half: the positive `gitlab` cases;
     `every_registered_kind_is_a_label_of_the_ddl_enum` is green.
-  - D10: the guards from F1 apply to a real GitLab tracker.
+  - D10: the guards from F1 apply to a real GitLab tracker, end to end: the HTTP 409s and the
+    `/sprints` and ticket reasons through the database. F1 tests the guards as functions
+    and the history and write-back skips with a fake adapter, because the API and SDLC
+    resolve the adapter by kind from the registry, where a fake cannot register
+    (amended at build, F1.4).
 - **Test scenarios:**
   - Given the Free fixture, when a snapshot runs, then the sprints are the distinct
     milestones (the ancestor milestone included), and the merge request is not a task.

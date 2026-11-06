@@ -52,6 +52,8 @@ pub enum Estimate {
     NoField,
     NotEstimated,
     Points(f64),
+    /// The tracker's adapter reads no history, so it never learns points (§G8).
+    Unsupported,
 }
 
 /// What a ticket's figures are computed from.
@@ -176,6 +178,9 @@ pub fn compute(input: &TicketInput) -> TicketSdlc {
         }
         Estimate::NotEstimated => {
             t.reasons.insert("estimated_points", "not_estimated");
+        }
+        Estimate::Unsupported => {
+            t.reasons.insert("estimated_points", "unsupported_by_tracker");
         }
     }
     match (t.estimated_points, input.settings.minutes_per_point) {
@@ -539,6 +544,7 @@ pub async fn ticket_figures(
     ids.sort();
     ids.dedup();
     let signals = pg.session_signals_for(&ids, &catalogue.hash).await?;
+    let reads_history = crate::sdlc::reads_history(pg, tracker_id).await?;
     let history = pg.ticket_history_facts(task_ids).await?;
     let none = Usage::default();
     Ok(task_ids
@@ -553,6 +559,7 @@ pub async fn ticket_figures(
                 .collect();
             let facts = history.get(task);
             let estimate = match facts {
+                _ if !reads_history => Estimate::Unsupported,
                 None => Estimate::NotSynced,
                 Some(f) if !f.learned => Estimate::NotSynced,
                 Some(f) if !f.has_field => Estimate::NoField,
@@ -944,6 +951,14 @@ mod tests {
     }
 
     #[test]
+    fn an_estimate_the_tracker_cannot_supply_reads_unsupported() {
+        let (u, s) = (Usage::default(), settings(15));
+        let t = compute(&TicketInput { estimate: Estimate::Unsupported, ..input(&[], &u, &s) });
+        assert_eq!(t.estimated_points, None);
+        assert_eq!(t.reasons.get("estimated_points"), Some(&"unsupported_by_tracker"));
+    }
+
+    #[test]
     fn every_reason_is_a_registered_code() {
         let registered = crate::sdlc::registered_reasons();
         let u = Usage::default();
@@ -960,6 +975,7 @@ mod tests {
             (&a[..], Estimate::Points(1.0), None),
             (&idle[..], Estimate::NotSynced, None),
             (&broken[..], Estimate::NotSynced, None),
+            (&a[..], Estimate::Unsupported, None),
         ] {
             let t = compute(&TicketInput {
                 estimate,
