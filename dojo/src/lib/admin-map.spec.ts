@@ -55,12 +55,12 @@ describe('toKitMember / toKitMembers', () => {
 	it('L4 member-names — email shows when the name is missing', () => {
 		expect(toKitMember(member({ display_name: null, email: 'a@x.co' }), { now: NOW }).name).toBe('a@x.co');
 	});
-	it.skip('pending: L4 forge-handle — the handle shows when the name is missing', () => {
+	it('L4 forge-handle — the handle shows when the name is missing', () => {
 		expect(toKitMember(member({ display_name: null, handle: 'octocat', email: null }), { now: NOW }).name).toBe(
 			'octocat'
 		);
 	});
-	it.skip('pending: L4 forge-handle — the handle loses to a name and beats an email', () => {
+	it('L4 forge-handle — the handle loses to a name and beats an email', () => {
 		expect(toKitMember(member({ display_name: 'Ada', handle: 'octocat', email: 'a@x.co' }), { now: NOW }).name).toBe(
 			'Ada'
 		);

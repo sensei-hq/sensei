@@ -8,12 +8,19 @@
 -- carrying a default; the comment dropped; the handle escaping its
 -- read policy (self, tenant admin) or gaining a session write path.
 --
--- Run with the identities DDL applied (`run.sh --apply dojo
--- ../ddl/table/dojo/identities.ddl dojo/identities_handle.sql.pending`),
--- or against a database the DDL has deployed to: opens its own
--- transaction, asserts, rolls back.
+-- Run with the fixture ALTER applied first (`run.sh --apply dojo
+-- fixtures/identities_handle.ddl ../ddl/table/dojo/identities.ddl
+-- dojo/identities_handle.sql` — the DDL file alone cannot land on a table
+-- that predates the column), or against a database the DDL has deployed
+-- to: opens its own transaction, asserts, rolls back.
 
 begin;
+
+-- The column until L0 converges it (F5): the fixture ALTER runs inside
+-- this transaction and rolls back with it. `if not exists` keeps this
+-- green when the ALTER is also passed as an `--apply` arg, and after
+-- converge.
+\ir ../fixtures/identities_handle.ddl
 
 insert into dojo.principals (id, auth_user_id, display_name) values
   ('f1111111-1111-1111-1111-111111111111', 'f2222222-2222-2222-2222-222222222222', null),

@@ -19,10 +19,10 @@ describe('viewers view', () => {
 	it('L4 member-names — an unnamed person reads as words, never an id fragment', () => {
 		expect(personLabel({ principalId: 'abcdef123456', name: null, handle: null, email: null })).toBe('Name not shared yet');
 	});
-	it.skip('pending: L4 forge-handle — the handle shows when the name is missing', () => {
+	it('L4 forge-handle — the handle shows when the name is missing', () => {
 		expect(personLabel({ principalId: 'abcdef123456', name: null, handle: 'octocat', email: null })).toBe('octocat');
 	});
-	it.skip('pending: L4 forge-handle — the handle loses to a name and beats an email', () => {
+	it('L4 forge-handle — the handle loses to a name and beats an email', () => {
 		expect(personLabel({ principalId: 'abcdef123456', name: 'Ana', handle: 'octocat', email: 'a@x.co' })).toBe('Ana');
 		expect(personLabel({ principalId: 'abcdef123456', name: null, handle: 'octocat', email: 'a@x.co' })).toBe('octocat');
 	});

@@ -98,7 +98,7 @@ describe('toTeamMetricsView', () => {
 		expect(view.perPerson).toBe(true);
 		expect(toTeamMetricsView({ ...wire, per_person: false }).perPerson).toBe(false);
 	});
-	it.skip('pending: L4 forge-handle — a handle-only member is labeled by the handle', () => {
+	it('L4 forge-handle — a handle-only member is labeled by the handle', () => {
 		const w: TeamMetricsWire = {
 			...wire,
 			teams: [

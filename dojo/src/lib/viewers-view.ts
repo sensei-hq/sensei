@@ -32,7 +32,7 @@ export interface PersonView {
 	email: string | null;
 }
 
-/** A person's label: their name, else their email, else honest words — never an id fragment, never an invented name. */
+/** A person's label: their name, else their handle, else their email, else honest words — never an id fragment, never an invented name. */
 export function personLabel(p: PersonView): string {
-	return p.name ?? p.email ?? 'Name not shared yet';
+	return p.name ?? p.handle ?? p.email ?? 'Name not shared yet';
 }

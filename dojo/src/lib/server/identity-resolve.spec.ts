@@ -59,11 +59,11 @@ describe('pickBestIdentity', () => {
 			email: null
 		});
 	});
-	it.skip('pending: L4 forge-handle — a handle-only row beats an email-only row', () => {
+	it('L4 forge-handle — a handle-only row beats an email-only row', () => {
 		const rows = [row({ email: 'only@x.co' }), row({ handle: 'octocat' })];
 		expect(pickBestIdentity(rows)).toEqual({ display_name: null, handle: 'octocat', email: null });
 	});
-	it.skip('pending: L4 forge-handle — the best row carries its handle too', () => {
+	it('L4 forge-handle — the best row carries its handle too', () => {
 		expect(pickBestIdentity([row({ display_name: 'Ada', handle: 'ada-l', email: 'ada@x.co' })])).toEqual({
 			display_name: 'Ada',
 			handle: 'ada-l',
@@ -138,7 +138,7 @@ describe('resolveDisplayNames', () => {
 		const { db } = makeDb({ data: null, error: { message: 'boom' } });
 		await expect(resolveDisplayNames(db, 't1', ['u1'])).rejects.toBeInstanceOf(AdminError);
 	});
-	it.skip('pending: L4 forge-handle — the identity read selects the handle column', async () => {
+	it('L4 forge-handle — the identity read selects the handle column', async () => {
 		const { db, calls } = makeTableDb({
 			memberships: [{ tenant_id: 't1', user_id: 'u1' }],
 			identities: [],

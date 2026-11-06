@@ -377,11 +377,14 @@ export async function ensureForgeIdentity(
 	db: DojoClient,
 	principalId: string,
 	forge: ForgeProvider,
-	// The login is optional: Azure reads carry none. Persisted as the handle in phase B.
+	// The login is optional: Azure reads carry none.
 	user: Pick<ForgeUser, 'id' | 'name' | 'email'> & { login?: string | null }
 ): Promise<void> {
 	const provider = authMethodFor(forge);
 	const now = new Date().toISOString();
+	// Null when the provider supplies no login or only blank: a handle is
+	// never invented (F1), and a blank says nothing on refresh either.
+	const handle = user.login?.trim() || null;
 
 	const found = await db
 		.from('identities')
@@ -406,6 +409,7 @@ export async function ensureForgeIdentity(
 				// ones on record stay (an Azure read never carries an email).
 				...(user.email ? { email: user.email } : {}),
 				...(user.name ? { display_name: user.name } : {}),
+				...(handle ? { handle } : {}),
 				last_login_at: now
 			})
 			.eq('id', row.id)
@@ -423,6 +427,7 @@ export async function ensureForgeIdentity(
 			subject: user.id,
 			email: user.email,
 			display_name: user.name,
+			handle,
 			last_login_at: now
 		})
 		.select('id')

@@ -49,7 +49,7 @@ function db(over: Record<string, FakeTable> = {}) {
 const asClient = (f: ReturnType<typeof fakeDojoDb>) => f as unknown as DojoClient & typeof f;
 
 describe('listDojoViewers', () => {
-	it.skip('pending: L4 forge-handle — viewers carry the identity handle', async () => {
+	it('L4 forge-handle — viewers carry the identity handle', async () => {
 		const got = await listDojoViewers(
 			db({
 				identities: {

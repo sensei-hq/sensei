@@ -214,7 +214,7 @@ describe('billing build · who is counted (M3)', () => {
 		expect(names).toEqual(users.map((u) => personLabel({ principalId: u.user_id, name: u.display_name, handle: u.handle, email: u.email })));
 		expect(names.join(' ')).not.toMatch(/0b1e2f30|5c6d7e80|7d3c9a10/);
 	});
-	it.skip('pending: L4 forge-handle — a handle-only seat-holder is labelled by the handle', () => {
+	it('L4 forge-handle — a handle-only seat-holder is labelled by the handle', () => {
 		const seat = countedSeats([
 			{ user_id: '9d8e7f60-0000-0000-0000-000000000009', display_name: null, handle: 'seat-oct', email: null, workspaces: [] }
 		])[0];

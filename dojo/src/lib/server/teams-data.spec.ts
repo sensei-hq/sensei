@@ -57,7 +57,7 @@ function db(over: Record<string, FakeTable> = {}) {
 }
 
 describe('listTeams', () => {
-	it.skip('pending: L4 forge-handle — team members carry the identity handle', async () => {
+	it('L4 forge-handle — team members carry the identity handle', async () => {
 		const d = db({
 			identities: {
 				rows: [{ principal_id: 'dev', display_name: null, handle: 'dev-oct', email: null, last_login_at: null }]
