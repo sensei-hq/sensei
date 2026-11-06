@@ -21,7 +21,6 @@ import type {
   InsightsBoard, LogRow, ScheduledTask,
   MetricStatusResponse, MetricStatusSummary, MetricActivationOutcome,
   SyncStateResponse,
-  IntakeGuide, PlaybookRecommendation,
   ProvisionModel, ProvisionPhase,
   SchemaPayload,
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
@@ -537,17 +536,6 @@ export function senseiApi(port: number) {
      *  an error, never the all-quiet empty board). */
     tryGetInsights: (workspace?: string) =>
       tryGet<InsightsBoard>(`/api/insights${workspace ? `?workspace=${enc(workspace)}` : ''}`),
-
-    // ── Front door · Intake ─────────────────────────────────────────────
-    // The guide (frame + axis prompts + catalog) for the intake screen. A
-    // failure is an error the screen shows, not an empty guide (#288).
-    tryGetIntakeGuide: () => tryGet<IntakeGuide>('/api/playbook/guide'),
-
-    // Classify + recommend a playbook. `{ chunk, preview: true }` previews
-    // (no row written); `{ lifecycle, intent, risk, confirm: true }` records
-    // the confirmed run. tryPost so the form can surface errors.
-    recommendPlaybook: (body: Record<string, unknown>) =>
-      tryPost<PlaybookRecommendation>('/api/playbook/recommend', body),
 
     // ── Workspace window · Overview (Slot 4) ──────────────────────────────
     // Server-assembled landing pane: header + top rec + stats + recent

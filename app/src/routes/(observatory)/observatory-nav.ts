@@ -74,14 +74,16 @@ const link = (
 export function buildNavItems({ workspaceCount }: NavOptions = {}): NavEntry[] {
   const entries: NavEntry[] = [
     // Anchors — where every day starts (top-level).
-    // Intake (the front door) lives in the workspace window now — a chunk of work
-    // always starts IN a workspace, so it's a per-workspace section, not observatory-wide.
     link("家", "i-solar-home-smile-bold-duotone", "Today", "/"),
     link("場", WORKSPACE_ICON, "Workspaces", "/workspaces", { badge: workspaceCount }),
     // Needs you — the daily payoff: everything with a pending decision.
     {
       text: "Needs you",
       children: [
+        // Relay (D90): the daily hand-off, and it reads every crew — 67 of 157
+        // repositories belong to no workspace, so a workspace window alone could not
+        // reach them. The workspace window shows the same screen, pre-filtered.
+        link("継", "i-solar-arrow-right-up-bold-duotone", "Relay", "/relay"),
         link("今", "i-solar-lightbulb-bolt-bold-duotone", "Insights", "/insights"),
         link("覚", "i-solar-notebook-bookmark-bold-duotone", "Memories", "/learnings"),
         link("果", "i-solar-graph-up-bold-duotone", "Impact", "/impact"),

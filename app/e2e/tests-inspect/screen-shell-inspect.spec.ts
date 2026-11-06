@@ -19,7 +19,7 @@ const WORKSPACE_SCREENS = [
   'traceability', 'instruments', 'libraries', 'memories',
   'diagrams/structure', 'diagrams/wheel', 'diagrams/zones', 'diagrams/matrix', 'diagrams/cycles',
   'diagrams/coupling', 'diagrams/complexity', 'diagrams/schema',
-  'overview', 'about', 'patterns', 'impact', 'intake', 'metrics', 'sessions',
+  'overview', 'about', 'patterns', 'impact', 'relay', 'metrics', 'sessions',
 ];
 
 /** Observatory screens on `Screen`, by path; grows as screens move (#293). */
@@ -28,7 +28,7 @@ const OBSERVATORY_SCREENS = [
     .map((s) => `/settings/${s}`),
   '/dojo/connections', '/dojo/sharing', '/help', '/knowledge-sources', '/libraries', '/traceability', '/upgrades',
   '/', '/impact', '/learnings', '/share-review',
-  '/activity-logs', '/consolidation', '/insights', '/instruments', '/workspaces', '/sessions',
+  '/activity-logs', '/consolidation', '/insights', '/instruments', '/workspaces', '/sessions', '/relay',
 ];
 
 type Probe = { fills: boolean; mainScrolls: boolean; headerMoved: number; bodyScrolled: number; fill: boolean } | null;

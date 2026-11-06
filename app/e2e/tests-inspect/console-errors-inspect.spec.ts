@@ -8,11 +8,11 @@ import { expect, test } from '../fixtures';
 import { DAEMON_URL, navigateTo, takeConsoleErrors, watchConsole } from '../helpers';
 
 const OBSERVATORY = ['/', '/workspaces', '/instruments', '/instruments?tab=replay', '/instruments?tab=insights',
-  '/libraries', '/metrics', '/sessions', '/settings/general'];
+  '/libraries', '/metrics', '/sessions', '/settings/general', '/relay'];
 const WORKSPACE = ['overview', 'metrics', 'sessions', 'memories', 'traceability', 
   'diagrams/structure', 'diagrams/wheel', 'diagrams/zones', 'diagrams/matrix', 'diagrams/cycles',
   'diagrams/coupling', 'diagrams/complexity', 'diagrams/schema',
-  'libraries', 'instruments', 'patterns', 'impact', 'tickets', 'integrations', 'about', 'intake'];
+  'libraries', 'instruments', 'patterns', 'impact', 'tickets', 'integrations', 'about', 'relay'];
 
 test('no screen logs a console error', async ({ tauriPage }) => {
   const workspaces = await (await fetch(`${DAEMON_URL}/api/workspaces`)).json();
