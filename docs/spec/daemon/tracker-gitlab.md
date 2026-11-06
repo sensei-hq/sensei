@@ -1,6 +1,6 @@
 ---
 name: GitLab tracker adapter
-status: reviewed (r2, gate passed 2026-11-06)
+status: reviewed (r3, gate passed 2026-11-06)
 date: 2026-11-06
 parent: docs/spec/daemon/tracker-jira-linkage.md ("Integration seam", R1–R11, "Future adapters")
 analysis: docs/analysis/2026-11-06-forge-trackers.md (FT1–FT6, §3)
@@ -11,6 +11,8 @@ also: docs/spec/tracker-levels.md (D40), docs/spec/daemon/tracker-metrics-writeb
 
 > **r2 (2026-11-06):** rewritten after the claims verification and five reviewers.
 > See "Review record" at the end for what changed and why.
+>
+> **r3 (2026-11-06):** OPEN-G1 and OPEN-G2 decided by the user (no ports, subpaths or private networks). The opt-in and `NetPolicy` are removed, and the address check is always on inside `ReqwestRaw` (C34).
 
 ## Purpose
 
@@ -40,7 +42,7 @@ GitHub is slice 2 and reuses §G6.
 | `board_ref` | **`project:<id>`** or **`group:<id>`**: GitLab's numeric id from validate. A rename or transfer keeps it, so one board can never be connected twice under two paths. Project ids and namespace ids are separate sequences, hence the prefix. |
 | `external_scope` | The board's `full_path` **at connect** (the column is written only by connect, `db/pg_store/trackers.rs:1091`). The **current** path is `params.full_path`, refreshed by every sync (§G4.6), and everything after connect reads that one. |
 | `account` | The token's `username` from `GET /user` at validate |
-| `params` | `{"board_name", "full_path", "version", "sprint_source": "iteration"\|"milestone", "sprint_source_changed_at"?, "allow_private_network": bool}` |
+| `params` | `{"board_name", "full_path", "version", "sprint_source": "iteration"\|"milestone", "sprint_source_changed_at"?}` |
 
 **Connect body** (`POST /api/workspaces/{id}/trackers`):
 
@@ -48,8 +50,7 @@ GitHub is slice 2 and reuses §G6.
 { "kind": "gitlab", "level": "sprint",
   "board_url": "https://gitlab.example.com/acme/platform/-/boards",
   "confirm_host": "gitlab.example.com",
-  "api_token": "glpat-…",
-  "allow_private_network": false }
+  "api_token": "glpat-…" }
 ```
 
 **`connect_params`** (pure, no network). Every failure is a **422** with the code
@@ -148,23 +149,21 @@ network. Applies to **every tracker transport** (all kinds) unless stated.
 1. **Name rule** (`host_rule`, a `fn(&str) -> bool` over the shared `normalize_base_url`, which already refuses IP literals, userinfo, any explicit port other than `:443`, and non-https):
    - `gitlab.com` is always allowed.
    - Otherwise a DNS name containing a dot, excluding `localhost`, `*.localhost`, `*.local`, `*.internal`, `*.lan` and `*.home.arpa`.
-   - With `allow_private_network: true`, those reserved suffixes are allowed too (`localhost` and `*.localhost` never are). `connect_params` selects between two `fn` rules by the flag.
    - **A trailing dot is refused** by the shared `normalize_base_url` (`localhost.` would otherwise pass every suffix test). Jira's existing test already rejects `acme.atlassian.net.`, so Jira is unaffected. The build confirms whether today's refusal comes from the Jira predicate or the shared rule, and puts it in the shared rule.
 2. **Host confirmation** (§G1.3): the user types the host twice.
-3. **One shared classifier.** `indexer/lib_indexer.rs:250` already has `is_public_ip` (it canonicalises IPv4-mapped IPv6 and has its own tests at `:1186-1189`). It moves to a new shared module, `crates/senseid/src/net/addr.rs`, as `classify(ip) -> AddrClass { Public, PrivateLan, Never }`, with the ranges below. `is_public_ip(ip)` becomes `classify(ip) == Public`, and the library fetcher keeps calling it. The fetcher's refusals only get stricter (6to4, Teredo, NAT64, the extra IPv4 blocks, and IPv6 outside `2000::/3`), and its existing tests stay green. The tracker resolver calls `classify` too, so there is no second list.
+3. **One shared classifier.** `indexer/lib_indexer.rs:250` already has `is_public_ip` (it canonicalises IPv4-mapped IPv6 and has its own tests at `:1186-1189`). It moves to a new shared module, `crates/senseid/src/net/addr.rs`, still named `is_public_ip(ip) -> bool`, with the ranges below, and the library fetcher keeps calling it. The fetcher's refusals only get stricter (6to4, Teredo, NAT64, the extra IPv4 blocks, and IPv6 outside `2000::/3`), and its existing tests stay green. The tracker resolver calls `is_public_ip` too, so there is no second list.
    **Address rule**, enforced in a custom `reqwest` DNS resolver (`ClientBuilder::dns_resolver`) on the tracker client. It filters every address of every resolution, so every new connection is re-checked (DNS rebinding included), and pooled connections reuse an address that was already checked.
    - Each address is **canonicalised first**: an IPv4-mapped or IPv4-compatible IPv6 address (`::ffff:a.b.c.d`) is classified as its IPv4 address.
-   - **Allowed by default: global unicast only**, defined positively.
+   - **Allowed: global unicast only**, defined positively. There is no opt-in (OPEN-G2, decided).
      - IPv4: refused are unspecified, `0.0.0.0/8`, loopback, RFC 1918, CGNAT `100.64.0.0/10`, link-local `169.254.0.0/16`, `192.0.0.0/24`, `198.18.0.0/15`, `240.0.0.0/4`, `192.88.99.0/24`, broadcast, multicast, and the documentation ranges.
      - IPv6: **only `2000::/3` is allowed**, and within it these are refused: 6to4 `2002::/16`, Teredo `2001::/32`, NAT64 `64:ff9b::/96` and `64:ff9b:1::/48`, ORCHID `2001:10::/28`, benchmarking `2001:2::/48` and documentation `2001:db8::/32`. Everything outside `2000::/3` is refused, which covers ULA `fc00::/7` (and so `fd00:ec2::254`), link-local, site-local `fec0::/10`, multicast and SIIT.
-   - **`allow_private_network: true`** additionally allows **only** RFC 1918, ULA `fc00::/7` and CGNAT `100.64.0.0/10`. Even then, the known cloud metadata addresses inside those ranges stay refused: **`100.100.100.200`** (Alibaba) and **`fd00:ec2::254`** (AWS IPv6). Loopback, link-local (so `169.254.169.254`), unspecified and multicast also stay refused. Other services inside RFC 1918 or CGNAT cannot be enumerated. The checkbox's explanation says so: "Lets sensei send your GitLab token to addresses on your private network. Only tick this for a GitLab you run there."
    - No address left → `TrackerError::Transport`.
 4. **No proxy**: the tracker client calls `.no_proxy()`. Otherwise reqwest honours `HTTPS_PROXY` / `ALL_PROXY`, the proxy resolves the host, and step 3 never runs.
-5. **The flag travels with the row.** `TransportFactory::transport` and `::write_transport` gain a `NetPolicy { allow_private: bool }`. **All five** production call sites pass it: `runtime.rs:87` (`transport_for`, from the row), `history.rs:60` and `writeback.rs:590-591` (from the row they already hold), and `api/handlers/trackers.rs:162` (connect, from the body). Jira rows pass `allow_private: false`. "Private network allowed" shows on Integrations, and changing it needs a reconnect.
+5. **Always on, for every tracker.** The resolver and `.no_proxy()` are built into `ReqwestRaw` itself, so every transport the `TransportFactory` builds (all five production call sites, C16) gets them with no parameter to pass. Jira's hosts are public, so Jira is unaffected.
 6. **Redirects stay off** (unchanged, C6).
 7. **CSRF on connect**: no new surface. The tracker routes carry `local_caller_guard` (`route_layer` at `api/routes.rs:71`, defined at `api/origin_guard.rs:93-101`), which refuses a foreign Origin on reads and writes, inside the full router's `caller_guard` (`routes.rs:581`).
 
-Explicit ports and subpaths stay refused or unsupported in v1 (OPEN-G1).
+Explicit ports, subpaths and private-network hosts are not supported (OPEN-G1, OPEN-G2: decided by the user, 2026-11-06: a GitLab is a public `https://` endpoint).
 
 ### G6 · Keys and links: `tracker/forge.rs`, provider-neutral, shared with GitHub
 
@@ -219,17 +218,17 @@ Jira returns `{true, true}`. GitLab returns `{false, false}`.
 | `tracker/mod.rs` | `TrackerKind::Gitlab` (`"gitlab"`); `AuthScheme::Header`; `ParamError::HostNotConfirmed` (`host_not_confirmed`); `Validated` gains `account: Option<String>`, `board_ref: Option<String>` and `params: serde_json::Map`; `Snapshot.params_extra`; `Capabilities` + `capabilities()`; `adapters()` registers `GitlabAdapter` |
 | `tracker/connect.rs` | Owner check after validate; validated `board_ref` and `account` for the tombstone, the keyring and the row; the row's `params` = `{board_name} ∪ validated.params` |
 | `tracker/sync.rs` | Merges `params_extra` into the existing patch; `sprint_source_changed_at` (§G3) |
-| `net/addr.rs` (new; `is_public_ip` moved from `indexer/lib_indexer.rs:250`, extended to `classify`), `tracker/transport.rs`, `runtime.rs`, `http.rs` (`crates/senseid/src/http.rs`) | `Header` auth; the resolver; `.no_proxy()`; `NetPolicy` at all 5 sites |
+| `net/addr.rs` (new; `is_public_ip` moved from `indexer/lib_indexer.rs:250`, with the stricter ranges), `tracker/transport.rs`, `runtime.rs`, `http.rs` (`crates/senseid/src/http.rs`) | `Header` auth; the resolver and `.no_proxy()` inside `ReqwestRaw` |
 | `tracker/history.rs`, `writeback.rs`, `sdlc/*`, `db/pg_store/tracker_history.rs`, `api/handlers/trackers.rs` | §G8 guards and the `unsupported_by_tracker` reason |
 | `database/import/staging/reason_codes.jsonl` | the `unsupported_by_tracker` row (§G8); `make test-template` |
 | `tracker/forge.rs`, `tracker/gitlab.rs` (new) | §G6, the adapter |
 | `tracker/ticket.rs`, `targets/http.rs` | §G9 |
 | DDL `enum/sensei/tracker_kind.ddl` | `'gitlab'` added, following the add-value convention of `enum/…/assistant_family.ddl:20`; `make test-template`. The column comments in `table/sensei/trackers.ddl:47-54` name GitLab's values. |
 | `database/design.dbml` | `Enum tracker_kind` gains `"gitlab"`; the tracker notes (`:2955-2958`) gain GitLab |
-| CLI `crates/cli/src/tracker.rs` | `sensei tracker connect gitlab --workspace <w> --level <l> --board-url <url> --confirm-host <host> [--allow-private-network]`. The token comes from `SENSEI_GITLAB_TOKEN`, else the first line of stdin (Jira's pattern: `SENSEI_JIRA_TOKEN`, `read_token`). The connect client timeout becomes **180 s** (5 validate requests × 30 s + the keyring call) for GitLab. |
-| App: Integrations | A **GitLab** radio (replacing "GitLab, coming soon"); board URL, confirm host, token, and a private-network checkbox with one line of explanation; `Sprints: iterations\|milestones`; the §G3 notice; "Write-back: not available for GitLab yet"; **Replace token** for GitLab re-sends `board_url` built from `base_url` + `params.full_path`, `confirm_host` = the stored host, `allow_private_network` = the stored `params.allow_private_network`, and the new token |
+| CLI `crates/cli/src/tracker.rs` | `sensei tracker connect gitlab --workspace <w> --level <l> --board-url <url> --confirm-host <host>`. The token comes from `SENSEI_GITLAB_TOKEN`, else the first line of stdin (Jira's pattern: `SENSEI_JIRA_TOKEN`, `read_token`). The connect client timeout becomes **180 s** (5 validate requests × 30 s + the keyring call) for GitLab. |
+| App: Integrations | A **GitLab** radio (replacing "GitLab, coming soon"); board URL, confirm host and token; `Sprints: iterations\|milestones`; the §G3 notice; "Write-back: not available for GitLab yet"; **Replace token** for GitLab re-sends `board_url` built from `base_url` + `params.full_path`, `confirm_host` = the stored host, and the new token |
 | App: kind-aware copy | Every string naming Jira on a shared path takes the tracker's kind: `app/src/lib/tracker-errors.ts` (`:14` `CREATE_TOKEN_URL`, `:17, :23, :24, :26` (`token_required`, which GitLab returns), `:28, :29, :30, :49, :56, :57, :59, :69, :104`, plus `host_not_confirmed` and `writeback_unsupported`; SDLC reasons do not live here); `tickets-state.svelte.ts:220` (`no_dates`); `integrations-state.svelte.ts:256`; `IntegrationsScreen.svelte:72, :132, :164, :382` (shared), with the Jira-only form copy at `:286, :320, :324, :333` shown only for the Jira radio; `integrations-state.svelte.ts:375` (connect kind hard-coded to `'jira'`); `TicketsScreen.svelte:49`; `api/handlers/scheduled_tasks.rs:67` |
-| Docs | **Parent** `tracker-jira-linkage.md`: `:80` (one adapter), `:157` (`board_ref` for GitLab = `project:<id>`/`group:<id>`, with the source in `params`), R4 `:280-283` (Header auth, resolver, NetPolicy), R5 `:388`, R8 `:511, :530-531` (`host_not_confirmed` 422, `writeback_unsupported` 409, GitLab's validate count), R10 `:546-553`, `:662`, and the "Future adapters" table (iteration `state` is an integer; `board_ref` does not name the source). `tracker-metrics-writeback.md` W7 `:375` (PUT `/fields` → 409), W8 `:426-428` (PATCH → 409) and W10 `:514-524` (client and `write_transport`: resolver, `.no_proxy()`, `NetPolicy`). `tracker-sdlc-metrics.md` S4/S5, S6 (the reason table) and S8 (`estimated_points` reasons): `unsupported_by_tracker`. `tracker-levels.md:27, :48, :65-67`: forge milestones are **sprints** on a sprint-level board, distinct from T3/V11 planning milestones read from an epic tracker. Screen specs `workspace-integrations.md` (`:43, :90-99, :121, :132-139, :151-180, :216, :218`) and `workspace-tickets.md` (`:77, :105-106`). `decisions.md` D91. `backlog.md:207-212` (closed by this spec). |
+| Docs | **Parent** `tracker-jira-linkage.md`: `:80` (one adapter), `:157` (`board_ref` for GitLab = `project:<id>`/`group:<id>`, with the source in `params`), R4 `:280-283` (Header auth, resolver, no proxy), R5 `:388`, R8 `:511, :530-531` (`host_not_confirmed` 422, `writeback_unsupported` 409, GitLab's validate count), R10 `:546-553`, `:662`, and the "Future adapters" table (iteration `state` is an integer; `board_ref` does not name the source). `tracker-metrics-writeback.md` W7 `:375` (PUT `/fields` → 409), W8 `:426-428` (PATCH → 409) and W10 `:514-524` (client and `write_transport`: resolver, `.no_proxy()`). `tracker-sdlc-metrics.md` S4/S5, S6 (the reason table) and S8 (`estimated_points` reasons): `unsupported_by_tracker`. `tracker-levels.md:27, :48, :65-67`: forge milestones are **sprints** on a sprint-level board, distinct from T3/V11 planning milestones read from an epic tracker. Screen specs `workspace-integrations.md` (`:43, :90-99, :121, :132-139, :151-180, :216, :218`) and `workspace-tickets.md` (`:77, :105-106`). `decisions.md` D91. `backlog.md:207-212` (closed by this spec). |
 
 ### Build order
 
@@ -238,7 +237,7 @@ Jira returns `{true, true}`. GitLab returns `{false, false}`.
    - **Free**: a gitlab.com free group, which has milestones and no iterations. It also covers a merge request absent from `/issues`, an undated milestone, a parent-group milestone on a subgroup issue, and a `task`-type issue.
    - **Premium**: a gitlab.com Premium/Ultimate trial group, with iterations including an untitled one.
    - **Human prerequisite** for both. Fixtures are recorded with `curl`, not hand-written.
-2. **Shared seams**, nothing GitLab-specific: `AuthScheme::Header`, the resolver, `.no_proxy()`, `NetPolicy` at 5 sites, `Validated` and `Snapshot` fields, the `params_extra` merge, `capabilities()` and the §G8 guards with `unsupported_by_tracker`. The full Jira suite stays green.
+2. **Shared seams**, nothing GitLab-specific: `AuthScheme::Header`, the resolver and `.no_proxy()` in `ReqwestRaw`, `Validated` and `Snapshot` fields, the `params_extra` merge, `capabilities()` and the §G8 guards with `unsupported_by_tracker`. The full Jira suite stays green.
 3. `forge.rs` (pure, unit-tested).
 4. **The `gitlab` kind lands as one unit:** the DDL enum value and `make test-template`; `TrackerKind::Gitlab`; `gitlab.rs` against the fixtures; registration in `adapters()`; replacing the three "gitlab is unsupported" tests (`mod.rs:1274`, `api/handlers/trackers.rs:998-1003`, and the app's `IntegrationsScreen.spec.svelte.ts:94-98` "coming soon" in step 6). These land together because `mod.rs:1274` pins the variant, and `every_registered_kind_is_a_label_of_the_ddl_enum` (`mod.rs:1278`, which iterates `adapters()`) pins registration to the DDL.
 5. §G9 `get_ticket`.
@@ -252,19 +251,19 @@ Write-back, history, SDLC sprint metrics, estimates and points for GitLab (all
 ports and subpaths (OPEN-G1); scoped `workflow::` labels as statuses; acceptance
 criteria parsed from descriptions; past sprint membership; epics; GitHub (slice 2).
 
-## Open for the user
+## Decided by the user (were open)
 
 | # | Question | Default |
 |---|---|---|
-| OPEN-G1 | Self-managed GitLab on a non-443 port or under a subpath: support in v1? | Not supported |
-| OPEN-G2 | The private-network opt-in as specified (§G5.1, §G5.3: relaxes the reserved-name suffixes; allows RFC 1918, ULA and CGNAT; never loopback, link-local or metadata) | As specified |
+| OPEN-G1 | Self-managed GitLab on a non-443 port or under a subpath: support in v1? | **Decided (user, 2026-11-06): no.** |
+| OPEN-G2 | A private-network opt-in for a GitLab on a LAN? | **Decided (user, 2026-11-06): no.** A GitLab is a public `https://` endpoint. The opt-in, its flag, checkbox and `NetPolicy` are removed. |
 
 ## Done gate
 
 | # | Check | Pass |
 |---|---|---|
 | D1 | `cargo test -p senseid tracker::` and `targets::` | 0 failed; every existing Jira test passes unmodified (except the two of D12) |
-| D2 | `connect_params` tests | `…/groups/acme/-/boards` → typed path `acme`; `…/acme/platform/-/issues` → `acme/platform`; `confirm_host` mismatch or missing → 422 `host_not_confirmed`; `https://1.2.3.4`, `:8443`, `http://`, `localhost`, `x.internal` (flag off) → `invalid_base_url`; `x.internal` with the flag → Ok; missing token → `token_required` |
+| D2 | `connect_params` tests | `…/groups/acme/-/boards` → typed path `acme`; `…/acme/platform/-/issues` → `acme/platform`; `confirm_host` mismatch or missing → 422 `host_not_confirmed`; `https://1.2.3.4`, `:8443`, `http://`, `localhost`, `x.internal` → `invalid_base_url`; missing token → `token_required` |
 | D3 | Validate (fake transport) | requests `/api/v4/projects/acme%2Fplatform`; project 200 → `board_ref = project:<id>`; project 404 + group 200 → `group:<id>`; both 404 → `board_not_found`; `account` = `/user` username; **at most 5 requests** |
 | D4 | Board identity (DB) | connect `acme/platform` (id 123) in workspace A, then `acme/core` (id 123) in workspace B → `board_already_connected` |
 | D5 | Probes | iterations 200 → `iteration`; 403 → `milestone`; 404 → `milestone`; 500 and timeout → the snapshot fails with `http_error` / `transport`, and **no sprint row's `removed_at` changes** |
@@ -275,9 +274,9 @@ criteria parsed from descriptions; past sprint membership; epics; GitHub (slice 
 | D10 | Guards | PATCH `writeback_enabled:true` and PUT `/fields` on a GitLab tracker → 409 `writeback_unsupported`; after a history run, the GitLab tracker's `history_error`, `history_at` and `terms_at` (`trackers.ddl:29-31`) are NULL; its `/sprints` SDLC reasons (commitment and scope, `velocity`) and a task's `estimated_points` reason are `unsupported_by_tracker` (not `history_pending` / `not_synced`); `lead_hours` is computed |
 | D11 | `forge.rs` | two repos with `#12` each: a bare `#12` links only the session's repo's task; NULL `repo_key` → none; `fix acme/platform#12` → mentions 1; `#123` → no link to `#12`; branch `12-fix` links; `unknown_keys` never returns a bare key; discovery for `acme/platform#99` against `Acme/Platform#99` → not_on_board empty |
 | D12 | Kind tests | `mod.rs:1274`, `trackers.rs:998-1003` and `IntegrationsScreen.spec.svelte.ts:94-98` replaced by positive `gitlab` cases; `every_registered_kind_is_a_label_of_the_ddl_enum` green; the dbml enum lists `gitlab` |
-| D13 | Resolver, through the **production `ReqwestRaw`** with a stub resolver | refused by default: `10.0.0.5`, `127.0.0.1`, `::1`, `::ffff:127.0.0.1`, `::ffff:169.254.169.254`, `169.254.169.254`, `100.64.0.1`, `0.1.2.3`, `64:ff9b::a00:1`, `fd00:ec2::254`; with `allow_private`: `10.0.0.5` and `fd12::1` pass, while `127.0.0.1`, `169.254.169.254` and `fd00:ec2::254` are still refused; a public address passes; with `HTTPS_PROXY` set, the request still goes direct (the proxy stub receives nothing) |
+| D13 | Resolver, through the **production `ReqwestRaw`** with a stub resolver | refused: `10.0.0.5`, `127.0.0.1`, `::1`, `::ffff:127.0.0.1`, `::ffff:169.254.169.254`, `169.254.169.254`, `100.64.0.1`, `0.1.2.3`, `64:ff9b::a00:1`, `fd00:ec2::254`, `fd12::1`, `100.100.100.200`, `2002:7f00:1::`; a public address passes; with `HTTPS_PROXY` set, the request still goes direct (the proxy stub receives nothing) |
 | D14 | `get_ticket` | `/api/tickets/acme%2Fplatform%2312/fetch` on a GitLab workspace → 200 with title, url, `acceptance_criteria_source = not_configured`; an unknown iid → 404; a 500 from GitLab → 502 with the code; **a key whose issue's project is outside the board** (the fake returns it, the token can see it) → 404 `ticket_not_found` with no title in the body; `acme/../x#1` → 404, no request sent |
-| D19 | Header redaction | `format!("{:?}", request)` for a `Header`-auth request does not contain the token; `localhost.` and `x.local.` → `invalid_base_url`; with `allow_private`, `100.100.100.200` is refused and `2002:7f00:1::` (6to4 of 127.0.0.1) is refused |
+| D19 | Header redaction | `format!("{:?}", request)` for a `Header`-auth request does not contain the token; `localhost.` and `x.local.` → `invalid_base_url` |
 | D15 | Pagination | 200 full pages + an empty page 201 → Ok with 20,000 items; a non-empty page 201 → `http_error` |
 | D16 | App and copy | component tests: a GitLab tracker with `unauthorized` and an undated sprint render no "Jira"; the GitLab radio is enabled; the source-change notice shows within 14 days of `sprint_source_changed_at` |
 | D17 | Gates | `make test-fast`, the app's tests, and `cargo clippy` green |
@@ -290,7 +289,7 @@ Ways this passes the done gate and is still wrong:
 - **A hand-written fixture.** Iteration `state` was a string in the draft because nobody had looked at a real response. D6 and D8 run on **recorded** fixtures, or they prove nothing.
 - **The probe fell through on a timeout.** Iterations would flip to milestones, and every iteration sprint would get `removed_at`. D5 must include a timeout, not just 200 and 403.
 - **The resolver tested beside the client, not inside it.** D13 goes through `ReqwestRaw` with the proxy variable set. A unit test of the classifier alone can pass while the client never calls it.
-- **`NetPolicy` threaded through `transport_for` only.** History and write-back would build Jira-default transports for a private GitLab and fail with `transport`. Grep the 5 sites.
+- **The resolver on one transport only.** If it is wired into `transport_for` and not into `ReqwestRaw` itself, history and write-back transports skip it. D13 goes through `ReqwestRaw`.
 - **Bare `#12` linked across repos.** A single-repo test cannot catch it. D11 needs two repos.
 - **"Not available" shown where the real answer is "pending" on Jira.** The `unsupported_by_tracker` reason must be driven by the adapter's capability, never by the kind's name in SQL, and Jira's reasons must be unchanged (D1).
 - **A path-keyed board.** Any code path that looks a board up by `full_path` after connect reintroduces the rename bug D4 guards against.
@@ -317,6 +316,7 @@ Ways this passes the done gate and is still wrong:
 | C14 | zero sprints → NULL current sprint | `sprint.rs:81`; `db/pg_store/trackers.rs:351-353` | as stated | CONFIRMED |
 | C15 | the default `board_terms` leads history to record `not_found` | `mod.rs:532-538`, `history.rs:80-84` | as stated | CONFIRMED |
 | ~~C16~~ | ~~exactly 4 production transport call sites~~ | `rg '\.transport\(\|\.write_transport\(' crates/senseid/src` | **5**: `runtime.rs:87`, `history.rs:60`, `writeback.rs:590`, `:591`, `api/handlers/trackers.rs:162`; history and write-back bypass `transport_for` | **FALSE (r1)**. Cost: `NetPolicy` would have missed history and write-back. Fixed in §G5.5. |
+| C34 † | Both `TransportFactory` methods build `ReqwestRaw::new`, so a resolver inside `ReqwestRaw` reaches all 5 sites with no parameter | `rg -n 'ReqwestRaw::new' crates/senseid/src/tracker/runtime.rs` | `:44` (`transport`) and `:52` (`write_transport`) | **CONFIRMED (2026-11-06, r3)**. reqwest does not call a custom resolver for an IP-literal URL, so the `ReqwestRaw` tests against `127.0.0.1` (`transport.rs:394-510`) are unaffected, and production IP literals are already refused by `normalize_base_url`. D13 injects its stub resolver through a test-only constructor. |
 | C17 | `trackers.rs` asserts `gitlab` → `unsupported_tracker` | `trackers.rs:998-1003` | present | CONFIRMED |
 | C17a† | `mod.rs` asserts `TrackerKind::parse("gitlab") == None` | `mod.rs:1274` | present | CONFIRMED |
 | C18 | connect = `POST /api/workspaces/{id}/trackers`; ParamErrors → **422** | `trackers.rs:135-159` | as stated | CONFIRMED (r1 said 400: FALSE, fixed) |
