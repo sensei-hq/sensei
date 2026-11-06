@@ -6,8 +6,7 @@
 // screen pre-filtered to its workspace (`(workspace)/workspace/[id]/relay`, whose spec pins
 // Now, Queue, compose and the states). This file pins what differs in the main window.
 //
-// Phase A: disabled reds (`pending: relay-screen`). The route does not exist yet, so the
-// loader and the page are imported inside each test. The relay client is mocked.
+// The loader and the page are imported inside each test. The relay client is mocked.
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';

@@ -24,6 +24,12 @@
     `${(a.round ?? 1) > 1 ? 'Rework' : 'Work'} · ${a.phase ?? 'work'} r${a.round ?? 1}`;
   const reviewTitle = (a: Extract<RelayAction, { kind: 'reviewed' }>) =>
     `Review · ${a.phase ?? 'work'} r${a.round ?? 1}`;
+  // Q12 puts lanes in this history: they send messages and ask other lanes. `lane_code`
+  // is who acted (null = the person); `asked_of` is `person` or the lane asked.
+  const messageTitle = (a: Extract<RelayAction, { kind: 'message' }>) =>
+    a.lane_code ? `Message from ${a.lane_code}` : 'Message from you';
+  const askTitle = (a: Extract<RelayAction, { kind: 'asked' }>) =>
+    a.props.asked_of === 'person' ? 'Asked you' : `Asked ${codeOf(lanes, a.props.asked_of)}`;
 </script>
 
 <article class="flex flex-col gap-2 rounded-sm border border-paper-edge p-3" data-history-entry={action.id}>
@@ -78,7 +84,7 @@
     </p>
 
   {:else if action.kind === 'message'}
-    <p class="text-sm font-medium m-0" data-entry-title>Message from you</p>
+    <p class="text-sm font-medium m-0" data-entry-title>{messageTitle(action)}</p>
     <p class="text-xs text-ink-mute m-0">
       To {action.props.to.kind === 'lane' ? codeOf(lanes, action.props.to.lane_id) : action.props.to.kind}
       <span class="rounded-sm bg-paper-soft px-1" data-message-state={messageState ?? 'sent'}>{messageState ?? 'sent'}</span>
@@ -100,7 +106,7 @@
     <p class="text-sm font-medium m-0" data-entry-title>Started</p>
 
   {:else if action.kind === 'asked'}
-    <p class="text-sm font-medium m-0" data-entry-title>Asked you</p>
+    <p class="text-sm font-medium m-0" data-entry-title>{askTitle(action)}</p>
     {#if action.body_md}<p class="text-sm text-ink-soft m-0">{action.body_md}</p>{/if}
 
   {:else if action.kind === 'answered'}

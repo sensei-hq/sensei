@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 // Workspace · Relay · a task — the task view (CONTRACT §1e; `relay.task_history`).
 //
-// Phase A: disabled reds (`pending: relay-screen`). The route does not exist yet, so
-// the loader and the page are imported inside each test. The relay client is mocked
+// The loader and the page are imported inside each test. The relay client is mocked
 // (`$lib/relay-api`, `relayApi(port)`), as on the Now screen.
 //
 // What this pins beyond the layout: the history keeps the view's order (newest
@@ -515,5 +514,54 @@ describe('Relay · task r2 — the facts line (L2)', () => {
     expect(facts).toMatch(/claude-code|Claude Code/);
     expect(facts).toContain(hhmm(view.task.assigned_at));
     expect(facts).toContain(hhmm(view.task.completed_at!));
+  });
+});
+
+describe('Relay · task impl r2 — who a row is from (L4 F2)', () => {
+  // Q12 puts lanes in this history: a lane sends messages and asks other lanes.
+  // A lane's message titled "Message from you" gives the person its words.
+  const laneSent = () =>
+    F.action(
+      'message',
+      { to: { kind: 'person' }, surface: 'lane' },
+      { id: 'act-msg-lane', lane_code: 'L3', body_md: 'Sync is refusing the repository.', created_at: F.minutesAgo(15) },
+    );
+
+  it('a lane’s message names the lane; the person’s own still reads yours', async () => {
+    const { c } = await open({
+      task: F.ok(F.taskView({ history: [laneSent(), ...F.history().filter((a) => a.id === 'act-msg')] })),
+    });
+    const mine = need(entry(c, 'act-msg'), 'history entry act-msg');
+    expect(text(one(mine, '[data-entry-title]'))).toBe('Message from you');
+
+    const theirs = need(entry(c, 'act-msg-lane'), 'history entry act-msg-lane');
+    expect(text(theirs)).toContain('Sync is refusing the repository.');
+    expect(text(one(theirs, '[data-entry-title]'))).toBe('Message from L3');
+    expect(text(theirs)).not.toContain('from you');
+  });
+
+  it('an ask directed at a lane names that lane; one at the person reads "Asked you"', async () => {
+    const ask = (asked_of: string, id: string, question: string) =>
+      F.action(
+        'asked',
+        { context: null, options: [], recommended: null, blocks: [], asked_of },
+        { id, lane_code: 'L0', body_md: question, created_at: F.minutesAgo(60) },
+      );
+    const { c } = await open({
+      task: F.ok(
+        F.taskView({
+          history: [
+            ask(F.LANE.L1, 'act-ask-lane', 'Is the billing export ready?'),
+            ask('person', 'act-ask-person', 'Where does the activity log live?'),
+          ],
+        }),
+      ),
+    });
+    expect(text(one(need(entry(c, 'act-ask-person'), 'the ask of the person'), '[data-entry-title]'))).toBe('Asked you');
+    const atLane = need(entry(c, 'act-ask-lane'), 'the ask of a lane');
+    expect(text(atLane)).toContain('Is the billing export ready?');
+    expect(text(one(atLane, '[data-entry-title]'))).toBe('Asked L1');
+    // A uuid never reaches the screen.
+    expect(text(c)).not.toContain(F.LANE.L1);
   });
 });

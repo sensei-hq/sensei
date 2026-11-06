@@ -4,9 +4,8 @@
 // Contract: coord/mockups/relay-lanes/CONTRACT.md §1 (the screen), §3 (the shapes);
 // data: docs/prd/modules/03-delivery/21-relay/lanes-data.md (`relay.now`, the queue).
 //
-// Phase A: every test is a disabled red (`pending: relay-screen`). The route does not
-// exist yet, so the loader and the page are imported inside each test — a static
-// import would fail the whole file, and the live specs beside it with it.
+// The loader and the page are imported inside each test, so a broken route fails one
+// test at a time rather than the whole file and the live specs beside it.
 //
 // The pattern is activity-logs' (D87 adopter): the loader reads, the page draws `data`
 // and reads nothing of its own, a state class owns each Retry (recovers, fails again

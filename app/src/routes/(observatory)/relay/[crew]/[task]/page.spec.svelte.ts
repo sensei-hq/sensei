@@ -5,7 +5,7 @@
 // what differs here: the view id, the back link to the main Relay, the read by (crew, task),
 // and a task on a repository that belongs to no workspace.
 //
-// Phase A: disabled reds (`pending: relay-screen`); the route is imported inside each test.
+// The route is imported inside each test.
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
