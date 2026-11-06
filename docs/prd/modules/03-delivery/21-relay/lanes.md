@@ -220,6 +220,10 @@ row, and must make waiting visible.
   - a verdict the author has not picked up;
   - an approval not yet merged;
   - a lane idle with nothing assigned.
+- **The waiting record.** A waiting task carries `task.waiting {since, reason, waiting_on}`, cleared into
+  `task.waiting_ended` on resume. Reasons: `review_unassigned` / `merge_pending` / `no_work` → the coordinator;
+  `verdict_unread` → the author's lane; `decision` → the person; `resource` → the broker. (From the approved
+  addendum-2 mockup, gap 17.)
 - **"Waiting" is a stat on the Relay screen** (ShellStat). Clicking it filters to the waiting tasks, oldest first.
 - **Nudge.** The person, or the broker after a threshold (default 15 min, per crew), nudges the party being waited on:
   - the coordinator, for an unassigned report or an unmerged approval;
