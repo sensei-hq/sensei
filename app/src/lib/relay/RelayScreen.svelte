@@ -18,6 +18,7 @@
   import type { RelayState } from './relay-state.svelte.js';
   import {
     crewGroups,
+    crewRepoLabel,
     hhmm,
     laneState,
     providerLabel,
@@ -284,7 +285,7 @@
              them by crew, because a lane code is unique per crew only (§1c). -->
         {#each grouped as group (group.crew.id)}
           <div data-crew-group={group.crew.id}>
-            <p class="text-xs text-ink-faint m-0" data-crew-heading>{group.crew.repo_key}</p>
+            <p class="text-xs text-ink-faint m-0" data-crew-heading>{crewRepoLabel(group.crew)}</p>
             {#each group.lanes as lane (lane.id)}
               {@const lost = laneState(lane)}
               <div class="border-t border-paper-edge py-2" data-lane-row={lane.code}>
