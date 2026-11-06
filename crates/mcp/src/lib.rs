@@ -2813,6 +2813,126 @@ mod tests {
         assert_eq!(body["workspace_id"], "w1");
     }
 
+    // ── Part 2: the remaining tools' request shapes ──
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_reregister_and_unregister_post_with_auth() {
+        for tool in ["relay_reregister", "relay_unregister"] {
+            let req = daemon_request_for(tool, &lane_args(json!({})), "/cwd", None).unwrap();
+            assert_eq!(req.method, HttpMethod::Post);
+            assert_eq!(req.path, format!("/api/relay/{}", tool.strip_prefix("relay_").unwrap()));
+            assert_eq!(req.body.as_ref().unwrap()["lane_id"], LANE_ID);
+            assert_token_only_in_headers(&req, TOKEN);
+        }
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_submit_review_posts_turn_shape() {
+        let req = daemon_request_for(
+            "relay_submit_review",
+            &lane_args(json!({"task_id": "t1", "verdict": "approved", "summary": "Clean."})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/t1/review");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["verdict"], "approved");
+        assert_eq!(body["summary"], "Clean.");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_ask_posts_decision_shape() {
+        let req = daemon_request_for(
+            "relay_ask_decision",
+            &lane_args(json!({"question": "Where?",
+                              "options": [{"id": "db", "label": "Db"}],
+                              "blocks": ["t1"], "asked_of": "person"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/decisions");
+        assert_eq!(req.body.as_ref().unwrap()["asked_of"], "person");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_answer_posts_to_decision() {
+        let req = daemon_request_for(
+            "relay_answer_decision",
+            &lane_args(json!({"decision_id": "d1", "option": "db"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/decisions/d1/answer");
+        assert_eq!(req.body.as_ref().unwrap()["option"], "db");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_plan_posts_item_shape() {
+        let req = daemon_request_for(
+            "relay_plan_item",
+            &lane_args(json!({"title": "T", "phase": "tests", "repo_key": "github.com/o/r"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/plan");
+        assert_eq!(req.body.as_ref().unwrap()["phase"], "tests");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_merge_posts_merge_shape() {
+        let req = daemon_request_for(
+            "relay_merge_task",
+            &lane_args(json!({"task_id": "t1", "commits": ["abc"], "into": "develop"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/t1/merge");
+        assert_eq!(req.body.as_ref().unwrap()["into"], "develop");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_required_args_per_tool() {
+        // to_lane is required: unassigned tasks are plan's, not assign's.
+        assert!(
+            missing_required("relay_assign_task", &lane_args(json!({"task_id": "t1"})))
+                .contains(&"to_lane".to_string())
+        );
+        assert_eq!(
+            missing_required("relay_submit_review", &lane_args(json!({"task_id": "t1"}))),
+            vec!["verdict", "summary"]
+        );
+        assert_eq!(
+            missing_required("relay_ask_decision", &lane_args(json!({}))),
+            vec!["question", "options", "asked_of"]
+        );
+        assert_eq!(
+            missing_required("relay_answer_decision", &lane_args(json!({}))),
+            vec!["decision_id", "option"]
+        );
+    }
+
     #[test]
     fn relay_existing_tools_unaffected() {
         // Guard: the phase-B match insertion must not move existing arms.

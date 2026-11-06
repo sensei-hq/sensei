@@ -595,6 +595,7 @@ mod personas;
 pub(crate) use personas::ForgeTokenRow;
 mod playbook;
 mod reasons;
+mod relay;
 mod repo_key;
 mod runs;
 mod schedules;

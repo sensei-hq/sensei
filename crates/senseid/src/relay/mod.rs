@@ -332,6 +332,69 @@ pub fn pick_reviewer(
     todo!("relay item 2 phase B")
 }
 
+// ─── Store errors (part 2: every op fails closed with a code) ───
+
+/// What a relay store op rejects with. Each variant maps to one HTTP status
+/// (see [`RelayError::status`]); the message carries the code and the facts,
+/// never a secret. Success-shaped empties are never returned for failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelayError {
+    /// Unknown lane token.
+    Unauthorized(String),
+    /// Valid identity, wrong party (a contributor coordinating, a lane
+    /// touching another lane's task, the wrong answerer).
+    Forbidden(String),
+    /// Unknown crew / lane / task / item / decision in scope.
+    NotFound(String),
+    /// The lane unregistered (it existed; `reregister` resumes it).
+    Gone(String),
+    /// A state or uniqueness rule refused the write (second coordinator,
+    /// busy lane, wrong round, already answered).
+    Conflict(String),
+    /// The request or its props are malformed (bad phase, long summary,
+    /// leaked secret, unknown finding class, self-review).
+    Validation(String),
+    /// The daemon user is unknown (never signed into a dōjō): register and
+    /// the person reads fail closed (Q19-REC).
+    SignInRequired,
+    /// Valid request, slice-2 work (the tracker pull behind ticketed triage).
+    NotImplemented(String),
+    /// The database (or the machine) failed under a valid request.
+    Internal(String),
+}
+
+impl RelayError {
+    /// The HTTP status the handler answers with.
+    pub fn status(&self) -> u16 {
+        let _ = self;
+        todo!("relay item 2 phase B")
+    }
+
+    /// The stable machine code the screen matches on (`lane_not_found`,
+    /// never a sentence).
+    pub fn code(&self) -> &'static str {
+        let _ = self;
+        todo!("relay item 2 phase B")
+    }
+}
+
+// ─── Resource floors (lanes.md §8; the footer's line) ───
+
+/// Refuse a resource grant below 25 GB free disk (the lanes.md example, as
+/// the constant; flagged for L0 veto in the part-2 report).
+pub const DISK_FLOOR_GB: u64 = 25;
+/// Refuse a resource grant below 1 GB free swap (likewise).
+pub const SWAP_FLOOR_GB: u64 = 1;
+
+// ─── Session-local time (the completed window is the Mac's day) ───
+
+/// This Mac's IANA zone, from `/etc/localtime` (e.g. `America/Chicago`).
+/// The daemon pool sets `TimeZone` to it so `relay.now`'s completed window
+/// is the session-local day. Fails closed when the link is unreadable.
+pub fn system_timezone() -> Result<String, String> {
+    todo!("relay item 2 phase B")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -874,5 +937,50 @@ mod tests {
         assert!(validate_props(K::Asked, &asked("person")).is_ok());
         assert!(validate_props(K::Asked, &asked(LANE_A)).is_ok());
         assert!(validate_props(K::Asked, &asked("L1")).is_err());
+    }
+
+    // ── Part 2: errors, floors, session-local time ──
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn relay_error_maps_to_status_and_code() {
+        use RelayError as E;
+        assert_eq!(E::Unauthorized("x".into()).status(), 401);
+        assert_eq!(E::Forbidden("x".into()).status(), 403);
+        assert_eq!(E::NotFound("x".into()).status(), 404);
+        assert_eq!(E::Gone("x".into()).status(), 410);
+        assert_eq!(E::Conflict("x".into()).status(), 409);
+        assert_eq!(E::Validation("x".into()).status(), 422);
+        assert_eq!(E::SignInRequired.status(), 401);
+        assert_eq!(E::NotImplemented("x".into()).status(), 501);
+        assert_eq!(E::Internal("x".into()).status(), 500);
+        // Codes are stable snake_case tokens, one per variant.
+        assert_eq!(E::Unauthorized("x".into()).code(), "relay_unauthorized");
+        assert_eq!(E::Forbidden("x".into()).code(), "relay_forbidden");
+        assert_eq!(E::NotFound("x".into()).code(), "relay_not_found");
+        assert_eq!(E::Gone("x".into()).code(), "relay_lane_gone");
+        assert_eq!(E::Conflict("x".into()).code(), "relay_conflict");
+        assert_eq!(E::Validation("x".into()).code(), "relay_invalid");
+        assert_eq!(E::SignInRequired.code(), "relay_signin_required");
+        assert_eq!(E::NotImplemented("x".into()).code(), "relay_not_implemented");
+        assert_eq!(E::Internal("x".into()).code(), "relay_internal");
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn resource_floors_are_lanes_md_values() {
+        assert_eq!(DISK_FLOOR_GB, 25);
+        assert_eq!(SWAP_FLOOR_GB, 1);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item2"]
+    fn system_timezone_reads_etc_localtime() {
+        // The Mac's zone, from the /etc/localtime link — the zone the pool
+        // sets, so the completed window is the session-local day.
+        let link = std::fs::read_link("/etc/localtime").unwrap().to_string_lossy().into_owned();
+        let expect = link.rsplit("zoneinfo/").next().unwrap().to_string();
+        assert_eq!(system_timezone().unwrap(), expect);
+        assert!(system_timezone().unwrap().contains('/'));
     }
 }

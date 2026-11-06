@@ -56,13 +56,23 @@ pub struct EnvelopeAnswer {
     pub created_at: String,
 }
 
-/// A review for the lane. Core fields only — identity and detail wait on Q15
-/// (to-perform vs to-answer vs both).
+/// Which way a review faces (Q15-REC): work the lane must perform, or a
+/// verdict on its own report it must answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewDirection {
+    Perform,
+    Answer,
+}
+
+/// A review for the lane: to-perform and to-answer alike, told apart by
+/// `direction` (Q15-REC).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnvelopeReview {
     pub task_id: String,
     pub phase: RelayTaskPhase,
     pub round: i32,
+    pub direction: ReviewDirection,
     pub created_at: String,
 }
 
@@ -183,15 +193,17 @@ mod tests {
     #[test]
     #[ignore = "pending:relay-item2"]
     fn envelope_review_core_shape_q15() {
-        // Q15 pending: only the core all directions share is pinned here.
+        // Q15-REC: both directions, told apart by `direction`.
         let r = EnvelopeReview {
             task_id: "t1".into(),
             phase: P::Impl,
             round: 2,
+            direction: ReviewDirection::Answer,
             created_at: "2026-11-05T16:04:00Z".into(),
         };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["round"], 2);
+        assert_eq!(v["direction"], "answer");
         assert_eq!(serde_json::from_value::<EnvelopeReview>(v).unwrap(), r);
     }
 }

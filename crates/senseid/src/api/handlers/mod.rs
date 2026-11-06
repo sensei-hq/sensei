@@ -26,6 +26,7 @@ pub(crate) mod planner;
 pub(crate) mod playbook;
 pub(crate) mod preferences;
 pub(crate) mod query;
+pub(crate) mod relay;
 pub(crate) mod repositories;
 pub(crate) mod review;
 pub(crate) mod runs;
