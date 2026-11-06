@@ -10,6 +10,7 @@ set search_path to staging, relay, extensions;
 -- re-runs.
 create or replace procedure staging.import_finding_classes()
 language plpgsql
+set search_path = staging, relay, extensions
 as $$
 begin
   insert into relay.finding_classes (code, label)

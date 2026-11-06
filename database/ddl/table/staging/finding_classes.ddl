@@ -11,3 +11,5 @@ create table staging.finding_classes (
   code  text not null,
   label text not null
 );
+
+alter table staging.finding_classes enable row level security;
