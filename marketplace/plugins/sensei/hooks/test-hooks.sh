@@ -148,6 +148,23 @@ else
 fi
 rm -f "$fallback" "$TEMP_REPO/.sensei/rules.md"
 
+# ── session-start: relay onboarding lines (PENDING relay slice 1 item 5) ─────
+# Disabled reds (phase A): run with RELAY_ONBOARDING_TESTS=1 to execute; the
+# default run skips them. They pin the two paste lines (my MCP tool names:
+# relay_register with no crew_id mints the crew for a coordinator, with the
+# crew_id joins it for a contributor) plus a `sensei relay` CLI hint.
+if [ "${RELAY_ONBOARDING_TESTS:-0}" = "1" ]; then
+  output=$(run_hook "session-start" "$SESSION_PAYLOAD")
+  assert_json "onboarding: coordinator paste line mints the crew" "$output" \
+    "import sys,json; c=json.load(sys.stdin)['additional_context']; assert 'relay_register(role=\"coordinator\")' in c and 'mints the crew' in c"
+  assert_json "onboarding: contributor paste line joins with the crew_id" "$output" \
+    "import sys,json; c=json.load(sys.stdin)['additional_context']; assert 'relay_register(role=\"contributor\"' in c and 'crew_id' in c"
+  assert_json "onboarding: sensei relay CLI hint" "$output" \
+    "import sys,json; c=json.load(sys.stdin)['additional_context']; assert 'sensei relay' in c"
+else
+  echo "  SKIP relay onboarding lines (pending item 5; RELAY_ONBOARDING_TESTS=1 to run)"
+fi
+
 # ── pre-compact: telemetry + context injection ───────────────────────────────
 
 echo ""
