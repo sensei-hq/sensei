@@ -463,14 +463,15 @@ impl TrackerAdapter for JiraAdapter {
 /// Jira's `match_links` (spec R6): keys of `known` found in the session's branches
 /// and prompts, matched on the original bytes, ASCII case-insensitively.
 pub fn match_keys(session: &SessionText, known: &[KnownTask]) -> Vec<Link> {
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::collections::HashMap;
     let mut by_key: HashMap<&str, Vec<&KnownTask>> = HashMap::new();
     for k in known {
         by_key.entry(k.key.as_str()).or_default().push(k);
     }
     let prefixes = key_prefixes(known);
-    // The (task, alias) pairs a text carries, one per occurrence.
-    let tasks_in = |text: &str| -> Vec<(&str, String)> {
+    // The (task, alias) pairs a text carries, one per occurrence. Jira keys read the
+    // same in a branch and a prompt.
+    let tasks_in = |text: &str, _source: LinkSource| -> Vec<(&str, String)> {
         keys_in(text.as_bytes(), &prefixes)
             .into_iter()
             .flat_map(|key| {
@@ -482,61 +483,7 @@ pub fn match_keys(session: &SessionText, known: &[KnownTask]) -> Vec<Link> {
             })
             .collect()
     };
-
-    // (task, source) → alias → mentions.
-    let mut tally: BTreeMap<(&str, LinkSource), BTreeMap<String, u32>> = BTreeMap::new();
-    let mut branch_hits: HashMap<&str, u32> = HashMap::new();
-    let branches: BTreeSet<&str> = session.branches.iter().map(String::as_str).collect();
-    for branch in branches {
-        // A branch counts once per task, and once per alias it carries.
-        let found: BTreeSet<(&str, String)> = tasks_in(branch).into_iter().collect();
-        let tasks: BTreeSet<&str> = found.iter().map(|(t, _)| *t).collect();
-        for t in tasks {
-            *branch_hits.entry(t).or_default() += 1;
-        }
-        for (t, k) in found {
-            *tally.entry((t, LinkSource::Branch)).or_default().entry(k).or_default() += 1;
-        }
-    }
-    for prompt in &session.prompts {
-        for (t, k) in tasks_in(prompt) {
-            *tally.entry((t, LinkSource::Prompt)).or_default().entry(k).or_default() += 1;
-        }
-    }
-    let current: HashMap<&str, &str> = known
-        .iter()
-        .filter(|k| k.current)
-        .map(|k| (k.external_id.as_str(), k.key.as_str()))
-        .collect();
-
-    tally
-        .into_iter()
-        .map(|((task, source), aliases)| {
-            let cur = current.get(task).copied();
-            let (matched_key, _) = aliases
-                .iter()
-                .max_by(|(ka, na), (kb, nb)| {
-                    na.cmp(nb)
-                        .then_with(|| (Some(ka.as_str()) == cur).cmp(&(Some(kb.as_str()) == cur)))
-                        .then_with(|| kb.cmp(ka))
-                })
-                .expect("a tallied task has an alias");
-            let mentions = match source {
-                LinkSource::Branch => branch_hits.get(task).copied().unwrap_or(0),
-                LinkSource::Prompt => aliases.values().sum(),
-                // The tally above holds branch and prompt hits only: a fetch link
-                // is written by `get_ticket`, never found by key matching.
-                LinkSource::Fetch => unreachable!("key matching never tallies a fetch link"),
-            };
-            Link {
-                session_id: session.session_id,
-                task_external_id: task.to_string(),
-                source,
-                matched_key: matched_key.clone(),
-                mentions,
-            }
-        })
-        .collect()
+    crate::tracker::link::tally_links(session, known, tasks_in)
 }
 
 /// The project-key prefixes of `known`, longest first (the scan order).

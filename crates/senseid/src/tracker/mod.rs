@@ -7,6 +7,9 @@
 
 pub mod connect;
 pub mod discover;
+// Lands ahead of the GitLab adapter (#366), its first caller.
+#[allow(dead_code)]
+pub mod forge;
 pub mod history;
 pub mod http;
 pub mod jira;
