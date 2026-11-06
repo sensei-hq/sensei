@@ -72,6 +72,80 @@ expect_refuse "DDL with abort; refused" "txn-abort.ddl" ./run.sh --apply dojo "$
 expect_refuse "test file with commit; refused" "commits.probe" ./run.sh --apply dojo "$FX/noop.ddl" "$FX/commits.probe"
 expect_refuse "test file with COMMIT WORK; refused" "commits-work.probe" ./run.sh --apply dojo "$FX/noop.ddl" "$FX/commits-work.probe"
 
+# --- sensei-target lib: pure unit tests (no database needed). ---
+# Each case fails "not implemented" until lib/sensei-target.sh provides the
+# function, so the suite is red on the unmodified tree.
+if [ -f ./lib/sensei-target.sh ]; then
+    # shellcheck disable=SC1091
+    . ./lib/sensei-target.sh
+fi
+unit() { # <desc> <fn> <want-exit> <arg...>: fn exists and exits want.
+    desc="$1"; fn="$2"; want="$3"; shift 3
+    if ! command -v "$fn" >/dev/null 2>&1; then
+        fail "$desc ($fn not implemented)"
+        return
+    fi
+    if "$fn" "$@" >/dev/null 2>&1; then code=0; else code=$?; fi
+    if [ "$code" -ne "$want" ]; then
+        fail "$desc (exit $code, want $want)"
+    else
+        pass "$desc"
+    fi
+}
+unit_out() { # <desc> <fn> <want-out> <arg...>: fn exists and prints want-out.
+    desc="$1"; fn="$2"; want="$3"; shift 3
+    if ! command -v "$fn" >/dev/null 2>&1; then
+        fail "$desc ($fn not implemented)"
+        return
+    fi
+    got="$("$fn" "$@" 2>/dev/null)" || { fail "$desc ($fn failed)"; return; }
+    if [ "$got" != "$want" ]; then
+        fail "$desc (got '$got', want '$want')"
+    else
+        pass "$desc"
+    fi
+}
+LIVE_MSG='refusing the live daemon DB'
+NOLANE_MSG='cannot derive a lane database'
+unit "live: host:port/dbname" sensei_is_live 0 'postgresql://localhost:5432/sensei'
+unit "live: default port" sensei_is_live 0 'postgresql://localhost/sensei'
+unit "live: 127.0.0.1" sensei_is_live 0 'postgresql://127.0.0.1:5432/sensei'
+unit "live: 127.x loopback" sensei_is_live 0 'postgresql://127.0.0.2:5432/sensei'
+unit "live: userinfo + query" sensei_is_live 0 'postgresql://u:p@localhost:5432/sensei?sslmode=require'
+unit "live: userinfo with @" sensei_is_live 0 'postgresql://u@example.com:p@localhost:5432/sensei'
+unit "live: case-insensitive" sensei_is_live 0 'POSTGRESQL://LOCALHOST:5432/sensei'
+unit "live: unix socket, empty host" sensei_is_live 0 'postgresql:///sensei'
+unit "live: encoded socket host" sensei_is_live 0 'postgresql://%2Fvar%2Frun%2Fpostgresql/sensei'
+unit "live: daemon port" sensei_is_live 0 'postgresql://localhost:7744/sensei'
+unit "live: trailing slash" sensei_is_live 0 'postgresql://localhost:5432/sensei/'
+unit "live: bracket ipv6 loopback" sensei_is_live 0 'postgresql://[::1]:5432/sensei'
+unit "not live: lane db name" sensei_is_live 1 'postgresql://localhost:5432/sensei_test_l3'
+unit "not live: other port" sensei_is_live 1 'postgresql://localhost:5433/sensei'
+unit "not live: remote host" sensei_is_live 1 'postgresql://db.internal:5432/sensei'
+unit "not live: other db on socket" sensei_is_live 1 'postgresql:///sensei_test_x'
+unit_out "lane name from lane branch" sensei_lane_name 'l3_relay' 'lane/L3-relay'
+unit_out "lane name from plain branch" sensei_lane_name 'develop' 'develop'
+unit_out "lane name sanitizes" sensei_lane_name 'feature_x_y' 'feature/x-y'
+unit_out "lane name truncates to 51" sensei_lane_name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+unit "lane name refuses empty" sensei_lane_name 1 ''
+
+# --- Live-DB refusal (no database needed: refused before any touch). ---
+# TEST_DATABASE_URL is scrubbed where SENSEI_DATABASE_URL is under test: the
+# caller's environment may export it, and it takes precedence by design.
+LIVE='postgresql://localhost:5432/sensei'
+expect_refuse "apply sensei refuses SENSEI_DATABASE_URL=live" "$LIVE_MSG" env -u TEST_DATABASE_URL SENSEI_DATABASE_URL="$LIVE" ./run.sh --apply sensei "$FX/a_sensei.ddl" "$FX/sensei.probe"
+expect_refuse "apply sensei refuses TEST_DATABASE_URL=live" "$LIVE_MSG" env TEST_DATABASE_URL="$LIVE" ./run.sh --apply sensei "$FX/a_sensei.ddl" "$FX/sensei.probe"
+expect_refuse "apply sensei refuses 127.0.0.1 live" "$LIVE_MSG" env -u TEST_DATABASE_URL SENSEI_DATABASE_URL='postgresql://127.0.0.1:5432/sensei' ./run.sh --apply sensei "$FX/a_sensei.ddl" "$FX/sensei.probe"
+expect_refuse "apply sensei refuses daemon-port live" "$LIVE_MSG" env -u TEST_DATABASE_URL SENSEI_DATABASE_URL='postgresql://localhost:7744/sensei' ./run.sh --apply sensei "$FX/a_sensei.ddl" "$FX/sensei.probe"
+expect_refuse "plain sensei scope refuses live" "$LIVE_MSG" env -u TEST_DATABASE_URL SENSEI_DATABASE_URL="$LIVE" ./run.sh sensei
+# Guard: an explicit non-live SENSEI_DATABASE_URL keeps routing there (unreachable
+# port → 69 naming it, not a refusal and not the live default).
+out=$(env -u TEST_DATABASE_URL SENSEI_DATABASE_URL='postgresql://localhost:5499/sensei_xxx' ./run.sh sensei 2>&1); code=$?
+case "$code:$out" in
+    69:*5499*) pass "explicit non-live SENSEI_DATABASE_URL still routes there" ;;
+    *) fail "explicit SENSEI_DATABASE_URL routing (exit $code) -- $out" ;;
+esac
+
 # A broken argument check exits 1, never "skipped": 69/127 mean only that the
 # database or psql is absent and every CLI case passed (F4).
 if ! command -v psql >/dev/null 2>&1; then
@@ -83,7 +157,8 @@ if ! command -v psql >/dev/null 2>&1; then
     exit 127
 fi
 DOJO_URL="${DATABASE_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}"
-SENSEI_URL="${SENSEI_DATABASE_URL:-postgresql://localhost:5432/sensei}"
+# No live SENSEI_URL default: the sensei plane runs on scratch lane DBs only
+# (see the sensei-plane section below).
 if ! psql "$DOJO_URL" -X -q -c 'select 1' >/dev/null 2>&1; then
     if [ "$failed" -ne 0 ]; then
         echo "self-test-apply: $failed failing case(s)" >&2
@@ -341,23 +416,92 @@ case "$code:$out" in
     *) fail "sensei probe on dojo (exit $code, want the probe error) -- $out" ;;
 esac
 
-# The positive sensei case needs the daemon database, which the CI dōjō job
-# has not got: skip it by name, loudly, and run everything else.
-if ! psql "$SENSEI_URL" -X -q -c 'select 1' >/dev/null 2>&1; then
-    echo "self-test-apply: SKIP sensei-plane positive case — cannot reach $SENSEI_URL" >&2
+# --- Sensei plane runs on a scratch lane DB, never live. ---
+# Scratch: createdb + the sensei schema (a_sensei.ddl needs it) + the routing
+# marker (proves WHERE the run went). Dropped afterwards; the name carries the
+# PID and the drop is pattern-guarded. No local postgres (the CI dōjō job):
+# skip loudly, run everything else.
+SCRATCH="sensei_test_selfapply_$$"
+case "$SCRATCH" in
+    sensei_test_selfapply_*) : ;;
+    *) echo "self-test-apply: refusing to use scratch name $SCRATCH" >&2; exit 1 ;;
+esac
+scratch_up=0
+if psql -h localhost -X -q -c 'select 1' postgres >/dev/null 2>&1 \
+   && createdb -h localhost "$SCRATCH" >/dev/null 2>&1 \
+   && psql -h localhost -X -q -c 'create schema sensei; create table public.__apply_route_marker (x int);' "$SCRATCH" >/dev/null 2>&1; then
+    scratch_up=1
 else
-    fp_s_before=$(fingerprint "$SENSEI_URL")
-    out=$(./run.sh --apply sensei "$FX/a_sensei.ddl" "$FX/sensei.probe" 2>&1); code=$?
-    fp_s_after=$(fingerprint "$SENSEI_URL")
+    dropdb --if-exists -h localhost "$SCRATCH" >/dev/null 2>&1 || true
+fi
+if [ "$scratch_up" -ne 1 ]; then
+    echo "self-test-apply: SKIP sensei-plane cases — no local postgres for a scratch DB" >&2
+else
+    SCRATCH_URL="postgresql://localhost:5432/$SCRATCH"
+    fp_s_before=$(fingerprint "$SCRATCH_URL")
+    # Routing proof: the marker lives ONLY in scratch, so exit 0 proves
+    # --apply sensei honoured TEST_DATABASE_URL (red while it ignores it).
+    out=$(env -u SENSEI_DATABASE_URL TEST_DATABASE_URL="$SCRATCH_URL" ./run.sh --apply sensei "$FX/noop.ddl" "$FX/route-sensei.probe" 2>&1); code=$?
+    if [ "$code" -ne 0 ]; then
+        fail "sensei routing proof (exit $code, want 0) -- $out"
+    else
+        pass "sensei routing proof honours TEST_DATABASE_URL"
+    fi
+    # End-to-end on the lane plane: real DDL + plane probe, green.
+    out=$(env -u SENSEI_DATABASE_URL TEST_DATABASE_URL="$SCRATCH_URL" ./run.sh --apply sensei "$FX/a_sensei.ddl" "$FX/sensei.probe" 2>&1); code=$?
     if [ "$code" -ne 0 ]; then
         fail "sensei-plane positive (exit $code, want 0) -- $out"
-    elif [ "$fp_s_before" != "$fp_s_after" ]; then
-        fail "sensei catalogue changed across the run ($fp_s_before / $fp_s_after)"
-    elif [ "$(canaries_present "$SENSEI_URL")" != "0" ]; then
-        fail "sensei canary persisted after the run"
     else
-        pass "sensei-plane positive green, catalogue identical, no canaries left"
+        pass "sensei-plane positive green"
     fi
+    fp_s_after=$(fingerprint "$SCRATCH_URL")
+    if [ "$fp_s_before" != "$fp_s_after" ]; then
+        fail "scratch catalogue changed across the runs ($fp_s_before / $fp_s_after)"
+    elif [ "$(canaries_present "$SCRATCH_URL")" != "0" ]; then
+        fail "sensei canary persisted after the runs"
+    else
+        pass "scratch catalogue identical, no canaries left"
+    fi
+    dropdb -h localhost "$SCRATCH" >/dev/null 2>&1 || fail "could not drop $SCRATCH"
+fi
+
+# --- Auto-create: without either var, run.sh derives + creates the lane DB. ---
+# Hermetic via GIT_DIR: a fake repo on lane/Selfapply<PID> (unique name, safe
+# to drop) or detached HEAD (must refuse). dbd missing: skip loudly.
+if ! command -v dbd >/dev/null 2>&1; then
+    echo "self-test-apply: SKIP auto-create cases — dbd not found on PATH" >&2
+elif ! psql -h localhost -X -q -c 'select 1' postgres >/dev/null 2>&1; then
+    echo "self-test-apply: SKIP auto-create cases — no local postgres" >&2
+else
+    fakerepo=$(mktemp -d)/repo
+    mkdir -p "$fakerepo" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init -qb "lane/Selfapply$$" "$fakerepo" >/dev/null 2>&1
+    AUTODB="sensei_test_selfapply$$"
+    case "$AUTODB" in
+        sensei_test_selfapply*) : ;;
+        *) echo "self-test-apply: refusing to use auto name $AUTODB" >&2; exit 1 ;;
+    esac
+    dropdb --if-exists -h localhost "$AUTODB" >/dev/null 2>&1 || true
+    out=$(env -u TEST_DATABASE_URL -u SENSEI_DATABASE_URL -u GIT_WORK_TREE -u GIT_INDEX_FILE GIT_DIR="$fakerepo/.git" ./run.sh --apply sensei "$FX/a_sensei.ddl" "$FX/sensei.probe" 2>&1); code=$?
+    if [ "$code" -ne 0 ]; then
+        fail "auto-create run (exit $code, want 0) -- $out"
+    elif ! psql -h localhost -lqt 2>/dev/null | cut -d'|' -f1 | grep -qw "$AUTODB"; then
+        fail "auto-create run left no $AUTODB behind"
+    else
+        pass "auto-create derives, deploys and runs on $AUTODB"
+    fi
+    dropdb --if-exists -h localhost "$AUTODB" >/dev/null 2>&1 || true
+    rm -rf "$(dirname "$fakerepo")"
+    # Detached HEAD derives nothing: refuse, naming TEST_DATABASE_URL.
+    fakerepo2=$(mktemp -d)/repo
+    mkdir -p "$fakerepo2" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init -qb main "$fakerepo2" >/dev/null 2>&1 \
+        && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$fakerepo2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m x >/dev/null 2>&1 \
+        && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$fakerepo2" checkout -q --detach >/dev/null 2>&1
+    out=$(env -u TEST_DATABASE_URL -u SENSEI_DATABASE_URL -u GIT_WORK_TREE -u GIT_INDEX_FILE GIT_DIR="$fakerepo2/.git" ./run.sh --apply sensei "$FX/a_sensei.ddl" "$FX/sensei.probe" 2>&1); code=$?
+    case "$code:$out" in
+        2:*"$NOLANE_MSG"*) pass "detached HEAD refuses naming TEST_DATABASE_URL" ;;
+        *) fail "detached HEAD (exit $code, want 2 + $NOLANE_MSG) -- $out" ;;
+    esac
+    rm -rf "$(dirname "$fakerepo2")"
 fi
 
 # --- Nothing from any dojo case above may persist. ---

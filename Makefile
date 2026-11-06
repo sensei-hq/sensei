@@ -517,7 +517,10 @@ test-template:
 
 # SQL assertions against a REAL Postgres — RLS, constraints, policy grants: the
 # things a mocked supabase-js client cannot check and therefore cannot fail on.
-#   DATABASE_URL overrides the target; defaults to the local Supabase.
+#   DATABASE_URL overrides the dōjō target (default: local Supabase);
+#   TEST_DATABASE_URL overrides the sensei-plane target (default: a
+#   branch-derived sensei_test_<lane> run.sh creates). The live daemon DB
+#   is refused, whatever names it.
 test-db:
 	./database/tests/run.sh
 

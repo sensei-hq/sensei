@@ -13,18 +13,26 @@ set -uo pipefail
 caller_pwd="$PWD"
 cd "$(dirname "$0")"
 
+# shellcheck disable=SC1091
+. ./lib/sensei-target.sh
+
 # Each directory is a dbd scope, and runs against the database that scope
-# deploys to: `dojo/` the dōjō (local Supabase), everything else the daemon's
-# own `sensei` database. One target for all of them ran `gateway/` against the
-# dōjō, which has no `sensei.model_capability` — a failure no fix could clear.
-# DATABASE_URL keeps naming the dōjō target, as it always has.
+# deploys to: `dojo/` the dōjō (local Supabase), everything else a lane-owned
+# test database — never the live daemon DB (L0 ruling 2026-11-05: the stray
+# `relay` schema). TEST_DATABASE_URL wins, then an explicit non-live
+# SENSEI_DATABASE_URL, then a branch-derived sensei_test_<lane> that run.sh
+# creates from the DDL tree; dbname `sensei` on :5432/:7744 is refused with a
+# clear message whatever named it. One target for all of them ran `gateway/`
+# against the dōjō, which has no `sensei.model_capability` — a failure no fix
+# could clear. DATABASE_URL keeps naming the dōjō target, as it always has.
 DOJO_DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}"
-SENSEI_DATABASE_URL="${SENSEI_DATABASE_URL:-postgresql://localhost:5432/sensei}"
+SENSEI_DATABASE_URL="${SENSEI_DATABASE_URL:-}"
+SENSEI_URL_RESOLVED=""
 
 database_for() { # FILE
     case "$1" in
         ./dojo/*) printf '%s' "$DOJO_DATABASE_URL" ;;
-        *) printf '%s' "$SENSEI_DATABASE_URL" ;;
+        *) printf '%s' "$SENSEI_URL_RESOLVED" ;;
     esac
 }
 
@@ -38,9 +46,10 @@ if [ "${1:-}" = "--apply" ]; then
     apply_usage() { echo "usage: run.sh --apply <dojo|sensei> <ddl>... <test> -- $1" >&2; exit 2; }
     [ $# -ge 3 ] || apply_usage "want a plane, at least one DDL file and a test file"
     plane="$1"; shift
+    sensei_plane=0
     case "$plane" in
         dojo) target_url="$DOJO_DATABASE_URL" ;;
-        sensei) target_url="$SENSEI_DATABASE_URL" ;;
+        sensei) sensei_plane=1 ;;
         *) apply_usage "unknown plane: $plane" ;;
     esac
     # Last argument is the test file; the rest are DDL files.
@@ -90,6 +99,11 @@ if [ "${1:-}" = "--apply" ]; then
         echo "  Homebrew keeps it keg-only: export PATH=\"\$(brew --prefix libpq)/bin:\$PATH\"" >&2
         exit 127
     fi
+    # The sensei target resolves after file validation (no database is created
+    # for a call that usage already refuses) and before the reachability probe.
+    if [ "$sensei_plane" -eq 1 ]; then
+        target_url="$(sensei_resolve_url)" || exit $?
+    fi
     if ! psql "$target_url" -X -q -c 'select 1' >/dev/null 2>&1; then
         echo "cannot reach $target_url" >&2
         exit 69
@@ -133,14 +147,20 @@ fi
 # dōjō's access rules are most of this suite. An unknown scope is refused, so a
 # typo cannot run nothing and pass. No argument: every scope, every database.
 search=.
-urls=("$DOJO_DATABASE_URL" "$SENSEI_DATABASE_URL")
 if [ $# -gt 0 ]; then
     if [ ! -d "./$1" ]; then
         echo "no such test scope: $1 (one of: $(find . -mindepth 1 -maxdepth 1 -type d | sed 's#^\./##' | sort | tr '\n' ' '))" >&2
         exit 2
     fi
     search="./$1"
-    urls=("$(database_for "./$1/x")")
+    # A dojo-only run never resolves (and never creates) the sensei target.
+    case "$search" in
+        ./dojo) urls=("$DOJO_DATABASE_URL") ;;
+        *) SENSEI_URL_RESOLVED="$(sensei_resolve_url)" || exit $?; urls=("$SENSEI_URL_RESOLVED") ;;
+    esac
+else
+    SENSEI_URL_RESOLVED="$(sensei_resolve_url)" || exit $?
+    urls=("$DOJO_DATABASE_URL" "$SENSEI_URL_RESOLVED")
 fi
 
 if ! command -v psql >/dev/null 2>&1; then
@@ -155,7 +175,7 @@ fi
 for url in "${urls[@]}"; do
     if ! psql "$url" -X -q -c 'select 1' >/dev/null 2>&1; then
         echo "cannot reach $url" >&2
-        echo "  the dōjō tests need the local Supabase (supabase start); the rest, the daemon's database" >&2
+        echo "  the dōjō tests need the local Supabase (supabase start); the rest, a lane-owned test database (TEST_DATABASE_URL, or a branch-derived sensei_test_<lane>)" >&2
         exit 69
     fi
 done
