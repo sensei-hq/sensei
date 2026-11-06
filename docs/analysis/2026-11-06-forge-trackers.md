@@ -46,6 +46,7 @@ adapters", `tracker-jira-linkage.md:670`). This slice adds two adapters, **GitLa
 | FT3 | **GitHub: milestones are sprints.** |
 | FT4 | **No milestones → the board connects as `level = sprint` and shows "No sprints yet".** Tickets sit in backlog. The daemon never changes the level the user picked, and never invents sprints (D83). |
 | FT5 | GitLab auth in v1 is a **PAT** (`read_api`). GitHub uses the person's forge sign-in (D71). |
+| FT6 | O1–O6 (§9) accepted as recommended (user, 2026-11-06). |
 
 ## 3 · GitLab
 
@@ -61,7 +62,7 @@ The outcome is stored in `trackers.params` (no secrets), for example
 `{"version":"16.11.2","sprint_source":"milestone"}`. **Each sync probes again**, so
 an upgrade to Premium switches to iterations without a reconnect.
 
-**Open (O1):** what happens when the sprint source changes from milestones to
+**O1 (decided, §9):** what happens when the sprint source changes from milestones to
 iterations mid-life? The old milestone sprint rows no longer come back, so they get
 `removed_at` the way any vanished sprint does. Is that acceptable, or should a
 switch need the user to confirm it?
@@ -75,10 +76,10 @@ switch need the user to confirm it?
 | Milestone `active`, start in the future | `future` |
 | Milestone `active`, past `due_date` | `active` (an overrunning sprint stays active, as in Jira R7) |
 | Milestone `closed` | `closed` |
-| Milestone with **no dates** | **Open (O2).** Recommendation: keep it as a sprint with NULL `start_at`/`end_at` and its `active/closed` state, shown as "undated". Skipping it would drop its tickets from every sprint view without saying so. |
+| Milestone with **no dates** | **O2 (decided):** keep it as a sprint with NULL `start_at`/`end_at` and its `active/closed` state, shown as "undated". Skipping it would drop its tickets from every sprint view without saying so. |
 
 `board_ref` names the scope: a group path (group milestones/iterations) or a project
-path (project milestones). **Open (O3):** must v1 support both group and project
+path (project milestones). **O3 (decided, both):** must v1 support both group and project
 milestones, or only group milestones?
 
 ### 3.3 Keys and links
@@ -97,7 +98,7 @@ user confirms at connect**:
 - The confirmed host is pinned for this tracker: redirects to another host are not followed.
 - **Needs a security review** (`sensei-security-reviewer`) before build.
 
-**Open (O4):** should a self-signed TLS certificate be supported (a custom CA path),
+**O4 (decided, out of v1):** should a self-signed TLS certificate be supported (a custom CA path),
 or is it out of v1?
 
 ## 4 · GitHub
@@ -119,13 +120,13 @@ GitHub milestones belong to **one repository**. A sensei project spans several r
 | B · One repo is the board | The user picks one repo whose milestones are the sprints. Issues from other repos join only if they carry a same-titled milestone. | Simple and unambiguous | Arbitrary for a multi-repo project |
 | C · One tracker per repo | Each repo is its own sprint tracker (D40 allows several). | No merging logic | N sprint lanes per project; sprint rollups never combine |
 
-**Open (O5):** confirm option A.
+**O5 (decided):** option A.
 
 ### 4.3 Keys, states, sprint mapping
 
 - Keys: `owner/repo#12`, bare `#12` and `12-title` resolved by the session's `repo_key`, the same as GitLab (§3.3).
 - Pull requests are issues in GitHub's REST API. **Exclude them** (drop items that carry `pull_request`) so a PR is never counted as a ticket.
-- Milestone `open` + `due_on` → `active` or `future` (GitHub milestones have **no start date**). **Open (O6):** what does `start_at` mean? Recommendation: NULL. A sprint window then ends at `due_on` and has no start, so per-sprint rollups count by membership, not by date window. Inventing a start date would be D83 fabrication.
+- Milestone `open` + `due_on` → `active` or `future` (GitHub milestones have **no start date**). **O6 (decided):** what does `start_at` mean? Recommendation: NULL. A sprint window then ends at `due_on` and has no start, so per-sprint rollups count by membership, not by date window. Inventing a start date would be D83 fabrication.
 - `closed` → `closed`.
 
 ## 5 · Shared between the two forges
@@ -166,9 +167,9 @@ file), with the shared part being provider-neutral.
 
 Each ships as its own slice.
 
-## 9 · Open questions
+## 9 · Questions (all decided — FT6, user 2026-11-06)
 
-| # | Question | Recommendation |
+| # | Question | Decision |
 |---|---|---|
 | O1 | Sprint source switches from milestones to iterations mid-life | Accept: the old rows get `removed_at`, with a one-line notice on Integrations |
 | O2 | GitLab milestone with no dates | Keep it as an undated sprint |
