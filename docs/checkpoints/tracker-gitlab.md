@@ -3,7 +3,7 @@
 **Slice:** GitLab as a tracker (gitlab.com + self-managed, Free/CE up), daemon path. Slice 1 of
 `docs/analysis/2026-11-06-forge-trackers.md`; GitHub is slice 2. Branch `feature/forge-trackers`.
 
-**Stage:** design done, gate PASSED. Spec `docs/spec/daemon/tracker-gitlab.md` (r2, commit 4724c9486).
+**Stage:** design done, gate PASSED. Spec `docs/spec/daemon/tracker-gitlab.md` (r3, commit e345df047; r3's §G5 change was audited by `sensei-spec-conformance-auditor` at build start, 6 findings fixed).
 Decision D91 (amends D49).
 
 **Claims found false, and what each changed:**

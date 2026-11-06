@@ -93,8 +93,8 @@ milestones, or only group milestones?
 Jira's host rule is a fixed predicate. GitLab needs **gitlab.com plus a host the
 user confirms at connect**:
 
-- The connect body carries the base URL. The UI shows the resolved host and the user confirms it.
-- `https` only. A private, loopback or link-local address (after DNS resolution, so a DNS name pointing at `127.0.0.1` is caught) is **refused unless the user opts in**, because self-managed GitLab often lives on a LAN.
+- The connect body carries the base URL, and the user types the host again (`confirm_host`, spec §G5.2).
+- `https` only. A private, loopback or link-local address (after DNS resolution, so a DNS name pointing at `127.0.0.1` is caught) is **refused**. ~~unless the user opts in~~: superseded by spec r3 (OPEN-G2, user 2026-11-06): no private networks, no opt-in.
 - The confirmed host is pinned for this tracker: redirects to another host are not followed.
 - **Needs a security review** (`sensei-security-reviewer`) before build.
 

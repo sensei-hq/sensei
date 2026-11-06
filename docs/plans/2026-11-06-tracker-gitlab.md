@@ -67,12 +67,16 @@ build.
   - `capabilities()` exists, and Jira returns `{history:true, writeback:true}`. The §G8
     guards key off the capability, never off the kind's name. The `unsupported_by_tracker`
     row is in `reason_codes.jsonl`, and `make test-template` is re-run.
-  - D1: the whole Jira suite passes unmodified.
+  - D1: every Jira assertion holds. The only test edits are the new fields in existing
+    struct literals.
 - **Test scenarios:**
-  - Given a stub resolver returning `169.254.169.254`, when `ReqwestRaw` sends, then the
-    request is refused before connecting.
-  - Given `HTTPS_PROXY` points at a stub, when a request is sent, then the stub receives
-    nothing.
+  - Given a stub lookup answering `169.254.169.254`, when the resolver resolves, then it
+    returns its own refusal, not a send error.
+  - Given `ReqwestRaw` from the shared constructor and a stub lookup answering a loopback
+    listener, then the listener gets no connection. With the predicate swapped to allow
+    loopback, it does.
+  - Given `HTTPS_PROXY` set to a proxy stub (`#[serial]`) and an `https://` hostname, then
+    the proxy stub gets nothing, and the lookup was asked for the hostname.
   - Given a host resolving to `10.0.0.5` or `100.100.100.200`, then the request is refused.
   - Given a fake adapter with `capabilities = {false,false}`, when PATCH sets
     `writeback_enabled:true`, then the response is 409 `writeback_unsupported`.
