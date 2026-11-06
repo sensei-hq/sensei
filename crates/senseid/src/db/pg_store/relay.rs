@@ -6498,10 +6498,29 @@ mod tests {
             Some(now - chrono::Duration::seconds(100)),
         )
         .await;
+        // F3 (r2): lane death cascades — a lane whose lease the sweep
+        // expires releases its held (still-live) grant, and the waiter
+        // inherits it. The grant's own TTL is unexpired, so only the
+        // cascade can release it.
+        let a5 = v7(0x16);
+        fx_lane(&pg, u1, a5, c1, "L5", "contributor", "tok-a5").await;
+        fx_lease(&pg, u1, c1, a5, "granted", Some(now - chrono::Duration::seconds(10))).await;
+        let doomed = fx_resource_lease(
+            &pg,
+            u1,
+            c1,
+            a5,
+            "gpu",
+            "granted",
+            Some(now - chrono::Duration::seconds(100)),
+            Some(now + chrono::Duration::seconds(3500)),
+        )
+        .await;
+        let heir = fx_resource_lease(&pg, u1, c1, a2, "gpu", "queued", None, None).await;
         let report = pg.relay_sweep_leases(now).await.unwrap();
         assert_eq!(report.expired_resource_leases, 2);
-        assert_eq!(report.granted_from_queue, 1);
-        assert_eq!(report.expired_leases, 0, "live lane leases untouched");
+        assert_eq!(report.granted_from_queue, 2);
+        assert_eq!(report.expired_leases, 1, "a5's stale lane lease, and only it");
         let (state, _, _, _, _, _) = resource_row(&pg, u1, stale).await;
         assert_eq!(state, "expired");
         let (state, _, _, granted_at, expires_at, _) = resource_row(&pg, u1, waiter).await;
@@ -6510,6 +6529,13 @@ mod tests {
         assert_eq!(expires_at, Some(now + chrono::Duration::seconds(3600)));
         let (state, _, _, _, _, _) = resource_row(&pg, u1, solo).await;
         assert_eq!(state, "expired");
+        let (state, _, _, _, _, released_at) = resource_row(&pg, u1, doomed).await;
+        assert_eq!(state, "released", "lane death releases the held grant");
+        assert_eq!(released_at, Some(now));
+        let (state, _, _, granted_at, expires_at, _) = resource_row(&pg, u1, heir).await;
+        assert_eq!(state, "granted");
+        assert_eq!(granted_at, Some(now));
+        assert_eq!(expires_at, Some(now + chrono::Duration::seconds(3600)));
     }
 
     #[tokio::test]
@@ -6543,5 +6569,159 @@ mod tests {
         let (state, _, _, granted_at, _, _) = resource_row(&pg, u1, q.lease_id).await;
         assert_eq!(state, "granted", "the waiter inherits the slot");
         assert!(granted_at.is_some());
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_auto_grant_rechecks_floors_per_waiter() {
+        let pg = PgStore::test_store().await;
+        let (c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
+        let a3 = v7(0x14);
+        fx_lane(&pg, u1, a3, c1, "L3", "contributor", "tok-a3").await;
+        fx_lease(&pg, u1, c1, a3, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
+        let now = t0();
+        let held = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(held.state, RelayLeaseState::Granted);
+        // Waiter 1 carries an impossible override — but floors gate the
+        // grant, not the queue, so it queues (decision 8: the override
+        // persists on the row for the grant-time re-check).
+        let w1 = pg
+            .relay_request_resource(
+                u1,
+                a2,
+                RelayResourceRequest {
+                    resource: "rust-build".into(),
+                    floors: Some(RelayFloors { disk_gb: u64::MAX, swap_gb: u64::MAX }),
+                },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(w1.state, RelayLeaseState::Queued);
+        assert_eq!(w1.position, Some(1));
+        let (_, _, props, _, _, _) = resource_row(&pg, u1, w1.lease_id).await;
+        assert_eq!(props["floors"]["disk_gb"].as_u64(), Some(u64::MAX));
+        assert_eq!(props["floors"]["swap_gb"].as_u64(), Some(u64::MAX));
+        sqlx_core::query::query("select pg_sleep(0.012)").execute(pg.pool()).await.unwrap();
+        let w2 = pg
+            .relay_request_resource(
+                u1,
+                a3,
+                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(w2.position, Some(2));
+        // The release re-checks each waiter in turn: waiter 1 refuses into
+        // the dropped floors, waiter 2 grants — one transaction.
+        let rel = pg.relay_release_resource(u1, a1, "rust-build", now).await.unwrap();
+        assert_eq!(rel.granted_next, Some(w2.lease_id));
+        let (state, _, props, granted_at, expires_at, _) = resource_row(&pg, u1, w1.lease_id).await;
+        assert_eq!(state, "refused");
+        assert!(
+            !props.get("reason").and_then(|r| r.as_str()).unwrap_or("").is_empty(),
+            "the grant-time refusal carries a reason"
+        );
+        assert_eq!(granted_at, None);
+        assert_eq!(expires_at, None);
+        let (state, _, props, granted_at, expires_at, _) = resource_row(&pg, u1, w2.lease_id).await;
+        assert_eq!(state, "granted");
+        assert_eq!(granted_at, Some(now));
+        assert_eq!(expires_at, Some(now + chrono::Duration::seconds(3600)));
+        // Grant-time numbers persist on the row (fresh read, not the
+        // queue-time output): the waiter's re-request reads them back.
+        assert!(props["disk_free_gb"].is_number(), "fresh disk persisted");
+        let w2b = pg
+            .relay_request_resource(
+                u1,
+                a3,
+                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(w2b.lease_id, w2.lease_id);
+        let granted_disk = w2b.disk_free_gb.expect("granted output carries disk");
+        assert_eq!(props["disk_free_gb"].as_u64(), Some(granted_disk));
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_rerequest_after_terminal_mints_fresh() {
+        let pg = PgStore::test_store().await;
+        let (c1, _c3, a1, _a2, _b1, u1) = fx_two_crews(&pg).await;
+        let now = t0();
+        let req = RelayResourceRequest { resource: "rust-build".into(), floors: None };
+        // Released → fresh.
+        let g1 = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
+        let rel = pg.relay_release_resource(u1, a1, "rust-build", now).await.unwrap();
+        assert_eq!(rel.granted_next, None, "no waiter behind the release");
+        let g2 = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
+        assert_eq!(g2.state, RelayLeaseState::Granted);
+        assert_ne!(g2.lease_id, g1.lease_id, "post-terminal re-request mints");
+        let (state, _, _, _, _, _) = resource_row(&pg, u1, g1.lease_id).await;
+        assert_eq!(state, "released", "history preserved");
+        // Refused → fresh (impossible override refuses into a free slot).
+        let r1 = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest {
+                    resource: "e2e".into(),
+                    floors: Some(RelayFloors { disk_gb: u64::MAX, swap_gb: u64::MAX }),
+                },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1.state, RelayLeaseState::Refused);
+        let g3 = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest { resource: "e2e".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(g3.state, RelayLeaseState::Granted);
+        assert_ne!(g3.lease_id, r1.lease_id);
+        let (state, _, _, _, _, _) = resource_row(&pg, u1, r1.lease_id).await;
+        assert_eq!(state, "refused");
+        // Expired → fresh.
+        let stale = fx_resource_lease(
+            &pg,
+            u1,
+            c1,
+            a1,
+            "gpu",
+            "granted",
+            Some(now - chrono::Duration::seconds(3700)),
+            Some(now - chrono::Duration::seconds(100)),
+        )
+        .await;
+        pg.relay_sweep_leases(now).await.unwrap();
+        let (state, _, _, _, _, _) = resource_row(&pg, u1, stale).await;
+        assert_eq!(state, "expired");
+        let g4 = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest { resource: "gpu".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(g4.state, RelayLeaseState::Granted);
+        assert_ne!(g4.lease_id, stale);
     }
 }
