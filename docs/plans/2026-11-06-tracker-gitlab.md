@@ -7,7 +7,7 @@ created: 2026-11-06
 depends_on:
   - docs/spec/daemon/tracker-gitlab.md
   - docs/analysis/2026-11-06-forge-trackers.md
-related_issues: []   # filled in after creation
+related_issues: [364, 365, 366, 367, 368, 369]
 references:
   - docs/spec/daemon/tracker-jira-linkage.md
   - docs/spec/daemon/tracker-metrics-writeback.md
@@ -46,6 +46,7 @@ build.
 ## Features
 
 ### F1 · Shared seams: header auth, network policy, capabilities (G2, G5, G8)
+- **Issue:** #364
 - **Layers:** `net/addr.rs` (new; `is_public_ip` moved from `indexer/lib_indexer.rs:250`
   with the stricter ranges), `tracker/transport.rs`, `runtime.rs`, `http.rs`,
   `tracker/mod.rs`, `tracker/connect.rs`, `tracker/sync.rs`, `tracker/history.rs`,
@@ -77,6 +78,7 @@ build.
     `writeback_enabled:true`, then the response is 409 `writeback_unsupported`.
 
 ### F2 · `tracker/forge.rs`: provider-neutral keys and links (G6)
+- **Issue:** #365
 - **Layers:** `tracker/forge.rs` (new, pure).
 - **Depends on:** none (it can run in parallel with F1).
 - **Acceptance criteria:**
@@ -94,6 +96,7 @@ build.
   - Given the branch `12-fix` in the matching repo, then `#12` links.
 
 ### F3 · The `gitlab` kind: DDL, adapter, registration (G1, G3, G4, G7)
+- **Issue:** #366
 - **Layers:** DDL `enum/sensei/tracker_kind.ddl` + `make test-template`;
   `database/design.dbml`; `TrackerKind::Gitlab`; `tracker/gitlab.rs`; `adapters()`.
 - **Depends on:** F1, F2, P1.
@@ -124,6 +127,7 @@ build.
     unchanged.
 
 ### F4 · `get_ticket` for GitLab keys (G9)
+- **Issue:** #367
 - **Layers:** `tracker/ticket.rs` (`GitlabTicketReader`), `targets/http.rs`, MCP
   `get_ticket`.
 - **Depends on:** F3.
@@ -140,6 +144,7 @@ build.
   - Given `acme/../x#1`, then the response is 404 and no request is sent.
 
 ### F5 · CLI, app, kind-aware copy, docs (G10)
+- **Issue:** #368
 - **Layers:** `crates/cli/src/tracker.rs`; `app/` Integrations and Tickets screens,
   `tracker-errors.ts` and the state files; `scheduled_tasks.rs:67`; the parent and sibling
   specs, the screen specs, `tracker-levels.md`, `backlog.md`.
@@ -160,6 +165,7 @@ build.
     copy names GitLab and links to GitLab's token page.
 
 ### F6 · Live verification (D18)
+- **Issue:** #369
 - **Depends on:** F1–F5, P1 (the same Free and Premium groups).
 - **Acceptance criteria:**
   - D18: after one sync, the count of non-removed sprints equals GitLab's UI for both

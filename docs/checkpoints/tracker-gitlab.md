@@ -14,8 +14,7 @@ Decision D91 (amends D49).
 - Not ledgered in r1: `is_public_ip` already existed (`indexer/lib_indexer.rs:250`) → extracted to `net/addr.rs` (DRY).
 
 **Decided (user, 2026-11-06):** OPEN-G1 and OPEN-G2: no ports, subpaths or private networks. The opt-in and `NetPolicy` are removed (spec r3).
-**Plan:** `docs/plans/2026-11-06-tracker-gitlab.md`, F1–F6; issues not yet created.
+**Plan:** `docs/plans/2026-11-06-tracker-gitlab.md`, F1–F6 = issues #364–#369.
 **Human prerequisites for build:** recorded fixtures from a gitlab.com Free group and a Premium trial group.
 
-**Next command:** `/sensei:plan` on the spec (registers the plan graph; creates GitHub issues, so confirm first).
-Then `/sensei:build`, starting at build step 1 (fixtures, human) and step 2 (shared seams; Jira suite green).
+**Next command:** `/sensei:build`, starting at build step 1 (fixtures, human) and step 2 (shared seams; Jira suite green).
