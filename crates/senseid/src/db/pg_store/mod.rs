@@ -595,7 +595,7 @@ mod personas;
 pub(crate) use personas::ForgeTokenRow;
 mod playbook;
 mod reasons;
-mod relay;
+pub(crate) mod relay;
 mod repo_key;
 mod runs;
 mod schedules;
@@ -663,6 +663,10 @@ impl PgStore {
     /// pools run in parallel — a warm floor of 8 each would exhaust Postgres's
     /// connection limit).
     async fn connect_with(database_url: &str, min: u32, max: u32) -> Result<Self, String> {
+        // The pool keeps the server default (UTC): metrics days are UTC and
+        // billing-adjacent, so the zone stays off the pool. Relay's one
+        // day-windowed read (`relay_now`) sets it per-transaction instead
+        // (L0 ruling 2026-11-06, relay-q15-q19 addendum).
         let pool = PgPoolOptions::new()
             .min_connections(min)
             .max_connections(max)

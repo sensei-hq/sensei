@@ -32,6 +32,7 @@ use crate::api::handlers::planner;
 use crate::api::handlers::playbook;
 use crate::api::handlers::preferences;
 use crate::api::handlers::query;
+use crate::api::handlers::relay;
 use crate::api::handlers::review;
 use crate::api::handlers::runs;
 use crate::api::handlers::scan_events;
@@ -91,6 +92,29 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/watcher/unregister", axum::routing::post(health::watcher_unregister))
         // Scan events (SSE)
         .route("/api/scan/events", get(scan_events::scan_events_sse))
+        // Relay lanes (L3): lane routes under /api/relay, person routes
+        // exactly as relay-api.ts calls them. Paths are L3's to publish (Q9).
+        .route("/api/relay/register", post(relay::register))
+        .route("/api/relay/heartbeat", post(relay::heartbeat))
+        .route("/api/relay/reregister", post(relay::reregister))
+        .route("/api/relay/unregister", post(relay::unregister))
+        .route("/api/relay/tasks", get(relay::get_tasks))
+        .route("/api/relay/tasks/wait", get(relay::wait_for_task))
+        .route("/api/relay/tasks/plan", post(relay::plan))
+        .route("/api/relay/tasks/{id}/assign", post(relay::assign))
+        .route("/api/relay/tasks/{id}/report", post(relay::report))
+        .route("/api/relay/tasks/{id}/review", post(relay::review))
+        .route("/api/relay/tasks/{id}/merge", post(relay::merge))
+        .route("/api/relay/decisions", post(relay::ask))
+        .route("/api/relay/decisions/{id}/answer", post(relay::lane_answer))
+        .route("/api/relay/messages", post(relay::lane_message))
+        .route("/relay/now", get(relay::now))
+        .route("/relay/queue", get(relay::queue))
+        .route("/relay/tasks/{crew_id}/{task_id}", get(relay::task_view))
+        .route("/relay/messages", post(relay::person_message))
+        .route("/relay/answers", post(relay::person_answer))
+        .route("/relay/triage", post(relay::triage))
+        .route("/relay/backlog", post(relay::backlog))
         // Gateway
         .route("/api/gateway/status", get(gateway::gateway_status))
         .route("/api/gateway/infer", post(gateway::infer))

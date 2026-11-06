@@ -12,18 +12,20 @@
 //! may introduce typed views as long as the JSON pins hold). `todo!()` stubs
 //! until phase B — the reds below fail on them, never on setup.
 
-// Phase-A scaffolding: the stubs are used only by the reds until phase B
-// wires the handlers. Removed then (like L4's F6 comments).
-#![allow(dead_code)]
-
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
 use super::PgStore;
-use crate::relay::envelope::LaneEnvelope;
+use crate::relay::envelope::{
+    EnvelopeAnswer, EnvelopeAssignment, EnvelopeBrief, EnvelopeMessage, EnvelopeReview,
+    EnvelopeTicket, LaneEnvelope, ReviewDirection,
+};
 use crate::relay::{
+    Caller, DISK_FLOOR_GB, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS, RegisterMode, RelayActionKind,
     RelayError, RelayFindingSeverity, RelayItemKind, RelayRole, RelaySurface, RelayTaskPhase,
-    RelayTaskState, RelayTicketProvider, ReviewVerdict,
+    RelayTaskState, RelayTicketProvider, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent,
+    check_summary_len, guard_markdown, hash_lane_token, pick_reviewer, register_mode,
+    resolve_surface, transition, validate_props,
 };
 
 // ─── Inputs / outputs ───
@@ -319,6 +321,363 @@ pub struct RelayReadFilter {
     pub repo_key: Option<String>,
 }
 
+// ─── Small helpers ───
+
+/// A database failure under a valid request is a 500, never a fabricated row.
+fn db_err(e: sqlx_core::Error) -> RelayError {
+    RelayError::Internal(format!("relay store: {e}"))
+}
+
+/// True when the error is a unique-violation (23505): the second
+/// coordinator, a busy lane, an already-answered decision.
+fn is_unique_violation(e: &sqlx_core::Error) -> bool {
+    matches!(e, sqlx_core::Error::Database(d) if d.is_unique_violation())
+}
+
+/// The violated constraint's name, when the error names one.
+fn violated_constraint(e: &sqlx_core::Error) -> Option<&str> {
+    match e {
+        sqlx_core::Error::Database(d) => d.constraint(),
+        _ => None,
+    }
+}
+
+/// Mint a v7 id (the DDL's `*_id_v7` checks require position 15 = `7`).
+fn new_id() -> Uuid {
+    Uuid::now_v7()
+}
+
+/// A relay enum as its DB/JSON word, reusing the serde spelling
+/// (`in_review`, `changes_requested`, …).
+fn word<T: serde::Serialize>(v: T) -> String {
+    serde_json::to_value(v).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
+}
+
+fn parse_state(s: &str) -> Result<RelayTaskState, RelayError> {
+    serde_json::from_str::<RelayTaskState>(&format!("\"{s}\""))
+        .map_err(|_| RelayError::Validation(format!("unknown task state: {s}")))
+}
+
+fn parse_phase(s: &str) -> Result<RelayTaskPhase, RelayError> {
+    serde_json::from_str::<RelayTaskPhase>(&format!("\"{s}\""))
+        .map_err(|_| RelayError::Validation(format!("unknown task phase: {s}")))
+}
+
+fn parse_role(s: &str) -> Result<RelayRole, RelayError> {
+    serde_json::from_str::<RelayRole>(&format!("\"{s}\""))
+        .map_err(|_| RelayError::Validation(format!("unknown lane role: {s}")))
+}
+
+fn parse_surface(s: &str) -> Result<RelaySurface, RelayError> {
+    serde_json::from_str::<RelaySurface>(&format!("\"{s}\""))
+        .map_err(|_| RelayError::Validation(format!("unknown surface: {s}")))
+}
+
+fn parse_provider(s: &str) -> Result<RelayTicketProvider, RelayError> {
+    serde_json::from_str::<RelayTicketProvider>(&format!("\"{s}\""))
+        .map_err(|_| RelayError::Validation(format!("unknown ticket provider: {s}")))
+}
+
+fn parse_item_kind(s: &str) -> Result<RelayItemKind, RelayError> {
+    serde_json::from_str::<RelayItemKind>(&format!("\"{s}\""))
+        .map_err(|_| RelayError::Validation(format!("unknown item kind: {s}")))
+}
+
+/// A person-facing summary: ≤ 600 chars, no secrets.
+fn check_summary(text: &str, what: &str) -> Result<(), RelayError> {
+    check_summary_len(text)
+        .map_err(|n| RelayError::Validation(format!("{what} too long: {n} > 600 chars")))?;
+    guard_markdown(text).map_err(|kinds| {
+        RelayError::Validation(format!("{what} looks like a secret ({})", kinds.join(", ")))
+    })?;
+    Ok(())
+}
+
+/// A stamp as the screen reads it: RFC 3339 with `Z`.
+fn iso(dt: DateTime<Utc>) -> String {
+    dt.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+}
+
+/// Does `path` fall outside every owned glob? Owned entries are exact paths
+/// or `prefix/**` globs (the only shapes the coordinator writes).
+fn outside_owned(path: &str, owned: &[String]) -> bool {
+    !owned.iter().any(|o| {
+        path == o
+            || o.strip_suffix("/**").is_some_and(|prefix| {
+                path.starts_with(prefix) && path[prefix.len()..].starts_with('/')
+            })
+    })
+}
+
+/// The Q14 broker's query: whose crews, whose pen, as of when (#161: one
+/// struct, not five positionals).
+struct RelayPickQuery<'t, 'c> {
+    tx: &'t mut sqlx_core::transaction::Transaction<'c, sqlx_postgres::Postgres>,
+    user_id: Uuid,
+    crew_id: Uuid,
+    author: Uuid,
+    now: DateTime<Utc>,
+}
+
+/// The Q14 broker: the least-loaded live lane that isn't the author, else
+/// the coordinator — unless the author is the coordinator, and then none.
+/// Liveness is a granted lane lease past `now` (the report feeds DB time,
+/// the sweeper its fed clock); loads count open in-review reviews.
+async fn relay_pick_reviewer(q: RelayPickQuery<'_, '_>) -> Result<Option<Uuid>, RelayError> {
+    let RelayPickQuery { tx, user_id, crew_id, author, now } = q;
+    let live: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
+        "select l.id from relay.lanes l
+         where l.user_id = $1 and l.crew_id = $2
+           and exists (
+             select 1 from relay.leases s
+             where s.lane_id = l.id and s.kind = 'lane' and s.state = 'granted'
+               and s.expires_at > $3)",
+    )
+    .bind(user_id)
+    .bind(crew_id)
+    .bind(now)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    let loads: Vec<(Uuid, i64)> = sqlx_core::query_as::query_as(
+        "select reviewer_lane_id, count(*) from relay.tasks
+         where user_id = $1 and crew_id = $2 and state = 'in_review'
+           and reviewer_lane_id is not null
+         group by reviewer_lane_id",
+    )
+    .bind(user_id)
+    .bind(crew_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    let loads: std::collections::HashMap<Uuid, u64> =
+        loads.into_iter().map(|(id, n)| (id, n as u64)).collect();
+    let coordinator: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+        "select id from relay.lanes
+         where user_id = $1 and crew_id = $2 and role = 'coordinator'",
+    )
+    .bind(user_id)
+    .bind(crew_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    let Some(coordinator) = coordinator else {
+        return Err(RelayError::Internal("crew has no coordinator".into()));
+    };
+    let live_loads: Vec<(Uuid, u64)> =
+        live.into_iter().map(|id| (id, loads.get(&id).copied().unwrap_or(0))).collect();
+    Ok(pick_reviewer(&live_loads, &author, &coordinator))
+}
+
+/// Free disk on `/`, in GiB (`df -g` units). Null when unreadable — the
+/// screen degrades, the read never fails for it.
+fn disk_free_gb() -> Option<u64> {
+    // statvfs widths differ per platform (macOS u32/u64, Linux u64/u64):
+    // the fallible conversions keep one body compiling everywhere.
+    #[allow(clippy::unnecessary_fallible_conversions, clippy::useless_conversion)]
+    fn blocks_to_bytes(blocks: impl TryInto<u64>, size: impl TryInto<u64>) -> Option<u64> {
+        blocks.try_into().ok()?.checked_mul(size.try_into().ok()?)
+    }
+    let mut vfs = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    if unsafe { libc::statvfs(c"/".as_ptr(), vfs.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let vfs = unsafe { vfs.assume_init() };
+    let free = blocks_to_bytes(vfs.f_bavail, vfs.f_frsize)?;
+    Some(free / 1024 / 1024 / 1024)
+}
+
+/// Free swap, in GiB. macOS reads `vm.swapusage`; anywhere else (or on any
+/// failure) it is null — degraded, never fatal.
+#[cfg(target_os = "macos")]
+fn swap_free_gb() -> Option<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::xsw_usage>::uninit();
+    let mut len = std::mem::size_of::<libc::xsw_usage>() as libc::size_t;
+    let r = unsafe {
+        libc::sysctlbyname(
+            c"vm.swapusage".as_ptr(),
+            usage.as_mut_ptr() as *mut libc::c_void,
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if r != 0 {
+        return None;
+    }
+    let usage = unsafe { usage.assume_init() };
+    Some(usage.xsu_avail / 1024 / 1024 / 1024)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn swap_free_gb() -> Option<u64> {
+    None
+}
+
+/// The reported-props keys that count as telemetry: a turn "reports" when
+/// any of these is present and non-null (derived; the screen's
+/// `reported_turns of turns` is telemetry coverage, not work product —
+/// files/gates/commits don't count).
+const TELEMETRY_KEYS: &[&str] = &[
+    "family",
+    "version",
+    "model",
+    "tokens_in",
+    "tokens_out",
+    "tokens_cache",
+    "started_at",
+    "ended_at",
+    "context_tokens",
+    "compactions",
+    "peak_memory_mb",
+    "subagents",
+    "working_secs",
+    "waiting_secs",
+];
+
+/// Shape stored props for the task history: the `RelayActionProps` interface
+/// per kind, required-nullable keys filled (absent = null, never missing).
+/// Unknown kinds pass through untouched (forward-compat for new kinds).
+fn history_props(kind: &str, props: &serde_json::Value) -> serde_json::Value {
+    let null = serde_json::Value::Null;
+    let get = |key: &str| props.get(key).cloned().unwrap_or(null.clone());
+    let arr = |key: &str| props.get(key).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    match kind {
+        "assigned" => serde_json::json!({
+            "docs": arr("docs"),
+            "owned_paths": arr("owned_paths"),
+            "acceptance": arr("acceptance"),
+        }),
+        "brief_updated" => serde_json::json!({ "docs": arr("docs") }),
+        "started" | "delivered" | "read" => serde_json::json!({}),
+        "reported" => {
+            let mut out = props.as_object().cloned().unwrap_or_default();
+            out.insert(
+                "files".into(),
+                arr("files")
+                    .iter()
+                    .map(|f| {
+                        serde_json::json!({
+                            "path": f.get("path"),
+                            "added": f.get("added"),
+                            "removed": f.get("removed"),
+                            // Fail closed: an unmarked file reads as outside.
+                            "outside_owned": f.get("outside_owned").and_then(|v| v.as_bool()).unwrap_or(true),
+                        })
+                    })
+                    .collect(),
+            );
+            out.insert(
+                "gates".into(),
+                arr("gates")
+                    .iter()
+                    .map(|g| {
+                        serde_json::json!({
+                            "cmd": g.get("cmd"),
+                            "exit": g.get("exit"),
+                            "counts": g.get("counts").cloned().unwrap_or(null.clone()),
+                        })
+                    })
+                    .collect(),
+            );
+            serde_json::Value::Object(out)
+        }
+        "reviewed" => {
+            let mut out = props.as_object().cloned().unwrap_or_default();
+            out.insert(
+                "findings".into(),
+                arr("findings")
+                    .iter()
+                    .map(|f| {
+                        serde_json::json!({
+                            "severity": f.get("severity"),
+                            "class": f.get("class"),
+                            "text": f.get("text"),
+                            "file": f.get("file").cloned().unwrap_or(null.clone()),
+                            "line": f.get("line").cloned().unwrap_or(null.clone()),
+                        })
+                    })
+                    .collect(),
+            );
+            serde_json::Value::Object(out)
+        }
+        "asked" => {
+            let options = arr("options")
+                .iter()
+                .map(|o| {
+                    serde_json::json!({
+                        "id": o.get("id"),
+                        "label": o.get("label"),
+                        "detail": o.get("detail").cloned().unwrap_or(null.clone()),
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "context": get("context"),
+                "options": options,
+                "recommended": get("recommended"),
+                "blocks": arr("blocks"),
+                "asked_of": get("asked_of"),
+            })
+        }
+        "answered" => serde_json::json!({ "option": get("option"), "surface": get("surface") }),
+        "message" => serde_json::json!({ "to": get("to"), "surface": get("surface") }),
+        "merged" => {
+            let gates = arr("gates")
+                .iter()
+                .map(|g| {
+                    serde_json::json!({
+                        "cmd": g.get("cmd"),
+                        "exit": g.get("exit"),
+                        "counts": g.get("counts").cloned().unwrap_or(null.clone()),
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({ "commits": arr("commits"), "into": get("into"), "gates": gates })
+        }
+        "interrupted" | "compacted" => props.clone(),
+        "reoffered" => {
+            let mut out = props.as_object().cloned().unwrap_or_default();
+            out.entry("to_lane".to_owned()).or_insert(null.clone());
+            serde_json::Value::Object(out)
+        }
+        _ => props.clone(),
+    }
+}
+
+/// Canonical phase order for the header's rounds.
+fn phase_rank(phase: &str) -> usize {
+    match phase {
+        "analysis" => 0,
+        "tests" => 1,
+        "impl" => 2,
+        "docs" => 3,
+        "mockup" => 4,
+        _ => 5,
+    }
+}
+
+/// Lane codes sort numerically (`L2` before `L10`), then lexicographically.
+fn code_rank(code: &str) -> (i64, &str) {
+    let n = code.strip_prefix('L').and_then(|n| n.parse::<i64>().ok()).unwrap_or(i64::MAX);
+    (n, code)
+}
+
+/// The next free lane code for a crew: `L1` on an empty crew, else one past
+/// the highest `L<n>` suffix. `None` when a code does not parse (the daemon
+/// mints `L<n>` only — anything else is corruption, failed closed).
+fn next_code(codes: &[String]) -> Option<String> {
+    if codes.is_empty() {
+        return Some("L1".to_string());
+    }
+    let mut max: Option<i64> = None;
+    for code in codes {
+        let n = code.strip_prefix('L').and_then(|n| n.parse::<i64>().ok())?;
+        max = Some(max.map_or(n, |m| m.max(n)));
+    }
+    max.map(|m| format!("L{}", m + 1))
+}
+
 // ─── The store ───
 
 impl PgStore {
@@ -331,19 +690,135 @@ impl PgStore {
         input: RelayRegisterInput,
         now: DateTime<Utc>,
     ) -> Result<RelayRegisterOutput, RelayError> {
-        let _ = (user_id, input, now);
-        todo!("relay item 2 phase B")
+        let mode = register_mode(input.role, input.crew_id.map(|_| "present"))
+            .map_err(|e| RelayError::Validation(e.message))?;
+        let token = Uuid::new_v4().simple().to_string();
+        let token_hash = hash_lane_token(&token);
+        let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let crew_id = match mode {
+            RegisterMode::MintCrew => {
+                let crew_id = new_id();
+                sqlx_core::query::query(
+                    "insert into relay.crews (user_id, id, workspace_id, repo_key, goal, status)
+                     values ($1, $2, $3, $4, $5, 'active')",
+                )
+                .bind(user_id)
+                .bind(crew_id)
+                .bind(input.workspace_id)
+                .bind(input.repo_key.as_deref())
+                .bind(input.goal.as_deref())
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                crew_id
+            }
+            RegisterMode::JoinCrew => {
+                let crew_id = input.crew_id.unwrap_or_else(Uuid::nil);
+                let exists: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                    "select id from relay.crews where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(crew_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                if exists.is_none() {
+                    return Err(RelayError::NotFound("crew not found".into()));
+                }
+                crew_id
+            }
+        };
+        let codes: Vec<String> = sqlx_core::query_scalar::query_scalar(
+            "select code from relay.lanes where user_id = $1 and crew_id = $2",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let lane_id = new_id();
+        let code = next_code(&codes)
+            .ok_or_else(|| RelayError::Internal("crew has unparseable lane codes".into()))?;
+        let insert_lane = sqlx_core::query::query(
+            "insert into relay.lanes
+               (user_id, id, crew_id, code, role, family, version, model,
+                capabilities, repo, worktree, token_hash)
+             values ($1, $2, $3, $4, $5::relay.lane_role, $6, $7, $8, $9, $10, $11, $12)",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .bind(crew_id)
+        .bind(code)
+        .bind(word(input.role))
+        .bind(input.family.as_str())
+        .bind(input.version.as_deref())
+        .bind(input.model.as_deref())
+        .bind(input.capabilities.clone())
+        .bind(input.repo.as_deref())
+        .bind(input.worktree.as_deref())
+        .bind(token_hash.as_str())
+        .execute(&mut *tx)
+        .await;
+        if let Err(e) = insert_lane {
+            if is_unique_violation(&e) {
+                // A code race (two registers minting one code) is not a
+                // second coordinator: name what actually collided.
+                let message = match violated_constraint(&e) {
+                    Some("lanes_code_per_crew") => "crew register raced; retry".to_string(),
+                    _ => "crew already has a coordinator".to_string(),
+                };
+                return Err(RelayError::Conflict(message));
+            }
+            return Err(db_err(e));
+        }
+        sqlx_core::query::query(
+            "insert into relay.leases
+               (user_id, id, crew_id, lane_id, kind, state, expires_at, granted_at)
+             values ($1, $2, $3, $4, 'lane'::relay.lease_kind, 'granted'::relay.lease_state, $5, $6)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(crew_id)
+        .bind(lane_id)
+        .bind(expires)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayRegisterOutput { lane_token: token, lane_id, lane_title: None, crew_id })
     }
 
     /// Resolve a lane caller's identity: token hash → lane. Unknown token is
     /// `Unauthorized`; an unregistered lane is `Gone` (`reregister` resumes).
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_auth_lane(
         &self,
         lane_id: Uuid,
         token: &str,
     ) -> Result<RelayLaneSession, RelayError> {
-        let _ = (lane_id, token);
-        todo!("relay item 2 phase B")
+        let row: Option<(Uuid, Uuid, String, String, Option<DateTime<Utc>>)> =
+            sqlx_core::query_as::query_as(
+                "select user_id, crew_id, role::text, token_hash, unregistered_at
+                 from relay.lanes where id = $1",
+            )
+            .bind(lane_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+        let Some((user_id, crew_id, role, token_hash, unregistered_at)) = row else {
+            return Err(RelayError::Unauthorized("unknown lane".into()));
+        };
+        if hash_lane_token(token) != token_hash {
+            return Err(RelayError::Unauthorized("bad lane token".into()));
+        }
+        if unregistered_at.is_some() {
+            return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
+        Ok(RelayLaneSession { user_id, crew_id, role: parse_role(&role)? })
     }
 
     /// Renew the lane's lease (`now` + 300 s).
@@ -352,8 +827,62 @@ impl PgStore {
         lane_id: Uuid,
         now: DateTime<Utc>,
     ) -> Result<RelayHeartbeatOutput, RelayError> {
-        let _ = (lane_id, now);
-        todo!("relay item 2 phase B")
+        let lane: Option<(Uuid, Uuid, Option<DateTime<Utc>>)> = sqlx_core::query_as::query_as(
+            "select user_id, crew_id, unregistered_at from relay.lanes where id = $1",
+        )
+        .bind(lane_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((user_id, crew_id, unregistered_at)) = lane else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        if unregistered_at.is_some() {
+            return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
+        let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // Renew the current granted lease; a lane whose lease lapsed or was
+        // released gets a fresh granted row (history is kept, not rewritten).
+        let renewed = sqlx_core::query::query(
+            "update relay.leases set expires_at = $1 where id = (
+               select id from relay.leases
+               where lane_id = $2 and kind = 'lane' and state = 'granted'
+               order by granted_at desc nulls last, id desc limit 1)",
+        )
+        .bind(expires)
+        .bind(lane_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if renewed.rows_affected() == 0 {
+            sqlx_core::query::query(
+                "insert into relay.leases
+                   (user_id, id, crew_id, lane_id, kind, state, expires_at, granted_at)
+                 values ($1, $2, $3, $4, 'lane'::relay.lease_kind,
+                         'granted'::relay.lease_state, $5, $6)",
+            )
+            .bind(user_id)
+            .bind(new_id())
+            .bind(crew_id)
+            .bind(lane_id)
+            .bind(expires)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        sqlx_core::query::query(
+            "update relay.crews set heartbeat_at = $1 where user_id = $2 and id = $3",
+        )
+        .bind(now)
+        .bind(user_id)
+        .bind(crew_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayHeartbeatOutput { expires_at: expires })
     }
 
     /// Resume an unregistered (or lapsed) lane: a fresh lease plus the
@@ -363,33 +892,240 @@ impl PgStore {
         lane_id: Uuid,
         now: DateTime<Utc>,
     ) -> Result<RelayReregisterOutput, RelayError> {
-        let _ = (lane_id, now);
-        todo!("relay item 2 phase B")
+        // The handler verifies the token first: `relay_auth_lane` answers
+        // `Gone` (valid token, unregistered lane) exactly for this resume.
+        let lane: Option<(Uuid, Uuid, Option<serde_json::Value>)> = sqlx_core::query_as::query_as(
+            "select user_id, crew_id, checkpoint from relay.lanes where id = $1",
+        )
+        .bind(lane_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((user_id, crew_id, checkpoint)) = lane else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        sqlx_core::query::query("update relay.lanes set unregistered_at = null where id = $1")
+            .bind(lane_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        sqlx_core::query::query(
+            "insert into relay.leases
+               (user_id, id, crew_id, lane_id, kind, state, expires_at, granted_at)
+             values ($1, $2, $3, $4, 'lane'::relay.lease_kind,
+                     'granted'::relay.lease_state, $5, $6)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(crew_id)
+        .bind(lane_id)
+        .bind(expires)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayReregisterOutput { lane_id, crew_id, checkpoint, expires_at: expires })
     }
 
     /// Leave: stamp `unregistered_at`, release the lane lease, and interrupt
     /// the lane's active task (a voluntary leave suspends work like a lost
     /// lease) — all in one transaction.
     pub async fn relay_unregister(&self, lane_id: Uuid) -> Result<(), RelayError> {
-        let _ = lane_id;
-        todo!("relay item 2 phase B")
+        let lane: Option<(Uuid, Uuid, Option<DateTime<Utc>>)> = sqlx_core::query_as::query_as(
+            "select user_id, crew_id, unregistered_at from relay.lanes where id = $1",
+        )
+        .bind(lane_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((user_id, crew_id, unregistered_at)) = lane else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        if unregistered_at.is_some() {
+            return Err(RelayError::Gone("lane already unregistered".into()));
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        sqlx_core::query::query(
+            "update relay.lanes set unregistered_at = current_timestamp where id = $1",
+        )
+        .bind(lane_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        sqlx_core::query::query(
+            "update relay.leases set state = 'released'::relay.lease_state,
+                    released_at = current_timestamp
+             where id = (
+               select id from relay.leases
+               where lane_id = $1 and kind = 'lane' and state = 'granted'
+               order by granted_at desc nulls last, id desc limit 1)",
+        )
+        .bind(lane_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        // A voluntary leave suspends the lane's work like a lost lease; the
+        // lane id stays on the task (resume keeps its place; reoffer clears).
+        let task: Option<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
+            "select id, state::text, round, phase::text from relay.tasks
+             where user_id = $1 and lane_id = $2
+               and state in ('assigned', 'working', 'in_review', 'rework', 'blocked')",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if let Some((task_id, state, round, phase)) = task {
+            let next = transition(parse_state(&state)?, TaskEvent::LeaseLost)
+                .map_err(|_| RelayError::Conflict("task cannot be suspended".into()))?;
+            sqlx_core::query::query(
+                "update relay.tasks set state = $1::relay.task_state,
+                        state_changed_at = current_timestamp
+                 where user_id = $2 and id = $3",
+            )
+            .bind(word(next))
+            .bind(user_id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            sqlx_core::query::query(
+                "insert into relay.actions
+                   (user_id, id, crew_id, task_id, lane_id, kind, round, phase, props)
+                 values ($1, $2, $3, $4, $5, 'interrupted'::relay.action_kind, $6,
+                         $7::relay.task_phase, '{}')",
+            )
+            .bind(user_id)
+            .bind(new_id())
+            .bind(crew_id)
+            .bind(task_id)
+            .bind(lane_id)
+            .bind(round)
+            .bind(phase)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(())
     }
 
     /// Plan an item into an unassigned task (coordinator only). From an item,
     /// title/repo/workspace default from it and it moves to `planned`; manual
     /// plans name their own. A task without a repository is refused.
+    /// The caller's crew, or why a coordinator-only op refuses: an unknown
+    /// lane is `NotFound`, a contributor is `Forbidden`. (Lane roles never
+    /// change after register, so this read sits outside the op's txn.)
+    async fn relay_crew_of_coordinator(
+        &self,
+        user_id: Uuid,
+        caller_lane: Uuid,
+    ) -> Result<Uuid, RelayError> {
+        let row: Option<(Uuid, String)> = sqlx_core::query_as::query_as(
+            "select crew_id, role::text from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(caller_lane)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((crew_id, role)) = row else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        if parse_role(&role)? != RelayRole::Coordinator {
+            return Err(RelayError::Forbidden("coordinator only".into()));
+        }
+        Ok(crew_id)
+    }
+
     pub async fn relay_plan_item(
         &self,
         user_id: Uuid,
         caller_lane: Uuid,
         input: RelayPlanInput,
     ) -> Result<RelayPlanOutput, RelayError> {
-        let _ = (user_id, caller_lane, input);
-        todo!("relay item 2 phase B")
+        let crew_id = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let (item_id, title, repo_key, workspace_id) = match input.item_id {
+            Some(item_id) => {
+                let row: Option<(String, String, Option<String>, Option<Uuid>)> =
+                    sqlx_core::query_as::query_as(
+                        "select title, state::text, repo_key, workspace_id
+                         from relay.items where user_id = $1 and id = $2",
+                    )
+                    .bind(user_id)
+                    .bind(item_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+                let Some((item_title, item_state, item_repo, item_ws)) = row else {
+                    return Err(RelayError::NotFound("item not found".into()));
+                };
+                if item_state == "closed" {
+                    return Err(RelayError::Conflict("item is closed".into()));
+                }
+                let repo_key = input
+                    .repo_key
+                    .or(item_repo)
+                    .ok_or_else(|| RelayError::Validation("a task needs a repository".into()))?;
+                sqlx_core::query::query(
+                    "update relay.items set state = 'planned'::relay.item_state
+                     where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(item_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                (
+                    Some(item_id),
+                    input.title.unwrap_or(item_title),
+                    repo_key,
+                    input.workspace_id.or(item_ws),
+                )
+            }
+            None => {
+                let title = input.title.ok_or_else(|| {
+                    RelayError::Validation("a manual plan names its title".into())
+                })?;
+                let repo_key = input
+                    .repo_key
+                    .ok_or_else(|| RelayError::Validation("a task needs a repository".into()))?;
+                (None, title, repo_key, input.workspace_id)
+            }
+        };
+        let task_id = new_id();
+        sqlx_core::query::query(
+            "insert into relay.tasks
+               (user_id, id, crew_id, item_id, repo_key, workspace_id, title,
+                phase, state, round)
+             values ($1, $2, $3, $4, $5, $6, $7, $8::relay.task_phase,
+                     'assigned'::relay.task_state, 1)",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .bind(crew_id)
+        .bind(item_id)
+        .bind(repo_key.as_str())
+        .bind(workspace_id)
+        .bind(title.as_str())
+        .bind(word(input.phase))
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayPlanOutput { task_id })
     }
 
     /// Hand a task to a lane (coordinator only): the brief freezes into the
     /// `assigned` action in the same transaction as the state write.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_assign_task(
         &self,
         user_id: Uuid,
@@ -397,14 +1133,289 @@ impl PgStore {
         task_id: Uuid,
         input: RelayAssignInput,
     ) -> Result<RelayAssignOutput, RelayError> {
-        let _ = (user_id, caller_lane, task_id, input);
-        todo!("relay item 2 phase B")
+        let crew_id = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
+        let to_lane: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select id from relay.lanes where user_id = $1 and crew_id = $2 and id = $3",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .bind(input.to_lane)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        if to_lane.is_none() {
+            return Err(RelayError::NotFound("lane not found".into()));
+        }
+        if let Some(reviewer) = input.reviewer_lane {
+            if reviewer == input.to_lane {
+                return Err(RelayError::Validation("a task never reviews itself".into()));
+            }
+            let reviewer_lane: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                "select id from relay.lanes where user_id = $1 and crew_id = $2 and id = $3",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .bind(reviewer)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+            if reviewer_lane.is_none() {
+                return Err(RelayError::NotFound("reviewer lane not found".into()));
+            }
+        }
+        check_summary(&input.brief_summary, "brief")?;
+        if let Some(ticket) = &input.ticket {
+            if ticket.key.trim().is_empty() {
+                return Err(RelayError::Validation("ticket key is empty".into()));
+            }
+            if !input.tags.is_empty() {
+                return Err(RelayError::Validation("a ticketed hand-off carries no tags".into()));
+            }
+        }
+        let task: Option<(
+            Uuid,
+            Option<Uuid>,
+            String,
+            i32,
+            String,
+            Option<Uuid>,
+            String,
+            Option<Uuid>,
+        )> = sqlx_core::query_as::query_as(
+            "select crew_id, lane_id, state::text, round, phase::text, item_id,
+                        repo_key, workspace_id
+                 from relay.tasks where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((task_crew, task_lane, state, round, phase, task_item, task_repo, task_ws)) = task
+        else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        if task_crew != crew_id {
+            return Err(RelayError::NotFound("task not found".into()));
+        }
+        let cur = parse_state(&state)?;
+        let cur_phase = parse_phase(&phase)?;
+        let active = matches!(
+            cur,
+            RelayTaskState::Assigned
+                | RelayTaskState::Working
+                | RelayTaskState::InReview
+                | RelayTaskState::Rework
+                | RelayTaskState::Blocked
+        );
+        let (next, new_round) = if cur == RelayTaskState::Approved {
+            if input.phase == cur_phase {
+                return Err(RelayError::Conflict("task is already approved in this phase".into()));
+            }
+            let next = transition(cur, TaskEvent::Reassigned)
+                .map_err(|_| RelayError::Conflict("task cannot advance".into()))?;
+            (next, round + 1)
+        } else if task_lane.is_some() && active {
+            return Err(RelayError::Conflict("task is already running".into()));
+        } else if task_lane.is_none() && cur == RelayTaskState::Assigned {
+            (RelayTaskState::Assigned, round)
+        } else {
+            return Err(RelayError::Conflict(format!("cannot assign a {} task", word(cur))));
+        };
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // The hand-off's ticket/tags ride the task's item (derived: tasks
+        // carry neither column; the item is their home).
+        let item_id = match (&input.ticket, task_item) {
+            (Some(ticket), Some(item)) => {
+                sqlx_core::query::query(
+                    "update relay.items set ticket_provider = $1, ticket_key = $2, tags = null
+                     where user_id = $3 and id = $4",
+                )
+                .bind(word(ticket.provider))
+                .bind(ticket.key.as_str())
+                .bind(user_id)
+                .bind(item)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                Some(item)
+            }
+            (Some(ticket), None) => {
+                let provider = word(ticket.provider);
+                let existing: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                    "select id from relay.items
+                     where user_id = $1 and ticket_provider = $2 and ticket_key = $3",
+                )
+                .bind(user_id)
+                .bind(provider.as_str())
+                .bind(ticket.key.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                match existing {
+                    Some(item) => {
+                        sqlx_core::query::query(
+                            "update relay.items set state = 'planned'::relay.item_state
+                             where user_id = $1 and id = $2",
+                        )
+                        .bind(user_id)
+                        .bind(item)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db_err)?;
+                        Some(item)
+                    }
+                    None => {
+                        let item = new_id();
+                        sqlx_core::query::query(
+                            "insert into relay.items
+                               (user_id, id, workspace_id, repo_key, ticket_provider,
+                                ticket_key, title, kind, state, added_by)
+                             values ($1, $2, $3, $4, $5, $6, $7,
+                                     'issue'::relay.item_kind,
+                                     'planned'::relay.item_state, $8)",
+                        )
+                        .bind(user_id)
+                        .bind(item)
+                        .bind(task_ws)
+                        .bind(task_repo.as_str())
+                        .bind(provider.as_str())
+                        .bind(ticket.key.as_str())
+                        .bind(input.title.as_str())
+                        .bind(caller_lane)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db_err)?;
+                        Some(item)
+                    }
+                }
+            }
+            (None, Some(item)) => {
+                if !input.tags.is_empty() {
+                    let provider: Option<Option<String>> = sqlx_core::query_scalar::query_scalar(
+                        "select ticket_provider from relay.items where user_id = $1 and id = $2",
+                    )
+                    .bind(user_id)
+                    .bind(item)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+                    if provider.flatten().is_some() {
+                        return Err(RelayError::Validation("ticketed items carry no tags".into()));
+                    }
+                    sqlx_core::query::query(
+                        "update relay.items set tags = $1 where user_id = $2 and id = $3",
+                    )
+                    .bind(input.tags.clone())
+                    .bind(user_id)
+                    .bind(item)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+                }
+                Some(item)
+            }
+            (None, None) => {
+                if input.tags.is_empty() {
+                    None
+                } else {
+                    let item = new_id();
+                    sqlx_core::query::query(
+                        "insert into relay.items
+                           (user_id, id, workspace_id, repo_key, title, kind, tags,
+                            state, added_by)
+                         values ($1, $2, $3, $4, $5, 'issue'::relay.item_kind, $6,
+                                 'planned'::relay.item_state, $7)",
+                    )
+                    .bind(user_id)
+                    .bind(item)
+                    .bind(task_ws)
+                    .bind(task_repo.as_str())
+                    .bind(input.title.as_str())
+                    .bind(input.tags.clone())
+                    .bind(caller_lane)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+                    Some(item)
+                }
+            }
+        };
+        let task_update = sqlx_core::query::query(
+            "update relay.tasks set lane_id = $1, title = $2, phase = $3::relay.task_phase,
+                    state = $4::relay.task_state, round = $5, reviewer_lane_id = $6,
+                    owned_paths = $7, acceptance = $8, resources = $9, deps = $10,
+                    item_id = $11, state_changed_at = current_timestamp
+             where user_id = $12 and id = $13",
+        )
+        .bind(input.to_lane)
+        .bind(input.title.as_str())
+        .bind(word(input.phase))
+        .bind(word(next))
+        .bind(new_round)
+        .bind(input.reviewer_lane)
+        .bind(input.owned_paths.clone())
+        .bind(input.acceptance.clone())
+        .bind(input.resources.clone())
+        .bind(input.deps.clone())
+        .bind(item_id)
+        .bind(user_id)
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await;
+        if let Err(e) = task_update {
+            if is_unique_violation(&e) {
+                return Err(RelayError::Conflict("lane is already busy".into()));
+            }
+            return Err(db_err(e));
+        }
+        // An absent reviewer clears the slot: the new round picks fresh at
+        // first report (derived; pass it again to keep it).
+        let props = serde_json::json!({
+            "docs": input.brief_docs,
+            "owned_paths": input.owned_paths,
+            "acceptance": input.acceptance,
+        });
+        validate_props(RelayActionKind::Assigned, &props)
+            .map_err(|e| RelayError::Internal(format!("assign props: {}", e.message)))?;
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                body_md, props)
+             values ($1, $2, $3, $4, $5, 'assigned'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(crew_id)
+        .bind(task_id)
+        .bind(caller_lane)
+        .bind(new_round)
+        .bind(word(input.phase))
+        .bind(input.brief_summary.as_str())
+        .bind(props)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if let Some(lane_title) = input.lane_title.as_deref() {
+            sqlx_core::query::query("update relay.lanes set title = $1 where id = $2")
+                .bind(lane_title)
+                .bind(input.to_lane)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayAssignOutput { task_id, round: new_round, state: next })
     }
 
     /// A work/rework turn: validate (props, length, leak guard, finding
     /// classes need none here), move working/rework → in_review, pick the
     /// reviewer at first report (Q14), write the `reported` action — one
     /// transaction, or nothing at all.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_report_task(
         &self,
         user_id: Uuid,
@@ -412,8 +1423,150 @@ impl PgStore {
         task_id: Uuid,
         input: RelayReportInput,
     ) -> Result<RelayReportOutput, RelayError> {
-        let _ = (user_id, caller_lane, task_id, input);
-        todo!("relay item 2 phase B")
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let task: Option<(Uuid, Option<Uuid>, String, i32, String, Option<Uuid>, Vec<String>)> =
+            sqlx_core::query_as::query_as(
+                "select crew_id, lane_id, state::text, round, phase::text,
+                        reviewer_lane_id, owned_paths
+                 from relay.tasks where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let Some((crew_id, task_lane, state, round, phase, task_reviewer, owned_paths)) = task
+        else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        if task_lane != Some(caller_lane) {
+            return Err(RelayError::Forbidden("only the assignee reports".into()));
+        }
+        let cur = parse_state(&state)?;
+        if !matches!(cur, RelayTaskState::Working | RelayTaskState::Rework) {
+            return Err(RelayError::Conflict(format!("cannot report a {} task", word(cur))));
+        }
+        if input.round != round {
+            return Err(RelayError::Conflict(format!("stale round: task is on round {round}")));
+        }
+        if input.phase != parse_phase(&phase)? {
+            return Err(RelayError::Conflict("report names the wrong phase".into()));
+        }
+        check_summary(&input.changed, "changed")?;
+        let telemetry = input
+            .telemetry
+            .as_object()
+            .ok_or_else(|| RelayError::Validation("telemetry must be an object".into()))?;
+        for key in ["look_at", "flags", "base", "branch", "commits", "files", "gates"] {
+            if telemetry.get(key).is_some_and(|v| !v.is_null()) {
+                return Err(RelayError::Validation(format!(
+                    "telemetry key `{key}` collides with the report field"
+                )));
+            }
+        }
+        let mut props = serde_json::Map::new();
+        if let Some(v) = &input.look_at {
+            props.insert("look_at".into(), serde_json::Value::String(v.clone()));
+        }
+        if let Some(v) = &input.flags {
+            props.insert("flags".into(), serde_json::Value::String(v.clone()));
+        }
+        if let Some(v) = &input.base {
+            props.insert("base".into(), serde_json::Value::String(v.clone()));
+        }
+        if let Some(v) = &input.branch {
+            props.insert("branch".into(), serde_json::Value::String(v.clone()));
+        }
+        props.insert("commits".into(), serde_json::to_value(&input.commits).unwrap_or_default());
+        let files: Vec<serde_json::Value> = input
+            .files
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "path": f.path,
+                    "added": f.added,
+                    "removed": f.removed,
+                    "outside_owned": outside_owned(&f.path, &owned_paths),
+                })
+            })
+            .collect();
+        props.insert("files".into(), serde_json::Value::Array(files));
+        let gates: Vec<serde_json::Value> = input
+            .gates
+            .iter()
+            .map(|g| {
+                let mut gate = serde_json::Map::from_iter([
+                    ("cmd".to_owned(), serde_json::Value::String(g.cmd.clone())),
+                    ("exit".to_owned(), serde_json::Value::from(g.exit)),
+                ]);
+                if let Some(counts) = &g.counts {
+                    gate.insert("counts".into(), serde_json::Value::String(counts.clone()));
+                }
+                serde_json::Value::Object(gate)
+            })
+            .collect();
+        props.insert("gates".into(), serde_json::Value::Array(gates));
+        for (k, v) in telemetry {
+            props.insert(k.clone(), v.clone());
+        }
+        let props = serde_json::Value::Object(props);
+        validate_props(RelayActionKind::Reported, &props)
+            .map_err(|e| RelayError::Validation(e.message))?;
+        // First report picks the reviewer (Q14); later turns keep the pick.
+        let reviewer = match task_reviewer {
+            Some(reviewer) => Some(reviewer),
+            None => {
+                let now: DateTime<Utc> =
+                    sqlx_core::query_scalar::query_scalar("select current_timestamp")
+                        .fetch_one(&mut *tx)
+                        .await
+                        .map_err(db_err)?;
+                relay_pick_reviewer(RelayPickQuery {
+                    tx: &mut tx,
+                    user_id,
+                    crew_id,
+                    author: caller_lane,
+                    now,
+                })
+                .await?
+            }
+        };
+        let next = transition(cur, TaskEvent::Reported)
+            .map_err(|_| RelayError::Conflict("task cannot move to review".into()))?;
+        sqlx_core::query::query(
+            "update relay.tasks set state = $1::relay.task_state, reviewer_lane_id = $2,
+                    state_changed_at = current_timestamp
+             where user_id = $3 and id = $4",
+        )
+        .bind(word(next))
+        .bind(reviewer)
+        .bind(user_id)
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                body_md, report_md, props)
+             values ($1, $2, $3, $4, $5, 'reported'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9, $10)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(crew_id)
+        .bind(task_id)
+        .bind(caller_lane)
+        .bind(input.round)
+        .bind(word(input.phase))
+        .bind(input.changed.as_str())
+        .bind(input.report_md.as_deref())
+        .bind(props)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayReportOutput { state: next, round, reviewer_lane_id: reviewer })
     }
 
     /// A review turn (the picked reviewer only): approved → approved, or
@@ -426,8 +1579,145 @@ impl PgStore {
         task_id: Uuid,
         input: RelayReviewInput,
     ) -> Result<RelayReviewOutput, RelayError> {
-        let _ = (user_id, caller_lane, task_id, input);
-        todo!("relay item 2 phase B")
+        let caller: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select id from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(caller_lane)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        if caller.is_none() {
+            return Err(RelayError::NotFound("lane not found".into()));
+        }
+        check_summary(&input.summary, "summary")?;
+        for finding in &input.findings {
+            let known: Option<String> = sqlx_core::query_scalar::query_scalar(
+                "select code from relay.finding_classes where code = $1",
+            )
+            .bind(finding.class.as_str())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+            if known.is_none() {
+                return Err(RelayError::Validation(format!(
+                    "unknown finding class {}",
+                    finding.class
+                )));
+            }
+        }
+        let telemetry = input
+            .telemetry
+            .as_object()
+            .ok_or_else(|| RelayError::Validation("telemetry must be an object".into()))?;
+        for key in ["verdict", "findings", "probes"] {
+            if telemetry.get(key).is_some_and(|v| !v.is_null()) {
+                return Err(RelayError::Validation(format!(
+                    "telemetry key `{key}` collides with the review field"
+                )));
+            }
+        }
+        let mut props = serde_json::Map::new();
+        props.insert("verdict".into(), serde_json::Value::String(word(input.verdict)));
+        let findings: Vec<serde_json::Value> = input
+            .findings
+            .iter()
+            .map(|f| {
+                let mut finding = serde_json::Map::from_iter([
+                    ("severity".to_owned(), serde_json::Value::String(word(f.severity))),
+                    ("class".to_owned(), serde_json::Value::String(f.class.clone())),
+                    ("text".to_owned(), serde_json::Value::String(f.text.clone())),
+                ]);
+                if let Some(file) = &f.file {
+                    finding.insert("file".into(), serde_json::Value::String(file.clone()));
+                }
+                if let Some(line) = f.line {
+                    finding.insert("line".into(), serde_json::Value::from(line));
+                }
+                serde_json::Value::Object(finding)
+            })
+            .collect();
+        props.insert("findings".into(), serde_json::Value::Array(findings));
+        if let Some(probes) = input.probes {
+            props.insert("probes".into(), serde_json::Value::from(probes));
+        }
+        for (k, v) in telemetry {
+            props.insert(k.clone(), v.clone());
+        }
+        let props = serde_json::Value::Object(props);
+        validate_props(RelayActionKind::Reviewed, &props)
+            .map_err(|e| RelayError::Validation(e.message))?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let task: Option<(Uuid, String, i32, String, Option<Uuid>)> =
+            sqlx_core::query_as::query_as(
+                "select crew_id, state::text, round, phase::text, reviewer_lane_id
+                 from relay.tasks where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let Some((crew_id, state, round, phase, task_reviewer)) = task else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        if task_reviewer != Some(caller_lane) {
+            return Err(RelayError::Forbidden("only the picked reviewer reviews".into()));
+        }
+        let cur = parse_state(&state)?;
+        if cur != RelayTaskState::InReview {
+            return Err(RelayError::Conflict(format!("cannot review a {} task", word(cur))));
+        }
+        let (event, new_round) = match input.verdict {
+            ReviewVerdict::Approved => (TaskEvent::ReviewApproved, round),
+            ReviewVerdict::ChangesRequested => (TaskEvent::ReviewChangesRequested, round + 1),
+        };
+        let next = transition(cur, event)
+            .map_err(|_| RelayError::Conflict("task cannot leave review".into()))?;
+        sqlx_core::query::query(
+            "update relay.tasks set state = $1::relay.task_state, round = $2,
+                    state_changed_at = current_timestamp
+             where user_id = $3 and id = $4",
+        )
+        .bind(word(next))
+        .bind(new_round)
+        .bind(user_id)
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let reply_to: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select id from relay.actions
+             where user_id = $1 and task_id = $2 and kind = 'reported'
+             order by created_at desc, id desc limit 1",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                body_md, props, reply_to)
+             values ($1, $2, $3, $4, $5, 'reviewed'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9, $10)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(crew_id)
+        .bind(task_id)
+        .bind(caller_lane)
+        .bind(new_round)
+        .bind(phase)
+        .bind(input.summary.as_str())
+        .bind(props)
+        .bind(reply_to)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayReviewOutput { state: next, round: new_round })
     }
 
     /// Ask a decision and block its tasks — one transaction.
@@ -437,12 +1727,169 @@ impl PgStore {
         caller_lane: Uuid,
         input: RelayAskInput,
     ) -> Result<RelayAskOutput, RelayError> {
-        let _ = (user_id, caller_lane, input);
-        todo!("relay item 2 phase B")
+        let lane_crew: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select crew_id from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(caller_lane)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some(crew_id) = lane_crew else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        check_summary(&input.question, "question")?;
+        // The ask's own task, when named, stamps the round/phase.
+        let task_stamp: Option<(i32, String)> = match input.task_id {
+            Some(task_id) => {
+                let row: Option<(Uuid, i32, String)> = sqlx_core::query_as::query_as(
+                    "select crew_id, round, phase::text from relay.tasks
+                     where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(task_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                let Some((task_crew, round, phase)) = row else {
+                    return Err(RelayError::NotFound("task not found".into()));
+                };
+                if task_crew != crew_id {
+                    return Err(RelayError::NotFound("task not found".into()));
+                }
+                Some((round, phase))
+            }
+            None => None,
+        };
+        if let RelayAskedOf::Lane(lane_id) = input.asked_of {
+            let asked: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                "select id from relay.lanes where user_id = $1 and crew_id = $2 and id = $3",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .bind(lane_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+            if asked.is_none() {
+                return Err(RelayError::NotFound("lane not found".into()));
+            }
+        }
+        if let Some(recommended) = &input.recommended
+            && !input.options.iter().any(|o| &o.id == recommended)
+        {
+            return Err(RelayError::Validation("recommended is not one of the options".into()));
+        }
+        // Every blocked task resolves and blocks — validated before a
+        // single write, so one bad ref refuses the whole ask.
+        let mut blocked = Vec::with_capacity(input.blocks.len());
+        for blocked_id in &input.blocks {
+            let row: Option<(Uuid, String)> = sqlx_core::query_as::query_as(
+                "select crew_id, state::text from relay.tasks where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(blocked_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+            let Some((task_crew, state)) = row else {
+                return Err(RelayError::NotFound("task not found".into()));
+            };
+            if task_crew != crew_id {
+                return Err(RelayError::NotFound("task not found".into()));
+            }
+            let cur = parse_state(&state)?;
+            transition(cur, TaskEvent::Blocked)
+                .map_err(|_| RelayError::Conflict(format!("a {} task cannot block", word(cur))))?;
+            blocked.push((*blocked_id, cur));
+        }
+        let options: Vec<serde_json::Value> = input
+            .options
+            .iter()
+            .map(|o| {
+                let mut option = serde_json::Map::from_iter([
+                    ("id".to_owned(), serde_json::Value::String(o.id.clone())),
+                    ("label".to_owned(), serde_json::Value::String(o.label.clone())),
+                ]);
+                if let Some(detail) = &o.detail {
+                    option.insert("detail".into(), serde_json::Value::String(detail.clone()));
+                }
+                serde_json::Value::Object(option)
+            })
+            .collect();
+        let mut props = serde_json::Map::from_iter([
+            ("options".to_owned(), serde_json::Value::Array(options)),
+            (
+                "blocks".to_owned(),
+                serde_json::Value::Array(
+                    input
+                        .blocks
+                        .iter()
+                        .map(|id| serde_json::Value::String(id.to_string()))
+                        .collect(),
+                ),
+            ),
+            (
+                "asked_of".to_owned(),
+                serde_json::Value::String(match input.asked_of {
+                    RelayAskedOf::Person => "person".to_owned(),
+                    RelayAskedOf::Lane(lane_id) => lane_id.to_string(),
+                }),
+            ),
+        ]);
+        if let Some(context) = &input.context {
+            props.insert("context".into(), serde_json::Value::String(context.clone()));
+        }
+        if let Some(recommended) = &input.recommended {
+            props.insert("recommended".into(), serde_json::Value::String(recommended.clone()));
+        }
+        let props = serde_json::Value::Object(props);
+        validate_props(RelayActionKind::Asked, &props)
+            .map_err(|e| RelayError::Validation(e.message))?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        for (blocked_id, cur) in &blocked {
+            sqlx_core::query::query(
+                "update relay.tasks set state = 'blocked'::relay.task_state,
+                        blocked_from_state = $1::relay.task_state,
+                        state_changed_at = current_timestamp
+                 where user_id = $2 and id = $3",
+            )
+            .bind(word(*cur))
+            .bind(user_id)
+            .bind(blocked_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        let decision_id = new_id();
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                body_md, props)
+             values ($1, $2, $3, $4, $5, 'asked'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9)",
+        )
+        .bind(user_id)
+        .bind(decision_id)
+        .bind(crew_id)
+        .bind(input.task_id)
+        .bind(caller_lane)
+        .bind(task_stamp.as_ref().map(|(round, _)| *round))
+        .bind(task_stamp.as_ref().map(|(_, phase)| phase.clone()))
+        .bind(input.question.as_str())
+        .bind(props)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayAskOutput { decision_id })
     }
 
     /// Answer a decision (the asked-of party only) and resume its tasks —
     /// one transaction.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_answer_decision(
         &self,
         user_id: Uuid,
@@ -450,8 +1897,156 @@ impl PgStore {
         decision_id: Uuid,
         input: RelayAnswerInput,
     ) -> Result<Uuid, RelayError> {
-        let _ = (user_id, caller, decision_id, input);
-        todo!("relay item 2 phase B")
+        let ask: Option<(Uuid, Option<Uuid>, serde_json::Value, Option<i32>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "select crew_id, task_id, props, round, phase::text from relay.actions
+                 where user_id = $1 and id = $2 and kind = 'asked'",
+            )
+            .bind(user_id)
+            .bind(decision_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+        let Some((crew_id, task_id, props, ask_round, ask_phase)) = ask else {
+            return Err(RelayError::NotFound("decision not found".into()));
+        };
+        let answered: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select id from relay.actions
+             where user_id = $1 and reply_to = $2 and kind = 'answered'",
+        )
+        .bind(user_id)
+        .bind(decision_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        if answered.is_some() {
+            return Err(RelayError::Conflict("decision is already answered".into()));
+        }
+        let asked_of = props
+            .get("asked_of")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RelayError::Internal("ask has no asked_of".into()))?;
+        let (lane_id, surface) = match &caller {
+            RelayCaller::Person { surface } if asked_of == "person" => (
+                None,
+                resolve_surface(Caller::Person, Some(*surface))
+                    .map_err(|e| RelayError::Validation(e.message))?,
+            ),
+            RelayCaller::Lane { lane_id } if asked_of == lane_id.to_string() => {
+                let lane: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                    "select id from relay.lanes where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(lane_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                if lane.is_none() {
+                    return Err(RelayError::NotFound("lane not found".into()));
+                }
+                (
+                    Some(*lane_id),
+                    resolve_surface(Caller::Lane, None)
+                        .map_err(|e| RelayError::Validation(e.message))?,
+                )
+            }
+            _ => {
+                return Err(RelayError::Forbidden("only the asked-of party answers".into()));
+            }
+        };
+        let options = props
+            .get("options")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| RelayError::Internal("ask has no options".into()))?;
+        if !options
+            .iter()
+            .any(|o| o.get("id").and_then(|v| v.as_str()) == Some(input.option.as_str()))
+        {
+            return Err(RelayError::Validation(format!("unknown option {}", input.option)));
+        }
+        if let Some(note) = &input.note {
+            check_summary(note, "note")?;
+        }
+        let answer_props = serde_json::json!({"option": input.option, "surface": word(surface)});
+        validate_props(RelayActionKind::Answered, &answer_props)
+            .map_err(|e| RelayError::Validation(e.message))?;
+        let ask_blocks: Vec<Uuid> = props
+            .get("blocks")
+            .and_then(|v| v.as_array())
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .and_then(|s| Uuid::parse_str(s).ok())
+                            .ok_or_else(|| RelayError::Internal("ask blocks are corrupt".into()))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let answer_id = new_id();
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                body_md, props, reply_to)
+             values ($1, $2, $3, $4, $5, 'answered'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9, $10)",
+        )
+        .bind(user_id)
+        .bind(answer_id)
+        .bind(crew_id)
+        .bind(task_id)
+        .bind(lane_id)
+        .bind(ask_round)
+        .bind(ask_phase)
+        .bind(input.note.as_deref())
+        .bind(answer_props)
+        .bind(decision_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        // Resume what the ask blocked. A task that moved on meanwhile
+        // (merged, cancelled, re-planned) is left alone — the answer still
+        // records; the resume is best-effort per task (derived).
+        for blocked_id in &ask_blocks {
+            let row: Option<(String, Option<String>)> = sqlx_core::query_as::query_as(
+                "select state::text, blocked_from_state::text from relay.tasks
+                 where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(blocked_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            let Some((state, blocked_from)) = row else {
+                continue;
+            };
+            if state != "blocked" {
+                continue;
+            }
+            let from =
+                blocked_from.as_deref().map(parse_state).transpose()?.ok_or_else(|| {
+                    RelayError::Internal("blocked task has no blocked_from".into())
+                })?;
+            let next =
+                transition(RelayTaskState::Blocked, TaskEvent::Unblocked { blocked_from: from })
+                    .map_err(|_| RelayError::Internal("blocked task cannot resume".into()))?;
+            sqlx_core::query::query(
+                "update relay.tasks set state = $1::relay.task_state,
+                        blocked_from_state = null, state_changed_at = current_timestamp
+                 where user_id = $2 and id = $3",
+            )
+            .bind(word(next))
+            .bind(user_id)
+            .bind(blocked_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(answer_id)
     }
 
     /// Queue a message on the bus — person and lane share it.
@@ -461,8 +2056,114 @@ impl PgStore {
         caller: RelayCaller,
         input: RelayMessageInput,
     ) -> Result<RelayMessageOutput, RelayError> {
-        let _ = (user_id, caller, input);
-        todo!("relay item 2 phase B")
+        let (lane_id, surface) = match &caller {
+            RelayCaller::Person { surface } => (
+                None,
+                resolve_surface(Caller::Person, Some(*surface))
+                    .map_err(|e| RelayError::Validation(e.message))?,
+            ),
+            RelayCaller::Lane { lane_id } => {
+                let lane: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                    "select id from relay.lanes where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(lane_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                if lane.is_none() {
+                    return Err(RelayError::NotFound("lane not found".into()));
+                }
+                (
+                    Some(*lane_id),
+                    resolve_surface(Caller::Lane, None)
+                        .map_err(|e| RelayError::Validation(e.message))?,
+                )
+            }
+        };
+        check_summary(&input.text, "text")?;
+        let task_crew: Option<Uuid> = match input.task_id {
+            Some(task_id) => {
+                let crew: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                    "select crew_id from relay.tasks where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(task_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                Some(crew.ok_or_else(|| RelayError::NotFound("task not found".into()))?)
+            }
+            None => None,
+        };
+        let caller_crew: Option<Uuid> = match lane_id {
+            Some(lane) => sqlx_core::query_scalar::query_scalar(
+                "select crew_id from relay.lanes where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(lane)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?,
+            None => None,
+        };
+        let (to, to_crew): (serde_json::Value, Option<Uuid>) = match &input.to {
+            RelayMessageTo::Coordinator => (serde_json::json!({"kind": "coordinator"}), None),
+            RelayMessageTo::Everyone => (serde_json::json!({"kind": "everyone"}), None),
+            RelayMessageTo::Person => (serde_json::json!({"kind": "person"}), None),
+            RelayMessageTo::Lane { lane_id } => {
+                let crew: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                    "select crew_id from relay.lanes where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(lane_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                let Some(crew) = crew else {
+                    return Err(RelayError::NotFound("lane not found".into()));
+                };
+                (serde_json::json!({"kind": "lane", "lane_id": lane_id.to_string()}), Some(crew))
+            }
+        };
+        // The row's crew, derived (the store input names none): the task's,
+        // else the sending lane's, else the addressed lane's, else the
+        // user's oldest crew. Delivery is by address over the user's rows
+        // (the envelope crew-scopes nothing), so this choice is audit, not
+        // routing — except it keeps the FK honest (derived; disclosed).
+        let crew_id = match task_crew.or(caller_crew).or(to_crew) {
+            Some(crew) => crew,
+            None => {
+                let oldest: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                    "select id from relay.crews where user_id = $1 order by started_at, id limit 1",
+                )
+                .bind(user_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                oldest.ok_or_else(|| RelayError::NotFound("no crew".into()))?
+            }
+        };
+        let props = serde_json::json!({"to": to, "surface": word(surface)});
+        validate_props(RelayActionKind::Message, &props)
+            .map_err(|e| RelayError::Validation(e.message))?;
+        let message_id = new_id();
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, body_md, props)
+             values ($1, $2, $3, $4, $5, 'message'::relay.action_kind, $6, $7)",
+        )
+        .bind(user_id)
+        .bind(message_id)
+        .bind(crew_id)
+        .bind(input.task_id)
+        .bind(lane_id)
+        .bind(input.text.as_str())
+        .bind(props)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(RelayMessageOutput { message_id })
     }
 
     /// Merge an approved task (coordinator only): approved → done with the
@@ -474,21 +2175,452 @@ impl PgStore {
         task_id: Uuid,
         input: RelayMergeInput,
     ) -> Result<(), RelayError> {
-        let _ = (user_id, caller_lane, task_id, input);
-        todo!("relay item 2 phase B")
+        let crew_id = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
+        let task: Option<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
+            "select crew_id, state::text, round, phase::text from relay.tasks
+             where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((task_crew, state, round, phase)) = task else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        if task_crew != crew_id {
+            return Err(RelayError::NotFound("task not found".into()));
+        }
+        let cur = parse_state(&state)?;
+        if cur != RelayTaskState::Approved {
+            return Err(RelayError::Conflict(format!(
+                "only approved tasks merge, not {}",
+                word(cur)
+            )));
+        }
+        check_summary(&input.note, "note")?;
+        let gates: Vec<serde_json::Value> = input
+            .gates
+            .iter()
+            .map(|g| {
+                let mut gate = serde_json::Map::from_iter([
+                    ("cmd".to_owned(), serde_json::Value::String(g.cmd.clone())),
+                    ("exit".to_owned(), serde_json::Value::from(g.exit)),
+                ]);
+                if let Some(counts) = &g.counts {
+                    gate.insert("counts".into(), serde_json::Value::String(counts.clone()));
+                }
+                serde_json::Value::Object(gate)
+            })
+            .collect();
+        let props = serde_json::json!({
+            "commits": input.commits,
+            "into": input.into,
+            "gates": gates,
+        });
+        validate_props(RelayActionKind::Merged, &props)
+            .map_err(|e| RelayError::Validation(e.message))?;
+        let next = transition(cur, TaskEvent::Merged)
+            .map_err(|_| RelayError::Conflict("task cannot merge".into()))?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        sqlx_core::query::query(
+            "update relay.tasks set state = $1::relay.task_state,
+                    completed_at = current_timestamp,
+                    state_changed_at = current_timestamp
+             where user_id = $2 and id = $3",
+        )
+        .bind(word(next))
+        .bind(user_id)
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                body_md, props)
+             values ($1, $2, $3, $4, $5, 'merged'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(crew_id)
+        .bind(task_id)
+        .bind(caller_lane)
+        .bind(round)
+        .bind(phase)
+        .bind(input.note.as_str())
+        .bind(props)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(())
     }
 
     /// The lane's grouped envelope (Q4): messages, answers, reviews,
     /// assignments, each newest-first. Reading marks the lane's active task
     /// started on first delivery and writes `delivered` receipts for newly
     /// included messages — one transaction with the read.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_envelope(
         &self,
         user_id: Uuid,
         lane_id: Uuid,
     ) -> Result<LaneEnvelope, RelayError> {
-        let _ = (user_id, lane_id);
-        todo!("relay item 2 phase B")
+        let lane: Option<(Uuid, String)> = sqlx_core::query_as::query_as(
+            "select crew_id, role::text from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((crew_id, role)) = lane else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        let is_coordinator = role == "coordinator";
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // ── messages: user-scoped, matched by address, newest first.
+        let rows: Vec<(
+            Uuid,
+            Option<Uuid>,
+            Option<Uuid>,
+            serde_json::Value,
+            Option<String>,
+            DateTime<Utc>,
+        )> = sqlx_core::query_as::query_as(
+            "select id, task_id, lane_id, props, body_md, created_at
+                 from relay.actions
+                 where user_id = $1 and kind = 'message'
+                   and (props->'to'->>'kind' = 'everyone'
+                        or (props->'to'->>'kind' = 'lane'
+                            and props->'to'->>'lane_id' = $2)
+                        or (props->'to'->>'kind' = 'coordinator' and $3))
+                 order by created_at desc, id desc",
+        )
+        .bind(user_id)
+        .bind(lane_id.to_string())
+        .bind(is_coordinator)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let mut messages = Vec::with_capacity(rows.len());
+        for (id, task_id, sender, props, body, created_at) in &rows {
+            let from_lane_code = match sender {
+                Some(sender) => {
+                    let code: Option<String> = sqlx_core::query_scalar::query_scalar(
+                        "select code from relay.lanes where user_id = $1 and id = $2",
+                    )
+                    .bind(user_id)
+                    .bind(sender)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+                    code
+                }
+                None => None,
+            };
+            let surface = props
+                .get("surface")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RelayError::Internal("message has no surface".into()))?;
+            messages.push(EnvelopeMessage {
+                id: id.to_string(),
+                task_id: task_id.map(|id| id.to_string()),
+                from_lane_code,
+                surface: parse_surface(surface)?,
+                text: body.clone().unwrap_or_default(),
+                created_at: iso(*created_at),
+            });
+            // Inclusion delivers; a later fetch after delivery reads (there
+            // is no ack tool).
+            let kinds: Vec<String> = sqlx_core::query_scalar::query_scalar(
+                "select kind::text from relay.actions
+                 where user_id = $1 and lane_id = $2 and reply_to = $3
+                   and kind in ('delivered', 'read')",
+            )
+            .bind(user_id)
+            .bind(lane_id)
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            let receipt = if !kinds.iter().any(|k| k == "delivered") {
+                "delivered"
+            } else if !kinds.iter().any(|k| k == "read") {
+                "read"
+            } else {
+                continue;
+            };
+            sqlx_core::query::query(
+                "insert into relay.actions
+                   (user_id, id, crew_id, task_id, lane_id, kind, reply_to, props)
+                 values ($1, $2, $3, $4, $5, $6::relay.action_kind, $7, '{}')",
+            )
+            .bind(user_id)
+            .bind(new_id())
+            .bind(crew_id)
+            .bind(task_id)
+            .bind(lane_id)
+            .bind(receipt)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        // ── answers: replies to this lane's asks, newest first.
+        let rows: Vec<(
+            Uuid,
+            Uuid,
+            Option<Uuid>,
+            Option<Uuid>,
+            String,
+            Option<String>,
+            DateTime<Utc>,
+        )> = sqlx_core::query_as::query_as(
+            "select a.id, a.reply_to, a.task_id, a.lane_id, a.props->>'option',
+                        a.body_md, a.created_at
+                 from relay.actions a join relay.actions ask on ask.id = a.reply_to
+                 where a.user_id = $1 and a.kind = 'answered' and ask.lane_id = $2
+                 order by a.created_at desc, a.id desc",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let mut answers = Vec::with_capacity(rows.len());
+        for (id, decision_id, task_id, sender, option, note, created_at) in rows {
+            let from_lane_code = match sender {
+                Some(sender) => {
+                    let code: Option<String> = sqlx_core::query_scalar::query_scalar(
+                        "select code from relay.lanes where user_id = $1 and id = $2",
+                    )
+                    .bind(user_id)
+                    .bind(sender)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+                    code
+                }
+                None => None,
+            };
+            answers.push(EnvelopeAnswer {
+                id: id.to_string(),
+                decision_id: decision_id.to_string(),
+                task_id: task_id.map(|id| id.to_string()),
+                option,
+                note,
+                from_lane_code,
+                created_at: iso(created_at),
+            });
+        }
+        // ── reviews, both directions (Q15): to-perform (picked reviewer,
+        // awaiting verdict) and to-answer (own task sent back).
+        let mut reviews = Vec::new();
+        let perform: Vec<(Uuid, String, i32, DateTime<Utc>)> = sqlx_core::query_as::query_as(
+            "select id, phase::text, round, state_changed_at from relay.tasks
+                 where user_id = $1 and reviewer_lane_id = $2 and state = 'in_review'",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        for (task_id, phase, round, changed_at) in perform {
+            let reported_at: Option<DateTime<Utc>> = sqlx_core::query_scalar::query_scalar(
+                "select created_at from relay.actions
+                 where user_id = $1 and task_id = $2 and kind = 'reported'
+                 order by created_at desc, id desc limit 1",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            reviews.push(EnvelopeReview {
+                task_id: task_id.to_string(),
+                phase: parse_phase(&phase)?,
+                round,
+                direction: ReviewDirection::Perform,
+                created_at: iso(reported_at.unwrap_or(changed_at)),
+            });
+        }
+        let answer_rows: Vec<(Uuid, String, i32, DateTime<Utc>)> = sqlx_core::query_as::query_as(
+            "select id, phase::text, round, state_changed_at from relay.tasks
+                 where user_id = $1 and lane_id = $2 and state = 'rework'",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        for (task_id, phase, round, changed_at) in answer_rows {
+            let reviewed_at: Option<DateTime<Utc>> = sqlx_core::query_scalar::query_scalar(
+                "select created_at from relay.actions
+                 where user_id = $1 and task_id = $2 and kind = 'reviewed'
+                 order by created_at desc, id desc limit 1",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            reviews.push(EnvelopeReview {
+                task_id: task_id.to_string(),
+                phase: parse_phase(&phase)?,
+                round,
+                direction: ReviewDirection::Answer,
+                created_at: iso(reviewed_at.unwrap_or(changed_at)),
+            });
+        }
+        reviews.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        // ── assignment: the one task the lane must act on (derived:
+        // assigned, working, or rework — in_review and blocked wait on
+        // someone else).
+        let task: Option<(
+            Uuid,
+            String,
+            String,
+            i32,
+            Option<Uuid>,
+            Vec<String>,
+            Vec<String>,
+            Vec<Uuid>,
+            Vec<String>,
+            DateTime<Utc>,
+            String,
+        )> = sqlx_core::query_as::query_as(
+            "select id, title, phase::text, round, item_id, acceptance, owned_paths,
+                    deps, resources, assigned_at, state::text
+             from relay.tasks
+             where user_id = $1 and lane_id = $2
+               and state in ('assigned', 'working', 'rework')",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let mut assignments = Vec::new();
+        if let Some((
+            task_id,
+            title,
+            phase,
+            round,
+            item_id,
+            acceptance,
+            owned_paths,
+            deps,
+            resources,
+            assigned_at,
+            state,
+        )) = task
+        {
+            let brief_row: Option<(Option<String>, serde_json::Value, DateTime<Utc>)> =
+                sqlx_core::query_as::query_as(
+                    "select body_md, props, created_at from relay.actions
+                     where user_id = $1 and task_id = $2
+                       and kind in ('assigned', 'brief_updated')
+                     order by created_at desc, id desc limit 1",
+                )
+                .bind(user_id)
+                .bind(task_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            let (summary, docs, brief_at) = match brief_row {
+                Some((body, props, at)) => (
+                    body.unwrap_or_default(),
+                    props
+                        .get("docs")
+                        .and_then(|v| v.as_array())
+                        .map(|docs| {
+                            docs.iter().filter_map(|d| d.as_str().map(str::to_owned)).collect()
+                        })
+                        .unwrap_or_default(),
+                    at,
+                ),
+                None => (String::new(), Vec::new(), assigned_at),
+            };
+            let (tags, ticket) = match item_id {
+                Some(item_id) => {
+                    let item: Option<(Option<Vec<String>>, Option<String>, Option<String>)> =
+                        sqlx_core::query_as::query_as(
+                            "select tags, ticket_provider, ticket_key from relay.items
+                             where user_id = $1 and id = $2",
+                        )
+                        .bind(user_id)
+                        .bind(item_id)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(db_err)?;
+                    match item {
+                        Some((tags, provider, key)) => {
+                            let ticket = match (provider, key) {
+                                (Some(provider), Some(key)) => Some(EnvelopeTicket {
+                                    provider: parse_provider(&provider)?,
+                                    key,
+                                    url: None,
+                                }),
+                                _ => None,
+                            };
+                            (tags.unwrap_or_default(), ticket)
+                        }
+                        None => (Vec::new(), None),
+                    }
+                }
+                None => (Vec::new(), None),
+            };
+            assignments.push(EnvelopeAssignment {
+                task_id: task_id.to_string(),
+                title,
+                phase: parse_phase(&phase)?,
+                round,
+                ticket,
+                tags,
+                brief: EnvelopeBrief { summary, docs },
+                acceptance,
+                owned_paths,
+                deps: deps.into_iter().map(|id| id.to_string()).collect(),
+                resources,
+                created_at: iso(brief_at),
+            });
+            // Delivery starts the task (derived: no start tool exists).
+            if state == "assigned" {
+                sqlx_core::query::query(
+                    "update relay.tasks set state = 'working'::relay.task_state,
+                            state_changed_at = current_timestamp
+                     where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(task_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                sqlx_core::query::query(
+                    "insert into relay.actions
+                       (user_id, id, crew_id, task_id, lane_id, kind, round, phase, props)
+                     values ($1, $2, $3, $4, $5, 'started'::relay.action_kind, $6,
+                             $7::relay.task_phase, '{}')",
+                )
+                .bind(user_id)
+                .bind(new_id())
+                .bind(crew_id)
+                .bind(task_id)
+                .bind(lane_id)
+                .bind(round)
+                .bind(phase)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            }
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(LaneEnvelope { messages, answers, reviews, assignments })
     }
 
     /// Expire lapsed lane leases (fed `now`): suspend their lanes —
@@ -499,8 +2631,160 @@ impl PgStore {
         &self,
         now: DateTime<Utc>,
     ) -> Result<RelaySweepReport, RelayError> {
-        let _ = now;
-        todo!("relay item 2 phase B")
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // The sweep acts at the fed `now`: its writes are stamped then, so
+        // the pass is a pure function of (database, now) — a task it
+        // interrupts is never due for re-offer in the same pass.
+        let expired: Vec<(Uuid, Uuid, Uuid)> = sqlx_core::query_as::query_as(
+            "update relay.leases set state = 'expired'::relay.lease_state
+             where kind = 'lane' and state = 'granted' and expires_at <= $1
+             returning user_id, crew_id, lane_id",
+        )
+        .bind(now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let expired_leases = expired.len() as u64;
+        let mut interrupted_tasks = 0u64;
+        for (user_id, crew_id, lane_id) in &expired {
+            let tasks: Vec<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
+                "select id, state::text, round, phase::text from relay.tasks
+                 where user_id = $1 and lane_id = $2
+                   and state in ('assigned', 'working', 'in_review', 'rework', 'blocked')",
+            )
+            .bind(user_id)
+            .bind(lane_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            for (task_id, state, round, phase) in tasks {
+                let next = transition(parse_state(&state)?, TaskEvent::LeaseLost)
+                    .map_err(|_| RelayError::Conflict("task cannot be suspended".into()))?;
+                sqlx_core::query::query(
+                    "update relay.tasks set state = $1::relay.task_state,
+                            state_changed_at = $2
+                     where user_id = $3 and id = $4",
+                )
+                .bind(word(next))
+                .bind(now)
+                .bind(user_id)
+                .bind(task_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                sqlx_core::query::query(
+                    "insert into relay.actions
+                       (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                        props, created_at)
+                     values ($1, $2, $3, $4, $5, 'interrupted'::relay.action_kind, $6,
+                             $7::relay.task_phase, '{}', $8)",
+                )
+                .bind(user_id)
+                .bind(new_id())
+                .bind(crew_id)
+                .bind(task_id)
+                .bind(lane_id)
+                .bind(round)
+                .bind(phase)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                interrupted_tasks += 1;
+            }
+        }
+        // Re-offer tasks past the grace, measured from the latest
+        // `interrupted` action. Tasks without one are left alone (the grace
+        // has nothing to measure from).
+        let cutoff = now - Duration::seconds(REOFFER_GRACE_SECS as i64);
+        let due: Vec<(Uuid, Uuid, Uuid, Option<Uuid>, i32, String)> =
+            sqlx_core::query_as::query_as(
+                "select t.user_id, t.crew_id, t.id, t.lane_id, t.round, t.phase::text
+                 from relay.tasks t
+                 where t.state = 'interrupted'
+                   and (select max(a.created_at) from relay.actions a
+                        where a.user_id = t.user_id and a.task_id = t.id
+                          and a.kind = 'interrupted') <= $1",
+            )
+            .bind(cutoff)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let mut reoffered_tasks = 0u64;
+        for (user_id, crew_id, task_id, lane_id, round, phase) in due {
+            let next = transition(RelayTaskState::Interrupted, TaskEvent::Reoffered)
+                .map_err(|_| RelayError::Conflict("task cannot be re-offered".into()))?;
+            sqlx_core::query::query(
+                "update relay.tasks set state = $1::relay.task_state, lane_id = null,
+                        state_changed_at = $2
+                 where user_id = $3 and id = $4",
+            )
+            .bind(word(next))
+            .bind(now)
+            .bind(user_id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            sqlx_core::query::query(
+                "insert into relay.actions
+                   (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                    props, created_at)
+                 values ($1, $2, $3, $4, $5, 'reoffered'::relay.action_kind, $6,
+                         $7::relay.task_phase, '{}', $8)",
+            )
+            .bind(user_id)
+            .bind(new_id())
+            .bind(crew_id)
+            .bind(task_id)
+            .bind(lane_id)
+            .bind(round)
+            .bind(phase)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            reoffered_tasks += 1;
+        }
+        // Re-pick dead reviewers over the live lanes (Q17): a new pick, or
+        // a cleared slot when nobody is live. Silent (no action kind names
+        // it); the count reports both.
+        let stale: Vec<(Uuid, Uuid, Uuid, Option<Uuid>)> = sqlx_core::query_as::query_as(
+            "select t.user_id, t.crew_id, t.id, t.lane_id from relay.tasks t
+             where t.state = 'in_review' and t.reviewer_lane_id is not null
+               and not exists (
+                 select 1 from relay.leases s
+                 where s.lane_id = t.reviewer_lane_id and s.kind = 'lane'
+                   and s.state = 'granted' and s.expires_at > $1)",
+        )
+        .bind(now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let mut repicked_reviewers = 0u64;
+        for (user_id, crew_id, task_id, author) in stale {
+            let Some(author) = author else { continue };
+            let reviewer =
+                relay_pick_reviewer(RelayPickQuery { tx: &mut tx, user_id, crew_id, author, now })
+                    .await?;
+            sqlx_core::query::query(
+                "update relay.tasks set reviewer_lane_id = $1 where user_id = $2 and id = $3",
+            )
+            .bind(reviewer)
+            .bind(user_id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            repicked_reviewers += 1;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelaySweepReport {
+            expired_leases,
+            interrupted_tasks,
+            reoffered_tasks,
+            repicked_reviewers,
+        })
     }
 
     /// The daemon user behind person reads and register (Q19-REC): the
@@ -508,40 +2792,867 @@ impl PgStore {
     /// (`SignInRequired`) when the machine never signed in — never a
     /// minted stand-in (a miss is an error, never an invented row).
     pub async fn relay_current_user(&self) -> Result<Uuid, RelayError> {
-        todo!("relay item 2 phase B")
+        // The DDL's own seam: the chosen default persona's dōjō principal.
+        // No default, or an unlinked one, is a machine that never signed in.
+        let principal: Option<Option<Uuid>> = sqlx_core::query_scalar::query_scalar(
+            "select principal_id from sensei.personas where is_chosen_default limit 1",
+        )
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        principal.flatten().ok_or(RelayError::SignInRequired)
     }
 
     /// `RelayNow`, exactly per `relay-api.ts` — crews, facets, lanes,
     /// decisions, triage, today's completions, today counts, resources.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_now(
         &self,
         user_id: Uuid,
         filter: RelayReadFilter,
     ) -> Result<serde_json::Value, RelayError> {
-        let _ = (user_id, filter);
-        todo!("relay item 2 phase B")
+        // The completed window is the session-local day, and this is the one
+        // relay read with a day window — so the transaction sets the Mac zone
+        // locally (the pool stays UTC for metrics; L0 ruling 2026-11-06).
+        // Fail-closed: without the zone the window is undefined.
+        let tz = crate::relay::system_timezone().map_err(RelayError::Internal)?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // `system_timezone` allows `[A-Za-z0-9_/+-]` only, so the name cannot
+        // break out of the quotes (`SET` takes no binds).
+        sqlx_core::query::query(&format!("SET LOCAL TIME ZONE '{tz}'"))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        // The filter selects crews; lanes/decisions/completed/today follow
+        // theirs. Facets stay global (the band's choices, not its result).
+        let crews: Vec<(
+            Uuid,
+            Option<String>,
+            Option<Uuid>,
+            Option<String>,
+            String,
+            DateTime<Utc>,
+            Option<DateTime<Utc>>,
+        )> = sqlx_core::query_as::query_as(
+            "select id, repo_key, workspace_id, goal, status, started_at, heartbeat_at
+             from relay.crews
+             where user_id = $1
+               and ($2::text is null or repo_key = $2)
+               and ($3::uuid is null or workspace_id = $3)
+             order by started_at, id",
+        )
+        .bind(user_id)
+        .bind(filter.repo_key.as_deref())
+        .bind(filter.workspace_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let crew_ids: Vec<Uuid> = crews.iter().map(|c| c.0).collect();
+        let crews_json: Vec<serde_json::Value> = crews
+            .iter()
+            .map(|(id, repo_key, workspace_id, goal, status, started_at, heartbeat_at)| {
+                serde_json::json!({
+                    "id": id.to_string(),
+                    "repo_key": repo_key,
+                    "workspace_id": workspace_id.map(|id| id.to_string()),
+                    "goal": goal,
+                    "status": status,
+                    "started_at": iso(*started_at),
+                    "heartbeat_at": heartbeat_at.map(iso),
+                })
+            })
+            .collect();
+        let repos: Vec<String> = sqlx_core::query_scalar::query_scalar(
+            "select distinct repo_key from relay.crews
+             where user_id = $1 and repo_key is not null order by 1",
+        )
+        .bind(user_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let workspaces: Vec<(Uuid, String)> = sqlx_core::query_as::query_as(
+            "select distinct w.id, w.name from relay.crews c
+             join sensei.workspaces w on w.id = c.workspace_id
+             where c.user_id = $1 and c.workspace_id is not null order by w.name",
+        )
+        .bind(user_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        // Lane rows come from the `relay.now` view (needs_answer is its
+        // rule); the row id/crew are the view's columns.
+        let mut lanes: Vec<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.id, v.crew_id, v.payload from relay.now v
+                 where v.user_id = $1 and v.section = 'lane' and v.crew_id = any($2)",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        lanes.sort_by(|a, b| {
+            let rank = |id: &Uuid| crew_ids.iter().position(|c| c == id).unwrap_or(usize::MAX);
+            let code = |p: &serde_json::Value| {
+                p.get("code").and_then(|v| v.as_str()).unwrap_or_default().to_owned()
+            };
+            (rank(&a.1), code_rank(&code(&a.2))).cmp(&(rank(&b.1), code_rank(&code(&b.2))))
+        });
+        let lanes_json: Vec<serde_json::Value> = lanes
+            .iter()
+            .map(|(id, crew_id, payload)| {
+                let lease_state = payload
+                    .get("lease")
+                    .and_then(|l| l.get("state"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("queued");
+                let lease_expires_at = payload
+                    .get("lease")
+                    .and_then(|l| l.get("expires_at"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                serde_json::json!({
+                    "id": id.to_string(),
+                    "crew_id": crew_id.to_string(),
+                    "code": payload.get("code"),
+                    "title": payload.get("title"),
+                    "role": payload.get("role"),
+                    "family": payload.get("family"),
+                    "version": payload.get("version"),
+                    "model": payload.get("model"),
+                    "lease_state": lease_state,
+                    "lease_expires_at": lease_expires_at,
+                    "task": payload.get("task"),
+                })
+            })
+            .collect();
+        let decisions: Vec<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.id, v.crew_id, v.payload from relay.now v
+             where v.user_id = $1 and v.section = 'open_asked' and v.crew_id = any($2)
+             order by v.payload->>'asked_at' desc, v.id desc",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let decisions_json: Vec<serde_json::Value> = decisions
+            .iter()
+            .map(|(id, crew_id, payload)| {
+                let options = payload
+                    .get("options")
+                    .and_then(|v| v.as_array())
+                    .map(|options| {
+                        options
+                            .iter()
+                            .map(|o| {
+                                serde_json::json!({
+                                    "id": o.get("id"),
+                                    "label": o.get("label"),
+                                    "detail": o.get("detail").cloned().unwrap_or(serde_json::Value::Null),
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                serde_json::json!({
+                    "id": id.to_string(),
+                    "crew_id": crew_id.to_string(),
+                    "task_id": payload.get("task_id"),
+                    "task_title": payload.get("task_title"),
+                    "question": payload.get("question"),
+                    "context": payload.get("context"),
+                    "options": options,
+                    "recommended": payload.get("recommended"),
+                    "asked_at": payload.get("asked_at"),
+                })
+            })
+            .collect();
+        // Triage counts are computed in SQL (the view's `triage_count` row
+        // cannot take the item-side filter): manual rows plus one row per
+        // tracker provider, sprints null until slice 2's pull.
+        let manual: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.items
+             where user_id = $1 and state = 'triage' and ticket_provider is null
+               and ($2::text is null or repo_key = $2)
+               and ($3::uuid is null or workspace_id = $3)",
+        )
+        .bind(user_id)
+        .bind(filter.repo_key.as_deref())
+        .bind(filter.workspace_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let providers: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+            "select ticket_provider, count(*) from relay.items
+             where user_id = $1 and state = 'triage' and ticket_provider is not null
+               and ($2::text is null or repo_key = $2)
+               and ($3::uuid is null or workspace_id = $3)
+             group by ticket_provider",
+        )
+        .bind(user_id)
+        .bind(filter.repo_key.as_deref())
+        .bind(filter.workspace_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let mut triage_json = Vec::new();
+        if manual > 0 {
+            triage_json.push(serde_json::json!({
+                "provider": "manual",
+                "sprint": serde_json::Value::Null,
+                "count": manual,
+            }));
+        }
+        let mut providers = providers;
+        providers.sort_by(|a, b| a.0.cmp(&b.0));
+        for (provider, count) in providers {
+            parse_provider(&provider)?;
+            triage_json.push(serde_json::json!({
+                "provider": provider,
+                "sprint": serde_json::Value::Null,
+                "count": count,
+            }));
+        }
+        // Completions are the view's payloads, passed through untouched
+        // (outcome + the session-local window are its contract).
+        let completed: Vec<serde_json::Value> = sqlx_core::query_scalar::query_scalar(
+            "select v.payload from relay.now v
+             where v.user_id = $1 and v.section = 'completed_today' and v.crew_id = any($2)
+             order by v.payload->>'completed_at' desc, v.id desc",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let reviewed: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions
+             where user_id = $1 and kind = 'reviewed' and crew_id = any($2)
+               and created_at >= date_trunc('day', current_timestamp)",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let first_pass: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions
+             where user_id = $1 and kind = 'reviewed' and crew_id = any($2)
+               and round = 1 and props->>'verdict' = 'approved'
+               and created_at >= date_trunc('day', current_timestamp)",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        // A granted build lease reads if one exists (nothing in slice 1
+        // writes them; the read stays honest for hand-held rows).
+        let build: Option<(String, String, DateTime<Utc>)> = sqlx_core::query_as::query_as(
+            "select s.resource, l.code, s.granted_at from relay.leases s
+             join relay.lanes l on l.user_id = s.user_id and l.id = s.lane_id
+             where s.user_id = $1 and s.kind = 'resource' and s.state = 'granted'
+             order by s.granted_at desc nulls last, s.id desc limit 1",
+        )
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(serde_json::json!({
+            "crews": crews_json,
+            "facets": {
+                "repos": repos,
+                "workspaces": workspaces
+                    .iter()
+                    .map(|(id, name)| serde_json::json!({"id": id.to_string(), "name": name}))
+                    .collect::<Vec<_>>(),
+            },
+            "lanes": lanes_json,
+            "decisions": decisions_json,
+            "triage": triage_json,
+            "completed_today": completed,
+            "today": {
+                "completed": completed.len(),
+                "reviewed": if reviewed > 0 { serde_json::json!(reviewed) } else { serde_json::Value::Null },
+                "first_pass_approved": if first_pass > 0 { serde_json::json!(first_pass) } else { serde_json::Value::Null },
+            },
+            "resources": {
+                "build_lease": build.map(|(resource, lane_code, granted_at)| serde_json::json!({
+                    "resource": resource,
+                    "lane_code": lane_code,
+                    "granted_at": iso(granted_at),
+                })),
+                "disk_free_gb": disk_free_gb(),
+                "disk_floor_gb": DISK_FLOOR_GB,
+                "swap_free_gb": swap_free_gb(),
+                "swap_floor_gb": SWAP_FLOOR_GB,
+            },
+        }))
     }
 
     /// `RelayQueue`: manual triage rows (the tracker pull is slice 2) and
     /// the backlog in position order.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_queue(
         &self,
         user_id: Uuid,
         filter: RelayReadFilter,
     ) -> Result<serde_json::Value, RelayError> {
-        let _ = (user_id, filter);
-        todo!("relay item 2 phase B")
+        // Items are crew-global: the filter narrows their own columns.
+        let triage: Vec<(
+            Uuid,
+            Option<String>,
+            Option<Uuid>,
+            String,
+            String,
+            Option<Vec<String>>,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "select id, repo_key, workspace_id, kind::text, title, tags, added_by,
+                    ticket_provider, ticket_key
+             from relay.items
+             where user_id = $1 and state = 'triage'
+               and ($2::text is null or repo_key = $2)
+               and ($3::uuid is null or workspace_id = $3)
+             order by added_at, id",
+        )
+        .bind(user_id)
+        .bind(filter.repo_key.as_deref())
+        .bind(filter.workspace_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        let mut triage_json = Vec::with_capacity(triage.len());
+        for (id, repo_key, workspace_id, kind, title, tags, added_by, provider, key) in triage {
+            // Exactly one identity: manual items by id, ticketed rows by
+            // ticket (slice 2's tracker pull shows ticketed rows with no
+            // item at all; a ticketed ITEM reads by its ticket too).
+            let (item_id, ticket) = match (provider, key) {
+                (Some(provider), Some(key)) => (
+                    serde_json::Value::Null,
+                    serde_json::json!({
+                        "provider": word(parse_provider(&provider)?),
+                        "key": key,
+                        "url": serde_json::Value::Null,
+                    }),
+                ),
+                _ => (serde_json::json!(id.to_string()), serde_json::Value::Null),
+            };
+            triage_json.push(serde_json::json!({
+                "repo_key": repo_key,
+                "workspace_id": workspace_id.map(|id| id.to_string()),
+                "kind": word(parse_item_kind(&kind)?),
+                "title": title,
+                "tags": tags.unwrap_or_default(),
+                "sprint": serde_json::Value::Null,
+                "added_by_you": added_by.is_none(),
+                "item_id": item_id,
+                "ticket": ticket,
+            }));
+        }
+        let backlog: Vec<(
+            Uuid,
+            Option<String>,
+            Option<Uuid>,
+            String,
+            String,
+            Option<Vec<String>>,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+        )> = sqlx_core::query_as::query_as(
+            "select id, repo_key, workspace_id, kind::text, title, tags, added_by,
+                    ticket_provider, ticket_key, position
+             from relay.items
+             where user_id = $1 and state = 'backlog'
+               and ($2::text is null or repo_key = $2)
+               and ($3::uuid is null or workspace_id = $3)
+             order by position nulls last, id",
+        )
+        .bind(user_id)
+        .bind(filter.repo_key.as_deref())
+        .bind(filter.workspace_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        let mut backlog_json = Vec::with_capacity(backlog.len());
+        for (id, repo_key, workspace_id, kind, title, tags, added_by, provider, key, position) in
+            backlog
+        {
+            let ticket = match (provider, key) {
+                (Some(provider), Some(key)) => serde_json::json!({
+                    "provider": word(parse_provider(&provider)?),
+                    "key": key,
+                    "url": serde_json::Value::Null,
+                }),
+                _ => serde_json::Value::Null,
+            };
+            backlog_json.push(serde_json::json!({
+                "item_id": id.to_string(),
+                "repo_key": repo_key,
+                "workspace_id": workspace_id.map(|id| id.to_string()),
+                "kind": word(parse_item_kind(&kind)?),
+                "title": title,
+                "tags": tags.unwrap_or_default(),
+                "sprint": serde_json::Value::Null,
+                "ticket": ticket,
+                "added_by_you": added_by.is_none(),
+                "position": position.unwrap_or(i32::MAX),
+            }));
+        }
+        Ok(serde_json::json!({"triage": triage_json, "backlog": backlog_json}))
     }
 
     /// `RelayTaskView` for (user, crew, task): anything else is `NotFound`.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_task_view(
         &self,
         user_id: Uuid,
         crew_id: Uuid,
         task_id: Uuid,
     ) -> Result<serde_json::Value, RelayError> {
-        let _ = (user_id, crew_id, task_id);
-        todo!("relay item 2 phase B")
+        let task: Option<(
+            String,
+            String,
+            String,
+            Option<Uuid>,
+            String,
+            i32,
+            Option<Uuid>,
+            Option<Uuid>,
+            DateTime<Utc>,
+            Option<DateTime<Utc>>,
+        )> = sqlx_core::query_as::query_as(
+            "select title, repo_key, phase::text, workspace_id, state::text, round,
+                    item_id, lane_id, assigned_at, completed_at
+             from relay.tasks where user_id = $1 and crew_id = $2 and id = $3",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .bind(task_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((
+            title,
+            repo_key,
+            phase,
+            workspace_id,
+            state,
+            round,
+            item_id,
+            lane_id,
+            assigned_at,
+            completed_at,
+        )) = task
+        else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        let ticket = match item_id {
+            Some(item_id) => {
+                let item: Option<(Option<String>, Option<String>)> = sqlx_core::query_as::query_as(
+                    "select ticket_provider, ticket_key from relay.items
+                         where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(item_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                match item {
+                    Some((Some(provider), Some(key))) => serde_json::json!({
+                        "provider": word(parse_provider(&provider)?),
+                        "key": key,
+                        "url": serde_json::Value::Null,
+                    }),
+                    _ => serde_json::Value::Null,
+                }
+            }
+            None => serde_json::Value::Null,
+        };
+        let lane_json = match lane_id {
+            Some(lane_id) => {
+                let lane: Option<(String, Option<String>, String, Option<String>, Option<String>)> =
+                    sqlx_core::query_as::query_as(
+                        "select code, title, family, version, model from relay.lanes
+                         where user_id = $1 and id = $2",
+                    )
+                    .bind(user_id)
+                    .bind(lane_id)
+                    .fetch_optional(self.pool())
+                    .await
+                    .map_err(db_err)?;
+                lane.map(|(code, title, family, version, model)| {
+                    serde_json::json!({
+                        "id": lane_id.to_string(),
+                        "code": code,
+                        "title": title,
+                        "family": family,
+                        "version": version,
+                        "model": model,
+                    })
+                })
+                .unwrap_or(serde_json::Value::Null)
+            }
+            None => serde_json::Value::Null,
+        };
+        // Rounds group reported turns by phase (canonical order); a turn
+        // without its own phase reads under the task's.
+        let mut rounds: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+            "select coalesce(a.phase::text, $1), count(*) from relay.actions a
+             where a.user_id = $2 and a.task_id = $3 and a.kind = 'reported'
+             group by coalesce(a.phase::text, $1)",
+        )
+        .bind(phase.clone())
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        rounds.sort_by_key(|r| phase_rank(&r.0));
+        // The header's `needs_answer` is the `relay.now` rule: an open
+        // person ask on the task or blocking it.
+        let needs_answer: bool = sqlx_core::query_scalar::query_scalar(
+            "select exists (
+               select 1 from relay.actions a
+               where a.user_id = $1 and a.kind = 'asked' and a.props->>'asked_of' = 'person'
+                 and (a.task_id = $2 or a.props->'blocks' @> to_jsonb($3::text))
+                 and not exists (
+                   select 1 from relay.actions an
+                   where an.user_id = $1 and an.kind = 'answered' and an.reply_to = a.id))",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .bind(task_id.to_string())
+        .fetch_one(self.pool())
+        .await
+        .map_err(db_err)?;
+        // ── run totals, over the task's turns (the screen adds nothing up).
+        let reported: Vec<(serde_json::Value, DateTime<Utc>, Option<i32>)> =
+            sqlx_core::query_as::query_as(
+                "select props, created_at, round from relay.actions
+                 where user_id = $1 and task_id = $2 and kind = 'reported'
+                 order by created_at desc, id desc",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_all(self.pool())
+            .await
+            .map_err(db_err)?;
+        let reviewed: Vec<(DateTime<Utc>, Option<i32>)> = sqlx_core::query_as::query_as(
+            "select created_at, round from relay.actions
+             where user_id = $1 and task_id = $2 and kind = 'reviewed'",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        let num = |props: &serde_json::Value, key: &str| -> Option<i64> {
+            props.get(key).and_then(|v| v.as_i64())
+        };
+        let sum = |key: &str| -> Option<i64> {
+            let mut total = None;
+            for (props, _, _) in &reported {
+                if let Some(n) = num(props, key) {
+                    total = Some(total.unwrap_or(0) + n);
+                }
+            }
+            total
+        };
+        let reported_turns = reported
+            .iter()
+            .filter(|(props, _, _)| {
+                TELEMETRY_KEYS.iter().any(|k| props.get(k).is_some_and(|v| !v.is_null()))
+            })
+            .count();
+        let mut files_changed = None;
+        let mut files_outside_owned = None;
+        let mut files_seen = false;
+        for (props, _, _) in &reported {
+            if let Some(files) = props.get("files").and_then(|v| v.as_array()) {
+                files_seen = true;
+                for f in files {
+                    let added = f.get("added").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let removed = f.get("removed").and_then(|v| v.as_i64()).unwrap_or(0);
+                    files_changed = Some(files_changed.unwrap_or(0) + added + removed);
+                    if f.get("outside_owned").and_then(|v| v.as_bool()).unwrap_or(true) {
+                        files_outside_owned = Some(files_outside_owned.unwrap_or(0) + 1);
+                    }
+                }
+            }
+        }
+        if !files_seen {
+            files_changed = None;
+            files_outside_owned = None;
+        }
+        let mut gates_run = None;
+        let mut gates_seen = false;
+        for (props, _, _) in &reported {
+            if let Some(gates) = props.get("gates").and_then(|v| v.as_array()) {
+                gates_seen = true;
+                gates_run = Some(gates_run.unwrap_or(0) + gates.len() as i64);
+            }
+        }
+        if !gates_seen {
+            gates_run = None;
+        }
+        // Working time prefers the turn's own stamps, else its key.
+        let mut working_secs = None;
+        for (props, _, _) in &reported {
+            let pair = || -> Option<i64> {
+                let start = props.get("started_at")?.as_str()?;
+                let end = props.get("ended_at")?.as_str()?;
+                let start = chrono::DateTime::parse_from_rfc3339(start).ok()?;
+                let end = chrono::DateTime::parse_from_rfc3339(end).ok()?;
+                Some((end - start).num_seconds().max(0))
+            };
+            if let Some(secs) = pair().or_else(|| num(props, "working_secs").map(|n| n.max(0))) {
+                working_secs = Some(working_secs.unwrap_or(0) + secs);
+            }
+        }
+        // Waiting time is the broker's measurement: per round, the first
+        // review minus the first report, where both exist. A lane-reported
+        // `waiting_secs` key is stored and shown, never totaled.
+        let mut waiting_secs = None;
+        let mut rounds_seen = std::collections::HashSet::new();
+        for (_, _, round) in &reported {
+            rounds_seen.insert(*round);
+        }
+        for (_, round) in &reviewed {
+            rounds_seen.insert(*round);
+        }
+        for round in rounds_seen {
+            let first_report =
+                reported.iter().filter(|(_, _, r)| *r == round).map(|(_, at, _)| *at).min();
+            let first_review =
+                reviewed.iter().filter(|(_, r)| *r == round).map(|(at, _)| *at).min();
+            if let (Some(rep), Some(rev)) = (first_report, first_review) {
+                let secs = (rev - rep).num_seconds().max(0);
+                waiting_secs = Some(waiting_secs.unwrap_or(0) + secs);
+            }
+        }
+        // The run's current branch/commits/model: the newest turn carrying
+        // the key wins (a bare turn wipes nothing).
+        let mut branch = serde_json::Value::Null;
+        let mut commits = serde_json::Value::Null;
+        let mut model = serde_json::Value::Null;
+        for (props, _, _) in &reported {
+            if branch.is_null()
+                && let Some(v) = props.get("branch").filter(|v| !v.is_null())
+            {
+                branch = v.clone();
+            }
+            if commits.is_null()
+                && let Some(v) = props.get("commits").filter(|v| v.is_array())
+            {
+                commits = v.clone();
+            }
+            if model.is_null()
+                && let Some(v) = props.get("model").filter(|v| !v.is_null())
+            {
+                model = v.clone();
+            }
+        }
+        let mut subagents = None;
+        let mut subagents_seen = false;
+        for (props, _, _) in &reported {
+            match props.get("subagents") {
+                Some(v) if v.is_i64() => {
+                    subagents_seen = true;
+                    subagents = Some(subagents.unwrap_or(0) + v.as_i64().unwrap_or(0));
+                }
+                Some(v) if v.is_array() => {
+                    subagents_seen = true;
+                    subagents = Some(
+                        subagents.unwrap_or(0) + v.as_array().map(|a| a.len() as i64).unwrap_or(0),
+                    );
+                }
+                _ => {}
+            }
+        }
+        if !subagents_seen {
+            subagents = None;
+        }
+        let decision: Option<(
+            Uuid,
+            Option<Uuid>,
+            Option<String>,
+            serde_json::Value,
+            DateTime<Utc>,
+        )> = sqlx_core::query_as::query_as(
+            "select a.id, a.task_id, a.body_md, a.props, a.created_at from relay.actions a
+                 where a.user_id = $1 and a.task_id = $2 and a.kind = 'asked'
+                   and a.props->>'asked_of' = 'person'
+                   and not exists (
+                     select 1 from relay.actions an
+                     where an.user_id = $1 and an.kind = 'answered' and an.reply_to = a.id)
+                 order by a.created_at desc, a.id desc limit 1",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let decision_json = match decision {
+            Some((id, ask_task, body, props, asked_at)) => {
+                let options = props
+                    .get("options")
+                    .and_then(|v| v.as_array())
+                    .map(|options| {
+                        options
+                            .iter()
+                            .map(|o| {
+                                serde_json::json!({
+                                    "id": o.get("id"),
+                                    "label": o.get("label"),
+                                    "detail": o.get("detail").cloned().unwrap_or(serde_json::Value::Null),
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                serde_json::json!({
+                    "id": id.to_string(),
+                    "crew_id": crew_id.to_string(),
+                    "task_id": ask_task.map(|id| id.to_string()),
+                    "task_title": title,
+                    "question": body,
+                    "context": props.get("context"),
+                    "options": options,
+                    "recommended": props.get("recommended"),
+                    "asked_at": iso(asked_at),
+                })
+            }
+            None => serde_json::Value::Null,
+        };
+        let handoff_row: Option<(Option<String>, serde_json::Value, DateTime<Utc>)> =
+            sqlx_core::query_as::query_as(
+                "select body_md, props, created_at from relay.actions
+                 where user_id = $1 and task_id = $2 and kind in ('assigned', 'brief_updated')
+                 order by created_at desc, id desc limit 1",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+        let handoff_json = match handoff_row {
+            Some((body, props, at)) => serde_json::json!({
+                "body_md": body.unwrap_or_default(),
+                "docs": props.get("docs").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+                "at": iso(at),
+            }),
+            None => serde_json::Value::Null,
+        };
+        let history: Vec<(
+            Uuid,
+            Option<String>,
+            String,
+            Option<i32>,
+            Option<String>,
+            Option<String>,
+            Option<Uuid>,
+            DateTime<Utc>,
+            serde_json::Value,
+        )> = sqlx_core::query_as::query_as(
+            "select action_id, lane_code, kind::text, round, phase::text, body_md,
+                    reply_to, created_at, props
+             from relay.task_history where user_id = $1 and task_id = $2
+             order by created_at desc, action_id desc",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        let history_json: Vec<serde_json::Value> = history
+            .iter()
+            .map(|(id, lane_code, kind, round, phase, body, reply_to, created_at, props)| {
+                serde_json::json!({
+                    "id": id.to_string(),
+                    "lane_code": lane_code,
+                    "kind": kind,
+                    "round": round,
+                    "phase": phase,
+                    "body_md": body,
+                    "reply_to": reply_to.map(|id| id.to_string()),
+                    "created_at": iso(*created_at),
+                    "props": history_props(kind, props),
+                })
+            })
+            .collect();
+        let mut lane_refs: Vec<(Uuid, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "select id, code, title from relay.lanes where user_id = $1 and crew_id = $2",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        lane_refs.sort_by(|a, b| code_rank(&a.1).cmp(&code_rank(&b.1)));
+        Ok(serde_json::json!({
+            "task": {
+                "id": task_id.to_string(),
+                "crew_id": crew_id.to_string(),
+                "title": title,
+                "repo_key": repo_key,
+                "workspace_id": workspace_id.map(|id| id.to_string()),
+                "phase": phase,
+                "state": state,
+                "round": round,
+                "ticket": ticket,
+                "lane": lane_json,
+                "assigned_at": iso(assigned_at),
+                "completed_at": completed_at.map(iso),
+                "rounds": rounds
+                    .iter()
+                    .map(|(phase, count)| serde_json::json!({"phase": phase, "count": count}))
+                    .collect::<Vec<_>>(),
+                "needs_answer": needs_answer,
+            },
+            "run": {
+                "repository": repo_key,
+                "branch": branch,
+                "commits": commits,
+                "model": model,
+                "tokens_in": sum("tokens_in"),
+                "tokens_out": sum("tokens_out"),
+                "tokens_cache": sum("tokens_cache"),
+                "context_tokens": sum("context_tokens"),
+                "compactions": sum("compactions"),
+                "peak_memory_mb": sum("peak_memory_mb"),
+                "subagents": subagents,
+                "working_secs": working_secs,
+                "waiting_secs": waiting_secs,
+                "files_changed": files_changed,
+                "files_outside_owned": files_outside_owned,
+                "gates_run": gates_run,
+                "reported_turns": reported_turns,
+                "turns": reported.len(),
+            },
+            "decision": decision_json,
+            "handoff": handoff_json,
+            "history": history_json,
+            "lanes": lane_refs
+                .iter()
+                .map(|(id, code, title)| serde_json::json!({
+                    "id": id.to_string(),
+                    "code": code,
+                    "title": title,
+                }))
+                .collect::<Vec<_>>(),
+        }))
     }
 
     /// The person adds a manual triage item (person-only). Slice 1's only
@@ -553,8 +3664,30 @@ impl PgStore {
         caller: RelayCaller,
         input: RelayTriageInput,
     ) -> Result<Uuid, RelayError> {
-        let _ = (user_id, caller, input);
-        todo!("relay item 2 phase B")
+        if matches!(caller, RelayCaller::Lane { .. }) {
+            return Err(RelayError::Forbidden("person only".into()));
+        }
+        // Untagged manual items carry null tags (the DDL's own rule), and
+        // the person adds as `added_by` null.
+        let tags: Option<Vec<String>> = if input.tags.is_empty() { None } else { Some(input.tags) };
+        let id = new_id();
+        sqlx_core::query::query(
+            "insert into relay.items
+               (user_id, id, workspace_id, repo_key, title, kind, tags, state)
+             values ($1, $2, $3, $4, $5, $6::relay.item_kind, $7,
+                     'triage'::relay.item_state)",
+        )
+        .bind(user_id)
+        .bind(id)
+        .bind(input.workspace_id)
+        .bind(input.repo_key.as_deref())
+        .bind(input.title.as_str())
+        .bind(word(input.kind))
+        .bind(tags)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(id)
     }
 
     /// The person's `+`: a triage/manual item → backlog with the next
@@ -565,8 +3698,41 @@ impl PgStore {
         caller: RelayCaller,
         item_id: Uuid,
     ) -> Result<Uuid, RelayError> {
-        let _ = (user_id, caller, item_id);
-        todo!("relay item 2 phase B")
+        if matches!(caller, RelayCaller::Lane { .. }) {
+            return Err(RelayError::Forbidden("lanes plan via plan_item".into()));
+        }
+        let state: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select state::text from relay.items where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(item_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some(state) = state else {
+            return Err(RelayError::NotFound("item not found".into()));
+        };
+        if state != "triage" {
+            return Err(RelayError::Conflict(format!("item is {state}")));
+        }
+        let max: Option<i32> = sqlx_core::query_scalar::query_scalar(
+            "select max(position) from relay.items where user_id = $1 and state = 'backlog'",
+        )
+        .bind(user_id)
+        .fetch_one(self.pool())
+        .await
+        .map_err(db_err)?;
+        sqlx_core::query::query(
+            "update relay.items set state = 'backlog'::relay.item_state, position = $1
+             where user_id = $2 and id = $3",
+        )
+        .bind(max.unwrap_or(0) + 1)
+        .bind(user_id)
+        .bind(item_id)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(item_id)
     }
 }
 
@@ -825,7 +3991,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn register_coordinator_without_crew_mints_crew_q16rec() {
         let pg = PgStore::test_store().await;
         let mut input = register_input(RelayRole::Coordinator, None);
@@ -871,7 +4036,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn register_contributor_joins_takes_next_code() {
         let pg = PgStore::test_store().await;
         let (c1, ..) = fx_two_crews(&pg).await;
@@ -892,7 +4056,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn register_contributor_without_crew_refused_and_atomic() {
         let pg = PgStore::test_store().await;
         let err = pg
@@ -906,7 +4069,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn register_second_coordinator_conflicts() {
         let pg = PgStore::test_store().await;
         let (c1, ..) = fx_two_crews(&pg).await;
@@ -919,7 +4081,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn register_unknown_crew_is_not_found() {
         let pg = PgStore::test_store().await;
         let err = pg
@@ -931,7 +4092,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn register_tokens_are_unique_per_lane() {
         let pg = PgStore::test_store().await;
         let (c1, ..) = fx_two_crews(&pg).await;
@@ -951,7 +4111,6 @@ mod tests {
     // ── auth / heartbeat / reregister / unregister ──
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn auth_lane_resolves_session_rejects_unknown() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
@@ -964,7 +4123,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn heartbeat_renews_lease() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
@@ -983,7 +4141,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn auth_unregistered_lane_is_gone() {
         let pg = PgStore::test_store().await;
         let (_, _, a1, _, _, _) = fx_two_crews(&pg).await;
@@ -993,7 +4150,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn reregister_resumes_with_checkpoint_same_token() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
@@ -1013,7 +4169,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn unregister_releases_lease_interrupts_task_atomically() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1048,7 +4203,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn unregister_twice_is_gone() {
         let pg = PgStore::test_store().await;
         let (_, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -1070,7 +4224,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn plan_from_backlog_item_mints_unassigned_task() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
@@ -1109,7 +4262,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn plan_repo_less_item_needs_repo_key() {
         let pg = PgStore::test_store().await;
         let (_, _, a1, _, _, _) = fx_two_crews(&pg).await;
@@ -1132,7 +4284,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn plan_manual_task_without_item() {
         let pg = PgStore::test_store().await;
         let (_, _, a1, _, _, _) = fx_two_crews(&pg).await;
@@ -1144,7 +4295,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn plan_refuses_contributor_unknown_and_closed() {
         let pg = PgStore::test_store().await;
         let (_, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1191,7 +4341,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn assign_hands_task_freezes_brief_sets_lane_title() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1229,7 +4378,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn assign_refuses_busy_terminal_and_strangers() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1261,7 +4409,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn assign_second_active_task_conflicts_not_500() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1282,7 +4429,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn assign_explicit_reviewer_honored_self_review_refused() {
         // ("merge" as a phase string is refused at the handler — 422 on the
         // wire value (Q3); the store's phase is already typed.)
@@ -1311,7 +4457,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn assign_approved_new_phase_advances_q11() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1356,10 +4501,16 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn report_moves_to_in_review_picks_least_loaded_q14() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        // N2: A1 reads last by code, so the least-loaded pick cannot
+        // coincide with first-by-code (a code-sorted wrong impl dies here).
+        sqlx_core::query::query("update relay.lanes set code = 'L9' where id = $1")
+            .bind(a1)
+            .execute(pg.pool())
+            .await
+            .unwrap();
         // A third lane, busier than the coordinator: the pick must go the
         // other way (aggregate direction — a max would pick wrong). Its two
         // open reviews sit on two other lanes (one active task per lane);
@@ -1406,7 +4557,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn report_keeps_picked_reviewer_on_later_reports() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1428,7 +4578,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn report_solo_coordinator_author_has_no_reviewer() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
@@ -1445,7 +4594,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn report_refuses_strangers_stale_and_unstarted() {
         let pg = PgStore::test_store().await;
         let (c1, c3, a1, a2, b1, _) = fx_two_crews(&pg).await;
@@ -1469,15 +4617,17 @@ mod tests {
         let err = pg.relay_report_task(u1(), a2, t, phase).await.unwrap_err();
         assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
         // Assigned but never delivered: delivery marks started, not the report.
+        // (Phase-B repair: `fresh` sits on A1, which holds nothing — the DDL's
+        // one-active-task unique forbids a second active task on A2. The pin
+        // — Conflict on an unstarted task — is unchanged.)
         let fresh = v7(0x88);
-        fx_task(&pg, u1(), fresh, c1, Some(a2), "assigned", "tests", 1).await;
-        let err = pg.relay_report_task(u1(), a2, fresh, report_input()).await.unwrap_err();
+        fx_task(&pg, u1(), fresh, c1, Some(a1), "assigned", "tests", 1).await;
+        let err = pg.relay_report_task(u1(), a1, fresh, report_input()).await.unwrap_err();
         assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
         assert_eq!(count(&pg, "actions").await, 0);
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn report_computes_outside_owned_and_keeps_nulls() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -1515,7 +4665,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn report_rejects_long_and_leaking_summaries_atomically() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -1553,7 +4702,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn review_approved_holds_for_merge() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1600,7 +4748,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn review_changes_requested_reworks_bumps_round() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1633,7 +4780,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn review_refuses_strangers_bad_states_unknown_classes() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1692,7 +4838,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn ask_blocks_tasks_remembering_where() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1724,7 +4869,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn ask_unknown_block_refused_atomically() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1737,7 +4881,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn answer_unblocks_to_blocked_from() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1771,7 +4914,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn answer_refuses_wrong_party_and_repeats() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1817,7 +4959,6 @@ mod tests {
     // ── send_message ──
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn message_person_to_lane_stored_with_surface() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -1850,7 +4991,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn message_lane_surface_daemon_set_spoof_refused() {
         let pg = PgStore::test_store().await;
         let (_, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1895,7 +5035,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn message_long_and_leaking_refused_atomically() {
         let pg = PgStore::test_store().await;
         let (_, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -1924,7 +5063,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn merge_approved_to_done_stamps_completed() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1951,7 +5089,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn merge_empty_commits_means_nothing_to_merge() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1964,7 +5101,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn merge_refuses_unapproved_and_contributors() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -1990,7 +5126,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn envelope_addresses_only_the_lane_newest_first() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -2058,7 +5193,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn envelope_read_marks_delivered_then_read() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -2098,7 +5232,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn envelope_delivery_marks_task_started_once() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -2140,7 +5273,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn envelope_reviews_both_directions_q15rec() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -2181,7 +5313,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn envelope_answers_carry_decision_answers() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -2209,7 +5340,6 @@ mod tests {
     // ── sweep_leases ──
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn sweep_expires_lapsed_lease_interrupts_task() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -2235,12 +5365,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn sweep_reoffers_after_grace_not_before() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
-        // Interrupted long ago (grace run out) vs just now.
-        for (n, ago_secs) in [(0xb2, 901), (0xb3, 100)] {
+        // Interrupted long ago (grace run out) vs just now — plus the
+        // boundary: 899 s (one inside the 900 s grace) stays (N2).
+        for (n, ago_secs) in [(0xb2, 901), (0xb3, 100), (0xb7, 899)] {
             let t = v7(n);
             fx_task(&pg, u1(), t, c1, Some(a2), "interrupted", "tests", 1).await;
             let a = fx_action(
@@ -2270,10 +5400,10 @@ mod tests {
         assert_eq!(old_state, "assigned");
         assert_eq!(old_lane, None, "back to the pool, off the lane");
         assert_eq!(task_state(&pg, v7(0xb3)).await, "interrupted");
+        assert_eq!(task_state(&pg, v7(0xb7)).await, "interrupted");
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn sweep_expired_reviewer_repicks_q17rec() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -2305,7 +5435,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn sweep_expired_reviewer_clears_when_nobody_live_q17rec() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
@@ -2339,7 +5468,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn sweep_leaves_live_lanes_alone() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -2437,7 +5565,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn now_serves_relay_api_shape_exactly() {
         let pg = PgStore::test_store().await;
         let (c1, a2, t, ws) = fx_now(&pg).await;
@@ -2500,7 +5627,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn now_scopes_to_user_and_filter() {
         let pg = PgStore::test_store().await;
         let (c1, ..) = fx_now(&pg).await;
@@ -2531,18 +5657,22 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn now_completed_midnight_pair_is_session_local() {
         let pg = PgStore::test_store().await;
         let (c1, _, a2, _, _, _) = fx_two_crews(&pg).await;
-        // Midnight-sharp (in) vs a second before (out), computed off the
-        // session clock exactly like L4's SQL pin — deterministic in any zone.
+        // Midnight-sharp (in) vs a second before (out), computed in the Mac
+        // zone the read runs under ((B) ruling: the pool is UTC, relay_now's
+        // txn is local) — deterministic in any zone.
+        let tz = crate::relay::system_timezone().unwrap();
         for (n, off) in [(0xe5, "0 seconds"), (0xe6, "-1 seconds")] {
             let t = v7(n);
             fx_task(&pg, u1(), t, c1, Some(a2), "done", "tests", 1).await;
             sqlx_core::query::query(
-                "update relay.tasks set completed_at = date_trunc('day', current_timestamp) + $1::interval where id = $2",
+                "update relay.tasks set completed_at =
+                   (date_trunc('day', current_timestamp at time zone $1) at time zone $1)
+                   + $2::interval where id = $3",
             )
+            .bind(tz.clone())
             .bind(off)
             .bind(t)
             .execute(pg.pool())
@@ -2561,7 +5691,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn now_without_crews_is_empty_not_failure() {
         let pg = PgStore::test_store().await;
         let now = pg.relay_now(v7(0xa9), no_filter()).await.unwrap();
@@ -2570,7 +5699,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn queue_serves_triage_and_positioned_backlog() {
         let pg = PgStore::test_store().await;
         fx_two_crews(&pg).await;
@@ -2603,7 +5731,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn task_view_serves_header_run_handoff_history() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -2718,7 +5845,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn task_view_404s_across_users_crews_and_unknown() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -2738,7 +5864,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn today_counts_reviews_and_first_pass() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -2771,7 +5896,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn backlog_add_positions_and_refuses_lanes() {
         let pg = PgStore::test_store().await;
         let (_, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -2800,7 +5924,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn triage_add_manual_item_person_only() {
         let pg = PgStore::test_store().await;
         fx_two_crews(&pg).await;
@@ -2826,7 +5949,6 @@ mod tests {
     // ── failure paths ──
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn relay_read_failure_is_internal_never_empty() {
         let pg = PgStore::test_store().await;
         pg.pool().close().await;
@@ -2835,27 +5957,107 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
     async fn current_user_is_stable_q19rec() {
-        // Q19-REC: whatever source phase B reads, the daemon user is one
-        // stable uuid per machine+identity (the failure mode — never signed
-        // in — waits on the ruling for its trigger).
+        // Q19-REC (amended, L0 sanction 2026-11-06): with a signed-in
+        // default persona, the daemon user is its principal — one stable
+        // uuid per machine+identity.
         let pg = PgStore::test_store().await;
+        let principal = v7(0x90);
+        sqlx_core::query::query(
+            "insert into sensei.personas (label, is_chosen_default, principal_id)
+             values ('default', true, $1)",
+        )
+        .bind(principal)
+        .execute(pg.pool())
+        .await
+        .unwrap();
         let a = pg.relay_current_user().await.unwrap();
         let b = pg.relay_current_user().await.unwrap();
         assert_eq!(a, b);
+        assert_eq!(a, principal);
     }
 
     #[tokio::test]
-    #[ignore = "pending:relay-item2"]
-    async fn pool_timezone_is_the_mac_zone() {
-        // The completed window is the session-local day, so every pool
-        // connection sets TimeZone to this Mac's zone (part-2 item).
+    async fn current_user_never_signed_in_is_sign_in_required_q19rec() {
+        // Q19-REC failure pin (added, L0 sanction 2026-11-06): no default
+        // persona — or an unlinked one — fails closed, never a minted user.
         let pg = PgStore::test_store().await;
-        let tz: String = sqlx_core::query_scalar::query_scalar("show TimeZone")
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(tz, crate::relay::system_timezone().unwrap());
+        let err = pg.relay_current_user().await.unwrap_err();
+        assert!(matches!(err, RelayError::SignInRequired), "{err:?}");
+        sqlx_core::query::query(
+            "insert into sensei.personas (label, is_chosen_default) values ('default', true)",
+        )
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let err = pg.relay_current_user().await.unwrap_err();
+        assert!(matches!(err, RelayError::SignInRequired), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn pool_default_stays_utc_for_metrics_days() {
+        // (B) ruling 2026-11-06: the pool keeps the server default (UTC) —
+        // metrics days are UTC and billing-adjacent. Relay's one
+        // day-windowed read sets the Mac zone per-transaction instead.
+        // `extract(timezone)` is 0 east of UTC only for UTC itself (any US
+        // zone is hours west, DST or not), so this pins UTC-ness robustly.
+        let pg = PgStore::test_store().await;
+        let off: i32 =
+            sqlx_core::query_scalar::query_scalar("select extract(timezone from now())::int")
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(off, 0);
+    }
+
+    #[tokio::test]
+    async fn relay_now_reads_in_the_mac_zone() {
+        // (B) ruling 2026-11-06 (amends `pool_timezone_is_the_mac_zone`):
+        // relay_now's transaction reads under the Mac zone. Two divergence
+        // instants — constructible any hour, DST-safe (PG knows tzdb):
+        // Chicago-evening is in Chicago-today but UTC-tomorrow (included);
+        // UTC-morning is in UTC-today but Chicago-yesterday (excluded).
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
+        let tz = crate::relay::system_timezone().unwrap();
+        let evening: chrono::DateTime<chrono::Utc> = sqlx_core::query_scalar::query_scalar(
+            "select (date_trunc('day', now() at time zone $1) + interval '23 hours 30 minutes')
+                    at time zone $1",
+        )
+        .bind(tz.clone())
+        .bind(tz.clone())
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        let morning: chrono::DateTime<chrono::Utc> = sqlx_core::query_scalar::query_scalar(
+            "select (date_trunc('day', now() at time zone $1) - interval '30 minutes')
+                    at time zone $1",
+        )
+        .bind(tz.clone())
+        .bind(tz.clone())
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        let (t_in, t_out) = (v7(0xd4), v7(0xd5));
+        fx_task(&pg, u1(), t_in, c1, Some(a1), "done", "tests", 1).await;
+        fx_task(&pg, u1(), t_out, c1, Some(a1), "done", "tests", 1).await;
+        // NOTE: two done tasks on one lane is legal (done is terminal).
+        for (t, at) in [(t_in, evening), (t_out, morning)] {
+            sqlx_core::query::query("update relay.tasks set completed_at = $1 where id = $2")
+                .bind(at)
+                .bind(t)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+        let now = pg.relay_now(u1(), no_filter()).await.unwrap();
+        let done: Vec<&str> = now["completed_today"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["task_id"].as_str())
+            .collect();
+        assert!(done.contains(&t_in.to_string().as_str()), "{done:?}");
+        assert!(!done.contains(&t_out.to_string().as_str()), "{done:?}");
     }
 }

@@ -169,8 +169,37 @@ pub fn transition(
     from: RelayTaskState,
     event: TaskEvent,
 ) -> Result<RelayTaskState, TransitionError> {
-    let _ = (from, event);
-    todo!("relay item 2 phase B")
+    use RelayTaskState as S;
+    use TaskEvent as E;
+    let bad = || TransitionError { from, event };
+    match (from, event) {
+        (S::Assigned, E::Started) | (S::Rework, E::Started) => Ok(S::Working),
+        (S::Working, E::Reported) | (S::Rework, E::Reported) => Ok(S::InReview),
+        (S::InReview, E::ReviewChangesRequested) => Ok(S::Rework),
+        (S::InReview, E::ReviewApproved) => Ok(S::Approved),
+        (S::Approved, E::Merged) => Ok(S::Done),
+        (S::Approved, E::Reassigned) => Ok(S::Working),
+        (S::Working, E::Blocked) | (S::InReview, E::Blocked) => Ok(S::Blocked),
+        // Assigned blocks too (implied: Assigned is a valid resume target,
+        // and the part-2 ask test pins an assigned task blocking).
+        (S::Assigned, E::Blocked) => Ok(S::Blocked),
+        (S::Blocked, E::Unblocked { blocked_from })
+            if !matches!(blocked_from, S::Blocked | S::Interrupted | S::Cancelled | S::Done) =>
+        {
+            Ok(blocked_from)
+        }
+        // Assigned/Rework join the pinned three (unpinned edge: the sweeper
+        // interrupts the lapsed lane's whole active set, and both hold the
+        // one-active-task unique; approved/done never interrupt).
+        (S::Assigned, E::LeaseLost)
+        | (S::Working, E::LeaseLost)
+        | (S::InReview, E::LeaseLost)
+        | (S::Rework, E::LeaseLost)
+        | (S::Blocked, E::LeaseLost) => Ok(S::Interrupted),
+        (S::Interrupted, E::Reoffered) => Ok(S::Assigned),
+        (cur, E::Cancelled) if !matches!(cur, S::Done | S::Cancelled) => Ok(S::Cancelled),
+        _ => Err(bad()),
+    }
 }
 
 // ─── wait_for_task timeout (brief §3: a wait holds at most 50 s) ───
@@ -182,8 +211,7 @@ pub const WAIT_TIMEOUT_MAX_MS: u64 = 50_000;
 
 /// Omitted → default; otherwise clamped to 1 ms – 50 s (Q10 settled).
 pub fn clamp_wait_timeout(timeout_ms: Option<u64>) -> u64 {
-    let _ = timeout_ms;
-    todo!("relay item 2 phase B")
+    timeout_ms.unwrap_or(25_000).clamp(1, 50_000)
 }
 
 // ─── Lane tokens ───
@@ -191,8 +219,8 @@ pub fn clamp_wait_timeout(timeout_ms: Option<u64>) -> u64 {
 /// `token_hash`: SHA-256 hex of the minted token. The raw token is returned
 /// once at register and never stored.
 pub fn hash_lane_token(token: &str) -> String {
-    let _ = token;
-    todo!("relay item 2 phase B")
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(token.as_bytes()))
 }
 
 // ─── Leak guard (Q8 settled: fail-closed, kinds only) ───
@@ -200,8 +228,15 @@ pub fn hash_lane_token(token: &str) -> String {
 /// Reject text carrying a secret, surfacing kinds only — never values.
 /// Runs over `body_md`, `report_md`, and message/summary text on write.
 pub fn guard_markdown(text: &str) -> Result<(), Vec<String>> {
-    let _ = text;
-    todo!("relay item 2 phase B")
+    // The shared detector owns the patterns (DRY: no second secret list);
+    // relay reports its kinds verbatim — kinds only, never a value.
+    let mut kinds: Vec<String> = Vec::new();
+    for finding in crate::secret_scan::scan(text) {
+        if !kinds.iter().any(|k: &String| k == finding.kind) {
+            kinds.push(finding.kind.to_string());
+        }
+    }
+    if kinds.is_empty() { Ok(()) } else { Err(kinds) }
 }
 
 // ─── Summary length (CONTRACT §3j) ───
@@ -210,9 +245,12 @@ pub fn guard_markdown(text: &str) -> Result<(), Vec<String>> {
 pub const SUMMARY_MAX_CHARS: usize = 600;
 
 /// Character count check. `Err` carries the actual count for the message.
+/// Person-facing summaries are capped at 600 chars (the DDL check).
+pub const MAX_SUMMARY_CHARS: usize = 600;
+
 pub fn check_summary_len(text: &str) -> Result<(), usize> {
-    let _ = text;
-    todo!("relay item 2 phase B")
+    let n = text.chars().count();
+    if n > MAX_SUMMARY_CHARS { Err(n) } else { Ok(()) }
 }
 
 /// Action kinds whose `body_md` is a summary (capped) rather than a brief or
@@ -220,8 +258,8 @@ pub fn check_summary_len(text: &str) -> Result<(), usize> {
 /// summary-like ("1–2 sentences", §3g); `assigned`/`brief_updated` bodies are
 /// briefs and `report_md` is the full report.
 pub fn body_is_summary(kind: RelayActionKind) -> bool {
-    let _ = kind;
-    todo!("relay item 2 phase B")
+    use RelayActionKind as K;
+    matches!(kind, K::Reported | K::Reviewed | K::Asked | K::Answered | K::Message | K::Merged)
 }
 
 // ─── Props validation ───
@@ -237,9 +275,248 @@ pub struct PropsError {
 /// needs the DB (part 2); here each finding's shape is checked.
 /// Settled refinements: `message.to.kind` ∈ coordinator/lane/everyone/person
 /// (Q2), lane-carrying refs are uuids (Q1), `surface` ∈ desktop/dojo/lane (Q12).
+fn props_err(message: String) -> PropsError {
+    PropsError { message }
+}
+
+fn is_uuid_str(s: &str) -> bool {
+    uuid::Uuid::parse_str(s).is_ok()
+}
+
+fn check_surface(value: &serde_json::Value) -> Result<(), PropsError> {
+    match value.as_str() {
+        Some("lane") | Some("desktop") | Some("dojo") => Ok(()),
+        _ => Err(props_err(format!("surface must be lane|desktop|dojo, saw {value}"))),
+    }
+}
+
+fn check_to_shape(to: &serde_json::Value) -> Result<(), PropsError> {
+    let obj = to.as_object().ok_or_else(|| props_err("to must be an object".into()))?;
+    let kind = obj
+        .get("kind")
+        .and_then(|k| k.as_str())
+        .ok_or_else(|| props_err("to.kind is required".into()))?;
+    match kind {
+        "lane" => {
+            let id = obj
+                .get("lane_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| props_err("to.lane_id is required for kind lane".into()))?;
+            if !is_uuid_str(id) {
+                return Err(props_err(format!("to.lane_id must be a uuid, saw {id}")));
+            }
+        }
+        "everyone" | "coordinator" | "person" => {
+            if obj.contains_key("lane_id") {
+                return Err(props_err(format!("to.kind {kind} carries no lane_id")));
+            }
+        }
+        other => return Err(props_err(format!("unknown to.kind {other}"))),
+    }
+    for key in obj.keys() {
+        if !matches!(key.as_str(), "kind" | "lane_id") {
+            return Err(props_err(format!("unknown to key {key}")));
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Result<(), PropsError> {
-    let _ = (kind, props);
-    todo!("relay item 2 phase B")
+    use RelayActionKind as K;
+    let obj = props.as_object().ok_or_else(|| props_err("props must be an object".into()))?;
+    let missing = |key: &str| props_err(format!("{key} is required"));
+    let present = |key: &str| obj.get(key).filter(|v| !v.is_null());
+    // Unknown-key sweep over an allowlist; required keys checked by kind below.
+    let allow = |keys: &[&str]| -> Result<(), PropsError> {
+        for key in obj.keys() {
+            if !keys.contains(&key.as_str()) {
+                return Err(props_err(format!("unknown props key {key}")));
+            }
+        }
+        Ok(())
+    };
+    match kind {
+        K::Assigned => {
+            allow(&["docs", "owned_paths", "acceptance"])?;
+            for key in ["docs", "owned_paths", "acceptance"] {
+                match present(key) {
+                    Some(v) if v.is_array() => {}
+                    _ => return Err(missing(key)),
+                }
+            }
+            Ok(())
+        }
+        K::BriefUpdated => {
+            allow(&["docs", "owned_paths", "acceptance"])?;
+            for key in ["docs", "owned_paths", "acceptance"] {
+                if let Some(v) = present(key)
+                    && !v.is_array()
+                {
+                    return Err(props_err(format!("{key} must be an array")));
+                }
+            }
+            Ok(())
+        }
+        K::Reported => {
+            const REPORTED_KEYS: &[&str] = &[
+                "look_at",
+                "flags",
+                "base",
+                "branch",
+                "commits",
+                "files",
+                "gates",
+                "tokens_in",
+                "tokens_out",
+                "tokens_cache",
+                "context_tokens",
+                "compactions",
+                "peak_memory_mb",
+                "subagents",
+                "working_secs",
+                "waiting_secs",
+                "started_at",
+                "ended_at",
+            ];
+            allow(REPORTED_KEYS)?;
+            for key in ["files", "gates", "commits"] {
+                if let Some(v) = present(key)
+                    && !v.is_array()
+                {
+                    return Err(props_err(format!("{key} must be an array")));
+                }
+            }
+            if let Some(files) = present("files") {
+                for f in files.as_array().unwrap_or(&vec![]) {
+                    let ok = f.get("path").and_then(|v| v.as_str()).is_some()
+                        && f.get("added").and_then(|v| v.as_i64()).is_some()
+                        && f.get("removed").and_then(|v| v.as_i64()).is_some();
+                    if !ok {
+                        return Err(props_err("files[] needs path/added/removed".into()));
+                    }
+                }
+            }
+            if let Some(gates) = present("gates") {
+                for g in gates.as_array().unwrap_or(&vec![]) {
+                    let ok = g.get("cmd").and_then(|v| v.as_str()).is_some()
+                        && g.get("exit").and_then(|v| v.as_i64()).is_some();
+                    if !ok {
+                        return Err(props_err("gates[] needs cmd/exit".into()));
+                    }
+                }
+            }
+            Ok(())
+        }
+        K::Reviewed => {
+            const REVIEWED_KEYS: &[&str] = &[
+                "verdict",
+                "findings",
+                "probes",
+                "tokens_in",
+                "tokens_out",
+                "tokens_cache",
+                "context_tokens",
+                "compactions",
+                "peak_memory_mb",
+                "subagents",
+                "working_secs",
+                "waiting_secs",
+                "started_at",
+                "ended_at",
+            ];
+            allow(REVIEWED_KEYS)?;
+            match present("verdict").and_then(|v| v.as_str()) {
+                Some("approved") | Some("changes_requested") => {}
+                _ => return Err(props_err("verdict must be approved|changes_requested".into())),
+            }
+            let findings = present("findings")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| missing("findings"))?;
+            for f in findings {
+                match f.get("severity").and_then(|v| v.as_str()) {
+                    Some("low") | Some("medium") | Some("high") => {}
+                    _ => return Err(props_err("findings[] needs severity low|medium|high".into())),
+                }
+                match f.get("class").and_then(|v| v.as_str()) {
+                    Some(c) if !c.is_empty() => {}
+                    _ => return Err(props_err("findings[] needs a non-empty class".into())),
+                }
+                if f.get("text").and_then(|v| v.as_str()).is_none() {
+                    return Err(props_err("findings[] needs text".into()));
+                }
+            }
+            Ok(())
+        }
+        K::Asked => {
+            allow(&["options", "blocks", "asked_of", "context", "recommended"])?;
+            let options =
+                present("options").and_then(|v| v.as_array()).ok_or_else(|| missing("options"))?;
+            for o in options {
+                let ok = o.get("id").and_then(|v| v.as_str()).is_some()
+                    && o.get("label").and_then(|v| v.as_str()).is_some();
+                if !ok {
+                    return Err(props_err("options[] needs id/label".into()));
+                }
+            }
+            if present("blocks").and_then(|v| v.as_array()).is_none() {
+                return Err(missing("blocks"));
+            }
+            match present("asked_of").and_then(|v| v.as_str()) {
+                Some("person") => {}
+                Some(id) if is_uuid_str(id) => {}
+                _ => return Err(props_err("asked_of must be person or a uuid".into())),
+            }
+            Ok(())
+        }
+        K::Answered => {
+            allow(&["option", "note", "surface"])?;
+            if present("option").and_then(|v| v.as_str()).is_none() {
+                return Err(missing("option"));
+            }
+            check_surface(present("surface").ok_or_else(|| missing("surface"))?)?;
+            Ok(())
+        }
+        K::Message => {
+            allow(&["to", "surface"])?;
+            check_to_shape(present("to").ok_or_else(|| missing("to"))?)?;
+            check_surface(present("surface").ok_or_else(|| missing("surface"))?)?;
+            Ok(())
+        }
+        K::Merged => {
+            allow(&["commits", "into", "gates"])?;
+            if present("commits").and_then(|v| v.as_array()).is_none() {
+                return Err(missing("commits"));
+            }
+            if present("into").and_then(|v| v.as_str()).is_none() {
+                return Err(missing("into"));
+            }
+            if present("gates").and_then(|v| v.as_array()).is_none() {
+                return Err(missing("gates"));
+            }
+            Ok(())
+        }
+        K::Interrupted => {
+            allow(&["checkpoint"])?;
+            Ok(())
+        }
+        K::Reoffered => {
+            allow(&["to_lane"])?;
+            if let Some(v) = present("to_lane")
+                && v.as_str().is_none_or(|s| !is_uuid_str(s))
+            {
+                return Err(props_err("to_lane must be a uuid".into()));
+            }
+            Ok(())
+        }
+        K::Compacted => {
+            allow(&["context_tokens_before", "context_tokens_after"])?;
+            Ok(())
+        }
+        K::Started | K::Delivered | K::Read => {
+            allow(&[])?;
+            Ok(())
+        }
+    }
 }
 
 // ─── Lane refs, register modes, surfaces (Q1/Q6/Q12, settled) ───
@@ -253,8 +530,7 @@ pub struct ValidationError {
 /// version is a minting discipline (phase B mints v7); the wire contract is
 /// "parses as a uuid, never a code".
 pub fn parse_lane_ref(s: &str) -> Result<uuid::Uuid, uuid::Error> {
-    let _ = s;
-    todo!("relay item 2 phase B")
+    uuid::Uuid::parse_str(s)
 }
 
 /// What a `register` call does (Q6, settled).
@@ -273,8 +549,15 @@ pub fn register_mode(
     role: RelayRole,
     crew_id: Option<&str>,
 ) -> Result<RegisterMode, ValidationError> {
-    let _ = (role, crew_id);
-    todo!("relay item 2 phase B")
+    match (role, crew_id) {
+        (RelayRole::Coordinator, None) => Ok(RegisterMode::MintCrew),
+        (RelayRole::Coordinator, Some(_)) | (RelayRole::Contributor, Some(_)) => {
+            Ok(RegisterMode::JoinCrew)
+        }
+        (RelayRole::Contributor, None) => Err(ValidationError {
+            message: "contributors register with crew_id; only a coordinator mints".into(),
+        }),
+    }
 }
 
 /// Who performs a surfaced action.
@@ -292,8 +575,17 @@ pub fn resolve_surface(
     caller: Caller,
     given: Option<RelaySurface>,
 ) -> Result<RelaySurface, ValidationError> {
-    let _ = (caller, given);
-    todo!("relay item 2 phase B")
+    match (caller, given) {
+        (Caller::Lane, None) | (Caller::Lane, Some(RelaySurface::Lane)) => Ok(RelaySurface::Lane),
+        (Caller::Lane, Some(_)) => Err(ValidationError {
+            message: "lanes act as surface lane; a person surface is spoofing".into(),
+        }),
+        (Caller::Person, Some(RelaySurface::Desktop)) => Ok(RelaySurface::Desktop),
+        (Caller::Person, Some(RelaySurface::Dojo)) => Ok(RelaySurface::Dojo),
+        (Caller::Person, _) => {
+            Err(ValidationError { message: "the person names surface desktop|dojo".into() })
+        }
+    }
 }
 
 // ─── Lease math (Q7, settled) ───
@@ -306,14 +598,12 @@ pub const REOFFER_GRACE_SECS: u64 = 900;
 /// True once `now` reaches the lease's end. Clocks are fed in (tests never
 /// read wall time).
 pub fn lease_expired(expires_at_unix: i64, now_unix: i64) -> bool {
-    let _ = (expires_at_unix, now_unix);
-    todo!("relay item 2 phase B")
+    expires_at_unix <= now_unix
 }
 
 /// True once the grace after the interrupt has run out.
 pub fn reoffer_due(interrupted_at_unix: i64, now_unix: i64) -> bool {
-    let _ = (interrupted_at_unix, now_unix);
-    todo!("relay item 2 phase B")
+    now_unix - interrupted_at_unix >= 900
 }
 
 // ─── Reviewer pick (Q14, settled) ───
@@ -328,8 +618,15 @@ pub fn pick_reviewer(
     author: &uuid::Uuid,
     coordinator: &uuid::Uuid,
 ) -> Option<uuid::Uuid> {
-    let _ = (live, author, coordinator);
-    todo!("relay item 2 phase B")
+    // Least-loaded other lane, ties to the smallest id; else the
+    // coordinator unless it is the author (Q14 settled — the fallback is
+    // unconditional; a dead fallback reviewer is the sweeper's Q17 case).
+    let mut others: Vec<&(uuid::Uuid, u64)> = live.iter().filter(|(id, _)| id != author).collect();
+    others.sort_by_key(|o| (o.1, o.0));
+    if let Some((id, _)) = others.first() {
+        return Some(*id);
+    }
+    if coordinator != author { Some(*coordinator) } else { None }
 }
 
 // ─── Store errors (part 2: every op fails closed with a code) ───
@@ -366,15 +663,32 @@ pub enum RelayError {
 impl RelayError {
     /// The HTTP status the handler answers with.
     pub fn status(&self) -> u16 {
-        let _ = self;
-        todo!("relay item 2 phase B")
+        match self {
+            RelayError::Unauthorized(_) | RelayError::SignInRequired => 401,
+            RelayError::Forbidden(_) => 403,
+            RelayError::NotFound(_) => 404,
+            RelayError::Gone(_) => 410,
+            RelayError::Conflict(_) => 409,
+            RelayError::Validation(_) => 422,
+            RelayError::NotImplemented(_) => 501,
+            RelayError::Internal(_) => 500,
+        }
     }
 
     /// The stable machine code the screen matches on (`lane_not_found`,
     /// never a sentence).
     pub fn code(&self) -> &'static str {
-        let _ = self;
-        todo!("relay item 2 phase B")
+        match self {
+            RelayError::Unauthorized(_) => "relay_unauthorized",
+            RelayError::Forbidden(_) => "relay_forbidden",
+            RelayError::NotFound(_) => "relay_not_found",
+            RelayError::Gone(_) => "relay_lane_gone",
+            RelayError::Conflict(_) => "relay_conflict",
+            RelayError::Validation(_) => "relay_invalid",
+            RelayError::SignInRequired => "relay_signin_required",
+            RelayError::NotImplemented(_) => "relay_not_implemented",
+            RelayError::Internal(_) => "relay_internal",
+        }
     }
 }
 
@@ -391,8 +705,25 @@ pub const SWAP_FLOOR_GB: u64 = 1;
 /// This Mac's IANA zone, from `/etc/localtime` (e.g. `America/Chicago`).
 /// The daemon pool sets `TimeZone` to it so `relay.now`'s completed window
 /// is the session-local day. Fails closed when the link is unreadable.
+/// This Mac's IANA zone (`America/Chicago`), read off `/etc/localtime`.
+/// Fail-closed: anything outside `zoneinfo/` — or outside the zone-name
+/// alphabet — is an error, never a guess (the pool interpolates the name
+/// into `SET TIME ZONE`, which takes no binds).
 pub fn system_timezone() -> Result<String, String> {
-    todo!("relay item 2 phase B")
+    let link = std::fs::read_link("/etc/localtime")
+        .map_err(|e| format!("system_timezone: cannot read /etc/localtime: {e}"))?
+        .to_string_lossy()
+        .into_owned();
+    let zone =
+        link.rsplit("zoneinfo/").next().filter(|z| *z != link).map(str::to_string).ok_or_else(
+            || format!("system_timezone: /etc/localtime points outside zoneinfo: {link}"),
+        )?;
+    if zone.is_empty()
+        || !zone.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '+'))
+    {
+        return Err(format!("system_timezone: not a zone name: {zone}"));
+    }
+    Ok(zone)
 }
 
 #[cfg(test)]
@@ -417,7 +748,6 @@ mod tests {
     // ── Vocabulary ──
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn enums_serialize_to_relay_api_strings() {
         assert_eq!(serde_json::to_string(&RelayTaskState::InReview).unwrap(), "\"in_review\"");
         assert_eq!(
@@ -452,7 +782,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn enums_reject_unknown_values() {
         assert!(serde_json::from_str::<RelayTaskState>("\"flying\"").is_err());
         // Q3 settled: no `merge` phase.
@@ -466,7 +795,6 @@ mod tests {
     use TaskEvent as E;
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn transition_happy_path_with_rework_loop() {
         assert_eq!(transition(S::Assigned, E::Started), Ok(S::Working));
         assert_eq!(transition(S::Working, E::Reported), Ok(S::InReview));
@@ -478,7 +806,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn transition_rejects_skips() {
         assert_eq!(
             transition(S::Assigned, E::Reported),
@@ -491,7 +818,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn transition_rework_may_report_directly() {
         // Derived: "the next report returns it to in_review" — a lane that
         // reports from rework without an explicit re-start is accepted.
@@ -499,7 +825,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn transition_interrupted_then_reoffered_to_assigned() {
         assert_eq!(transition(S::Working, E::LeaseLost), Ok(S::Interrupted));
         assert_eq!(transition(S::InReview, E::LeaseLost), Ok(S::Interrupted));
@@ -511,7 +836,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn transition_cancelled_from_any_non_terminal() {
         for s in [
             S::Assigned,
@@ -529,7 +853,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn transition_blocked_resumes_where_it_was() {
         assert_eq!(transition(S::Working, E::Blocked), Ok(S::Blocked));
         assert_eq!(transition(S::InReview, E::Blocked), Ok(S::Blocked));
@@ -557,7 +880,6 @@ mod tests {
     // ── Timeout / token / guard / length ──
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn clamp_wait_timeout_defaults_and_clamps() {
         assert_eq!(clamp_wait_timeout(None), 25_000);
         assert_eq!(clamp_wait_timeout(Some(5_000)), 5_000);
@@ -567,7 +889,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn hash_lane_token_is_stable_hex_never_raw() {
         let h1 = hash_lane_token("lane-secret-1");
         let h2 = hash_lane_token("lane-secret-1");
@@ -579,7 +900,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn guard_rejects_secrets_with_kinds_only() {
         let token = gh_token();
         let err = guard_markdown(&format!("see {token}")).unwrap_err();
@@ -598,7 +918,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn guard_accepts_clean_brief() {
         // Q8 settled: no identifier dereference — relay text legitimately names
         // lanes, repos and paths, and stripping would corrupt briefs.
@@ -612,7 +931,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn summary_len_counts_chars_not_bytes() {
         assert!(check_summary_len(&"x".repeat(600)).is_ok());
         assert_eq!(check_summary_len(&"x".repeat(601)), Err(601));
@@ -621,7 +939,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn body_is_summary_covers_every_kind() {
         use RelayActionKind as K;
         for k in [K::Reported, K::Reviewed, K::Asked, K::Answered, K::Message, K::Merged] {
@@ -644,7 +961,6 @@ mod tests {
     // ── Props validation ──
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn validate_props_requires_per_kind_keys() {
         use RelayActionKind as K;
         let full_assigned = json!({"docs": [], "owned_paths": [], "acceptance": []});
@@ -682,7 +998,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn validate_props_rejects_unknown_keys() {
         let err = validate_props(RelayActionKind::Reported, &json!({"bogus": 1})).unwrap_err();
         assert!(err.message.contains("bogus"), "{}", err.message);
@@ -695,7 +1010,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn validate_props_empty_kinds_take_no_keys() {
         use RelayActionKind as K;
         for k in [K::Started, K::Delivered, K::Read] {
@@ -705,7 +1019,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn validate_props_reported_all_optional_d83() {
         // Every `reported` key is self-reported: `{}` is a valid report.
         assert!(validate_props(RelayActionKind::Reported, &json!({})).is_ok());
@@ -719,7 +1032,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn validate_props_reviewed_verdict_and_findings() {
         use RelayActionKind as K;
         assert!(validate_props(K::Reviewed, &json!({"verdict": "nope", "findings": []})).is_err());
@@ -748,7 +1060,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn validate_props_asked_options_shape() {
         use RelayActionKind as K;
         let good = json!({
@@ -770,7 +1081,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn validate_props_interrupt_family_optional_keys() {
         use RelayActionKind as K;
         assert!(validate_props(K::Interrupted, &json!({})).is_ok());
@@ -790,7 +1100,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn transition_reassigned_advances_phase_q11() {
         // Q11 settled: no auto advance; the coordinator's re-assign moves an
         // approved task back to working (and starts a new round, part 2).
@@ -801,7 +1110,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn parse_lane_ref_accepts_uuids_rejects_codes_q1() {
         // Q1 settled: uuid on the wire, codes for display only. Any uuid
         // version parses — the version is a minting discipline, not the wire.
@@ -813,7 +1121,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn register_mode_mint_join_refuse_q6() {
         use RegisterMode as M;
         use RelayRole as R;
@@ -825,7 +1132,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn resolve_surface_lane_and_person_q12() {
         use Caller as C;
         use RelaySurface as S;
@@ -841,7 +1147,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn lease_math_boundaries_q7() {
         assert_eq!(LANE_LEASE_TTL_SECS, 300);
         assert_eq!(REOFFER_GRACE_SECS, 900);
@@ -854,7 +1159,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn pick_reviewer_least_loaded_not_author_q14() {
         let author = uuid(LANE_A);
         let coord = uuid(LANE_B);
@@ -876,7 +1180,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn validate_props_message_to_kinds_q1_q2() {
         use RelayActionKind as K;
         let msg = |to: serde_json::Value| json!({"to": to, "surface": "lane"});
@@ -906,7 +1209,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn validate_props_surface_values_q12() {
         use RelayActionKind as K;
         assert!(
@@ -930,7 +1232,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn validate_props_asked_of_person_or_uuid_q1() {
         use RelayActionKind as K;
         let asked = |of: &str| json!({"options": [], "blocks": [], "asked_of": of});
@@ -942,7 +1243,6 @@ mod tests {
     // ── Part 2: errors, floors, session-local time ──
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn relay_error_maps_to_status_and_code() {
         use RelayError as E;
         assert_eq!(E::Unauthorized("x".into()).status(), 401);
@@ -967,14 +1267,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn resource_floors_are_lanes_md_values() {
         assert_eq!(DISK_FLOOR_GB, 25);
         assert_eq!(SWAP_FLOOR_GB, 1);
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn system_timezone_reads_etc_localtime() {
         // The Mac's zone, from the /etc/localtime link — the zone the pool
         // sets, so the completed window is the session-local day.

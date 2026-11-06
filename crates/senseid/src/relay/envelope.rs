@@ -20,7 +20,7 @@ pub struct LaneEnvelope {
 
 /// The empty envelope: a timed-out wait (Q10), or a lane with nothing queued.
 pub fn empty_envelope() -> LaneEnvelope {
-    todo!("relay item 2 phase B")
+    LaneEnvelope { messages: vec![], answers: vec![], reviews: vec![], assignments: vec![] }
 }
 
 /// §3h-bis, as delivered to the recipient lane.
@@ -116,14 +116,12 @@ mod tests {
     use crate::relay::{RelaySurface as S, RelayTaskPhase as P, RelayTicketProvider as T};
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn envelope_keys_serialize_in_ruling_order() {
         let json = serde_json::to_string(&empty_envelope()).unwrap();
         assert_eq!(json, r#"{"messages":[],"answers":[],"reviews":[],"assignments":[]}"#);
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn envelope_message_round_trip() {
         let m = EnvelopeMessage {
             id: "m1".into(),
@@ -150,7 +148,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn envelope_answer_round_trip() {
         let a = EnvelopeAnswer {
             id: "a1".into(),
@@ -168,7 +165,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn envelope_assignment_round_trip() {
         let a = EnvelopeAssignment {
             task_id: "t1".into(),
@@ -191,7 +187,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item2"]
     fn envelope_review_core_shape_q15() {
         // Q15-REC: both directions, told apart by `direction`.
         let r = EnvelopeReview {

@@ -5027,6 +5027,7 @@ dependencies = [
  "ignore",
  "json5",
  "keyring",
+ "libc",
  "notify",
  "notify-debouncer-mini",
  "notify-rust",
