@@ -245,4 +245,6 @@ Handshake is negotiated, not assumed. At register the broker probes what the ass
 itself, session-minted codenames, and direct session-to-session handshakes (as Muse sessions do today). Where an
 assistant (freebuff, opencode, claude, cowork, chatgpt, …) lacks direct-handshake support, traffic falls back to the
 Sensei-mediated channel — the daemon brokers, exactly as slice 1 does for every lane. The dogfood adapter (§14.5)
-proves the direct path; the fallback keeps every other family working unchanged.
+proves the direct path; the fallback keeps every other family working unchanged. Direct traffic stays visible: whenever
+a direct handshake carries an interaction, a copy is fed into Sensei so the daemon tracks it, tagged with the mode of
+communication (direct vs Sensei-mediated). The broker never goes blind on lanes that talk around it.
