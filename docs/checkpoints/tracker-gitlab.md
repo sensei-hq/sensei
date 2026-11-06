@@ -17,4 +17,17 @@ Decision D91 (amends D49).
 **Plan:** `docs/plans/2026-11-06-tracker-gitlab.md`, F1–F6 = issues #364–#369.
 **Human prerequisites for build:** recorded fixtures from a gitlab.com Free group and a Premium trial group.
 
-**Next command:** `/sensei:build`, starting at build step 1 (fixtures, human) and step 2 (shared seams; Jira suite green).
+**Build (2026-11-06, unattended):**
+- F1 #364 done: 881558907 (public-only resolver, no proxy), 3a2bfb80a (header auth, trailing dot),
+  2e43fdac0 (validated board_ref/account, params_extra), 34d1351d8 (capabilities + guards,
+  `unsupported_by_tracker`), c542f9a28 (review fixes). Full senseid suite 4367 passed at 34d1351d8.
+  Review: security NO FINDINGS; test reviewer's 4 gaps fixed; adversarial: 1 fixed, 1 LOW left
+  (`reads_history` re-reads the tracker row).
+- F2 #365 done: 40f8984cc (`tracker::forge`, `link::tally_links` shared with Jira).
+- Two `#[allow(dead_code)]` wait for F3 to remove: `AuthScheme::Header`, `mod forge`.
+- Amended: D10 end to end (HTTP 409, SDLC reasons through the DB) moves to F3.
+
+**Blocked on the human:** P1 fixtures in `crates/senseid/tests/fixtures/gitlab/`, recorded with curl
+from a gitlab.com Free group and a Premium trial group (spec build step 1).
+
+**Next command:** `/sensei:build #366` once the fixtures are in.
