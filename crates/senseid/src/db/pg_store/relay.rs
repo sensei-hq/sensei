@@ -22,10 +22,10 @@ use crate::relay::envelope::{
 };
 use crate::relay::{
     Caller, DISK_FLOOR_GB, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS, RegisterMode, RelayActionKind,
-    RelayError, RelayFindingSeverity, RelayItemKind, RelayRole, RelaySurface, RelayTaskPhase,
-    RelayTaskState, RelayTicketProvider, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent,
-    check_summary_len, guard_markdown, hash_lane_token, pick_reviewer, register_mode,
-    resolve_surface, transition, validate_props,
+    RelayError, RelayFindingSeverity, RelayFloors, RelayItemKind, RelayLeaseState, RelayRole,
+    RelaySurface, RelayTaskPhase, RelayTaskState, RelayTicketProvider, ReviewVerdict,
+    SWAP_FLOOR_GB, TaskEvent, check_summary_len, guard_markdown, hash_lane_token, pick_reviewer,
+    register_mode, resolve_surface, transition, validate_props,
 };
 
 // ─── Inputs / outputs ───
@@ -302,6 +302,45 @@ pub struct RelaySweepReport {
     pub interrupted_tasks: u64,
     pub reoffered_tasks: u64,
     pub repicked_reviewers: u64,
+    /// Resource grants past their TTL, expired this pass (item 3).
+    pub expired_resource_leases: u64,
+    /// Queued requests auto-granted this pass (item 3).
+    pub granted_from_queue: u64,
+}
+
+/// `POST /api/relay/resources/request` (item 3): the lease input carries an
+/// optional floor override so tests pin the grant/refuse paths on any disk;
+/// the handlers always pass `None` (the ruled constants).
+#[derive(Debug, Clone)]
+pub struct RelayResourceRequest {
+    pub resource: String,
+    pub floors: Option<RelayFloors>,
+}
+
+/// A resource request's answer (item 3, Q9): the grant shape, with
+/// `position` present only while queued and the stamp pair present only
+/// while granted.
+#[derive(Debug, Clone)]
+pub struct RelayResourceGrant {
+    pub lease_id: Uuid,
+    pub state: RelayLeaseState,
+    pub resource: String,
+    pub disk_free_gb: Option<u64>,
+    pub swap_free_gb: Option<u64>,
+    pub disk_floor_gb: u64,
+    pub swap_floor_gb: u64,
+    pub granted_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub position: Option<u64>,
+}
+
+/// A resource release's answer (item 3): the released row plus the next
+/// queued request the release auto-granted, if any.
+#[derive(Debug, Clone)]
+pub struct RelayResourceRelease {
+    pub lease_id: Uuid,
+    pub resource: String,
+    pub granted_next: Option<Uuid>,
 }
 
 /// A manual triage item, as the person adds it.
@@ -1012,6 +1051,30 @@ impl PgStore {
         }
         tx.commit().await.map_err(db_err)?;
         Ok(())
+    }
+
+    /// Request a resource lease (item 3, Q1–Q3/Q5/Q6): grant when free and
+    /// the floors pass, queue behind the holder, refuse below the floors.
+    pub async fn relay_request_resource(
+        &self,
+        _user_id: Uuid,
+        _caller_lane: Uuid,
+        _input: RelayResourceRequest,
+        _now: DateTime<Utc>,
+    ) -> Result<RelayResourceGrant, RelayError> {
+        todo!("relay item 3: request resource")
+    }
+
+    /// Release a held resource lease (item 3, Q7): the holder's release
+    /// auto-grants the next queued request.
+    pub async fn relay_release_resource(
+        &self,
+        _user_id: Uuid,
+        _caller_lane: Uuid,
+        _resource: &str,
+        _now: DateTime<Utc>,
+    ) -> Result<RelayResourceRelease, RelayError> {
+        todo!("relay item 3: release resource")
     }
 
     /// Plan an item into an unassigned task (coordinator only). From an item,
@@ -2784,6 +2847,9 @@ impl PgStore {
             interrupted_tasks,
             reoffered_tasks,
             repicked_reviewers,
+            // Item 3 (phase A): the sweep ignores resources until phase B.
+            expired_resource_leases: 0,
+            granted_from_queue: 0,
         })
     }
 
@@ -3831,6 +3897,59 @@ mod tests {
         .await
         .unwrap();
         id
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn fx_resource_lease(
+        pg: &PgStore,
+        user: Uuid,
+        crew: Uuid,
+        lane: Uuid,
+        resource: &str,
+        state: &str,
+        granted_at: Option<DateTime<Utc>>,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Uuid {
+        let id = fxid();
+        sqlx_core::query::query(
+            "insert into relay.leases (user_id, id, crew_id, lane_id, kind, resource, state, granted_at, expires_at) \
+             values ($1, $2, $3, $4, 'resource', $5, $6::relay.lease_state, $7, $8)",
+        )
+        .bind(user)
+        .bind(id)
+        .bind(crew)
+        .bind(lane)
+        .bind(resource)
+        .bind(state)
+        .bind(granted_at)
+        .bind(expires_at)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn resource_row(
+        pg: &PgStore,
+        user: Uuid,
+        id: Uuid,
+    ) -> (
+        String,
+        Option<String>,
+        serde_json::Value,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+    ) {
+        sqlx_core::query_as::query_as(
+            "select state::text, resource, props, granted_at, expires_at, released_at \
+             from relay.leases where user_id = $1 and id = $2",
+        )
+        .bind(user)
+        .bind(id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
     }
 
     /// A contributor crew: U1 owns C1 (coordinator A1 + live contributor A2),
@@ -6059,5 +6178,351 @@ mod tests {
             .collect();
         assert!(done.contains(&t_in.to_string().as_str()), "{done:?}");
         assert!(!done.contains(&t_out.to_string().as_str()), "{done:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_request_grants_first_come_reports_numbers() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, _a2, _b1, u1) = fx_two_crews(&pg).await;
+        let now = t0();
+        let out = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.state, RelayLeaseState::Granted);
+        assert_eq!(out.resource, "rust-build");
+        // The broker mints the id (L0 note 1): v7, position 15 reads `7`.
+        assert_eq!(&out.lease_id.to_string()[14..15], "7");
+        assert_eq!(out.disk_floor_gb, 25);
+        assert_eq!(out.swap_floor_gb, 1);
+        assert!(out.disk_free_gb.is_some(), "disk always reads");
+        assert_eq!(out.granted_at, Some(now));
+        assert_eq!(out.expires_at, Some(now + chrono::Duration::seconds(3600)));
+        assert_eq!(out.position, None);
+        let (state, resource, props, granted_at, expires_at, _) =
+            resource_row(&pg, u1, out.lease_id).await;
+        assert_eq!(state, "granted");
+        assert_eq!(resource.as_deref(), Some("rust-build"));
+        assert_eq!(props.get("disk_free_gb"), Some(&json!(out.disk_free_gb)));
+        assert_eq!(props.get("swap_free_gb"), Some(&json!(out.swap_free_gb)));
+        assert_eq!(granted_at, Some(now));
+        assert_eq!(expires_at, out.expires_at);
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_request_while_held_queues_fifo() {
+        let pg = PgStore::test_store().await;
+        let (c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
+        let a3 = v7(0x14);
+        fx_lane(&pg, u1, a3, c1, "L3", "contributor", "tok-a3").await;
+        fx_lease(&pg, u1, c1, a3, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
+        let now = t0();
+        let req = RelayResourceRequest { resource: "rust-build".into(), floors: None };
+        let held = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
+        assert_eq!(held.state, RelayLeaseState::Granted);
+        let q1 = pg.relay_request_resource(u1, a2, req.clone(), now).await.unwrap();
+        assert_eq!(q1.state, RelayLeaseState::Queued);
+        assert_eq!(q1.position, Some(1));
+        assert_eq!(q1.granted_at, None);
+        assert_eq!(q1.expires_at, None);
+        // v7 ids order by millisecond: separate the requests so FIFO-by-id
+        // reads request order deterministically.
+        sqlx_core::query::query("select pg_sleep(0.012)").execute(pg.pool()).await.unwrap();
+        let q2 = pg.relay_request_resource(u1, a3, req.clone(), now).await.unwrap();
+        assert_eq!(q2.state, RelayLeaseState::Queued);
+        assert_eq!(q2.position, Some(2));
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_request_cross_crew_excludes_machine_wide() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, _a2, b1, u1) = fx_two_crews(&pg).await;
+        let now = t0();
+        let held = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest { resource: "e2e".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(held.state, RelayLeaseState::Granted);
+        // Another crew, another user: the slot is machine-wide, so this queues.
+        let q = pg
+            .relay_request_resource(
+                u2(),
+                b1,
+                RelayResourceRequest { resource: "e2e".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(q.state, RelayLeaseState::Queued);
+        assert_eq!(q.position, Some(1));
+        let n: (i64,) = sqlx_core::query_as::query_as(
+            "select count(*) from relay.leases \
+             where kind = 'resource' and resource = 'e2e' and state = 'granted'",
+        )
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(n.0, 1, "one granted row per slot, machine-wide");
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_request_same_lane_twice_returns_existing() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
+        let now = t0();
+        let req = RelayResourceRequest { resource: "rust-build".into(), floors: None };
+        let g1 = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
+        let g2 = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
+        assert_eq!(g2.lease_id, g1.lease_id);
+        assert_eq!(g2.state, RelayLeaseState::Granted);
+        let q1 = pg.relay_request_resource(u1, a2, req.clone(), now).await.unwrap();
+        let q2 = pg.relay_request_resource(u1, a2, req.clone(), now).await.unwrap();
+        assert_eq!(q2.lease_id, q1.lease_id);
+        assert_eq!(q2.state, RelayLeaseState::Queued);
+        assert_eq!(q2.position, Some(1));
+        let n: (i64,) = sqlx_core::query_as::query_as(
+            "select count(*) from relay.leases \
+             where user_id = $1 and lane_id = $2 and kind = 'resource' and resource = 'rust-build'",
+        )
+        .bind(u1)
+        .bind(a2)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(n.0, 1, "the re-request inserts no second row");
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_request_refused_below_floors_writes_row() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, _a2, _b1, u1) = fx_two_crews(&pg).await;
+        let now = t0();
+        // Impossible floors: every real reading sits below them (Q5).
+        let out = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest {
+                    resource: "rust-build".into(),
+                    floors: Some(RelayFloors { disk_gb: u64::MAX, swap_gb: u64::MAX }),
+                },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.state, RelayLeaseState::Refused);
+        // The output echoes the effective floors (the ones compared).
+        assert_eq!(out.disk_floor_gb, u64::MAX);
+        assert_eq!(out.granted_at, None);
+        assert_eq!(out.expires_at, None);
+        assert_eq!(out.position, None);
+        let (state, _resource, props, _granted, _expires, _) =
+            resource_row(&pg, u1, out.lease_id).await;
+        assert_eq!(state, "refused");
+        let reason = props.get("reason").and_then(|r| r.as_str()).unwrap_or("");
+        assert!(!reason.is_empty(), "the refused row carries a reason");
+        assert_eq!(props.get("disk_free_gb"), Some(&json!(out.disk_free_gb)));
+        assert_eq!(props.get("swap_free_gb"), Some(&json!(out.swap_free_gb)));
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_request_empty_resource_is_validation() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, _a2, _b1, u1) = fx_two_crews(&pg).await;
+        let err = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest { resource: "  ".into(), floors: None },
+                t0(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::Validation(_)), "blank resource: {err:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_release_grants_next_queued_auto() {
+        let pg = PgStore::test_store().await;
+        let (c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
+        let a3 = v7(0x15);
+        fx_lane(&pg, u1, a3, c1, "L3", "contributor", "tok-a3").await;
+        fx_lease(&pg, u1, c1, a3, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
+        let now = t0();
+        let req = RelayResourceRequest { resource: "rust-build".into(), floors: None };
+        let held = pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
+        let q1 = pg.relay_request_resource(u1, a2, req.clone(), now).await.unwrap();
+        sqlx_core::query::query("select pg_sleep(0.012)").execute(pg.pool()).await.unwrap();
+        let q2 = pg.relay_request_resource(u1, a3, req.clone(), now).await.unwrap();
+        assert_eq!(q2.position, Some(2));
+        let rel = pg.relay_release_resource(u1, a1, "rust-build", now).await.unwrap();
+        assert_eq!(rel.lease_id, held.lease_id);
+        assert_eq!(rel.resource, "rust-build");
+        assert_eq!(rel.granted_next, Some(q1.lease_id));
+        // The queued row flips in place: the waiter keeps its id.
+        let (state, _, _, granted_at, expires_at, _) = resource_row(&pg, u1, q1.lease_id).await;
+        assert_eq!(state, "granted");
+        assert_eq!(granted_at, Some(now));
+        assert_eq!(expires_at, Some(now + chrono::Duration::seconds(3600)));
+        let (state, _, _, _, _, released_at) = resource_row(&pg, u1, held.lease_id).await;
+        assert_eq!(state, "released");
+        assert_eq!(released_at, Some(now));
+        // And the next waiter moves up (observed through its idempotent re-request).
+        let q2b = pg.relay_request_resource(u1, a3, req.clone(), now).await.unwrap();
+        assert_eq!(q2b.lease_id, q2.lease_id);
+        assert_eq!(q2b.position, Some(1));
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_release_rules_holder_only_and_unknown() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
+        let now = t0();
+        let held = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(held.state, RelayLeaseState::Granted);
+        // Held by another lane: the holder alone releases (Q7).
+        let err = pg.relay_release_resource(u1, a2, "rust-build", now).await.unwrap_err();
+        assert!(matches!(err, RelayError::Forbidden(_)), "non-holder: {err:?}");
+        // Nothing live at all: not found.
+        let err = pg.relay_release_resource(u1, a1, "e2e", now).await.unwrap_err();
+        assert!(matches!(err, RelayError::NotFound(_)), "unknown: {err:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_heartbeat_renews_held_resource_leases() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
+        let now = t0();
+        let held = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        let q = pg
+            .relay_request_resource(
+                u1,
+                a2,
+                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(q.state, RelayLeaseState::Queued);
+        let later = now + chrono::Duration::seconds(60);
+        pg.relay_heartbeat(a1, later).await.unwrap();
+        let (_, _, _, _, expires_at, _) = resource_row(&pg, u1, held.lease_id).await;
+        assert_eq!(expires_at, Some(later + chrono::Duration::seconds(3600)));
+        // The queued row claims no grant: nothing to renew.
+        let (_, _, _, granted_at, expires_at, _) = resource_row(&pg, u1, q.lease_id).await;
+        assert_eq!(granted_at, None);
+        assert_eq!(expires_at, None);
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_sweep_expires_and_grants_next() {
+        let pg = PgStore::test_store().await;
+        let (c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
+        let now = t0();
+        // A stale grant with a waiter, and a stale grant with none.
+        let stale = fx_resource_lease(
+            &pg,
+            u1,
+            c1,
+            a1,
+            "rust-build",
+            "granted",
+            Some(now - chrono::Duration::seconds(3700)),
+            Some(now - chrono::Duration::seconds(100)),
+        )
+        .await;
+        let waiter = fx_resource_lease(&pg, u1, c1, a2, "rust-build", "queued", None, None).await;
+        let solo = fx_resource_lease(
+            &pg,
+            u1,
+            c1,
+            a1,
+            "e2e",
+            "granted",
+            Some(now - chrono::Duration::seconds(3700)),
+            Some(now - chrono::Duration::seconds(100)),
+        )
+        .await;
+        let report = pg.relay_sweep_leases(now).await.unwrap();
+        assert_eq!(report.expired_resource_leases, 2);
+        assert_eq!(report.granted_from_queue, 1);
+        assert_eq!(report.expired_leases, 0, "live lane leases untouched");
+        let (state, _, _, _, _, _) = resource_row(&pg, u1, stale).await;
+        assert_eq!(state, "expired");
+        let (state, _, _, granted_at, expires_at, _) = resource_row(&pg, u1, waiter).await;
+        assert_eq!(state, "granted");
+        assert_eq!(granted_at, Some(now));
+        assert_eq!(expires_at, Some(now + chrono::Duration::seconds(3600)));
+        let (state, _, _, _, _, _) = resource_row(&pg, u1, solo).await;
+        assert_eq!(state, "expired");
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resource_unregister_releases_held() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
+        let now = t0();
+        let held = pg
+            .relay_request_resource(
+                u1,
+                a1,
+                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        let q = pg
+            .relay_request_resource(
+                u1,
+                a2,
+                RelayResourceRequest { resource: "rust-build".into(), floors: None },
+                now,
+            )
+            .await
+            .unwrap();
+        pg.relay_unregister(a1).await.unwrap();
+        let (state, _, _, _, _, released_at) = resource_row(&pg, u1, held.lease_id).await;
+        assert_eq!(state, "released");
+        assert!(released_at.is_some(), "release stamps released_at");
+        let (state, _, _, granted_at, _, _) = resource_row(&pg, u1, q.lease_id).await;
+        assert_eq!(state, "granted", "the waiter inherits the slot");
+        assert!(granted_at.is_some());
     }
 }

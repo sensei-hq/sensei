@@ -699,6 +699,35 @@ impl RelayError {
 pub const DISK_FLOOR_GB: u64 = 25;
 /// Refuse a resource grant below 1 GB free swap (likewise).
 pub const SWAP_FLOOR_GB: u64 = 1;
+/// A resource grant lives 3600 s; heartbeat renews it (Q4, settled).
+pub const RESOURCE_LEASE_TTL_SECS: u64 = 3600;
+
+/// A floor override for resource grants (`None` at the store means the
+/// `DISK_FLOOR_GB` / `SWAP_FLOOR_GB` constants; tests inject extremes so
+/// the grant/refuse paths stay deterministic on any disk).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RelayFloors {
+    pub disk_gb: u64,
+    pub swap_gb: u64,
+}
+
+/// The grant decision for a resource request (Q5/Q6, settled): grant
+/// unless a reported reading sits strictly below its floor; an unknown
+/// reading (`None`) never refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResourceGrant {
+    Granted,
+    Refused { reason: String },
+}
+
+/// Decide a resource grant from the readings (pure; Q5/Q6).
+pub fn decide_resource_grant(
+    _disk_free_gb: Option<u64>,
+    _swap_free_gb: Option<u64>,
+    _floors: &RelayFloors,
+) -> ResourceGrant {
+    todo!("relay item 3: grant decision")
+}
 
 // ─── Session-local time (the completed window is the Mac's day) ───
 
@@ -1280,5 +1309,40 @@ mod tests {
         let expect = link.rsplit("zoneinfo/").next().unwrap().to_string();
         assert_eq!(system_timezone().unwrap(), expect);
         assert!(system_timezone().unwrap().contains('/'));
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item3"]
+    fn resource_grant_decision_matrix() {
+        use super::{RelayFloors, ResourceGrant, decide_resource_grant};
+        assert_eq!(super::RESOURCE_LEASE_TTL_SECS, 3600);
+        let floors = RelayFloors { disk_gb: 25, swap_gb: 1 };
+        // Above the floors: grant.
+        assert_eq!(decide_resource_grant(Some(100), Some(8), &floors), ResourceGrant::Granted);
+        // On the floor (refuse iff strictly below): grant.
+        assert_eq!(decide_resource_grant(Some(25), Some(1), &floors), ResourceGrant::Granted);
+        // Unknown readings never refuse (Q6).
+        assert_eq!(decide_resource_grant(None, None, &floors), ResourceGrant::Granted);
+        assert_eq!(decide_resource_grant(None, Some(8), &floors), ResourceGrant::Granted);
+        assert_eq!(decide_resource_grant(Some(100), None, &floors), ResourceGrant::Granted);
+        // Below a floor: refuse, naming the short reading and the floor.
+        let ResourceGrant::Refused { reason } = decide_resource_grant(Some(10), Some(8), &floors)
+        else {
+            panic!("disk below floor must refuse");
+        };
+        assert!(reason.contains("disk"), "reason names disk: {reason}");
+        assert!(reason.contains("10"), "reason names reading: {reason}");
+        assert!(reason.contains("25"), "reason names floor: {reason}");
+        let ResourceGrant::Refused { reason } = decide_resource_grant(Some(100), Some(0), &floors)
+        else {
+            panic!("swap below floor must refuse");
+        };
+        assert!(reason.contains("swap"), "reason names swap: {reason}");
+        // Both short: one reason naming both.
+        let ResourceGrant::Refused { reason } = decide_resource_grant(Some(10), Some(0), &floors)
+        else {
+            panic!("both below floor must refuse");
+        };
+        assert!(reason.contains("disk") && reason.contains("swap"), "both: {reason}");
     }
 }

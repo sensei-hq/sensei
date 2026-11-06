@@ -3314,4 +3314,59 @@ mod tests {
             .unwrap();
         assert_eq!(req.path, "/api/mcp/call");
     }
+
+    #[test]
+    #[ignore = "pending:relay-item3"]
+    fn relay_resource_tools_are_listed() {
+        let tools = handle_list_tools();
+        let names: Vec<&str> =
+            tools["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        for tool in ["relay_request_resource", "relay_release_resource"] {
+            assert!(names.contains(&tool), "{tool} is listed");
+        }
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item3"]
+    fn relay_request_resource_posts_shape() {
+        assert_eq!(
+            missing_required("relay_request_resource", &lane_args(json!({}))),
+            vec!["resource"]
+        );
+        let req = daemon_request_for(
+            "relay_request_resource",
+            &lane_args(json!({"resource": "rust-build"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/resources/request");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["resource"], "rust-build");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    #[ignore = "pending:relay-item3"]
+    fn relay_release_resource_posts_shape() {
+        assert_eq!(
+            missing_required("relay_release_resource", &lane_args(json!({}))),
+            vec!["resource"]
+        );
+        let req = daemon_request_for(
+            "relay_release_resource",
+            &lane_args(json!({"resource": "rust-build"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/resources/release");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["resource"], "rust-build");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
 }

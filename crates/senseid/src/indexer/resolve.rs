@@ -4607,8 +4607,12 @@ mod tests {
         // 27 identities via a `pub(crate) use` re-export the indexer cannot
         // follow; those moved to the `pub(crate) mod` path their callers name
         // (the 2026-10-26 cure) instead of spending the ratchet.
+        // Raised 1,105 → 1,116 on 2026-11-06, measured 1,114 over 228
+        // identities: item 3's reds clone the `RelayResourceRequest` input
+        // (the codebase idiom), and the 11 `clone` references dangle —
+        // derive-generated, in no source file (the third documented cause).
         assert!(
-            other <= 1_105,
+            other <= 1_116,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

@@ -1176,6 +1176,144 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resources_request_grants_shape() {
+        let h = harness().await;
+        let (lane_id, token, _) = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/request",
+            Some(json!({"lane_id": lane_id, "resource": "rust-build"})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "granted");
+        assert_eq!(body["resource"], "rust-build");
+        assert!(body["lease_id"].is_string(), "{body}");
+        assert!(body["disk_free_gb"].is_number(), "{body}");
+        assert!(body["disk_floor_gb"].as_u64() == Some(25), "{body}");
+        assert!(body["swap_floor_gb"].as_u64() == Some(1), "{body}");
+        assert!(body["granted_at"].is_string(), "{body}");
+        assert!(body["expires_at"].is_string(), "{body}");
+        assert!(body["position"].is_null(), "position only while queued: {body}");
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resources_queue_then_release_grants() {
+        let h = harness().await;
+        let (coord_id, coord_token, crew_id) = register_coordinator(&h).await;
+        let (contrib_id, contrib_token) = register_contributor(&h, &crew_id).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/request",
+            Some(json!({"lane_id": coord_id, "resource": "rust-build"})),
+            Some(&coord_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, queued) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/request",
+            Some(json!({"lane_id": contrib_id, "resource": "rust-build"})),
+            Some(&contrib_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{queued}");
+        assert_eq!(queued["state"], "queued");
+        assert_eq!(queued["position"], 1);
+        assert!(queued["granted_at"].is_null(), "{queued}");
+        let (status, released) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/release",
+            Some(json!({"lane_id": coord_id, "resource": "rust-build"})),
+            Some(&coord_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{released}");
+        assert_eq!(released["state"], "released");
+        assert_eq!(released["granted_next"], queued["lease_id"]);
+        // The waiter re-requests: the same row, now granted.
+        let (status, granted) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/request",
+            Some(json!({"lane_id": contrib_id, "resource": "rust-build"})),
+            Some(&contrib_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{granted}");
+        assert_eq!(granted["state"], "granted");
+        assert_eq!(granted["lease_id"], queued["lease_id"]);
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resources_request_without_token_is_401() {
+        let h = harness().await;
+        let (lane_id, _, _) = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/request",
+            Some(json!({"lane_id": lane_id, "resource": "rust-build"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_eq!(body["error"], "relay_unauthorized");
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resources_release_by_non_holder_is_403() {
+        let h = harness().await;
+        let (coord_id, coord_token, crew_id) = register_coordinator(&h).await;
+        let (contrib_id, contrib_token) = register_contributor(&h, &crew_id).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/request",
+            Some(json!({"lane_id": coord_id, "resource": "rust-build"})),
+            Some(&coord_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/release",
+            Some(json!({"lane_id": contrib_id, "resource": "rust-build"})),
+            Some(&contrib_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "relay_forbidden");
+    }
+
+    #[tokio::test]
+    #[ignore = "pending:relay-item3"]
+    async fn resources_release_unknown_is_404() {
+        let h = harness().await;
+        let (lane_id, token, _) = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/release",
+            Some(json!({"lane_id": lane_id, "resource": "e2e"})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"], "relay_not_found");
+    }
+
+    #[tokio::test]
     async fn heartbeat_renews_and_auth_is_checked() {
         let h = harness().await;
         let (lane_id, token, _) = register_coordinator(&h).await;
