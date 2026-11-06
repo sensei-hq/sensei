@@ -1303,8 +1303,9 @@ mod tests {
 
     #[test]
     fn system_timezone_reads_etc_localtime() {
-        // The Mac's zone, from the /etc/localtime link — the zone the pool
-        // sets, so the completed window is the session-local day.
+        // The Mac's zone, from the /etc/localtime link — the zone the
+        // relay_now transaction sets, so the completed window is the
+        // session-local day (the pool itself stays UTC per (B)).
         let link = std::fs::read_link("/etc/localtime").unwrap().to_string_lossy().into_owned();
         let expect = link.rsplit("zoneinfo/").next().unwrap().to_string();
         assert_eq!(system_timezone().unwrap(), expect);

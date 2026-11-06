@@ -4640,6 +4640,25 @@ mod tests {
         fx_lease(&pg, u1(), c1, a3, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
         fx_lane(&pg, u1(), a4, c1, "L4", "contributor", "tok-a4").await;
         fx_lease(&pg, u1(), c1, a4, "expired", Some(t0() - chrono::Duration::seconds(1))).await;
+        // F1 (phase-B r2): the pick path reads liveness against DB
+        // `current_timestamp`, but every fixture lease above expires at the
+        // fixed t0+300 — dead in any working-hours run, so the pick fell
+        // through to the coordinator fallback and the load axis never
+        // engaged. Revive the same-crew lanes under the DB's own clock (the
+        // same clock the pick query reads — no skew possible). The only
+        // exclusions left are the two this test names: A2 by author id, A4
+        // by lapsed state (clock-independent); B1 stays dead (another crew).
+        sqlx_core::query::query(
+            "update relay.leases set state = 'granted',
+                    expires_at = current_timestamp + interval '300 seconds'
+             where kind = 'lane' and lane_id in ($1, $2, $3)",
+        )
+        .bind(a1)
+        .bind(a2)
+        .bind(a3)
+        .execute(pg.pool())
+        .await
+        .unwrap();
         for (n, holder) in [(0x81, a1), (0x82, a4)] {
             let t = v7(n);
             fx_task(&pg, u1(), t, c1, Some(holder), "in_review", "tests", 1).await;
