@@ -1,25 +1,30 @@
-# Checkpoint — 2026-11-04 night (coordinator; lanes in ~/Developer/sensei-hq/coord/TRACKER.md)
+# Checkpoint — 2026-11-06 (coordinator; lanes in ~/Developer/sensei-hq/coord/TRACKER.md)
 
-**Slice:** the week's spine: sync verified → targets end to end → a miss becomes a fix and a learning.
-Lanes L1–L5 + Design; reviews through `~/Developer/sensei-hq/coord`.
+**Slice:** Relay slice 1 (D90) — `relay` schema (L4) → daemon + MCP tools (L3) → resource lease (L3); Relay screen (L5,
+merged); onboarding lines (L0). Billing is low priority.
 
-**Merged today (11-04):** L6 docs §3.3; Notice family; F4 viewer pools; Libraries + Knowledge sources; Copilot backlog
-line; action items confined to the repository; pack-rule pull (local rules + dōjō state); Settings › Extensions; #156
-architecture metrics. Fixes by L0: staging.metric_gating RLS, fmt/clippy, text on tints, travels tiles.
-Rokkit 1.14.1 (switch contrast) and 1.15.1 (ScreenShell D87, StatCard, search in the filter band) are on develop.
-Last full gate: 4304 senseid passed / 0 failed; test-fast; 67/67 SQL.
+**Done:**
+- Relay screen replaces Intake (2898b4157; L5 r2, reviewed by L4/L6; F2 wordings ratified).
+- rokkit 1.15.2 (ScreenShell/Toolbar attribute passthrough, L7) in app + dōjō (2ef07a55b).
+- dōjō `@rokkit/app` resolution fix (e1d724a14): dōjō check + 40 test files were red since 4aec5a688.
+- dbd 0.27.9 released: a call never resolves to a relation (sensei-hq/dbd#112, PR #113); CI test job pinned to
+  ubuntu-24.04 (26.04 lacks libxml2.so.2).
+- Gates at 2ef07a55b: app check 0 / 3196 tests; dōjō check 0 / 2279 tests; make test-fast green.
 
-**Decided today:** D87 (+ info band look), D88 past due = hidden until paid, D89 sync targets (env list, per-target marks).
+**Remaining:**
+- L4 relay schema r2: B1 `current_timestamp` (no `now()` in relay DDL) + `dbd inspect` 0 errors both scopes, S1
+  search_path, session-local-day window, policy count line → L6 reviews → L0 rehearses on a clone, converges both local
+  DBs twice, merges.
+- L3: run.sh refuses the live `sensei` DB (tests first) → relay part 2 (pool TimeZone = the Mac's) → resource lease →
+  bump the daemon's dbd-core pin v0.27.8 → v0.27.9.
+- L5: relay follow-ups (`coord/reviews/L5/relay-screen-followups.md`); diagrams-shell phase B after L3 approves tests r2.
+- L6: sensei-hq/dbd#114 (tests spawning git clear GIT_* env) while no review is pending.
+- L0: onboarding lines (slice 1 item 5); dbd develop → main PR.
 
-**Remaining, in order:**
-1. L3: run.sh --apply phase B → sync hardening (token only to its own registry, per-row stored confirmation,
-   dojo_url per cycle) → WP8 → D89 analysis r2.
-2. L2: TG5a tests r2 → TG2 after WP8. L1: D83a phase B, module-tree analysis, diagrams onto ScreenShell.
-3. L4: dōjō workspaces feedback → org repositories read → metric_readings. L5: next page. Design: billing build r2.
-4. Install #2 with the user (daemon + DB converge twice: #156 view, pack-rule; app).
+**Next command:** read `coord/reports/L4/` newest (relay-schema-impl-r2) and run `dbd inspect` + `--scope dojo` in
+`lanes/L9/database`.
 
-**Next command:** review/merge as lanes report; install #2 when the user has a few minutes.
+**Open questions (user):** billing edge — a future-start Pro or ended trial shows "once Pro is renewed".
 
-**Open:** this Mac's dōjō target (production now; local for tests); production landing check needs prod access.
-
-**Known broken:** none on develop. The 220 F4 rows are marked shared against production (D89 migration re-offers).
+**Known broken:** none on develop. Production lacks per-row confirm and refuses `hidden_coupling_pairs` until the next
+sensei release.
