@@ -241,3 +241,8 @@ Lanes read better as names than as codes. The broker mints each lane a stable co
 show the codename as the primary human handle next to the objective title ("Beige Aster · Diagrams"); the code (L1)
 stays for compact and technical contexts. Slice 1 ships code + objective title as contracted; codenames land as a
 tests-first slice-2 item (model column + minting rule + uniqueness, in `lanes-data.md` and `relay-api.ts` then).
+Handshake is negotiated, not assumed. At register the broker probes what the assistant family supports: the probe
+itself, session-minted codenames, and direct session-to-session handshakes (as Muse sessions do today). Where an
+assistant (freebuff, opencode, claude, cowork, chatgpt, …) lacks direct-handshake support, traffic falls back to the
+Sensei-mediated channel — the daemon brokers, exactly as slice 1 does for every lane. The dogfood adapter (§14.5)
+proves the direct path; the fallback keeps every other family working unchanged.
