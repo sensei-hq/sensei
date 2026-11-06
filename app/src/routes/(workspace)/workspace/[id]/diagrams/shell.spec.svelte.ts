@@ -15,6 +15,7 @@ import LensPage from './[lens]/+page.svelte';
 import SchemaPage from './schema/+page.svelte';
 import { CODEMAP_HOST, CodeMapHost } from './codemap-host.svelte.js';
 import { DIAGRAM_VIEWS } from './diagrams-nav.js';
+import { KANJI_ICONS } from '$lib/glyph-vocabulary';
 import type { CodeMapPort, Level0, Level1, Lens } from '@sensei/codemap';
 
 const L0: Level0 = {
@@ -270,6 +271,70 @@ describe('diagrams-shell — the diagrams render on the ScreenShell', () => {
     expect(['diagram-stats-toggle', 'diagram-side-toggle', 'diagram-stats', 'diagram-budget',
       'schema-screen', 'schema-layout', 'schema-sidebar', 'schema-tabs']
       .filter((h) => !q(`[data-testid="${h}"]`))).toEqual([]);
+  });
+
+  // Review r1 F1: the ER page has its own `cardOf`, so the lens pins above say
+  // nothing about it — and `schema-inspect` reads this card's own hooks.
+  it('the ER stat cards keep the hooks schema-inspect reads off them', async () => {
+    renderSchema();
+    await settle();
+    // The label counts, as the design does: one table is `Table`.
+    expect(q('[data-testid="diagram-stat-Table"]')).not.toBeNull();
+    expect(q('[data-testid="diagram-stat-Table"] [data-stat-card-value]')?.textContent).toBe('1');
+  });
+
+  // Review r1 F3 (N5a's ruling): rokkit draws a card's icon only in icon mode and
+  // its `mark` in kanji mode, so a card without a mark shows nothing by default —
+  // where the old header always showed the stat's Solar icon.
+  it('every stat card carries its own mark and tone, and its icon in icon mode', async () => {
+    renderLens('structure');
+    await settle();
+    expect(q('[data-testid="diagram-stat-Modules"] [data-stat-card-mark]')?.textContent).toBe('構');
+    expect(q('[data-testid="diagram-stat-Repos"] [data-stat-card-mark]')?.textContent).toBe('場');
+    expect(q('[data-testid="diagram-stat-Cycles"] [data-stat-card-mark]')?.textContent).toBe('環');
+    // The tone the old spec pinned on this card, and still the shell's hook (#133).
+    expect(q('[data-testid="diagram-stat-Cycles"]')?.getAttribute('data-tone')).toBe('warning');
+    // #133: every mark is the vocabulary's, so icon mode can draw it as its icon.
+    const marks = all('[data-screen-stats] [data-stat-card-mark]').map((n) => n.textContent ?? '');
+    expect(marks.every((m) => KANJI_ICONS[m])).toBe(true);
+
+    drop();
+    renderLens('structure', { glyphs: 'icon' });
+    await settle();
+    expect(q('[data-testid="diagram-stat-Modules"] [data-stat-card-icon]')?.className)
+      .toBe('i-solar-box-minimalistic-bold-duotone');
+
+    drop();
+    renderSchema();
+    await settle();
+    expect(q('[data-testid="diagram-stat-Table"] [data-stat-card-mark]')?.textContent).toBe('表');
+  });
+
+  // Review r1 F4 (N5b's ruling): the shell's sidebar slot has no narrow rule, and
+  // the old map drew its panel only `{#if side && !narrow}`. The page measures its
+  // own area — the width the map used to — so hiding the panel cannot re-widen it.
+  it('a narrow window keeps the sidebar closed, and a wide one shows it', async () => {
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 400 });
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: ResizeObserverCallback) {
+        void cb;
+      }
+      observe(el: Element) {
+        void el;
+      }
+      unobserve() {}
+      disconnect() {}
+    });
+    try {
+      renderLens('structure');
+      await settle();
+      expect(q('[data-screen-body]')).not.toBeNull();
+      expect(q('[data-screen-sidebar]')).toBeNull();
+    } finally {
+      if (width) Object.defineProperty(HTMLElement.prototype, 'clientWidth', width);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+    }
   });
 
   it('the legacy diagram keys migrate once, into every diagram’s view id — after the views are read', () => {

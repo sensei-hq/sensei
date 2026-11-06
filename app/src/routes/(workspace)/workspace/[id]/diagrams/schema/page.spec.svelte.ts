@@ -88,10 +88,21 @@ describe('Database · ER', () => {
     expect(q('[data-testid="schema-tabs"]')).not.toBeNull();
   });
 
+  // Review r1 F2 (L0's standing rule from activity-logs): a steady state with no
+  // design passes no sidebar snippet, never an empty one — the old page drew its
+  // aside inside `{:else if view.model}`.
   it('a read that failed says so, with the status, and can be retried', async () => {
     render({}, 500);
     await settle();
     expect(q('[data-testid="schema-error"]')?.textContent).toContain('500');
     expect(q('[data-testid="schema-retry"]')).not.toBeNull();
+    expect(q('[data-screen-sidebar]')).toBeNull();
+  });
+
+  it('no design describes nothing and draws no sidebar', async () => {
+    render({ version: 3, tables: [], refs: [], entities: [], deps: [], enums: [] });
+    await settle();
+    expect(q('[data-testid="schema-none"]')).not.toBeNull();
+    expect(q('[data-screen-sidebar]')).toBeNull();
   });
 });

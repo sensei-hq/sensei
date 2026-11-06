@@ -9,6 +9,7 @@
     import type { InfoSlot, ShellStat } from '@rokkit/app';
     import { codeMapHost } from '../codemap-host.svelte.js';
     import { viewIdOf } from '../diagrams-nav.js';
+    import { statMark } from '../diagram-marks.js';
 
     let { data } = $props();
 
@@ -39,10 +40,18 @@
         title: s.label,
         value: s.value,
         tone: TONE[s.tone],
+        // Kanji mode draws the mark, icon mode the icon (N5a, #133).
+        kanji: statMark(s.label),
         icon: s.icon,
         href: s.lens ? hrefFor(s.lens) : undefined,
         attrs: { 'data-testid': `diagram-stat-${s.label}` },
     });
+
+    // The old map drew its panel only `{#if side && !narrow}`; the shell's slot has
+    // no narrow rule, so the page measures the width the map used to and closes it.
+    // Measured outside the shell: the sidebar's own width cannot change this number.
+    let width = $state(0);
+    const narrow = $derived(width > 0 && width < 640);
     /** The workspace's numbers, its repos beside its modules; null while reading. */
     const cards = $derived.by((): ShellStat[] | null => {
         const stats = host.stats;
@@ -75,6 +84,7 @@
 
 <!-- Each diagram is its own screen; the map they share lives in the layout. The
      four toggles keep the header's old names and their `diagram-*-toggle` hooks. -->
+<div class="h-full min-h-0" bind:clientWidth={width}>
 {#key data.lens}
 <ShellScreen
     viewId={viewIdOf(data.view)}
@@ -95,7 +105,7 @@
     bandAttrs={{ stats: { 'data-testid': 'diagram-stats' } }}
     filters={controlsBand}
     footer={budgetBand}
-    sidebar={sidePanel}>
+    sidebar={narrow ? undefined : sidePanel}>
     <div class="h-full min-h-0 flex flex-col gap-3 p-4" data-testid="codemap-screen" data-lens={data.lens}>
         {#if host.focus}
             <span class="self-start inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-accent text-sm text-ink"
@@ -117,3 +127,4 @@
     </div>
 </ShellScreen>
 {/key}
+</div>

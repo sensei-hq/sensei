@@ -26,6 +26,7 @@
     import { appState } from '$lib/appstate.svelte.js';
     import type { Stat } from '@sensei/codemap';
     import { DIAGRAM_VIEWS, viewIdOf } from '../diagrams-nav.js';
+    import { statMark } from '../diagram-marks.js';
     import { SchemaState, type DesignTabId } from '../schema-state.svelte.js';
 
     let { data } = $props();
@@ -55,6 +56,8 @@
         title: s.label,
         value: s.value,
         tone: TONE[s.tone],
+        // Kanji mode draws the mark, icon mode the icon (N5a, #133).
+        kanji: statMark(s.label),
         icon: s.icon,
         attrs: { 'data-testid': `diagram-stat-${s.label}` },
     });
@@ -77,6 +80,9 @@
     <p class="m-0 px-4 py-2 font-mono text-xs text-ink-mute" data-testid="diagram-budget">{view.note}</p>
 {/snippet}
 
+<!-- A read, a failure and no design are steady states: pass no sidebar snippet,
+     never an empty one (L0's rule from activity-logs). The old page's aside lived
+     inside its `{:else if view.model}` branch, which sat after those three. -->
 <ShellScreen
     viewId={viewIdOf(diagram)}
     mark={{ kanji: diagram.kanji, icon: diagram.icon }}
@@ -93,7 +99,7 @@
     }}
     bandAttrs={{ stats: { 'data-testid': 'diagram-stats' } }}
     footer={budgetBand}
-    sidebar={sidePanel}>
+    sidebar={view.view === 'design' ? sidePanel : undefined}>
     <div class="flex-1 min-h-0 flex flex-col p-4" data-testid="schema-screen">
         {#if view.view === 'loading'}
             <p class="text-sm text-ink-soft" data-testid="schema-loading">Reading the schema store.</p>
