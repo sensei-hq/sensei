@@ -98,28 +98,55 @@ describe('billing build · each account state says what it means (mockup r3)', (
 		expect(b.problem?.code).toBe('not_subscribed');
 	});
 
-	it('period ended: Free is current; hidden again, back as they were (D88), code subscription_expired', () => {
+	it('period ended: Free is current, Pro has lapsed, code subscription_expired', () => {
 		const b = built({ account: account('pro', 'active', '2026-11-01T00:00:00Z'), usage: usage() }, NOW);
 		expect(current(b)).toEqual(['free']);
 		expect(b.tag).toBe('Current plan');
 		expect(b.problem).toEqual({
 			tone: 'refusal',
 			title: 'Pro is not active',
-			detail: "The billing period ended Nov 1, so this organization's private repositories are hidden again. They come back as they were once Pro is renewed.",
+			detail: "The billing period ended Nov 1, so this organization's private repositories are hidden again. Pro has lapsed.",
 			remedy: 'Renew once payments are connected.',
 			code: 'subscription_expired'
 		});
 	});
 
-	it('canceled: Free is current, the same promise and remedy, code not_subscribed', () => {
+	it('canceled: Free is current, Pro has lapsed, code not_subscribed', () => {
 		const b = built({ account: account('pro', 'canceled'), usage: usage() }, NOW);
 		expect(current(b)).toEqual(['free']);
 		expect(b.problem).toEqual({
 			tone: 'refusal',
 			title: 'Pro is not active',
-			detail: "The billing account is canceled, so this organization's private repositories are hidden again. They come back as they were once Pro is renewed.",
+			detail: "The billing account is canceled, so this organization's private repositories are hidden again. Pro has lapsed.",
 			remedy: 'Renew once payments are connected.',
 			code: 'not_subscribed'
+		});
+	});
+
+	// billing wording ruling (2026-11-06): an ended trial is Pro that ran and ended.
+	it('trial ended: Free is current, Pro has lapsed, code subscription_expired', () => {
+		const b = built({ account: account('pro', 'trialing', '2026-11-01T00:00:00Z'), usage: usage() }, NOW);
+		expect(current(b)).toEqual(['free']);
+		expect(b.problem).toEqual({
+			tone: 'refusal',
+			title: 'Pro is not active',
+			detail: "The billing period ended Nov 1, so this organization's private repositories are hidden again. Pro has lapsed.",
+			remedy: 'Renew once payments are connected.',
+			code: 'subscription_expired'
+		});
+	});
+
+	// billing wording ruling (2026-11-06): a Pro plan that never ran is not enabled.
+	it('future start: Free is current, Pro is not enabled, code not_enabled', () => {
+		const a = { ...account('pro', 'active', '2026-12-01T00:00:00Z'), period_start: '2026-12-01T00:00:00Z' };
+		const b = built({ account: a, usage: usage() }, NOW);
+		expect(current(b)).toEqual(['free']);
+		expect(b.problem).toEqual({
+			tone: 'refusal',
+			title: 'Pro is not active',
+			detail: "The billing period starts Dec 1, so this organization's private repositories are hidden again. Pro is not enabled.",
+			remedy: 'Renew once payments are connected.',
+			code: 'not_enabled'
 		});
 	});
 

@@ -60,9 +60,10 @@ describe('toKitBilling', () => {
 
 	// M5 (r1): the screen and all_my_repositories must agree — a lapsed account is
 	// not current, so its private repositories are hidden, and the screen says so.
-	// billing build: canceled keeps this shape with D88's copy and a code;
+	// billing build: canceled keeps this shape with the code;
 	// past due no longer lapses to Free (it stays Pro, tagged — billing-build.spec.ts).
-	it('a canceled account has lapsed: Free is current, and a refusal says why and that they come back', () => {
+	// billing wording ruling (2026-11-06): Pro ran and ended, so it has lapsed.
+	it('a canceled account has lapsed: Free is current, and a refusal says why', () => {
 		const out = toKitBilling({ account: account('pro', '2026-08-01T00:00:00Z', 'canceled'), usage: usage(2) }, NOW);
 		expect(out.plan).toBe('Free');
 		expect(out.tiers.filter((t) => t.current).map((t) => t.id)).toEqual(['free']);
@@ -70,17 +71,49 @@ describe('toKitBilling', () => {
 		expect(out.problem).toEqual({
 			tone: 'refusal',
 			title: 'Pro is not active',
-			detail: "The billing account is canceled, so this organization's private repositories are hidden again. They come back as they were once Pro is renewed.",
+			detail: "The billing account is canceled, so this organization's private repositories are hidden again. Pro has lapsed.",
 			remedy: 'Renew once payments are connected.',
 			code: 'not_subscribed'
 		});
 	});
 
-	// billing build: D88's copy.
+	// billing wording ruling (2026-11-06): a period that ended is Pro that ran and ended.
 	it('an account past its period end has lapsed too', () => {
 		const out = toKitBilling({ account: account('pro', '2026-07-01T00:00:00Z'), usage: usage(2) }, NOW);
 		expect(out.plan).toBe('Free');
-		expect(out.problem?.detail).toBe("The billing period ended Jul 1, so this organization's private repositories are hidden again. They come back as they were once Pro is renewed.");
+		expect(out.problem?.detail).toBe("The billing period ended Jul 1, so this organization's private repositories are hidden again. Pro has lapsed.");
+	});
+
+	// billing wording ruling (2026-11-06): a trial that ended is Pro that ran and ended.
+	it('an ended trial has lapsed too, not "not enabled"', () => {
+		const out = toKitBilling({ account: account('pro', '2026-07-01T00:00:00Z', 'trialing'), usage: usage(2) }, NOW);
+		expect(out.plan).toBe('Free');
+		expect(out.problem?.detail).toBe("The billing period ended Jul 1, so this organization's private repositories are hidden again. Pro has lapsed.");
+		expect(out.problem?.code).toBe('subscription_expired');
+	});
+
+	// billing wording ruling (2026-11-06): a Pro plan whose period has not started
+	// never ran, so it is not enabled — and there is no hidden list for it.
+	it('a future start is not enabled, not lapsed', () => {
+		const future = { ...account('pro', '2026-08-01T00:00:00Z'), period_start: '2026-08-01T00:00:00Z' };
+		const out = toKitBilling({ account: future, usage: usage(2) }, NOW);
+		expect(out.plan).toBe('Free');
+		expect(out.problem).toEqual({
+			tone: 'refusal',
+			title: 'Pro is not active',
+			detail: "The billing period starts Aug 1, so this organization's private repositories are hidden again. Pro is not enabled.",
+			remedy: 'Renew once payments are connected.',
+			code: 'not_enabled'
+		});
+	});
+
+	// dojo.billing_status holds only trialing, active, past_due and canceled, so this
+	// arm is defensive: any other status has never been active, so it is not enabled.
+	it('a status outside the enum is not enabled, not lapsed', () => {
+		const out = toKitBilling({ account: account('pro', null, 'incomplete'), usage: usage(2) }, NOW);
+		expect(out.plan).toBe('Free');
+		expect(out.problem?.detail).toBe("The billing account is incomplete, so this organization's private repositories are hidden again. Pro is not enabled.");
+		expect(out.problem?.code).toBe('not_enabled');
 	});
 
 	// billing build: the mockup's copy (L3).
