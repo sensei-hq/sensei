@@ -82,8 +82,8 @@ export interface RelayFilter {
 
 export interface RelayCrew {
   id: string;
-  /** The crew's repository; the main window groups its rows under it (L0 ruling, r2). */
-  repo_key: string;
+  /** The crew's repository (`null` = none — Q18; the screen reads it as "no repository"); the main window groups its rows under it (L0 ruling, r2). */
+  repo_key: string | null;
   /** Optional: a crew may work on repositories that belong to no workspace. */
   workspace_id: string | null;
   goal: string | null;
@@ -442,6 +442,7 @@ export interface RelaySendMessage {
   task_id: string | null;
   /** ≤ 600 characters, plain text. */
   text: string;
+  /** Person-only: 'lane' is set by the daemon, never sent (Q12). */
   surface: 'desktop' | 'dojo';
 }
 
@@ -451,6 +452,7 @@ export interface RelayAnswer {
   option: string;
   note: string | null;
   /** No `by`: the daemon records the person as `lane_id = null` (lanes-data), CONTRACT §3e's `by: 'person'`. */
+  /** Person-only: 'lane' is set by the daemon, never sent (Q12). */
   surface: 'desktop' | 'dojo';
 }
 
