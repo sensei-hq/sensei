@@ -4574,9 +4574,9 @@ mod tests {
         // this slice to earn a print for that reason.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,124, headroom {})",
+             (ceiling 1,123, headroom {})",
             elsewhere.len(),
-            1_124_i64 - other as i64
+            1_123_i64 - other as i64
         );
         // Lowered from 1,300 on 2026-10-26: the store's row types moved to the
         // path their callers name (`pg_store::FolderRow`), so the re-exports the
@@ -4614,13 +4614,13 @@ mod tests {
         // Raised 1,116 → 1,120 on 2026-11-06, measured 1,118 over 228
         // identities: item 3's phase-B bodies add 4 refs over 0 new
         // identities (alias reaches from the new store fns and handlers).
-        // Raised 1,120 → 1,124 on 2026-11-07, measured 1,121 over 228
+        // Raised 1,120 → 1,123 on 2026-11-07, measured 1,121 over 228
         // identities (develop base 1,119/228): the F3 gap fix adds 2 over
         // 0 new identities — `AppState·pg` alias reaches from the two new
         // lane handlers and the sweeper-driving test. Same documented
         // class, same backlog cure (follow the alias), not a lower number.
         assert!(
-            other <= 1_124,
+            other <= 1_123,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

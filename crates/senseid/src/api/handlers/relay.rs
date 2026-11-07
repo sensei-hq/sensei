@@ -2353,6 +2353,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn closed_crew_rejects_reregister() {
+        // r2 (L0 ruling): a closed crew refuses resumes too — reregister is
+        // register by another name, and a live lane on a closed crew strands
+        // work no coordinator action can touch.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        unregister_lane(&h, &lane_id, &token).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/reregister",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        // Still unregistered: the 409 wrote nothing (heartbeat stays 410).
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::GONE, "{body}");
+        assert_eq!(body["error"], "relay_lane_gone");
+    }
+
+    #[tokio::test]
     async fn close_is_idempotent() {
         let h = harness().await;
         let coord = register_coordinator(&h).await;

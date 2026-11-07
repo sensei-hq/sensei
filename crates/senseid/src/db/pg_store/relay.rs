@@ -1120,6 +1120,7 @@ impl PgStore {
         };
         let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
         sqlx_core::query::query("update relay.lanes set unregistered_at = null where id = $1")
             .bind(lane_id)
             .execute(&mut *tx)
@@ -1518,10 +1519,10 @@ impl PgStore {
         Ok(crew_id)
     }
 
-    /// A closed crew refuses new work (F3): register-join, plan and assign
-    /// all pass through here inside their write transaction. A missing
-    /// crew is not this gate's verdict — each caller rules existence its
-    /// own way.
+    /// A closed crew refuses new work (F3): register-join, reregister, plan
+    /// and assign all pass through here inside their write transaction. A
+    /// missing crew is not this gate's verdict — each caller rules
+    /// existence its own way.
     async fn relay_require_crew_open(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
         user_id: Uuid,
@@ -2832,7 +2833,7 @@ impl PgStore {
     /// the coordinator closes, then unregisters (a strict zero is
     /// uncallable: closing needs a live lane to auth). Idempotent:
     /// closing a closed crew re-asserts the state. Closed crews refuse
-    /// register/plan/assign (`relay_require_crew_open`).
+    /// register/reregister/plan/assign (`relay_require_crew_open`).
     pub async fn relay_close_crew(
         &self,
         user_id: Uuid,
