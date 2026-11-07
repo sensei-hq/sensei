@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::api::state::AppState;
 use crate::db::pg_store::targets::FetchStart;
 use crate::tracker::ticket::{JiraTicketReader, TicketReader};
-use crate::tracker::{TrackerKind, adapter_for_kind, jira, runtime};
+use crate::tracker::{TrackerKind, adapter_for_kind, gitlab, jira, runtime};
 
 /// Body of `POST /api/tickets/{key}/fetch`.
 #[derive(serde::Deserialize)]
@@ -74,9 +74,6 @@ pub(crate) async fn fetch_ticket(
         }
     };
 
-    // The tracker that answers to the key: one of THIS workspace's trackers whose
-    // project key is the key's prefix.
-    let upper = key.to_ascii_uppercase();
     let trackers = match pg.trackers_for_workspace(workspace).await {
         Ok(t) => t,
         Err(e) => {
@@ -84,16 +81,40 @@ pub(crate) async fn fetch_ticket(
             return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", json!({}));
         }
     };
-    let prefix = upper.split_once('-').map(|(p, _)| p);
-    let tracker = trackers.iter().find(|t| {
-        TrackerKind::parse(&t.kind) == Some(TrackerKind::Jira)
-            && jira::is_jira_key(&upper)
-            && prefix.is_some_and(|p| p.eq_ignore_ascii_case(&t.external_scope))
-    });
+    // The key in its canonical form and the tracker that answers to it. A Jira key
+    // is upper-cased; a forge key (`acme/platform#12`, or a bare `#12` read in the
+    // folder's own repository) keeps a lowercased path (§G9).
+    let (canonical, tracker) = if key.contains('#') {
+        let canonical = match forge_key(pg, &folder_id, &key).await {
+            Ok(ForgeKey::Key(k)) => k,
+            Ok(ForgeKey::Invalid) => {
+                return refuse(StatusCode::NOT_FOUND, "ticket_not_found", json!({"key": key}));
+            }
+            Ok(ForgeKey::NoRepository) => {
+                return refuse(StatusCode::NOT_FOUND, "no_tracker_for_key", json!({"key": key}));
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "fetch_ticket: the folder's repository read failed");
+                return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", json!({}));
+            }
+        };
+        let tracker = gitlab::tracker_for_key(&trackers, &canonical);
+        (canonical, tracker)
+    } else {
+        // One of THIS workspace's Jira trackers whose project key is the key's prefix.
+        let upper = key.to_ascii_uppercase();
+        let prefix = upper.split_once('-').map(|(p, _)| p);
+        let tracker = trackers.iter().find(|t| {
+            TrackerKind::parse(&t.kind) == Some(TrackerKind::Jira)
+                && jira::is_jira_key(&upper)
+                && prefix.is_some_and(|p| p.eq_ignore_ascii_case(&t.external_scope))
+        });
+        (upper, tracker)
+    };
     let Some(tracker) = tracker else {
         return refuse(StatusCode::NOT_FOUND, "no_tracker_for_key", json!({"key": key}));
     };
-    let Some(adapter) = adapter_for_kind(TrackerKind::Jira) else {
+    let Some(adapter) = TrackerKind::parse(&tracker.kind).and_then(adapter_for_kind) else {
         return refuse(StatusCode::BAD_GATEWAY, "unsupported_tracker", json!({"key": key}));
     };
 
@@ -105,14 +126,31 @@ pub(crate) async fn fetch_ticket(
             return refuse(StatusCode::BAD_GATEWAY, e.code(), json!({"key": key}));
         }
     };
-    let reader = JiraTicketReader {
-        transport: transport.as_ref(),
-        base_url: tracker.base_url.clone(),
-        acceptance_criteria_field: tracker.params["acceptance_criteria_field"]
-            .as_str()
-            .map(String::from),
+    let read = match adapter.kind() {
+        TrackerKind::Jira => {
+            JiraTicketReader {
+                transport: transport.as_ref(),
+                base_url: tracker.base_url.clone(),
+                acceptance_criteria_field: tracker.params["acceptance_criteria_field"]
+                    .as_str()
+                    .map(String::from),
+            }
+            .read_ticket(&canonical)
+            .await
+        }
+        TrackerKind::Gitlab => {
+            gitlab::GitlabTicketReader {
+                transport: transport.as_ref(),
+                board: crate::tracker::BoardScope {
+                    base_url: tracker.base_url.clone(),
+                    board_ref: tracker.board_ref.clone(),
+                },
+            }
+            .read_ticket(&canonical)
+            .await
+        }
     };
-    let ticket = match reader.read_ticket(&upper).await {
+    let ticket = match read {
         Ok(Some(t)) => t,
         Ok(None) => return refuse(StatusCode::NOT_FOUND, "ticket_not_found", json!({"key": key})),
         Err(e) => {
@@ -143,9 +181,46 @@ pub(crate) async fn fetch_ticket(
             }
         };
 
-    let start_of_work = start_work(&state, workspace, &upper, body.session_id.as_deref()).await;
+    let start_of_work = start_work(&state, workspace, &canonical, body.session_id.as_deref()).await;
     Json(json!({ "ticket": ticket, "rules": rules, "start_of_work": start_of_work }))
         .into_response()
+}
+
+/// A forge key, as the route reads it.
+enum ForgeKey {
+    /// Canonical: the lowercased path, `#`, the number.
+    Key(String),
+    /// Not a key (an empty, `.` or `..` path segment, no number): nothing is fetched.
+    Invalid,
+    /// A bare `#n` from a folder with no repository key to read it in.
+    NoRepository,
+}
+
+/// `key` in canonical form. A bare `#n` is read in the folder's own repository:
+/// its `repo_key` (`host/org/repo`) gives the path.
+async fn forge_key(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    key: &str,
+) -> Result<ForgeKey, String> {
+    use crate::tracker::forge::{is_key_path, parse_key};
+    if let Some(n) = key.strip_prefix('#') {
+        if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+            return Ok(ForgeKey::Invalid);
+        }
+        let Some(repo_key) = pg.repo_key_of_folder(folder_id).await? else {
+            return Ok(ForgeKey::NoRepository);
+        };
+        // `host/org/repo`: the path is everything after the host.
+        return Ok(match repo_key.split_once('/') {
+            Some((_, path)) if is_key_path(path) => ForgeKey::Key(format!("{path}#{n}")),
+            _ => ForgeKey::NoRepository,
+        });
+    }
+    Ok(match parse_key(key) {
+        Some((path, n)) => ForgeKey::Key(format!("{path}#{n}")),
+        None => ForgeKey::Invalid,
+    })
 }
 
 /// Link the session to the ticket as the start of work, or say why not. The
@@ -650,5 +725,130 @@ mod tests {
         let mut expected = rules.clone();
         expected.as_object_mut().unwrap().remove("folder");
         assert_eq!(b["rules"], expected);
+    }
+
+    // ── §G9: GitLab keys, against the recorded CE ───────────────────────────
+
+    /// A workspace with the recorded GitLab group `acme` (group:857) connected and
+    /// synced, a repository folder whose `repo_key` is `acme/backend`, and a session.
+    /// Issue 44 is the recorded one; 99 is missing; 7 lives in a project outside the
+    /// group; 8 answers 500.
+    async fn gitlab_world(h: &Harness) -> World {
+        use crate::tracker::gitlab::test_support::{RecordedGitlab, body};
+        let outside = {
+            let mut i = body("ce-closed-milestone", "project_issue_one");
+            i["project_id"] = json!(999);
+            i
+        };
+        let gl = RecordedGitlab::load("ce-closed-milestone")
+            .with(
+                "projects/acme%2Fbackend/issues/44",
+                200,
+                body("ce-closed-milestone", "project_issue_one"),
+            )
+            .with("projects/acme%2Fbackend/issues/99", 404, json!({}))
+            .with("projects/acme%2Fbackend/issues/7", 200, outside)
+            .with("projects/999", 200, json!({"id": 999, "namespace": {"full_path": "elsewhere"}}))
+            .with("projects/acme%2Fbackend/issues/8", 500, json!({}));
+        h.factory.serve_transport("https://gitlab.example.com", Arc::new(gl));
+        let pg = &h.state.pg;
+        let workspace = pg
+            .create_workspace(&format!("_test:g9:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let (st, b) = call(
+            h,
+            "POST",
+            &format!("/api/workspaces/{workspace}/trackers"),
+            Some(json!({
+                "kind": "gitlab", "level": "sprint",
+                "board_url": "https://gitlab.example.com/groups/acme",
+                "confirm_host": "gitlab.example.com", "api_token": API_TOKEN,
+            })),
+        )
+        .await;
+        assert!(st.is_success(), "connect: {st} {b}");
+        for _ in 0..300 {
+            let (_, b) =
+                call(h, "GET", &format!("/api/workspaces/{workspace}/trackers"), None).await;
+            if b[0]["status"] != json!("pending") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let w = repository_in(h, workspace).await;
+        sqlx_core::query::query(
+            "UPDATE sensei.repositories SET repo_key = 'gitlab.example.com/acme/backend'
+              WHERE id = (SELECT repository_id FROM sensei.folders WHERE abs_path = $1)",
+        )
+        .bind(&w.folder)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        w
+    }
+
+    #[tokio::test]
+    async fn a_gitlab_key_reads_the_issue_and_links_the_session() {
+        let h = harness().await;
+        let w = gitlab_world(&h).await;
+        let (st, b) = post_fetch(
+            &h,
+            "Acme%2FBackend%2344",
+            json!({"folder": w.folder, "session_id": w.client_session}),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let t = &b["ticket"];
+        assert_eq!(
+            (t["key"].clone(), t["tracker"].clone()),
+            (json!("acme/backend#44"), json!("gitlab"))
+        );
+        assert_eq!(t["title"], json!("Issue 44"));
+        assert_eq!(t["acceptance_criteria_source"], json!("not_configured"));
+        assert_eq!(t["url"], json!("https://gitlab.example.com/acme/backend/-/work_items/44"));
+        assert_eq!(
+            b["start_of_work"],
+            json!({"recorded": true}),
+            "the canonical key finds the mirror"
+        );
+        assert_eq!(
+            links_of(&h, w.session).await,
+            [("fetch".into(), "acme/backend#44".into(), 1, true)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bare_key_is_read_in_the_folder_s_repository() {
+        let h = harness().await;
+        let w = gitlab_world(&h).await;
+        let (st, b) = post_fetch(&h, "%2344", json!({"folder": w.folder})).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert_eq!(b["ticket"]["key"], json!("acme/backend#44"));
+    }
+
+    #[tokio::test]
+    async fn a_gitlab_issue_outside_the_board_is_not_returned() {
+        // The token can see it; the board does not hold it.
+        let h = harness().await;
+        let w = gitlab_world(&h).await;
+        let (st, b) = post_fetch(&h, "acme%2Fbackend%237", json!({"folder": w.folder})).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::NOT_FOUND, json!("ticket_not_found")));
+        assert!(b.get("ticket").is_none() && !b.to_string().contains("Issue 44"), "{b}");
+    }
+
+    #[tokio::test]
+    async fn gitlab_misses_failures_and_bad_keys_answer_with_their_codes() {
+        let h = harness().await;
+        let w = gitlab_world(&h).await;
+        let folder = json!({"folder": w.folder});
+        let (st, b) = post_fetch(&h, "acme%2Fbackend%2399", folder.clone()).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::NOT_FOUND, json!("ticket_not_found")));
+        let (st, b) = post_fetch(&h, "acme%2Fbackend%238", folder.clone()).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::BAD_GATEWAY, json!("http_error")));
+        let (st, b) = post_fetch(&h, "acme%2F..%2Fx%231", folder.clone()).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::NOT_FOUND, json!("ticket_not_found")));
+        let (st, b) = post_fetch(&h, "other%2Frepo%231", folder).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::NOT_FOUND, json!("no_tracker_for_key")));
     }
 }

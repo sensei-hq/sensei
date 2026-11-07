@@ -39,6 +39,34 @@ pub struct TrackerRow {
     pub writeback_error: Option<String>,
 }
 
+#[cfg(test)]
+impl TrackerRow {
+    /// A row with every field empty, for pure tests that set the few they read.
+    pub fn test_default() -> Self {
+        TrackerRow {
+            id: uuid::Uuid::nil(),
+            workspace_id: uuid::Uuid::nil(),
+            kind: String::new(),
+            level: "sprint".into(),
+            base_url: String::new(),
+            account: String::new(),
+            external_scope: String::new(),
+            board_ref: String::new(),
+            params: serde_json::json!({}),
+            secret_service: String::new(),
+            last_attempt_at: None,
+            last_success_at: None,
+            last_error: None,
+            discovered_through: chrono::DateTime::UNIX_EPOCH,
+            owner_ref: None,
+            owner_state: None,
+            owner_error: None,
+            writeback_enabled: false,
+            writeback_error: None,
+        }
+    }
+}
+
 impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for TrackerRow {
     fn from_row(r: &'r sqlx_postgres::PgRow) -> Result<Self, sqlx_core::Error> {
         use sqlx_core::row::Row;

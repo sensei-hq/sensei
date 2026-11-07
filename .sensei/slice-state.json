@@ -19,7 +19,7 @@
     "3 Validated/Snapshot fields + owner-after-validate + params_extra",
     "4 capabilities + guards + unsupported_by_tracker"
   ],
-  "current_phase": "F4 #367 get_ticket",
+  "current_phase": "F5 #368 CLI, app, copy, docs",
   "completed": [
     "F1.1 address check: net::addr::is_public_ip (moved, stricter), net::resolver::PublicOnly, ReqwestRaw resolver + no_proxy (D13)",
     "F1.2 Header auth (sensitive, redacted) + trailing-dot refusal in normalize_base_url (D19)",
@@ -28,7 +28,8 @@
     "F1 review: security NO FINDINGS; test-review 4 gaps fixed (PublicOnly::public, refusal_for 409 branch, capabilities_of_kind + reads_history tests, history control); adversarial: PUT guard uses the resolved adapter; reads_history extra row read per tracker left as LOW (4 signatures)",
     "F2 forge.rs: keys, links, unknown_keys (D11); link::tally_links shared with Jira",
     "P1 (CE part): fixtures ce-no-milestones (5d99ce051) and ce-closed-milestone (a887862df), recorded from a self-managed CE 19.5.3 and scrubbed",
-    "F3 #366: GitLab adapter (milestone path on recorded CE; iterations on GitLab's documented shape), D2 D3 D5 D6 D7 D9 D10 D12(Rust) D15; full suite 4398 passed + ratchet fixed"
+    "F3 #366: GitLab adapter (milestone path on recorded CE; iterations on GitLab's documented shape), D2 D3 D5 D6 D7 D9 D10 D12(Rust) D15; full suite 4398 passed + ratchet fixed",
+    "F4 #367: get_ticket kind-dispatched; forge keys canonical (lowercased path), bare #n via the folder's repo_key, longest full_path wins, containment before anything returns (mutation-checked); full suite 4404 passed"
   ],
   "gate_status": "pass",
   "open_questions": [],
@@ -39,7 +40,8 @@
   "amendments": [
     "build-start audit: D1 reworded, D13 observable refusal + https proxy target (6ffec1e7b)",
     "F1.4: D10 end-to-end (HTTP 409, SDLC reasons through DB) moves to F3, because adapters resolve by kind from the registry",
-    "F3: project-board issues are read without scope=all (group boards need it); a '..' in a board URL is resolved by URL parsing before the path is read"
+    "F3: project-board issues are read without scope=all (group boards need it); a '..' in a board URL is resolved by URL parsing before the path is read",
+    "F4: GitlabTicketReader lives in tracker/gitlab.rs (it needs the board-id type there), not tracker/ticket.rs"
   ],
   "next_command": "/sensei:build #366",
   "notes": [

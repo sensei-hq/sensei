@@ -600,6 +600,91 @@ impl TrackerAdapter for GitlabAdapter {
     }
 }
 
+/// `get_ticket` for a GitLab key (§G9): one issue, read live with the board's own
+/// token, and returned only when its project is inside the board. A token often
+/// sees more than the board; this check is what keeps the read to the board.
+pub struct GitlabTicketReader<'a> {
+    pub transport: &'a dyn GetTransport,
+    pub board: BoardScope,
+}
+
+#[async_trait::async_trait]
+impl crate::tracker::ticket::TicketReader for GitlabTicketReader<'_> {
+    async fn read_ticket(
+        &self,
+        key: &str,
+    ) -> Result<Option<crate::tracker::ticket::TicketDetail>, TrackerError> {
+        use crate::tracker::ticket::{AcceptanceCriteriaSource, TicketDetail};
+        let t = self.transport;
+        // Not a key: nothing is requested.
+        let Some((path, iid)) = crate::tracker::forge::parse_key(key) else { return Ok(None) };
+        let board = BoardId::parse(&self.board.board_ref).ok_or(TrackerError::Decode)?;
+        let issue =
+            match t.get_json(&format!("{API}/projects/{}/issues/{iid}", encoded(&path)), &[]).await
+            {
+                Ok(v) => v,
+                Err(TrackerError::NotFound) => return Ok(None),
+                Err(e) => return Err(e),
+            };
+        let project_id =
+            issue.get("project_id").and_then(|p| p.as_u64()).ok_or(TrackerError::Decode)?;
+        let inside = match board.kind {
+            BoardKind::Project => project_id == board.id,
+            BoardKind::Group => {
+                let project = t.get_json(&format!("{API}/projects/{project_id}"), &[]).await?;
+                let namespace = project
+                    .pointer("/namespace/full_path")
+                    .and_then(|p| p.as_str())
+                    .ok_or(TrackerError::Decode)?
+                    .to_ascii_lowercase();
+                // The group's current path, never the stored one.
+                let (_, group_path) = board_info(t, board).await?;
+                path_in_board(&namespace, board, &group_path)
+            }
+        };
+        if !inside {
+            return Ok(None);
+        }
+        let named =
+            |pointer: &str| issue.pointer(pointer).and_then(|v| v.as_str()).map(String::from);
+        Ok(Some(TicketDetail {
+            key: format!("{path}#{iid}"),
+            title: named("/title").ok_or(TrackerError::Decode)?,
+            description: named("/description").filter(|d| !d.trim().is_empty()),
+            // GitLab has no criteria field (§G9).
+            acceptance_criteria: Vec::new(),
+            acceptance_criteria_source: AcceptanceCriteriaSource::NotConfigured,
+            status: named("/state"),
+            issue_type: named("/issue_type"),
+            sprint: named("/iteration/title").or_else(|| named("/milestone/title")),
+            assignee: named("/assignees/0/username"),
+            tracker: TrackerKind::Gitlab,
+            url: named("/web_url").ok_or(TrackerError::Decode)?,
+        }))
+    }
+}
+
+/// Pure: the GitLab tracker among `trackers` that answers to the forge `key`: the one
+/// whose current `full_path` is the key's path or its longest prefix on `/`
+/// boundaries; on a tie, the first in `trackers`' order (level, then creation).
+pub fn tracker_for_key<'a>(
+    trackers: &'a [crate::db::pg_store::trackers::TrackerRow],
+    key: &str,
+) -> Option<&'a crate::db::pg_store::trackers::TrackerRow> {
+    let (path, _) = crate::tracker::forge::parse_key(key)?;
+    let mut best: Option<(&crate::db::pg_store::trackers::TrackerRow, usize)> = None;
+    for t in trackers.iter().filter(|t| TrackerKind::parse(&t.kind) == Some(TrackerKind::Gitlab)) {
+        let Some(full_path) = t.params["full_path"].as_str().map(str::to_ascii_lowercase) else {
+            continue;
+        };
+        let matches = path == full_path || path.starts_with(&format!("{full_path}/"));
+        if matches && best.is_none_or(|(_, len)| full_path.len() > len) {
+            best = Some((t, full_path.len()));
+        }
+    }
+    best.map(|(t, _)| t)
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use crate::tracker::{GetTransport, TrackerError};
@@ -1112,5 +1197,33 @@ mod tests {
         ] {
             assert!(!is_gitlab_host(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn the_longest_full_path_answers_a_key() {
+        let row = |kind: &str, full_path: &str| crate::db::pg_store::trackers::TrackerRow {
+            kind: kind.into(),
+            params: serde_json::json!({"full_path": full_path}),
+            ..crate::db::pg_store::trackers::TrackerRow::test_default()
+        };
+        let trackers = [
+            row("gitlab", "acme"),
+            row("gitlab", "acme/backend"),
+            row("gitlab", "acme/back"),
+            row("jira", "acme/backend/x"),
+        ];
+        let pick = |k: &str| {
+            tracker_for_key(&trackers, k)
+                .map(|t| t.params["full_path"].as_str().unwrap().to_string())
+        };
+        assert_eq!(pick("acme/backend#4").as_deref(), Some("acme/backend"));
+        assert_eq!(pick("acme/backend/sub#4").as_deref(), Some("acme/backend"), "on / boundaries");
+        assert_eq!(pick("acme/frontend#4").as_deref(), Some("acme"));
+        assert_eq!(
+            pick("acme/backendx#4").as_deref(),
+            Some("acme"),
+            "acme/back is not a prefix of it"
+        );
+        assert_eq!(pick("other#4"), None);
     }
 }
