@@ -18,8 +18,17 @@ fn cfg() -> &'static SenseiConfig {
     sensei_bootstrap::config()
 }
 
+/// Process-scoped daemon base URL, resolved once in `main()` from
+/// `--daemon-url` > `SENSEI_DAEMON_URL` > default. A cell rather than a
+/// threaded parameter: ~20 call sites across this binary (and `auth`) read
+/// the base, and the CLI is a single-shot process — one command per
+/// invocation — so process scope IS command scope, exactly like bootstrap's
+/// `config()` singleton. Unit tests never set it (they don't run `main`),
+/// so `daemon_url()` in tests is plain `sensei_bootstrap::daemon_url()`.
+static DAEMON_BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 fn daemon_url() -> String {
-    sensei_bootstrap::daemon_url()
+    DAEMON_BASE.get().cloned().unwrap_or_else(sensei_bootstrap::daemon_url)
 }
 
 #[derive(Parser)]
@@ -33,6 +42,11 @@ struct Cli {
     /// plugin/MCP in one shot after a sensei upgrade.
     #[arg(long)]
     upgrade: bool,
+
+    /// Daemon base URL — `host:port` or full `http://host:port`.
+    /// Precedence: this flag > SENSEI_DAEMON_URL env > 127.0.0.1:7744.
+    #[arg(long, value_name = "URL")]
+    daemon_url: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -235,6 +249,7 @@ const UPGRADE_ENDPOINT: &str = "/api/assistants/upgrade";
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let _ = DAEMON_BASE.set(sensei_bootstrap::daemon_url_with_flag(cli.daemon_url.as_deref()));
 
     // `sensei --upgrade` (flag form) — refresh every detected assistant, the
     // same all-ACP fan-out as the `upgrade` subcommand with no --acp.
