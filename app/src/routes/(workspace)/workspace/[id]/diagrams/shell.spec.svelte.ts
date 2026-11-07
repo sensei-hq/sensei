@@ -249,6 +249,39 @@ describe('diagrams-shell — the diagrams render on the ScreenShell', () => {
     expect(q('[data-screen-footer] [data-testid="diagram-budget"]')?.textContent).toBe('schema model v3');
   });
 
+  // The canvas is the app's own (user, 2026-11-06): tables and views on one picture,
+  // and a press walks into a neighbourhood instead of opening a page.
+  it('the ER page’s Diagram tab is the app canvas, and a press walks into a neighbourhood', async () => {
+    renderSchema();
+    await settle();
+    const tab = [...document.querySelectorAll('[role="tab"]')].find((t) => /diagram/i.test(t.textContent ?? ''));
+    expect(tab).toBeTruthy();
+    (tab as HTMLElement).click();
+    await settle();
+    expect(q('[data-testid="schema-diagram"] [data-testid="er-canvas"]')).not.toBeNull();
+    const card = q('[data-testid="er-canvas"] [data-graph-node="app.customers"]');
+    expect(card).not.toBeNull();
+    (card as HTMLElement).click();
+    await settle();
+    expect(q('[data-testid="er-neighbourhood"]')?.getAttribute('data-centre')).toBe('app.customers');
+    (q('[data-testid="er-design-back"]') as HTMLButtonElement).click();
+    await settle();
+    expect(q('[data-testid="er-neighbourhood"]')).toBeNull();
+    expect(q('[data-testid="er-canvas"] [data-graph-node="app.customers"]')).not.toBeNull();
+  });
+
+  // The Details tab's six-column field table widened the page instead of scrolling
+  // inside it (user, 2026-11-06). The rule is a `<style>` block, so this is the pin
+  // that keeps it — no mounted-DOM assertion can see a stylesheet in jsdom.
+  it('the Details tab’s field table scrolls inside its column', () => {
+    const page = readFileSync(
+      join(process.cwd(), 'src/routes/(workspace)/workspace/[id]/diagrams/schema/+page.svelte'),
+      'utf8',
+    );
+    expect(page).toMatch(/\[data-details-fit\] :global\(\[data-graph-design-scroll\]\)\s*\{[^}]*overflow-x: auto/);
+    expect(page).toMatch(/data-details-fit/);
+  });
+
   // The inspect specs keep their selectors: rokkit 1.15.2 hands the hooks back
   // (per-band toggle attrs, band attrs, stat attrs), so the pages carry the old
   // `data-testid`s instead of every spec learning a role and an accessible name.

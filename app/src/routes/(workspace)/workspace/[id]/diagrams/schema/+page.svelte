@@ -9,7 +9,6 @@
     // and its sidebar is the shell's sidebar slot.
     import {
         designTabs,
-        DiagramView,
         EntitiesView,
         EnumView,
         ObjectView,
@@ -28,6 +27,7 @@
     import { DIAGRAM_VIEWS, viewIdOf } from '../diagrams-nav.js';
     import { statMark } from '../diagram-marks.js';
     import { SchemaState, type DesignTabId } from '../schema-state.svelte.js';
+    import ErCanvas from '../ErCanvas.svelte';
 
     let { data } = $props();
 
@@ -125,7 +125,7 @@
                         <button class="p-0 bg-transparent border-none cursor-pointer text-ink-mute hover:underline"
                             onclick={() => view.select(null)} data-testid="schema-back">‹ {name}</button>
                     </nav>
-                    <div data-testid="schema-page" data-page={view.page}>
+                    <div data-testid="schema-page" data-page={view.page} data-details-fit>
                         {#if view.page === 'table'}
                             <TableView {model} entityKey={view.selected} onselect={(k) => view.select(k)} />
                         {:else if view.page === 'object'}
@@ -143,10 +143,11 @@
                     {#if view.tab === 'overview'}
                         <OverviewView {model} counts={false} />
                     {:else if view.tab === 'diagram'}
-                        <div class="h-[70vh] shrink-0" data-testid="schema-diagram">
-                            <DiagramView {model} value={view.selected} bind:density={view.density}
-                                bind:edgeStyle={view.edgeStyle} label="Tables and their keys"
-                                onselect={(k) => view.select(k)} />
+                        <!-- The canvas is the app's own (user, 2026-11-06): tables and views on
+                             one picture, a press walking into a neighbourhood. -->
+                        <div class="h-[70vh] min-w-0 shrink-0" data-testid="schema-diagram">
+                            <ErCanvas {model} focus={view.focus} bind:density={view.density}
+                                bind:edgeStyle={view.edgeStyle} onselect={(k) => view.focusOn(k)} />
                         </div>
                     {:else if entities}
                         <EntitiesView nodes={entities.nodes} edges={entities.edges} fields={entities.fields} />
@@ -156,3 +157,21 @@
         {/if}
     </div>
 </ShellScreen>
+
+<style>
+    /* The Details tab is six columns wide — field, type, settings, default, references,
+       notes — and on a narrow window it widened the page instead of scrolling inside it
+       (user, 2026-11-06). rokkit draws the field table in its own scroll box; this gives
+       that box a ceiling and the flex parents the floor they need to shrink. */
+    [data-details-fit] :global([data-graph-design-page]),
+    [data-details-fit] :global([data-graph-section]) {
+        min-width: 0;
+    }
+    [data-details-fit] :global([data-graph-design-scroll]) {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+    [data-details-fit] :global([data-graph-design-table]) {
+        width: 100%;
+    }
+</style>

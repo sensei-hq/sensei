@@ -90,6 +90,19 @@ describe('SchemaState', () => {
     expect([s.selected, s.page]).toEqual([null, null]);
   });
 
+  // The canvas's own selection (user, 2026-11-06): a press centres a neighbourhood,
+  // and opening a page clears it — the page replaces the canvas, so a stale focal
+  // object would greet the reader on the way back.
+  it('the canvas centres on what it is given, and opening a page clears it', async () => {
+    const s = await loaded();
+    expect(s.focus).toBeNull();
+    s.focusOn('app.orders');
+    expect(s.focus).toBe('app.orders');
+    s.select('app.customers');
+    expect(s.focus).toBeNull();
+    expect(s.page).toBe('table');
+  });
+
   it('a selection the reloaded design no longer has clears, rather than opening on nothing', async () => {
     const s = await loaded();
     s.select('crm.accounts');
