@@ -1214,9 +1214,50 @@ mod tests {
         // Q16-REC: the mint response carries the crew for the paste line.
         assert!(body["lane_token"].is_string());
         assert!(body["lane_id"].is_string());
-        assert_eq!(body["lane_title"], Value::Null);
+        // F2: register mints the lane title (code + family), never null.
+        assert_eq!(body["lane_title"], "L1 · claude-code");
         assert!(body["crew_id"].is_string());
         assert!(uuid::Uuid::parse_str(body["crew_id"].as_str().unwrap()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn register_mints_title_each_role_and_census_reflects() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "contributor", "family": "muse", "crew_id": coord.2})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // F2: the minted title carries the lane code, each role.
+        assert_eq!(body["lane_title"], "L2 · muse");
+        // …and census reflects both persisted titles.
+        let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        let titles: Vec<&str> =
+            now["lanes"].as_array().unwrap().iter().map(|l| l["title"].as_str().unwrap()).collect();
+        assert!(titles.contains(&"L1 · claude-code"), "{titles:?}");
+        assert!(titles.contains(&"L2 · muse"), "{titles:?}");
+    }
+
+    #[tokio::test]
+    async fn register_empty_family_title_is_bare_code() {
+        let h = harness().await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "coordinator", "family": ""})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // F2: no dangling separator on an empty family.
+        assert_eq!(body["lane_title"], "L1");
     }
 
     #[tokio::test]

@@ -919,16 +919,23 @@ impl PgStore {
         let lane_id = new_id();
         let code = next_code(&codes)
             .ok_or_else(|| RelayError::Internal("crew has unparseable lane codes".into()))?;
+        // F2: the lane title is minted here, never null — code + family
+        // (`L4 · Muse`), or the bare code when the family is empty.
+        let title = if input.family.is_empty() {
+            code.clone()
+        } else {
+            format!("{} · {}", code, input.family)
+        };
         let insert_lane = sqlx_core::query::query(
             "insert into relay.lanes
                (user_id, id, crew_id, code, role, family, version, model,
-                capabilities, repo, worktree, token_hash)
-             values ($1, $2, $3, $4, $5::relay.lane_role, $6, $7, $8, $9, $10, $11, $12)",
+                capabilities, repo, worktree, token_hash, title)
+             values ($1, $2, $3, $4, $5::relay.lane_role, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(user_id)
         .bind(lane_id)
         .bind(crew_id)
-        .bind(code)
+        .bind(code.as_str())
         .bind(word(input.role))
         .bind(input.family.as_str())
         .bind(input.version.as_deref())
@@ -937,6 +944,7 @@ impl PgStore {
         .bind(input.repo.as_deref())
         .bind(input.worktree.as_deref())
         .bind(token_hash.as_str())
+        .bind(title.as_str())
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert_lane {
@@ -966,7 +974,7 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayRegisterOutput { lane_token: token, lane_id, lane_title: None, crew_id })
+        Ok(RelayRegisterOutput { lane_token: token, lane_id, lane_title: Some(title), crew_id })
     }
 
     /// Resolve a lane caller's identity: token hash → lane. Unknown token is
@@ -4575,7 +4583,8 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(out.crew_id, crew_id);
-        // …the lane joins it as L1 with a granted lease and no title yet…
+        // …the lane joins it as L1 with a granted lease and its minted
+        // title (F2: code + family, persisted on the row)…
         let (code, role, title): (String, String, Option<String>) = sqlx_core::query_as::query_as(
             "select code, role::text, title from relay.lanes where id = $1",
         )
@@ -4583,7 +4592,10 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!((code.as_str(), role.as_str(), title), ("L1", "coordinator", None));
+        assert_eq!(
+            (code.as_str(), role.as_str(), title.as_deref()),
+            ("L1", "coordinator", Some("L1 · claude-code"))
+        );
         let (state, expires): (String, DateTime<Utc>) = sqlx_core::query_as::query_as(
             "select state::text, expires_at from relay.leases where lane_id = $1 order by id desc limit 1",
         )
@@ -4603,7 +4615,7 @@ mod tests {
         .unwrap();
         assert_ne!(stored, out.lane_token);
         assert_eq!(stored, h(&out.lane_token));
-        assert!(out.lane_title.is_none());
+        assert_eq!(out.lane_title.as_deref(), Some("L1 · claude-code"));
     }
 
     #[tokio::test]

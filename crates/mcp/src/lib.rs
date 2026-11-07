@@ -1277,7 +1277,7 @@ pub fn handle_list_tools() -> Value {
             // Lane calls authenticate over the Authorization header (never the
             // query); `lane_token` never appears in a path, query or body.
             tool("relay_register",
-                "Register a relay lane: join a crew with its crew_id, or mint a crew as a coordinator (goal/repo_key/workspace_id ride the mint). Answers the lane token — every other lane call authenticates with it.",
+                "Register a relay lane: join a crew with its crew_id, or mint a crew as a coordinator (goal/repo_key/workspace_id ride the mint). Answers the lane token — every other lane call authenticates with it — plus lane_title, minted as `<code> · <family>` (bare code when family is empty), persisted on the lane and shown in census.",
                 &[
                     ("role", "string", "coordinator (mint or join) | contributor (join: crew_id required)"),
                     ("family", "string", "Lane family, e.g. claude-code"),
