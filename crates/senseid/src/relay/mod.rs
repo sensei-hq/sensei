@@ -720,13 +720,30 @@ pub enum ResourceGrant {
     Refused { reason: String },
 }
 
-/// Decide a resource grant from the readings (pure; Q5/Q6).
+/// Decide a resource grant from the readings (pure; Q5/Q6): refuse iff a
+/// reported reading sits strictly below its floor; unknown readings never
+/// refuse. The reason names every short reading with its floor.
 pub fn decide_resource_grant(
-    _disk_free_gb: Option<u64>,
-    _swap_free_gb: Option<u64>,
-    _floors: &RelayFloors,
+    disk_free_gb: Option<u64>,
+    swap_free_gb: Option<u64>,
+    floors: &RelayFloors,
 ) -> ResourceGrant {
-    todo!("relay item 3: grant decision")
+    let mut short = Vec::new();
+    if let Some(free) = disk_free_gb
+        && free < floors.disk_gb
+    {
+        short.push(format!("disk free {free} GB < floor {} GB", floors.disk_gb));
+    }
+    if let Some(free) = swap_free_gb
+        && free < floors.swap_gb
+    {
+        short.push(format!("swap free {free} GB < floor {} GB", floors.swap_gb));
+    }
+    if short.is_empty() {
+        ResourceGrant::Granted
+    } else {
+        ResourceGrant::Refused { reason: short.join("; ") }
+    }
 }
 
 // ─── Session-local time (the completed window is the Mac's day) ───
@@ -1313,7 +1330,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pending:relay-item3"]
     fn resource_grant_decision_matrix() {
         use super::{RelayFloors, ResourceGrant, decide_resource_grant};
         assert_eq!(super::RESOURCE_LEASE_TTL_SECS, 3600);
