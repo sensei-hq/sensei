@@ -666,6 +666,28 @@ pub fn daemon_request_for(
                 args,
             ))
         }
+        "relay_cancel_task" => {
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let body = relay_lane_body(args);
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/tasks/{}/cancel", path_segment(task_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
+        "relay_close_crew" => {
+            let crew_id = args["crew_id"].as_str().unwrap_or("");
+            let body = relay_lane_body(args);
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/crews/{}/close", path_segment(crew_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
         "relay_request_resource" => {
             let mut body = relay_lane_body(args);
             relay_forward(&mut body, args, &["resource"]);
@@ -1448,6 +1470,22 @@ pub fn handle_list_tools() -> Value {
                     ("commits", "array", "Merged shas (empty means nothing to merge)"),
                     ("gates", "array", "[{cmd, exit, counts?}] re-run on the merged tree"),
                 ]),
+            tool("relay_cancel_task",
+                "Cancel a task the crew no longer needs: unassigned work, or a task whose holder is gone. A live holder is a 409; cancelled tasks never re-offer. Coordinator only.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                ],
+                &[]),
+            tool("relay_close_crew",
+                "Close the crew when its lanes are gone (besides the caller, who unregisters after). Closed crews refuse new register/plan/assign. Coordinator only.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("crew_id", "string", "Crew uuid"),
+                ],
+                &[]),
             tool("relay_request_resource",
                 "Request a machine-wide resource slot (rust-build, e2e): grants when free and the floors pass, queues behind the holder, refuses below the floors.",
                 &[
@@ -1934,6 +1972,8 @@ mod tests {
         "relay_merge_task",
         "relay_request_resource",
         "relay_release_resource",
+        "relay_cancel_task",
+        "relay_close_crew",
     ];
 
     fn tools() -> Vec<Value> {
@@ -2987,6 +3027,8 @@ mod tests {
         "relay_merge_task",
         "relay_request_resource",
         "relay_release_resource",
+        "relay_cancel_task",
+        "relay_close_crew",
     ];
 
     const LANE_ID: &str = "01938931-0000-7000-8000-000000000001";
@@ -3312,6 +3354,48 @@ mod tests {
         assert_eq!(req.path, "/api/relay/tasks/t1/merge");
         assert_eq!(req.body.as_ref().unwrap()["into"], "develop");
         assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_cancel_posts_cancel_shape() {
+        let req = daemon_request_for(
+            "relay_cancel_task",
+            &lane_args(json!({"task_id": "t1"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/t1/cancel");
+        assert_eq!(req.body.as_ref().unwrap()["lane_id"], LANE_ID);
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_close_posts_close_shape() {
+        let req = daemon_request_for(
+            "relay_close_crew",
+            &lane_args(json!({"crew_id": "c1"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/crews/c1/close");
+        assert_eq!(req.body.as_ref().unwrap()["lane_id"], LANE_ID);
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_cancel_close_require_ids() {
+        assert!(
+            missing_required("relay_cancel_task", &lane_args(json!({})))
+                .contains(&"task_id".to_string())
+        );
+        assert!(
+            missing_required("relay_close_crew", &lane_args(json!({})))
+                .contains(&"crew_id".to_string())
+        );
     }
 
     #[test]

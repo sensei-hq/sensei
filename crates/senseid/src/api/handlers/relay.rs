@@ -23,6 +23,8 @@
 //! | lane | `POST /api/relay/decisions/{id}/answer` | answer (lane asked) |
 //! | lane | `POST /api/relay/messages` | message (lane sent) |
 //! | lane | `POST /api/relay/tasks/{id}/merge` | merge (coordinator) |
+//! | lane | `POST /api/relay/tasks/{id}/cancel` | cancel (coordinator) |
+//! | lane | `POST /api/relay/crews/{id}/close` | close the crew (coordinator) |
 //! | person | `GET /relay/now`, `GET /relay/queue`, `GET /relay/tasks/{crew}/{task}` | reads |
 //! | person | `POST /relay/messages`, `POST /relay/answers`, `POST /relay/backlog` | writes |
 //! | person | `POST /relay/triage` | add a manual triage item (derived: nothing
@@ -927,6 +929,40 @@ pub(crate) async fn merge(
         .map_err(err)?;
     emit(&state, "merge");
     ok(serde_json::json!({ "task_id": task_id.to_string() }))
+}
+
+pub(crate) async fn cancel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<LaneBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let out = state.pg.relay_cancel_task(session.user_id, caller, task_id).await.map_err(err)?;
+    emit(&state, "cancel");
+    ok(serde_json::json!({
+        "task_id": out.task_id.to_string(),
+        "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+    }))
+}
+
+pub(crate) async fn close_crew(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(crew_id): Path<String>,
+    Json(body): Json<LaneBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
+    let out = state.pg.relay_close_crew(session.user_id, caller, crew_id).await.map_err(err)?;
+    emit(&state, "close");
+    ok(serde_json::json!({
+        "crew_id": out.crew_id.to_string(),
+        "status": out.status,
+    }))
 }
 
 // ─── Person routes ───
@@ -1909,6 +1945,436 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
         assert_eq!(body["error"], "relay_not_implemented");
+    }
+
+    // ── F3: triage / cancel / close ──
+
+    /// Coordinator plans a tests-phase task without assigning; returns the
+    /// task id. The task sits `assigned` with NULL lane: run-01's M2/M3.
+    async fn planned_task(h: &Harness, coord: &(String, String, String)) -> String {
+        let (status, body) = call(
+            h,
+            "POST",
+            "/api/relay/tasks/plan",
+            Some(lane_body(
+                &coord.0,
+                json!({"title": "T", "phase": "tests", "repo_key": "github.com/o/r"}),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["task_id"].as_str().unwrap().to_string()
+    }
+
+    async fn unregister_lane(h: &Harness, lane_id: &str, token: &str) {
+        let (status, body) = call(
+            h,
+            "POST",
+            "/api/relay/unregister",
+            Some(json!({"lane_id": lane_id})),
+            Some(token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    #[tokio::test]
+    async fn triage_surfaces_planned_task_with_full_identity() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let task_id = planned_task(&h, &coord).await;
+        let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        let bucket = now["triage"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["provider"] == "unassigned")
+            .expect("unassigned bucket");
+        assert_eq!(bucket["count"], 1);
+        assert_eq!(bucket["sprint"], Value::Null);
+        let tasks = bucket["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        assert_eq!(t["id"], task_id);
+        assert_eq!(t["crew_id"], coord.2);
+        assert_eq!(t["title"], "T");
+        assert_eq!(t["phase"], "tests");
+        assert_eq!(t["state"], "assigned");
+        assert_eq!(t["round"], 1);
+        assert_eq!(t["repo_key"], "github.com/o/r");
+    }
+
+    #[tokio::test]
+    async fn triage_excludes_lane_held_tasks() {
+        // A held task rides its lane's census row, never the unassigned
+        // bucket. (Pin: green before F3, guards the triage write.)
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        assigned_task(&h, &coord, &lane_id).await;
+        let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        assert!(
+            now["triage"].as_array().unwrap().iter().all(|e| e["provider"] != "unassigned"),
+            "{now}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_unassigned_task_happy_path() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let task_id = planned_task(&h, &coord).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/cancel"),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["task_id"], task_id);
+        assert_eq!(body["state"], "cancelled");
+        // Cancelled leaves triage: it is no longer unassigned work.
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "cancelled");
+        let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        assert!(
+            now["triage"].as_array().unwrap().iter().all(|e| e["provider"] != "unassigned"),
+            "{now}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_requires_coordinator() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = planned_task(&h, &coord).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/cancel"),
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "relay_forbidden");
+    }
+
+    #[tokio::test]
+    async fn cancel_terminal_task_is_409() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let task_id = planned_task(&h, &coord).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/cancel"),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // A cancelled task is terminal: the second cancel is a 409, never
+        // a silent no-op.
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/cancel"),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn cancel_live_held_task_is_409() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/cancel"),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        // The 409 changed nothing: the task is still assigned to its lane.
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "assigned");
+    }
+
+    #[tokio::test]
+    async fn cancel_dead_holder_task_succeeds() {
+        // Unregister suspends the holder's task to interrupted (lane id
+        // stays); the coordinator cancels the orphan instead of reoffering.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        unregister_lane(&h, &lane_id, &token).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/cancel"),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "cancelled");
+    }
+
+    #[tokio::test]
+    async fn cancel_blocked_task_with_live_holder_is_409() {
+        // Blocked does not bypass the holder rule: a live holder still
+        // 409s, and the task (with its block memory) is untouched — any
+        // partial write would 500 on the blocked-memory check. The clear
+        // itself is pinned at the store level
+        // (`cancel_blocked_task_clears_block_memory`).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &coord.0,
+                json!({
+                    "task_id": task_id, "question": "Which?",
+                    "options": [{"id": "a", "label": "A"}],
+                    "blocks": [task_id], "asked_of": "person",
+                }),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "blocked");
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/cancel"),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "blocked");
+    }
+
+    #[tokio::test]
+    async fn cancelled_task_never_reoffers() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        let task_id = planned_task(&h, &coord).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/cancel"),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // A sweeper pass far past every lease and grace touches nothing.
+        let far = chrono::Utc::now() + chrono::Duration::days(30);
+        let report = h.state.pg.relay_sweep_leases(far).await.unwrap();
+        assert_eq!(report.interrupted_tasks, 0);
+        assert_eq!(report.reoffered_tasks, 0);
+        // Still cancelled after the sweep: assign refuses it.
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/assign"),
+            Some(lane_body(
+                &coord.0,
+                json!({
+                    "to_lane": lane_id, "title": "T", "phase": "tests",
+                    "brief": {"summary": "Do it.", "docs": []},
+                    "acceptance": ["green"], "owned_paths": ["app/**"],
+                }),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn close_happy_path() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        unregister_lane(&h, &lane_id, &token).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["crew_id"], coord.2);
+        assert_eq!(body["status"], "closed");
+        let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        assert_eq!(now["crews"][0]["status"], "closed");
+        // The census crew row carries no completed_at (out of brief scope
+        // to add one); the stamp itself is pinned at the store level
+        // (`close_crew_stamps_completed_at`).
+    }
+
+    #[tokio::test]
+    async fn close_with_live_lane_is_409() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (_lane_id, _token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        assert_eq!(now["crews"][0]["status"], "active");
+    }
+
+    #[tokio::test]
+    async fn close_requires_coordinator() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "relay_forbidden");
+    }
+
+    #[tokio::test]
+    async fn closed_crew_rejects_register_plan_assign() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        // Planned before the close so assign has a task to refuse.
+        let task_id = planned_task(&h, &coord).await;
+        unregister_lane(&h, &lane_id, &token).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // Join the closed crew: 409.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "contributor", "family": "claude-code", "crew_id": coord.2})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        // Plan on the closed crew: 409.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/tasks/plan",
+            Some(lane_body(
+                &coord.0,
+                json!({"title": "Late", "phase": "tests", "repo_key": "github.com/o/r"}),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        // Assign on the closed crew: 409.
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/assign"),
+            Some(lane_body(
+                &coord.0,
+                json!({
+                    "to_lane": lane_id, "title": "T", "phase": "tests",
+                    "brief": {"summary": "Do it.", "docs": []},
+                    "acceptance": ["green"], "owned_paths": ["app/**"],
+                }),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn close_is_idempotent() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "closed");
     }
 
     // ── failure paths ──
