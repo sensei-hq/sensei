@@ -7,9 +7,8 @@
 
 pub mod connect;
 pub mod discover;
-// Lands ahead of the GitLab adapter (#366), its first caller.
-#[allow(dead_code)]
 pub mod forge;
+pub mod gitlab;
 pub mod history;
 pub mod http;
 pub mod jira;
@@ -30,17 +29,20 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TrackerKind {
     Jira,
+    Gitlab,
 }
 
 impl TrackerKind {
     pub fn as_str(self) -> &'static str {
         match self {
             TrackerKind::Jira => "jira",
+            TrackerKind::Gitlab => "gitlab",
         }
     }
     pub fn parse(s: &str) -> Option<TrackerKind> {
         match s {
             "jira" => Some(TrackerKind::Jira),
+            "gitlab" => Some(TrackerKind::Gitlab),
             _ => None,
         }
     }
@@ -185,8 +187,6 @@ pub enum AuthScheme {
         token: ApiToken,
     },
     /// The token as the whole value of one header (GitLab: `PRIVATE-TOKEN`, §G2).
-    // The shared half of #364 lands ahead of the GitLab adapter (#366) that constructs it.
-    #[allow(dead_code)]
     Header {
         name: &'static str,
         token: ApiToken,
@@ -285,6 +285,8 @@ pub enum ParamError {
     InvalidBaseUrl,
     EmailRequired,
     TokenRequired,
+    /// The typed confirmation of a self-managed host is missing or differs (§G5.2).
+    HostNotConfirmed,
 }
 
 impl ParamError {
@@ -293,6 +295,7 @@ impl ParamError {
             ParamError::InvalidBaseUrl => "invalid_base_url",
             ParamError::EmailRequired => "email_required",
             ParamError::TokenRequired => "token_required",
+            ParamError::HostNotConfirmed => "host_not_confirmed",
         }
     }
 }
@@ -596,7 +599,7 @@ pub trait TrackerAdapter: Send + Sync {
 
 /// The registered adapters — the only place a new tracker is added.
 pub fn adapters() -> &'static [&'static dyn TrackerAdapter] {
-    &[&jira::JiraAdapter]
+    &[&jira::JiraAdapter, &gitlab::GitlabAdapter]
 }
 
 /// The adapter for a kind, if one is registered.
@@ -1550,10 +1553,16 @@ mod seam_tests {
     use super::*;
 
     #[test]
-    fn jira_is_registered_and_kinds_round_trip() {
-        assert_eq!(adapter_for_kind(TrackerKind::Jira).map(|a| a.kind()), Some(TrackerKind::Jira));
-        assert_eq!(TrackerKind::parse(TrackerKind::Jira.as_str()), Some(TrackerKind::Jira));
-        assert_eq!(TrackerKind::parse("gitlab"), None, "no adapter, no kind");
+    fn every_kind_is_registered_and_round_trips() {
+        for kind in [TrackerKind::Jira, TrackerKind::Gitlab] {
+            assert_eq!(adapter_for_kind(kind).map(|a| a.kind()), Some(kind));
+            assert_eq!(TrackerKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(TrackerKind::parse("github"), None, "no adapter, no kind");
+        assert_eq!(
+            capabilities_of_kind("gitlab"),
+            Ok(Capabilities { history: false, writeback: false })
+        );
     }
 
     #[test]

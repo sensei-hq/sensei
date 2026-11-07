@@ -148,7 +148,7 @@ async fn run(
             }
         };
     // 4. Apply in one short transaction; success is recorded inside it.
-    let patch = params_patch(&snapshot);
+    let patch = params_patch(&snapshot, &row.params, chrono::Utc::now());
     match pg
         .apply_tracker_snapshot(
             tracker_id,
@@ -287,8 +287,23 @@ async fn record_failure(
 
 /// Pure: what a snapshot writes into the row's `params`: the adapter's
 /// `params_extra`, with `board_name` beside it when the snapshot read one.
-fn params_patch(snapshot: &crate::tracker::Snapshot) -> serde_json::Value {
+///
+/// When the snapshot's `sprint_source` differs from the one `stored` (an upgrade to
+/// iterations, or a downgrade), `sprint_source_changed_at` = `now` joins it, for
+/// Integrations' notice (§G3). A first source is not a change.
+fn params_patch(
+    snapshot: &crate::tracker::Snapshot,
+    stored: &serde_json::Value,
+    now: chrono::DateTime<chrono::Utc>,
+) -> serde_json::Value {
     let mut patch = snapshot.params_extra.clone();
+    let source = |v: Option<&serde_json::Value>| v.and_then(|s| s.as_str()).map(String::from);
+    let (was, is) = (source(stored.get("sprint_source")), source(patch.get("sprint_source")));
+    if let (Some(was), Some(is)) = (was, is)
+        && was != is
+    {
+        patch.insert("sprint_source_changed_at".into(), serde_json::json!(now.to_rfc3339()));
+    }
     if let Some(name) = &snapshot.board_name {
         patch.insert("board_name".into(), serde_json::json!(name));
     }
@@ -669,15 +684,39 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            params_patch(&with_name),
+            params_patch(&with_name, &json!({}), chrono::Utc::now()),
             json!({"board_name": "Platform", "full_path": "acme/platform", "sprint_source": "milestone"})
         );
         let without_name = crate::tracker::Snapshot { params_extra: extra, ..Default::default() };
         assert_eq!(
-            params_patch(&without_name),
+            params_patch(&without_name, &json!({}), chrono::Utc::now()),
             json!({"full_path": "acme/platform", "sprint_source": "milestone"})
         );
-        assert_eq!(params_patch(&Default::default()), json!({}));
+        assert_eq!(params_patch(&Default::default(), &json!({}), chrono::Utc::now()), json!({}));
+    }
+
+    #[test]
+    fn a_changed_sprint_source_is_stamped_and_a_first_or_same_one_is_not() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-07T10:00:00Z").unwrap().to_utc();
+        let snap = |source: &str| crate::tracker::Snapshot {
+            params_extra: serde_json::from_value(json!({"sprint_source": source})).unwrap(),
+            ..Default::default()
+        };
+        let stored = json!({"sprint_source": "milestone", "full_path": "acme"});
+        assert_eq!(
+            params_patch(&snap("iteration"), &stored, now)["sprint_source_changed_at"],
+            json!("2026-11-07T10:00:00+00:00")
+        );
+        assert!(
+            params_patch(&snap("milestone"), &stored, now)
+                .get("sprint_source_changed_at")
+                .is_none()
+        );
+        assert!(
+            params_patch(&snap("milestone"), &json!({}), now)
+                .get("sprint_source_changed_at")
+                .is_none()
+        );
     }
 
     #[tokio::test]

@@ -1026,6 +1026,62 @@ mod tests {
         assert_eq!(listed[0]["external_scope"], json!("AUTH"));
     }
 
+    /// D10, end to end: a GitLab board connects over HTTP against the recorded CE,
+    /// syncs, refuses write-back, and reads `unsupported_by_tracker` where its
+    /// figures need history.
+    #[tokio::test]
+    async fn a_gitlab_board_connects_syncs_and_refuses_write_back() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        h.factory.serve_transport(
+            "https://gitlab.example.com",
+            Arc::new(crate::tracker::gitlab::test_support::RecordedGitlab::load(
+                "ce-closed-milestone",
+            )),
+        );
+        let body = json!({
+            "kind": "gitlab", "level": "sprint",
+            "board_url": "https://gitlab.example.com/groups/acme/-/boards",
+            "confirm_host": "gitlab.example.com", "api_token": SENTINEL,
+        });
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers"), Some(body), None).await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        let row = &json(&b)["tracker"];
+        assert_eq!(
+            (row["kind"].clone(), row["board_ref"].clone()),
+            (json!("gitlab"), json!("group:857"))
+        );
+        assert_eq!(row["account"], json!("group_bot"));
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{t}");
+
+        let (st, b) = call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": true})), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("writeback_unsupported"))
+        );
+        let (st, _) =
+            call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": false})), None).await;
+        assert_eq!(st, StatusCode::OK, "turning it off is allowed");
+        let metric = crate::tracker::writeback::TrackerMetric::ALL[0].as_str();
+        let fields = json!({"fields": [{"metric": metric, "field_ref": "x"}]});
+        let (st, b) = call(&h, "PUT", &format!("{uri}/fields"), Some(fields), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("writeback_unsupported"))
+        );
+
+        let (st, b) = call(&h, "GET", &format!("{uri}/sprints"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let sprints = json(&b);
+        assert_eq!(sprints.as_array().unwrap().len(), 1);
+        let reasons = sprints[0]["sdlc"]["reasons"].as_object().expect("reasons").clone();
+        assert!(!reasons.is_empty());
+        assert!(reasons.values().all(|r| r == "unsupported_by_tracker"), "{reasons:?}");
+    }
+
     #[tokio::test]
     async fn connect_refusals_carry_fixed_codes() {
         let h = harness().await;
@@ -1033,10 +1089,13 @@ mod tests {
         let uri = format!("/api/workspaces/{p}/trackers");
         let mut gitlab = connect_body(&site());
         gitlab["kind"] = json!("gitlab");
+        let mut unknown = connect_body(&site());
+        unknown["kind"] = json!("github");
         let mut no_level = connect_body(&site());
         no_level.as_object_mut().unwrap().remove("level");
         for (body, code) in [
-            (gitlab, "unsupported_tracker"),
+            (gitlab, "host_not_confirmed"),
+            (unknown, "unsupported_tracker"),
             (board_body(&site(), "42", "portfolio"), "invalid_level"),
             (no_level, "level_required"),
         ] {

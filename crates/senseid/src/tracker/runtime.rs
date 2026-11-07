@@ -180,6 +180,10 @@ pub mod test_support {
             self.boards.lock().unwrap().insert(base_url.to_string(), board.clone());
             board
         }
+        /// Serve any transport for `base_url` (a recorded GitLab, for instance).
+        pub fn serve_transport(&self, base_url: &str, t: Arc<dyn GetTransport>) {
+            self.boards.lock().unwrap().insert(base_url.to_string(), t);
+        }
         /// Record `writes` for `base_url`, behind the real 429 policy.
         pub fn serve_writes(
             &self,

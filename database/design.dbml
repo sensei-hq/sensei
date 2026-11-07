@@ -762,6 +762,7 @@ Enum "sensei"."tracker_error" {
 
 Enum "sensei"."tracker_kind" {
   "jira"
+  "gitlab"
 }
 
 Enum "sensei"."tracker_level" {
@@ -2952,10 +2953,10 @@ Table "sensei"."trackers" {
   "kind" sensei.tracker_kind [not null, note: 'Which adapter speaks to this tracker (crate::tracker::adapter_for_kind).']
   "level" sensei.tracker_level [not null, default: 'sprint', note: 'What the board serves in the workspace (D40): epic (portfolio), sprint (a team board, one Sprints lane), task (linked from changes). Rows from before levels are sprint trackers.']
   "base_url" text [not null, note: 'Adapter-normalised origin, exactly "https://" + lowercase host, no port/path/slash (crate::tracker::http::normalize_base_url). Part of the board identity.']
-  "account" text [not null, note: 'The account the token belongs to, as the adapter defines it (Jira: the Atlassian email). Keyring account of secret_service.']
-  "external_scope" text [not null, note: 'The provider scope shown to users (Jira: the board\'s project key, or the board name for a multi-project board).']
-  "board_ref" text [not null, note: 'The board, in the adapter\'s canonical form (Jira: decimal board id, no leading zeros) so one board cannot be connected twice under two spellings.']
-  "params" jsonb [not null, default: '{}', note: 'Adapter-specific extras (e.g. board_name). Never secrets.']
+  "account" text [not null, note: 'The account the token belongs to, as the adapter defines it (Jira: the Atlassian email; GitLab: the token\'s username). Keyring account of secret_service.']
+  "external_scope" text [not null, note: 'The provider scope shown to users (Jira: the board\'s project key, or the board name for a multi-project board; GitLab: the board\'s full path at connect).']
+  "board_ref" text [not null, note: 'The board, in the adapter\'s canonical form (Jira: decimal board id, no leading zeros; GitLab: project:<id> or group:<id>) so one board cannot be connected twice under two spellings.']
+  "params" jsonb [not null, default: '{}', note: 'Adapter-specific extras (e.g. board_name; GitLab: full_path, version, sprint_source, sprint_source_changed_at). Never secrets.']
   "secret_service" text [not null, note: 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Shared by every tracker of the workspace on the same (kind, base_url): a connect re-keys them all. Changing it tombstones the old value; the drain keeps a secret another tracker still references.']
   "last_attempt_at" timestamptz [note: 'When a sync last started (written before the fetch, outside any transaction).']
   "last_success_at" timestamptz [note: 'When a sync last committed in full. NULL = never (status pending), also reset by a re-connect.']
