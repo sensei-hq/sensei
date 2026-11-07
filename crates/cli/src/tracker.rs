@@ -8,10 +8,37 @@ use serde_json::Value;
 /// Env var the token may come from (visible to same-user processes, so stdin is
 /// offered too). The token is never an argv flag.
 pub const TOKEN_ENV: &str = "SENSEI_JIRA_TOKEN";
+pub const GITLAB_TOKEN_ENV: &str = "SENSEI_GITLAB_TOKEN";
+
+/// Which tracker a message is about. `Any` is for a command that holds only a
+/// tracker id (sync, disconnect, the lookups), so it never names the wrong one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    Jira,
+    Gitlab,
+    Any,
+}
+
+impl Provider {
+    fn name(self) -> &'static str {
+        match self {
+            Provider::Jira => "Jira",
+            Provider::Gitlab => "GitLab",
+            Provider::Any => "the tracker",
+        }
+    }
+    fn token_env(self) -> Option<&'static str> {
+        match self {
+            Provider::Jira => Some(TOKEN_ENV),
+            Provider::Gitlab => Some(GITLAB_TOKEN_ENV),
+            Provider::Any => None,
+        }
+    }
+}
 
 #[derive(Subcommand, Debug, PartialEq)]
 pub enum TrackerCmd {
-    /// Connect a workspace to a tracker board (token from SENSEI_JIRA_TOKEN, else stdin)
+    /// Connect a workspace to a tracker board (token from SENSEI_JIRA_TOKEN or SENSEI_GITLAB_TOKEN, else stdin)
     Connect {
         #[command(subcommand)]
         kind: ConnectKind,
@@ -82,6 +109,20 @@ pub enum ConnectKind {
         /// Optional: the board's Jira project key, checked against the board
         #[arg(long)]
         project_key: Option<String>,
+        /// What the board serves in the workspace: epic, sprint or task
+        #[arg(long)]
+        level: String,
+    },
+    /// GitLab: gitlab.com or a self-managed instance (https on the standard port)
+    Gitlab {
+        #[arg(long)]
+        workspace: String,
+        /// The group's or project's address, e.g. https://gitlab.example.com/acme/platform
+        #[arg(long)]
+        board_url: String,
+        /// The host again, exactly as in --board-url (not needed for gitlab.com)
+        #[arg(long)]
+        confirm_host: Option<String>,
         /// What the board serves in the workspace: epic, sprint or task
         #[arg(long)]
         level: String,
@@ -330,8 +371,29 @@ pub fn jira_connect_body(
     Value::Object(body)
 }
 
+/// The connect request body for the GitLab flags and the token.
+pub fn gitlab_connect_body(
+    board_url: &str,
+    confirm_host: Option<&str>,
+    level: &str,
+    token: &str,
+) -> Value {
+    let mut body = serde_json::json!({
+        "kind": "gitlab", "level": level, "board_url": board_url, "api_token": token,
+    });
+    if let Some(h) = confirm_host {
+        body["confirm_host"] = h.into();
+    }
+    body
+}
+
 /// The token: `env` if set and non-empty, else the first line of `stdin`.
-pub fn read_token(env: Option<String>, stdin: &mut dyn std::io::BufRead) -> Result<String, String> {
+/// `env_name` is the variable `env` was read from, for the error.
+pub fn read_token(
+    env_name: &str,
+    env: Option<String>,
+    stdin: &mut dyn std::io::BufRead,
+) -> Result<String, String> {
     if let Some(t) = env.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
         return Ok(t.to_string());
     }
@@ -339,19 +401,69 @@ pub fn read_token(env: Option<String>, stdin: &mut dyn std::io::BufRead) -> Resu
     stdin.read_line(&mut line).map_err(|e| format!("could not read the token from stdin: {e}"))?;
     let t = line.trim();
     if t.is_empty() {
-        return Err(format!("no API token: set {TOKEN_ENV} or pipe the token on stdin"));
+        return Err(format!("no API token: set {env_name} or pipe the token on stdin"));
     }
     Ok(t.to_string())
 }
 
-/// One line for a daemon error body `{"error": code, ...}`.
+/// One line for a daemon error body `{"error": code, ...}`, from a command that
+/// holds only a tracker id: it never names a provider.
 pub fn describe_error(status: u16, body: &Value) -> String {
+    describe_error_for(Provider::Any, status, body)
+}
+
+/// One line for a daemon error body, worded for `p`.
+pub fn describe_error_for(p: Provider, status: u16, body: &Value) -> String {
     let code = body.get("error").and_then(Value::as_str).unwrap_or("unknown");
     let field = |k: &str| body.get(k).and_then(Value::as_str).unwrap_or("?").to_string();
-    match code {
-        "unauthorized" => "Jira rejected the email and token. Check both, or create a new token at \
+    let name = p.name();
+    let capitalized = |s: &str| {
+        let mut c = s.chars();
+        c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+    };
+    match (code, p) {
+        ("unauthorized", Provider::Jira) => "Jira rejected the email and token. Check both, or create a new token at \
              https://id.atlassian.com/manage-profile/security/api-tokens"
             .into(),
+        ("unauthorized", Provider::Gitlab) => "GitLab rejected the token. Check it has the read_api scope and has not \
+             expired, or create a new one under Preferences → Access tokens."
+            .into(),
+        ("unauthorized", _) => "The tracker rejected the saved token. Connect again with a new one.".into(),
+        ("host_not_confirmed", _) => "Pass --confirm-host with the GitLab host exactly as in --board-url \
+             (gitlab.com needs none)."
+            .into(),
+        ("writeback_unsupported", _) => "Write-back isn't available for this tracker.".into(),
+        ("invalid_base_url", Provider::Gitlab) => "That isn't a GitLab board address. Use https://<host>/<group> or \
+             https://<host>/<group>/<project>: https on the standard port, no subpath, and not a local \
+             name such as .local or .internal."
+            .into(),
+        ("invalid_base_url", Provider::Any) => "That board address isn't valid.".into(),
+        ("board_not_found", Provider::Gitlab) => {
+            format!("No group or project {} on {}.", field("board_ref"), field("base_url"))
+        }
+        ("task_not_on_board", Provider::Gitlab | Provider::Any) => {
+            format!("{} isn't on this board.", field("key"))
+        }
+        ("token_required", _) => match p.token_env() {
+            Some(env) => format!("No API token: set {env} or pipe it on stdin."),
+            None => "No API token was given.".into(),
+        },
+        ("rate_limited", _) => format!("{} is rate-limiting requests. Try again in a minute.", capitalized(name)),
+        ("transport" | "http_error" | "redirect" | "decode", _) => {
+            format!("Couldn't reach {name} ({code}). Check the site address and your connection.")
+        }
+        (code, _) => describe_common(status, code, &field, body),
+    }
+}
+
+/// The messages that read the same for every tracker.
+fn describe_common(
+    status: u16,
+    code: &str,
+    field: &dyn Fn(&str) -> String,
+    body: &Value,
+) -> String {
+    match code {
         "forbidden" => "This account can't read that board. Ask the board admin for access, or use another account.".into(),
         "board_not_found" => format!("No board #{} on {}.", field("board_ref"), field("base_url")),
         "task_not_on_board" => format!(
@@ -374,7 +486,6 @@ pub fn describe_error(status: u16, body: &Value) -> String {
                 .into()
         }
         "email_required" => "Pass --email: the Atlassian account the token belongs to.".into(),
-        "token_required" => format!("No API token: set {TOKEN_ENV} or pipe it on stdin."),
         "unsupported_tracker" => "This tracker type isn't available in this version of sensei.".into(),
         "not_connected" => "This workspace has no tracker connected.".into(),
         "tracker_not_found" => "No such board in this workspace.".into(),
@@ -383,12 +494,8 @@ pub fn describe_error(status: u16, body: &Value) -> String {
         "workspace_not_found" => "No such workspace.".into(),
         "busy" => "A sync is already running for this board.".into(),
         "superseded" => "The board's token changed while it synced. Sync again.".into(),
-        "rate_limited" => "Jira is rate-limiting requests. Try again in a minute.".into(),
         "token_missing" | "credential_store" => {
             "The saved token can't be read from the system keychain. Connect again to replace it.".into()
-        }
-        "transport" | "http_error" | "redirect" | "decode" => {
-            format!("Couldn't reach Jira ({code}). Check the site address and your connection.")
         }
         "forbidden_caller" => "The daemon refused this caller.".into(),
         other => format!("Daemon error {status}: {other}"),
@@ -428,7 +535,7 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             if env.as_deref().is_none_or(|t| t.trim().is_empty()) {
                 eprintln!("Paste the Jira API token, then press Enter:");
             }
-            let token = read_token(env, &mut std::io::stdin().lock())?;
+            let token = read_token(TOKEN_ENV, env, &mut std::io::stdin().lock())?;
             let body = jira_connect_body(
                 board_url.as_deref(),
                 url.as_deref(),
@@ -439,30 +546,20 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                 &token,
             );
             // Two validation requests at up to 30 s each, plus the keyring.
-            let resp = crate::client_with_timeout(90)
-                .post(format!("{base}/api/workspaces/{id}/trackers"))
-                .json(&body)
-                .send()
-                .map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
-            let status = resp.status().as_u16();
-            let v: Value = resp.json().unwrap_or(Value::Null);
-            if status != 201 {
-                return Err(describe_error(status, &v));
+            connect(&client, &base, &id, &body, 90, Provider::Jira)
+        }
+        TrackerCmd::Connect {
+            kind: ConnectKind::Gitlab { workspace, board_url, confirm_host, level },
+        } => {
+            let id = workspace_id(&workspace)?;
+            let env = std::env::var(GITLAB_TOKEN_ENV).ok();
+            if env.as_deref().is_none_or(|t| t.trim().is_empty()) {
+                eprintln!("Paste the GitLab access token (read_api), then press Enter:");
             }
-            let t = &v["tracker"];
-            println!(
-                "Connected {} board \"{}\" (#{}) on {}.",
-                t["external_scope"].as_str().unwrap_or("?"),
-                t["board_name"].as_str().unwrap_or("?"),
-                t["board_ref"].as_str().unwrap_or("?"),
-                t["base_url"].as_str().unwrap_or("?"),
-            );
-            println!("First sync running…");
-            wait_for_first_sync(
-                &client,
-                &format!("{base}/api/workspaces/{id}/trackers"),
-                t["id"].as_str().unwrap_or_default(),
-            )
+            let token = read_token(GITLAB_TOKEN_ENV, env, &mut std::io::stdin().lock())?;
+            let body = gitlab_connect_body(&board_url, confirm_host.as_deref(), &level, &token);
+            // Up to five validation requests at 30 s each, plus the keyring.
+            connect(&client, &base, &id, &body, 180, Provider::Gitlab)
         }
         TrackerCmd::Sync { workspace, board } => {
             let id = workspace_id(&workspace)?;
@@ -507,7 +604,7 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                 .map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
             let status = resp.status().as_u16();
             if status == 204 {
-                println!("Disconnected. Jira itself is not changed.");
+                println!("Disconnected. The tracker itself is not changed.");
                 return Ok(());
             }
             Err(describe_error(status, &resp.json().unwrap_or(Value::Null)))
@@ -654,6 +751,42 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
     }
 }
 
+/// POST the connect body, then wait for the first sync.
+fn connect(
+    client: &reqwest::blocking::Client,
+    base: &str,
+    workspace: &str,
+    body: &Value,
+    timeout_secs: u64,
+    p: Provider,
+) -> Result<(), String> {
+    let resp = crate::client_with_timeout(timeout_secs)
+        .post(format!("{base}/api/workspaces/{workspace}/trackers"))
+        .json(body)
+        .send()
+        .map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
+    let status = resp.status().as_u16();
+    let v: Value = resp.json().unwrap_or(Value::Null);
+    if status != 201 {
+        return Err(describe_error_for(p, status, &v));
+    }
+    let t = &v["tracker"];
+    println!(
+        "Connected {} board \"{}\" (#{}) on {}.",
+        t["external_scope"].as_str().unwrap_or("?"),
+        t["board_name"].as_str().unwrap_or("?"),
+        t["board_ref"].as_str().unwrap_or("?"),
+        t["base_url"].as_str().unwrap_or("?"),
+    );
+    println!("First sync running…");
+    wait_for_first_sync(
+        client,
+        &format!("{base}/api/workspaces/{workspace}/trackers"),
+        t["id"].as_str().unwrap_or_default(),
+        p,
+    )
+}
+
 fn get_json(client: &reqwest::blocking::Client, url: &str) -> Result<Value, String> {
     let resp =
         client.get(url).send().map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
@@ -670,6 +803,7 @@ fn wait_for_first_sync(
     client: &reqwest::blocking::Client,
     url: &str,
     id: &str,
+    p: Provider,
 ) -> Result<(), String> {
     for _ in 0..60 {
         let list = get_json(client, url)?;
@@ -685,7 +819,7 @@ fn wait_for_first_sync(
                 let code = t["last_error"].as_str().unwrap_or("unknown");
                 return Err(format!(
                     "Connected, but the first sync failed: {}",
-                    describe_error(0, &serde_json::json!({ "error": code }))
+                    describe_error_for(p, 0, &serde_json::json!({ "error": code }))
                 ));
             }
             _ => {
@@ -932,21 +1066,80 @@ mod tests {
     #[test]
     fn the_token_comes_from_env_then_stdin() {
         let mut empty = std::io::Cursor::new(Vec::new());
-        assert_eq!(read_token(Some("from-env".into()), &mut empty), Ok("from-env".into()));
+        assert_eq!(
+            read_token(TOKEN_ENV, Some("from-env".into()), &mut empty),
+            Ok("from-env".into())
+        );
         let mut input = std::io::Cursor::new(b"  from-stdin  \nignored\n".to_vec());
         assert_eq!(
-            read_token(Some("".into()), &mut input),
+            read_token(TOKEN_ENV, Some("".into()), &mut input),
             Ok("from-stdin".into()),
             "an empty env var falls through"
         );
         let mut nothing = std::io::Cursor::new(Vec::new());
-        assert!(read_token(None, &mut nothing).is_err());
+        let err = read_token(GITLAB_TOKEN_ENV, None, &mut nothing).unwrap_err();
+        assert!(err.contains("SENSEI_GITLAB_TOKEN"), "{err}");
+    }
+
+    #[test]
+    fn gitlab_connect_parses_and_builds_its_body() {
+        let c = parse(&[
+            "connect",
+            "gitlab",
+            "--workspace",
+            "p",
+            "--board-url",
+            "https://gitlab.example.com/acme",
+            "--confirm-host",
+            "gitlab.example.com",
+            "--level",
+            "sprint",
+        ])
+        .unwrap();
+        assert!(
+            matches!(c, TrackerCmd::Connect { kind: ConnectKind::Gitlab { ref confirm_host, .. } } if confirm_host.as_deref() == Some("gitlab.example.com"))
+        );
+        assert!(
+            parse(&["connect", "gitlab", "--workspace", "p", "--level", "sprint"]).is_err(),
+            "--board-url is required"
+        );
+        assert_eq!(
+            gitlab_connect_body("https://gitlab.com/acme", None, "sprint", "glpat-x"),
+            json!({"kind": "gitlab", "level": "sprint", "board_url": "https://gitlab.com/acme", "api_token": "glpat-x"})
+        );
+        assert_eq!(
+            gitlab_connect_body("https://g.example.com/a", Some("g.example.com"), "task", "t")["confirm_host"],
+            json!("g.example.com")
+        );
+    }
+
+    #[test]
+    fn errors_name_the_right_tracker() {
+        let e = |p, code: &str| describe_error_for(p, 0, &json!({"error": code}));
+        assert!(e(Provider::Gitlab, "unauthorized").contains("read_api"));
+        assert!(e(Provider::Gitlab, "host_not_confirmed").contains("--confirm-host"));
+        assert!(e(Provider::Gitlab, "invalid_base_url").contains("GitLab"));
+        assert!(e(Provider::Gitlab, "rate_limited").starts_with("GitLab"));
+        assert!(e(Provider::Gitlab, "token_required").contains("SENSEI_GITLAB_TOKEN"));
+        for code in [
+            "unauthorized",
+            "rate_limited",
+            "transport",
+            "invalid_base_url",
+            "token_required",
+            "task_not_on_board",
+        ] {
+            let m = describe_error(0, &json!({"error": code, "key": "k"}));
+            assert!(!m.contains("Jira") && !m.contains("GitLab"), "{code}: {m}");
+        }
+        assert!(e(Provider::Jira, "rate_limited").starts_with("Jira"));
     }
 
     #[test]
     fn errors_are_described_in_words() {
         assert_eq!(
-            describe_error(
+            describe_error_for(
+                Provider::Jira,
                 404,
                 &json!({"error": "task_not_on_board", "key": "AUTH-404", "board_ref": "42"})
             ),
@@ -957,7 +1150,7 @@ mod tests {
             "No ticket with that key in sensei."
         );
         assert!(
-            describe_error(401, &json!({"error": "unauthorized"}))
+            describe_error_for(Provider::Jira, 401, &json!({"error": "unauthorized"}))
                 .contains("rejected the email and token")
         );
         let taken = describe_error(
