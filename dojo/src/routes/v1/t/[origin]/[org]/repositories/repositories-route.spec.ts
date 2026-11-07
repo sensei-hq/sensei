@@ -9,6 +9,10 @@
 // it. Test 14 needs no test here: the PATCH election write path and its spec
 // already exist and are untouched by this item.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// The real AdminError (via the importOriginal spread below): the route maps
+// it with `instanceof`, so a local lookalike would take the foreign-error
+// branch and pin the wrong path.
+import { AdminError } from '$lib/server/admin-data';
 
 const caller: Record<string, unknown> = {
 	tenantId: 't1',
@@ -18,15 +22,6 @@ const caller: Record<string, unknown> = {
 	membershipId: 'm1',
 	accessToken: 'jwt-A'
 };
-
-class AdminError extends Error {
-	constructor(
-		readonly status: number,
-		message: string
-	) {
-		super(message);
-	}
-}
 
 const mocks = vi.hoisted(() => ({
 	resolveTenantAccess: vi.fn(),
@@ -46,7 +41,7 @@ vi.mock('$lib/server/admin-data', async (importOriginal) => ({
 
 function ev(params: Record<string, string> = {}) {
 	return {
-		params: { origin: 'github', org: 'acme', ...params },
+		params: { origin: 'organization', org: 'acme', ...params },
 		request: new Request('http://x/', { headers: { authorization: 'Bearer [REDACTED]' } }),
 		locals: {},
 		url: new URL('http://x/')
@@ -96,7 +91,12 @@ describe('GET /v1/t/{origin}/{org}/repositories (r2 tests 10-13)', () => {
 		expect(body.hidden_private_count).toBe(1); // counted from the rows, not stored
 	});
 
-	it.skip('403 as member, outsider, lead: the access Response propagates', async () => {
+	// Layer split: through fully-mocked access no route test can distinguish
+	// roles (the mock erases the layer that does). Per-role refusals live at
+	// SQL test 2 (all five) + the ACCESS.admin floor-arg pin in the 200 test +
+	// roleToAccess's own ladder spec (dojo-access-ladder.spec.ts). This pins
+	// propagation: an access refusal reaches the caller, store untouched.
+	it.skip('access refusals (role floor, non-member) propagate, store untouched', async () => {
 		for (const [status, message] of [
 			[403, 'admin role required'],
 			[403, 'not a member of this dōjō']
@@ -120,6 +120,15 @@ describe('GET /v1/t/{origin}/{org}/repositories (r2 tests 10-13)', () => {
 		expect(mocks.listOrgRepositories).not.toHaveBeenCalled();
 	});
 
+	it.skip('404 personal origin even when access resolves (orgs only)', async () => {
+		// resolveTenantAccess resolves personal tenants (their keys exist),
+		// so the route needs its own origin branch — else a personal read
+		// falls through to the org store. Access resolves here by default.
+		const res = await GET({ origin: 'personal' });
+		expect(res.status).toBe(404);
+		expect(mocks.listOrgRepositories).not.toHaveBeenCalled();
+	});
+
 	it.skip('empty org reads empty, never 404 or null (D83)', async () => {
 		mocks.listOrgRepositories.mockResolvedValue([]);
 		const res = await GET();
@@ -137,8 +146,15 @@ describe('GET /v1/t/{origin}/{org}/repositories (r2 tests 10-13)', () => {
 		expect(body.repositories[0].member_count).toBe(6); // counts from the DB, verbatim
 	});
 
-	it.skip('store failure rejects (500 upstream), never partial rows', async () => {
+	it.skip('store AdminError(500) returns 500 with the error shape, never partial rows', async () => {
 		mocks.listOrgRepositories.mockRejectedValueOnce(new AdminError(500, 'definer failed'));
-		await expect(GET()).rejects.toThrow();
+		const res = await GET();
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({ error: 'definer failed' });
+	});
+
+	it.skip('foreign store errors reject (only AdminError maps to a Response)', async () => {
+		mocks.listOrgRepositories.mockRejectedValueOnce(new Error('kaboom'));
+		await expect(GET()).rejects.toThrow('kaboom');
 	});
 });

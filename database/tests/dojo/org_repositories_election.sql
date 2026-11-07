@@ -95,34 +95,34 @@ begin
     -- Explicit org row true: elected, by the organization, at the row's stamp.
     select elected, configured_by::text as who, configured_at as at, configurable_by_me as cfg
       into r from dojo.org_repositories('b0000000-0000-4000-8000-000000000151') where name = 'orgtrue';
-    if (r.elected, r.by, r.at, r.cfg) is distinct from
+    if (r.elected, r.who, r.at, r.cfg) is distinct from
        (true, 'organization', '2026-10-10T10:00:00Z'::timestamptz, true) then
         raise exception 'election(orgtrue): expected (t,organization,2026-10-10,t), got (%,%,%,%)',
-            r.elected, r.by, r.at, r.cfg;
+            r.elected, r.who, r.at, r.cfg;
     end if;
 
     -- Explicit org row false beats policy-false alike: not elected, still decided.
     select elected, configured_by::text as who, configured_at as at, configurable_by_me as cfg
       into r from dojo.org_repositories('b0000000-0000-4000-8000-000000000151') where name = 'orgfalse';
-    if (r.elected, r.by, r.at, r.cfg) is distinct from
+    if (r.elected, r.who, r.at, r.cfg) is distinct from
        (false, 'organization', '2026-10-11T10:00:00Z'::timestamptz, true) then
         raise exception 'election(orgfalse): expected (f,organization,2026-10-11,t), got (%,%,%,%)',
-            r.elected, r.by, r.at, r.cfg;
+            r.elected, r.who, r.at, r.cfg;
     end if;
 
     -- Public with an explicit false: honored (the default only fills absence).
     select elected, configured_by::text as who
       into r from dojo.org_repositories('b0000000-0000-4000-8000-000000000151') where name = 'puboff';
-    if (r.elected, r.by) is distinct from (false, 'organization') then
-        raise exception 'election(puboff): explicit false on public must hold, got (%,%)', r.elected, r.by;
+    if (r.elected, r.who) is distinct from (false, 'organization') then
+        raise exception 'election(puboff): explicit false on public must hold, got (%,%)', r.elected, r.who;
     end if;
 
     -- Public with no row: elected by default, decided by nobody (a private
     -- policy never configures a public repo, so provenance stays null).
     select elected, configured_by as who, configured_at as at
       into r from dojo.org_repositories('b0000000-0000-4000-8000-000000000151') where name = 'pubdef';
-    if r.elected is distinct from true or r.by is not null or r.at is not null then
-        raise exception 'election(pubdef): expected (t,null,null), got (%,%,%)', r.elected, r.by, r.at;
+    if r.elected is distinct from true or r.who is not null or r.at is not null then
+        raise exception 'election(pubdef): expected (t,null,null), got (%,%,%)', r.elected, r.who, r.at;
     end if;
 
     -- NULL visibility: elected false AND not configurable, even with an org
@@ -136,17 +136,17 @@ begin
     -- No org row + policy true: the policy elects, provenance is the policy stamp.
     select elected, configured_by::text as who, configured_at as at
       into r from dojo.org_repositories('b0000000-0000-4000-8000-000000000152') where name = 'poltrue';
-    if (r.elected, r.by, r.at) is distinct from
+    if (r.elected, r.who, r.at) is distinct from
        (true, 'organization', '2026-09-02T10:00:00Z'::timestamptz) then
         raise exception 'election(poltrue): expected (t,organization,2026-09-02), got (%,%,%)',
-            r.elected, r.by, r.at;
+            r.elected, r.who, r.at;
     end if;
 
     -- No row + no policy on private: not elected, decided by nobody.
     select elected, configured_by as who, configured_at as at
       into r from dojo.org_repositories('b0000000-0000-4000-8000-000000000153') where name = 'defpriv';
-    if r.elected is distinct from false or r.by is not null or r.at is not null then
-        raise exception 'election(defpriv): expected (f,null,null), got (%,%,%)', r.elected, r.by, r.at;
+    if r.elected is distinct from false or r.who is not null or r.at is not null then
+        raise exception 'election(defpriv): expected (f,null,null), got (%,%,%)', r.elected, r.who, r.at;
     end if;
 end $$;
 

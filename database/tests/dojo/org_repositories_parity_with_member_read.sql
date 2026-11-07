@@ -116,7 +116,8 @@ declare
     k text[];
     want text[];
     i int;
-    member_got text;
+    member_got text[];
+    member_one text;
     org_got text;
 begin
     -- (tenant, repo_key, expected refusal at BOTH grains).
@@ -147,15 +148,21 @@ begin
                   'forge_visibility_stale',
                   null,
                   null];
+    -- All 9 member checks BEFORE the first org call, so the file
+    -- self-proves the matrix in phase A too (red at outcome 1's org
+    -- call, with all 9 member verdicts already confirmed).
     for i in 1 .. 9 loop
         -- Member grain, as the contributor.
         perform set_config('request.jwt.claims',
             json_build_object('sub', 'a1000000-0000-4000-8000-000000000172')::text, true);
-        select entitlement_refusal into member_got from dojo.my_repositories()
+        select entitlement_refusal into member_one from dojo.my_repositories()
          where repo_key = k[i];
-        if member_got is distinct from want[i] then
-            raise exception 'parity(%): member grain expected %, got %', k[i], want[i], member_got;
+        if member_one is distinct from want[i] then
+            raise exception 'parity(%): member grain expected %, got %', k[i], want[i], member_one;
         end if;
+        member_got[i] := member_one;
+    end loop;
+    for i in 1 .. 9 loop
         -- Org grain, as the admin: identical verdict, same repo.
         perform set_config('request.jwt.claims',
             json_build_object('sub', 'a1000000-0000-4000-8000-000000000171')::text, true);
@@ -163,7 +170,7 @@ begin
          where repo_key = k[i];
         if org_got is distinct from want[i] then
             raise exception 'parity(%): org grain expected %, got % (member grain said %)',
-                k[i], want[i], org_got, member_got;
+                k[i], want[i], org_got, member_got[i];
         end if;
     end loop;
 end $$;
