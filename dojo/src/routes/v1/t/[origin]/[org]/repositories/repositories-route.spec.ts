@@ -1,13 +1,11 @@
 // Route-level tests for the org repositories read (JWT plane):
 //   GET /v1/t/{origin}/{org}/repositories → { repositories[], hidden_private_count }
 //
-// Phase A (org-repositories r2, tests 10-13): every test is it.skip — the
-// route module does not exist yet, so the import is dynamic and inside the
-// tests (a static import would fail collection). Phase B un-skips these
-// against the real +server.ts; if the store seam lands somewhere other than
-// $lib/server/admin-data's listOrgRepositories, the vi.mock path moves with
-// it. Test 14 needs no test here: the PATCH election write path and its spec
-// already exist and are untouched by this item.
+// Phase B (org-repositories r2, tests 10-13): un-skipped against the real
+// +server.ts, top-level await import per admin-routes.spec.ts. The store
+// seam is $lib/server/admin-data's listOrgRepositories. Test 14 needs no
+// test here: the PATCH election write path and its spec already exist and
+// are untouched by this item.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 // The real AdminError (via the importOriginal spread below): the route maps
 // it with `instanceof`, so a local lookalike would take the foreign-error
@@ -28,6 +26,13 @@ const mocks = vi.hoisted(() => ({
 	listOrgRepositories: vi.fn()
 }));
 
+// Fake clients (per admin-routes.spec.ts): the store is mocked and never
+// touches them, but callerDb builds one through userDb, which throws
+// without Supabase env.
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
@@ -70,17 +75,14 @@ beforeEach(() => {
 	mocks.listOrgRepositories.mockClear().mockResolvedValue([]);
 });
 
+const repositories = await import('./+server');
+
 async function GET(p?: Record<string, string>) {
-	// Concatenated so Vite cannot statically resolve it: +server.ts lands in
-	// phase B, and skipped tests never evaluate this import. Phase B replaces
-	// this helper with the admin-routes.spec.ts top-level await import.
-	const routeModule = './+ser' + 'ver';
-	const mod = await import(routeModule);
-	return mod.GET(ev(p));
+	return repositories.GET(ev(p));
 }
 
 describe('GET /v1/t/{origin}/{org}/repositories (r2 tests 10-13)', () => {
-	it.skip('200 as admin with the full wire shape, gated at ACCESS.admin', async () => {
+	it('200 as admin with the full wire shape, gated at ACCESS.admin', async () => {
 		mocks.listOrgRepositories.mockResolvedValue([row(), row({ name: 'portal', billing_hidden: true })]);
 		const res = await GET();
 		expect(res.status).toBe(200);
@@ -96,7 +98,7 @@ describe('GET /v1/t/{origin}/{org}/repositories (r2 tests 10-13)', () => {
 	// SQL test 2 (all five) + the ACCESS.admin floor-arg pin in the 200 test +
 	// roleToAccess's own ladder spec (dojo-access-ladder.spec.ts). This pins
 	// propagation: an access refusal reaches the caller, store untouched.
-	it.skip('access refusals (role floor, non-member) propagate, store untouched', async () => {
+	it('access refusals (role floor, non-member) propagate, store untouched', async () => {
 		for (const [status, message] of [
 			[403, 'admin role required'],
 			[403, 'not a member of this dōjō']
@@ -111,7 +113,7 @@ describe('GET /v1/t/{origin}/{org}/repositories (r2 tests 10-13)', () => {
 		expect(mocks.listOrgRepositories).not.toHaveBeenCalled();
 	});
 
-	it.skip('404 unknown org and origin/org mismatch propagate', async () => {
+	it('404 unknown org and origin/org mismatch propagate', async () => {
 		mocks.resolveTenantAccess.mockRejectedValueOnce(
 			new Response(JSON.stringify({ error: 'no such dōjō' }), { status: 404 })
 		);
@@ -120,7 +122,7 @@ describe('GET /v1/t/{origin}/{org}/repositories (r2 tests 10-13)', () => {
 		expect(mocks.listOrgRepositories).not.toHaveBeenCalled();
 	});
 
-	it.skip('404 personal origin even when access resolves (orgs only)', async () => {
+	it('404 personal origin even when access resolves (orgs only)', async () => {
 		// resolveTenantAccess resolves personal tenants (their keys exist),
 		// so the route needs its own origin branch — else a personal read
 		// falls through to the org store. Access resolves here by default.
@@ -129,14 +131,14 @@ describe('GET /v1/t/{origin}/{org}/repositories (r2 tests 10-13)', () => {
 		expect(mocks.listOrgRepositories).not.toHaveBeenCalled();
 	});
 
-	it.skip('empty org reads empty, never 404 or null (D83)', async () => {
+	it('empty org reads empty, never 404 or null (D83)', async () => {
 		mocks.listOrgRepositories.mockResolvedValue([]);
 		const res = await GET();
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ repositories: [], hidden_private_count: 0 });
 	});
 
-	it.skip('instants pass through as instants, nothing invented (D83)', async () => {
+	it('instants pass through as instants, nothing invented (D83)', async () => {
 		mocks.listOrgRepositories.mockResolvedValue([row()]);
 		const body = await (await GET()).json();
 		for (const k of ['last_synced_at', 'configured_at'] as const) {
@@ -146,14 +148,14 @@ describe('GET /v1/t/{origin}/{org}/repositories (r2 tests 10-13)', () => {
 		expect(body.repositories[0].member_count).toBe(6); // counts from the DB, verbatim
 	});
 
-	it.skip('store AdminError(500) returns 500 with the error shape, never partial rows', async () => {
+	it('store AdminError(500) returns 500 with the error shape, never partial rows', async () => {
 		mocks.listOrgRepositories.mockRejectedValueOnce(new AdminError(500, 'definer failed'));
 		const res = await GET();
 		expect(res.status).toBe(500);
 		expect(await res.json()).toEqual({ error: 'definer failed' });
 	});
 
-	it.skip('foreign store errors reject (only AdminError maps to a Response)', async () => {
+	it('foreign store errors reject (only AdminError maps to a Response)', async () => {
 		mocks.listOrgRepositories.mockRejectedValueOnce(new Error('kaboom'));
 		await expect(GET()).rejects.toThrow('kaboom');
 	});

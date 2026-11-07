@@ -42,6 +42,15 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, visibility, visibi
   ('90000000-0000-4000-8000-000000000104', 'b0000000-0000-4000-8000-000000000102',
    'github.com/ztest-orrepos-out/other', 'other', 'private', now(), 'github');
 
+-- Standing roles (test 3's rule: no standing, no listing). The outsider
+-- repo is deliberately listable too, so the isolation check below proves
+-- tenant scoping rather than passing on role-absence.
+insert into dojo.repository_roles (repository_id, principal_id, forge_role) values
+  ('90000000-0000-4000-8000-000000000101', 'a0000000-0000-4000-8000-000000000102', 'contributor'),
+  ('90000000-0000-4000-8000-000000000102', 'a0000000-0000-4000-8000-000000000102', 'contributor'),
+  ('90000000-0000-4000-8000-000000000103', 'a0000000-0000-4000-8000-000000000102', 'contributor'),
+  ('90000000-0000-4000-8000-000000000104', 'a0000000-0000-4000-8000-000000000103', 'contributor');
+
 set local role authenticated;
 
 do $$
