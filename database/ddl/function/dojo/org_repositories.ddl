@@ -95,7 +95,10 @@ begin
                      then coalesce(oe.elected, p.private_repos_shared, false)
                 when t.origin = 'organization'
                      then coalesce(oe.elected, true)
-                else true -- unreachable: personal tenants return empty above
+                -- Unreachable: personal tenants return empty above, and
+                -- tenant_origin is exactly {personal, organization} — a
+                -- future third origin would silently take elected = true.
+                else true
            end as elected
          -- May the caller change it, right now? The view's CASE
          -- specialised: null visibility reads false even for admins (L2);

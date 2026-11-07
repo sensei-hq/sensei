@@ -87,10 +87,11 @@ as $$
          -- developer's own private repository is free, and a personal billing
          -- row — present or not, in any state — refuses nothing.
          --
-         -- `claimed_at` is live and its term is enabled below. There is NO seat
-         -- term, and there should not be (see all_my_repositories' header
-         -- history: the seat model keys on the wrong concept; re-keying it is
-         -- its own slice).
+         -- PHASE 2 terms sit COMMENTED at their precedence positions.
+         -- `claimed_at` is live and its term is enabled below. The seat term
+         -- is NOT, and the note at its precedence position says why — it named a
+         -- table that never existed, and the real one is at a grain these
+         -- repo-level inputs cannot reach.
          , case
              when c.forge_visibility is null              then c.capture_refusal
              when c.forge_visibility = 'public'           then null   -- entitled, free
@@ -118,6 +119,29 @@ as $$
              -- casts it to midnight and denies the whole final day.
              when now() <  p_period_start
                or now() >= (p_period_end + 1)             then 'subscription_expired'
+             -- THERE IS NO SEAT TERM, AND THERE SHOULD NOT BE. This position
+             -- held `when sa.id is null then 'no_seat'` against
+             -- `dojo.seat_allocations` — a table that never existed. Chasing it
+             -- down established something larger, so the reason row is now
+             -- DELETED rather than left seeded and unemitted:
+             --
+             --   * A seat is a BILLING QUANTITY, not a permission.
+             --     `seats_included` is never compared to anything and
+             --     `openOrRefreshSeat` never refuses at a cap. Entitlement is
+             --     already answered above by the subscription terms.
+             --   * `dojo.seats.namespace_id` points at `sensei.namespaces`, which
+             --     is the GOVERNANCE LADDER (general·user·organization·workspace·
+             --     repository) — the structure that
+             --     decides WHICH RULES APPLY to a repo. Three of its four
+             --     referents are rule packs, adoptions and shared rules; seats is
+             --     the odd one out, billing against a rule scope.
+             --   * A `(workspace, …)` namespace is NOT `dojo.workspaces`. Live: 311
+             --     workspace-rung namespaces against 146 workspaces (#307 D12).
+             --
+             -- So this was never a grain to reconcile; the seat model keys on the
+             -- wrong concept. Re-keying it is its own slice — see docs/backlog.md.
+             -- Sync is repo-scoped and never touches a project or a namespace
+             -- (184 metric rows, 0 projects), so nothing here is waiting on it.
              else null                                                -- entitled
            end as entitlement_refusal
       from capture c

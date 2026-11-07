@@ -83,12 +83,18 @@ async function GET(p?: Record<string, string>) {
 
 describe('GET /v1/t/{origin}/{org}/repositories (r2 tests 10-13)', () => {
 	it('200 as admin with the full wire shape, gated at ACCESS.admin', async () => {
-		mocks.listOrgRepositories.mockResolvedValue([row(), row({ name: 'portal', billing_hidden: true })]);
+		// Asymmetric by design: two visible + one hidden, still expecting 1 —
+		// the inversion mutant (!billing_hidden) yields 2 and dies here.
+		mocks.listOrgRepositories.mockResolvedValue([
+			row(),
+			row({ name: 'portal', billing_hidden: true }),
+			row({ name: 'docs' })
+		]);
 		const res = await GET();
 		expect(res.status).toBe(200);
 		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(4); // ACCESS.admin, before any store call
 		const body = await res.json();
-		expect(body.repositories).toHaveLength(2);
+		expect(body.repositories).toHaveLength(3);
 		expect(body.repositories[0]).toEqual(row());
 		expect(body.hidden_private_count).toBe(1); // counted from the rows, not stored
 	});
