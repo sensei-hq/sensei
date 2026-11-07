@@ -27,6 +27,9 @@ const row = (over: Partial<TrackerConnection> = {}): TrackerConnection => ({
   external_scope: 'AUTH',
   board_ref: '42',
   board_name: 'AUTH Scrum',
+  sprint_source: null,
+  sprint_source_changed_at: null,
+  full_path: null,
   status: 'connected',
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
@@ -201,6 +204,75 @@ describe('the connect form', () => {
         api_token: 'SENTINEL-TOKEN-XYZ',
       },
     });
+  });
+
+  it('GitLab: sends the group URL, the confirmed host and the token, as kind gitlab', async () => {
+    const { s, calls } = screen([{ ok: true, data: [] }]);
+    await s.load();
+    s.kind = 'gitlab';
+    s.level = 'sprint';
+    s.boardUrl = 'https://gitlab.example.com/groups/acme';
+    s.token = 'glpat-x';
+    expect(s.canConnect).toBe(false);
+    s.confirmHost = 'gitlab.example.com';
+    expect(s.canConnect).toBe(true);
+    await s.connect();
+    expect(calls.find((c) => c[0] === 'connect')![1]).toEqual({
+      p: P,
+      kind: 'gitlab',
+      level: 'sprint',
+      body: { board_url: 'https://gitlab.example.com/groups/acme', confirm_host: 'gitlab.example.com', api_token: 'glpat-x' },
+    });
+  });
+
+  it('GitLab on gitlab.com needs no confirmed host and no email', () => {
+    const { s } = screen([{ ok: true, data: [] }]);
+    s.kind = 'gitlab';
+    s.level = 'task';
+    s.boardUrl = 'https://gitlab.com/acme/platform';
+    s.token = 'glpat-x';
+    expect(s.needsConfirmHost).toBe(false);
+    expect(s.canConnect).toBe(true);
+  });
+
+  it('GitLab Replace token rebuilds the URL from the current path and confirms the stored host', () => {
+    const { s } = screen([{ ok: true, data: [] }]);
+    s.startReplace(row({ kind: 'gitlab', base_url: 'https://gitlab.example.com', full_path: 'acme/platform', level: 'epic' }));
+    expect([s.kind, s.boardUrl, s.confirmHost, s.level]).toEqual([
+      'gitlab',
+      'https://gitlab.example.com/acme/platform',
+      'gitlab.example.com',
+      'epic',
+    ]);
+    expect(s.token).toBe('');
+  });
+
+  it('GitLab: the sprint source line, and its change notice for 14 days only', () => {
+    const { s } = screen([{ ok: true, data: [] }]);
+    const days = (n: number) => new Date(NOW.getTime() - n * 24 * 3600 * 1000).toISOString();
+    const gl = (over: Partial<TrackerConnection>) => row({ kind: 'gitlab', sprint_source: 'iteration', ...over });
+    expect(s.sprintsLine(gl({}))).toBe('Sprints: iterations');
+    expect(s.sprintsLine(row())).toBeNull();
+    expect(s.sourceChangeNotice(gl({ sprint_source_changed_at: days(3) }))).toBe(
+      'Sprints now come from iterations. Earlier milestone sprints are marked removed.',
+    );
+    expect(s.sourceChangeNotice(gl({ sprint_source: 'milestone', sprint_source_changed_at: days(13) }))).toBe(
+      'Sprints now come from milestones. Earlier iteration sprints are marked removed.',
+    );
+    expect(s.sourceChangeNotice(gl({ sprint_source_changed_at: days(15) }))).toBeNull();
+    expect(s.sourceChangeNotice(gl({ sprint_source_changed_at: null }))).toBeNull();
+  });
+
+  it('a GitLab failure is worded for GitLab and never names Jira', () => {
+    for (const code of ['invalid_base_url', 'unauthorized', 'token_required', 'not_found', 'rate_limited', 'transport', 'bad_request', 'host_not_confirmed', 'writeback_unsupported']) {
+      const text = errorFor(422, { error: code }, 'gitlab').text;
+      expect(text, code).not.toMatch(/Jira|Atlassian/);
+    }
+    expect(errorFor(422, { error: 'host_not_confirmed' }, 'gitlab').field).toBe('board_url');
+    expect(errorFor(401, { error: 'unauthorized' }, 'gitlab').link).toBeNull();
+    expect(errorFor(404, { error: 'board_not_found', base_url: 'https://g.example.com', board_ref: 'acme' }, 'gitlab').text).toBe(
+      'No group or project acme on https://g.example.com.',
+    );
   });
 
   it('sends site + board id from Advanced', async () => {

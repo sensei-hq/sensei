@@ -58,6 +58,9 @@ const tracker: TrackerConnection = {
   external_scope: 'AUTH',
   board_ref: '42',
   board_name: 'AUTH Scrum',
+  sprint_source: null,
+  sprint_source_changed_at: null,
+  full_path: null,
   level: 'sprint',
   status: 'connected',
   last_success_at: '2026-10-18T11:58:00Z',
@@ -307,7 +310,7 @@ describe('the sprint filter', () => {
     await l.setFilter('n');
     expect(l.strip).toEqual({
       kind: 'reason',
-      text: 'Jira has no dates for this sprint, so its sessions can’t be placed in it.',
+      text: 'The tracker has no dates for this sprint, so its sessions can’t be placed in it.',
     });
   });
 });

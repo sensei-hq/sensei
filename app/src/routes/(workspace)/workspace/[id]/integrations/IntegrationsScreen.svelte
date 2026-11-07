@@ -5,6 +5,7 @@
   import { PageHeader, Screen } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import { Notice } from '@sensei/ui';
+  import { TRACKER_NAME } from '$lib/tracker-errors.js';
   import ModalShell from '$lib/components/ModalShell.svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { CREATE_TOKEN_URL, LEVELS, METRICS, type TrackerIntegration } from './integrations-state.svelte.js';
@@ -36,7 +37,7 @@
 
 {#snippet field(
   id: string,
-  name: 'board_url' | 'email' | 'token' | 'site_url' | 'board_id',
+  name: 'board_url' | 'confirm_host' | 'email' | 'token' | 'site_url' | 'board_id',
   label: string,
   type: string,
   value: string,
@@ -69,7 +70,7 @@
       icon="i-solar-link-bold-duotone"
       eyebrow="Integrations"
       title="Issue trackers"
-      description="Connect this workspace’s Jira boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map."
+      description="Connect this workspace’s Jira or GitLab boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map (GitLab boards are read-only for now)."
     />
   {/snippet}
 <section data-screen="integrations" class="flex flex-col">
@@ -106,6 +107,12 @@
           {#each group.trackers as tracker (tracker.id)}
             <div data-tracker={tracker.id} class="flex flex-col gap-3 rounded-lg border border-paper-edge bg-paper-soft p-4">
               <p class="m-0 text-sm text-ink">{screen.cardTitle(tracker)}</p>
+              {#if screen.sprintsLine(tracker)}
+                <p class="m-0 text-xs text-ink-soft" data-sprint-source={tracker.sprint_source}>{screen.sprintsLine(tracker)}</p>
+              {/if}
+              {#if screen.sourceChangeNotice(tracker)}
+                <p class="m-0 text-xs text-ink" role="note" data-notice="sprint-source">{screen.sourceChangeNotice(tracker)}</p>
+              {/if}
               <p class="m-0 flex items-center gap-2 text-xs text-ink-soft" data-status={tracker.status}>
                 <span
                   aria-hidden="true"
@@ -116,6 +123,7 @@
                 ></span>
                 {screen.cardStatus(tracker)}
               </p>
+              {#if tracker.kind === 'jira'}
               <div class="flex flex-wrap items-center gap-3">
                 <label class="flex items-center gap-2 text-sm text-ink">
                   <input
@@ -194,6 +202,11 @@
                   </div>
                 {/if}
               </div>
+              {:else}
+                <p class="m-0 text-xs text-ink-mute" data-writeback="unsupported">
+                  Write-back: not available for {TRACKER_NAME[tracker.kind]} yet
+                </p>
+              {/if}
               <div class="flex flex-wrap gap-2">
                 <Button
                   style="outline"
@@ -268,14 +281,58 @@
           <fieldset class="m-0 flex gap-4 border-0 p-0">
             <legend class="mb-1 text-sm text-ink">Tracker</legend>
             <label class="flex items-center gap-2 text-sm text-ink" data-tracker="jira">
-              <input type="radio" name="tracker" value="jira" checked /> Jira
+              <input
+                type="radio"
+                name="tracker"
+                value="jira"
+                checked={screen.kind === 'jira'}
+                disabled={screen.replacing !== null}
+                onchange={() => (screen.kind = 'jira')}
+              /> Jira
             </label>
-            <span class="flex items-center gap-2 text-sm text-ink-faint" data-tracker="gitlab" aria-disabled="true">
-              GitLab, coming soon
-            </span>
+            <label class="flex items-center gap-2 text-sm text-ink" data-tracker="gitlab">
+              <input
+                type="radio"
+                name="tracker"
+                value="gitlab"
+                checked={screen.kind === 'gitlab'}
+                disabled={screen.replacing !== null}
+                onchange={() => (screen.kind = 'gitlab')}
+              /> GitLab
+            </label>
           </fieldset>
 
-          {#if !screen.advanced}
+          {#if screen.kind === 'gitlab'}
+            {@render field(
+              'tracker-board-url',
+              'board_url',
+              'Group or project URL',
+              'text',
+              screen.boardUrl,
+              (v) => (screen.boardUrl = v),
+              'Open the group or project in GitLab and copy the address bar, e.g. https://gitlab.example.com/acme/platform. https only, on the standard port.',
+            )}
+            {#if screen.needsConfirmHost}
+              {@render field(
+                'tracker-confirm-host',
+                'confirm_host',
+                'Confirm the host',
+                'text',
+                screen.confirmHost,
+                (v) => (screen.confirmHost = v),
+                'Type the host from the URL again (e.g. gitlab.example.com). sensei sends your token only to this host.',
+              )}
+            {/if}
+            {@render field(
+              'tracker-token',
+              'token',
+              'Access token',
+              'password',
+              screen.token,
+              (v) => (screen.token = v),
+              'In GitLab, create a personal or group access token with the read_api scope, and paste it here.',
+            )}
+          {:else if !screen.advanced}
             {@render field(
               'tracker-board-url',
               'board_url',
@@ -287,6 +344,7 @@
             )}
           {/if}
 
+          {#if screen.kind === 'jira'}
           <div class="flex flex-col gap-3">
             <div>
               <Button
@@ -338,6 +396,7 @@
             class="self-start text-sm text-primary underline"
             onclick={(e) => external(e, CREATE_TOKEN_URL)}>Create an API token</a
           >
+          {/if}
 
           <p class="m-0 text-xs text-ink-mute">
             Your token is stored in your system keychain, not in sensei’s database.
@@ -379,7 +438,7 @@
     Disconnect board #{screen.confirmingDisconnect?.board_ref}?
   </h2>
   <p class="m-0 text-sm text-ink-mute">
-    This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and Jira itself is not changed.
+    This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and the tracker itself is not changed.
   </p>
   <div class="flex justify-end gap-2">
     <Button style="outline" size="sm" data-action="cancel-disconnect" onclick={() => screen.cancelDisconnect()} label="Cancel" />

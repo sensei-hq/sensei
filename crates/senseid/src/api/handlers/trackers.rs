@@ -89,6 +89,12 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         "external_scope": row.external_scope,
         "board_ref": row.board_ref,
         "board_name": row.params.get("board_name"),
+        // GitLab (§G3, §G10): where sprints come from, when that last changed, and
+        // the board's current path (Replace token rebuilds the board URL from it).
+        // Null for Jira.
+        "sprint_source": row.params.get("sprint_source"),
+        "sprint_source_changed_at": row.params.get("sprint_source_changed_at"),
+        "full_path": row.params.get("full_path"),
         "status": st.as_str(),
         "last_success_at": row.last_success_at,
         "last_error": row.last_error,
@@ -1053,6 +1059,11 @@ mod tests {
             (json!("gitlab"), json!("group:857"))
         );
         assert_eq!(row["account"], json!("group_bot"));
+        assert_eq!(
+            (row["sprint_source"].clone(), row["full_path"].clone()),
+            (json!("milestone"), json!("acme"))
+        );
+        assert_eq!(row["sprint_source_changed_at"], Value::Null, "a first source is not a change");
         settled(&h, p).await;
         let t = tracker(&h, p).await;
         let uri = format!("/api/workspaces/{p}/trackers/{t}");

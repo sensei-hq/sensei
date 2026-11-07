@@ -1767,18 +1767,27 @@ export interface PruneResult {
 /** What a board serves in its workspace (D40): the `sensei.tracker_level` enum. */
 export type TrackerLevel = 'epic' | 'sprint' | 'task';
 
+/** A `sensei.tracker_kind` label: the trackers sensei has an adapter for. */
+export type TrackerKind = 'jira' | 'gitlab';
+
 export interface TrackerConnection {
   id: string;
-  kind: 'jira';
+  kind: TrackerKind;
   level: TrackerLevel;
   /** Normalised by the daemon, e.g. `https://acme.atlassian.net`. */
   base_url: string;
-  /** The account the token belongs to (Jira: the Atlassian email). */
+  /** The account the token belongs to (Jira: the Atlassian email; GitLab: the token's username). */
   account: string;
-  /** Jira project key, or the board name for a cross-project board. */
+  /** Jira project key, or the board name for a cross-project board; GitLab: the full path at connect. */
   external_scope: string;
   board_ref: string;
   board_name: string | null;
+  /** GitLab: where sprints come from; null for Jira. */
+  sprint_source: 'iteration' | 'milestone' | null;
+  /** GitLab: when the sprint source last changed (ISO); null when it never has. */
+  sprint_source_changed_at: string | null;
+  /** GitLab: the board's current full path; null for Jira. */
+  full_path: string | null;
   status: 'pending' | 'connected' | 'stale' | 'error';
   last_success_at: string | null;
   /** A fixed `tracker_error` code, never a raw message. */

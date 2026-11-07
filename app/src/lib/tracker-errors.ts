@@ -11,10 +11,15 @@ export interface TrackerAlert {
   link: { href: string; label: string } | null;
 }
 
+import type { TrackerKind } from './types.js';
+
 export const CREATE_TOKEN_URL = 'https://id.atlassian.com/manage-profile/security/api-tokens';
 
-const reach = (code: string) =>
-  `Couldn’t reach Jira (${code}). Check the site address and your connection.`;
+/** A tracker's name in a sentence. */
+export const TRACKER_NAME: Record<TrackerKind, string> = { jira: 'Jira', gitlab: 'GitLab' };
+
+const reach = (code: string, name = 'Jira') =>
+  `Couldn’t reach ${name} (${code}). Check the site address and your connection.`;
 const keychain = 'The saved token can’t be read from the system keychain.';
 
 /** Fixed daemon codes → the screen's words (the spec's error table). */
@@ -48,6 +53,23 @@ const WORDS: Record<string, string> = {
   task_not_found: 'No ticket with that key in sensei.',
   bad_request: 'Jira rejected the request.',
   invalid_body: 'sensei refused that change.',
+  host_not_confirmed: 'Type the GitLab host again, exactly as in the board URL.',
+  writeback_unsupported: 'Write-back isn’t available for this tracker yet.',
+};
+
+/** GitLab's words where they differ from Jira's (tracker-gitlab §G10). */
+const GITLAB_WORDS: Record<string, string> = {
+  invalid_base_url:
+    'That isn’t a GitLab board address. Use https://<host>/<group> or https://<host>/<group>/<project>: https on the standard port, no subpath, and not a local name such as .local or .internal.',
+  unauthorized: 'GitLab rejected the token. Check it has the read_api scope and hasn’t expired.',
+  token_required: 'Enter a GitLab access token with the read_api scope.',
+  not_found: 'GitLab no longer has this group or project (it may have been deleted or moved).',
+  rate_limited: 'GitLab is rate-limiting requests. Try again in a minute.',
+  transport: reach('transport', 'GitLab'),
+  http_error: reach('http_error', 'GitLab'),
+  redirect: reach('redirect', 'GitLab'),
+  decode: reach('decode', 'GitLab'),
+  bad_request: 'GitLab rejected the request.',
 };
 
 /** Why a write-back pass could not run or stopped (tracker-metrics-writeback W-UI), by its
@@ -79,21 +101,28 @@ const FIELD: Record<string, TrackerAlert['field']> = {
   email_required: 'email',
   token_required: 'token',
   unauthorized: 'token',
+  host_not_confirmed: 'board_url',
   level_required: 'level',
   invalid_level: 'level',
 };
 
-/** The alert for a failed request: `status` 0 is the daemon not answering. */
-export function errorFor(status: number, body: Record<string, unknown> | undefined): TrackerAlert {
+/** The alert for a failed request: `status` 0 is the daemon not answering. `kind` is
+ *  the tracker the request was about, so a GitLab failure never names Jira. */
+export function errorFor(
+  status: number,
+  body: Record<string, unknown> | undefined,
+  kind: TrackerKind = 'jira',
+): TrackerAlert {
   if (status === 0) {
     return { code: 'unreachable', text: 'The sensei daemon didn’t respond.', field: null, link: null };
   }
   const code = typeof body?.error === 'string' ? body.error : `http_${status}`;
   const field = FIELD[code] ?? null;
   if (code === 'board_not_found') {
+    const what = kind === 'gitlab' ? `group or project ${String(body?.board_ref ?? '')}` : `board #${String(body?.board_ref ?? '')}`;
     return {
       code,
-      text: `No board #${String(body?.board_ref ?? '')} on ${String(body?.base_url ?? '')}.`,
+      text: `No ${what} on ${String(body?.base_url ?? '')}.`,
       field,
       link: null,
     };
@@ -101,7 +130,10 @@ export function errorFor(status: number, body: Record<string, unknown> | undefin
   if (code === 'task_not_on_board') {
     return {
       code,
-      text: `${String(body?.key ?? '')} isn’t on board #${String(body?.board_ref ?? '')}: it may be in another Jira project, or outside the board’s filter.`,
+      text:
+        kind === 'gitlab'
+          ? `${String(body?.key ?? '')} isn’t in this board’s group or project.`
+          : `${String(body?.key ?? '')} isn’t on board #${String(body?.board_ref ?? '')}: it may be in another Jira project, or outside the board’s filter.`,
       field,
       link: null,
     };
@@ -115,6 +147,8 @@ export function errorFor(status: number, body: Record<string, unknown> | undefin
       link: workspace.id ? { href: `/workspace/${workspace.id}/integrations`, label: workspace.name ?? workspace.id } : null,
     };
   }
-  const link = code === 'unauthorized' ? { href: CREATE_TOKEN_URL, label: 'create a new token' } : null;
-  return { code, text: WORDS[code] ?? `Unexpected error from sensei (${code}).`, field, link };
+  // GitLab's token page is on the user's own host; the form explains where it is.
+  const link = code === 'unauthorized' && kind === 'jira' ? { href: CREATE_TOKEN_URL, label: 'create a new token' } : null;
+  const words = (kind === 'gitlab' ? GITLAB_WORDS[code] : undefined) ?? WORDS[code];
+  return { code, text: words ?? `Unexpected error from sensei (${code}).`, field, link };
 }
