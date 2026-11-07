@@ -97,7 +97,7 @@ enum Commands {
     /// Show daemon status
     Status,
 
-    /// Issue-tracker connections (Jira) for a workspace
+    /// Issue-tracker connections (Jira, GitLab) for a workspace
     Tracker {
         #[command(subcommand)]
         cmd: tracker::TrackerCmd,

@@ -19,7 +19,7 @@
     "3 Validated/Snapshot fields + owner-after-validate + params_extra",
     "4 capabilities + guards + unsupported_by_tracker"
   ],
-  "current_phase": "F6 #369 live verification (D18) \u2014 human-assisted",
+  "current_phase": "F6 done except the session-link check",
   "completed": [
     "F1.1 address check: net::addr::is_public_ip (moved, stricter), net::resolver::PublicOnly, ReqwestRaw resolver + no_proxy (D13)",
     "F1.2 Header auth (sensitive, redacted) + trailing-dot refusal in normalize_base_url (D19)",
@@ -30,10 +30,15 @@
     "P1 (CE part): fixtures ce-no-milestones (5d99ce051) and ce-closed-milestone (a887862df), recorded from a self-managed CE 19.5.3 and scrubbed",
     "F3 #366: GitLab adapter (milestone path on recorded CE; iterations on GitLab's documented shape), D2 D3 D5 D6 D7 D9 D10 D12(Rust) D15; full suite 4398 passed + ratchet fixed",
     "F4 #367: get_ticket kind-dispatched; forge keys canonical (lowercased path), bare #n via the folder's repo_key, longest full_path wins, containment before anything returns (mutation-checked); full suite 4404 passed",
-    "F5 #368: CLI (6291a5c25), app + view fields (2205c8766), docs (this commit)"
+    "F5 #368: CLI (6291a5c25), app + view fields (2205c8766), docs (this commit)",
+    "F6 #369 live (2026-11-07): a real self-managed CE group connected through the CLI (level task); 1 sprint and 52 tickets, matching GitLab; get_ticket full and mixed-case keys OK, a bare key from an unrelated repo is no_tracker_for_key, a missing one ticket_not_found. Found: dbd never adds a value to an existing enum, fixed by apply/before/sensei_tracker_kind_gitlab.sql"
   ],
   "gate_status": "pass",
-  "open_questions": [],
+  "open_questions": [
+    "Session linking not verified live: needs a local clone of a repo in the connected group",
+    "The CLI sprints table shows the exclusive end_at (one day after GitLab's due date) (LOW, display)",
+    "make install-debug assumes macOS (codesign) and fails on Linux after copying the binaries"
+  ],
   "known_broken": [],
   "blocked_on_human": [
     "Premium recording for the iteration half of D8 (optional; iteration mapping is tested on the documented shape)"
@@ -44,7 +49,7 @@
     "F3: project-board issues are read without scope=all (group boards need it); a '..' in a board URL is resolved by URL parsing before the path is read",
     "F4: GitlabTicketReader lives in tracker/gitlab.rs (it needs the board-id type there), not tracker/ticket.rs"
   ],
-  "next_command": "Live check: connect the migrator group from the app or CLI, sync, compare sprint count with GitLab; a session on branch 44-... links; get_ticket returns it",
+  "next_command": "Session-link check: in a local clone of a repo in the connected GitLab group, run a Claude session on a branch named <iid>-..., then confirm the link; then close #364-#369",
   "notes": [
     "build with -j 1: -j 2 was OOM-killed (exit 137) on 2026-11-06 with the editor running",
     "dangling-refs ratchet (indexer/resolve.rs) is at its ceiling 1,080: write Arc::clone(&x), not x.clone() on derive-generated impls"
