@@ -27,7 +27,7 @@ mod prompt_classify;
 mod publish_run;
 mod publish_segments;
 mod rank;
-mod repo_scan;
+pub(crate) mod repo_scan;
 pub(crate) mod scan;
 pub(crate) mod scan_logic;
 pub(crate) mod session_process;

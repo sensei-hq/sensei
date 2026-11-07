@@ -718,8 +718,8 @@ async fn write_file_rows(
 /// FAILS rather than fabricating: minting a synthetic `p-<name>` id here once
 /// pushed a phantom workspace into the UI that matched no row and never
 /// reconciled. An error aborts this repo and the scan retries next tick.
-async fn resolve_workspace(
-    ctx: &TaskContext,
+pub(crate) async fn resolve_workspace(
+    pg: &crate::db::pg_store::PgStore,
     repo_path: &Path,
     folder_name: &str,
 ) -> Result<(uuid::Uuid, bool), String> {
@@ -727,16 +727,14 @@ async fn resolve_workspace(
     let fm = crate::tasks::processors::metadata::read_frontmatter(repo_path).unwrap_or_default();
     let name: String = match folder_name.split_once(':') {
         Some((parent_repo, _)) if fm.workspace.is_none() => {
-            let parent_workspace = ctx
-                .pg()
+            let parent_workspace = pg
                 .get_repo_by_name(parent_repo)
                 .await
                 .ok()
                 .flatten()
                 .and_then(|f| crate::api::util::json_uuid(&f["workspace_id"]));
             match parent_workspace {
-                Some(pid) => ctx
-                    .pg()
+                Some(pid) => pg
                     .get_workspace(&pid)
                     .await
                     .ok()
@@ -748,7 +746,7 @@ async fn resolve_workspace(
         }
         _ => fm.workspace.clone().unwrap_or_else(|| folder_name.to_string()),
     };
-    ctx.pg().get_or_create_workspace_by_name(&name).await
+    pg.get_or_create_workspace_by_name(&name).await
 }
 
 /// THE REPO SCAN. `ScanRoot` enqueues one of these per repository it found.
@@ -839,7 +837,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // The workspace, resolved and ATTACHED — a repository with no membership is
     // invisible to every workspace surface (UI, list_workspaces, metrics), and
     // nothing downstream repairs it.
-    let (workspace_uuid, _created) = resolve_workspace(ctx, repo_abs, &name).await?;
+    let (workspace_uuid, _created) = resolve_workspace(ctx.pg(), repo_abs, &name).await?;
     if repository_id.is_some()
         && let Err(e) =
             ctx.pg().set_folder_workspace(&folder_id, &workspace_uuid, "root", None).await
@@ -1174,14 +1172,14 @@ mod scan_tests {
         let readme = repo.join("README.md");
         std::fs::write(&readme, format!("---\nproject: {name}\n---\n# r\n")).unwrap();
 
-        let (wid, _) = super::resolve_workspace(&ctx, &repo, "d31-repo").await.unwrap();
+        let (wid, _) = super::resolve_workspace(ctx.pg(), &repo, "d31-repo").await.unwrap();
         let ws = ctx.pg().get_workspace(&wid).await.unwrap().expect("the workspace exists");
         assert_eq!(ws["name"], serde_json::json!(name), "grouped under the README's workspace");
         let migrated = format!("---\nworkspace: {name}\n---\n# r\n");
         assert_eq!(std::fs::read_to_string(&readme).unwrap(), migrated);
 
         // The next scan: already on `workspace:` — same workspace, file untouched.
-        let (again, created) = super::resolve_workspace(&ctx, &repo, "d31-repo").await.unwrap();
+        let (again, created) = super::resolve_workspace(ctx.pg(), &repo, "d31-repo").await.unwrap();
         assert_eq!((again, created), (wid, false));
         assert_eq!(std::fs::read_to_string(&readme).unwrap(), migrated);
 
