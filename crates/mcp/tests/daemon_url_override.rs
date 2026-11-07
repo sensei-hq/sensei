@@ -19,12 +19,27 @@ fn stub_daemon(body: &'static str) -> (u16, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("stub bind");
     let port = listener.local_addr().expect("stub addr").port();
     let handle = std::thread::spawn(move || {
-        listener.set_nonblocking(false).expect("stub blocking mode");
-        for _ in 0..4 {
-            let (mut stream, _) = match listener.accept() {
-                Ok(pair) => pair,
+        // Nonblocking accept with an idle deadline: serve every connection
+        // the client opens (call count varies), then exit — no lingering
+        // thread or held port past the join (N1).
+        listener.set_nonblocking(true).expect("stub nonblocking");
+        let mut idle_since = std::time::Instant::now();
+        loop {
+            let mut stream = match listener.accept() {
+                Ok((stream, _)) => {
+                    idle_since = std::time::Instant::now();
+                    stream
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if idle_since.elapsed() > Duration::from_secs(5) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
                 Err(_) => return,
             };
+            let _ = stream.set_nonblocking(false);
             let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
             let mut head = vec![0u8; 4096];
             let mut read = 0;
@@ -83,23 +98,23 @@ fn call_get_rules(configure: &dyn Fn(&mut Command)) -> String {
 }
 
 #[test]
-#[ignore = "pending:F1"]
 fn mcp_flag_override_reaches_ephemeral_port() {
-    let (port, _stub) = stub_daemon(r#"{"stub":"daemon-url-proof"}"#);
+    let (port, stub) = stub_daemon(r#"{"stub":"daemon-url-proof"}"#);
     let target = format!("127.0.0.1:{port}");
     let response = call_get_rules(&|cmd| {
         cmd.arg("--daemon-url").arg(&target);
     });
     assert!(response.contains(MARKER), "flag override did not reach the stub daemon: {response}");
+    stub.join().expect("stub join");
 }
 
 #[test]
-#[ignore = "pending:F1"]
 fn mcp_env_override_reaches_ephemeral_port() {
-    let (port, _stub) = stub_daemon(r#"{"stub":"daemon-url-proof"}"#);
+    let (port, stub) = stub_daemon(r#"{"stub":"daemon-url-proof"}"#);
     let target = format!("http://127.0.0.1:{port}");
     let response = call_get_rules(&|cmd| {
         cmd.env("SENSEI_DAEMON_URL", &target);
     });
     assert!(response.contains(MARKER), "env override did not reach the stub daemon: {response}");
+    stub.join().expect("stub join");
 }

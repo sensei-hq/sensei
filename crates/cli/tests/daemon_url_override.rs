@@ -15,11 +15,26 @@ fn stub_now() -> (u16, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("stub bind");
     let port = listener.local_addr().expect("stub addr").port();
     let handle = std::thread::spawn(move || {
-        for _ in 0..4 {
-            let (mut stream, _) = match listener.accept() {
-                Ok(pair) => pair,
+        // Nonblocking accept with an idle deadline: serve every connection
+        // the client opens, then exit — no lingering thread past the join (N1).
+        listener.set_nonblocking(true).expect("stub nonblocking");
+        let mut idle_since = std::time::Instant::now();
+        loop {
+            let mut stream = match listener.accept() {
+                Ok((stream, _)) => {
+                    idle_since = std::time::Instant::now();
+                    stream
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if idle_since.elapsed() > Duration::from_secs(5) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
                 Err(_) => return,
             };
+            let _ = stream.set_nonblocking(false);
             let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
             let mut head = vec![0u8; 4096];
             let mut read = 0;
@@ -59,23 +74,23 @@ fn run_relay(configure: &dyn Fn(&mut Command)) -> String {
 }
 
 #[test]
-#[ignore = "pending:F1"]
 fn cli_flag_override_reaches_ephemeral_port() {
-    let (port, _stub) = stub_now();
+    let (port, stub) = stub_now();
     let target = format!("127.0.0.1:{port}");
     let out = run_relay(&|cmd| {
         cmd.arg("--daemon-url").arg(&target).arg("relay");
     });
     assert!(out.contains(MARKER), "flag override did not reach the stub daemon: {out}");
+    stub.join().expect("stub join");
 }
 
 #[test]
-#[ignore = "pending:F1"]
 fn cli_env_override_reaches_ephemeral_port() {
-    let (port, _stub) = stub_now();
+    let (port, stub) = stub_now();
     let target = format!("http://127.0.0.1:{port}");
     let out = run_relay(&|cmd| {
         cmd.env("SENSEI_DAEMON_URL", &target).arg("relay");
     });
     assert!(out.contains(MARKER), "env override did not reach the stub daemon: {out}");
+    stub.join().expect("stub join");
 }

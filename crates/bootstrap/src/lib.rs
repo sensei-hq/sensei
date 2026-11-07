@@ -45,22 +45,37 @@ pub fn config() -> &'static SenseiConfig {
     CFG.get_or_init(SenseiConfig::from_env)
 }
 
-/// Shorthand for `config().daemon_url()`.
-///
-/// Phase B (F1) also honors `SENSEI_DAEMON_URL` here; see `resolve_daemon_url`.
+/// The daemon base URL: `--daemon-url` flag > `SENSEI_DAEMON_URL` env >
+/// built-in default. See [`resolve_daemon_url`] for the accepted shapes.
+/// With neither set this is byte-identical to the historical default.
 pub fn daemon_url() -> String {
-    config().daemon_url()
+    daemon_url_with_flag(None)
+}
+
+/// [`daemon_url`] with an explicit `--daemon-url` flag value. The single
+/// owner of the `SENSEI_DAEMON_URL` read — MCP and CLI call this rather than
+/// reading the env var themselves, so the variable name appears once.
+pub fn daemon_url_with_flag(flag: Option<&str>) -> String {
+    let env = std::env::var("SENSEI_DAEMON_URL").ok();
+    resolve_daemon_url(flag, env.as_deref())
 }
 
 /// Resolve the daemon base URL. Precedence: explicit flag value > `SENSEI_DAEMON_URL`
-/// env value > built-in default. Both `host:port` and full `http://host:port` shapes
-/// normalize to `http://host:port` (no trailing slash); empty/whitespace values count
-/// as unset and fall through to the next level.
+/// env value > built-in default (`http://127.0.0.1:7744`).
 ///
-/// Phase-A stub (F1 tests r1): always returns the default so the precedence reds
-/// fail. Phase B implements the chain.
-pub fn resolve_daemon_url(_flag: Option<&str>, _env: Option<&str>) -> String {
-    "http://127.0.0.1:7744".to_string()
+/// Accepted shapes (normalized one way to `http://host:port`, no trailing slash):
+/// `host:port` gains the `http://` scheme; a value already carrying a scheme
+/// (`://`) passes through with any trailing `/` trimmed. Empty/whitespace
+/// values count as unset and fall through to the next level.
+pub fn resolve_daemon_url(flag: Option<&str>, env: Option<&str>) -> String {
+    let picked = [flag, env].into_iter().flatten().map(str::trim).find(|s| !s.is_empty());
+    match picked {
+        None => format!("http://127.0.0.1:{DAEMON_PORT}"),
+        Some(value) => {
+            let value = value.trim_end_matches('/');
+            if value.contains("://") { value.to_string() } else { format!("http://{value}") }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -70,19 +85,16 @@ mod daemon_url_tests {
     const DEFAULT: &str = "http://127.0.0.1:7744";
 
     #[test]
-    #[ignore = "pending:F1"]
     fn default_when_neither_set() {
         assert_eq!(resolve_daemon_url(None, None), DEFAULT);
     }
 
     #[test]
-    #[ignore = "pending:F1"]
     fn env_beats_default() {
         assert_eq!(resolve_daemon_url(None, Some("127.0.0.1:7844")), "http://127.0.0.1:7844");
     }
 
     #[test]
-    #[ignore = "pending:F1"]
     fn flag_beats_env() {
         assert_eq!(
             resolve_daemon_url(Some("127.0.0.1:9999"), Some("http://127.0.0.1:7844")),
@@ -91,7 +103,6 @@ mod daemon_url_tests {
     }
 
     #[test]
-    #[ignore = "pending:F1"]
     fn url_shape_passes_through() {
         assert_eq!(
             resolve_daemon_url(None, Some("http://127.0.0.1:7844")),
@@ -100,13 +111,11 @@ mod daemon_url_tests {
     }
 
     #[test]
-    #[ignore = "pending:F1"]
     fn host_port_shape_gets_scheme() {
         assert_eq!(resolve_daemon_url(Some("example:1"), None), "http://example:1");
     }
 
     #[test]
-    #[ignore = "pending:F1"]
     fn trailing_slash_trimmed() {
         assert_eq!(
             resolve_daemon_url(Some("http://127.0.0.1:7844/"), None),
@@ -115,13 +124,11 @@ mod daemon_url_tests {
     }
 
     #[test]
-    #[ignore = "pending:F1"]
     fn empty_means_unset() {
         assert_eq!(resolve_daemon_url(Some(""), Some("  ")), DEFAULT);
     }
 
     #[test]
-    #[ignore = "pending:F1"]
     fn empty_flag_falls_through_to_env() {
         assert_eq!(resolve_daemon_url(Some(""), Some("127.0.0.1:7844")), "http://127.0.0.1:7844");
     }
