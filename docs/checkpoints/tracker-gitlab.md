@@ -27,7 +27,15 @@ Decision D91 (amends D49).
 - Two `#[allow(dead_code)]` wait for F3 to remove: `AuthScheme::Header`, `mod forge`.
 - Amended: D10 end to end (HTTP 409, SDLC reasons through the DB) moves to F3.
 
-**Blocked on the human:** P1 fixtures in `crates/senseid/tests/fixtures/gitlab/`, recorded with curl
-from a gitlab.com Free group and a Premium trial group (spec build step 1).
+**Build (2026-11-07):**
+- Fixtures: `ce-no-milestones` (5d99ce051), `ce-closed-milestone` (a887862df), recorded from a
+  self-managed CE 19.5.3 with `scripts/record-gitlab-fixtures.py` and scrubbed.
+- F3 #366 adapter 91cd165f2 · F4 #367 get_ticket b975e3d0f · F5 #368 CLI 6291a5c25, app 2205c8766,
+  docs cf8902b13. Full senseid suite 4404 passed at b975e3d0f; app suite green except
+  `sessions-digest.spec.ts` (2 local-day tests that fail without these changes too).
+- Not yet recorded: a Premium group (iterations), an undated or project-level milestone, a Task issue.
+  Iteration mapping is tested on GitLab's documented shape.
 
-**Next command:** `/sensei:build #366` once the fixtures are in.
+**Next:** F6 #369, live (D18): install this branch's daemon, connect the group from the CLI or the
+app, sync, compare sprint and ticket counts with GitLab, then a session on a `44-…` branch links and
+MCP `get_ticket` returns `#44`.
