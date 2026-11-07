@@ -26,7 +26,8 @@ daemon pulls what it needs.
    epic tracker (e.g. a portfolio board), one or more sprint trackers (team boards), and task-level ones.
 2. **Reads follow the level.** Epics and milestones (T3, V11) read from the epic tracker; sprints and their
    tasks from the sprint trackers (merged per workspace, de-duplicated by issue key); a task-level tracker
-   ties one change to its ticket.
+   ties one change to its ticket. A GitLab board's milestones or iterations are **sprints** of a sprint-level
+   board (`daemon/tracker-gitlab.md` §G4), not these planning milestones.
 3. **"A new task's tracker is scoped to what it changed; incremental changes are read against the whole
    system and what changed"** — a task-level link is made from the change (branch / commit / PR → ticket key,
    as `tracker_task_keys` does today), not configured by hand; the sprint and epic trackers give the whole.
@@ -45,7 +46,8 @@ daemon pulls what it needs.
 ## Done gate
 
 - A workspace with an epic tracker and two sprint trackers syncs all three; tasks and sprints carry their
-  tracker; epics/milestones read from the epic tracker only.
+  tracker; epics/milestones read from the epic tracker only. (A forge's milestones or iterations synced as a
+  sprint-level board's sprints are not T3/V11 milestones and are not read here.)
 - The Sprints screen shows the two sprint trackers side by side, one lane each; usage per ticket still attributes once.
 - The single-tracker workspaces of today keep working unchanged (their tracker becomes `level = sprint`).
 
@@ -65,3 +67,9 @@ What the code assumes today, and the change for each — one tracker per workspa
 **Epics and milestones (T3, V11) have no reader yet** — the Jira adapter fetches neither, no table holds them. R9 makes
 an epic-level tracker sync its board like any other (its issues carry `issue_type`); the epic/milestone *read*
 for the planning graph is T3's slice, which reads from `level = epic` trackers only.
+
+**Forge milestones are sprints, not planning milestones** (amended 2026-11-07, `daemon/tracker-gitlab.md`).
+The GitLab adapter syncs a group's or project's iterations, or its milestones where it has none, into
+`sensei.sprints` (`external_id` `iteration:<id>` or `milestone:<id>`). They are the sprints of whatever board
+the user connected, at the level the user chose, shown as a Sprints lane like a Jira board's. They are not the
+T3/V11 planning milestones, which stay unread and, when built, come from an epic-level tracker only.

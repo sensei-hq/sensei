@@ -384,7 +384,9 @@ from the edit screen is refused with a 400, which is `field_invalid` (W4).
      (the second occurrence's value).
   4. Unknown workspace or tracker → 404 (`workspace_not_found` / `tracker_not_found`). This
      comes first because the tracker's adapter owns the field-id shape; it is a database
-     read, not a network call.
+     read, not a network call. A tracker whose adapter cannot write back
+     (`capabilities().writeback = false`, GitLab today) → 409 `writeback_unsupported`
+     (amended 2026-11-07, `tracker-gitlab.md` §G8).
   5. `field_ref` fails `adapter.field_ref_shape` (Jira: `^customfield_[1-9][0-9]{0,9}$`)
      → 422 `invalid_field_ref` `{field_ref}`. No network request has been made yet.
      Then the Save takes the board's lock (`TrackerLocks`, the one sync and the pass
@@ -426,6 +428,9 @@ from the edit screen is refused with a 400, which is `field_invalid` (W4).
 - `PATCH /api/workspaces/{id}/trackers/{tracker}`: the body must be exactly
   `{"writeback_enabled": <bool>}`. Anything else (missing, non-bool, extra key) → 422
   `invalid_body`. It returns 200 with the tracker in the `GET …/trackers` element shape.
+  `true` on a tracker whose adapter cannot write back (`capabilities().writeback = false`,
+  GitLab today) → 409 `writeback_unsupported`; `false` is always allowed. The write-back
+  pass skips such a tracker (amended 2026-11-07, `tracker-gitlab.md` §G8).
   Going false → true clears `comment_removed`, `forbidden`, `not_found` and `field_invalid` for that
   tracker's tasks, and with `comment_removed` it also sets `writeback_comment_ref = NULL`
   and `writeback_hash = NULL`. The next pass therefore posts a new comment.
@@ -512,7 +517,11 @@ pub enum WriteMethod { Post, Put }
   
   No existing GET caller changes behaviour (C30).
 - `ReqwestRaw` implements `RawWrite` on **the same client** it builds for GET:
-  `crate::http::bounded_builder()` with `redirect::Policy::none()`. A 3xx on a write is
+  `crate::http::bounded_builder()` with `redirect::Policy::none()`, `.no_proxy()` and the
+  public-only DNS resolver (`net/resolver.rs`). Both are built into `ReqwestRaw` itself,
+  with no parameter, so `write_transport` gets them exactly as `transport` does (amended
+  2026-11-07, `tracker-gitlab.md` §G5; there is no network-policy argument, since the
+  private-network opt-in was dropped, OPEN-G2). A 3xx on a write is
   `Redirect`, never followed. The base URL is the stored, normalised `trackers.base_url`,
   so no new host is possible.
 - `TransportFactory` gains

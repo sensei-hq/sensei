@@ -9,8 +9,8 @@ analysis: docs/analysis/2026-10-15-jira-ticket-linkage.md
 # Tracker integrations — Jira first (T-1a + T-1d, local slice)
 
 > File kept at its original path; the scope is now the **tracker integration seam**
-> with **Jira as the first adapter**. GitLab is the next adapter (see "Future
-> adapters").
+> with **Jira as the first adapter**. GitLab is the second, built to
+> [`tracker-gitlab.md`](tracker-gitlab.md) (amended 2026-11-07; see "Future adapters").
 
 ## Purpose
 
@@ -77,7 +77,10 @@ form is the adapter's (Jira upper-cases; GitLab keeps `group/proj#12`).
   orchestration (R6), usage (R7), routes (R8), status (R9), scheduling.
 - **Per adapter:** connect params and URL policy, auth scheme, endpoints and
   pagination, what a "sprint" is, ticket-key matching.
-- v1 registers **one** adapter, `JiraAdapter` (`tracker/jira.rs`).
+- Two adapters are registered: `JiraAdapter` (`tracker/jira.rs`) and `GitlabAdapter`
+  (`tracker/gitlab.rs`, spec `tracker-gitlab.md`). Each declares
+  `capabilities() -> Capabilities { history, writeback }`. Jira has both. GitLab has
+  neither, and the guards read the capability, never the kind's name (`tracker-gitlab.md` §G8).
 
 ## Overrides of parents
 
@@ -109,7 +112,7 @@ backlog items.
 ```
 sensei project ──< repositories        (existing: repositories_in_projects; grouped by
       │                                 README front matter `project:` or the API)
-      └── 1 tracker  (one board: Jira today, GitLab next)
+      └── 1 tracker  (one board: Jira or GitLab)
               └──< sprints
                       └──< tickets      (tracker_task_sprints; a ticket carried over
                               │          sits in each sprint that lists it; its
@@ -154,7 +157,7 @@ sensei project ──< repositories        (existing: repositories_in_projects; 
 
 | Table | Columns | Keys / notes |
 |---|---|---|
-| `sensei.trackers` | `id uuid pk`, `project_id uuid not null → projects on delete cascade`, `kind tracker_kind not null` (enum: `jira`; future `gitlab`), `base_url text not null` (adapter-normalised), `account text not null` (adapter-defined: Jira = email; GitLab = username), `external_scope text not null` (Jira project key; GitLab group/project path), `board_ref text not null` (Jira board id; GitLab board / iteration-cadence / milestone scope), `params jsonb not null default '{}'` (adapter-specific extras, never secrets), `secret_service text not null`, `last_attempt_at`, `last_success_at`, `last_error tracker_error` (enum, nullable), `discovered_through timestamptz` (R11 watermark: transcript turns ingested up to here have been checked for unknown keys; set to `now()` at connect, since the first full sync covers the past), `created_at` | `unique(project_id)`; `unique(kind, base_url, board_ref)`. No secret in the row. `after delete` and `after update of secret_service` triggers → tombstone of the old value (R3), defined with its function in `database/ddl/function/sensei/tracker_secret_tombstone.ddl` (the repo's trigger convention, e.g. `historize_memories.ddl`). |
+| `sensei.trackers` | `id uuid pk`, `project_id uuid not null → projects on delete cascade`, `kind tracker_kind not null` (enum: `jira`, `gitlab`), `base_url text not null` (adapter-normalised), `account text not null` (adapter-defined: Jira = email; GitLab = username), `external_scope text not null` (Jira project key; GitLab group/project path at connect), `board_ref text not null` (Jira board id; GitLab `project:<id>` or `group:<id>`, the numeric id, so a rename keeps it), `params jsonb not null default '{}'` (adapter-specific extras, never secrets; GitLab keeps the current `full_path`, `version` and the sprint source, `iteration` or `milestone`, here: `tracker-gitlab.md` §G1), `secret_service text not null`, `last_attempt_at`, `last_success_at`, `last_error tracker_error` (enum, nullable), `discovered_through timestamptz` (R11 watermark: transcript turns ingested up to here have been checked for unknown keys; set to `now()` at connect, since the first full sync covers the past), `created_at` | `unique(project_id)`; `unique(kind, base_url, board_ref)`. No secret in the row. `after delete` and `after update of secret_service` triggers → tombstone of the old value (R3), defined with its function in `database/ddl/function/sensei/tracker_secret_tombstone.ddl` (the repo's trigger convention, e.g. `historize_memories.ddl`). |
 | `sensei.tracker_secret_tombstones` | `secret_service text pk`, `account text not null`, `not_before timestamptz not null`, `created_at` | drained by disconnect and by the tick (R3) |
 | `sensei.sprints` | `id uuid pk`, `tracker_id → trackers cascade`, `external_id text not null`, `seq bigint not null` (adapter-supplied creation order — Jira: the numeric sprint id; never compare `external_id` text), `name text not null`, `state text not null` (common states `future`/`active`/`closed`; adapters map theirs onto these), `start_at`, `end_at`, `complete_at` (nullable), `members_fetched_state text` (state at last membership fetch), `removed_at`, `last_seen_at` | `unique(tracker_id, external_id)` |
 | `sensei.tracker_tasks` | `id uuid pk`, `tracker_id → trackers cascade`, `external_id text not null` (provider issue id), `key text not null` (provider's canonical display key — Jira `AUTH-420` upper-cased; GitLab `group/project#12`), `scope text` (nullable; GitLab project path the key is relative to), `summary text`, `issue_type text`, `status text`, `current_sprint_id uuid → sprints on delete set null`, `removed_at`, `last_seen_at` | `unique(tracker_id, external_id)`; index `(tracker_id, key)` |
@@ -266,6 +269,8 @@ scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
     `atlassian.net`/`jira.com`, `x.atlassian.net.evil.com` and the trailing-dot form
     `acme.atlassian.net.` are all rejected. (Amended 2026-10-17: the user's own site
     is on `jira.com`, which the first rule refused.)
+  - A host ending in a dot is refused for every adapter (`localhost.` would otherwise
+    pass every suffix rule). Amended 2026-11-07, `tracker-gitlab.md` §G5.1.
   - Anything else → 422 `{error:"invalid_base_url"}`.
 - Transport:
 
@@ -275,10 +280,16 @@ scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
   }
   ```
 
-  One method; the adapter's `AuthScheme` is applied by the production impl. Production impl: a `reqwest::Client` built from a new shared
+  One method; the adapter's `AuthScheme` is applied by the production impl:
+  `Basic` (Jira: `email:token`) or `Header { name, token }` (GitLab: `PRIVATE-TOKEN`,
+  sent as a sensitive header value so no `Debug` or trace output shows it). Production impl (`ReqwestRaw`): a `reqwest::Client` built from a new shared
   `http::bounded_builder()` (connect 5 s, total 30 s — extracted from
   `federation::http_client()`, which then calls it) **plus**
-  `.redirect(reqwest::redirect::Policy::none())`. A build failure is an error, not
+  `.redirect(reqwest::redirect::Policy::none())`, **`.no_proxy()`** and a
+  **public-only DNS resolver** (`net/resolver.rs`, filtering every resolved address
+  through `net/addr.rs::is_public_ip`; no address left → `transport`). Both are built
+  into `ReqwestRaw` itself, so every tracker transport, read or write, of every kind
+  has them (amended 2026-11-07, `tracker-gitlab.md` §G5). A build failure is an error, not
   a fallback client. Any 3xx → `TrackerError::Redirect`.
 - `TrackerError` → `tracker_error`: 401 `unauthorized`, 403 `forbidden`, 404
   `not_found`, 429-exhausted `rate_limited`, other non-2xx `http_error`, network
@@ -385,8 +396,11 @@ sync runs in five steps (guard → fetch → compute links → apply → outcome
      the step-3 links for those sessions only, in one `INSERT … SELECT FROM
      unnest(…)` that resolves `external_id → id` in SQL. A session pruned since
      step 3 is skipped, never an FK error.
-   - Store `params.board_name`, set `last_success_at = now()` and
-     `last_error = NULL`, then commit.
+   - Merge the params patch into `params`: `board_name` plus the adapter's
+     `Snapshot.params_extra` (empty for Jira; GitLab's `full_path`, `version` and
+     `sprint_source`, with `sprint_source_changed_at` added by the coordinator when the
+     source differs from the stored one, `tracker-gitlab.md` §G3, §G4.6). Set
+     `last_success_at = now()` and `last_error = NULL`, then commit.
    Sprints, tasks, memberships and links commit **together or not at all**.
 5. **Outcome.** Success is recorded inside step 4. Any failure in steps 2–4 →
    `last_error = <code>` (autocommit, conditional on the starting `secret_service`):
@@ -507,12 +521,12 @@ sit behind one guard layer built from **existing** code:
 
 | Route | Behaviour |
 |---|---|
-| `GET /api/workspaces/{id}/trackers` | Every board of the workspace, by level (epic, sprint, task) then age (D40): `[{id, kind, level, base_url, account, external_scope, board_ref, board_name, status, last_success_at, last_error, counts:{tasks, sprints}, writeback:{enabled, state, surface, mapped, assigned, failing, error}}]` (`writeback`: tracker-metrics-writeback W8); `[]` when none. Unknown workspace → 404. |
-| `POST /api/workspaces/{id}/trackers` | Body `{kind, level, …}`. `kind` resolved by `adapter_for_kind`; missing, unknown or unregistered → 422 `{error:"unsupported_tracker"}`. `level` (`epic|sprint|task`, D40) is required: missing → 422 `level_required`, unknown → 422 `invalid_level`. The rest of the body = the adapter's connect params (Jira: R4, e.g. `{board_url, email, api_token}`). Validate and normalise the URL (R4) → 422. The normalised `(kind, base_url, board_ref)` already connected to **another** workspace → 409 `{error:"board_already_connected", workspace:{id, name}}`. The same board already on this workspace → **re-connect**: level, fields and token replaced after validation. Another board → a **new tracker** beside the workspace's others (D40). Either way every board of the workspace on the same `(kind, base_url)` moves to the new token: one credential per site (D14). Then `adapter.validate`: credential rejected → 401 `{error:"unauthorized"}`; board/scope missing → 404 `{error:"board_not_found", base_url, board_ref}` (the normalised values, so a UI that sent only `board_url` can name them); adapter-specific mismatches → 422 with the adapter's code (Jira: `board_project_mismatch`). Then persist (R3). Return **201** `{tracker, first_sync:{pending:true}}` straight away, and start the first sync in the background (`tokio::spawn`, under the R5 guard; if a sync is already running it waits it out, polling once a second for up to 15 min, then leaves it to the tick). Connect never waits on a sync, so it finishes in the time of `validate` (2 requests with no 429 retries) plus one keyring call. Clients poll `GET …/trackers` until `status` leaves `pending`. A failed first sync keeps the connection (the credential was valid), and `status` shows `error`. |
+| `GET /api/workspaces/{id}/trackers` | Every board of the workspace, by level (epic, sprint, task) then age (D40): `[{id, kind, level, base_url, account, external_scope, board_ref, board_name, sprint_source, sprint_source_changed_at, full_path, status, last_success_at, last_error, counts:{tasks, sprints}, writeback:{enabled, state, surface, mapped, assigned, failing, error}}]` (`writeback`: tracker-metrics-writeback W8; `sprint_source`, `sprint_source_changed_at` and `full_path` come from GitLab's `params` and are null for Jira, `tracker-gitlab.md` §G3); `[]` when none. Unknown workspace → 404. |
+| `POST /api/workspaces/{id}/trackers` | Body `{kind, level, …}`. `kind` resolved by `adapter_for_kind`; missing, unknown or unregistered → 422 `{error:"unsupported_tracker"}`. `level` (`epic|sprint|task`, D40) is required: missing → 422 `level_required`, unknown → 422 `invalid_level`. The rest of the body = the adapter's connect params (Jira: R4, e.g. `{board_url, email, api_token}`; GitLab: `{board_url, confirm_host, api_token}`, where `confirm_host` must equal the normalised host and may be left out only for `gitlab.com`, else 422 `host_not_confirmed`, `tracker-gitlab.md` §G1). Validate and normalise the URL (R4) → 422. The normalised `(kind, base_url, board_ref)` already connected to **another** workspace → 409 `{error:"board_already_connected", workspace:{id, name}}`. The same board already on this workspace → **re-connect**: level, fields and token replaced after validation. Another board → a **new tracker** beside the workspace's others (D40). Either way every board of the workspace on the same `(kind, base_url)` moves to the new token: one credential per site (D14). Then `adapter.validate`: credential rejected → 401 `{error:"unauthorized"}`; board/scope missing → 404 `{error:"board_not_found", base_url, board_ref}` (the normalised values, so a UI that sent only `board_url` can name them); adapter-specific mismatches → 422 with the adapter's code (Jira: `board_project_mismatch`). GitLab's validate also replaces the provisional `board_ref` and `account` with `project:<id>`/`group:<id>` and the token's username, before the board-owner check and before anything is persisted. Then persist (R3). Return **201** `{tracker, first_sync:{pending:true}}` straight away, and start the first sync in the background (`tokio::spawn`, under the R5 guard; if a sync is already running it waits it out, polling once a second for up to 15 min, then leaves it to the tick). Connect never waits on a sync, so it finishes in the time of `validate` (no 429 retries; Jira makes 2 requests, GitLab at most 5: `/user`, the project, then the group on a 404, `/version` and the iterations probe) plus one keyring call. Clients poll `GET …/trackers` until `status` leaves `pending`. A failed first sync keeps the connection (the credential was valid), and `status` shows `error`. |
 | `DELETE /api/workspaces/{id}/trackers/{tracker}` | R3 disconnect of that board; 204; 404 `tracker_not_found` for an id that is not one of the workspace's trackers. The secret survives while another board of the workspace on the same site still uses it. |
-| `PATCH /api/workspaces/{id}/trackers/{tracker}` | Usage and SDLC write-back on or off (tracker-metrics-writeback W8): the body is exactly `{"writeback_enabled": bool}`, anything else → 422 `invalid_body`; unknown tracker → 404 `tracker_not_found`. Switching on clears the board's sticky write-back statuses. 200 with the tracker in the listing's shape. Behind the same origin guard. |
+| `PATCH /api/workspaces/{id}/trackers/{tracker}` | Usage and SDLC write-back on or off (tracker-metrics-writeback W8): the body is exactly `{"writeback_enabled": bool}`, anything else → 422 `invalid_body`; unknown tracker → 404 `tracker_not_found`; `true` on a tracker whose adapter cannot write back (GitLab) → 409 `writeback_unsupported` (`false` is always allowed). Switching on clears the board's sticky write-back statuses. 200 with the tracker in the listing's shape. Behind the same origin guard. |
 | `GET /api/workspaces/{id}/trackers/{tracker}/fields` | The board's mapped fields for usage and SDLC write-back (tracker-metrics-writeback W7): `{fields:[{metric, field_ref}]}` in metric order. Unknown tracker → 404 `tracker_not_found`. |
-| `PUT /api/workspaces/{id}/trackers/{tracker}/fields` | Replace the mapped set, body `{fields:[{metric, field_ref}]}` (`[]` clears it); refused with the first failing W7 check (422 `invalid_body`, `unknown_metric`, `duplicate_mapping`, `invalid_field_ref`, `field_not_found`, `field_not_number`, `field_in_use`, each naming its `metric` or `field_ref`; 404; tracker errors as 401/403/500/502). A field no longer mapped is retired, and sensei clears it. 200 with the GET body. Behind the same origin guard. |
+| `PUT /api/workspaces/{id}/trackers/{tracker}/fields` | Replace the mapped set, body `{fields:[{metric, field_ref}]}` (`[]` clears it); refused with the first failing W7 check (422 `invalid_body`, `unknown_metric`, `duplicate_mapping`, `invalid_field_ref`, `field_not_found`, `field_not_number`, `field_in_use`, each naming its `metric` or `field_ref`; 404; 409 `writeback_unsupported` when the adapter cannot write back; tracker errors as 401/403/500/502). A field no longer mapped is retired, and sensei clears it. 200 with the GET body. Behind the same origin guard. |
 | `POST /api/workspaces/{id}/trackers/{tracker}/sync` | R5 now, for that board. 200 `{counts:{sprints, tasks, removed, links, skipped_members}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 `tracker_not_found` for an id that is not one of the workspace's trackers. |
 | `GET /api/workspaces/{id}/trackers/{tracker}/sprints` | the board's sprints (one Sprints lane, D40), newest first (`start_at` desc, NULL last, then `seq` desc): `[{id, name, state, start_at, end_at, complete_at, tasks, candidates_in_window, linked_sprint, linked_other, unlinked, reason}]` — `tasks` = tickets the sprint lists; each part a usage object; without a window the count and parts are `null` and `reason` says why (`not_started`, `no_dates`). Removed sprints excluded. 404 `tracker_not_found` for an id that is not one of the workspace's trackers. |
 | `GET /api/workspaces/{id}/trackers/{tracker}/backlog` | `{tickets, usage}` — the board's backlog ticket count and its usage (R7 backlog usage). 404 `tracker_not_found` for an id that is not one of the workspace's trackers. |
@@ -524,11 +538,11 @@ Error codes the routes return (body `{error: <code>}`, extra fields where noted)
 
 | Status | Codes |
 |---|---|
-| 401 | `unauthorized` (Jira rejected the credential at connect) |
+| 401 | `unauthorized` (the tracker rejected the credential at connect) |
 | 403 | `forbidden` (the account can't read the board, at connect); `forbidden_caller` (the local-caller guard: foreign `Origin` or non-loopback `Host`) |
 | 404 | `workspace_not_found`; `tracker_not_found` (a tracker id that is not one of the workspace's boards); `board_not_found` (+ `base_url`, `board_ref`); `task_not_found` (no ticket with that key or alias); `task_not_on_board` (+ `key`, `board_ref`; R11); `sprint_not_found` |
-| 409 | `board_already_connected` (+ `workspace {id, name}`); `busy` |
-| 422 | `unsupported_tracker`; `level_required`; `invalid_level`; `invalid_base_url`; `email_required`; `token_required`; `board_project_mismatch`; `sprint_required`; `sprint_or_backlog` |
+| 409 | `board_already_connected` (+ `workspace {id, name}`); `busy`; `writeback_unsupported` (PATCH `writeback_enabled:true` or PUT `/fields` on a tracker whose adapter cannot write back) |
+| 422 | `unsupported_tracker`; `level_required`; `invalid_level`; `invalid_base_url`; `email_required` (Jira only); `token_required`; `board_project_mismatch`; `host_not_confirmed` (GitLab: `confirm_host` missing or not the board URL's host); `sprint_required`; `sprint_or_backlog` |
 | 500 | `credential_store`; `internal` (database error) |
 | 502 | a `tracker_error` code from the provider (connect validation or sync): `rate_limited`, `transport`, `http_error`, `redirect`, `decode`, `not_found`, `token_missing`, … |
 
@@ -544,7 +558,7 @@ enabled; a missing row is a 500 (the row is seeded and test-enforced).
 
 ### R10 · CLI (`crates/cli`, via `daemon_url()` + the blocking client)
 
-- `sensei tracker connect <kind> …` — one subcommand per registered adapter; v1: `jira`.
+- `sensei tracker connect <kind> …` — one subcommand per registered adapter: `jira`, `gitlab`.
   `sensei tracker connect jira --workspace <w> (--board-url <url> | --url <site> --board <id>) --email <e> [--project-key <K>]`
   — token from `SENSEI_JIRA_TOKEN` if set, else one line read from stdin (the help
   text notes env vars are visible to same-user processes). Never an argv flag. The
@@ -554,6 +568,12 @@ enabled; a missing row is a 500 (the row is seeded and test-enforced).
   keyring call). After a 201 it polls `GET …/trackers` every 2 s for up to 120 s,
   printing the first-sync result. On a polling timeout it says the sync is still
   running in the daemon; it never reports a connect failure.
+  `sensei tracker connect gitlab --workspace <w> --level <l> --board-url <url> [--confirm-host <host>]`
+  — `--board-url` is the group's or project's address; `--confirm-host` repeats its
+  host and is needed for any host but `gitlab.com`. Token from `SENSEI_GITLAB_TOKEN`,
+  else one line of stdin, as for Jira. Connect uses `client_with_timeout(180)` (up to
+  5 validation requests, plus the keyring call). Error messages name the tracker the
+  command was for (amended 2026-11-07, `tracker-gitlab.md` §G10).
 - `sensei tracker sync --workspace <w>` · `sensei tracker disconnect --workspace <w>`
 - `sensei tracker sprints --workspace <w>` — the workspace's sprints with ticket counts.
 - `sensei tracker usage --workspace <w> [--sprint <s> | <KEY>]` — giving both is an
@@ -659,7 +679,7 @@ by the event that opened it:
 
 ### Out of scope
 
-Any adapter other than Jira (GitLab is next — below); write-back to any tracker; Dōjō UI / rollup / upload (F-3); ADO / GitHub Issues; task-type
+Any adapter other than Jira (GitLab is now built, `tracker-gitlab.md`; GitHub is next — below); write-back to any tracker; Dōjō UI / rollup / upload (F-3); ADO / GitHub Issues; task-type
 mapping; per-repo key patterns and source toggles (T-1c); commit linkage; OAuth;
 Jira Server/DC; assignee or any per-person figure; discovery from live session hooks
 (R11 triggers on transcript ingest and lookup only); daemon-wide route auth/CORS
@@ -669,16 +689,20 @@ Jira Server/DC; assignee or any per-person figure; discovery from live session h
 
 ## Future adapters (not built in this slice)
 
-**GitLab** — known differences the seam already accommodates; each needs a decision
-in its own slice (recorded in `docs/backlog.md`):
+**GitLab: built** (2026-11-07, spec [`tracker-gitlab.md`](tracker-gitlab.md), issues
+#364–#368). The seam took it with no coordinator change. How each known difference was
+settled:
 
-| Concern | GitLab reality | Seam hook |
+| Concern | GitLab reality | Seam hook (as built) |
 |---|---|---|
-| What is a sprint | **Iterations** (Premium/Ultimate, cadence-based) or **milestones** (all tiers) | adapter's `fetch_snapshot` maps either onto `SprintRow`; `board_ref` names which |
-| Ticket key | `#12` is per GitLab project; `group/project#12` is global; branches default to `12-title` | `match_links` gets the session's `repo_key` to resolve `#12`. `tracker_tasks.scope` is stored as `normalize_repo_key(<project web URL>)` (`db/pg_store/repo_key.rs:14`, the same lowercased `host/path` form as `repositories.repo_key`), and matched by exact equality. A session with NULL `repo_key` never resolves a bare `#12`. |
-| Host | gitlab.com **or self-managed** | adapter host allow-rule: gitlab.com plus a host the user explicitly confirms at connect (SSRF review needed) |
-| Auth | PAT / OAuth, `PRIVATE-TOKEN` or `Bearer` header | `AuthScheme::Header` / `Bearer` |
-| States | `opened`/`closed` issues; iteration `upcoming`/`current`/`closed` | mapped onto common sprint states |
+| What is a sprint | **Iterations** (Premium/Ultimate, cadence-based) or **milestones** (all tiers) | the adapter's `fetch_snapshot` maps either onto `SprintRow`, with `external_id` `iteration:<id>` or `milestone:<id>`. The source is chosen by a probe at validate and at every snapshot and kept in `params.sprint_source`; `board_ref` (`project:<id>`/`group:<id>`) does not name it |
+| Ticket key | `#12` is per GitLab project; `group/project#12` is global; branches default to `12-title` | `match_links` gets the session's `repo_key` to resolve `#12` (`tracker/forge.rs`, shared with GitHub). `tracker_tasks.scope` is stored as `normalize_repo_key("<base_url>/<path of references.full>")` (`db/pg_store/repo_key.rs:14`, the same lowercased `host/path` form as `repositories.repo_key`), and matched by exact equality. A session with NULL `repo_key` never resolves a bare `#12`. |
+| Host | gitlab.com **or self-managed** | adapter host allow-rule: gitlab.com plus a host the user confirms at connect (`confirm_host`, else 422 `host_not_confirmed`). Every tracker client resolves only public addresses and uses no proxy (R4). No explicit ports, subpaths or private-network hosts |
+| Auth | PAT, `PRIVATE-TOKEN` header (`read_api`) | `AuthScheme::Header`. OAuth and `Bearer` are not built |
+| States | `opened`/`closed` issues; iteration `state` is an **integer** (`1` upcoming, `2` current, `3` closed); milestones are `active`/`closed` | mapped onto common sprint states: `1 → future`, `2 → active`, `3 → closed`, any other value → `decode`; an active milestone that starts after today → `future`, otherwise `active` |
+| History and write-back | not read or written | `capabilities()` is `{history: false, writeback: false}`: SDLC figures built from history read `unsupported_by_tracker`, and turning write-back on is 409 `writeback_unsupported` |
+
+**GitHub** (future, slice 2): reuses `tracker/forge.rs` for keys and links.
 
 ## Prerequisites (build gate)
 
