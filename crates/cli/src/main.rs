@@ -1392,12 +1392,10 @@ fn print_models_status(d: &serde_json::Value) {
 fn relay_status() {
     ensure_daemon();
     match client().get(format!("{}/relay/now", daemon_url())).send() {
-        Ok(r) if r.status().is_success() => {
-            match r.json::<serde_json::Value>() {
-                Ok(d) => println!("{}", format_relay_status(&d)),
-                Err(e) => eprintln!("relay status failed: unexpected response ({e})"),
-            }
-        }
+        Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>() {
+            Ok(d) => println!("{}", format_relay_status(&d)),
+            Err(e) => eprintln!("relay status failed: unexpected response ({e})"),
+        },
         Ok(r) => eprintln!("{}", relay_http_error(r.status())),
         Err(e) => eprintln!("relay status failed: {e}"),
     }
