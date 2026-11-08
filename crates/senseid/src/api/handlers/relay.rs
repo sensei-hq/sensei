@@ -2188,6 +2188,62 @@ mod tests {
         assert_eq!(view["task"]["state"], "blocked");
     }
 
+    // ── Follow-up: unregister clears block memory (F3 ruling-4) ──
+
+    #[tokio::test]
+    async fn unregister_blocked_task_holder_clears_block_memory() {
+        // Unregister suspends the lane's task via LeaseLost; a BLOCKED
+        // holder must land interrupted with its block memory cleared —
+        // without the clear the suspend write 500s on the
+        // tasks_blocked_memory check (cancel's precedent: the memory
+        // clear rides the state write).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &coord.0,
+                json!({
+                    "task_id": task_id, "question": "Which?",
+                    "options": [{"id": "a", "label": "A"}],
+                    "blocks": [task_id], "asked_of": "person",
+                }),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "blocked");
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/unregister",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "interrupted");
+        let memory: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select blocked_from_state::text from relay.tasks where id = $1",
+        )
+        .bind(task_id.parse::<uuid::Uuid>().unwrap())
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(memory, None);
+    }
+
     #[tokio::test]
     async fn cancelled_task_never_reoffers() {
         let h = harness().await;
