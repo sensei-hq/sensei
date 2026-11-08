@@ -144,6 +144,20 @@ pub struct RelayAssignOutput {
     pub state: RelayTaskState,
 }
 
+/// `POST /api/relay/tasks/{id}/cancel` (coordinator, F3).
+#[derive(Debug, Clone)]
+pub struct RelayCancelOutput {
+    pub task_id: Uuid,
+    pub state: RelayTaskState,
+}
+
+/// `POST /api/relay/crews/{id}/close` (coordinator, F3).
+#[derive(Debug, Clone)]
+pub struct RelayCloseOutput {
+    pub crew_id: Uuid,
+    pub status: String,
+}
+
 /// One reported file. No `outside_owned`: the broker computes it from the
 /// task's `owned_paths` (CONTRACT §3c), never trusts the lane's claim.
 #[derive(Debug, Clone)]
@@ -905,6 +919,7 @@ impl PgStore {
                 if exists.is_none() {
                     return Err(RelayError::NotFound("crew not found".into()));
                 }
+                Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
                 crew_id
             }
         };
@@ -1105,6 +1120,7 @@ impl PgStore {
         };
         let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
         sqlx_core::query::query("update relay.lanes set unregistered_at = null where id = $1")
             .bind(lane_id)
             .execute(&mut *tx)
@@ -1503,6 +1519,29 @@ impl PgStore {
         Ok(crew_id)
     }
 
+    /// A closed crew refuses new work (F3): register-join, reregister, plan
+    /// and assign all pass through here inside their write transaction. A
+    /// missing crew is not this gate's verdict — each caller rules
+    /// existence its own way.
+    async fn relay_require_crew_open(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        crew_id: Uuid,
+    ) -> Result<(), RelayError> {
+        let status: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select status from relay.crews where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        if status.as_deref() == Some("closed") {
+            return Err(RelayError::Conflict("crew is closed".into()));
+        }
+        Ok(())
+    }
+
     pub async fn relay_plan_item(
         &self,
         user_id: Uuid,
@@ -1511,6 +1550,7 @@ impl PgStore {
     ) -> Result<RelayPlanOutput, RelayError> {
         let crew_id = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
         let (item_id, title, repo_key, workspace_id) = match input.item_id {
             Some(item_id) => {
                 let row: Option<(String, String, Option<String>, Option<Uuid>)> =
@@ -1684,6 +1724,7 @@ impl PgStore {
             return Err(RelayError::Conflict(format!("cannot assign a {} task", word(cur))));
         };
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
         // The hand-off's ticket/tags ride the task's item (derived: tasks
         // carry neither column; the item is their home).
         let item_id = match (&input.ticket, task_item) {
@@ -2719,6 +2760,133 @@ impl PgStore {
         Ok(())
     }
 
+    /// Cancel a task (coordinator only, F3): the run-01 orphans — planned
+    /// tasks sitting `assigned` with NULL lane, and interrupted tasks whose
+    /// holder unregistered — leave the board instead of lingering. Cancels
+    /// from anything but done/cancelled (the machine's `Cancelled` event);
+    /// a live holder is a 409. The lane id stays on the task (merge's
+    /// precedent) and no action row is written: one coordinator per crew,
+    /// so the canceller is implicit, and `state_changed_at` stamps the
+    /// when (plan's precedent). Cancelled tasks never re-offer: assign's
+    /// state gate and the sweeper's predicates exclude them by
+    /// construction.
+    pub async fn relay_cancel_task(
+        &self,
+        user_id: Uuid,
+        caller_lane: Uuid,
+        task_id: Uuid,
+    ) -> Result<RelayCancelOutput, RelayError> {
+        let crew_id = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
+        let task: Option<(Uuid, Option<Uuid>, String)> = sqlx_core::query_as::query_as(
+            "select crew_id, lane_id, state::text from relay.tasks
+             where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((task_crew, task_lane, state)) = task else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        if task_crew != crew_id {
+            return Err(RelayError::NotFound("task not found".into()));
+        }
+        let cur = parse_state(&state)?;
+        let next = transition(cur, TaskEvent::Cancelled)
+            .map_err(|_| RelayError::Conflict(format!("cannot cancel a {} task", word(cur))))?;
+        if let Some(holder) = task_lane {
+            let unregistered: Option<Option<DateTime<Utc>>> =
+                sqlx_core::query_scalar::query_scalar(
+                    "select unregistered_at from relay.lanes where id = $1",
+                )
+                .bind(holder)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+            // A missing holder row is unreachable (the task FK holds it),
+            // but an orphan cancels rather than wedges: only a live lane
+            // blocks.
+            if matches!(unregistered, Some(None)) {
+                return Err(RelayError::Conflict("task is held by a live lane".into()));
+            }
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        sqlx_core::query::query(
+            "update relay.tasks set state = $1::relay.task_state,
+                    blocked_from_state = null,
+                    state_changed_at = current_timestamp
+             where user_id = $2 and id = $3",
+        )
+        .bind(word(next))
+        .bind(user_id)
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayCancelOutput { task_id, state: next })
+    }
+
+    /// Close a crew (coordinator only, F3): the crew's work is over when
+    /// its lanes are gone. "Zero live lanes" counts beside the caller —
+    /// the coordinator closes, then unregisters (a strict zero is
+    /// uncallable: closing needs a live lane to auth). Idempotent:
+    /// closing a closed crew re-asserts the state. Closed crews refuse
+    /// register/reregister/plan/assign (`relay_require_crew_open`).
+    pub async fn relay_close_crew(
+        &self,
+        user_id: Uuid,
+        caller_lane: Uuid,
+        crew_id: Uuid,
+    ) -> Result<RelayCloseOutput, RelayError> {
+        let own_crew = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
+        if own_crew != crew_id {
+            return Err(RelayError::NotFound("crew not found".into()));
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let status: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select status from relay.crews where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let Some(status) = status else {
+            return Err(RelayError::NotFound("crew not found".into()));
+        };
+        if status != "closed" {
+            let live: bool = sqlx_core::query_scalar::query_scalar(
+                "select exists (
+                   select 1 from relay.lanes
+                   where user_id = $1 and crew_id = $2
+                     and unregistered_at is null and id <> $3)",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .bind(caller_lane)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if live {
+                return Err(RelayError::Conflict("crew has live lanes".into()));
+            }
+            sqlx_core::query::query(
+                "update relay.crews set status = 'closed',
+                        completed_at = current_timestamp
+                 where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayCloseOutput { crew_id, status: "closed".to_string() })
+    }
+
     /// The lane's grouped envelope (Q4): messages, answers, reviews,
     /// assignments, each newest-first. Reading marks the lane's active task
     /// started on first delivery and writes `delivered` receipts for newly
@@ -3511,6 +3679,56 @@ impl PgStore {
                 "provider": provider,
                 "sprint": serde_json::Value::Null,
                 "count": count,
+            }));
+        }
+        // F3: planned-but-unassigned crew work (run-01's M2/M3 sat
+        // `assigned` with NULL lane and appeared nowhere). One trailing
+        // bucket, additive: existing provider entries keep their shape,
+        // and readers of {provider, sprint, count} see an "Unassigned"
+        // intake row. Done/cancelled stay out (complete or dead); a
+        // coordinator polling census + its lane pull accounts for every
+        // other crew task. Closed crews' leftovers stay visible: the
+        // coordinator sees the crew is closed in `crews` and judges.
+        let unassigned: Vec<(Uuid, Uuid, String, String, String, i32, String, Option<Uuid>)> =
+            sqlx_core::query_as::query_as(
+                "select t.id, t.crew_id, t.title, t.phase::text, t.state::text,
+                    t.round, t.repo_key, t.item_id
+             from relay.tasks t
+             where t.user_id = $1 and t.crew_id = any($2) and t.lane_id is null
+               and t.state not in ('done', 'cancelled')
+               and ($3::text is null or t.repo_key = $3)
+               and ($4::uuid is null or t.workspace_id = $4)
+             order by t.assigned_at, t.id",
+            )
+            .bind(user_id)
+            .bind(crew_ids.clone())
+            .bind(filter.repo_key.as_deref())
+            .bind(filter.workspace_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        if !unassigned.is_empty() {
+            triage_json.push(serde_json::json!({
+                "provider": "unassigned",
+                "sprint": serde_json::Value::Null,
+                "count": unassigned.len(),
+                "tasks": unassigned
+                    .iter()
+                    .map(
+                        |(id, crew_id, title, phase, state, round, repo_key, item_id)| {
+                            serde_json::json!({
+                                "id": id.to_string(),
+                                "crew_id": crew_id.to_string(),
+                                "title": title,
+                                "phase": phase,
+                                "state": state,
+                                "round": round,
+                                "repo_key": repo_key,
+                                "item_id": item_id.map(|i| i.to_string()),
+                            })
+                        }
+                    )
+                    .collect::<Vec<_>>(),
             }));
         }
         // Completions are the view's payloads, passed through untouched
@@ -7273,5 +7491,72 @@ mod tests {
             .unwrap();
         assert_eq!(g4.state, RelayLeaseState::Granted);
         assert_ne!(g4.lease_id, stale);
+    }
+
+    // ── F3: cancel / close ──
+
+    #[tokio::test]
+    async fn cancel_blocked_task_clears_block_memory() {
+        // Without the clear, the blocked-memory check fails the write: the
+        // cancel is the proof the memory cleared. Store level: reaching a
+        // blocked task with a dead holder over HTTP needs unregister,
+        // which suspends first.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xf9);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        sqlx_core::query::query(
+            "update relay.tasks set state = 'blocked', blocked_from_state = 'working'
+             where id = $1",
+        )
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query(
+            "update relay.lanes set unregistered_at = current_timestamp where id = $1",
+        )
+        .bind(a2)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let out = pg.relay_cancel_task(u1(), a1, t).await.unwrap();
+        assert_eq!(out.task_id, t);
+        assert_eq!(out.state, RelayTaskState::Cancelled);
+        let memory: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select blocked_from_state::text from relay.tasks where id = $1",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(memory, None);
+    }
+
+    #[tokio::test]
+    async fn close_crew_stamps_completed_at() {
+        // The census crew row carries no completed_at, so the stamp is
+        // pinned here: close means done.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        sqlx_core::query::query(
+            "update relay.lanes set unregistered_at = current_timestamp where id = $1",
+        )
+        .bind(a2)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let out = pg.relay_close_crew(u1(), a1, c1).await.unwrap();
+        assert_eq!(out.crew_id, c1);
+        assert_eq!(out.status, "closed");
+        let row: (String, Option<DateTime<Utc>>) = sqlx_core::query_as::query_as(
+            "select status, completed_at from relay.crews where id = $1",
+        )
+        .bind(c1)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(row.0, "closed");
+        assert!(row.1.is_some());
     }
 }
