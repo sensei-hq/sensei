@@ -58,7 +58,10 @@ fn stub_daemon(
                     }
                 }
             }
-            heads.lock().expect("heads lock").push(String::from_utf8_lossy(&head[..read]).into_owned());
+            heads
+                .lock()
+                .expect("heads lock")
+                .push(String::from_utf8_lossy(&head[..read]).into_owned());
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
