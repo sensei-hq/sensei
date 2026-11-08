@@ -3292,8 +3292,13 @@ impl PgStore {
             for (task_id, state, round, phase) in tasks {
                 let next = transition(parse_state(&state)?, TaskEvent::LeaseLost)
                     .map_err(|_| RelayError::Conflict("task cannot be suspended".into()))?;
+                // Block memory clears with the suspend: only a blocked task
+                // remembers where it was (the tasks_blocked_memory check;
+                // cancel/unregister precedent) — without it the write
+                // violates the check and rolls back the whole pass.
                 sqlx_core::query::query(
                     "update relay.tasks set state = $1::relay.task_state,
+                            blocked_from_state = null,
                             state_changed_at = $2
                      where user_id = $3 and id = $4",
                 )
