@@ -6187,6 +6187,47 @@ mod tests {
         assert_eq!(kinds, vec!["interrupted".to_string()]);
     }
 
+    // ── Follow-up: sweep clears block memory (unregister-follow-up finding) ──
+
+    #[tokio::test]
+    async fn sweep_blocked_task_holder_clears_block_memory() {
+        // The sweep suspends expired-lease holders via LeaseLost; a BLOCKED
+        // holder must land interrupted with its block memory cleared —
+        // without the clear the suspend write violates
+        // tasks_blocked_memory and rolls back the WHOLE pass (one
+        // transaction: expiry, re-offers, reviewer re-picks — a liveness
+        // wedge, not a single 500).
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        sqlx_core::query::query("update relay.leases set expires_at = $1 where lane_id = $2")
+            .bind(t0() - chrono::Duration::seconds(1))
+            .bind(a2)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let t = v7(0xb9);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        sqlx_core::query::query(
+            "update relay.tasks set state = 'blocked', blocked_from_state = 'working'
+             where id = $1",
+        )
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!((rep.expired_leases, rep.interrupted_tasks, rep.reoffered_tasks), (1, 1, 0));
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+        let memory: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select blocked_from_state::text from relay.tasks where id = $1",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(memory, None);
+    }
+
     #[tokio::test]
     async fn sweep_reoffers_after_grace_not_before() {
         let pg = PgStore::test_store().await;
