@@ -605,4 +605,13 @@ mod daemon_url_flag_tests {
         assert_eq!(parse_daemon_url_flag(&argv(&["--other"])), None);
         assert_eq!(parse_daemon_url_flag(&argv(&["--daemon-url"])), None);
     }
+
+    #[test]
+    #[ignore = "pending:F1-L1"]
+    fn flag_shaped_next_arg_counts_as_dangling() {
+        // F1-L1: `--daemon-url --other` must not consume `--other` as the
+        // value — a `--*`-shaped next arg is dangling (None + warn + fall
+        // through), same as a trailing `--daemon-url`.
+        assert_eq!(parse_daemon_url_flag(&argv(&["--daemon-url", "--other"])), None);
+    }
 }
