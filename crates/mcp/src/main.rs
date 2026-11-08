@@ -28,13 +28,19 @@ fn prepend_note(result: &mut Value, note: &str) {
 /// run-01 broker was unreachable because no override existed). A manual scan:
 /// one flag does not justify a CLI parser dep. Unknown args are ignored (the
 /// MCP speaks stdio; historical launchers pass none). A dangling trailing
-/// `--daemon-url` yields `None` and `main` warns — it falls through to
-/// `SENSEI_DAEMON_URL`/default rather than failing the session.
+/// `--daemon-url` — or one followed by another `--*`-shaped flag (F1-L1:
+/// `--daemon-url --other` must not eat `--other` as the value) — yields
+/// `None` and `main` warns; it falls through to `SENSEI_DAEMON_URL`/default
+/// rather than failing the session. The `=` form assigns literally, even a
+/// flag-shaped suffix (explicit assignment wins).
 fn parse_daemon_url_flag(args: &[String]) -> Option<String> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--daemon-url" {
-            return iter.next().cloned();
+            match iter.next() {
+                Some(next) if !next.starts_with("--") => return Some(next.clone()),
+                _ => return None,
+            }
         }
         if let Some(value) = arg.strip_prefix("--daemon-url=") {
             return Some(value.to_string());
@@ -604,5 +610,13 @@ mod daemon_url_flag_tests {
         assert_eq!(parse_daemon_url_flag(&argv(&[])), None);
         assert_eq!(parse_daemon_url_flag(&argv(&["--other"])), None);
         assert_eq!(parse_daemon_url_flag(&argv(&["--daemon-url"])), None);
+    }
+
+    #[test]
+    fn flag_shaped_next_arg_counts_as_dangling() {
+        // F1-L1: `--daemon-url --other` must not consume `--other` as the
+        // value — a `--*`-shaped next arg is dangling (None + warn + fall
+        // through), same as a trailing `--daemon-url`.
+        assert_eq!(parse_daemon_url_flag(&argv(&["--daemon-url", "--other"])), None);
     }
 }
