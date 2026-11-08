@@ -1184,6 +1184,8 @@ impl PgStore {
         .map_err(db_err)?;
         // A voluntary leave suspends the lane's work like a lost lease; the
         // lane id stays on the task (resume keeps its place; reoffer clears).
+        // Block memory clears with it: only a blocked task remembers where
+        // it was (the tasks_blocked_memory check; cancel's precedent).
         let task: Option<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
             "select id, state::text, round, phase::text from relay.tasks
              where user_id = $1 and lane_id = $2
@@ -1199,6 +1201,7 @@ impl PgStore {
                 .map_err(|_| RelayError::Conflict("task cannot be suspended".into()))?;
             sqlx_core::query::query(
                 "update relay.tasks set state = $1::relay.task_state,
+                        blocked_from_state = null,
                         state_changed_at = current_timestamp
                  where user_id = $2 and id = $3",
             )
