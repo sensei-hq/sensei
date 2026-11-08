@@ -109,6 +109,12 @@ fn send_daemon_request(
         if let Some(body) = &req.body {
             rb = rb.json(body);
         }
+        // Inside the per-attempt closure: the connect retry rebuilds the
+        // whole request, and relay lane calls authenticate over these
+        // headers (dropped here, every authed call 401s).
+        for (name, value) in &req.headers {
+            rb = rb.header(name, value);
+        }
         rb
     };
     // The daemon bounces during an upgrade (stop → overlay → restart). A request
