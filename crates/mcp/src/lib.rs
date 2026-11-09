@@ -1433,7 +1433,7 @@ pub fn handle_list_tools() -> Value {
                     ("item_id", "string", "Queue item uuid (moves it to planned)"),
                     ("title", "string", "Task title (manual plans must name it)"),
                     ("phase", "string", "analysis | tests | impl | docs | mockup"),
-                    ("repo_key", "string", "Task repository (manual plans must name it)"),
+                    ("repo_key", "string", "Task repository — required unless item_id names an item with one; explicit null/empty is rejected (422)"),
                     ("workspace_id", "string", "Task workspace uuid"),
                 ]),
             tool("relay_assign_task",

@@ -90,7 +90,10 @@ pub struct RelayReregisterOutput {
 pub struct RelayPlanInput {
     pub item_id: Option<Uuid>,
     /// Required when no item (or when the item names no repository — tasks
-    /// require `repo_key` where manual items may omit it).
+    /// require `repo_key` where manual items may omit it). F2 contract:
+    /// explicit null falls back to the item, else 422s ("a task needs a
+    /// repository"); explicit empty always 422s ("repo_key must not be
+    /// empty"), even with a repo'd item.
     pub title: Option<String>,
     pub phase: RelayTaskPhase,
     pub repo_key: Option<String>,
@@ -1554,6 +1557,12 @@ impl PgStore {
         let crew_id = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
         Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
+        // F2: an explicit empty repo_key is always a caller bug — reject
+        // it outright, even when the item names a repository (an empty
+        // string must never silently inherit over, nor be stored).
+        if input.repo_key.as_deref().is_some_and(|s| s.trim().is_empty()) {
+            return Err(RelayError::Validation("repo_key must not be empty".into()));
+        }
         let (item_id, title, repo_key, workspace_id) = match input.item_id {
             Some(item_id) => {
                 let row: Option<(String, String, Option<String>, Option<Uuid>)> =
