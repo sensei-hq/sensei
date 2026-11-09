@@ -132,6 +132,26 @@ function dayKeyFromDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** The local day a UTC hour bucket files under: the day holding the majority
+ *  of its 60 minutes, ties to the later day. A bucket fully inside one local
+ *  day files there — the only case in whole-hour zones, where midnight never
+ *  falls inside a bucket. A midnight-straddling bucket (#357: half-hour and
+ *  :45 zones) files by minutes, never by its start instant: filing the whole
+ *  bucket by the start puts the after-midnight half on the wrong day. */
+export function hourBucketDay(hour: number): string {
+  const startMs = hour * 3_600_000;
+  const startDay = dayKeyFromDate(new Date(startMs));
+  const endDay = dayKeyFromDate(new Date(startMs + 3_600_000 - 1));
+  if (startDay === endDay) return startDay;
+  // Straddles local midnight: count the minutes after it. In every current
+  // zone midnight is never inside a DST transition, so both sides are whole
+  // minutes summing to 60 and the comparison is exact.
+  const [y, m, d] = endDay.split('-').map(Number);
+  const midnightMs = new Date(y, m - 1, d).getTime();
+  const afterMidnight = (startMs + 3_600_000 - midnightMs) / 60_000;
+  return afterMidnight >= 30 ? endDay : startDay;
+}
+
 /** Whole calendar days from `then` up to `now` (0 = same day, 1 = yesterday). */
 function calendarDaysAgo(then: Date, now: Date): number {
   const a = new Date(then.getFullYear(), then.getMonth(), then.getDate()).getTime();
@@ -397,7 +417,7 @@ export function activityByDay(
       continue;
     }
     for (const [hour, agentMs, userMs] of r.activeByHour) {
-      const slot = byDay.get(dayKey(new Date(hour * 3_600_000).toISOString()));
+      const slot = byDay.get(hourBucketDay(hour));
       if (!slot) continue;
       slot.agentMs += agentMs;
       slot.userMs += userMs;
@@ -439,7 +459,7 @@ export interface TurnDay {
 export function turnsByDay(hours: HourActivity[], days: string[], now: Date = new Date()): TurnDay[] {
   const byDay = new Map(days.map((d) => [d, { turns: 0, corrections: 0, tin: null as number | null, tout: null as number | null }]));
   for (const [hour, turns, corrections, tin, tout] of hours) {
-    const slot = byDay.get(dayKey(new Date(hour * 3_600_000).toISOString()));
+    const slot = byDay.get(hourBucketDay(hour));
     if (!slot) continue;
     slot.turns += turns;
     slot.corrections += corrections;
@@ -470,7 +490,7 @@ export function sessionSpans(rows: Pick<SessionRow, 'id' | 'activeByHour'>[], da
     if (!r.activeByHour) continue;
     const on = new Set<string>();
     for (const [hour] of r.activeByHour) {
-      const day = dayKey(new Date(hour * 3_600_000).toISOString());
+      const day = hourBucketDay(hour);
       if (order.has(day)) on.add(day);
     }
     if (on.size > 1) spans.push({ id: r.id, days: [...on].sort((a, b) => order.get(a)! - order.get(b)!) });
