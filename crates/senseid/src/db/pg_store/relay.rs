@@ -4055,20 +4055,39 @@ impl PgStore {
         })
     }
 
-    /// The daemon user behind person reads and register (Q19-REC): the
-    /// dōjō principal id from the sign-in session. Fails closed
-    /// (`SignInRequired`) when the machine never signed in — never a
-    /// minted stand-in (a miss is an error, never an invented row).
+    /// The daemon user behind person reads and register (local identity,
+    /// user ruling 2026-11-09; Q19 superseded): the stable machine-local id
+    /// from `relay.daemon_user`, minted once on first use. Persona and
+    /// principal state never affect it — no precedence, no fallback, no
+    /// 401. Sync maps local→principal at the dōjō boundary; this id never
+    /// changes, so relay rows are never re-keyed.
     pub async fn relay_current_user(&self) -> Result<Uuid, RelayError> {
-        // The DDL's own seam: the chosen default persona's dōjō principal.
-        // No default, or an unlinked one, is a machine that never signed in.
-        let principal: Option<Option<Uuid>> = sqlx_core::query_scalar::query_scalar(
-            "select principal_id from sensei.personas where is_chosen_default limit 1",
+        // Steady state is one indexed read; the mint runs once per machine.
+        // Two racing first calls both fall through to the insert, the loser
+        // no-ops on the singleton PK, and both read back the winner's row.
+        let id: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select user_id from relay.daemon_user where singleton",
         )
         .fetch_optional(self.pool())
         .await
         .map_err(db_err)?;
-        principal.flatten().ok_or(RelayError::SignInRequired)
+        if let Some(id) = id {
+            return Ok(id);
+        }
+        sqlx_core::query::query(
+            "insert into relay.daemon_user (singleton, user_id) values (true, $1)
+             on conflict (singleton) do nothing",
+        )
+        .bind(new_id())
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        sqlx_core::query_scalar::query_scalar(
+            "select user_id from relay.daemon_user where singleton",
+        )
+        .fetch_one(self.pool())
+        .await
+        .map_err(db_err)
     }
 
     /// `RelayNow`, exactly per `relay-api.ts` — crews, facets, lanes,

@@ -37,7 +37,8 @@
 //! Lane calls authenticate over the `Authorization: Bearer <lane_token>`
 //! header and name their `lane_id` in the query (GET) or body (POST); the
 //! token never appears anywhere else. Person calls ride the daemon's
-//! localhost trust; the daemon user comes from `relay_current_user` (Q19).
+//! localhost trust; the daemon user comes from `relay_current_user` (the
+//! stable machine-local id — local identity, Q19 superseded).
 //!
 //! Phase A: types and reds only — the handlers and the `routes.rs`
 //! registration land in phase B, so every red below fails on the missing
@@ -127,8 +128,8 @@ async fn auth_lane(
     state.pg.relay_auth_lane(lane_id, token).await
 }
 
-/// The person behind a person route (Q19): fail-closed 401 when the
-/// machine never signed in.
+/// The person behind a person route: the stable machine-local daemon
+/// user, always (local identity, Q19 superseded — no sign-in gate).
 async fn person_user(state: &AppState) -> Result<Uuid, RelayError> {
     state.pg.relay_current_user().await
 }
