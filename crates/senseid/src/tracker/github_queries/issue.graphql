@@ -1,0 +1,21 @@
+query Issue($owner: String!, $name: String!, $number: Int!, $field: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      databaseId number title body state url createdAt updatedAt
+      issueType { name }
+      repository { nameWithOwner url }
+      assignees(first: 1) { nodes { databaseId login } }
+      projectItems(first: 50, after: $after, includeArchived: true) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          isArchived
+          project { id }
+          fieldValueByName(name: $field) {
+            __typename
+            ... on ProjectV2ItemFieldIterationValue { iterationId title }
+          }
+        }
+      }
+    }
+  }
+}

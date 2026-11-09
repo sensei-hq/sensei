@@ -17,9 +17,10 @@ export interface SeatHolderWire {
 
 /** A billable user as the route answers it: named through the identity join
  *  (`resolveDisplayNames`, as the system — the access-matrix exception). `null`
- *  name and email when the person shared neither; never an invented label. */
+ *  name, handle and email when the person shared nothing; never an invented label. */
 export interface BillableUserWire extends SeatHolderWire {
 	display_name: string | null;
+	handle: string | null;
 	email: string | null;
 }
 
@@ -36,18 +37,20 @@ export interface SeatUsageWire {
 /** The seat count before names (`summarizeSeatUsage`): seat-holders only. */
 export type SeatCountWire = Omit<SeatUsageWire, 'billable_users'> & { billable_users: SeatHolderWire[] };
 
-/** The seat usage as the route answers it: each seat-holder with the name and
- *  email the identity join found. An id the join left unnamed is `null` — the
- *  screen says so in words (`personLabel`); nothing here invents a name. Pure. */
+/** The seat usage as the route answers it: each seat-holder with the name,
+ *  handle and email the identity join found. An id the join left unnamed is
+ *  `null` — the screen says so in words (`personLabel`); nothing here invents
+ *  a name. Pure. */
 export function nameSeatHolders(
 	count: SeatCountWire,
-	names: ReadonlyMap<string, { display_name: string | null; email: string | null }>
+	names: ReadonlyMap<string, { display_name: string | null; handle: string | null; email: string | null }>
 ): SeatUsageWire {
 	return {
 		...count,
 		billable_users: count.billable_users.map((u) => ({
 			...u,
 			display_name: names.get(u.user_id)?.display_name ?? null,
+			handle: names.get(u.user_id)?.handle ?? null,
 			email: names.get(u.user_id)?.email ?? null
 		}))
 	};
@@ -98,11 +101,11 @@ export function attachNotice(current: string) {
 }
 
 /** "Who is counted": each seat as the admin surfaces name a person
- *  (`personLabel`: name, then email, then words — never an id fragment), with its
- *  workspaces and the role on each. */
+ *  (`personLabel`: name, then handle, then email, then words — never an id
+ *  fragment), with its workspaces and the role on each. */
 export function countedSeats(users: BillableUserWire[]): KitBillingSeat[] {
 	return users.map((u) => ({
-		name: personLabel({ principalId: u.user_id, name: u.display_name, email: u.email }),
+		name: personLabel({ principalId: u.user_id, name: u.display_name, handle: u.handle, email: u.email }),
 		workspaces: u.workspaces.map((w) => `${w.name} (${w.role})`).join(', ')
 	}));
 }
@@ -126,11 +129,13 @@ export function hiddenCountLine(count: number): string {
 /** How the org's hidden private repositories come back — or `null` when Billing
  *  lists no hidden repositories at all (user ruling 2026-11-05). The list is for an
  *  account that had Pro and lost it: past due comes back once it is paid; a lapsed
- *  Pro (canceled, or a period ended) once it is renewed — both "as they were"
- *  (D88). On Free, never subscribed, unclaimed or an unknown key: no list (the
- *  repositories stay hidden for everyone all the same). */
+ *  Pro (canceled, a period ended, a trial ended) says "Pro has lapsed." A Pro plan
+ *  that never ran (a future start, or never active) is not enabled, so it lists
+ *  nothing (user ruling 2026-11-06). On Free, never subscribed, unclaimed or an
+ *  unknown key: no list either (the repositories stay hidden for everyone all the
+ *  same). */
 export function hiddenReturnLine(b: Pick<KitBilling, 'tag' | 'problem'>): string | null {
 	if (b.tag === 'Past due') return 'They come back as they were once it is paid.';
 	const lapsed = b.problem?.tone === 'refusal' && (b.problem.code === 'not_subscribed' || b.problem.code === 'subscription_expired');
-	return lapsed ? 'They come back as they were once Pro is renewed.' : null;
+	return lapsed ? 'Pro has lapsed.' : null;
 }

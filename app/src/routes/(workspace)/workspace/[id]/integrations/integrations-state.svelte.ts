@@ -13,6 +13,7 @@ import type { ApiResult } from '$lib/api.js';
 import type {
   TrackerConnection,
   TrackerFieldMapping,
+  TrackerKind,
   TrackerLevel,
   TrackerMetric,
   TrackerSyncCounts,
@@ -91,6 +92,15 @@ export const METRICS: ReadonlyArray<{ metric: TrackerMetric; label: string }> = 
 ];
 
 /** The row a refused save names (a duplicate names its second row), or `null`. */
+/** The lowercased host of a board URL, or `''` when it is not one yet. */
+export function boardHost(url: string): string {
+  try {
+    return new URL(url.trim()).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
 export function refusedRow(rows: TrackerFieldMapping[], body: Record<string, unknown> | undefined): number | null {
   const ref = typeof body?.field_ref === 'string' ? body.field_ref : null;
   const metric = typeof body?.metric === 'string' ? body.metric : null;
@@ -124,7 +134,8 @@ export function elapsedLabel(iso: string, now: Date): string {
   return `${Math.floor(h / 24)} days ago`;
 }
 
-const lastErrorText = (code: string | null) => (code ? errorFor(502, { error: code }).text : '');
+const lastErrorText = (code: string | null, kind: TrackerKind = 'jira') =>
+  code ? errorFor(502, { error: code }, kind).text : '';
 
 /** A board's write-back state as the card says it (W-UI). */
 export function writebackText(w: TrackerConnection['writeback']): string {
@@ -173,7 +184,15 @@ export class TrackerIntegration {
 
   /** The level the new board serves: the user's choice, never defaulted. */
   level = $state<TrackerLevel | null>(null);
+  /** The tracker the form connects: Jira, GitLab or GitHub. */
+  kind = $state<TrackerKind>('jira');
+  /** GitHub: the project's Iteration field, when it has more than one (tracker-github §H1). */
+  iterationField = $state('');
+  /** GitHub: the field names the daemon offered after `iteration_field_ambiguous`. */
+  iterationFields = $state<string[]>([]);
   boardUrl = $state('');
+  /** GitLab, self-managed: the host typed again (tracker-gitlab §G5.2). */
+  confirmHost = $state('');
   email = $state('');
   token = $state('');
   advanced = $state(false);
@@ -243,15 +262,52 @@ export class TrackerIntegration {
     return this.view === 'not_connected' || this.adding || this.replacing !== null;
   }
 
-  /** Level, board URL (or Site + Board id), email and token are all given. */
+  /** Whether the GitLab board URL is on a self-managed host, which must be confirmed. */
+  get needsConfirmHost(): boolean {
+    return this.kind === 'gitlab' && boardHost(this.boardUrl) !== 'gitlab.com';
+  }
+
+  /** Jira: level, board URL (or Site + Board id), email and token. GitLab: level,
+   *  board URL, token, and the host typed again unless it is gitlab.com. */
   get canConnect(): boolean {
     const given = (v: string) => v.trim().length > 0;
+    if (this.kind === 'github') {
+      return this.level !== null && given(this.boardUrl) && given(this.token);
+    }
+    if (this.kind === 'gitlab') {
+      return (
+        this.level !== null && given(this.boardUrl) && given(this.token) && (!this.needsConfirmHost || given(this.confirmHost))
+      );
+    }
     const board = this.advanced ? given(this.siteUrl) && given(this.boardId) : given(this.boardUrl);
     return this.level !== null && board && given(this.email) && given(this.token);
   }
 
+  /** GitLab: where the board's sprints come from; GitHub: its Iteration field. `null` for Jira. */
+  sprintsLine(t: TrackerConnection): string | null {
+    if (t.kind === 'github') return t.iteration_field ? `Sprints: the ${t.iteration_field} iteration field` : null;
+    if (t.kind !== 'gitlab' || !t.sprint_source) return null;
+    return `Sprints: ${t.sprint_source === 'iteration' ? 'iterations' : 'milestones'}`;
+  }
+
+  /** GitLab: the one-line notice for 14 days after the sprint source changed (§G3). */
+  sourceChangeNotice(t: TrackerConnection): string | null {
+    if (t.kind !== 'gitlab' || !t.sprint_source_changed_at || !t.sprint_source) return null;
+    const age = this.#now().getTime() - new Date(t.sprint_source_changed_at).getTime();
+    if (!(age >= 0 && age <= 14 * 24 * 3600 * 1000)) return null;
+    const [now, before] = t.sprint_source === 'iteration' ? ['iterations', 'milestone'] : ['milestones', 'iteration'];
+    return `Sprints now come from ${now}. Earlier ${before} sprints are marked removed.`;
+  }
+
   cardTitle(t: TrackerConnection): string {
     const site = t.base_url.replace(/^https:\/\//, '');
+    if (t.kind === 'github') {
+      return `GitHub · ${t.external_scope}${t.board_name ? ` · ${t.board_name}` : ''}`;
+    }
+    if (t.kind === 'gitlab') {
+      const path = t.full_path ?? t.external_scope;
+      return `GitLab · ${site} · ${path}${t.board_name && t.board_name !== path ? ` (${t.board_name})` : ''}`;
+    }
     const board = t.board_name ? `board "${t.board_name}" (#${t.board_ref})` : `board #${t.board_ref}`;
     return `Jira · ${site} · project ${t.external_scope} · ${board}`;
   }
@@ -346,7 +402,7 @@ export class TrackerIntegration {
       case 'pending':
         return 'pending · first sync running…';
       case 'error':
-        return `error · ${lastErrorText(t.last_error)}`;
+        return `error · ${lastErrorText(t.last_error, t.kind)}`;
     }
   }
 
@@ -364,21 +420,31 @@ export class TrackerIntegration {
 
   async connect() {
     if (!this.canConnect || this.busy || this.level === null) return;
-    const body: Record<string, unknown> = this.advanced
-      ? { base_url: this.siteUrl.trim(), board_id: this.boardId.trim() }
-      : { board_url: this.boardUrl.trim() };
-    body.email = this.email.trim();
-    body.api_token = this.token;
+    const kind = this.kind;
+    let body: Record<string, unknown>;
+    if (kind === 'github') {
+      body = { board_url: this.boardUrl.trim(), api_token: this.token };
+      if (this.iterationField.trim()) body.iteration_field = this.iterationField.trim();
+    } else if (kind === 'gitlab') {
+      body = { board_url: this.boardUrl.trim(), api_token: this.token };
+      if (this.confirmHost.trim()) body.confirm_host = this.confirmHost.trim();
+    } else {
+      body = this.advanced
+        ? { base_url: this.siteUrl.trim(), board_id: this.boardId.trim() }
+        : { board_url: this.boardUrl.trim() };
+      body.email = this.email.trim();
+      body.api_token = this.token;
+    }
     this.busy = 'connect';
     this.alert = null;
     this.statusText = 'Checking credentials and board…';
-    const res = await this.#api.tryConnectTracker(this.#workspaceId, 'jira', this.level, body);
+    const res = await this.#api.tryConnectTracker(this.#workspaceId, kind, this.level, body);
     // The token's only job is done, whatever the answer.
     this.token = '';
     this.busy = null;
     if (!res.ok) {
       this.statusText = '';
-      this.#fail(res.error);
+      this.#fail(res.error, kind);
       return;
     }
     this.replacing = null;
@@ -397,7 +463,7 @@ export class TrackerIntegration {
     this.busy = null;
     this.busyTracker = null;
     if (!res.ok) {
-      this.#fail(res.error);
+      this.#fail(res.error, this.trackers.find((t) => t.id === trackerId)?.kind);
       return;
     }
     await this.load();
@@ -418,6 +484,24 @@ export class TrackerIntegration {
   startReplace(t: TrackerConnection) {
     this.#clearForm();
     this.level = t.level;
+    if (t.kind === 'github') {
+      // The project's address and its field, so only the token is new.
+      this.kind = 'github';
+      this.boardUrl = t.url ?? '';
+      this.iterationField = t.iteration_field ?? '';
+      this.adding = false;
+      this.replacing = t.id;
+      return;
+    }
+    if (t.kind === 'gitlab') {
+      // The board's current path and its confirmed host, so only the token is new.
+      this.kind = 'gitlab';
+      this.boardUrl = `${t.base_url}/${t.full_path ?? t.external_scope}`;
+      this.confirmHost = t.base_url.replace(/^https:\/\//, '');
+      this.adding = false;
+      this.replacing = t.id;
+      return;
+    }
     this.advanced = true;
     this.siteUrl = t.base_url;
     this.boardId = t.board_ref;
@@ -450,7 +534,7 @@ export class TrackerIntegration {
     this.busy = null;
     this.busyTracker = null;
     if (!res.ok) {
-      this.#fail(res.error);
+      this.#fail(res.error, t.kind);
       return;
     }
     this.statusText = '';
@@ -465,6 +549,10 @@ export class TrackerIntegration {
 
   #clearForm() {
     this.level = null;
+    this.kind = 'jira';
+    this.confirmHost = '';
+    this.iterationField = '';
+    this.iterationFields = [];
     this.boardUrl = '';
     this.advanced = false;
     this.siteUrl = '';
@@ -473,8 +561,11 @@ export class TrackerIntegration {
     this.alert = null;
   }
 
-  #fail(error: { status: number; message: string; body?: Record<string, unknown> }) {
-    this.alert = errorFor(error.status, error.body ?? { error: error.message });
+  #fail(error: { status: number; message: string; body?: Record<string, unknown> }, kind?: TrackerKind) {
+    this.alert = errorFor(error.status, error.body ?? { error: error.message }, kind);
+    const fields = error.body?.fields;
+    this.iterationFields =
+      this.alert.code === 'iteration_field_ambiguous' && Array.isArray(fields) ? fields.map(String) : [];
     this.alertSeq += 1;
   }
 
@@ -489,7 +580,7 @@ export class TrackerIntegration {
       this.#awaitingFirstSync = null;
       this.statusText =
         awaited.status === 'error'
-          ? `Connected, but the first sync failed: ${lastErrorText(awaited.last_error)}`
+          ? `Connected, but the first sync failed: ${lastErrorText(awaited.last_error, awaited.kind)}`
           : `Connected · ${awaited.counts.sprints} sprints · ${awaited.counts.tasks} tickets`;
     }
     if (trackers.some((t) => t.status === 'pending')) this.#poll();

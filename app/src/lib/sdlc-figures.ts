@@ -98,7 +98,7 @@ export function projectSdlcFigures(p: ProjectSdlc, words: Words): SdlcFigure[] {
 
 const SPRINT_WINDOW_REASONS: Record<string, string> = {
   not_started: 'Not started. Usage counts from the sprint’s start.',
-  no_dates: 'Jira has no dates for this sprint, so its sessions can’t be placed in it.',
+  no_dates: 'The tracker has no dates for this sprint, so its sessions can’t be placed in it.',
 };
 
 /** Why a sprint has no usage window (R7 `reason`), in words; an unknown code as itself. */

@@ -29,6 +29,11 @@ const connected: TrackerConnection = {
   external_scope: 'AUTH',
   board_ref: '42',
   board_name: 'AUTH Scrum',
+  sprint_source: null,
+  sprint_source_changed_at: null,
+  full_path: null,
+  url: null,
+  iteration_field: null,
   status: 'connected',
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
@@ -91,11 +96,87 @@ describe('not connected', () => {
     expect(email.type).toBe('email');
   });
 
-  it('offers Jira and shows GitLab as coming soon, not selectable', async () => {
-    const { q } = await open();
-    const gitlab = q('[data-tracker="gitlab"]')!;
-    expect(gitlab.getAttribute('aria-disabled')).toBe('true');
-    expect(gitlab.textContent).toMatch(/coming soon/i);
+  it('offers Jira and GitLab; GitLab asks for its URL, the host again and a token, never an email', async () => {
+    const { state, q } = await open();
+    const gitlab = q<HTMLInputElement>('[data-tracker="gitlab"] input')!;
+    expect(gitlab.disabled).toBe(false);
+    gitlab.click();
+    flushSync();
+    expect(state.kind).toBe('gitlab');
+    expect(q('[data-field="email"]')).toBeNull();
+    expect(q('a[data-link="create-token"]')).toBeNull();
+    state.boardUrl = 'https://gitlab.example.com/acme/platform';
+    flushSync();
+    expect(q('[data-field="confirm_host"]')).not.toBeNull();
+    state.boardUrl = 'https://gitlab.com/acme/platform';
+    flushSync();
+    expect(q('[data-field="confirm_host"]')).toBeNull();
+  });
+
+  it('a GitLab board names GitLab, its sprint source and no write-back, and never Jira', async () => {
+    const gitlab: TrackerConnection = {
+      ...connected,
+      kind: 'gitlab',
+      base_url: 'https://gitlab.example.com',
+      account: 'group_bot',
+      external_scope: 'acme',
+      board_ref: 'group:857',
+      board_name: 'acme',
+      sprint_source: 'milestone',
+      full_path: 'acme',
+      status: 'error',
+      last_error: 'unauthorized',
+      writeback: { ...connected.writeback, enabled: false },
+    };
+    const { m, q } = await open({ tryListTrackers: async () => ({ ok: true, data: [gitlab] }) });
+    const card = q('[data-tracker="t-1"]')!;
+    expect(card.textContent).toContain('GitLab · gitlab.example.com · acme');
+    expect(q('[data-sprint-source="milestone"]')!.textContent).toContain('Sprints: milestones');
+    expect(q('[data-writeback="unsupported"]')!.textContent).toContain('not available for GitLab yet');
+    expect(q('[data-action="writeback"]')).toBeNull();
+    expect(card.textContent).not.toMatch(/Jira/);
+    expect(m.container.textContent).toContain('Jira, GitLab or GitHub boards');
+  });
+
+  it('offers GitHub: a project URL, a token, an optional Iteration field, and the field names when asked', async () => {
+    const { q, state } = await open();
+    const github = q<HTMLInputElement>('[data-tracker="github"] input')!;
+    expect(github.disabled).toBe(false);
+    github.click();
+    flushSync();
+    expect(state.kind).toBe('github');
+    expect(q('[data-field="email"]')).toBeNull();
+    expect(q('[data-field="confirm_host"]')).toBeNull();
+    expect(q('[data-field="board_url"]')).not.toBeNull();
+    expect(q('[data-field="token"]')).not.toBeNull();
+    expect(q('[data-field="iteration_field"]')).not.toBeNull();
+    expect(q('[data-github-choices]')).toBeNull();
+    state.iterationFields = ['Sprint', 'Release'];
+    flushSync();
+    const choices = q('[data-github-choices]')!;
+    expect(choices.textContent).toContain('Sprint');
+    expect(choices.textContent).toContain('Release');
+  });
+
+  it('a GitHub project names GitHub, its Iteration field and no write-back, and never Jira or GitLab', async () => {
+    const github: TrackerConnection = {
+      ...connected,
+      kind: 'github',
+      base_url: 'https://api.github.com',
+      account: 'user1',
+      external_scope: 'acme/3',
+      board_ref: 'project:PVT_1',
+      board_name: 'Roadmap',
+      url: 'https://github.com/orgs/acme/projects/3',
+      iteration_field: 'Sprint',
+      writeback: { ...connected.writeback, enabled: false },
+    };
+    const { q } = await open({ tryListTrackers: async () => ({ ok: true, data: [github] }) });
+    const card = q('[data-tracker="t-1"]')!;
+    expect(card.textContent).toContain('GitHub · acme/3 · Roadmap');
+    expect(card.textContent).toContain('Sprints: the Sprint iteration field');
+    expect(q('[data-writeback="unsupported"]')!.textContent).toContain('not available for GitHub yet');
+    expect(card.textContent).not.toMatch(/Jira|GitLab/);
   });
 
   it('links to Atlassian to create a token and says where it is kept', async () => {
@@ -217,7 +298,7 @@ describe('connected', () => {
     const dialog = q('[data-component="disconnect-dialog"]')!;
     expect(dialog.textContent).toContain('Disconnect board #42?');
     expect(dialog.textContent).toContain(
-      'This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and Jira itself is not changed.',
+      'This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and the tracker itself is not changed.',
     );
     expect((document.activeElement as HTMLElement).dataset.action).toBe('cancel-disconnect');
     (document.activeElement as HTMLButtonElement).click();
@@ -269,7 +350,7 @@ describe('write-back on the board card (W-UI)', () => {
   it('the header says what sensei writes back, and where', async () => {
     const { m } = await open({ tryListTrackers: async () => ({ ok: true, data: [active] }) });
     expect(m.container.textContent).toContain(
-      'Connect this workspace’s Jira boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map.',
+      'Connect this workspace’s Jira, GitLab or GitHub boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map (GitLab and GitHub boards are read-only for now).',
     );
     expect(m.container.textContent).not.toContain('never changes anything in Jira');
   });

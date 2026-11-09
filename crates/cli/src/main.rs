@@ -18,8 +18,17 @@ fn cfg() -> &'static SenseiConfig {
     sensei_bootstrap::config()
 }
 
+/// Process-scoped daemon base URL, resolved once in `main()` from
+/// `--daemon-url` > `SENSEI_DAEMON_URL` > default. A cell rather than a
+/// threaded parameter: ~20 call sites across this binary (and `auth`) read
+/// the base, and the CLI is a single-shot process — one command per
+/// invocation — so process scope IS command scope, exactly like bootstrap's
+/// `config()` singleton. Unit tests never set it (they don't run `main`),
+/// so `daemon_url()` in tests is plain `sensei_bootstrap::daemon_url()`.
+static DAEMON_BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 fn daemon_url() -> String {
-    sensei_bootstrap::daemon_url()
+    DAEMON_BASE.get().cloned().unwrap_or_else(sensei_bootstrap::daemon_url)
 }
 
 #[derive(Parser)]
@@ -33,6 +42,11 @@ struct Cli {
     /// plugin/MCP in one shot after a sensei upgrade.
     #[arg(long)]
     upgrade: bool,
+
+    /// Daemon base URL — `host:port` or full `http://host:port`.
+    /// Precedence: this flag > SENSEI_DAEMON_URL env > 127.0.0.1:7744.
+    #[arg(long, value_name = "URL")]
+    daemon_url: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -97,7 +111,10 @@ enum Commands {
     /// Show daemon status
     Status,
 
-    /// Issue-tracker connections (Jira) for a workspace
+    /// Show relay registration — one line: the lane and crew, or not-registered
+    Relay,
+
+    /// Issue-tracker connections (Jira, GitLab, GitHub) for a workspace
     Tracker {
         #[command(subcommand)]
         cmd: tracker::TrackerCmd,
@@ -232,6 +249,7 @@ const UPGRADE_ENDPOINT: &str = "/api/assistants/upgrade";
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let _ = DAEMON_BASE.set(sensei_bootstrap::daemon_url_with_flag(cli.daemon_url.as_deref()));
 
     // `sensei --upgrade` (flag form) — refresh every detected assistant, the
     // same all-ACP fan-out as the `upgrade` subcommand with no --acp.
@@ -282,6 +300,7 @@ fn main() -> ExitCode {
             restart_daemon(port.unwrap_or_else(|| cfg().daemon_port))
         }
         Some(Commands::Status) => daemon_cmd("status", None),
+        Some(Commands::Relay) => relay_status(),
         Some(Commands::Tracker { cmd }) => std::process::exit(tracker::run(cmd)),
         Some(Commands::Scan { path, force }) => scan(&path, force),
         Some(Commands::Scaffold { what, path }) => scaffold_cmd(what, path.as_deref()),
@@ -1382,6 +1401,55 @@ fn print_models_status(d: &serde_json::Value) {
     }
 }
 
+/// `sensei relay` (item 5): one-line registration status over the person
+/// `now` payload — the first lane and its crew, or not-registered.
+/// Status only; lanes register over MCP.
+fn relay_status() {
+    ensure_daemon();
+    match client().get(format!("{}/relay/now", daemon_url())).send() {
+        Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>() {
+            Ok(d) => println!("{}", format_relay_status(&d)),
+            Err(e) => eprintln!("relay status failed: unexpected response ({e})"),
+        },
+        Ok(r) => eprintln!("{}", relay_http_error(r.status())),
+        Err(e) => eprintln!("relay status failed: {e}"),
+    }
+}
+
+/// Render the one-line relay status. Kept pure over the JSON so the line
+/// is unit-testable without a daemon (the models precedent).
+fn format_relay_status(d: &serde_json::Value) -> String {
+    let lanes = d["lanes"].as_array().cloned().unwrap_or_default();
+    let Some(first) = lanes.first() else {
+        return "relay: not registered — no lanes yet".to_string();
+    };
+    let code = first["code"].as_str().unwrap_or("?");
+    let role = first["role"].as_str().unwrap_or("?");
+    let crew_id = first["crew_id"].as_str().unwrap_or("");
+    let crew = d["crews"]
+        .as_array()
+        .and_then(|crews| crews.iter().find(|c| c["id"].as_str() == Some(crew_id)))
+        .and_then(|c| c["goal"].as_str())
+        .map(|goal| format!("\"{goal}\""))
+        .unwrap_or_else(|| crew_id.chars().take(8).collect());
+    let mut line = format!("relay: registered as {code} ({role}) in crew {crew}");
+    if lanes.len() > 1 {
+        line.push_str(&format!(" (+{} more lanes)", lanes.len() - 1));
+    }
+    line
+}
+
+/// The stderr line for a failed relay status read. Sign-in failures name
+/// the remedy (the onboarding audience runs this first); anything else
+/// reports the HTTP status like the other daemon-backed commands.
+fn relay_http_error(status: reqwest::StatusCode) -> String {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        "relay: not signed in — sign in to check registration".to_string()
+    } else {
+        format!("relay status failed: HTTP {status}")
+    }
+}
+
 /// Format a `ProvisionPhase` JSON value (`{"phase":"...", ...}`) as a compact,
 /// human-readable string. Pure over the daemon's serde shape (kernel
 /// `ProvisionPhase`, internally tagged `"phase"`, snake_case).
@@ -1549,6 +1617,80 @@ mod tests {
     fn models_requires_a_subcommand() {
         // Bare `sensei models` must not parse — a subcommand is required.
         assert!(Cli::try_parse_from(["sensei", "models"]).is_err());
+    }
+
+    #[test]
+    fn relay_subcommand_parses_bare() {
+        // Item 5: bare `sensei relay` is the status — no subcommand.
+        let cli = Cli::parse_from(["sensei", "relay"]);
+        assert!(matches!(cli.command, Some(Commands::Relay)));
+    }
+
+    #[test]
+    fn relay_status_names_the_lane_and_crew() {
+        use serde_json::json;
+        let d = json!({
+            "lanes": [{"id": "l1", "crew_id": "c9", "code": "L1", "role": "coordinator"}],
+            "crews": [{"id": "c9", "goal": "Ship it"}],
+        });
+        assert_eq!(
+            format_relay_status(&d),
+            "relay: registered as L1 (coordinator) in crew \"Ship it\""
+        );
+    }
+
+    #[test]
+    fn relay_status_falls_back_to_the_crew_id() {
+        use serde_json::json;
+        let d = json!({
+            "lanes": [{"id": "l1", "crew_id": "01938931-0000-7000-8000-0000000000c1", "code": "L2", "role": "contributor"}],
+            "crews": [{"id": "01938931-0000-7000-8000-0000000000c1", "goal": null}],
+        });
+        assert_eq!(
+            format_relay_status(&d),
+            "relay: registered as L2 (contributor) in crew 01938931"
+        );
+    }
+
+    #[test]
+    fn relay_status_counts_further_lanes() {
+        use serde_json::json;
+        let d = json!({
+            "lanes": [
+                {"id": "l1", "crew_id": "c9", "code": "L1", "role": "coordinator"},
+                {"id": "l2", "crew_id": "c9", "code": "L2", "role": "contributor"},
+                {"id": "l3", "crew_id": "c9", "code": "L3", "role": "contributor"},
+            ],
+            "crews": [{"id": "c9", "goal": "Ship it"}],
+        });
+        assert_eq!(
+            format_relay_status(&d),
+            "relay: registered as L1 (coordinator) in crew \"Ship it\" (+2 more lanes)"
+        );
+    }
+
+    #[test]
+    fn relay_http_error_names_sign_in_for_401() {
+        assert_eq!(
+            relay_http_error(reqwest::StatusCode::UNAUTHORIZED),
+            "relay: not signed in — sign in to check registration"
+        );
+        assert_eq!(
+            relay_http_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR),
+            "relay status failed: HTTP 500 Internal Server Error"
+        );
+    }
+
+    #[test]
+    fn relay_status_without_lanes_is_not_registered() {
+        use serde_json::json;
+        assert_eq!(
+            format_relay_status(&json!({"lanes": [], "crews": []})),
+            "relay: not registered — no lanes yet"
+        );
+        // Missing or misshapen lanes read as empty (the models precedent):
+        // a 200 always carries lanes[], so anything else is no lanes.
+        assert_eq!(format_relay_status(&json!({})), "relay: not registered — no lanes yet");
     }
 
     #[test]

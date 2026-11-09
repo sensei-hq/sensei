@@ -36,7 +36,7 @@ describe('OrgSectionState', () => {
 		const a = actions();
 		const reload = vi.fn().mockResolvedValue(undefined);
 		const s = new OrgSectionState(a, reload);
-		const v = { principalId: 'v1', name: null, email: 'v@x.co', workspaces: [] };
+		const v = { principalId: 'v1', name: null, handle: null, email: 'v@x.co', workspaces: [] };
 		await s.grantView(v, 'p1');
 		await s.revokeView(v, 'p1');
 		await s.removeViewer(v);

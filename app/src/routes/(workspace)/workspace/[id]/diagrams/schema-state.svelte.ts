@@ -39,6 +39,13 @@ export class SchemaState {
   /** The ER diagram's field detail and edge style — rokkit's own settings. */
   density = $state<Density>('keys');
   edgeStyle = $state<EdgeStyle>('curved');
+  /**
+   * The object the ER canvas centres on (user, 2026-11-06), or null for the design.
+   * It is not the selection: a press on the canvas walks into a neighbourhood, while
+   * the sidebar's own press opens the object's page — two answers to "what next"
+   * that would otherwise fight over one field.
+   */
+  #focus = $state<string | null>(null);
 
   constructor(api: SchemaApi, workspaceId: () => string) {
     this.#api = api;
@@ -93,6 +100,18 @@ export class SchemaState {
 
   select(key: string | null) {
     this.#picked = key;
+    // A page replaces the canvas; coming back to it should not reopen a neighbourhood
+    // the reader left two pages ago.
+    this.#focus = null;
+  }
+
+  /** The canvas's own selection: a neighbourhood, or the design when null. */
+  get focus(): string | null {
+    return this.#focus;
+  }
+
+  focusOn(key: string | null) {
+    this.#focus = key;
   }
 
   async load() {

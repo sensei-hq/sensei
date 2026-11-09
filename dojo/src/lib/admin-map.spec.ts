@@ -27,6 +27,7 @@ function member(over: Partial<Membership> = {}): Membership {
 		disabled_at: null,
 		created_at: '2026-01-01T00:00:00Z',
 		display_name: null,
+		handle: null,
 		email: null,
 		...over
 	};
@@ -53,6 +54,19 @@ describe('toKitMember / toKitMembers', () => {
 	});
 	it('L4 member-names — email shows when the name is missing', () => {
 		expect(toKitMember(member({ display_name: null, email: 'a@x.co' }), { now: NOW }).name).toBe('a@x.co');
+	});
+	it('L4 forge-handle — the handle shows when the name is missing', () => {
+		expect(toKitMember(member({ display_name: null, handle: 'octocat', email: null }), { now: NOW }).name).toBe(
+			'octocat'
+		);
+	});
+	it('L4 forge-handle — the handle loses to a name and beats an email', () => {
+		expect(toKitMember(member({ display_name: 'Ada', handle: 'octocat', email: 'a@x.co' }), { now: NOW }).name).toBe(
+			'Ada'
+		);
+		expect(toKitMember(member({ display_name: null, handle: 'octocat', email: 'a@x.co' }), { now: NOW }).name).toBe(
+			'octocat'
+		);
 	});
 	it('marks the viewer row with you', () => {
 		const k = toKitMember(member(), { self: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', now: NOW });

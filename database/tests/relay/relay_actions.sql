@@ -1,0 +1,252 @@
+-- `relay.actions` — everything that happens: one table, categorised by kind.
+--
+-- WHAT BREAKS THIS TEST: summaries over 600 chars (reported/reviewed — the
+-- shared text stays short); a dangling crew/task/lane/reply_to; kind or crew
+-- turning nullable; a non-v7 id; a non-owner reading a row.
+--
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_actions.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_actions.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
+--
+-- NOTE (for L0): the 600-char cap binds reported/reviewed only (lanes-data's
+-- "summaries"); questions and messages are daemon-validated. Rule if otherwise.
+
+begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
+
+insert into relay.crews (user_id, id, status) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f701', 'active'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f702', 'active');
+
+insert into relay.lanes (user_id, id, crew_id, code, role, family, repo, token_hash) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f711',
+   '11111111-1111-7000-8000-00000000f701', 'L1', 'coordinator', 'claude-code',
+   'github.com/sensei-hq/sensei', 'x'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f712',
+   '11111111-1111-7000-8000-00000000f701', 'L2', 'contributor', 'claude-code',
+   'github.com/sensei-hq/sensei', 'x'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f713',
+   '22222222-2222-7000-8000-00000000f702', 'L1', 'coordinator', 'claude-code',
+   'github.com/sensei-hq/other', 'x');
+
+insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, title, phase, state) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f731',
+   '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f712',
+   'github.com/sensei-hq/sensei', 'The task', 'tests', 'working'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f732',
+   '22222222-2222-7000-8000-00000000f702', '22222222-2222-7000-8000-00000000f713',
+   'github.com/sensei-hq/other', 'Their task', 'tests', 'working');
+
+-- A1: the frozen brief. A2: started (no text, no props). A3: the report (a
+-- full 600-char summary + the full report text). A4: the person messages the
+-- crew about no particular task. A5/A6: the question and its answer. A7: U2's.
+insert into relay.actions
+  (user_id, id, crew_id, task_id, lane_id, kind, round, phase, body_md, report_md, props, reply_to) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f741',
+   '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f731',
+   '11111111-1111-7000-8000-00000000f711', 'assigned', 1, 'tests',
+   'Put the diagrams header on the shell.', null,
+   '{"docs": ["coord/briefs/x.md"], "owned_paths": ["app/src/**"], "acceptance": ["it matches"]}', null),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f742',
+   '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f731',
+   '11111111-1111-7000-8000-00000000f712', 'started', 1, 'tests', null, null, '{}', null),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f743',
+   '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f731',
+   '11111111-1111-7000-8000-00000000f712', 'reported', 1, 'tests',
+   repeat('r', 600), 'The full report text lives here.',
+   '{"branch": "lane/x", "files": [{"path": "a.ts", "added": 3, "removed": 1}]}', null),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f744',
+   '11111111-1111-7000-8000-00000000f701', null, null,
+   'message', null, null, 'Standup in five.', null,
+   '{"to": {"kind": "everyone"}, "surface": "desktop"}', null),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f745',
+   '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f731',
+   '11111111-1111-7000-8000-00000000f712', 'asked', 1, 'tests',
+   'Where does the activity log live?',
+   null,
+   '{"context": "Activity logs is waiting.", "options": [{"id": "db", "label": "In the database", "detail": null}], "recommended": "db", "blocks": ["11111111-1111-7000-8000-00000000f731"], "asked_of": "person"}',
+   null),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f746',
+   '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f731',
+   null, 'answered', 1, 'tests', 'In the database it is.', null,
+   '{"option": "db", "surface": "desktop"}', '11111111-1111-7000-8000-00000000f745'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f747',
+   '22222222-2222-7000-8000-00000000f702', '22222222-2222-7000-8000-00000000f732',
+   '22222222-2222-7000-8000-00000000f713', 'reported', 1, 'tests',
+   'Their report.', null, '{}', null);
+
+do $$
+declare
+  n int;
+  v_text text;
+  v_json jsonb;
+  v_ts timestamptz;
+begin
+  -- The brief roundtrips frozen; the answer points at its question.
+  select body_md into v_text from relay.actions where id = '11111111-1111-7000-8000-00000000f741';
+  if v_text is distinct from 'Put the diagrams header on the shell.' then
+    raise exception 'assigned body should read back, saw %.', v_text;
+  end if;
+  select reply_to::text into v_text from relay.actions where id = '11111111-1111-7000-8000-00000000f746';
+  if v_text is distinct from '11111111-1111-7000-8000-00000000f745' then
+    raise exception 'answered should reply to the asked, saw %.', v_text;
+  end if;
+
+  -- A full 600-char summary lands; the server stamps the row.
+  select char_length(body_md), created_at into n, v_ts from relay.actions
+   where id = '11111111-1111-7000-8000-00000000f743';
+  if n <> 600 or v_ts is null then
+    raise exception 'the 600-char summary should land stamped.';
+  end if;
+
+  -- 601 chars is refused on a summary...
+  begin
+    insert into relay.actions (user_id, id, crew_id, task_id, lane_id, kind, body_md) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f751',
+       '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f731',
+       '11111111-1111-7000-8000-00000000f712', 'reported', repeat('r', 601));
+    raise exception 'a 601-char reported summary was accepted.';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into relay.actions (user_id, id, crew_id, task_id, lane_id, kind, body_md) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f752',
+       '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f731',
+       '11111111-1111-7000-8000-00000000f711', 'reviewed', repeat('r', 601));
+    raise exception 'a 601-char reviewed summary was accepted.';
+  exception when check_violation then null;
+  end;
+
+  -- ... but a long question or message is the daemon's call, not the schema's.
+  insert into relay.actions (user_id, id, crew_id, task_id, lane_id, kind, body_md) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f753',
+     '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f731',
+     null, 'message', repeat('m', 601)),
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f754',
+     '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f731',
+     '11111111-1111-7000-8000-00000000f712', 'asked', repeat('q', 601));
+  select count(*) into n from relay.actions
+   where id in ('11111111-1111-7000-8000-00000000f753', '11111111-1111-7000-8000-00000000f754');
+  if n <> 2 then
+    raise exception 'long message/asked rows should land.';
+  end if;
+
+  -- props default to the empty doc.
+  insert into relay.actions (user_id, id, crew_id, task_id, lane_id, kind) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f755',
+     '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f731',
+     '11111111-1111-7000-8000-00000000f712', 'started');
+  select props into v_json from relay.actions where id = '11111111-1111-7000-8000-00000000f755';
+  if v_json is distinct from '{}' then
+    raise exception 'props should default to {}, saw %.', v_json;
+  end if;
+
+  -- kind and crew are required.
+  begin
+    insert into relay.actions (user_id, id, crew_id, body_md) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f756',
+       '11111111-1111-7000-8000-00000000f701', 'No kind');
+    raise exception 'an action without a kind was accepted.';
+  exception when not_null_violation then null;
+  end;
+  begin
+    insert into relay.actions (user_id, id, kind, body_md) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f757',
+       'message', 'No crew');
+    raise exception 'an action without a crew was accepted.';
+  exception when not_null_violation then null;
+  end;
+
+  -- Dangling crew / task / lane / reply_to fail the foreign keys.
+  begin
+    insert into relay.actions (user_id, id, crew_id, kind) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f758',
+       '11111111-1111-7000-8000-00000000f799', 'message');
+    raise exception 'an action on a missing crew was accepted.';
+  exception when foreign_key_violation then null;
+  end;
+  begin
+    insert into relay.actions (user_id, id, crew_id, task_id, kind) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f759',
+       '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f799', 'message');
+    raise exception 'an action on a missing task was accepted.';
+  exception when foreign_key_violation then null;
+  end;
+  begin
+    insert into relay.actions (user_id, id, crew_id, lane_id, kind) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f760',
+       '11111111-1111-7000-8000-00000000f701', '11111111-1111-7000-8000-00000000f799', 'message');
+    raise exception 'an action by a missing lane was accepted.';
+  exception when foreign_key_violation then null;
+  end;
+  begin
+    insert into relay.actions (user_id, id, crew_id, kind, reply_to) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f761',
+       '11111111-1111-7000-8000-00000000f701', 'read', '11111111-1111-7000-8000-00000000f799');
+    raise exception 'an action replying to a missing action was accepted.';
+  exception when foreign_key_violation then null;
+  end;
+
+  -- References are user-scoped: a U1 action on U2's task fails (composite FK).
+  begin
+    insert into relay.actions (user_id, id, crew_id, task_id, kind) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f762',
+       '11111111-1111-7000-8000-00000000f701', '22222222-2222-7000-8000-00000000f732', 'message');
+    raise exception 'an action on another user''s task was accepted.';
+  exception when foreign_key_violation then null;
+  end;
+
+  -- Ids are v7.
+  begin
+    insert into relay.actions (user_id, id, crew_id, kind) values
+      ('a1111111-1111-4111-8111-111111111111', '99999999-9999-4999-8999-999999999994',
+       '11111111-1111-7000-8000-00000000f701', 'message');
+    raise exception 'a v4 action id was accepted.';
+  exception when check_violation then null;
+  end;
+
+  -- The daemon owner sees all ten actions (7 fixtures + 2 long + started).
+  select count(*) into n from relay.actions
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
+  if n <> 10 then
+    raise exception 'the owner should see 10 actions, saw %.', n;
+  end if;
+
+  if has_table_privilege('authenticated', 'relay.actions', 'INSERT') then
+    raise exception 'authenticated must hold no INSERT grant on actions.';
+  end if;
+end $$;
+
+-- U1 reads their nine; U2 reads their one.
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"a1111111-1111-4111-8111-111111111111","role":"authenticated"}', true);
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from relay.actions;
+  if n <> 9 then
+    raise exception 'U1 should read 9 actions, saw %.', n;
+  end if;
+end $$;
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"a2222222-2222-4222-8222-222222222222","role":"authenticated"}', true);
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from relay.actions;
+  if n <> 1 then
+    raise exception 'U2 should read 1 action, saw %.', n;
+  end if;
+end $$;
+reset role;
+
+rollback;

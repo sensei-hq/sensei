@@ -129,6 +129,23 @@ describe('Observatory · Relay — every crew, workspace or not', () => {
     expect(all(loose, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L8', 'L9']);
   });
 
+  it('two crews with no repository head distinct "no repository · crew XXXX" groups (Q18 L1)', async () => {
+    const base = F.mainNow();
+    const { c } = await open({
+      now: F.ok({
+        ...base,
+        crews: [
+          F.crew({ repo_key: null }),
+          F.crew({ id: F.LOOSE_CREW_ID, repo_key: null, workspace_id: null, goal: 'Try the scratch idea' }),
+        ],
+      }),
+    });
+    const sensei = need(one(c, `[data-crew-group="${F.CREW_ID}"]`), 'the first repo-less crew’s group');
+    expect(text(one(sensei, '[data-crew-heading]'))).toBe('no repository · crew c7f3');
+    const loose = need(one(c, `[data-crew-group="${F.LOOSE_CREW_ID}"]`), 'the second repo-less crew’s group');
+    expect(text(one(loose, '[data-crew-heading]'))).toBe('no repository · crew b10c');
+  });
+
   it('the context counts the crews it shows', async () => {
     const { c } = await open();
     expect(text(one(c, '[data-screen-context]'))).toContain('2 crews');
@@ -172,17 +189,22 @@ describe('Observatory · Relay — the filter band: repository and workspace', (
   });
 
   it('choosing one navigates with it in the URL; All clears it', async () => {
-    const { c } = await open({ search: '?workspace=w1' });
+    const { c, api } = await open({ search: '?workspace=w1' });
     const band = need(one(c, '[data-screen-filters]'), 'the filter band');
     setValue(need(one(band, 'select[data-relay-filter-repo]'), 'the repository filter'), F.LOOSE_REPO);
     await tick();
     expect(vi.mocked(goto)).toHaveBeenCalledTimes(1);
-    const [href, opts] = vi.mocked(goto).mock.calls[0];
+    const [href, ...rest] = vi.mocked(goto).mock.calls[0];
     const url = new URL(String(href), 'http://localhost');
     expect(url.pathname).toBe('/relay');
     expect(url.searchParams.get('repo')).toBe(F.LOOSE_REPO);
     expect(url.searchParams.get('workspace')).toBe('w1');
-    expect(opts).toMatchObject({ invalidateAll: true });
+    // N9: goto re-runs this route's load on a search change, and nothing above it
+    // depends on the filter — invalidateAll would refetch every parent load too.
+    expect(rest).toEqual([]);
+    // One load for the narrow: the page fetches nothing of its own.
+    expect(api.tryGetNow).toHaveBeenCalledTimes(1);
+    expect(api.tryGetQueue).toHaveBeenCalledTimes(1);
 
     setValue(need(one(band, 'select[data-relay-filter-workspace]'), 'the workspace filter'), '');
     await tick();
@@ -219,5 +241,27 @@ describe('Observatory · Relay — Message the crew across crews', () => {
       text: 'Try the other parser first.',
       surface: 'desktop',
     });
+  });
+
+  it('repo-less crews read distinct "no repository · crew XXXX" in the Crew field (Q18 L1)', async () => {
+    const base = F.mainNow();
+    const { c } = await open({
+      now: F.ok({
+        ...base,
+        crews: [
+          F.crew(),
+          F.crew({ id: F.LOOSE_CREW_ID, repo_key: null, workspace_id: null, goal: 'Try the scratch idea' }),
+          F.crew({ id: F.OTHER_CREW_ID, repo_key: null, workspace_id: null, goal: 'Another scratch' }),
+        ],
+      }),
+    });
+    need(one(c, '[data-screen-tools] [aria-label="Message the crew"]'), 'the Message the crew action').click();
+    await tick();
+    const crewField = need(one(c, 'select[data-compose-crew]'), 'the Crew field') as HTMLSelectElement;
+    expect([...crewField.options].map((o) => o.text)).toEqual([
+      'github.com/sensei-hq/sensei',
+      'no repository · crew b10c',
+      'no repository · crew 99aa',
+    ]);
   });
 });

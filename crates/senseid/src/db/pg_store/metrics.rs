@@ -937,6 +937,24 @@ impl PgStore {
     /// federated) and for an id with no row. Used to look a repository up in the
     /// dōjō's activation ruling, which is keyed on `repo_key` because that is the
     /// one identity both planes share — `repositories.id` is per-install.
+    /// The `repo_key` of a folder's repository: `None` when the folder has no
+    /// repository or its repository has no key (a local-only repo).
+    pub async fn repo_key_of_folder(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT r.repo_key FROM sensei.folders f
+               JOIN sensei.repositories r ON r.id = f.repository_id
+              WHERE f.id = $1",
+        )
+        .bind(folder_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("repo_key_of_folder: {e}"))?;
+        Ok(row.and_then(|(k,)| k))
+    }
+
     pub async fn repo_key_for_repository(
         &self,
         repository_id: &uuid::Uuid,

@@ -25,7 +25,7 @@ comment on column sprints.tracker_id
 comment on column sprints.external_id
      is 'The provider''s sprint id, as text.';
 comment on column sprints.seq
-     is 'Adapter-supplied creation order (Jira: the numeric sprint id). The tie-break for a ticket''s current sprint; never compare external_id text.';
+     is 'Adapter-supplied ordering key (Jira, GitLab: the numeric sprint id; GitHub: the iteration''s start date in days since 1970-01-01). The tie-break for a ticket''s current sprint; never compare external_id text.';
 comment on column sprints.name
      is 'Sprint name as the provider shows it.';
 comment on column sprints.state

@@ -11,7 +11,7 @@ import type { TeamView } from '$lib/teams-view';
 // it, rename and delete. A team grants no access; the copy says so.
 
 const teams: TeamView[] = [
-	{ id: 't1', name: 'Payments', members: [{ principalId: 'u1', name: 'Ada', email: null }] },
+	{ id: 't1', name: 'Payments', members: [{ principalId: 'u1', name: 'Ada', handle: null, email: null }] },
 	{ id: 't2', name: 'Search', members: [] }
 ];
 const members = [

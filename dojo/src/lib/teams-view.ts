@@ -13,14 +13,14 @@ export interface TeamView {
 export interface TeamWire {
 	id: string;
 	name: string;
-	members: Array<{ principal_id: string; display_name: string | null; email: string | null }>;
+	members: Array<{ principal_id: string; display_name: string | null; handle: string | null; email: string | null }>;
 }
 
 export function toTeamViews(rows: TeamWire[]): TeamView[] {
 	return rows.map((t) => ({
 		id: t.id,
 		name: t.name,
-		members: t.members.map((m) => ({ principalId: m.principal_id, name: m.display_name, email: m.email }))
+		members: t.members.map((m) => ({ principalId: m.principal_id, name: m.display_name, handle: m.handle, email: m.email }))
 	}));
 }
 

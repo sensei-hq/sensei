@@ -45,8 +45,10 @@ describe('Database · ER', () => {
     render();
     await settle();
     expect(q('[data-graph-design-overview]')).not.toBeNull();
-    const layout = q('[data-testid="schema-layout"]') as HTMLElement;
-    const [main, side] = [...layout.children] as HTMLElement[];
+    // D87 §9: the design is the shell's body, its sidebar the shell's sidebar
+    // slot — so the design pane and the sidebar are read apart, not as siblings.
+    const main = q('[data-screen-body] [data-testid="schema-layout"]') as HTMLElement;
+    const side = q('[data-screen-sidebar] [data-testid="schema-sidebar"]') as HTMLElement;
     // Only the tabs head the design: its name and counts are the page header's already.
     const tabs = [...main.querySelectorAll('[data-testid="schema-tabs"] [role="tab"]')].map((t) => t.textContent?.trim());
     expect(tabs).toEqual(['Overview', 'Diagram', 'Entities']);
@@ -86,10 +88,21 @@ describe('Database · ER', () => {
     expect(q('[data-testid="schema-tabs"]')).not.toBeNull();
   });
 
+  // Review r1 F2 (L0's standing rule from activity-logs): a steady state with no
+  // design passes no sidebar snippet, never an empty one — the old page drew its
+  // aside inside `{:else if view.model}`.
   it('a read that failed says so, with the status, and can be retried', async () => {
     render({}, 500);
     await settle();
     expect(q('[data-testid="schema-error"]')?.textContent).toContain('500');
     expect(q('[data-testid="schema-retry"]')).not.toBeNull();
+    expect(q('[data-screen-sidebar]')).toBeNull();
+  });
+
+  it('no design describes nothing and draws no sidebar', async () => {
+    render({ version: 3, tables: [], refs: [], entities: [], deps: [], enums: [] });
+    await settle();
+    expect(q('[data-testid="schema-none"]')).not.toBeNull();
+    expect(q('[data-screen-sidebar]')).toBeNull();
   });
 });

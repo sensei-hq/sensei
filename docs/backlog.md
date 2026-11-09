@@ -37,7 +37,7 @@ week; `—` means no lane holds it yet. Per-module status and its evidence:
 | Sync hardening (L3 F8) | — | stored:None complement marks + warns once per cycle | remove the complement when every supported dōjō returns `stored` (then the warn and this row go away) | L3 |
 | Governance | ~50% | scope resolution, rule packs + adoption, resolved rules pulled | no violation/override store (G-GOV-AUDIT); no "what adopting changed here"; team scope #318 | — |
 | Learnings | ~60% | memories, Learnings screen, share-review, k ≥ 3 promotion, playbook rules | no `report_learning` / `report_memory_use`; no failure → lesson loop; too many competing verbs (D65) | L1 (after #314), L0 (spec) |
-| Trackers / sprints | ~35% | Jira (daemon), boards per level (D40), sprints, Tickets screen | GitHub Issues / ADO adapters (D49, behind #310); tracker-ownership conflict; epics unread | L7 |
+| Trackers / sprints | ~40% | Jira, GitLab and GitHub Projects (daemon, D91, D92), boards per level (D40), sprints, Tickets screen | ADO adapter, dōjō-owned connections (D49, behind #310); tracker-ownership conflict; epics unread | L7 |
 | Teams / viewers | ~70% | roles, teams, invites, viewers, lead view | no viewer shell (D68); leads have no menu of their own; A4 writable workspaces | L4 |
 | Billing / plans | ~15% | `billing_accounts`, `seats`, `ScrBilling` | no provider, no subscription table; D46 entitlement is WP8; price to be announced (D75) | L4 (screen), L1 (WP8) |
 
@@ -208,12 +208,19 @@ and file what is still true as an issue.
   says only the repo-root folder carries `repository_id` (I16); `folders.ddl`
   records that D-REPO-ANCHOR (2026-10-01) superseded it — every folder carries it.
 
-- **GitLab tracker adapter** (next after Jira; seam in
-  [`spec/daemon/tracker-jira-linkage.md`](spec/daemon/tracker-jira-linkage.md) "Future
-  adapters") — decide: iterations (Premium) vs milestones as sprints; `#12` key
-  resolution scoped by the session's repo; self-managed host allow-rule (SSRF
-  review); PAT vs OAuth. D49 puts the new org adapters (GitHub Issues, ADO) on the
-  dōjō-owned path first.
+- **GitLab tracker adapter — closed** (2026-11-07) by
+  [`spec/daemon/tracker-gitlab.md`](spec/daemon/tracker-gitlab.md), issues #364–#368:
+  iterations where the instance has them, else milestones, as sprints; `#12` resolved by
+  the session's repo (`tracker/forge.rs`, shared with GitHub); gitlab.com or a confirmed
+  self-managed host, with a public-only resolver and no proxy on every tracker client;
+  PAT (`read_api`), no OAuth. Write-back and history are unsupported
+  (`unsupported_by_tracker`, 409 `writeback_unsupported`). D49 still puts the new org
+  adapters (GitHub Issues, ADO) on the dōjō-owned path first.
+
+- **`reads_history` re-reads the tracker row** (LOW, from the GitLab F1 review) —
+  `sdlc::reads_history` (`crates/senseid/src/sdlc/mod.rs`) does one primary-key read of
+  `sensei.trackers` per call, so `GET /trackers` pays one per tracker for a kind its caller
+  already holds. Pass the row's kind from the callers instead.
 
 - **Rust indexer miscounts `impl Trait for &Type`** (found 2026-10-16 by the
   tracker slice) — `indexer::lang::rust::tests::the_symbol_count_equals_an_independent_count_of_declaration_nodes`

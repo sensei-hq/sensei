@@ -215,8 +215,15 @@ pub async fn build_effort(
     tasks.sort();
     tasks.dedup();
     let usage = crate::tracker::usage::ticket_usages_of(pg, b.tracker_id, &pairs).await?;
-    let figures =
-        crate::sdlc::ticket::ticket_figures_of(pg, b.workspace_id, &tasks, &pairs, &usage).await?;
+    let figures = crate::sdlc::ticket::ticket_figures_of(
+        pg,
+        b.tracker_id,
+        b.workspace_id,
+        &tasks,
+        &pairs,
+        &usage,
+    )
+    .await?;
     for task in &tasks {
         let (Some(f), Some(u)) = (figures.get(task), usage.get(task)) else {
             return Err(format!("ticket {} has no figures", live[task]));

@@ -443,6 +443,52 @@ describe('Relay · task r2 — its decision (F4, L3)', () => {
   });
 });
 
+describe('Relay · task follow-ups — a re-read that fails, and a re-offer with no lane', () => {
+  const withDecision = () => F.ok(F.taskView({ decision: F.decision({ task_id: 't-header' }) }));
+
+  // N8: the write landed, the re-read did not. Drawing the view we kept would pass
+  // off what the daemon said before the answer as what it says now (D83).
+  it('an answer whose re-read fails is the fault Notice, and a Retry brings the task back', async () => {
+    const { c, api } = await open({ task: withDecision() });
+    api.tryGetTask.mockResolvedValueOnce(F.fail(502, 'the daemon dropped the read'));
+
+    const row = need(one(c, '[data-decision]'), 'the decision');
+    need(one(row, '[data-option="file"]'), 'the file option').click();
+    await tick();
+    need(one(row, '[data-decision-answer]'), 'Answer').click();
+
+    await vi.waitFor(() => expect(one(c, '[data-relay-error]')).not.toBeNull());
+    const notice = need(one(c, '[data-relay-error]'), 'the fault Notice after a failed re-read');
+    expect(text(notice)).toContain('the daemon dropped the read');
+    // The stale view is not drawn as if it were fresh.
+    expect(one(c, '[data-history-entry]')).toBeNull();
+    expect(one(c, '[data-task-title]')).toBeNull();
+
+    api.tryGetTask.mockResolvedValue(F.ok(F.taskView({ decision: null })));
+    need(one(notice, '[data-action="retry"]'), 'the Notice’s Retry').click();
+    await vi.waitFor(() => expect(one(c, '[data-history-entry]')).not.toBeNull());
+    expect(one(c, '[data-relay-error]')).toBeNull();
+    expect(api.tryGetTask).toHaveBeenCalledTimes(3);
+  });
+
+  // N10: a lane that hands a task back to the backlog has no lane to name.
+  describe('a re-offer', () => {
+    const view = (to_lane: string | null) =>
+      F.ok(F.taskView({ history: [F.action('reoffered', { to_lane }, { id: 'act-reoffered', lane_code: 'L0' })] }));
+    const title = (c: HTMLElement) => text(one(need(entry(c, 'act-reoffered'), 'the re-offer step'), '[data-entry-title]'));
+
+    it('to a lane names it', async () => {
+      const { c } = await open({ task: view(F.LANE.L3) });
+      expect(title(c)).toBe('Re-offered to L3');
+    });
+
+    it('with no lane says it went back to the queue, never "Re-offered to —"', async () => {
+      const { c } = await open({ task: view(null) });
+      expect(title(c)).toBe('Returned to the queue');
+    });
+  });
+});
+
 describe('Relay · task r2 — receipts fold per message (F5)', () => {
   it('each message carries its own receipts: one read, one only delivered', async () => {
     const { c } = await open();

@@ -11,10 +11,11 @@ const viewers: DojoViewerView[] = [
 	{
 		principalId: 'boss',
 		name: 'The Boss',
+		handle: null,
 		email: 'boss@example.com',
 		workspaces: [{ id: 'p1', name: 'Payments' }]
 	},
-	{ principalId: 'client', name: null, email: 'client@example.com', workspaces: [] }
+	{ principalId: 'client', name: null, handle: null, email: 'client@example.com', workspaces: [] }
 ];
 const workspaces = [
 	{ id: 'p1', name: 'Payments' },

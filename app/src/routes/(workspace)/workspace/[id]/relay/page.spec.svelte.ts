@@ -1021,3 +1021,48 @@ describe('Relay r2 — Completed today rows (L1)', () => {
     expect(text(one(rows[1], '[data-state]'))).toBe('done');
   });
 });
+
+describe('Relay follow-up — a re-read that fails after a write (N8)', () => {
+  it('an answer whose re-read fails is the fault Notice, never a stale Needs you', async () => {
+    const { c, api } = await open({ now: F.ok(F.now({ decisions: [F.decision()] })) });
+    api.tryGetNow.mockResolvedValueOnce(F.fail(502, 'the daemon dropped the read'));
+
+    const row = need(one(c, '[data-decision]'), 'the decision');
+    need(one(row, '[data-option="file"]'), 'the file option').click();
+    await tick();
+    need(one(row, '[data-decision-answer]'), 'Answer').click();
+
+    await vi.waitFor(() => expect(one(c, '[data-relay-error]')).not.toBeNull());
+    const notice = need(one(c, '[data-relay-error]'), 'the fault Notice after a failed re-read');
+    expect(text(notice)).toContain('the daemon dropped the read');
+    expect(section(c, 'lanes')).toBeNull();
+
+    api.tryGetNow.mockResolvedValue(F.ok(F.now({ decisions: [] })));
+    need(one(notice, '[data-action="retry"]'), 'the Notice’s Retry').click();
+    await vi.waitFor(() => expect(section(c, 'lanes')).not.toBeNull());
+    expect(one(c, '[data-relay-error]')).toBeNull();
+  });
+
+  it('an add whose queue re-read fails is the queue’s fault Notice', async () => {
+    const { c, api } = await open();
+    need(tab(c, 'Queue'), 'the Queue tab').click();
+    await tick();
+    api.tryGetQueue.mockResolvedValueOnce(F.fail(503, 'the daemon dropped the read'));
+
+    const row = need(
+      triageRows(c).find((r) => one(r, '[data-add-to-backlog]')),
+      'a triage row with +',
+    );
+    need(one(row, '[data-add-to-backlog]'), '[data-add-to-backlog]').click();
+
+    await vi.waitFor(() => expect(one(c, '[data-relay-queue-error]')).not.toBeNull());
+    const notice = need(one(c, '[data-relay-queue-error]'), 'the queue’s fault Notice after a failed re-read');
+    expect(text(notice)).toContain('the daemon dropped the read');
+    expect(section(c, 'backlog')).toBeNull();
+
+    api.tryGetQueue.mockResolvedValue(F.ok(F.queue()));
+    need(one(notice, '[data-action="retry"]'), 'Retry').click();
+    await vi.waitFor(() => expect(section(c, 'triage')).not.toBeNull());
+    expect(one(c, '[data-relay-queue-error]')).toBeNull();
+  });
+});

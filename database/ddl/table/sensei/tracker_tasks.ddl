@@ -40,7 +40,7 @@ comment on column tracker_tasks.external_id
 comment on column tracker_tasks.key
      is 'The provider''s display key (Jira: AUTH-420, stored upper-case). Overwritten when the issue is renamed or moved.';
 comment on column tracker_tasks.scope
-     is 'What the key is relative to, when it is not globally unique (GitLab: normalize_repo_key of the project URL). NULL for Jira.';
+     is 'What the key is relative to, when it is not globally unique (GitLab: normalize_repo_key of the project URL; GitHub: of the issue''s repository URL). NULL for Jira.';
 comment on column tracker_tasks.summary
      is 'Issue title. Travels to the dōjō of a workspace whose repositories the person shares, as the only ticket free text (tracker-delivery-metrics B9, B12, 2026-11-04); never anywhere else.';
 comment on column tracker_tasks.issue_type

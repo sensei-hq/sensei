@@ -52,6 +52,8 @@ pub enum Estimate {
     NoField,
     NotEstimated,
     Points(f64),
+    /// The tracker's adapter reads no history, so it never learns points (§G8).
+    Unsupported,
 }
 
 /// What a ticket's figures are computed from.
@@ -194,6 +196,9 @@ pub fn compute(input: &TicketInput) -> TicketSdlc {
         }
         Estimate::NotEstimated => {
             t.reasons.insert("estimated_points", "not_estimated");
+        }
+        Estimate::Unsupported => {
+            t.reasons.insert("estimated_points", "unsupported_by_tracker");
         }
     }
     match (t.estimated_points, input.settings.minutes_per_point) {
@@ -562,13 +567,14 @@ pub async fn ticket_figures(
     usage: &std::collections::HashMap<uuid::Uuid, Usage>,
 ) -> Result<std::collections::HashMap<uuid::Uuid, TicketSdlc>, String> {
     let pairs = pg.ticket_sessions(tracker_id, Some(task_ids)).await?;
-    ticket_figures_of(pg, workspace_id, task_ids, &pairs, usage).await
+    ticket_figures_of(pg, tracker_id, workspace_id, task_ids, &pairs, usage).await
 }
 
 /// Every ticket's figures among `task_ids` over exactly these (ticket, session)
 /// pairs, and `usage` computed over the same pairs.
 pub async fn ticket_figures_of(
     pg: &crate::db::pg_store::PgStore,
+    tracker_id: uuid::Uuid,
     workspace_id: uuid::Uuid,
     task_ids: &[uuid::Uuid],
     pairs: &[crate::db::pg_store::tracker_usage::TicketSession],
@@ -580,6 +586,7 @@ pub async fn ticket_figures_of(
     ids.sort();
     ids.dedup();
     let signals = pg.session_signals_for(&ids, &catalogue.hash).await?;
+    let reads_history = crate::sdlc::reads_history(pg, tracker_id).await?;
     let history = pg.ticket_history_facts(task_ids).await?;
     let none = Usage::default();
     Ok(task_ids
@@ -594,6 +601,7 @@ pub async fn ticket_figures_of(
                 .collect();
             let facts = history.get(task);
             let estimate = match facts {
+                _ if !reads_history => Estimate::Unsupported,
                 None => Estimate::NotSynced,
                 Some(f) if !f.learned => Estimate::NotSynced,
                 Some(f) if !f.has_field => Estimate::NoField,
@@ -1032,6 +1040,14 @@ mod tests {
     }
 
     #[test]
+    fn an_estimate_the_tracker_cannot_supply_reads_unsupported() {
+        let (u, s) = (Usage::default(), settings(15));
+        let t = compute(&TicketInput { estimate: Estimate::Unsupported, ..input(&[], &u, &s) });
+        assert_eq!(t.estimated_points, None);
+        assert_eq!(t.reasons.get("estimated_points"), Some(&"unsupported_by_tracker"));
+    }
+
+    #[test]
     fn every_reason_is_a_registered_code() {
         let registered = crate::sdlc::registered_reasons();
         let u = Usage::default();
@@ -1048,6 +1064,7 @@ mod tests {
             (&a[..], Estimate::Points(1.0), None),
             (&idle[..], Estimate::NotSynced, None),
             (&broken[..], Estimate::NotSynced, None),
+            (&a[..], Estimate::Unsupported, None),
         ] {
             let t = compute(&TicketInput {
                 estimate,

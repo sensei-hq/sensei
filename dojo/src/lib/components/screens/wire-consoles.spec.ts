@@ -55,6 +55,7 @@ const wireMember: Membership = {
 	disabled_at: null,
 	created_at: '2026-01-01T00:00:00Z',
 	display_name: null,
+	handle: null,
 	email: null
 };
 

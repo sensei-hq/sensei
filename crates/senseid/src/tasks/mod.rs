@@ -42,6 +42,7 @@ pub mod progress;
 pub mod progress_emitter;
 pub mod queue;
 pub mod reconcile_scheduler;
+pub mod relay_lease_sweep;
 pub mod resume;
 pub mod retention;
 pub mod retry;

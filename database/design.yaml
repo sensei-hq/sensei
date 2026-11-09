@@ -115,6 +115,21 @@ scopes:
       # nothing — the packs are there and do nothing.
       - staging.rule_pack_adoptions
       - staging.import_rule_pack_adoptions
+      # Relay: one schema, both planes. The daemon's default scope picks it up
+      # by exclusion; the dōjō needs it listed. The eight enums are column
+      # types (not FKs — dbd cannot reach them), and the staging pair seeds
+      # the finding-classes DATA (without it the vocabulary deploys empty).
+      - relay
+      - relay.lane_role
+      - relay.lease_kind
+      - relay.lease_state
+      - relay.item_kind
+      - relay.item_state
+      - relay.task_phase
+      - relay.task_state
+      - relay.action_kind
+      - staging.finding_classes
+      - staging.import_finding_classes
     deps: include
     extensions: []      # vector-free: the embedded Dōjō PG lacks pgvector
   default:
@@ -166,11 +181,21 @@ apply:
     # Drops dojo.invite_accept_failures, which became dojo.request_attempts
     # (#308 R5b: one rate-limit table for every limited action). No-op afterwards.
     - apply/before/dojo_invite_accept_failures_retired.sql
+    # Adds `gitlab` to an existing sensei.tracker_kind: dbd never adds a value to an
+    # enum that already exists (tracker-gitlab §G10, found live in F6). No-op on a
+    # fresh database and once the value is there.
+    - apply/before/sensei_tracker_kind_gitlab.sql
+    # The same for `github` (tracker-github §H7). Runs after the gitlab hook, so the
+    # values keep the DDL's order.
+    - apply/before/sensei_tracker_kind_github.sql
   after:
     - apply/after/realtime_publication.sql
     # USAGE on `dojo` for the API roles (+ service_role's table grants) — what
     # used to be a manual Supabase deploy step. No-op where `dojo` is absent.
     - apply/after/dojo_api_grants.sql
+    # USAGE on `relay` for the API roles (+ service_role's table grants).
+    # No-op where `relay` is absent.
+    - apply/after/relay_api_grants.sql
     # Drops functions the design no longer has — reconcile prunes orphaned
     # tables but not functions. No-op once they are gone.
     - apply/after/retired_functions.sql

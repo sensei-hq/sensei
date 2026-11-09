@@ -113,8 +113,8 @@ async fn run(
     // 2. Fetch, with no connection checked out, under the whole-sync deadline
     // (shared with step 3). Every write below is conditional on this credential
     // still being current.
+    let board = BoardScope::of(&row);
     let secret_service = row.secret_service;
-    let board = BoardScope { base_url: row.base_url, board_ref: row.board_ref };
     let snapshot = match tokio::time::timeout_at(
         until,
         adapter.fetch_snapshot(transport, &board, &prev),
@@ -148,10 +148,7 @@ async fn run(
             }
         };
     // 4. Apply in one short transaction; success is recorded inside it.
-    let patch = match &snapshot.board_name {
-        Some(name) => serde_json::json!({ "board_name": name }),
-        None => serde_json::json!({}),
-    };
+    let patch = params_patch(&snapshot, &row.params, chrono::Utc::now());
     match pg
         .apply_tracker_snapshot(
             tracker_id,
@@ -288,12 +285,38 @@ async fn record_failure(
     SyncError::Failed(e)
 }
 
+/// Pure: what a snapshot writes into the row's `params`: the adapter's
+/// `params_extra`, with `board_name` beside it when the snapshot read one.
+///
+/// When the snapshot's `sprint_source` differs from the one `stored` (an upgrade to
+/// iterations, or a downgrade), `sprint_source_changed_at` = `now` joins it, for
+/// Integrations' notice (§G3). A first source is not a change.
+fn params_patch(
+    snapshot: &crate::tracker::Snapshot,
+    stored: &serde_json::Value,
+    now: chrono::DateTime<chrono::Utc>,
+) -> serde_json::Value {
+    let mut patch = snapshot.params_extra.clone();
+    let source = |v: Option<&serde_json::Value>| v.and_then(|s| s.as_str()).map(String::from);
+    let (was, is) = (source(stored.get("sprint_source")), source(patch.get("sprint_source")));
+    if let (Some(was), Some(is)) = (was, is)
+        && was != is
+    {
+        patch.insert("sprint_source_changed_at".into(), serde_json::json!(now.to_rfc3339()));
+    }
+    if let Some(name) = &snapshot.board_name {
+        patch.insert("board_name".into(), serde_json::json!(name));
+    }
+    serde_json::Value::Object(patch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tracker::connect::tests::connected_tracker;
     use crate::tracker::jira::JiraAdapter;
     use crate::tracker::test_support::FakeBoard;
+    use crate::tracker::test_support::fake_adapter;
     use serde_json::json;
 
     async fn rows(
@@ -617,182 +640,6 @@ mod tests {
         assert_eq!(removed_at().await, Some(first), "a sprint's removed_at is never advanced");
     }
 
-    /// A second, non-Jira adapter: GitLab-like `#12` keys relative to a project
-    /// scope, and iteration-named sprints. The coordinator must handle it unchanged
-    /// (gate 1l). Leaked so it is `'static`, like a registered adapter.
-    struct FakeAdapter {
-        scopes: [String; 2],
-    }
-
-    fn fake_adapter(scopes: [String; 2]) -> &'static FakeAdapter {
-        Box::leak(Box::new(FakeAdapter { scopes }))
-    }
-
-    #[async_trait::async_trait]
-    impl crate::tracker::TrackerAdapter for FakeAdapter {
-        fn kind(&self) -> crate::tracker::TrackerKind {
-            crate::tracker::TrackerKind::Jira
-        }
-        fn connect_params(
-            &self,
-            _body: &serde_json::Value,
-        ) -> Result<crate::tracker::ConnectParams, crate::tracker::ParamError> {
-            Err(crate::tracker::ParamError::InvalidBaseUrl)
-        }
-        fn auth(
-            &self,
-            account: &str,
-            token: &crate::tracker::ApiToken,
-        ) -> crate::tracker::AuthScheme {
-            crate::tracker::AuthScheme::Basic { user: account.into(), token: token.clone() }
-        }
-        async fn owner(
-            &self,
-            _t: &dyn GetTransport,
-        ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
-            Ok(crate::tracker::OwnerLookup::Unknown)
-        }
-        async fn find_comment(
-            &self,
-            _t: &dyn GetTransport,
-            _task: &str,
-            _owner: &crate::tracker::AccountRef,
-        ) -> Result<Option<String>, TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn create_comment(
-            &self,
-            _w: &dyn crate::tracker::WriteTransport,
-            _task: &str,
-            _report: &crate::tracker::writeback::Report,
-        ) -> Result<String, TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn update_comment(
-            &self,
-            _w: &dyn crate::tracker::WriteTransport,
-            _task: &str,
-            _comment: &str,
-            _report: &crate::tracker::writeback::Report,
-        ) -> Result<(), TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn issue_exists(
-            &self,
-            _t: &dyn GetTransport,
-            _task: &str,
-        ) -> Result<bool, TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        fn field_ref_shape(&self, _f: &str) -> bool {
-            false
-        }
-        async fn check_fields(
-            &self,
-            _t: &dyn GetTransport,
-            _f: &[String],
-        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn field_in_use(
-            &self,
-            _t: &dyn GetTransport,
-            _b: &BoardScope,
-            _f: &str,
-        ) -> Result<bool, TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn write_fields(
-            &self,
-            _w: &dyn crate::tracker::WriteTransport,
-            _task: &str,
-            _f: &[(String, crate::tracker::FieldValue)],
-        ) -> Result<(), TrackerError> {
-            Err(TrackerError::UnsupportedTracker)
-        }
-        async fn validate(
-            &self,
-            _t: &dyn GetTransport,
-            _p: &crate::tracker::ConnectParams,
-        ) -> Result<crate::tracker::Validated, crate::tracker::ValidateError> {
-            Err(crate::tracker::ValidateError::BoardNotFound)
-        }
-        async fn fetch_snapshot(
-            &self,
-            _t: &dyn GetTransport,
-            _board: &BoardScope,
-            _prev: &crate::tracker::PrevState,
-        ) -> Result<crate::tracker::Snapshot, TrackerError> {
-            use crate::tracker::sprint::SprintState;
-            use crate::tracker::{Snapshot, SprintRow, TaskRow};
-            let task = |id: &str, key: &str, scope: &str| TaskRow {
-                external_id: id.into(),
-                key: key.into(),
-                scope: Some(scope.into()),
-                summary: None,
-                issue_type: None,
-                status: Some("opened".into()),
-                assignee: None,
-                ..Default::default()
-            };
-            let iteration = |id: &str, seq: i64, state| SprintRow {
-                external_id: id.into(),
-                seq,
-                name: format!("Iteration {seq}"),
-                state,
-                start_at: None,
-                end_at: None,
-                complete_at: None,
-            };
-            Ok(Snapshot {
-                board_name: Some("Group board".into()),
-                sprints: vec![iteration("gid://iteration/7", 7, SprintState::Active)],
-                tasks: vec![
-                    task("gid://issue/1", "#12", &self.scopes[0]),
-                    task("gid://issue/2", "#12", &self.scopes[1]),
-                ],
-                members: vec![("gid://iteration/7".into(), Some(vec!["gid://issue/1".into()]))],
-                points_field: None,
-            })
-        }
-        /// `#N` in a prompt, for the task of that key whose scope is the session's repo.
-        fn match_links(
-            &self,
-            session: &crate::tracker::SessionText,
-            known: &[crate::tracker::KnownTask],
-        ) -> Vec<crate::tracker::Link> {
-            known
-                .iter()
-                .filter(|k| k.scope.is_some() && k.scope == session.repo_key)
-                .filter_map(|k| {
-                    let n: usize = session.prompts.iter().map(|p| p.matches(&k.key).count()).sum();
-                    (n > 0).then(|| crate::tracker::Link {
-                        session_id: session.session_id,
-                        task_external_id: k.external_id.clone(),
-                        source: crate::tracker::LinkSource::Prompt,
-                        matched_key: k.key.clone(),
-                        mentions: n as u32,
-                    })
-                })
-                .collect()
-        }
-        fn unknown_keys(
-            &self,
-            _session: &crate::tracker::SessionText,
-            _known: &[crate::tracker::KnownTask],
-        ) -> Vec<String> {
-            Vec::new()
-        }
-        async fn fetch_tasks(
-            &self,
-            _t: &dyn GetTransport,
-            _board: &BoardScope,
-            _keys: &[String],
-        ) -> Result<crate::tracker::Discovered, TrackerError> {
-            Ok(Default::default())
-        }
-    }
-
     #[tokio::test]
     async fn the_coordinator_handles_a_non_jira_adapter_unchanged() {
         let pg = PgStore::test_store().await;
@@ -822,6 +669,72 @@ mod tests {
         assert_eq!(scope.as_deref(), Some("gitlab.com/group/a"));
         assert_eq!(sprint.as_deref(), Some("gid://iteration/7"));
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        assert_eq!(row.params["board_name"], json!("Group board"));
+    }
+
+    #[test]
+    fn the_params_patch_is_the_adapters_extra_with_the_board_name() {
+        let extra: serde_json::Map<String, serde_json::Value> = serde_json::from_value(
+            json!({"full_path": "acme/platform", "sprint_source": "milestone"}),
+        )
+        .unwrap();
+        let with_name = crate::tracker::Snapshot {
+            board_name: Some("Platform".into()),
+            params_extra: extra.clone(),
+            ..Default::default()
+        };
+        assert_eq!(
+            params_patch(&with_name, &json!({}), chrono::Utc::now()),
+            json!({"board_name": "Platform", "full_path": "acme/platform", "sprint_source": "milestone"})
+        );
+        let without_name = crate::tracker::Snapshot { params_extra: extra, ..Default::default() };
+        assert_eq!(
+            params_patch(&without_name, &json!({}), chrono::Utc::now()),
+            json!({"full_path": "acme/platform", "sprint_source": "milestone"})
+        );
+        assert_eq!(params_patch(&Default::default(), &json!({}), chrono::Utc::now()), json!({}));
+    }
+
+    #[test]
+    fn a_changed_sprint_source_is_stamped_and_a_first_or_same_one_is_not() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-07T10:00:00Z").unwrap().to_utc();
+        let snap = |source: &str| crate::tracker::Snapshot {
+            params_extra: serde_json::from_value(json!({"sprint_source": source})).unwrap(),
+            ..Default::default()
+        };
+        let stored = json!({"sprint_source": "milestone", "full_path": "acme"});
+        assert_eq!(
+            params_patch(&snap("iteration"), &stored, now)["sprint_source_changed_at"],
+            json!("2026-11-07T10:00:00+00:00")
+        );
+        assert!(
+            params_patch(&snap("milestone"), &stored, now)
+                .get("sprint_source_changed_at")
+                .is_none()
+        );
+        assert!(
+            params_patch(&snap("milestone"), &json!({}), now)
+                .get("sprint_source_changed_at")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_snapshots_params_extra_reaches_the_row_and_keeps_what_it_does_not_name() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        let adapter =
+            crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
+                scopes: ["gitlab.com/group/a".into(), "gitlab.com/group/b".into()],
+                params_extra: serde_json::from_value(json!({"full_path": "acme/platform"}))
+                    .unwrap(),
+                ..crate::tracker::test_support::FakeAdapter::gitlab_like()
+            });
+        sync_tracker(&pg, &TrackerLocks::default(), t, adapter, &FakeBoard::empty(), SYNC_DEADLINE)
+            .await
+            .unwrap();
+        let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        assert_eq!(row.params["full_path"], json!("acme/platform"));
         assert_eq!(row.params["board_name"], json!("Group board"));
     }
 
@@ -1244,11 +1157,7 @@ mod tests {
         let live = session_with(&pg, Some(repo_in(&pg, p).await), &[], &[]).await;
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
         let snapshot = JiraAdapter
-            .fetch_snapshot(
-                &FakeBoard::standard(),
-                &BoardScope { base_url: row.base_url, board_ref: row.board_ref },
-                &Default::default(),
-            )
+            .fetch_snapshot(&FakeBoard::standard(), &BoardScope::of(&row), &Default::default())
             .await
             .unwrap();
         let to = |s| crate::tracker::Link {
@@ -1281,6 +1190,9 @@ mod tests {
     impl crate::tracker::TrackerAdapter for BrokenLinks {
         fn kind(&self) -> crate::tracker::TrackerKind {
             JiraAdapter.kind()
+        }
+        fn capabilities(&self) -> crate::tracker::Capabilities {
+            JiraAdapter.capabilities()
         }
         fn connect_params(
             &self,
@@ -1430,7 +1342,8 @@ mod tests {
         let n = uuid::Uuid::new_v4().simple().to_string();
         // repo_key goes through the production normaliser, from an SSH remote; the
         // adapter's scope comes from the HTTPS form of the same project.
-        let key = |remote: String| crate::db::pg_store::normalize_repo_key(&remote).unwrap();
+        let key =
+            |remote: String| crate::db::pg_store::repo_key::normalize_repo_key(&remote).unwrap();
         let scope_a = key(format!("https://gitlab.com/Group/Sub/A{n}"));
         let scope_b = key(format!("https://gitlab.com/Group/Sub/B{n}"));
         let with_remote = |remote: Option<String>| {

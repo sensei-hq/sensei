@@ -371,7 +371,7 @@ app-check:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin test-db-apply
+test-fast: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-no-now-relay check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin test-db-apply
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -416,6 +416,14 @@ check-ddl-grants:
 # starts. Instant and needs no database, so it runs on every commit.
 check-ddl-comments:
 	@python3 scripts/check-ddl-comments.py
+
+# dbd 0.27.8 resolved the `now()` call to the `relay.now` view (cyclic
+# dependency, relay impl r1 blocker B1). Fixed upstream in 0.27.9, but the
+# daemon's embedded dbd-core may lag the CLI — so no relay DDL file may call
+# `now()` at all. Static and instant, no database.
+check-no-now-relay:
+	@python3 scripts/check-no-now-relay.py --test >/dev/null
+	@python3 scripts/check-no-now-relay.py
 
 # A tap resolves `sensei-hq/tap/<token>` by filename, and it searches the formula
 # and cask namespaces SEPARATELY — so `brew install` with no `--cask` falls
@@ -509,7 +517,10 @@ test-template:
 
 # SQL assertions against a REAL Postgres — RLS, constraints, policy grants: the
 # things a mocked supabase-js client cannot check and therefore cannot fail on.
-#   DATABASE_URL overrides the target; defaults to the local Supabase.
+#   DATABASE_URL overrides the dōjō target (default: local Supabase);
+#   TEST_DATABASE_URL overrides the sensei-plane target (default: a
+#   branch-derived sensei_test_<lane> run.sh creates). The live daemon DB
+#   is refused, whatever names it.
 test-db:
 	./database/tests/run.sh
 

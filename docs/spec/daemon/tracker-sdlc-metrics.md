@@ -399,6 +399,12 @@ change re-derives every session (S2).
 
 ### S4 · Ticket history (D2)
 
+*Amendment A11 (GitLab adapter, `tracker-gitlab.md` §G8):*
+- *An adapter declares `capabilities().history`. Jira reads history; GitLab does not.*
+- *The history task skips a tracker whose adapter has `history: false`. Its `history_through`, `terms_at`, `estimation_field`, `points_field`, `history_error` and `history_at` stay NULL.*
+- *For such a tracker, every figure built from history reads `unsupported_by_tracker` (S5, S6), never `history_pending` or `not_synced`, which would say the data is coming.*
+- *GitLab's sync still stores `issue_created_at`, `issue_updated_at` and `status_category` (`opened` → `new`, `closed` → `done`). `points` stays NULL.*
+
 *Amendment A6 (F5 pre-implementation audit):*
 - *sync gains fields only, no new requests;*
 - *board configuration, the sprint field id and the statuses are read by the history task;*
@@ -501,6 +507,10 @@ transport, and writeback gate 13's per-file loop includes `history`.
 - *`predictability` drops null sprints before it takes six.*
 - *With the board's points in use and no ticket completed, `velocity` is 0 and `points_commitment_reliability` is 0% of a non-zero commitment (S6: "a 0 means the inputs exist"). The S5 null-at-`_n = 0` rule still holds for the facts' sums.*
 
+*Amendment A11 (GitLab adapter):* on a tracker whose adapter reads no history (S4), there is
+nothing to replay. A sprint with a window gets `unsupported_by_tracker` on every key. The
+window's own reasons (`no_dates`, `sprint_not_started`) still come first.
+
 `sdlc/sprint_replay.rs`: `replay(sprint, sprints_of_tracker, tasks, changes, statuses) -> SprintFacts`.
 
 - **Window.** Reuse `tracker::usage::sprint_window` (R7): `S = start_at`, and
@@ -536,6 +546,14 @@ All figures live in an `sdlc` object. Each key is a number or `null`, and
 `database/import/staging/reason_codes.jsonl`, domain `sdlc_metrics`, rendered through the
 existing reason lookup (`pg_store/reasons.rs`). A `0` means the inputs exist and the count
 is zero.
+
+*Amendment A11 (GitLab adapter):* one more registered code, `unsupported_by_tracker`
+(precedence 38, kind `normal`, summary "Not available from this tracker", detail "This
+tracker's adapter doesn't read ticket history, so figures built from it can't be
+computed."). It is kind-neutral, because one row serves every tracker kind. It is given when
+the tracker's adapter has `capabilities().history = false`: every sprint key that has a
+window, `predictability`, and a ticket's `estimated_points` (so `expected_minutes` too).
+Signal-based ticket figures and `lead_hours` do not depend on history and are unaffected.
 
 **Ticket.** The ticket's sessions are R7's ticket `S` (linked R1 candidates). Their signals
 are merged by `at` (D11). **Slices at read:** each session's base slices are merged where
@@ -588,7 +606,7 @@ as zeros.
 | `rework_minutes` | for each **union interval** with a `code_edit` at ≥ `submitted_at`: `until −` that interval's first such `code_edit` (A5) | `submitted_at` null |
 | `rework_cycles` | `pushed` signals after `submitted_at` with ≥1 `code_edit` since the previous push (or since `submitted_at`) | `submitted_at` null |
 | `post_review_rework_ratio` (D5) | `rework_minutes / worked_minutes × 100` | either null or active 0 |
-| `estimated_points` | `tracker_tasks.points` | `estimation_field` NULL (`no_estimation_field`) or no value (`not_estimated`) |
+| `estimated_points` | `tracker_tasks.points` | estimates not learned yet (`not_synced`, S4); `estimation_field` NULL (`no_estimation_field`) or no value (`not_estimated`); the tracker's adapter reads no history (`unsupported_by_tracker`, A11), which `expected_minutes` inherits |
 | `expected_minutes` | `estimated_points × minutes_per_point` | `no_calibration` / points null |
 | `time_variance_minutes` | `worked_minutes − expected_minutes` | either null |
 | `effort_cost` | `hourly_rate × worked_minutes / 60` | `no_rate` |
@@ -601,7 +619,7 @@ Where `runs_unknown > 0`, the defect counts are lower bounds. The screen shows t
 
 | key | formula | null when |
 |---|---|---|
-| `commitment_reliability` | `completed_committed / committed × 100` | committed 0 (`no_commitment`), or a window reason |
+| `commitment_reliability` | `completed_committed / committed × 100` | committed 0 (`no_commitment`), or a window reason (`no_dates`, `sprint_not_started`, `history_pending`, or `unsupported_by_tracker` on every key when the adapter reads no history, A11) |
 | `total_completion` | `(completed_committed + completed_added) / committed × 100` | same |
 | `scope_change` | `(added + removed) / committed × 100` | same |
 | `carry_over_rate` | `carried_over / committed × 100` | same |
@@ -613,7 +631,7 @@ Where `runs_unknown > 0`, the defect counts are lower bounds. The screen shows t
 
 | key | formula | null when |
 |---|---|---|
-| `predictability` | population stddev of `commitment_reliability` over the tracker's last **6** closed sprints (by `seq`) with a non-null value | fewer than 2 (`too_few_sprints`) |
+| `predictability` | population stddev of `commitment_reliability` over the tracker's last **6** closed sprints (by `seq`) with a non-null value | fewer than 2 (`too_few_sprints`); `unsupported_by_tracker` instead when the tracker's adapter reads no history (A11) |
 | `tokens_per_ticket` | over the **distinct union** `U` of the tracker's tickets' candidate sessions (a shared session counts once): Σ (`tokens_fresh + cache_read + cache_write + tokens_out`) / the number of tickets with a non-empty `S`. Null when any session in `U` lacks one of the four fields (`partial_tokens`, with `sessions_without_tokens` beside it) | no such ticket (`no_usage`) |
 | `prompts_per_ticket` | Σ `prompt` signals over `U` / tickets with a non-empty `S` | none (`no_usage`); any session in `U` not derived (`not_derived`), else any failed (`derivation_failed`, A9) |
 

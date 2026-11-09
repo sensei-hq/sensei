@@ -21,8 +21,8 @@ const usage: Usage = {
 	seats_used: 2,
 	total_active_seats: 4,
 	billable_users: [
-		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', email: 'alex@example.com', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
-		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, email: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] }
+		{ user_id: '7d3c9a10-0000-0000-0000-000000000001', display_name: 'Alex Doe', handle: null, email: 'alex@example.com', workspaces: [{ name: 'ws-alpha', slug: 'ws-alpha', role: 'contributor' }, { name: 'ws-beta', slug: 'ws-beta', role: 'maintainer' }] },
+		{ user_id: '0b1e2f30-0000-0000-0000-000000000002', display_name: null, handle: null, email: null, workspaces: [{ name: 'ws-gamma', slug: 'ws-gamma', role: 'contributor' }] }
 	]
 };
 const acct = (status: string, plan = 'pro'): NonNullable<BillingResponse['account']> => ({
@@ -191,7 +191,7 @@ describe('ScrBilling · billing build · the plan tab', () => {
 		const emailOnly: Usage = {
 			seats_used: 1,
 			total_active_seats: 1,
-			billable_users: [{ user_id: '5c6d7e80-0000-0000-0000-000000000003', display_name: null, email: 'sam@example.com', workspaces: [{ name: 'ws-delta', slug: 'ws-delta', role: 'contributor' }] }]
+			billable_users: [{ user_id: '5c6d7e80-0000-0000-0000-000000000003', display_name: null, handle: null, email: 'sam@example.com', workspaces: [{ name: 'ws-delta', slug: 'ws-delta', role: 'contributor' }] }]
 		};
 		const { container } = screen(null, emailOnly);
 		const items = [...container.querySelectorAll('details[data-billing-counted] li')].map((li) => li.textContent?.replace(/\s+/g, ' ').trim());
@@ -273,9 +273,25 @@ describe('ScrBilling · billing follow-up', () => {
 		expect(sec.textContent).toContain('They come back as they were once it is paid.');
 	});
 
-	it('lapsed: back as they were once Pro is renewed', () => {
+	it('lapsed: Pro has lapsed', () => {
 		const { container } = withHidden(lapsedAcct(), twoHidden);
-		expect(container.querySelector('[data-billing-hidden]')?.textContent ?? '').toContain('They come back as they were once Pro is renewed.');
+		expect(container.querySelector('[data-billing-hidden]')?.textContent ?? '').toContain('Pro has lapsed.');
+	});
+
+	// billing wording ruling (2026-11-06): a trial that ran and ended lapsed too.
+	it('an ended trial lists the hidden repositories, Pro has lapsed', () => {
+		const endedTrial = { ...acct('trialing'), period_end: '2026-11-01T00:00:00Z' };
+		const { container } = withHidden(endedTrial, twoHidden);
+		expect(container.querySelector('[data-billing-hidden]')?.textContent ?? '').toContain('Pro has lapsed.');
+	});
+
+	// billing wording ruling (2026-11-06): a Pro plan that has not started never ran,
+	// so it is not enabled and gets no hidden list even with hidden repositories.
+	it('a future start: Pro is not enabled, and no hidden list', () => {
+		const future = { ...acct('active'), period_start: '2026-12-01T00:00:00Z', period_end: '2027-01-01T00:00:00Z' };
+		const { container } = withHidden(future, twoHidden);
+		expect(container.querySelector('[data-billing-problem]')?.textContent ?? '').toContain('Pro is not enabled.');
+		expect(container.querySelector('[data-billing-hidden]')).toBeNull();
 	});
 
 	it('nothing hidden: no hidden-repositories section', () => {
@@ -319,11 +335,11 @@ describe('ScrBilling · billing polish', () => {
 	it.each([
 		['canceled (not_subscribed)', withStatus('canceled')],
 		['a period that ended (subscription_expired)', lapsedAcct()]
-	] as const)('%s: listed, back as they were once Pro is renewed', (_s, account) => {
+	] as const)('%s: listed, Pro has lapsed', (_s, account) => {
 		const { container } = withHidden(account, twoHidden);
 		const text = container.querySelector('[data-billing-hidden]')?.textContent ?? '';
 		expect(text).toContain('2 private repositories are hidden from everyone in this organization.');
-		expect(text).toContain('They come back as they were once Pro is renewed.');
+		expect(text).toContain('Pro has lapsed.');
 	});
 
 	it.each([

@@ -73,11 +73,15 @@ export class RelayTaskState {
     return null;
   }
 
+  /** Read the task again after a write. A failed re-read is a fault, not a no-op:
+   *  the view it would have replaced is stale (D83, N8). */
   async reRead(): Promise<void> {
     const answer = await this.api.tryGetTask(this.crewId, this.taskId);
     if (answer.ok) {
       this.view = answer.data;
       this.error = null;
+    } else {
+      this.error = answer.error;
     }
   }
 }

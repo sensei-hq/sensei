@@ -42,6 +42,10 @@ pub async fn run(
     deadline: Duration,
     _guard: &tokio::sync::OwnedMutexGuard<()>,
 ) -> HistoryOutcome {
+    // §G8: an adapter that reads no history leaves the tracker's history state NULL.
+    if !adapter.capabilities().history {
+        return HistoryOutcome::Skipped;
+    }
     let until = tokio::time::Instant::now() + deadline;
     let row = match pg.tracker_by_id(tracker_id).await {
         Ok(Some(row)) if row.secret_service == secret_service => row,
@@ -61,11 +65,12 @@ pub async fn run(
         &row.base_url,
         adapter.auth(&row.account, &token),
         SYNC_RETRIES,
+        adapter.reads_graphql(),
     ) {
         Ok(t) => t,
         Err(e) => return finish(pg, tracker_id, Some(e.code())).await,
     };
-    let board = BoardScope { base_url: row.base_url.clone(), board_ref: row.board_ref.clone() };
+    let board = BoardScope::of(&row);
     read(pg, transport.as_ref(), &board, tracker_id, adapter, until).await
 }
 
@@ -165,7 +170,11 @@ mod tests {
     use serde_json::json;
 
     fn board() -> BoardScope {
-        BoardScope { base_url: "https://acme.atlassian.net".into(), board_ref: "42".into() }
+        BoardScope {
+            base_url: "https://acme.atlassian.net".into(),
+            board_ref: "42".into(),
+            ..Default::default()
+        }
     }
 
     /// A board that answers the terms, and a one-entry changelog for each ticket.
@@ -337,8 +346,11 @@ mod learning_tests {
     async fn the_estimation_is_learned_only_from_terms_actually_read() {
         let pg = PgStore::test_store().await;
         let t = super::test_tracker(&pg).await;
-        let board =
-            BoardScope { base_url: "https://acme.atlassian.net".into(), board_ref: "42".into() };
+        let board = BoardScope {
+            base_url: "https://acme.atlassian.net".into(),
+            board_ref: "42".into(),
+            ..Default::default()
+        };
         let until = tokio::time::Instant::now() + Duration::from_secs(30);
         assert_eq!(pg.tracker_prev_state(t).await.unwrap().estimation, Estimation::NotLearned);
 
@@ -386,7 +398,11 @@ mod store_tests {
     use serde_json::json;
 
     fn board() -> BoardScope {
-        BoardScope { base_url: "https://acme.atlassian.net".into(), board_ref: "42".into() }
+        BoardScope {
+            base_url: "https://acme.atlassian.net".into(),
+            board_ref: "42".into(),
+            ..Default::default()
+        }
     }
     fn terms(statuses: serde_json::Value) -> FakeBoard {
         FakeBoard::empty()
@@ -554,5 +570,65 @@ mod store_tests {
         assert_eq!(reason().await, (Some(3.0), None));
         set("UPDATE sensei.trackers SET estimation_field = NULL, points_field = 'none' WHERE id = $1").await;
         assert_eq!(reason().await.1, Some("no_estimation_field".into()));
+    }
+
+    #[tokio::test]
+    async fn a_tracker_whose_adapter_reads_no_history_is_skipped_untouched() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = crate::tracker::connect::tests::connected_tracker(&pg).await;
+        let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        let adapter =
+            crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
+                capabilities: crate::tracker::Capabilities { history: false, writeback: false },
+                ..crate::tracker::test_support::FakeAdapter::gitlab_like()
+            });
+        let io = crate::tracker::test_support::empty_pass_io();
+        let locks = crate::tracker::sync::TrackerLocks::default();
+        let guard = locks.try_lock(t).expect("the guard is free");
+        let out = run(
+            &pg,
+            &io,
+            t,
+            &row.secret_service,
+            adapter,
+            std::time::Duration::from_secs(5),
+            &guard,
+        )
+        .await;
+        assert_eq!(out, HistoryOutcome::Skipped);
+        let (err, at, terms): (
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ) = sqlx_core::query_as::query_as(
+            "SELECT history_error::text, history_at, terms_at FROM sensei.trackers WHERE id = $1",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!((err, at, terms), (None, None, None));
+        // Control: a capable adapter on the same tracker gets past the guard and
+        // fails at the (empty) keyring, recording it.
+        let capable = crate::tracker::test_support::fake_adapter([String::new(), String::new()]);
+        let out = run(
+            &pg,
+            &io,
+            t,
+            &row.secret_service,
+            capable,
+            std::time::Duration::from_secs(5),
+            &guard,
+        )
+        .await;
+        assert!(matches!(out, HistoryOutcome::Failed(_)), "{out:?}");
+        let (err,): (Option<String>,) = sqlx_core::query_as::query_as(
+            "SELECT history_error::text FROM sensei.trackers WHERE id = $1",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!(err.is_some(), "the capable run recorded its failure");
     }
 }

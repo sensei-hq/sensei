@@ -89,6 +89,16 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         "external_scope": row.external_scope,
         "board_ref": row.board_ref,
         "board_name": row.params.get("board_name"),
+        // GitLab (§G3, §G10): where sprints come from, when that last changed, and
+        // the board's current path (Replace token rebuilds the board URL from it).
+        // Null for Jira.
+        "sprint_source": row.params.get("sprint_source"),
+        "sprint_source_changed_at": row.params.get("sprint_source_changed_at"),
+        "full_path": row.params.get("full_path"),
+        // GitHub (tracker-github §H7): the project's address and the iteration field
+        // in use, which Replace token re-sends. Null for Jira and GitLab.
+        "url": row.params.get("url"),
+        "iteration_field": row.params.get("iteration_field"),
         "status": st.as_str(),
         "last_success_at": row.last_success_at,
         "last_error": row.last_error,
@@ -163,6 +173,7 @@ pub(crate) async fn connect_tracker(
         &params.base_url,
         adapter.auth(&params.account, &params.token),
         0,
+        adapter.reads_graphql(),
     ) {
         Ok(t) => t,
         Err(e) => return fail(StatusCode::BAD_GATEWAY, e.code()).into_response(),
@@ -265,6 +276,10 @@ fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
         ConnectError::Validate(ValidateError::BoardProjectMismatch) => {
             fail(StatusCode::UNPROCESSABLE_ENTITY, "board_project_mismatch")
         }
+        ConnectError::Validate(ValidateError::IterationFieldAmbiguous(fields)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "iteration_field_ambiguous", "fields": fields})),
+        ),
         ConnectError::Validate(ValidateError::Tracker(e)) => {
             fail(tracker_error_status(e), e.code())
         }
@@ -367,6 +382,9 @@ pub(crate) async fn put_tracker_fields(
     else {
         return fail(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_tracker").into_response();
     };
+    if let Some(r) = refusal_for(adapter.capabilities(), true) {
+        return r.into_response();
+    }
     if let Some((_, bad)) = entries.iter().find(|(_, r)| !adapter.field_ref_shape(r)) {
         return refuse("invalid_field_ref", "field_ref", bad);
     }
@@ -409,10 +427,7 @@ pub(crate) async fn put_tracker_fields(
         if let Some(c) = checks.iter().find(|c| !c.numeric) {
             return refuse("field_not_number", "field_ref", &c.field_ref);
         }
-        let board = crate::tracker::BoardScope {
-            base_url: row.base_url.clone(),
-            board_ref: row.board_ref.clone(),
-        };
+        let board = crate::tracker::BoardScope::of(&row);
         for field_ref in wanted.iter().filter(|r| !ours(r)) {
             match adapter.field_in_use(t.as_ref(), &board, field_ref).await {
                 Ok(false) => {}
@@ -446,6 +461,17 @@ pub(crate) async fn disconnect_tracker(
     }
 }
 
+/// §G8: turning write-back on, or mapping its fields, on a tracker whose adapter cannot
+/// write back is a 409. Turning it off is always allowed.
+fn writeback_refusal(kind: &str, enabling: bool) -> Result<Option<ApiErr>, String> {
+    Ok(refusal_for(crate::tracker::capabilities_of_kind(kind)?, enabling))
+}
+
+/// Pure: the 409 for turning write-back on with an adapter that cannot.
+fn refusal_for(caps: crate::tracker::Capabilities, enabling: bool) -> Option<ApiErr> {
+    (enabling && !caps.writeback).then(|| fail(StatusCode::CONFLICT, "writeback_unsupported"))
+}
+
 /// `PATCH /api/workspaces/{id}/trackers/{tracker}` — exactly `{"writeback_enabled": bool}` (W8).
 pub(crate) async fn patch_tracker(
     State(state): State<AppState>,
@@ -463,6 +489,11 @@ pub(crate) async fn patch_tracker(
         Ok(row) => row,
         Err(r) => return r.into_response(),
     };
+    match writeback_refusal(&row.kind, enabled) {
+        Ok(None) => {}
+        Ok(Some(r)) => return r.into_response(),
+        Err(_) => return internal().into_response(),
+    }
     let pg = &state.pg;
     match pg.set_writeback_enabled(row.id, enabled).await {
         Ok(true) => {}
@@ -837,11 +868,47 @@ pub(crate) async fn list_unlinked_sessions(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_ambiguous_iteration_field_is_422_with_the_names_to_choose_from() {
+        let (status, axum::Json(body)) = super::connect_failure(
+            crate::tracker::connect::ConnectError::Validate(
+                crate::tracker::ValidateError::IterationFieldAmbiguous(vec![
+                    "Sprint".into(),
+                    "Release".into(),
+                ]),
+            ),
+            "https://api.github.com",
+            "orgs/acme/3",
+        );
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            body,
+            serde_json::json!({"error": "iteration_field_ambiguous", "fields": ["Sprint", "Release"]})
+        );
+    }
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use serde_json::{Value, json};
     use std::sync::Arc;
     use tower::ServiceExt;
+
+    #[test]
+    fn write_back_is_refused_only_when_enabling_it_on_an_adapter_that_cannot() {
+        use crate::tracker::Capabilities;
+        let cannot = Capabilities { history: false, writeback: false };
+        let (status, body) = super::refusal_for(cannot, true).expect("refused");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body.0, json!({"error": "writeback_unsupported"}));
+        assert!(super::refusal_for(cannot, false).is_none(), "turning it off is allowed");
+        assert!(
+            super::refusal_for(Capabilities { history: true, writeback: true }, true).is_none()
+        );
+        // Through the registry: Jira can, an unknown kind is an error. The HTTP 409 on a
+        // real GitLab tracker is F3's (D10).
+        assert!(super::writeback_refusal("jira", true).unwrap().is_none());
+        assert!(super::writeback_refusal("not-a-kind", true).is_err());
+    }
 
     use crate::tracker::TrackerError;
     use crate::tracker::runtime::test_support::{FakeFactory, fake_runtime};
@@ -990,6 +1057,334 @@ mod tests {
         assert_eq!(listed[0]["external_scope"], json!("AUTH"));
     }
 
+    /// tracker-github E10, E13 and the list fields, end to end: a GitHub project connects
+    /// over HTTP against the recorded fixtures, lists the fields Replace token needs,
+    /// refuses write-back, and cannot be connected by a second workspace.
+    #[tokio::test]
+    async fn a_github_project_connects_lists_its_settings_and_is_connected_once() {
+        let h = harness().await;
+        let (p, other) = (workspace(&h).await, workspace(&h).await);
+        h.factory.serve_transport(
+            crate::tracker::github::API_BASE,
+            Arc::new(crate::tracker::github::test_support::RecordedGithub::load(&["project"])),
+        );
+        let body = json!({
+            "kind": "github", "level": "sprint",
+            "board_url": "https://github.com/orgs/acme/projects/2",
+            "api_token": SENTINEL,
+        });
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers"), Some(body.clone()), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        let row = &json(&b)["tracker"];
+        assert_eq!(
+            (row["kind"].clone(), row["board_ref"].clone(), row["account"].clone()),
+            (json!("github"), json!("project:PVT_1"), json!("user1"))
+        );
+        assert_eq!(
+            (row["url"].clone(), row["iteration_field"].clone()),
+            (json!("https://github.com/orgs/acme/projects/2"), json!("Sprint"))
+        );
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let (st, b) = call(
+            &h,
+            "PATCH",
+            &format!("/api/workspaces/{p}/trackers/{t}"),
+            Some(json!({"writeback_enabled": true})),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("writeback_unsupported"))
+        );
+        // The same project, typed under another spelling, from another workspace.
+        let again = json!({
+            "kind": "github", "level": "sprint",
+            "board_url": "https://github.com/orgs/ACME/projects/2/views/4",
+            "api_token": SENTINEL,
+        });
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{other}/trackers"), Some(again), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("board_already_connected"))
+        );
+    }
+
+    /// tracker-github E10: the board is the project's node id, so the same project under
+    /// a renamed owner path is still the same board.
+    #[tokio::test]
+    async fn a_github_project_under_a_renamed_path_is_still_one_board() {
+        use crate::tracker::github::test_support::{RecordedGithub, fixture_body};
+        let h = harness().await;
+        let (p, other) = (workspace(&h).await, workspace(&h).await);
+        let renamed = RecordedGithub::load(&["project"]).with(
+            "ValidateOrg",
+            json!({"owner": "acme2", "number": 2}),
+            fixture_body("project", "validate_org"),
+        );
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(renamed));
+        let connect = |board_url: &str| json!({"kind": "github", "level": "sprint", "board_url": board_url, "api_token": SENTINEL});
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{p}/trackers"),
+            Some(connect("https://github.com/orgs/acme/projects/2")),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{other}/trackers"),
+            Some(connect("https://github.com/orgs/acme2/projects/2")),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("board_already_connected"))
+        );
+    }
+
+    /// tracker-github E8, E9, E13, end to end: a project with no Iteration field syncs
+    /// with no sprints and no error; a failing items page fails the sync with
+    /// `http_error` and leaves the tickets as they were; history-based figures read
+    /// `unsupported_by_tracker`; the board holds its repository's scope.
+    #[tokio::test]
+    async fn a_github_sync_records_its_failure_and_changes_nothing() {
+        use crate::tracker::github::test_support::RecordedGithub;
+        let h = harness().await;
+        let p = workspace(&h).await;
+        h.factory.serve_transport(
+            crate::tracker::github::API_BASE,
+            Arc::new(RecordedGithub::load(&["project", "no-field"])),
+        );
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{p}/trackers"),
+            Some(json!({"kind": "github", "level": "sprint",
+                        "board_url": "https://github.com/orgs/acme/projects/3", "api_token": SENTINEL})),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        let listed = settled(&h, p).await;
+        assert_eq!(listed[0]["last_error"], Value::Null, "{listed}");
+        assert_eq!(listed[0]["counts"], json!({"tasks": 1, "sprints": 0}));
+        assert_eq!(listed[0]["iteration_field"], Value::Null);
+        let t = tracker(&h, p).await;
+        let (_, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers/{t}/tasks"), None, None).await;
+        assert!(json(&b).to_string().contains("acme/platform#2"), "{b}");
+        let tracker_id: uuid::Uuid = t.parse().unwrap();
+        assert_eq!(
+            h.state.pg.trackers_holding_scope(p, "github.com/acme/platform").await.unwrap(),
+            vec![tracker_id]
+        );
+        assert!(
+            h.state.pg.trackers_holding_scope(p, "github.com/acme/none").await.unwrap().is_empty()
+        );
+
+        // Now the items page fails: the sync fails whole and the ticket stays.
+        let failing = RecordedGithub::load(&["no-field"]).with(
+            "Items",
+            json!({"id": "PVT_3", "field": "", "after": null}),
+            json!({"errors": [{"type": "SOMETHING_ELSE", "path": ["node"]}]}),
+        );
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(failing));
+        let (st, _) =
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/{t}/sync"), None, None).await;
+        assert_eq!(st, StatusCode::BAD_GATEWAY);
+        let listed = settled(&h, p).await;
+        assert_eq!(listed[0]["last_error"], json!("http_error"));
+        assert_eq!(listed[0]["counts"], json!({"tasks": 1, "sprints": 0}), "nothing was removed");
+
+        // A project with sprints: their history-based figures are unsupported, not pending.
+        let q = workspace(&h).await;
+        h.factory.serve_transport(
+            crate::tracker::github::API_BASE,
+            Arc::new(RecordedGithub::load(&["project"])),
+        );
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{q}/trackers"),
+            Some(json!({"kind": "github", "level": "sprint",
+                        "board_url": "https://github.com/orgs/acme/projects/2", "api_token": SENTINEL})),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, q).await;
+        let t = tracker(&h, q).await;
+        let (st, b) =
+            call(&h, "GET", &format!("/api/workspaces/{q}/trackers/{t}/sprints"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let reasons: Vec<Value> = json(&b)
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|s| {
+                s["sdlc"]["reasons"].as_object().cloned().unwrap_or_default().into_values()
+            })
+            .collect();
+        assert!(reasons.contains(&json!("unsupported_by_tracker")), "{reasons:?}");
+        assert!(!reasons.contains(&json!("history_pending")), "{reasons:?}");
+    }
+
+    /// A GitHub credential is per owner (user decision 2026-11-09, amending D14 for
+    /// GitHub): a fine-grained token covers one owner, so connecting a project of
+    /// another owner keeps the first project's token; a project of the same owner
+    /// moves it to the newest token, as one site does for Jira and GitLab.
+    #[tokio::test]
+    async fn github_tokens_are_shared_per_owner_not_per_site() {
+        use crate::tracker::github::test_support::{RecordedGithub, fixture_body};
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let project = |kind: &str, owner: &str, number: u64, id: &str| {
+            let mut env = fixture_body("project", "validate_org");
+            let mut board = env["data"]["organization"]["projectV2"].take();
+            board["id"] = json!(id);
+            board["number"] = json!(number);
+            board["owner"] = json!({"__typename": kind, "login": owner});
+            let segment = if kind == "User" { "users" } else { "orgs" };
+            board["url"] = json!(format!("https://github.com/{segment}/{owner}/projects/{number}"));
+            if kind == "User" {
+                json!({"data": {"user": {"projectV2": board}}})
+            } else {
+                json!({"data": {"organization": {"projectV2": board}}})
+            }
+        };
+        let (bob, acme9) =
+            (project("User", "bob", 5, "PVT_7"), project("Organization", "acme", 9, "PVT_8"));
+        let node = |env: &Value, root: &str| json!({"data": {"node": env["data"][root]["projectV2"].clone()}});
+        let no_items = json!({"data": {"node": {"items": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}}}});
+        let gh = RecordedGithub::load(&["project"])
+            .with("ValidateUser", json!({"owner": "bob", "number": 5}), bob.clone())
+            .with("ValidateOrg", json!({"owner": "acme", "number": 9}), acme9.clone())
+            .with("Board", json!({"id": "PVT_7"}), node(&bob, "user"))
+            .with("Board", json!({"id": "PVT_8"}), node(&acme9, "organization"))
+            .with(
+                "Items",
+                json!({"id": "PVT_7", "field": "Sprint", "after": null}),
+                no_items.clone(),
+            )
+            .with("Items", json!({"id": "PVT_8", "field": "Sprint", "after": null}), no_items);
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(gh));
+        let connect = |board_url: &str| json!({"kind": "github", "level": "sprint", "board_url": board_url, "api_token": SENTINEL});
+        let uri = format!("/api/workspaces/{p}/trackers");
+        let secret_of = |board_ref: &'static str| {
+            let pg = h.state.pg.clone();
+            async move {
+                let (s,): (String,) = sqlx_core::query_as::query_as(
+                    "SELECT secret_service FROM sensei.trackers WHERE workspace_id = $1 AND board_ref = $2",
+                )
+                .bind(p)
+                .bind(board_ref)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+                s
+            }
+        };
+        let (st, b) =
+            call(&h, "POST", &uri, Some(connect("https://github.com/orgs/acme/projects/2")), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        let acme_token = secret_of("project:PVT_1").await;
+        let (st, b) =
+            call(&h, "POST", &uri, Some(connect("https://github.com/users/bob/projects/5")), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        assert_eq!(
+            secret_of("project:PVT_1").await,
+            acme_token,
+            "another owner keeps its own token"
+        );
+        assert_ne!(secret_of("project:PVT_7").await, acme_token);
+        let (st, b) =
+            call(&h, "POST", &uri, Some(connect("https://github.com/orgs/acme/projects/9")), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        assert_eq!(
+            secret_of("project:PVT_1").await,
+            secret_of("project:PVT_8").await,
+            "the same owner moves to the newest token"
+        );
+        assert_ne!(secret_of("project:PVT_7").await, secret_of("project:PVT_8").await);
+    }
+
+    /// D10, end to end: a GitLab board connects over HTTP against the recorded CE,
+    /// syncs, refuses write-back, and reads `unsupported_by_tracker` where its
+    /// figures need history.
+    #[tokio::test]
+    async fn a_gitlab_board_connects_syncs_and_refuses_write_back() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        h.factory.serve_transport(
+            "https://gitlab.example.com",
+            Arc::new(crate::tracker::gitlab::test_support::RecordedGitlab::load(
+                "ce-closed-milestone",
+            )),
+        );
+        let body = json!({
+            "kind": "gitlab", "level": "sprint",
+            "board_url": "https://gitlab.example.com/groups/acme/-/boards",
+            "confirm_host": "gitlab.example.com", "api_token": SENTINEL,
+        });
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers"), Some(body), None).await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        let row = &json(&b)["tracker"];
+        assert_eq!(
+            (row["kind"].clone(), row["board_ref"].clone()),
+            (json!("gitlab"), json!("group:857"))
+        );
+        assert_eq!(row["account"], json!("group_bot"));
+        assert_eq!(
+            (row["sprint_source"].clone(), row["full_path"].clone()),
+            (json!("milestone"), json!("acme"))
+        );
+        assert_eq!(row["sprint_source_changed_at"], Value::Null, "a first source is not a change");
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{t}");
+
+        let (st, b) = call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": true})), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("writeback_unsupported"))
+        );
+        let (st, _) =
+            call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": false})), None).await;
+        assert_eq!(st, StatusCode::OK, "turning it off is allowed");
+        let metric = crate::tracker::writeback::TrackerMetric::ALL[0].as_str();
+        let fields = json!({"fields": [{"metric": metric, "field_ref": "x"}]});
+        let (st, b) = call(&h, "PUT", &format!("{uri}/fields"), Some(fields), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("writeback_unsupported"))
+        );
+
+        let (st, b) = call(&h, "GET", &format!("{uri}/sprints"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let sprints = json(&b);
+        assert_eq!(sprints.as_array().unwrap().len(), 1);
+        let reasons = sprints[0]["sdlc"]["reasons"].as_object().expect("reasons").clone();
+        assert!(!reasons.is_empty());
+        assert!(reasons.values().all(|r| r == "unsupported_by_tracker"), "{reasons:?}");
+    }
+
     #[tokio::test]
     async fn connect_refusals_carry_fixed_codes() {
         let h = harness().await;
@@ -997,10 +1392,13 @@ mod tests {
         let uri = format!("/api/workspaces/{p}/trackers");
         let mut gitlab = connect_body(&site());
         gitlab["kind"] = json!("gitlab");
+        let mut unknown = connect_body(&site());
+        unknown["kind"] = json!("azure_devops");
         let mut no_level = connect_body(&site());
         no_level.as_object_mut().unwrap().remove("level");
         for (body, code) in [
-            (gitlab, "unsupported_tracker"),
+            (gitlab, "host_not_confirmed"),
+            (unknown, "unsupported_tracker"),
             (board_body(&site(), "42", "portfolio"), "invalid_level"),
             (no_level, "level_required"),
         ] {
