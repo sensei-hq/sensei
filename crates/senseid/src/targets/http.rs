@@ -85,8 +85,8 @@ pub(crate) async fn fetch_ticket(
     // is upper-cased; a forge key (`acme/platform#12`, or a bare `#12` read in the
     // folder's own repository) keeps a lowercased path (§G9).
     let (canonical, tracker) = if key.contains('#') {
-        let canonical = match forge_key(pg, &folder_id, &key).await {
-            Ok(ForgeKey::Key(k)) => k,
+        let (canonical, host) = match forge_key(pg, &folder_id, &key).await {
+            Ok(ForgeKey::Key(k, host)) => (k, host),
             Ok(ForgeKey::Invalid) => {
                 return refuse(StatusCode::NOT_FOUND, "ticket_not_found", json!({"key": key}));
             }
@@ -98,7 +98,8 @@ pub(crate) async fn fetch_ticket(
                 return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", json!({}));
             }
         };
-        let tracker = gitlab::tracker_for_key(&trackers, &canonical);
+        let tracker =
+            crate::tracker::forge::tracker_for_key(&trackers, &canonical, host.as_deref());
         (canonical, tracker)
     } else {
         // One of THIS workspace's Jira trackers whose project key is the key's prefix.
@@ -141,10 +142,15 @@ pub(crate) async fn fetch_ticket(
         TrackerKind::Gitlab => {
             gitlab::GitlabTicketReader {
                 transport: transport.as_ref(),
-                board: crate::tracker::BoardScope {
-                    base_url: tracker.base_url.clone(),
-                    board_ref: tracker.board_ref.clone(),
-                },
+                board: crate::tracker::BoardScope::of(tracker),
+            }
+            .read_ticket(&canonical)
+            .await
+        }
+        TrackerKind::Github => {
+            crate::tracker::github::GithubTicketReader {
+                transport: transport.as_ref(),
+                board: crate::tracker::BoardScope::of(tracker),
             }
             .read_ticket(&canonical)
             .await
@@ -188,8 +194,10 @@ pub(crate) async fn fetch_ticket(
 
 /// A forge key, as the route reads it.
 enum ForgeKey {
-    /// Canonical: the lowercased path, `#`, the number.
-    Key(String),
+    /// Canonical: the lowercased path, `#`, the number; and the host it was read on,
+    /// known only for a bare `#n` (the folder's `repo_key`), so selection can keep
+    /// to that host (spec tracker-github §H5).
+    Key(String, Option<String>),
     /// Not a key (an empty, `.` or `..` path segment, no number): nothing is fetched.
     Invalid,
     /// A bare `#n` from a folder with no repository key to read it in.
@@ -213,12 +221,14 @@ async fn forge_key(
         };
         // `host/org/repo`: the path is everything after the host.
         return Ok(match repo_key.split_once('/') {
-            Some((_, path)) if is_key_path(path) => ForgeKey::Key(format!("{path}#{n}")),
+            Some((host, path)) if is_key_path(path) => {
+                ForgeKey::Key(format!("{path}#{n}"), Some(host.to_ascii_lowercase()))
+            }
             _ => ForgeKey::NoRepository,
         });
     }
     Ok(match parse_key(key) {
-        Some((path, n)) => ForgeKey::Key(format!("{path}#{n}")),
+        Some((path, n)) => ForgeKey::Key(format!("{path}#{n}"), None),
         None => ForgeKey::Invalid,
     })
 }

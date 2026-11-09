@@ -5,6 +5,7 @@ set search_path to sensei, extensions;
 create type tracker_kind as enum (
   'jira'      -- Jira Cloud (Agile REST)
 , 'gitlab'    -- gitlab.com and self-managed, Free/CE up (REST v4)
+, 'github'    -- github.com Projects (v2), GraphQL (tracker-github, D92)
 );
 
 comment on type tracker_kind is

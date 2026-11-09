@@ -589,8 +589,9 @@ impl Pass<'_> {
                 Err(e) => return self.stop(e.code()).await,
             };
         let auth = self.adapter.auth(&row.account, &token);
-        let transports_built =
-            transports.transport(&row.base_url, auth.clone(), SYNC_RETRIES).and_then(|get| {
+        let transports_built = transports
+            .transport(&row.base_url, auth.clone(), SYNC_RETRIES, self.adapter.reads_graphql())
+            .and_then(|get| {
                 Ok((get, transports.write_transport(&row.base_url, auth, WRITE_RETRIES)?))
             });
         let (get, write) = match transports_built {
@@ -1284,6 +1285,7 @@ mod pass_tests {
             account: "dev@example.com".into(),
             token: ApiToken("t".into()),
             project_key: None,
+            sprint_field: None,
         };
         let t =
             connect(&pg, rt.secrets.clone(), &JiraAdapter, &board, p, TrackerLevel::Sprint, params)

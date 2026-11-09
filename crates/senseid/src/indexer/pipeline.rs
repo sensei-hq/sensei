@@ -211,15 +211,14 @@ async fn write_one_repo(
     // The workspace is recorded BELOW, against the repository, once the folder
     // and its repository both exist. It is deliberately not an argument to the
     // folder upsert: since #211 there is no `folders.workspace_id` to put it in.
-    let workspace_id = match crate::tasks::handlers::repo_scan::resolve_workspace(pg, root, &name)
-        .await
-    {
-        Ok((id, _created)) => Some(id),
-        Err(e) => {
-            out.errors.push(format!("resolve_workspace({name}): {e}"));
-            None
-        }
-    };
+    let workspace_id =
+        match crate::tasks::handlers::repo_scan::resolve_workspace(pg, root, &name).await {
+            Ok((id, _created)) => Some(id),
+            Err(e) => {
+                out.errors.push(format!("resolve_workspace({name}): {e}"));
+                None
+            }
+        };
 
     let folder_id = match pg
         .upsert_folder(&crate::db::pg_store::FolderRow {

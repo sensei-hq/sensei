@@ -4,6 +4,7 @@
 //! iterations probe answers 200, milestones otherwise. Keys and links are
 //! [`crate::tracker::forge`]'s. History and write-back are unsupported (§G8).
 
+use crate::tracker::forge::{date, midnight, text, timestamp};
 use crate::tracker::http::normalize_base_url;
 use crate::tracker::sprint::SprintState;
 use crate::tracker::{
@@ -149,25 +150,6 @@ async fn paged(
     Ok(out)
 }
 
-fn text<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a str> {
-    v.get(key).and_then(|x| x.as_str())
-}
-
-/// A `YYYY-MM-DD` field: `None` when absent or null, `Decode` when malformed.
-fn date(v: &serde_json::Value, key: &str) -> Result<Option<chrono::NaiveDate>, TrackerError> {
-    match v.get(key) {
-        None | Some(serde_json::Value::Null) => Ok(None),
-        Some(serde_json::Value::String(s)) => chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-            .map(Some)
-            .map_err(|_| TrackerError::Decode),
-        Some(_) => Err(TrackerError::Decode),
-    }
-}
-
-fn midnight(d: chrono::NaiveDate) -> chrono::DateTime<chrono::Utc> {
-    d.and_hms_opt(0, 0, 0).expect("midnight exists").and_utc()
-}
-
 /// `start_at` and `end_at` (§G4.2): the due date is inclusive, the window's end
 /// exclusive, so the end is the day after it.
 /// A sprint's `(start_at, end_at)`.
@@ -237,25 +219,12 @@ fn iteration_row(v: &serde_json::Value) -> Result<SprintRow, TrackerError> {
     })
 }
 
-fn timestamp(
-    v: &serde_json::Value,
-    key: &str,
-) -> Result<Option<chrono::DateTime<chrono::Utc>>, TrackerError> {
-    match v.get(key) {
-        None | Some(serde_json::Value::Null) => Ok(None),
-        Some(serde_json::Value::String(s)) => chrono::DateTime::parse_from_rfc3339(s)
-            .map(|t| Some(t.with_timezone(&chrono::Utc)))
-            .map_err(|_| TrackerError::Decode),
-        Some(_) => Err(TrackerError::Decode),
-    }
-}
-
 /// An issue as a ticket (§G4.3). `base_url` is the tracker's origin.
 fn task_row(v: &serde_json::Value, base_url: &str) -> Result<TaskRow, TrackerError> {
     let full =
         v.pointer("/references/full").and_then(|x| x.as_str()).ok_or(TrackerError::Decode)?;
     let (path, n) = crate::tracker::forge::parse_key(full).ok_or(TrackerError::Decode)?;
-    let scope = crate::db::pg_store::normalize_repo_key(&format!("{base_url}/{path}"))
+    let scope = crate::db::pg_store::repo_key::normalize_repo_key(&format!("{base_url}/{path}"))
         .ok_or(TrackerError::Decode)?;
     let state = text(v, "state").map(String::from);
     let status_category = match state.as_deref() {
@@ -373,6 +342,7 @@ impl TrackerAdapter for GitlabAdapter {
             account: String::new(),
             token: ApiToken(token),
             project_key: None,
+            sprint_field: None,
         })
     }
 
@@ -406,15 +376,15 @@ impl TrackerAdapter for GitlabAdapter {
             }
             Err(e) => return Err(ValidateError::Tracker(e)),
         };
-        let decode = ValidateError::Tracker(TrackerError::Decode);
+        let decode = || ValidateError::Tracker(TrackerError::Decode);
         let (kind, v) = board;
-        let board_id = BoardId { kind, id: id(&v).map_err(|_| decode)? };
-        let name = text(&v, "name").ok_or(decode)?.to_string();
+        let board_id = BoardId { kind, id: id(&v).map_err(|_| decode())? };
+        let name = text(&v, "name").ok_or_else(decode)?.to_string();
         let full_path = match kind {
             BoardKind::Project => text(&v, "path_with_namespace"),
             BoardKind::Group => text(&v, "full_path"),
         }
-        .ok_or(decode)?
+        .ok_or_else(decode)?
         .to_ascii_lowercase();
         let version = version(t).await.map_err(ValidateError::Tracker)?;
         let source = sprint_source(t, board_id).await.map_err(ValidateError::Tracker)?;
@@ -664,27 +634,6 @@ impl crate::tracker::ticket::TicketReader for GitlabTicketReader<'_> {
     }
 }
 
-/// Pure: the GitLab tracker among `trackers` that answers to the forge `key`: the one
-/// whose current `full_path` is the key's path or its longest prefix on `/`
-/// boundaries; on a tie, the first in `trackers`' order (level, then creation).
-pub fn tracker_for_key<'a>(
-    trackers: &'a [crate::db::pg_store::trackers::TrackerRow],
-    key: &str,
-) -> Option<&'a crate::db::pg_store::trackers::TrackerRow> {
-    let (path, _) = crate::tracker::forge::parse_key(key)?;
-    let mut best: Option<(&crate::db::pg_store::trackers::TrackerRow, usize)> = None;
-    for t in trackers.iter().filter(|t| TrackerKind::parse(&t.kind) == Some(TrackerKind::Gitlab)) {
-        let Some(full_path) = t.params["full_path"].as_str().map(str::to_ascii_lowercase) else {
-            continue;
-        };
-        let matches = path == full_path || path.starts_with(&format!("{full_path}/"));
-        if matches && best.is_none_or(|(_, len)| full_path.len() > len) {
-            best = Some((t, full_path.len()));
-        }
-    }
-    best.map(|(t, _)| t)
-}
-
 #[cfg(test)]
 pub(crate) mod test_support {
     use crate::tracker::{GetTransport, TrackerError};
@@ -819,7 +768,7 @@ mod tests {
     const BASE: &str = "https://gitlab.example.com";
 
     fn group_board() -> BoardScope {
-        BoardScope { base_url: BASE.into(), board_ref: "group:857".into() }
+        BoardScope { base_url: BASE.into(), board_ref: "group:857".into(), ..Default::default() }
     }
 
     // ── connect_params (D2) ─────────────────────────────────────────────────
@@ -904,6 +853,7 @@ mod tests {
             account: String::new(),
             token: ApiToken("glpat-x".into()),
             project_key: None,
+            sprint_field: None,
         }
     }
 
@@ -1006,7 +956,9 @@ mod tests {
             .expect("keyed by the full reference");
         assert_eq!(
             t44.scope,
-            crate::db::pg_store::normalize_repo_key("git@gitlab.example.com:acme/backend.git")
+            crate::db::pg_store::repo_key::normalize_repo_key(
+                "git@gitlab.example.com:acme/backend.git"
+            )
         );
         assert_eq!(
             (t44.status.as_deref(), t44.status_category.as_deref()),
@@ -1036,7 +988,11 @@ mod tests {
             404,
             serde_json::json!({}),
         );
-        let board = BoardScope { base_url: BASE.into(), board_ref: "project:424".into() };
+        let board = BoardScope {
+            base_url: BASE.into(),
+            board_ref: "project:424".into(),
+            ..Default::default()
+        };
         let s = GitlabAdapter.fetch_snapshot(&gl, &board, &PrevState::default()).await.unwrap();
         assert_eq!(
             s.sprints.iter().map(|s| s.external_id.as_str()).collect::<Vec<_>>(),
@@ -1197,33 +1153,5 @@ mod tests {
         ] {
             assert!(!is_gitlab_host(bad), "{bad}");
         }
-    }
-
-    #[test]
-    fn the_longest_full_path_answers_a_key() {
-        let row = |kind: &str, full_path: &str| crate::db::pg_store::trackers::TrackerRow {
-            kind: kind.into(),
-            params: serde_json::json!({"full_path": full_path}),
-            ..crate::db::pg_store::trackers::TrackerRow::test_default()
-        };
-        let trackers = [
-            row("gitlab", "acme"),
-            row("gitlab", "acme/backend"),
-            row("gitlab", "acme/back"),
-            row("jira", "acme/backend/x"),
-        ];
-        let pick = |k: &str| {
-            tracker_for_key(&trackers, k)
-                .map(|t| t.params["full_path"].as_str().unwrap().to_string())
-        };
-        assert_eq!(pick("acme/backend#4").as_deref(), Some("acme/backend"));
-        assert_eq!(pick("acme/backend/sub#4").as_deref(), Some("acme/backend"), "on / boundaries");
-        assert_eq!(pick("acme/frontend#4").as_deref(), Some("acme"));
-        assert_eq!(
-            pick("acme/backendx#4").as_deref(),
-            Some("acme"),
-            "acme/back is not a prefix of it"
-        );
-        assert_eq!(pick("other#4"), None);
     }
 }

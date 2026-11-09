@@ -65,11 +65,12 @@ pub async fn run(
         &row.base_url,
         adapter.auth(&row.account, &token),
         SYNC_RETRIES,
+        adapter.reads_graphql(),
     ) {
         Ok(t) => t,
         Err(e) => return finish(pg, tracker_id, Some(e.code())).await,
     };
-    let board = BoardScope { base_url: row.base_url.clone(), board_ref: row.board_ref.clone() };
+    let board = BoardScope::of(&row);
     read(pg, transport.as_ref(), &board, tracker_id, adapter, until).await
 }
 
@@ -169,7 +170,11 @@ mod tests {
     use serde_json::json;
 
     fn board() -> BoardScope {
-        BoardScope { base_url: "https://acme.atlassian.net".into(), board_ref: "42".into() }
+        BoardScope {
+            base_url: "https://acme.atlassian.net".into(),
+            board_ref: "42".into(),
+            ..Default::default()
+        }
     }
 
     /// A board that answers the terms, and a one-entry changelog for each ticket.
@@ -341,8 +346,11 @@ mod learning_tests {
     async fn the_estimation_is_learned_only_from_terms_actually_read() {
         let pg = PgStore::test_store().await;
         let t = super::test_tracker(&pg).await;
-        let board =
-            BoardScope { base_url: "https://acme.atlassian.net".into(), board_ref: "42".into() };
+        let board = BoardScope {
+            base_url: "https://acme.atlassian.net".into(),
+            board_ref: "42".into(),
+            ..Default::default()
+        };
         let until = tokio::time::Instant::now() + Duration::from_secs(30);
         assert_eq!(pg.tracker_prev_state(t).await.unwrap().estimation, Estimation::NotLearned);
 
@@ -390,7 +398,11 @@ mod store_tests {
     use serde_json::json;
 
     fn board() -> BoardScope {
-        BoardScope { base_url: "https://acme.atlassian.net".into(), board_ref: "42".into() }
+        BoardScope {
+            base_url: "https://acme.atlassian.net".into(),
+            board_ref: "42".into(),
+            ..Default::default()
+        }
     }
     fn terms(statuses: serde_json::Value) -> FakeBoard {
         FakeBoard::empty()

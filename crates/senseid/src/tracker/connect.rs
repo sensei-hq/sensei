@@ -223,6 +223,7 @@ pub(crate) mod tests {
             account: "dev@example.com".into(),
             token: ApiToken("SENTINEL-TOKEN-XYZ".into()),
             project_key: None,
+            sprint_field: None,
         }
     }
     fn site() -> String {

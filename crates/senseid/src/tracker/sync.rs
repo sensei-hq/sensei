@@ -114,7 +114,8 @@ async fn run(
     // (shared with step 3). Every write below is conditional on this credential
     // still being current.
     let secret_service = row.secret_service;
-    let board = BoardScope { base_url: row.base_url, board_ref: row.board_ref };
+    let board =
+        BoardScope { base_url: row.base_url, board_ref: row.board_ref, params: row.params.clone() };
     let snapshot = match tokio::time::timeout_at(
         until,
         adapter.fetch_snapshot(transport, &board, &prev),
@@ -1157,11 +1158,7 @@ mod tests {
         let live = session_with(&pg, Some(repo_in(&pg, p).await), &[], &[]).await;
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
         let snapshot = JiraAdapter
-            .fetch_snapshot(
-                &FakeBoard::standard(),
-                &BoardScope { base_url: row.base_url, board_ref: row.board_ref },
-                &Default::default(),
-            )
+            .fetch_snapshot(&FakeBoard::standard(), &BoardScope::of(&row), &Default::default())
             .await
             .unwrap();
         let to = |s| crate::tracker::Link {
@@ -1346,7 +1343,8 @@ mod tests {
         let n = uuid::Uuid::new_v4().simple().to_string();
         // repo_key goes through the production normaliser, from an SSH remote; the
         // adapter's scope comes from the HTTPS form of the same project.
-        let key = |remote: String| crate::db::pg_store::normalize_repo_key(&remote).unwrap();
+        let key =
+            |remote: String| crate::db::pg_store::repo_key::normalize_repo_key(&remote).unwrap();
         let scope_a = key(format!("https://gitlab.com/Group/Sub/A{n}"));
         let scope_b = key(format!("https://gitlab.com/Group/Sub/B{n}"));
         let with_remote = |remote: Option<String>| {

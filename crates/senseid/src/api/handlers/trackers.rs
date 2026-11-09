@@ -95,6 +95,10 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         "sprint_source": row.params.get("sprint_source"),
         "sprint_source_changed_at": row.params.get("sprint_source_changed_at"),
         "full_path": row.params.get("full_path"),
+        // GitHub (tracker-github §H7): the project's address and the iteration field
+        // in use, which Replace token re-sends. Null for Jira and GitLab.
+        "url": row.params.get("url"),
+        "iteration_field": row.params.get("iteration_field"),
         "status": st.as_str(),
         "last_success_at": row.last_success_at,
         "last_error": row.last_error,
@@ -169,6 +173,7 @@ pub(crate) async fn connect_tracker(
         &params.base_url,
         adapter.auth(&params.account, &params.token),
         0,
+        adapter.reads_graphql(),
     ) {
         Ok(t) => t,
         Err(e) => return fail(StatusCode::BAD_GATEWAY, e.code()).into_response(),
@@ -271,6 +276,10 @@ fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
         ConnectError::Validate(ValidateError::BoardProjectMismatch) => {
             fail(StatusCode::UNPROCESSABLE_ENTITY, "board_project_mismatch")
         }
+        ConnectError::Validate(ValidateError::IterationFieldAmbiguous(fields)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "iteration_field_ambiguous", "fields": fields})),
+        ),
         ConnectError::Validate(ValidateError::Tracker(e)) => {
             fail(tracker_error_status(e), e.code())
         }
@@ -418,10 +427,7 @@ pub(crate) async fn put_tracker_fields(
         if let Some(c) = checks.iter().find(|c| !c.numeric) {
             return refuse("field_not_number", "field_ref", &c.field_ref);
         }
-        let board = crate::tracker::BoardScope {
-            base_url: row.base_url.clone(),
-            board_ref: row.board_ref.clone(),
-        };
+        let board = crate::tracker::BoardScope::of(&row);
         for field_ref in wanted.iter().filter(|r| !ours(r)) {
             match adapter.field_in_use(t.as_ref(), &board, field_ref).await {
                 Ok(false) => {}
@@ -862,6 +868,25 @@ pub(crate) async fn list_unlinked_sessions(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_ambiguous_iteration_field_is_422_with_the_names_to_choose_from() {
+        let (status, axum::Json(body)) = super::connect_failure(
+            crate::tracker::connect::ConnectError::Validate(
+                crate::tracker::ValidateError::IterationFieldAmbiguous(vec![
+                    "Sprint".into(),
+                    "Release".into(),
+                ]),
+            ),
+            "https://api.github.com",
+            "orgs/acme/3",
+        );
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            body,
+            serde_json::json!({"error": "iteration_field_ambiguous", "fields": ["Sprint", "Release"]})
+        );
+    }
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use serde_json::{Value, json};
@@ -1032,6 +1057,63 @@ mod tests {
         assert_eq!(listed[0]["external_scope"], json!("AUTH"));
     }
 
+    /// tracker-github E10, E13 and the list fields, end to end: a GitHub project connects
+    /// over HTTP against the recorded fixtures, lists the fields Replace token needs,
+    /// refuses write-back, and cannot be connected by a second workspace.
+    #[tokio::test]
+    async fn a_github_project_connects_lists_its_settings_and_is_connected_once() {
+        let h = harness().await;
+        let (p, other) = (workspace(&h).await, workspace(&h).await);
+        h.factory.serve_transport(
+            crate::tracker::github::API_BASE,
+            Arc::new(crate::tracker::github::test_support::RecordedGithub::load(&["project"])),
+        );
+        let body = json!({
+            "kind": "github", "level": "sprint",
+            "board_url": "https://github.com/orgs/acme/projects/2",
+            "api_token": SENTINEL,
+        });
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers"), Some(body.clone()), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        let row = &json(&b)["tracker"];
+        assert_eq!(
+            (row["kind"].clone(), row["board_ref"].clone(), row["account"].clone()),
+            (json!("github"), json!("project:PVT_1"), json!("user1"))
+        );
+        assert_eq!(
+            (row["url"].clone(), row["iteration_field"].clone()),
+            (json!("https://github.com/orgs/acme/projects/2"), json!("Sprint"))
+        );
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let (st, b) = call(
+            &h,
+            "PATCH",
+            &format!("/api/workspaces/{p}/trackers/{t}"),
+            Some(json!({"writeback_enabled": true})),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("writeback_unsupported"))
+        );
+        // The same project, typed under another spelling, from another workspace.
+        let again = json!({
+            "kind": "github", "level": "sprint",
+            "board_url": "https://github.com/orgs/ACME/projects/2/views/4",
+            "api_token": SENTINEL,
+        });
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{other}/trackers"), Some(again), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("board_already_connected"))
+        );
+    }
+
     /// D10, end to end: a GitLab board connects over HTTP against the recorded CE,
     /// syncs, refuses write-back, and reads `unsupported_by_tracker` where its
     /// figures need history.
@@ -1101,7 +1183,7 @@ mod tests {
         let mut gitlab = connect_body(&site());
         gitlab["kind"] = json!("gitlab");
         let mut unknown = connect_body(&site());
-        unknown["kind"] = json!("github");
+        unknown["kind"] = json!("azure_devops");
         let mut no_level = connect_body(&site());
         no_level.as_object_mut().unwrap().remove("level");
         for (body, code) in [

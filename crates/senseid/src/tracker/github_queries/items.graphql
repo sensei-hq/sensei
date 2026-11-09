@@ -1,0 +1,27 @@
+query Items($id: ID!, $field: String!, $after: String) {
+  node(id: $id) {
+    ... on ProjectV2 {
+      items(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          type
+          isArchived
+          fieldValueByName(name: $field) {
+            __typename
+            ... on ProjectV2ItemFieldIterationValue { iterationId }
+          }
+          content {
+            __typename
+            ... on Issue {
+              databaseId number title body state url createdAt updatedAt
+              issueType { name }
+              repository { nameWithOwner url }
+              assignees(first: 1) { nodes { databaseId login } }
+            }
+          }
+        }
+      }
+    }
+  }
+}

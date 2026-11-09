@@ -45,13 +45,13 @@ comment on column trackers.kind
 comment on column trackers.base_url
      is 'Adapter-normalised origin, exactly "https://" + lowercase host, no port/path/slash (crate::tracker::http::normalize_base_url). Part of the board identity.';
 comment on column trackers.account
-     is 'The account the token belongs to, as the adapter defines it (Jira: the Atlassian email; GitLab: the token''s username). Keyring account of secret_service.';
+     is 'The account the token belongs to, as the adapter defines it (Jira: the Atlassian email; GitLab and GitHub: the token''s username or login). Keyring account of secret_service.';
 comment on column trackers.external_scope
-     is 'The provider scope shown to users (Jira: the board''s project key, or the board name for a multi-project board; GitLab: the board''s full path at connect).';
+     is 'The provider scope shown to users (Jira: the board''s project key, or the board name for a multi-project board; GitLab: the board''s full path at connect; GitHub: <owner>/<project number>).';
 comment on column trackers.board_ref
-     is 'The board, in the adapter''s canonical form (Jira: decimal board id, no leading zeros; GitLab: project:<id> or group:<id>) so one board cannot be connected twice under two spellings.';
+     is 'The board, in the adapter''s canonical form (Jira: decimal board id, no leading zeros; GitLab: project:<id> or group:<id>; GitHub: project:<node id>) so one board cannot be connected twice under two spellings.';
 comment on column trackers.params
-     is 'Adapter-specific extras (e.g. board_name; GitLab: full_path, version, sprint_source, sprint_source_changed_at). Never secrets.';
+     is 'Adapter-specific extras (e.g. board_name; GitLab: full_path, version, sprint_source, sprint_source_changed_at; GitHub: owner, owner_kind, number, url, iteration_field). Never secrets.';
 comment on column trackers.secret_service
      is 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Shared by every tracker of the workspace on the same (kind, base_url): a connect re-keys them all. Changing it tombstones the old value; the drain keeps a secret another tracker still references.';
 comment on column trackers.last_attempt_at

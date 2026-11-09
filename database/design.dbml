@@ -763,6 +763,7 @@ Enum "sensei"."tracker_error" {
 Enum "sensei"."tracker_kind" {
   "jira"
   "gitlab"
+  "github"
 }
 
 Enum "sensei"."tracker_level" {
@@ -2953,10 +2954,10 @@ Table "sensei"."trackers" {
   "kind" sensei.tracker_kind [not null, note: 'Which adapter speaks to this tracker (crate::tracker::adapter_for_kind).']
   "level" sensei.tracker_level [not null, default: 'sprint', note: 'What the board serves in the workspace (D40): epic (portfolio), sprint (a team board, one Sprints lane), task (linked from changes). Rows from before levels are sprint trackers.']
   "base_url" text [not null, note: 'Adapter-normalised origin, exactly "https://" + lowercase host, no port/path/slash (crate::tracker::http::normalize_base_url). Part of the board identity.']
-  "account" text [not null, note: 'The account the token belongs to, as the adapter defines it (Jira: the Atlassian email; GitLab: the token\'s username). Keyring account of secret_service.']
-  "external_scope" text [not null, note: 'The provider scope shown to users (Jira: the board\'s project key, or the board name for a multi-project board; GitLab: the board\'s full path at connect).']
-  "board_ref" text [not null, note: 'The board, in the adapter\'s canonical form (Jira: decimal board id, no leading zeros; GitLab: project:<id> or group:<id>) so one board cannot be connected twice under two spellings.']
-  "params" jsonb [not null, default: '{}', note: 'Adapter-specific extras (e.g. board_name; GitLab: full_path, version, sprint_source, sprint_source_changed_at). Never secrets.']
+  "account" text [not null, note: 'The account the token belongs to, as the adapter defines it (Jira: the Atlassian email; GitLab and GitHub: the token\'s username or login). Keyring account of secret_service.']
+  "external_scope" text [not null, note: 'The provider scope shown to users (Jira: the board\'s project key, or the board name for a multi-project board; GitLab: the board\'s full path at connect; GitHub: <owner>/<project number>).']
+  "board_ref" text [not null, note: 'The board, in the adapter\'s canonical form (Jira: decimal board id, no leading zeros; GitLab: project:<id> or group:<id>; GitHub: project:<node id>) so one board cannot be connected twice under two spellings.']
+  "params" jsonb [not null, default: '{}', note: 'Adapter-specific extras (e.g. board_name; GitLab: full_path, version, sprint_source, sprint_source_changed_at; GitHub: owner, owner_kind, number, url, iteration_field). Never secrets.']
   "secret_service" text [not null, note: 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Shared by every tracker of the workspace on the same (kind, base_url): a connect re-keys them all. Changing it tombstones the old value; the drain keeps a secret another tracker still references.']
   "last_attempt_at" timestamptz [note: 'When a sync last started (written before the fetch, outside any transaction).']
   "last_success_at" timestamptz [note: 'When a sync last committed in full. NULL = never (status pending), also reset by a re-connect.']
@@ -3810,7 +3811,7 @@ Table "sensei"."sprints" {
   "id" uuid [pk, not null, default: `gen_random_uuid()`]
   "tracker_id" uuid [not null, note: 'The board this sprint belongs to.']
   "external_id" text [not null, note: 'The provider\'s sprint id, as text.']
-  "seq" bigint [not null, note: 'Adapter-supplied creation order (Jira: the numeric sprint id). The tie-break for a ticket\'s current sprint; never compare external_id text.']
+  "seq" bigint [not null, note: 'Adapter-supplied ordering key (Jira, GitLab: the numeric sprint id; GitHub: the iteration\'s start date in days since 1970-01-01). The tie-break for a ticket\'s current sprint; never compare external_id text.']
   "name" text [not null, note: 'Sprint name as the provider shows it.']
   "state" text [not null, note: 'Common lifecycle state: future, active or closed (adapters map theirs onto these).']
   "start_at" timestamptz [note: 'Planned or actual start; NULL for a future sprint without dates.']
@@ -4394,7 +4395,7 @@ Table "sensei"."tracker_tasks" {
   "tracker_id" uuid [not null, note: 'The board this ticket belongs to.']
   "external_id" text [not null, note: 'The provider\'s immutable issue id.']
   "key" text [not null, note: 'The provider\'s display key (Jira: AUTH-420, stored upper-case). Overwritten when the issue is renamed or moved.']
-  "scope" text [note: 'What the key is relative to, when it is not globally unique (GitLab: normalize_repo_key of the project URL). NULL for Jira.']
+  "scope" text [note: 'What the key is relative to, when it is not globally unique (GitLab: normalize_repo_key of the project URL; GitHub: of the issue\'s repository URL). NULL for Jira.']
   "summary" text [note: 'Issue title. Client-confidential: never leaves the machine.']
   "issue_type" text [note: 'Provider issue type, raw (Story, Bug, Task, ...). Not mapped in v1.']
   "status" text [note: 'Provider workflow status, raw.']

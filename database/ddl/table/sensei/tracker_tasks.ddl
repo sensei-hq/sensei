@@ -40,7 +40,7 @@ comment on column tracker_tasks.external_id
 comment on column tracker_tasks.key
      is 'The provider''s display key (Jira: AUTH-420, stored upper-case). Overwritten when the issue is renamed or moved.';
 comment on column tracker_tasks.scope
-     is 'What the key is relative to, when it is not globally unique (GitLab: normalize_repo_key of the project URL). NULL for Jira.';
+     is 'What the key is relative to, when it is not globally unique (GitLab: normalize_repo_key of the project URL; GitHub: of the issue''s repository URL). NULL for Jira.';
 comment on column tracker_tasks.summary
      is 'Issue title. Client-confidential: never leaves the machine.';
 comment on column tracker_tasks.issue_type

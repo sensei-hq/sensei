@@ -109,6 +109,7 @@ impl TrackerAdapter for JiraAdapter {
             account,
             token: ApiToken(token),
             project_key: text("project_key").map(str::to_uppercase),
+            sprint_field: None,
         })
     }
 
@@ -1000,6 +1001,7 @@ mod adapter_tests {
             account: "dev@example.com".into(),
             token: ApiToken("t".into()),
             project_key: project_key.map(String::from),
+            sprint_field: None,
         }
     }
 
@@ -1344,7 +1346,11 @@ mod adapter_tests {
     }
 
     fn scope() -> BoardScope {
-        BoardScope { base_url: "https://acme.atlassian.net".into(), board_ref: "42".into() }
+        BoardScope {
+            base_url: "https://acme.atlassian.net".into(),
+            board_ref: "42".into(),
+            ..Default::default()
+        }
     }
 
     #[tokio::test]
@@ -1625,7 +1631,11 @@ mod discover_tests {
     }
 
     fn scope() -> BoardScope {
-        BoardScope { base_url: "https://acme.atlassian.net".into(), board_ref: "42".into() }
+        BoardScope {
+            base_url: "https://acme.atlassian.net".into(),
+            board_ref: "42".into(),
+            ..Default::default()
+        }
     }
 
     #[tokio::test]

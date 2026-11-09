@@ -16,11 +16,14 @@ pub const SYNC_RETRIES: u8 = 3;
 
 /// Builds the GET transport for a base URL and auth scheme.
 pub trait TransportFactory: Send + Sync {
+    /// `graphql`: the adapter's [`TrackerAdapter::reads_graphql`], the only way a
+    /// transport may POST to `/graphql` (tracker-github §H2.2).
     fn transport(
         &self,
         base_url: &str,
         auth: AuthScheme,
         retries: u8,
+        graphql: bool,
     ) -> Result<Arc<dyn GetTransport>, TrackerError>;
     /// Builds the write transport; only the write-back pass calls it (W10).
     fn write_transport(
@@ -40,8 +43,11 @@ impl TransportFactory for ReqwestTransportFactory {
         base_url: &str,
         auth: AuthScheme,
         retries: u8,
+        graphql: bool,
     ) -> Result<Arc<dyn GetTransport>, TrackerError> {
-        Ok(Arc::new(PolicyTransport::new(ReqwestRaw::new(base_url, auth)?, retries)))
+        let raw = ReqwestRaw::new(base_url, auth)?;
+        let raw = if graphql { raw.allow_graphql() } else { raw };
+        Ok(Arc::new(PolicyTransport::new(raw, retries)))
     }
     fn write_transport(
         &self,
@@ -84,7 +90,12 @@ pub async fn transport_for(
     let (service, account) = (row.secret_service.clone(), row.account.clone());
     let token =
         bounded(rt.secrets.clone(), KEYRING_TIMEOUT, move |s| s.get(&service, &account)).await?;
-    rt.transports.transport(&row.base_url, adapter.auth(&row.account, &token), retries)
+    rt.transports.transport(
+        &row.base_url,
+        adapter.auth(&row.account, &token),
+        retries,
+        adapter.reads_graphql(),
+    )
 }
 
 /// Sync one stored tracker end to end, resolving its adapter and transport.
@@ -201,6 +212,7 @@ pub mod test_support {
             base_url: &str,
             _auth: AuthScheme,
             _retries: u8,
+            _graphql: bool,
         ) -> Result<Arc<dyn GetTransport>, TrackerError> {
             self.boards.lock().unwrap().get(base_url).cloned().ok_or(TrackerError::Transport)
         }
@@ -237,5 +249,55 @@ pub mod test_support {
             discovery: Default::default(),
         });
         (rt, store, factory)
+    }
+}
+
+#[cfg(test)]
+mod factory_tests {
+    use super::*;
+
+    /// A server that counts the GraphQL POSTs it receives and answers `{"data": {}}`.
+    async fn graphql_server() -> (String, Arc<std::sync::atomic::AtomicU32>) {
+        let hits = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let h = Arc::clone(&hits);
+        let app = axum::Router::new().route(
+            "/graphql",
+            axum::routing::post(move || {
+                h.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { axum::Json(serde_json::json!({"data": {"ok": true}})) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), hits)
+    }
+
+    #[tokio::test]
+    async fn only_a_transport_built_for_graphql_posts_to_it() {
+        // tracker-github §H2.2: a Jira or GitLab credential never leaves in a GraphQL POST.
+        let (base, hits) = graphql_server().await;
+        let q = crate::tracker::graphql::GraphqlQuery::new("query A { ok }", serde_json::json!({}))
+            .unwrap();
+        let auth = || AuthScheme::Header {
+            name: "Authorization",
+            token: crate::tracker::ApiToken("Bearer t".into()),
+        };
+        let plain = ReqwestTransportFactory.transport(&base, auth(), 0, false).unwrap();
+        assert_eq!(plain.graphql(&q).await, Err(TrackerError::Transport));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0, "nothing was sent");
+        let reader = ReqwestTransportFactory.transport(&base, auth(), 0, true).unwrap();
+        assert_eq!(reader.graphql(&q).await, Ok(serde_json::json!({"ok": true})));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Only GitHub reads GraphQL; Jira's and GitLab's credentials never reach it.
+        for adapter in crate::tracker::adapters() {
+            let reads = adapter.reads_graphql();
+            assert_eq!(
+                reads,
+                adapter.kind() == crate::tracker::TrackerKind::Github,
+                "{:?}",
+                adapter.kind()
+            );
+        }
     }
 }

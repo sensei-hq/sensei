@@ -145,6 +145,86 @@ pub fn unknown_keys(session: &SessionText, known: &[KnownTask]) -> Vec<String> {
     out.into_iter().collect()
 }
 
+// ── JSON readers shared by the forge adapters (GitLab, GitHub) ──────────────
+
+/// A string field, or `None`.
+pub(crate) fn text<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    v.get(key).and_then(|x| x.as_str())
+}
+
+/// A `YYYY-MM-DD` field: `None` when absent or null, `Decode` when malformed.
+pub(crate) fn date(
+    v: &serde_json::Value,
+    key: &str,
+) -> Result<Option<chrono::NaiveDate>, crate::tracker::TrackerError> {
+    use crate::tracker::TrackerError;
+    match v.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .map(Some)
+            .map_err(|_| TrackerError::Decode),
+        Some(_) => Err(TrackerError::Decode),
+    }
+}
+
+/// 00:00 UTC of a date.
+pub(crate) fn midnight(d: chrono::NaiveDate) -> chrono::DateTime<chrono::Utc> {
+    d.and_hms_opt(0, 0, 0).expect("midnight exists").and_utc()
+}
+
+/// An RFC 3339 timestamp field: `None` when absent or null, `Decode` when malformed.
+pub(crate) fn timestamp(
+    v: &serde_json::Value,
+    key: &str,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, crate::tracker::TrackerError> {
+    use crate::tracker::TrackerError;
+    match v.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => chrono::DateTime::parse_from_rfc3339(s)
+            .map(|t| Some(t.with_timezone(&chrono::Utc)))
+            .map_err(|_| TrackerError::Decode),
+        Some(_) => Err(TrackerError::Decode),
+    }
+}
+
+/// Pure: the GitLab tracker among `trackers` that answers to the forge `key`: the one
+/// whose current `full_path` is the key's path or its longest prefix on `/`
+/// boundaries; on a tie, the first in `trackers`' order (level, then creation).
+///
+/// `host` is the key's host when it is known (a bare `#n` read in a folder's
+/// repository, spec tracker-github §H5): then only trackers on that host answer.
+/// A typed `path#n` carries no host and matches by path alone.
+pub fn tracker_for_key<'a>(
+    trackers: &'a [crate::db::pg_store::trackers::TrackerRow],
+    key: &str,
+    host: Option<&str>,
+) -> Option<&'a crate::db::pg_store::trackers::TrackerRow> {
+    use crate::tracker::TrackerKind;
+    let (path, _) = parse_key(key)?;
+    let on_host = |t: &crate::db::pg_store::trackers::TrackerRow| {
+        host.is_none_or(|h| {
+            reqwest::Url::parse(&t.base_url)
+                .ok()
+                .and_then(|u| u.host_str().map(|th| th.eq_ignore_ascii_case(h)))
+                .unwrap_or(false)
+        })
+    };
+    let mut best: Option<(&crate::db::pg_store::trackers::TrackerRow, usize)> = None;
+    for t in trackers
+        .iter()
+        .filter(|t| TrackerKind::parse(&t.kind) == Some(TrackerKind::Gitlab) && on_host(t))
+    {
+        let Some(full_path) = t.params["full_path"].as_str().map(str::to_ascii_lowercase) else {
+            continue;
+        };
+        let matches = path == full_path || path.starts_with(&format!("{full_path}/"));
+        if matches && best.is_none_or(|(_, len)| full_path.len() > len) {
+            best = Some((t, full_path.len()));
+        }
+    }
+    best.map(|(t, _)| t)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +343,65 @@ mod tests {
             &["#99, Acme/Platform#99, acme/platform#12, other/repo#5, acme/core#7, acme/./core#8"],
         );
         assert_eq!(unknown_keys(&s, &two_repos()), ["acme/core#7", "acme/platform#99"]);
+    }
+
+    #[test]
+    fn the_longest_full_path_answers_a_key() {
+        let row = |kind: &str, full_path: &str| crate::db::pg_store::trackers::TrackerRow {
+            kind: kind.into(),
+            base_url: "https://gitlab.example.com".into(),
+            params: serde_json::json!({"full_path": full_path}),
+            ..crate::db::pg_store::trackers::TrackerRow::test_default()
+        };
+        let trackers = [
+            row("gitlab", "acme"),
+            row("gitlab", "acme/backend"),
+            row("gitlab", "acme/back"),
+            row("jira", "acme/backend/x"),
+        ];
+        let pick = |k: &str| {
+            tracker_for_key(&trackers, k, None)
+                .map(|t| t.params["full_path"].as_str().unwrap().to_string())
+        };
+        assert_eq!(pick("acme/backend#4").as_deref(), Some("acme/backend"));
+        assert_eq!(pick("acme/backend/sub#4").as_deref(), Some("acme/backend"), "on / boundaries");
+        assert_eq!(pick("acme/frontend#4").as_deref(), Some("acme"));
+        assert_eq!(
+            pick("acme/backendx#4").as_deref(),
+            Some("acme"),
+            "acme/back is not a prefix of it"
+        );
+        assert_eq!(pick("other#4"), None);
+    }
+
+    #[test]
+    fn a_key_read_on_one_host_never_reaches_a_tracker_on_another() {
+        // tracker-github §H5: a bare `#12` keeps its folder's host, so a GitLab board
+        // whose path happens to match cannot answer for another forge's ticket.
+        let row = |base: &str, full_path: &str| crate::db::pg_store::trackers::TrackerRow {
+            kind: "gitlab".into(),
+            base_url: base.into(),
+            params: serde_json::json!({"full_path": full_path}),
+            ..crate::db::pg_store::trackers::TrackerRow::test_default()
+        };
+        let trackers =
+            [row("https://gitlab.example.com", "acme"), row("https://git.other.org", "acme")];
+        let host_of =
+            |k: &str, h: Option<&str>| tracker_for_key(&trackers, k, h).map(|t| t.base_url.clone());
+        assert_eq!(host_of("acme/platform#12", Some("github.com")), None);
+        assert_eq!(
+            host_of("acme/platform#12", Some("git.other.org")).as_deref(),
+            Some("https://git.other.org")
+        );
+        assert_eq!(
+            host_of("acme/platform#12", Some("GitLab.Example.com")).as_deref(),
+            Some("https://gitlab.example.com"),
+            "hosts compare case-insensitively"
+        );
+        // A typed key carries no host: the path alone, first in list order.
+        assert_eq!(
+            host_of("acme/platform#12", None).as_deref(),
+            Some("https://gitlab.example.com")
+        );
     }
 }

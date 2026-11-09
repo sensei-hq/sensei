@@ -8,7 +8,9 @@
 pub mod connect;
 pub mod discover;
 pub mod forge;
+pub mod github;
 pub mod gitlab;
+pub mod graphql;
 pub mod history;
 pub mod http;
 pub mod jira;
@@ -30,6 +32,7 @@ use std::collections::HashMap;
 pub enum TrackerKind {
     Jira,
     Gitlab,
+    Github,
 }
 
 impl TrackerKind {
@@ -37,12 +40,14 @@ impl TrackerKind {
         match self {
             TrackerKind::Jira => "jira",
             TrackerKind::Gitlab => "gitlab",
+            TrackerKind::Github => "github",
         }
     }
     pub fn parse(s: &str) -> Option<TrackerKind> {
         match s {
             "jira" => Some(TrackerKind::Jira),
             "gitlab" => Some(TrackerKind::Gitlab),
+            "github" => Some(TrackerKind::Github),
             _ => None,
         }
     }
@@ -202,7 +207,9 @@ impl std::fmt::Debug for AuthScheme {
     }
 }
 
-/// GET-only access to a tracker's API. One method, so no other verb can be sent.
+/// Read access to a tracker's API: GET, plus validated GraphQL queries (spec
+/// tracker-github §H2). No other verb can be sent, and a GraphQL document is
+/// proved to be a single `query` before it can be built.
 #[async_trait::async_trait]
 pub trait GetTransport: Send + Sync {
     async fn get_json(
@@ -210,6 +217,12 @@ pub trait GetTransport: Send + Sync {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<serde_json::Value, TrackerError>;
+
+    /// A GraphQL read: the response's `data`, or its error (§H2.3). A transport not
+    /// built for GraphQL refuses, sending nothing.
+    async fn graphql(&self, _q: &graphql::GraphqlQuery) -> Result<serde_json::Value, TrackerError> {
+        Err(TrackerError::UnsupportedTracker)
+    }
 }
 
 /// The verbs a write may use (spec W10).
@@ -277,6 +290,9 @@ pub struct ConnectParams {
     pub account: String,
     pub token: ApiToken,
     pub project_key: Option<String>,
+    /// The sprint field the user named at connect (GitHub's `iteration_field`,
+    /// tracker-github §H1); `None` for Jira and GitLab.
+    pub sprint_field: Option<String>,
 }
 
 /// Why connect input was refused before any network call.
@@ -318,18 +334,36 @@ pub struct Validated {
 }
 
 /// Why `validate` refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidateError {
     Tracker(TrackerError),
     BoardNotFound,
     BoardProjectMismatch,
+    /// The board has several sprint fields and none was named, or the named one
+    /// does not exist: the names to choose from, in the board's order
+    /// (tracker-github §H1 validate 3).
+    IterationFieldAmbiguous(Vec<String>),
 }
 
 /// The board a sync fetches.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BoardScope {
     pub base_url: String,
     pub board_ref: String,
+    /// The tracker row's stored `params`; an adapter reads only its own keys
+    /// (GitHub: `iteration_field`, tracker-github §H3.2).
+    pub params: serde_json::Value,
+}
+
+impl BoardScope {
+    /// The board a stored tracker row names.
+    pub fn of(row: &crate::db::pg_store::trackers::TrackerRow) -> Self {
+        BoardScope {
+            base_url: row.base_url.clone(),
+            board_ref: row.board_ref.clone(),
+            params: row.params.clone(),
+        }
+    }
 }
 
 /// One sprint as the provider reports it.
@@ -490,6 +524,11 @@ pub trait TrackerAdapter: Send + Sync {
     fn kind(&self) -> TrackerKind;
     /// What this adapter supports beyond sync (§G8).
     fn capabilities(&self) -> Capabilities;
+    /// Whether this adapter reads with GraphQL; only then may its transport POST to
+    /// `/graphql` (tracker-github §H2.2).
+    fn reads_graphql(&self) -> bool {
+        false
+    }
     /// Parse and canonicalise the connect body.
     fn connect_params(&self, body: &serde_json::Value) -> Result<ConnectParams, ParamError>;
     /// The auth scheme the transport uses for this account.
@@ -599,7 +638,7 @@ pub trait TrackerAdapter: Send + Sync {
 
 /// The registered adapters — the only place a new tracker is added.
 pub fn adapters() -> &'static [&'static dyn TrackerAdapter] {
-    &[&jira::JiraAdapter, &gitlab::GitlabAdapter]
+    &[&jira::JiraAdapter, &gitlab::GitlabAdapter, &github::GithubAdapter]
 }
 
 /// The adapter for a kind, if one is registered.
@@ -1554,15 +1593,17 @@ mod seam_tests {
 
     #[test]
     fn every_kind_is_registered_and_round_trips() {
-        for kind in [TrackerKind::Jira, TrackerKind::Gitlab] {
+        for kind in [TrackerKind::Jira, TrackerKind::Gitlab, TrackerKind::Github] {
             assert_eq!(adapter_for_kind(kind).map(|a| a.kind()), Some(kind));
             assert_eq!(TrackerKind::parse(kind.as_str()), Some(kind));
         }
-        assert_eq!(TrackerKind::parse("github"), None, "no adapter, no kind");
-        assert_eq!(
-            capabilities_of_kind("gitlab"),
-            Ok(Capabilities { history: false, writeback: false })
-        );
+        assert_eq!(TrackerKind::parse("azure_devops"), None, "no adapter, no kind");
+        for kind in ["gitlab", "github"] {
+            assert_eq!(
+                capabilities_of_kind(kind),
+                Ok(Capabilities { history: false, writeback: false })
+            );
+        }
     }
 
     #[test]

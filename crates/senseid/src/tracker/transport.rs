@@ -19,6 +19,13 @@ pub struct RawResponse {
 pub trait RawGet: Send + Sync {
     /// `Err` only for a network-level failure (no response at all).
     async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<RawResponse, ()>;
+
+    /// POST a GraphQL body to the backend's fixed `/graphql` path (spec
+    /// tracker-github §H2.2). Refused (`Err`, nothing sent) unless the backend was
+    /// built for GraphQL; only [`ReqwestRaw::allow_graphql`] makes one.
+    async fn post_graphql(&self, _body: &[u8]) -> Result<RawResponse, ()> {
+        Err(())
+    }
 }
 
 /// One write, with no policy: the production impl is reqwest with redirects off (W10).
@@ -111,6 +118,15 @@ impl<R: RawGet> GetTransport for PolicyTransport<R> {
     ) -> Result<serde_json::Value, TrackerError> {
         self.with_retries(|| self.raw.get(path, query), map_response).await
     }
+
+    async fn graphql(
+        &self,
+        q: &crate::tracker::graphql::GraphqlQuery,
+    ) -> Result<serde_json::Value, TrackerError> {
+        let bytes = serde_json::to_vec(&q.body()).map_err(|_| TrackerError::Decode)?;
+        let envelope = self.with_retries(|| self.raw.post_graphql(&bytes), map_response).await?;
+        q.read(envelope)
+    }
 }
 
 #[async_trait::async_trait]
@@ -134,6 +150,9 @@ pub struct ReqwestRaw {
     client: reqwest::Client,
     base_url: String,
     auth: crate::tracker::AuthScheme,
+    /// Whether [`RawGet::post_graphql`] may send (§H2.2): only for an adapter that
+    /// reads GraphQL, so no other tracker's credential is ever POSTed to `/graphql`.
+    graphql: bool,
 }
 
 impl ReqwestRaw {
@@ -149,12 +168,25 @@ impl ReqwestRaw {
         resolver: crate::net::resolver::PublicOnly,
     ) -> Result<Self, TrackerError> {
         let client = crate::http::bounded_builder()
+            // GitHub refuses an API request without one (tracker-github §H2.6).
+            .user_agent(concat!("sensei/", env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .dns_resolver(std::sync::Arc::new(resolver))
             .build()
             .map_err(|_| TrackerError::Transport)?;
-        Ok(ReqwestRaw { client, base_url: base_url.trim_end_matches('/').to_string(), auth })
+        Ok(ReqwestRaw {
+            client,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            auth,
+            graphql: false,
+        })
+    }
+
+    /// Let this backend POST GraphQL to `<base_url>/graphql` (§H2.2).
+    pub fn allow_graphql(mut self) -> Self {
+        self.graphql = true;
+        self
     }
 }
 
@@ -196,6 +228,18 @@ fn authenticate(
 impl RawGet for ReqwestRaw {
     async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<RawResponse, ()> {
         self.execute(self.client.get(format!("{}{}", self.base_url, path)).query(query)).await
+    }
+
+    async fn post_graphql(&self, body: &[u8]) -> Result<RawResponse, ()> {
+        if !self.graphql {
+            return Err(());
+        }
+        let req = self
+            .client
+            .post(format!("{}/graphql", self.base_url))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.to_vec());
+        self.execute(req).await
     }
 }
 
@@ -662,6 +706,95 @@ mod tests {
             authenticate(client.get("https://gitlab.example.com/x"), &private_token("a\nb"))
                 .is_err()
         );
+    }
+
+    // ── tracker-github §H2: GraphQL as a guarded read ───────────────────────
+
+    fn bearer(token: &str) -> crate::tracker::AuthScheme {
+        crate::tracker::AuthScheme::Header {
+            name: "Authorization",
+            token: crate::tracker::ApiToken(format!("Bearer {token}")),
+        }
+    }
+
+    fn items_query() -> crate::tracker::graphql::GraphqlQuery {
+        crate::tracker::graphql::GraphqlQuery::new(
+            "query Items($id: ID!) { node(id: $id) { id } }",
+            serde_json::json!({"id": "PVT_1"}),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_backend_not_built_for_graphql_sends_nothing() {
+        // The default `post_graphql` refuses: a network-level `Err`, so `Transport`.
+        let scripted = Scripted::new(vec![]);
+        let t = PolicyTransport::new(Ref(&scripted), 0);
+        assert_eq!(t.graphql(&items_query()).await, Err(TrackerError::Transport));
+        assert_eq!(scripted.calls(), 0);
+        // The production backend without `allow_graphql`: no connection is made.
+        let (port, hits) = counting_listener().await;
+        let raw = ReqwestRaw::new(&format!("http://127.0.0.1:{port}"), bearer("t")).unwrap();
+        assert!(raw.post_graphql(b"{}").await.is_err());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_graphql_read_posts_to_the_fixed_path_and_returns_its_data() {
+        let base = serve(axum::Router::new().route(
+            "/graphql",
+            axum::routing::post(
+                |headers: axum::http::HeaderMap,
+                 axum::Json(body): axum::Json<serde_json::Value>| async move {
+                    axum::Json(serde_json::json!({"data": {
+                        "auth": headers.get("authorization").and_then(|v| v.to_str().ok()),
+                        "ua": headers.get("user-agent").and_then(|v| v.to_str().ok()),
+                        "body": body,
+                    }}))
+                },
+            ),
+        ))
+        .await;
+        let raw = ReqwestRaw::new(&base, bearer("ghp_x")).unwrap().allow_graphql();
+        let t = PolicyTransport::new(raw, 0);
+        let data = t.graphql(&items_query()).await.unwrap();
+        assert_eq!(data["auth"], serde_json::json!("Bearer ghp_x"));
+        assert_eq!(data["body"]["operationName"], serde_json::json!("Items"));
+        assert_eq!(data["body"]["variables"], serde_json::json!({"id": "PVT_1"}));
+        assert_eq!(data["ua"], serde_json::json!(concat!("sensei/", env!("CARGO_PKG_VERSION"))));
+    }
+
+    #[tokio::test]
+    async fn a_graphql_error_beside_data_is_the_error() {
+        let base = serve(axum::Router::new().route(
+            "/graphql",
+            axum::routing::post(|| async {
+                axum::Json(serde_json::json!({
+                    "data": {"node": {"id": "PVT_1"}},
+                    "errors": [{"type": "RATE_LIMITED", "path": ["node"]}],
+                }))
+            }),
+        ))
+        .await;
+        let raw = ReqwestRaw::new(&base, bearer("t")).unwrap().allow_graphql();
+        let t = PolicyTransport::new(raw, 0);
+        assert_eq!(t.graphql(&items_query()).await, Err(TrackerError::RateLimited));
+    }
+
+    #[tokio::test]
+    async fn every_tracker_request_names_sensei_as_its_user_agent() {
+        let base = serve(axum::Router::new().route(
+            "/echo",
+            axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                axum::Json(serde_json::json!({
+                    "ua": headers.get("user-agent").and_then(|v| v.to_str().ok()),
+                }))
+            }),
+        ))
+        .await;
+        let raw = ReqwestRaw::new(&base, basic("u", "t")).unwrap();
+        let echo = map_response(&raw.get("/echo", &[]).await.unwrap()).unwrap();
+        assert_eq!(echo["ua"], serde_json::json!(concat!("sensei/", env!("CARGO_PKG_VERSION"))));
     }
 
     #[tokio::test]
