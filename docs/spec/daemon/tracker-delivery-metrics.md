@@ -440,9 +440,11 @@ design sent `last_success_at` itself and capped it at the dōjō's clock. That c
 machines' clocks: a daemon running 3 h fast whose last good sync was 2 h ago could replace a copy
 synced 10 minutes ago, and a slow clock's fresh copy was answered `stale`, then acknowledged and
 not re-sent for 6 h. An age measured on one clock and turned into a time on another has neither
-fault. Transit only makes a copy look older, the safe direction. A negative, fractional or
-non-numeric `synced_age_s` is refused by the ingest with 400; the function refuses a negative one
-with `invalid_parameter_value` (422) when called directly. Since a stored `synced_at` is always
+fault. Transit only makes a copy look older, the safe direction. A `synced_age_s` that is not a
+whole number from 0 to 315 360 000 (ten years of seconds) is refused by the ingest with 400; the
+function refuses one outside that range with an explicit `invalid_parameter_value` (422) when
+called directly, before `make_interval`, which by itself accepts a negative value and errors on a
+huge one. Since a stored `synced_at` is always
 the dōjō's own past, no future value can be stored and no cap is needed.
 
 **Malformed timestamps.** `checkDeliveryBody` refuses with 400 a `history_at` that is a string
@@ -467,9 +469,9 @@ reconcile (schema unreleased), with no backfill.
 | `crates/senseid/src/tasks/dojo_delivery.rs` | `build_one`, after the second token read, reads `delivery_sync_age`; skips (`Ok(None)`) when its `last_success_at` is null or differs from `before.last_success_at`; sets `synced_age_s` when `capabilities_of_kind(&t.kind)?.history` is false, else `None`; module doc |
 | `crates/senseid/src/tasks/dojo_sync.rs` | tests for gate 19 |
 | `database/ddl/table/dojo/delivery_boards.ddl` | nullable `synced_at timestamptz` and its column comment; table comment's order and its B11 sentence; `history_at` comment no longer "the" orderer |
-| `database/ddl/function/dojo/file_delivery_facts.ddl` | `v_synced := now() - make_interval(secs => (v_facts ->> 'synced_age_s')::bigint)` (null when absent; a negative age raises `invalid_parameter_value`); rule 3 in the stale predicate; insert and update set `synced_at`; header comment and `comment on function` state the four rules |
+| `database/ddl/function/dojo/file_delivery_facts.ddl` | `v_synced := now() - make_interval(secs => (v_facts ->> 'synced_age_s')::bigint)` (null when absent), preceded by an explicit `raise … using errcode = 'invalid_parameter_value'` for an age outside 0..315 360 000; rule 3 in the stale predicate; insert and update set `synced_at`; header comment and `comment on function` state the four rules |
 | `database/tests/dojo/delivery_facts.sql` | header restates the order; gates 20–23 (sql) |
-| `dojo/src/lib/server/delivery-ingest.ts` | `DeliveryFacts.synced_age_s?: number \| null`, a whole number ≥ 0 or null; `history_at` checked as a parseable timestamp; its spec file for gate 23 (dojo) |
+| `dojo/src/lib/server/delivery-ingest.ts` | `DeliveryFacts.synced_age_s?: number \| null`, a whole number in 0..315 360 000 or null; `history_at` checked as a parseable timestamp; its spec file for gate 23 (dojo) |
 | `docs/backlog.md` | close the DF1 entry when built |
 **Workspace.** Resolved from the `repository_id`s of the caller's verified
 `all_my_repositories` rows for `tenant_id`, through `dojo.repositories_in_workspaces` — never
@@ -632,7 +634,9 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
     tracker whose `last_success_at` is `now() - 90 s` sends `synced_age_s` in 90..=95; the same
     board as Jira sends `synced_age_s: null`; moving only `last_success_at` sends nothing on the
     next tick; a GitLab tracker whose `last_success_at` is set to NULL after the board list is
-    read is not posted. `delivery_sync_age` (store test) answers the column and its age in whole
+    read is not posted — asserted on the pure `sync_age(history, token, read)` in
+    `dojo/delivery.rs`, which also skips when the read's `last_success_at` differs from the
+    token's (a sync landed while the facts were built). `delivery_sync_age` (store test) answers the column and its age in whole
     seconds, and `(None, None)` for a null column.
 20. **Order without history (sql).** Both `history_at` null, both `pending_tickets` 0, stored
     `synced_at` = now() - 10 min: incoming `synced_age_s` 7200 → `stale`, the stored row,
@@ -645,10 +649,10 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
     `history_at` null and no `synced_age_s`, pending 3 each → the later arrives `accepted`.
 22. **Completeness first (sql).** Stored `pending_tickets` 0 with `synced_at` an hour ago,
     incoming 3 with `synced_age_s` 0, both history null → `stale`.
-23. **Shape (sql + dojo).** The function called with `synced_age_s` -1 raises
+23. **Shape (sql + dojo).** The function called with `synced_age_s` -1 or 315 360 001 raises
     `invalid_parameter_value`. `checkDeliveryBody`: `synced_age_s` absent, null, 0 or 7200 → ok;
-    -1, 1.5 or `"60"` → 400 `facts.synced_age_s must be a whole number of seconds, 0 or more, or
-    null`; `history_at` `"garbage"` → 400 `facts.history_at must be a timestamp or null`.
+    -1, 1.5, 1e15 or `"60"` → 400 `facts.synced_age_s must be a whole number of seconds from 0
+    to 315360000, or null`; `history_at` `"garbage"` → 400 `facts.history_at must be a timestamp or null`.
 
 ## Wrong gate
 
