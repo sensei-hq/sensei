@@ -65,7 +65,7 @@ guards (§G8). Changed: `get_ticket`'s tracker selection (H5) and the read seam 
    with no port and no username or password. The path must be
    `/orgs/<owner>/projects/<n>` or `/users/<owner>/projects/<n>`, optionally followed
    by `/views/<v>` or `/`. A query or fragment is ignored. `<owner>` must match
-   `^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$` (`_` for Enterprise Managed Users, amended at review) (no `%`-encoded bytes), `<n>` `^[0-9]{1,9}$`.
+   `^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$` (`_` for Enterprise Managed Users, amended at review) (no `%`-encoded bytes), `<n>` `^[0-9]{1,9}$`.
    Anything else → **`invalid_base_url`**.
 2. `api_token` missing or blank → `token_required`. `email_required` and
    `host_not_confirmed` are never returned: the host is fixed.

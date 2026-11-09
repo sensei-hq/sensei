@@ -226,7 +226,11 @@ const TICKET_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs
 async fn within_ticket_deadline<T>(
     read: impl std::future::Future<Output = Answer<T>>,
 ) -> Answer<T> {
-    tokio::time::timeout(TICKET_READ_DEADLINE, read).await.unwrap_or(Answer::Failed("transport"))
+    match tokio::time::timeout(TICKET_READ_DEADLINE, read).await {
+        Ok(answer) => answer,
+        // Out of time is a failure, reported as one: never a "not found".
+        Err(_elapsed) => Answer::Failed("transport"),
+    }
 }
 
 /// How the candidate boards answered one ticket read (tracker-github §H5).
