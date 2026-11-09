@@ -1839,6 +1839,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handover_requires_coordinator() {
+        // RC-1 (beige-aster r1): handover is coordinator-only — a
+        // contributor caller 403s, like every sibling route pins.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, _, _) = working_task(&h, &coord).await;
+        let (caller, caller_token) = register_contributor(&h, &coord.2).await;
+        let (to_lane, _) = register_contributor(&h, &coord.2).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/handover"),
+            Some(lane_body(&caller, json!({"to_lane": to_lane}))),
+            Some(&caller_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "relay_forbidden");
+    }
+
+    #[tokio::test]
     async fn handover_terminal_task_is_409() {
         let h = harness().await;
         let coord = register_coordinator(&h).await;
