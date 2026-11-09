@@ -2250,6 +2250,141 @@ mod tests {
         assert!(body["message_id"].is_string());
     }
 
+    // ── Q2 part 2: crew → person messages in Needs-you ──
+
+    async fn send_lane_message(
+        h: &Harness,
+        lane_id: &str,
+        token: &str,
+        task_id: Option<&str>,
+        to: serde_json::Value,
+        text: &str,
+    ) {
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/messages",
+            Some(lane_body(
+                lane_id,
+                json!({"to": to, "task_id": task_id, "text": text}),
+            )),
+            Some(token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    #[tokio::test]
+    async fn now_serves_person_messages_newest_first() {
+        // Q2-2(a): to.person messages from a lane surface in the person
+        // feed newest-first with lane code, text, and task link.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        send_lane_message(
+            &h,
+            &lane_id,
+            &token,
+            Some(&task_id),
+            json!({"kind": "person"}),
+            "first, needs your eyes",
+        )
+        .await;
+        send_lane_message(
+            &h,
+            &lane_id,
+            &token,
+            Some(&task_id),
+            json!({"kind": "person"}),
+            "second, blocks the merge",
+        )
+        .await;
+        let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let messages = body["person_messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2, "{body}");
+        assert_eq!(messages[0]["text"], "second, blocks the merge");
+        assert_eq!(messages[1]["text"], "first, needs your eyes");
+        let lanes = body["lanes"].as_array().unwrap();
+        let code = lanes.iter().find(|l| l["id"] == lane_id).unwrap()["code"]
+            .as_str()
+            .unwrap();
+        assert_eq!(messages[0]["from_lane_code"], code);
+        assert_eq!(messages[0]["task_id"], task_id);
+        assert_eq!(messages[0]["crew_id"], coord.2);
+        assert!(messages[0]["sent_at"].is_string());
+        assert!(messages[0]["task_title"].is_string());
+    }
+
+    #[tokio::test]
+    async fn now_person_message_clears_after_read() {
+        // Q2-2(b): the envelope's receipt walk, mirrored for the person —
+        // first read delivers, second read reads, third read is clear.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        send_lane_message(
+            &h,
+            &lane_id,
+            &token,
+            Some(&task_id),
+            json!({"kind": "person"}),
+            "read me twice",
+        )
+        .await;
+        for expected in [1, 1, 0] {
+            let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["person_messages"].as_array().unwrap().len(), expected, "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn now_person_messages_exclude_other_addresses() {
+        // Q2-2(c): everyone/coordinator/lane mail stays out of the person
+        // feed — only to.person arrives.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        send_lane_message(
+            &h,
+            &lane_id,
+            &token,
+            Some(&task_id),
+            json!({"kind": "everyone"}),
+            "to all",
+        )
+        .await;
+        send_lane_message(
+            &h,
+            &lane_id,
+            &token,
+            Some(&task_id),
+            json!({"kind": "coordinator"}),
+            "to coord",
+        )
+        .await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/messages",
+            Some(json!({
+                "crew_id": coord.2,
+                "to": {"kind": "lane", "lane_id": lane_id},
+                "task_id": Value::Null, "text": "to lane", "surface": "desktop",
+            })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["person_messages"].as_array().unwrap().len(), 0, "{body}");
+    }
+
     // ── person reads ──
 
     #[tokio::test]
