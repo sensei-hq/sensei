@@ -1775,6 +1775,68 @@ mod tests {
         assert!(!body["reviewer_lane_id"].is_null(), "{body}");
     }
 
+    // ── Fix gate F9: register guidance ──
+
+    #[tokio::test]
+    async fn register_returns_versioned_guidance() {
+        // F9(a): every register carries a guidance block — a version plus
+        // self-sufficient generic contract lines (TTL/cadence, poll paths,
+        // report flow, re-offer/wait pickup, no-transcript rule).
+        let h = harness().await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "coordinator", "family": "muse"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let guidance = &body["guidance"];
+        assert_eq!(guidance["version"], "1", "{body}");
+        let generic = guidance["generic"].as_str().unwrap();
+        for line in ["300", "heartbeat", "tasks/wait", "report", "transcript"] {
+            assert!(generic.contains(line), "generic lacks {line:?}: {generic}");
+        }
+    }
+
+    #[tokio::test]
+    async fn register_known_family_gets_override() {
+        // F9(b): a known family gets generic PLUS its override note.
+        let h = harness().await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "coordinator", "family": "claude-code"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let notes = body["guidance"]["family_notes"].as_str().unwrap();
+        assert!(notes.contains("claude"), "{notes}");
+    }
+
+    #[tokio::test]
+    async fn register_unknown_family_gets_generic_only() {
+        // F9(c): an unknown family (codex is a documented family outside
+        // the four) gets a full generic block and null notes — no crash,
+        // no empty block.
+        let h = harness().await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "coordinator", "family": "codex"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let guidance = &body["guidance"];
+        assert!(!guidance["generic"].as_str().unwrap().is_empty(), "{body}");
+        assert!(guidance["family_notes"].is_null(), "{body}");
+    }
+
     // ── Fix gate F1: force-handover ──
 
     async fn handover(
