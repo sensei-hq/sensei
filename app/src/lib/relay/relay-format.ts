@@ -50,6 +50,9 @@ export const crewRepoLabel = (crew: Pick<RelayCrew, 'repo_key' | 'id'>): string 
 /** One lane's state pill: the lease first, then the person's open question, then the task. */
 export function laneState(lane: RelayLane): string {
   if (lane.lease_state === 'expired') return 'lease lost';
+  // A live lease with a reported quota pause reads paused, never lost —
+  // and a dead lease reads lost even with a stale pause on the row.
+  if (lane.limit_scope) return 'paused';
   if (!lane.task) return 'idle';
   if (lane.task.needs_answer) return 'needs your answer';
   return taskStateLabel(lane.task.state);

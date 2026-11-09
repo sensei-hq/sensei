@@ -300,6 +300,13 @@
                   {#if lost === 'lease lost' && lane.lease_expires_at}
                     <span class="text-xs text-warning">at {hhmm(lane.lease_expires_at)}</span>
                   {/if}
+                  {#if lost === 'paused'}
+                    <span class="text-xs text-warning"
+                      >{lane.limit_scope} · {lane.limit_resumes_at
+                        ? `until ${hhmm(lane.limit_resumes_at)}`
+                        : 'resume unknown'}</span
+                    >
+                  {/if}
                 </div>
                 <div class="text-sm text-ink-soft" data-row-line="2">
                   {#if lane.task}

@@ -146,6 +146,24 @@ describe('Relay · task — the header', () => {
     expect(facts).toContain('tests 1');
     expect(facts).toContain('impl 2');
   });
+
+  it('a limit-paused holder reads paused with scope and resume time', async () => {
+    const resumes = new Date(Date.now() + 120 * 60_000).toISOString();
+    const view = F.taskView();
+    const { c } = await open({
+      task: F.ok({
+        ...view,
+        task: {
+          ...view.task,
+          lane: { ...view.task.lane!, limit_scope: 'weekly', limit_resumes_at: resumes, limit_note: null },
+        },
+      }),
+    });
+    const facts = text(one(c, '[data-task-facts]'));
+    expect(facts).toContain('paused');
+    expect(facts).toContain('weekly');
+    expect(facts).toContain(hhmm(resumes));
+  });
 });
 
 describe('Relay · task — Run details', () => {
