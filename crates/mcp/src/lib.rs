@@ -3199,6 +3199,31 @@ mod tests {
     }
 
     #[test]
+    fn relay_report_forwards_partial_flag() {
+        // F1: an explicit partial flag rides to the daemon; omitted it
+        // stays absent (never null-filled) and the report is full.
+        let req = daemon_request_for(
+            "relay_report_task",
+            &lane_args(json!({"task_id": "t1", "phase": "impl", "round": 1,
+                              "summary": {"changed": "c"}, "partial": true})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.path, "/api/relay/tasks/t1/report");
+        assert_eq!(req.body.as_ref().unwrap()["partial"], true);
+        let req = daemon_request_for(
+            "relay_report_task",
+            &lane_args(json!({"task_id": "t1", "phase": "impl", "round": 1,
+                              "summary": {"changed": "c"}})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert!(req.body.as_ref().unwrap().get("partial").is_none());
+    }
+
+    #[test]
     fn relay_message_requires_to_and_text() {
         assert_eq!(
             missing_required("relay_send_message", &lane_args(json!({}))),

@@ -1657,6 +1657,87 @@ mod tests {
         assert_eq!(body["task"]["state"], "done");
     }
 
+    // ── Fix gate F1: partial reports ──
+
+    fn partial_report_body(lane_id: &str) -> Value {
+        lane_body(
+            lane_id,
+            json!({
+                "phase": "tests", "round": 1, "partial": true,
+                "summary": {"changed": "Halfway.", "look_at": null, "flags": null},
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn report_partial_stays_working_no_reviewer_pick() {
+        // F1: a partial report records progress without moving the task:
+        // still working, same round, no reviewer picked, and the
+        // reported action carries props.partial=true.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        let _ = call(&h, "GET", &format!("/api/relay/tasks?lane_id={lane_id}"), None, Some(&token))
+            .await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(partial_report_body(&lane_id)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "working");
+        assert!(body["reviewer_lane_id"].is_null(), "{body}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "working");
+        assert_eq!(view["task"]["round"], 1);
+        let reported = view["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["kind"] == "reported")
+            .unwrap();
+        assert_eq!(reported["props"]["partial"], true);
+    }
+
+    #[tokio::test]
+    async fn report_full_after_partial_lands_in_review() {
+        // F1: a full report after partials moves to in_review and picks
+        // the reviewer, on the same round the partials kept.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        let _ = call(&h, "GET", &format!("/api/relay/tasks?lane_id={lane_id}"), None, Some(&token))
+            .await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(partial_report_body(&lane_id)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&lane_id)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "in_review");
+        assert_eq!(body["round"], 1);
+        assert!(!body["reviewer_lane_id"].is_null(), "{body}");
+    }
+
     #[tokio::test]
     async fn assign_merge_phase_is_422_q3() {
         let h = harness().await;
