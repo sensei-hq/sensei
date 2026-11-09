@@ -2317,6 +2317,171 @@ mod tests {
         assert!(body["message_id"].is_string());
     }
 
+    // ── Limit exhaustion: lanes report quota pauses ──
+
+    async fn limit_pause(
+        h: &Harness,
+        lane_id: &str,
+        token: &str,
+        scope: &str,
+        resumes_at: serde_json::Value,
+        note: Option<&str>,
+    ) -> (StatusCode, serde_json::Value) {
+        call(
+            h,
+            "POST",
+            "/api/relay/limit_pause",
+            Some(lane_body(
+                lane_id,
+                json!({"scope": scope, "resumes_at": resumes_at, "note": note}),
+            )),
+            Some(token),
+        )
+        .await
+    }
+
+    async fn now_lane(h: &Harness, lane_id: &str) -> serde_json::Value {
+        let (status, body) = call(h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["id"] == lane_id)
+            .cloned()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn limit_pause_records_scope_and_resume() {
+        // The lane reports quota exhaustion; the person feed echoes scope
+        // + resume time on the lane row (lease untouched — still live).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = limit_pause(
+            &h,
+            &lane_id,
+            &token,
+            "weekly",
+            json!("2030-01-01T00:00:00Z"),
+            Some("weekly cap hit during backfill"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let lane = now_lane(&h, &lane_id).await;
+        assert_eq!(lane["limit_scope"], "weekly", "{lane}");
+        assert_eq!(lane["limit_resumes_at"], "2030-01-01T00:00:00Z", "{lane}");
+        assert_eq!(lane["lease_state"], "granted", "{lane}");
+    }
+
+    #[tokio::test]
+    async fn limit_pause_unknown_scope_rejected() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) =
+            limit_pause(&h, &lane_id, &token, "monthly", serde_json::Value::Null, None).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+
+    #[tokio::test]
+    async fn sweep_paused_lane_task_interrupts_without_lease_expiry() {
+        // A paused lane's held task suspends for re-offer elsewhere, but
+        // the lane itself is not swept: no expiry, no failure.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        let (status, _) = limit_pause(
+            &h,
+            &lane_id,
+            &token,
+            "daily",
+            serde_json::Value::Null,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        h.state.pg.relay_sweep_leases(chrono::Utc::now()).await.unwrap();
+        let lane = now_lane(&h, &lane_id).await;
+        assert_eq!(lane["lease_state"], "granted", "{lane}");
+        assert_eq!(lane["limit_scope"], "daily", "{lane}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "interrupted", "{view}");
+    }
+
+    #[tokio::test]
+    async fn heartbeat_clears_pause_only_past_resume() {
+        // Beating before resumes_at keeps the pause (still on quota);
+        // beating after it resumes. Unknown resume clears on next beat.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, _) = limit_pause(
+            &h,
+            &lane_id,
+            &token,
+            "daily",
+            json!("2030-01-01T00:00:00Z"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let lane = now_lane(&h, &lane_id).await;
+        assert_eq!(lane["limit_scope"], "daily", "{lane}");
+        // Past the resume time the same beat resumes.
+        h.state
+            .pg
+            .relay_heartbeat(
+                lane_id.parse().unwrap(),
+                chrono::DateTime::parse_from_rfc3339("2030-01-02T00:00:00Z")
+                    .unwrap()
+                    .to_utc(),
+            )
+            .await
+            .unwrap();
+        let lane = now_lane(&h, &lane_id).await;
+        assert!(lane["limit_scope"].is_null(), "{lane}");
+        assert!(lane["limit_resumes_at"].is_null(), "{lane}");
+    }
+
+    #[tokio::test]
+    async fn reregister_clears_pause() {
+        // Leaving and resuming returns the lane to live duty: no stale
+        // pause survives the round trip.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, _) =
+            limit_pause(&h, &lane_id, &token, "other", serde_json::Value::Null, None).await;
+        assert_eq!(status, StatusCode::OK);
+        for route in ["/api/relay/unregister", "/api/relay/reregister"] {
+            let (status, body) = call(
+                &h,
+                "POST",
+                route,
+                Some(lane_body(&lane_id, json!({}))),
+                Some(&token),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+        let lane = now_lane(&h, &lane_id).await;
+        assert!(lane["limit_scope"].is_null(), "{lane}");
+    }
+
     // ── person reads ──
 
     #[tokio::test]
