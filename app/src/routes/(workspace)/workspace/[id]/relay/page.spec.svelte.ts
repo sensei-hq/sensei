@@ -1016,6 +1016,27 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
     expect(text(lost)).toContain(`at ${hhmm(expired)}`);
     expect(text(one(c, '[data-lane-row="L5"] [data-state]'))).toBe('interrupted');
   });
+
+  it('a limit-paused lane reads "paused" with scope and resume time — never "lease lost" on a live lease', async () => {
+    const resumes = new Date(Date.now() + 120 * 60_000).toISOString();
+    const { c } = await open({
+      now: F.ok(
+        F.now({
+          lanes: [
+            F.lane({ id: F.LANE.L2, code: 'L2', title: 'Billing', lease_state: 'granted', limit_scope: 'weekly', limit_resumes_at: resumes, limit_note: null, task: task({ id: 't-b', state: 'working' }) }),
+            F.lane({ id: F.LANE.L5, code: 'L5', title: 'Docs', lease_state: 'granted', limit_scope: 'daily', limit_resumes_at: null, limit_note: null, task: null }),
+          ],
+        }),
+      ),
+    });
+    const paused = need(one(c, '[data-lane-row="L2"]'), 'the L2 row');
+    expect(text(one(paused, '[data-state]'))).toBe('paused');
+    expect(text(paused)).toContain('weekly');
+    expect(text(paused)).toContain(`until ${hhmm(resumes)}`);
+    const unknown = need(one(c, '[data-lane-row="L5"]'), 'the L5 row');
+    expect(text(one(unknown, '[data-state]'))).toBe('paused');
+    expect(text(unknown)).toContain('resume unknown');
+  });
 });
 
 describe('Relay r2 — Completed today rows (L1)', () => {

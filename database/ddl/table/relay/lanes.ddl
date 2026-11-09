@@ -19,7 +19,13 @@ create table if not exists relay.lanes (
   checkpoint      jsonb,
   registered_at   timestamptz     not null default current_timestamp,
   unregistered_at timestamptz,
+  limit_paused_at timestamptz,
+  limit_scope     relay.limit_scope,
+  limit_resumes_at timestamptz,
+  limit_note      text,
   constraint lanes_pkey primary key (user_id, id),
+  constraint lanes_pause_coherent check (
+    (limit_paused_at is null) = (limit_scope is null)),
   constraint lanes_id_v7 check (substring(id::text from 15 for 1) = '7'),
   constraint lanes_crew_fk foreign key (user_id, crew_id) references relay.crews (user_id, id),
   constraint lanes_code_per_crew unique (user_id, crew_id, code)
@@ -40,3 +46,7 @@ comment on column relay.lanes.worktree is 'The broker-created worktree. Null unt
 comment on column relay.lanes.token_hash is 'sha256 hex of the lane token. The token itself is never stored.';
 comment on column relay.lanes.checkpoint is 'Where the lane was, for resume after interrupt. Null until set.';
 comment on column relay.lanes.unregistered_at is 'Null until the lane leaves. Rows persist: history keeps them.';
+comment on column relay.lanes.limit_paused_at is 'When the lane reported quota exhaustion. Null: not paused. Distinct from lease expiry: a paused lane may hold a live lease.';
+comment on column relay.lanes.limit_scope is 'Which quota ran out. Set exactly when paused (lanes_pause_coherent).';
+comment on column relay.lanes.limit_resumes_at is 'Quota-reset time from the warning. Null: unknown — any beat resumes.';
+comment on column relay.lanes.limit_note is 'The lane''s own words on the pause. Audit, shown nowhere yet.';

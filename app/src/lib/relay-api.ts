@@ -109,6 +109,9 @@ export interface RelayLaneTask {
   needs_answer: boolean;
 }
 
+/** Which quota a limit-paused lane ran out of. */
+export type RelayLimitScope = 'daily' | 'weekly' | 'other';
+
 export interface RelayLane {
   id: string;
   crew_id: string;
@@ -122,6 +125,12 @@ export interface RelayLane {
   model: string | null;
   lease_state: RelayLeaseState;
   lease_expires_at: string | null;
+  /** Set exactly when the lane reported quota exhaustion (lease may be live). */
+  limit_scope: RelayLimitScope | null;
+  /** Quota-reset instant; null when unknown (any beat resumes). */
+  limit_resumes_at: string | null;
+  /** The lane's own words on the pause (audit; shown nowhere yet). */
+  limit_note: string | null;
   task: RelayLaneTask | null;
 }
 
@@ -264,6 +273,12 @@ export interface RelayTaskLane {
   family: string;
   version: string | null;
   model: string | null;
+  /** Set exactly when the lane reported quota exhaustion. */
+  limit_scope: RelayLimitScope | null;
+  /** Quota-reset instant; null when unknown. */
+  limit_resumes_at: string | null;
+  /** The lane's own words on the pause (audit; shown nowhere yet). */
+  limit_note: string | null;
 }
 
 export interface RelayTaskHeader {

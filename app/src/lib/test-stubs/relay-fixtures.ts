@@ -67,6 +67,9 @@ export function lane(over: Partial<RelayLane> = {}): RelayLane {
     model: 'claude-opus-5-5',
     lease_state: 'granted',
     lease_expires_at: null,
+    limit_scope: null,
+    limit_resumes_at: null,
+    limit_note: null,
     task: {
       id: 't-structure',
       title: 'Structure view on the shell',
@@ -548,7 +551,7 @@ export function taskView(over: Partial<RelayTaskView> = {}): RelayTaskView {
       state: 'done',
       round: 2,
       ticket: { provider: 'jira', key: 'SEN-52', url: 'https://acme.atlassian.net/browse/SEN-52' },
-      lane: { id: LANE.L1, code: 'L1', title: 'Diagrams', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5' },
+      lane: { id: LANE.L1, code: 'L1', title: 'Diagrams', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5', limit_scope: null, limit_resumes_at: null, limit_note: null },
       assigned_at: minutesAgo(240),
       completed_at: minutesAgo(10),
       state_changed_at: minutesAgo(10),

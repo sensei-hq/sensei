@@ -67,14 +67,16 @@ carry their own, so a crew spans repos, and null is read as "no repository", Q18
 `user_id` · `id` uuid v7 · `crew_id` · `code` (`L1`…, unique per crew) · `title` null (the objective, e.g. "Diagrams") · `role`
 (`'coordinator','contributor'`; one coordinator per crew) · `family` / `version` null / `model` null · `capabilities` text[]
 · `repo`, `worktree` null (the broker creates it) · `token_hash` · `checkpoint` jsonb null (for `reregister`) ·
-`registered_at` / `unregistered_at` null.
-Liveness is **not** a column here; it's the lane's lease (below).
+`registered_at` / `unregistered_at` null · `limit_paused_at` / `limit_scope` (`'daily','weekly','other'`) /
+`limit_resumes_at` / `limit_note` (all null when working; paused ⟺ scope set).
+Liveness is **not** a column here; it's the lane's lease (below). A limit pause is not liveness either: the
+lane may hold a live lease while paused, and the sweep suspends its held task without expiring it.
 
 ### `relay.leases`: one table for every lease
 `user_id` · `id` · `crew_id` · `lane_id` · `kind` (`'lane','resource'`) · `resource` text null (`rust-build`, `e2e`…; null for a lane
 lease) · `state` (`'queued','granted','released','expired','refused'`) · `expires_at` null · `granted_at`,
 `released_at` null · `props` jsonb (disk/swap at grant, refusal reason).
-- A lane lease is renewed by every MCP call. When it expires, the lane is suspended.
+- A lane lease is renewed only by `heartbeat`. When it expires, the lane is suspended.
 - A resource lease is the build slot: at most one granted per resource, machine-wide (partial unique).
 
 ### `relay.items`: the queue (triage and backlog)
