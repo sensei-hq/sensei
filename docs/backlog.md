@@ -67,6 +67,13 @@ status — open or closed is GitHub's answer.
 
 ## Open — not yet filed
 
+- **Delivery copy order for boards without history (DF1, 2026-11-09).** GitHub and GitLab boards never set `history_at`, so the
+  dōjō keeps whichever push came last; a stale daemon can overwrite a fresher copy. Add `synced_at` to the facts and order by it
+  when neither copy has history. `docs/analysis/2026-11-09-delivery-metrics-forge-trackers.md`.
+
+- **Forge tickets from unshared repositories travel with the board (DF2, 2026-11-09, deferred).** Matches Jira. Forge tickets
+  carry their repository, so a later slice could send only tickets from the workspace's shared repositories.
+
 - **Known limitation: two windows can race on the single `ui.views` config entry (D87 panel store, 2026-11-04).** The last save
   wins, so a panel toggled in another window at the same moment can be lost. Fix if it's ever seen: per-view keys, or
   compare-and-set on the daemon.

@@ -71,7 +71,7 @@ only its own sessions; the Dōjō is the one place work on a shared board comes 
 
 | Family | Source | Same on every daemon? | Merge in the Dōjō |
 |---|---|---|---|
-| **Board facts**: board name; sprint details and removal; `SprintFacts`, `SprintSdlc`; `predictability`; each ticket's key, title, status category, points, sprint membership, `issue_created_at`, removal | Jira, via sync and the history task | Yes, once each daemon has read the same history | **One copy per board, replaced whole** (D4 order). Never summed. |
+| **Board facts**: board name; sprint details and removal; `SprintFacts`, `SprintSdlc`; `predictability`; each ticket's key, title, status category, points, sprint membership, `issue_created_at`, removal | The tracker (Jira, GitLab or GitHub), via sync and, where the adapter reads it, the history task. A board without history reports 0 pending and history-built figures read `unsupported_by_tracker` (2026-11-09, `docs/analysis/2026-11-09-delivery-metrics-forge-trackers.md`) | Yes, once each daemon has read the same history | **One copy per board, replaced whole** (D4 order). Never summed. |
 | **Sprint effort**: the sprint's `linked_sprint` `Usage` partition | This persona's provable sessions in the sprint window linked to the sprint's tickets | No | **Sum per field** across people, each value with its `_n`. |
 | **Project effort**: tokens and prompts over the distinct union of the board's tickets' sessions, `sessions_without_tokens` | This persona's provable sessions | No | **Sum**, then recompute the per-ticket ratios (below). |
 | **Ticket effort**: the `TicketSdlc` numerators below | This persona's provable sessions linked to the ticket | No | **Per field**, below. |

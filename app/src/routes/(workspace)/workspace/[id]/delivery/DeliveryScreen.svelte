@@ -36,7 +36,7 @@
       icon="i-solar-delivery-bold-duotone"
       eyebrow="Delivery Metrics"
       title="Delivery Metrics"
-      description="How each sprint went: commitment kept, scope that moved, carry-over and velocity, read from Jira, with the AI work in your sessions behind it. Team figures are in the dōjō."
+      description="How each sprint went: commitment kept, scope that moved, carry-over and velocity, read from your tracker, with the AI work in your sessions behind it. Team figures are in the dōjō."
     />
   {/snippet}
   <section data-screen="delivery" class="flex flex-col">

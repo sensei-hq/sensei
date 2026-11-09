@@ -201,6 +201,12 @@ describe('Delivery Metrics', () => {
     }
   });
 
+  it('names no one tracker: a GitHub or GitLab board reads the same screen', async () => {
+    const { container } = await open();
+    expect(container.textContent).toContain('read from your tracker');
+    expect(container.textContent).not.toMatch(/Jira/);
+  });
+
   it('no sprint board shows the not-connected words and the Integrations link', async () => {
     const { q } = await open({ tryListTrackers: async () => ({ ok: true, data: [] }) });
     expect(q('[data-view="not_connected"]')!.textContent).toContain('This workspace has no sprint board connected.');

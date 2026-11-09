@@ -104,6 +104,20 @@ async fn pending_counts_what_the_history_task_would_still_read() {
 }
 
 #[tokio::test]
+async fn a_board_whose_tracker_reads_no_history_has_nothing_pending() {
+    // GitHub and GitLab adapters read no history (G8): the history task skips them,
+    // so counting their updated tickets as pending would claim a read that never comes.
+    for kind in ["gitlab", "github"] {
+        let s = pg_store().await;
+        let t = board(&s).await;
+        exec(&s, "UPDATE sensei.tracker_tasks SET history_through = NULL, issue_updated_at = '2026-10-05Z' WHERE tracker_id = $1", t).await;
+        assert!(s.delivery_token(t).await.unwrap().pending > 0, "jira: due tickets are pending");
+        exec(&s, &format!("UPDATE sensei.trackers SET kind = '{kind}' WHERE id = $1"), t).await;
+        assert_eq!(s.delivery_token(t).await.unwrap().pending, 0, "{kind}");
+    }
+}
+
+#[tokio::test]
 async fn the_token_moves_when_the_history_task_or_a_sync_writes() {
     let s = pg_store().await;
     let t = board(&s).await;

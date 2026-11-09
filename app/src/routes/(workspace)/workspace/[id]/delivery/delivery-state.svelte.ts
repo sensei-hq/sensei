@@ -54,7 +54,7 @@ export interface TicketLink {
   href: string;
 }
 
-/** The project figures read from Jira; the rest come from your sessions (spec D1). */
+/** The project figures read from the tracker; the rest come from your sessions (spec D1). */
 const BOARD_FACTS = new Set(['predictability']);
 
 const FACTS: Array<[Fact['key'], string]> = [
@@ -121,7 +121,7 @@ export class DeliveryBoard {
     return projectSdlcFigures(this.tracker.sdlc_project, this.#words);
   }
 
-  /** The project row's board fact: predictability, read from Jira (D1). */
+  /** The project row's board fact: predictability, read from the tracker (D1). */
   get projectBoard(): SdlcFigure[] {
     return this.project.filter((f) => BOARD_FACTS.has(f.key));
   }

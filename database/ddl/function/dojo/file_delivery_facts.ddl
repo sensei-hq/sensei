@@ -1,6 +1,6 @@
 set search_path to dojo, extensions;
 
--- File one board's Jira-derived facts for the signed-in person's daemon, kept as
+-- File one board's tracker-derived facts for the signed-in person's daemon, kept as
 -- ONE copy per board (spec docs/spec/daemon/tracker-delivery-metrics.md D4; #352).
 --
 -- Consent is the caller's own: every repo_key must be their verdict row of

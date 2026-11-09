@@ -108,6 +108,7 @@ pub struct WithdrawalKey {
 }
 
 type TokenRow = (
+    String,
     Option<chrono::DateTime<chrono::Utc>>,
     i64,
     Option<chrono::DateTime<chrono::Utc>>,
@@ -205,10 +206,11 @@ impl PgStore {
     }
 
     /// The board's consistency token: its last sync, the history task's pending
-    /// count, and the newest history and update it holds.
+    /// count, and the newest history and update it holds. A tracker whose adapter
+    /// reads no history has nothing pending: the history task never reads it (G8).
     pub async fn delivery_token(&self, tracker_id: uuid::Uuid) -> Result<DeliveryToken, String> {
         let sql = format!(
-            "SELECT tr.last_success_at,
+            "SELECT tr.kind::text, tr.last_success_at,
                     (SELECT count(*) FROM sensei.tracker_tasks WHERE tracker_id = tr.id AND {HISTORY_DUE}),
                     (SELECT max(history_through) FROM sensei.tracker_tasks WHERE tracker_id = tr.id),
                     (SELECT max(issue_updated_at) FROM sensei.tracker_tasks WHERE tracker_id = tr.id)
@@ -220,8 +222,10 @@ impl PgStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| format!("delivery_token({tracker_id}): {e}"))?;
-        let (last_success_at, pending, history_through, issue_updated_at) =
+        let (kind, last_success_at, pending, history_through, issue_updated_at) =
             row.ok_or_else(|| format!("delivery_token({tracker_id}): no such tracker"))?;
+        let pending =
+            if crate::tracker::capabilities_of_kind(&kind)?.history { pending } else { 0 };
         Ok(DeliveryToken { last_success_at, pending, history_through, issue_updated_at })
     }
 
