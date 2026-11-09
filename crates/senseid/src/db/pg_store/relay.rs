@@ -5092,6 +5092,35 @@ mod tests {
         assert_eq!(repo, "github.com/o/r");
     }
 
+    // ── Fix gate F2: repo_key is required (empty rejected) ──
+
+    #[tokio::test]
+    async fn plan_empty_repo_key_rejected() {
+        // An explicit empty repo_key is always a caller bug: rejected
+        // even when the item names a repository (never silently
+        // inherited over, never stored).
+        let pg = PgStore::test_store().await;
+        let (_, _, a1, _, _, _) = fx_two_crews(&pg).await;
+        let mut input = plan_input(None);
+        input.title = Some("Manual".into());
+        input.repo_key = Some("".into());
+        let err = pg.relay_plan_item(u1(), a1, input).await.unwrap_err();
+        match err {
+            RelayError::Validation(m) => assert_eq!(m, "repo_key must not be empty"),
+            other => panic!("wrong error: {other:?}"),
+        }
+        let item = v7(0x54);
+        fx_item(&pg, u1(), item, "backlog", Some("github.com/o/r"), None).await;
+        let mut input = plan_input(Some(item));
+        input.repo_key = Some("   ".into());
+        let err = pg.relay_plan_item(u1(), a1, input).await.unwrap_err();
+        match err {
+            RelayError::Validation(m) => assert_eq!(m, "repo_key must not be empty"),
+            other => panic!("wrong error: {other:?}"),
+        }
+        assert_eq!(count(&pg, "tasks").await, 0);
+    }
+
     #[tokio::test]
     async fn plan_manual_task_without_item() {
         let pg = PgStore::test_store().await;

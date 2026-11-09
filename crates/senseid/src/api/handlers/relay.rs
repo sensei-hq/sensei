@@ -1728,6 +1728,29 @@ mod tests {
         assert_eq!(body["error"], "relay_forbidden");
     }
 
+    // ── Fix gate F2: repo_key is required (null rejected) ──
+
+    #[tokio::test]
+    async fn plan_explicit_null_repo_key_rejected_422() {
+        // F2: the plan body accepts explicit null syntactically, but a
+        // task needs a repository — the rejection is 422 +
+        // relay_invalid, documented on RelayPlanInput (never a silent
+        // accept, never a 500).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/tasks/plan",
+            Some(lane_body(&coord.0, json!({"title": "T", "phase": "tests", "repo_key": null}))),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "relay_invalid");
+        assert_eq!(body["message"], "a task needs a repository");
+    }
+
     // ── decisions / messages ──
 
     #[tokio::test]
