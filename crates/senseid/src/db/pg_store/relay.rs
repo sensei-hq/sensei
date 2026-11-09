@@ -90,7 +90,10 @@ pub struct RelayReregisterOutput {
 pub struct RelayPlanInput {
     pub item_id: Option<Uuid>,
     /// Required when no item (or when the item names no repository — tasks
-    /// require `repo_key` where manual items may omit it).
+    /// require `repo_key` where manual items may omit it). F2 contract:
+    /// explicit null falls back to the item, else 422s ("a task needs a
+    /// repository"); explicit empty always 422s ("repo_key must not be
+    /// empty"), even with a repo'd item.
     pub title: Option<String>,
     pub phase: RelayTaskPhase,
     pub repo_key: Option<String>,
@@ -1554,6 +1557,12 @@ impl PgStore {
         let crew_id = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
         Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
+        // F2: an explicit empty repo_key is always a caller bug — reject
+        // it outright, even when the item names a repository (an empty
+        // string must never silently inherit over, nor be stored).
+        if input.repo_key.as_deref().is_some_and(|s| s.trim().is_empty()) {
+            return Err(RelayError::Validation("repo_key must not be empty".into()));
+        }
         let (item_id, title, repo_key, workspace_id) = match input.item_id {
             Some(item_id) => {
                 let row: Option<(String, String, Option<String>, Option<Uuid>)> =
@@ -5090,6 +5099,35 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(repo, "github.com/o/r");
+    }
+
+    // ── Fix gate F2: repo_key is required (empty rejected) ──
+
+    #[tokio::test]
+    async fn plan_empty_repo_key_rejected() {
+        // An explicit empty repo_key is always a caller bug: rejected
+        // even when the item names a repository (never silently
+        // inherited over, never stored).
+        let pg = PgStore::test_store().await;
+        let (_, _, a1, _, _, _) = fx_two_crews(&pg).await;
+        let mut input = plan_input(None);
+        input.title = Some("Manual".into());
+        input.repo_key = Some("".into());
+        let err = pg.relay_plan_item(u1(), a1, input).await.unwrap_err();
+        match err {
+            RelayError::Validation(m) => assert_eq!(m, "repo_key must not be empty"),
+            other => panic!("wrong error: {other:?}"),
+        }
+        let item = v7(0x54);
+        fx_item(&pg, u1(), item, "backlog", Some("github.com/o/r"), None).await;
+        let mut input = plan_input(Some(item));
+        input.repo_key = Some("   ".into());
+        let err = pg.relay_plan_item(u1(), a1, input).await.unwrap_err();
+        match err {
+            RelayError::Validation(m) => assert_eq!(m, "repo_key must not be empty"),
+            other => panic!("wrong error: {other:?}"),
+        }
+        assert_eq!(count(&pg, "tasks").await, 0);
     }
 
     #[tokio::test]
