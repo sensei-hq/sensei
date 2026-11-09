@@ -32,6 +32,8 @@ const connected: TrackerConnection = {
   sprint_source: null,
   sprint_source_changed_at: null,
   full_path: null,
+  url: null,
+  iteration_field: null,
   status: 'connected',
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
@@ -133,7 +135,48 @@ describe('not connected', () => {
     expect(q('[data-writeback="unsupported"]')!.textContent).toContain('not available for GitLab yet');
     expect(q('[data-action="writeback"]')).toBeNull();
     expect(card.textContent).not.toMatch(/Jira/);
-    expect(m.container.textContent).toContain('Jira or GitLab boards');
+    expect(m.container.textContent).toContain('Jira, GitLab or GitHub boards');
+  });
+
+  it('offers GitHub: a project URL, a token, an optional Iteration field, and the field names when asked', async () => {
+    const { q, state } = await open();
+    const github = q<HTMLInputElement>('[data-tracker="github"] input')!;
+    expect(github.disabled).toBe(false);
+    github.click();
+    flushSync();
+    expect(state.kind).toBe('github');
+    expect(q('[data-field="email"]')).toBeNull();
+    expect(q('[data-field="confirm_host"]')).toBeNull();
+    expect(q('[data-field="board_url"]')).not.toBeNull();
+    expect(q('[data-field="token"]')).not.toBeNull();
+    expect(q('[data-field="iteration_field"]')).not.toBeNull();
+    expect(q('[data-github-choices]')).toBeNull();
+    state.iterationFields = ['Sprint', 'Release'];
+    flushSync();
+    const choices = q('[data-github-choices]')!;
+    expect(choices.textContent).toContain('Sprint');
+    expect(choices.textContent).toContain('Release');
+  });
+
+  it('a GitHub project names GitHub, its Iteration field and no write-back, and never Jira or GitLab', async () => {
+    const github: TrackerConnection = {
+      ...connected,
+      kind: 'github',
+      base_url: 'https://api.github.com',
+      account: 'user1',
+      external_scope: 'acme/3',
+      board_ref: 'project:PVT_1',
+      board_name: 'Roadmap',
+      url: 'https://github.com/orgs/acme/projects/3',
+      iteration_field: 'Sprint',
+      writeback: { ...connected.writeback, enabled: false },
+    };
+    const { q } = await open({ tryListTrackers: async () => ({ ok: true, data: [github] }) });
+    const card = q('[data-tracker="t-1"]')!;
+    expect(card.textContent).toContain('GitHub · acme/3 · Roadmap');
+    expect(card.textContent).toContain('Sprints: the Sprint iteration field');
+    expect(q('[data-writeback="unsupported"]')!.textContent).toContain('not available for GitHub yet');
+    expect(card.textContent).not.toMatch(/Jira|GitLab/);
   });
 
   it('links to Atlassian to create a token and says where it is kept', async () => {
@@ -307,7 +350,7 @@ describe('write-back on the board card (W-UI)', () => {
   it('the header says what sensei writes back, and where', async () => {
     const { m } = await open({ tryListTrackers: async () => ({ ok: true, data: [active] }) });
     expect(m.container.textContent).toContain(
-      'Connect this workspace’s Jira or GitLab boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map (GitLab boards are read-only for now).',
+      'Connect this workspace’s Jira, GitLab or GitHub boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map (GitLab and GitHub boards are read-only for now).',
     );
     expect(m.container.textContent).not.toContain('never changes anything in Jira');
   });

@@ -225,6 +225,35 @@ pub fn tracker_for_key<'a>(
     best.map(|(t, _)| t)
 }
 
+/// The trackers that may answer a forge `key`, in the order to try them
+/// (tracker-github §H5). `holding` are the trackers whose mirror holds a task of the
+/// key's repository; they are tried first among GitHub's.
+pub fn candidates_for_key<'a>(
+    trackers: &'a [crate::db::pg_store::trackers::TrackerRow],
+    key: &str,
+    host: Option<&str>,
+    holding: &[uuid::Uuid],
+) -> Vec<&'a crate::db::pg_store::trackers::TrackerRow> {
+    use crate::tracker::TrackerKind;
+    // A project spans repositories, so the path cannot pick a GitHub board: those
+    // holding the repository first, then the rest; containment decides (§H5.3).
+    let github = || {
+        let (first, rest): (Vec<_>, Vec<_>) = trackers
+            .iter()
+            .filter(|t| TrackerKind::parse(&t.kind) == Some(TrackerKind::Github))
+            .partition(|t| holding.contains(&t.id));
+        first.into_iter().chain(rest).collect()
+    };
+    match host {
+        Some(h) if h.eq_ignore_ascii_case("github.com") => github(),
+        Some(_) => tracker_for_key(trackers, key, host).into_iter().collect(),
+        None => match tracker_for_key(trackers, key, None) {
+            Some(gitlab) => vec![gitlab],
+            None => github(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,5 +432,47 @@ mod tests {
             host_of("acme/platform#12", None).as_deref(),
             Some("https://gitlab.example.com")
         );
+    }
+
+    #[test]
+    fn a_key_is_tried_on_its_own_forge_and_github_boards_holding_its_repo_first() {
+        let row = |kind: &str, base: &str, full_path: Option<&str>, n: u128| {
+            crate::db::pg_store::trackers::TrackerRow {
+                id: uuid::Uuid::from_u128(n),
+                kind: kind.into(),
+                base_url: base.into(),
+                params: serde_json::json!({"full_path": full_path}),
+                ..crate::db::pg_store::trackers::TrackerRow::test_default()
+            }
+        };
+        let trackers = [
+            row("gitlab", "https://gitlab.example.com", Some("acme"), 1),
+            row("github", "https://api.github.com", None, 2),
+            row("github", "https://api.github.com", None, 3),
+            row("jira", "https://acme.atlassian.net", None, 4),
+        ];
+        let ids = |host: Option<&str>, key: &str, holding: &[u128]| {
+            let holding: Vec<uuid::Uuid> =
+                holding.iter().map(|n| uuid::Uuid::from_u128(*n)).collect();
+            candidates_for_key(&trackers, key, host, &holding)
+                .iter()
+                .map(|t| t.id.as_u128())
+                .collect::<Vec<_>>()
+        };
+        // Read on github.com: only GitHub's boards, those holding the repo first.
+        assert_eq!(ids(Some("github.com"), "acme/platform#2", &[3]), [3, 2]);
+        assert_eq!(
+            ids(Some("github.com"), "acme/platform#2", &[]),
+            [2, 3],
+            "an unmirrored repo is still tried"
+        );
+        // Read on a GitLab host: that host's GitLab board only.
+        assert_eq!(ids(Some("gitlab.example.com"), "acme/platform#2", &[2, 3]), [1]);
+        assert!(ids(Some("git.other.org"), "acme/platform#2", &[2]).is_empty());
+        // Typed, no host: GitLab by path first, else GitHub's.
+        assert_eq!(ids(None, "acme/platform#2", &[2]), [1]);
+        assert_eq!(ids(None, "other/repo#2", &[3]), [3, 2]);
+        let no_github = &trackers[..1];
+        assert!(candidates_for_key(no_github, "other/repo#2", None, &[]).is_empty());
     }
 }

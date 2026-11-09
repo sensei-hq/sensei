@@ -30,6 +30,8 @@ const row = (over: Partial<TrackerConnection> = {}): TrackerConnection => ({
   sprint_source: null,
   sprint_source_changed_at: null,
   full_path: null,
+  url: null,
+  iteration_field: null,
   status: 'connected',
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
@@ -272,6 +274,71 @@ describe('the connect form', () => {
     expect(errorFor(401, { error: 'unauthorized' }, 'gitlab').link).toBeNull();
     expect(errorFor(404, { error: 'board_not_found', base_url: 'https://g.example.com', board_ref: 'acme' }, 'gitlab').text).toBe(
       'No group or project acme on https://g.example.com.',
+    );
+  });
+
+  it('GitHub: sends the project URL, the token and a named iteration field, as kind github', async () => {
+    const { s, calls } = screen([{ ok: true, data: [] }]);
+    await s.load();
+    s.kind = 'github';
+    s.level = 'sprint';
+    s.boardUrl = 'https://github.com/orgs/acme/projects/3';
+    expect(s.canConnect).toBe(false);
+    s.token = 'github_pat_x';
+    expect(s.canConnect).toBe(true);
+    s.iterationField = 'Sprint';
+    await s.connect();
+    expect(calls.find((c) => c[0] === 'connect')![1]).toEqual({
+      p: P,
+      kind: 'github',
+      level: 'sprint',
+      body: { board_url: 'https://github.com/orgs/acme/projects/3', api_token: 'github_pat_x', iteration_field: 'Sprint' },
+    });
+  });
+
+  it('GitHub: an ambiguous iteration field offers the project\u2019s names to choose from', async () => {
+    const { s } = screen([{ ok: true, data: [] }], {
+      tryConnectTracker: async () =>
+        fail(422, 'iteration_field_ambiguous', { error: 'iteration_field_ambiguous', fields: ['Sprint', 'Release'] }),
+    });
+    await s.load();
+    s.kind = 'github';
+    s.level = 'sprint';
+    s.boardUrl = 'https://github.com/orgs/acme/projects/3';
+    s.token = 'github_pat_x';
+    await s.connect();
+    expect(s.iterationFields).toEqual(['Sprint', 'Release']);
+    expect(s.alert?.field).toBe('iteration_field');
+    expect(s.alert?.text).toContain('Iteration field');
+  });
+
+  it('GitHub: the card names the project, and Replace token re-sends its address and field', () => {
+    const { s } = screen([{ ok: true, data: [] }]);
+    const gh = row({
+      kind: 'github', base_url: 'https://api.github.com', external_scope: 'acme/3', board_ref: 'project:PVT_1',
+      board_name: 'Roadmap', url: 'https://github.com/orgs/acme/projects/3', iteration_field: 'Sprint', level: 'epic',
+    });
+    expect(s.cardTitle(gh)).toBe('GitHub · acme/3 · Roadmap');
+    expect(s.sprintsLine(gh)).toBe('Sprints: the Sprint iteration field');
+    s.startReplace(gh);
+    expect([s.kind, s.boardUrl, s.iterationField, s.level, s.token]).toEqual([
+      'github',
+      'https://github.com/orgs/acme/projects/3',
+      'Sprint',
+      'epic',
+      '',
+    ]);
+  });
+
+  it('a GitHub failure is worded for GitHub and never names Jira or GitLab', () => {
+    for (const code of ['invalid_base_url', 'unauthorized', 'forbidden', 'token_required', 'not_found', 'rate_limited', 'transport', 'bad_request', 'writeback_unsupported']) {
+      const text = errorFor(422, { error: code }, 'github').text;
+      expect(text, code).not.toMatch(/Jira|Atlassian|GitLab/);
+    }
+    expect(errorFor(403, { error: 'forbidden' }, 'github').text).toContain('Projects: read');
+    expect(errorFor(401, { error: 'unauthorized' }, 'github').link?.href).toBe('https://github.com/settings/personal-access-tokens/new');
+    expect(errorFor(404, { error: 'board_not_found', board_ref: 'orgs/acme/3' }, 'github').text).toBe(
+      'No GitHub project at orgs/acme/3, or the token can\u2019t see it.',
     );
   });
 

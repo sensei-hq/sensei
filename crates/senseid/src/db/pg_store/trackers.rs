@@ -464,6 +464,26 @@ impl PgStore {
             .map_err(|e| e.to_string())
     }
 
+    /// The workspace's trackers whose mirror holds a live task of the repository
+    /// `scope` (a `normalize_repo_key` value): the GitHub boards `get_ticket` tries
+    /// first for a key of that repository (tracker-github §H5).
+    pub async fn trackers_holding_scope(
+        &self,
+        workspace_id: uuid::Uuid,
+        scope: &str,
+    ) -> Result<Vec<uuid::Uuid>, String> {
+        sqlx_core::query_scalar::query_scalar(
+            "SELECT DISTINCT t.id FROM sensei.trackers t
+               JOIN sensei.tracker_tasks tt ON tt.tracker_id = t.id
+              WHERE t.workspace_id = $1 AND tt.scope = $2 AND tt.removed_at IS NULL",
+        )
+        .bind(workspace_id)
+        .bind(scope)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
     /// The workspace's trackers, by level (epic, sprint, task) then age.
     pub async fn trackers_for_workspace(
         &self,

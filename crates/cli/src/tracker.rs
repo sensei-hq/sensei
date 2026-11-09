@@ -9,6 +9,7 @@ use serde_json::Value;
 /// offered too). The token is never an argv flag.
 pub const TOKEN_ENV: &str = "SENSEI_JIRA_TOKEN";
 pub const GITLAB_TOKEN_ENV: &str = "SENSEI_GITLAB_TOKEN";
+pub const GITHUB_TOKEN_ENV: &str = "SENSEI_GITHUB_TOKEN";
 
 /// Which tracker a message is about. `Any` is for a command that holds only a
 /// tracker id (sync, disconnect, the lookups), so it never names the wrong one.
@@ -16,6 +17,7 @@ pub const GITLAB_TOKEN_ENV: &str = "SENSEI_GITLAB_TOKEN";
 pub enum Provider {
     Jira,
     Gitlab,
+    Github,
     Any,
 }
 
@@ -24,6 +26,7 @@ impl Provider {
         match self {
             Provider::Jira => "Jira",
             Provider::Gitlab => "GitLab",
+            Provider::Github => "GitHub",
             Provider::Any => "the tracker",
         }
     }
@@ -31,6 +34,7 @@ impl Provider {
         match self {
             Provider::Jira => Some(TOKEN_ENV),
             Provider::Gitlab => Some(GITLAB_TOKEN_ENV),
+            Provider::Github => Some(GITHUB_TOKEN_ENV),
             Provider::Any => None,
         }
     }
@@ -38,7 +42,7 @@ impl Provider {
 
 #[derive(Subcommand, Debug, PartialEq)]
 pub enum TrackerCmd {
-    /// Connect a workspace to a tracker board (token from SENSEI_JIRA_TOKEN or SENSEI_GITLAB_TOKEN, else stdin)
+    /// Connect a workspace to a tracker board (token from SENSEI_JIRA_TOKEN, SENSEI_GITLAB_TOKEN or SENSEI_GITHUB_TOKEN, else stdin)
     Connect {
         #[command(subcommand)]
         kind: ConnectKind,
@@ -123,6 +127,23 @@ pub enum ConnectKind {
         /// The host again, exactly as in --board-url (not needed for gitlab.com)
         #[arg(long)]
         confirm_host: Option<String>,
+        /// What the board serves in the workspace: epic, sprint or task
+        #[arg(long)]
+        level: String,
+    },
+    /// GitHub: a Project on github.com, sprints from its Iteration field. Use a
+    /// fine-grained, read-only token (Projects: read; Issues and Metadata: read). A
+    /// classic token with repo and read:project also works, but can write to every
+    /// repository it reaches.
+    Github {
+        #[arg(long)]
+        workspace: String,
+        /// The project's address, e.g. https://github.com/orgs/acme/projects/3
+        #[arg(long)]
+        board_url: String,
+        /// The project's Iteration field, when it has more than one
+        #[arg(long)]
+        iteration_field: Option<String>,
         /// What the board serves in the workspace: epic, sprint or task
         #[arg(long)]
         level: String,
@@ -387,6 +408,22 @@ pub fn gitlab_connect_body(
     body
 }
 
+/// The connect request body for the GitHub flags and the token.
+pub fn github_connect_body(
+    board_url: &str,
+    iteration_field: Option<&str>,
+    level: &str,
+    token: &str,
+) -> Value {
+    let mut body = serde_json::json!({
+        "kind": "github", "level": level, "board_url": board_url, "api_token": token,
+    });
+    if let Some(f) = iteration_field {
+        body["iteration_field"] = f.into();
+    }
+    body
+}
+
 /// The token: `env` if set and non-empty, else the first line of `stdin`.
 /// `env_name` is the variable `env` was read from, for the error.
 pub fn read_token(
@@ -428,6 +465,29 @@ pub fn describe_error_for(p: Provider, status: u16, body: &Value) -> String {
         ("unauthorized", Provider::Gitlab) => "GitLab rejected the token. Check it has the read_api scope and has not \
              expired, or create a new one under Preferences → Access tokens."
             .into(),
+        ("unauthorized", Provider::Github) => "GitHub rejected the token. Use a fine-grained token with Projects: \
+             read and Issues: read, or a classic token with repo and read:project, and check it has not expired."
+            .into(),
+        ("forbidden", Provider::Github) => "The token can't read this project. It needs Projects: read \
+             (fine-grained) or the read:project scope (classic)."
+            .into(),
+        ("invalid_base_url", Provider::Github) => "That isn't a GitHub project address. Use \
+             https://github.com/orgs/<org>/projects/<n> or https://github.com/users/<user>/projects/<n>."
+            .into(),
+        ("board_not_found", Provider::Github) => {
+            format!("No GitHub project at {}, or the token can't see it.", field("board_ref"))
+        }
+        ("iteration_field_ambiguous", _) => {
+            let names: Vec<&str> = body
+                .get("fields")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            format!(
+                "Name the project's Iteration field with --iteration-field: {}.",
+                names.join(", ")
+            )
+        }
         ("unauthorized", _) => "The tracker rejected the saved token. Connect again with a new one.".into(),
         ("host_not_confirmed", _) => "Pass --confirm-host with the GitLab host exactly as in --board-url \
              (gitlab.com needs none)."
@@ -441,7 +501,7 @@ pub fn describe_error_for(p: Provider, status: u16, body: &Value) -> String {
         ("board_not_found", Provider::Gitlab) => {
             format!("No group or project {} on {}.", field("board_ref"), field("base_url"))
         }
-        ("task_not_on_board", Provider::Gitlab | Provider::Any) => {
+        ("task_not_on_board", Provider::Gitlab | Provider::Github | Provider::Any) => {
             format!("{} isn't on this board.", field("key"))
         }
         ("token_required", _) => match p.token_env() {
@@ -560,6 +620,21 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             let body = gitlab_connect_body(&board_url, confirm_host.as_deref(), &level, &token);
             // Up to five validation requests at 30 s each, plus the keyring.
             connect(&client, &base, &id, &body, 180, Provider::Gitlab)
+        }
+        TrackerCmd::Connect {
+            kind: ConnectKind::Github { workspace, board_url, iteration_field, level },
+        } => {
+            let id = workspace_id(&workspace)?;
+            let env = std::env::var(GITHUB_TOKEN_ENV).ok();
+            if env.as_deref().is_none_or(|t| t.trim().is_empty()) {
+                eprintln!(
+                    "Paste the GitHub token (Projects: read, Issues: read), then press Enter:"
+                );
+            }
+            let token = read_token(GITHUB_TOKEN_ENV, env, &mut std::io::stdin().lock())?;
+            let body = github_connect_body(&board_url, iteration_field.as_deref(), &level, &token);
+            // Up to three validation requests at 30 s each, plus the keyring.
+            connect(&client, &base, &id, &body, 120, Provider::Github)
         }
         TrackerCmd::Sync { workspace, board } => {
             let id = workspace_id(&workspace)?;
@@ -1111,6 +1186,72 @@ mod tests {
             gitlab_connect_body("https://g.example.com/a", Some("g.example.com"), "task", "t")["confirm_host"],
             json!("g.example.com")
         );
+    }
+
+    #[test]
+    fn github_connect_parses_and_builds_its_body() {
+        let c = parse(&[
+            "connect",
+            "github",
+            "--workspace",
+            "p",
+            "--board-url",
+            "https://github.com/orgs/acme/projects/3",
+            "--iteration-field",
+            "Sprint",
+            "--level",
+            "sprint",
+        ])
+        .unwrap();
+        assert!(
+            matches!(c, TrackerCmd::Connect { kind: ConnectKind::Github { ref iteration_field, .. } } if iteration_field.as_deref() == Some("Sprint"))
+        );
+        assert!(parse(&["connect", "github", "--workspace", "p", "--level", "sprint"]).is_err());
+        assert_eq!(
+            github_connect_body(
+                "https://github.com/orgs/acme/projects/3",
+                None,
+                "sprint",
+                "github_pat_x"
+            ),
+            json!({"kind": "github", "level": "sprint", "board_url": "https://github.com/orgs/acme/projects/3", "api_token": "github_pat_x"})
+        );
+        assert_eq!(
+            github_connect_body(
+                "https://github.com/orgs/a/projects/1",
+                Some("Sprint"),
+                "task",
+                "t"
+            )["iteration_field"],
+            json!("Sprint")
+        );
+    }
+
+    #[test]
+    fn github_errors_say_what_the_token_needs_and_list_the_fields() {
+        let e = |code: &str| describe_error_for(Provider::Github, 0, &json!({"error": code}));
+        assert!(e("unauthorized").contains("Projects: read"));
+        assert!(e("forbidden").contains("read:project"));
+        assert!(e("invalid_base_url").contains("github.com/orgs/"));
+        assert!(e("board_not_found").contains("GitHub project"));
+        assert!(e("token_required").contains("SENSEI_GITHUB_TOKEN"));
+        assert!(e("rate_limited").starts_with("GitHub"));
+        let ambiguous = describe_error_for(
+            Provider::Github,
+            422,
+            &json!({"error": "iteration_field_ambiguous", "fields": ["Sprint", "Release"]}),
+        );
+        assert!(
+            ambiguous.contains("Sprint, Release") && ambiguous.contains("--iteration-field"),
+            "{ambiguous}"
+        );
+        for code in ["unauthorized", "invalid_base_url", "board_not_found", "forbidden"] {
+            assert!(
+                !e(code).contains("Jira") && !e(code).contains("GitLab"),
+                "{code}: {}",
+                e(code)
+            );
+        }
     }
 
     #[test]

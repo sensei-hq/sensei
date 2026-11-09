@@ -7,7 +7,7 @@ export interface TrackerAlert {
   code: string;
   text: string;
   /** The form field the failure concerns, for `aria-describedby`. */
-  field: 'board_url' | 'email' | 'token' | 'level' | null;
+  field: 'board_url' | 'email' | 'token' | 'level' | 'iteration_field' | null;
   link: { href: string; label: string } | null;
 }
 
@@ -16,7 +16,10 @@ import type { TrackerKind } from './types.js';
 export const CREATE_TOKEN_URL = 'https://id.atlassian.com/manage-profile/security/api-tokens';
 
 /** A tracker's name in a sentence. */
-export const TRACKER_NAME: Record<TrackerKind, string> = { jira: 'Jira', gitlab: 'GitLab' };
+export const TRACKER_NAME: Record<TrackerKind, string> = { jira: 'Jira', gitlab: 'GitLab', github: 'GitHub' };
+
+/** Where a GitHub token is made: fine-grained, read-only is the one the form asks for. */
+export const GITHUB_TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new';
 
 const reach = (code: string, name = 'Jira') =>
   `Couldn’t reach ${name} (${code}). Check the site address and your connection.`;
@@ -72,6 +75,22 @@ const GITLAB_WORDS: Record<string, string> = {
   bad_request: 'GitLab rejected the request.',
 };
 
+/** GitHub's words where they differ from Jira's (tracker-github §H7). */
+const GITHUB_WORDS: Record<string, string> = {
+  invalid_base_url:
+    'That isn’t a GitHub project address. Use https://github.com/orgs/<org>/projects/<number> or https://github.com/users/<user>/projects/<number>.',
+  unauthorized: 'GitHub rejected the token. Check it hasn’t expired, or create a new one.',
+  forbidden: 'The token can’t read this project. It needs Projects: read (fine-grained) or the read:project scope (classic).',
+  token_required: 'Enter a GitHub token with Projects: read and Issues: read.',
+  not_found: 'GitHub no longer has this project, or its Iteration field (it may have been deleted or renamed).',
+  rate_limited: 'GitHub is rate-limiting requests. Try again in a minute.',
+  transport: reach('transport', 'GitHub'),
+  http_error: reach('http_error', 'GitHub'),
+  redirect: reach('redirect', 'GitHub'),
+  decode: reach('decode', 'GitHub'),
+  bad_request: 'GitHub rejected the request.',
+};
+
 /** Why a write-back pass could not run or stopped (tracker-metrics-writeback W-UI), by its
  *  `writeback_error` code. Apart from `WORDS`: the same codes mean something else for a sync. */
 export const WRITEBACK_STOPPED: Record<string, string> = {
@@ -102,6 +121,7 @@ const FIELD: Record<string, TrackerAlert['field']> = {
   token_required: 'token',
   unauthorized: 'token',
   host_not_confirmed: 'board_url',
+  iteration_field_ambiguous: 'iteration_field',
   level_required: 'level',
   invalid_level: 'level',
 };
@@ -118,6 +138,13 @@ export function errorFor(
   }
   const code = typeof body?.error === 'string' ? body.error : `http_${status}`;
   const field = FIELD[code] ?? null;
+  if (code === 'board_not_found' && kind === 'github') {
+    return { code, text: `No GitHub project at ${String(body?.board_ref ?? '')}, or the token can’t see it.`, field, link: null };
+  }
+  if (code === 'iteration_field_ambiguous') {
+    const names = Array.isArray(body?.fields) ? (body.fields as unknown[]).map(String).join(', ') : '';
+    return { code, text: `Choose the project’s Iteration field: ${names}.`, field, link: null };
+  }
   if (code === 'board_not_found') {
     const what = kind === 'gitlab' ? `group or project ${String(body?.board_ref ?? '')}` : `board #${String(body?.board_ref ?? '')}`;
     return {
@@ -133,6 +160,8 @@ export function errorFor(
       text:
         kind === 'gitlab'
           ? `${String(body?.key ?? '')} isn’t in this board’s group or project.`
+          : kind === 'github'
+          ? `${String(body?.key ?? '')} isn’t on this project.`
           : `${String(body?.key ?? '')} isn’t on board #${String(body?.board_ref ?? '')}: it may be in another Jira project, or outside the board’s filter.`,
       field,
       link: null,
@@ -148,7 +177,9 @@ export function errorFor(
     };
   }
   // GitLab's token page is on the user's own host; the form explains where it is.
-  const link = code === 'unauthorized' && kind === 'jira' ? { href: CREATE_TOKEN_URL, label: 'create a new token' } : null;
-  const words = (kind === 'gitlab' ? GITLAB_WORDS[code] : undefined) ?? WORDS[code];
+  const tokenPage = kind === 'jira' ? CREATE_TOKEN_URL : kind === 'github' ? GITHUB_TOKEN_URL : null;
+  const link = code === 'unauthorized' && tokenPage ? { href: tokenPage, label: 'create a new token' } : null;
+  const kindWords = kind === 'gitlab' ? GITLAB_WORDS : kind === 'github' ? GITHUB_WORDS : {};
+  const words = kindWords[code] ?? WORDS[code];
   return { code, text: words ?? `Unexpected error from sensei (${code}).`, field, link };
 }

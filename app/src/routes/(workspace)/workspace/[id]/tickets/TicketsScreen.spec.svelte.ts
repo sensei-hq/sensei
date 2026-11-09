@@ -64,6 +64,8 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
           sprint_source: null,
           sprint_source_changed_at: null,
           full_path: null,
+          url: null,
+          iteration_field: null,
           level: 'sprint',
           status: 'connected',
           last_success_at: null,

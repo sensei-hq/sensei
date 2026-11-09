@@ -184,8 +184,12 @@ export class TrackerIntegration {
 
   /** The level the new board serves: the user's choice, never defaulted. */
   level = $state<TrackerLevel | null>(null);
-  /** The tracker the form connects: Jira or GitLab. */
+  /** The tracker the form connects: Jira, GitLab or GitHub. */
   kind = $state<TrackerKind>('jira');
+  /** GitHub: the project's Iteration field, when it has more than one (tracker-github §H1). */
+  iterationField = $state('');
+  /** GitHub: the field names the daemon offered after `iteration_field_ambiguous`. */
+  iterationFields = $state<string[]>([]);
   boardUrl = $state('');
   /** GitLab, self-managed: the host typed again (tracker-gitlab §G5.2). */
   confirmHost = $state('');
@@ -267,6 +271,9 @@ export class TrackerIntegration {
    *  board URL, token, and the host typed again unless it is gitlab.com. */
   get canConnect(): boolean {
     const given = (v: string) => v.trim().length > 0;
+    if (this.kind === 'github') {
+      return this.level !== null && given(this.boardUrl) && given(this.token);
+    }
     if (this.kind === 'gitlab') {
       return (
         this.level !== null && given(this.boardUrl) && given(this.token) && (!this.needsConfirmHost || given(this.confirmHost))
@@ -276,8 +283,9 @@ export class TrackerIntegration {
     return this.level !== null && board && given(this.email) && given(this.token);
   }
 
-  /** GitLab: where the board's sprints come from. `null` for Jira. */
+  /** GitLab: where the board's sprints come from; GitHub: its Iteration field. `null` for Jira. */
   sprintsLine(t: TrackerConnection): string | null {
+    if (t.kind === 'github') return t.iteration_field ? `Sprints: the ${t.iteration_field} iteration field` : null;
     if (t.kind !== 'gitlab' || !t.sprint_source) return null;
     return `Sprints: ${t.sprint_source === 'iteration' ? 'iterations' : 'milestones'}`;
   }
@@ -293,6 +301,9 @@ export class TrackerIntegration {
 
   cardTitle(t: TrackerConnection): string {
     const site = t.base_url.replace(/^https:\/\//, '');
+    if (t.kind === 'github') {
+      return `GitHub · ${t.external_scope}${t.board_name ? ` · ${t.board_name}` : ''}`;
+    }
     if (t.kind === 'gitlab') {
       const path = t.full_path ?? t.external_scope;
       return `GitLab · ${site} · ${path}${t.board_name && t.board_name !== path ? ` (${t.board_name})` : ''}`;
@@ -411,7 +422,10 @@ export class TrackerIntegration {
     if (!this.canConnect || this.busy || this.level === null) return;
     const kind = this.kind;
     let body: Record<string, unknown>;
-    if (kind === 'gitlab') {
+    if (kind === 'github') {
+      body = { board_url: this.boardUrl.trim(), api_token: this.token };
+      if (this.iterationField.trim()) body.iteration_field = this.iterationField.trim();
+    } else if (kind === 'gitlab') {
       body = { board_url: this.boardUrl.trim(), api_token: this.token };
       if (this.confirmHost.trim()) body.confirm_host = this.confirmHost.trim();
     } else {
@@ -470,6 +484,15 @@ export class TrackerIntegration {
   startReplace(t: TrackerConnection) {
     this.#clearForm();
     this.level = t.level;
+    if (t.kind === 'github') {
+      // The project's address and its field, so only the token is new.
+      this.kind = 'github';
+      this.boardUrl = t.url ?? '';
+      this.iterationField = t.iteration_field ?? '';
+      this.adding = false;
+      this.replacing = t.id;
+      return;
+    }
     if (t.kind === 'gitlab') {
       // The board's current path and its confirmed host, so only the token is new.
       this.kind = 'gitlab';
@@ -528,6 +551,8 @@ export class TrackerIntegration {
     this.level = null;
     this.kind = 'jira';
     this.confirmHost = '';
+    this.iterationField = '';
+    this.iterationFields = [];
     this.boardUrl = '';
     this.advanced = false;
     this.siteUrl = '';
@@ -538,6 +563,9 @@ export class TrackerIntegration {
 
   #fail(error: { status: number; message: string; body?: Record<string, unknown> }, kind?: TrackerKind) {
     this.alert = errorFor(error.status, error.body ?? { error: error.message }, kind);
+    const fields = error.body?.fields;
+    this.iterationFields =
+      this.alert.code === 'iteration_field_ambiguous' && Array.isArray(fields) ? fields.map(String) : [];
     this.alertSeq += 1;
   }
 

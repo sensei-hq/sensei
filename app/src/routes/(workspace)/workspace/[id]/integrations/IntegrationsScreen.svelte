@@ -37,7 +37,7 @@
 
 {#snippet field(
   id: string,
-  name: 'board_url' | 'confirm_host' | 'email' | 'token' | 'site_url' | 'board_id',
+  name: 'board_url' | 'confirm_host' | 'email' | 'token' | 'site_url' | 'board_id' | 'iteration_field',
   label: string,
   type: string,
   value: string,
@@ -70,7 +70,7 @@
       icon="i-solar-link-bold-duotone"
       eyebrow="Integrations"
       title="Issue trackers"
-      description="Connect this workspace’s Jira or GitLab boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map (GitLab boards are read-only for now)."
+      description="Connect this workspace’s Jira, GitLab or GitHub boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map (GitLab and GitHub boards are read-only for now)."
     />
   {/snippet}
 <section data-screen="integrations" class="flex flex-col">
@@ -300,9 +300,60 @@
                 onchange={() => (screen.kind = 'gitlab')}
               /> GitLab
             </label>
+            <label class="flex items-center gap-2 text-sm text-ink" data-tracker="github">
+              <input
+                type="radio"
+                name="tracker"
+                value="github"
+                checked={screen.kind === 'github'}
+                disabled={screen.replacing !== null}
+                onchange={() => (screen.kind = 'github')}
+              /> GitHub
+            </label>
           </fieldset>
 
-          {#if screen.kind === 'gitlab'}
+          {#if screen.kind === 'github'}
+            {@render field(
+              'tracker-board-url',
+              'board_url',
+              'Project URL',
+              'text',
+              screen.boardUrl,
+              (v) => (screen.boardUrl = v),
+              'Open the project on GitHub and copy the address bar, e.g. https://github.com/orgs/acme/projects/3.',
+            )}
+            {@render field(
+              'tracker-token',
+              'token',
+              'Access token',
+              'password',
+              screen.token,
+              (v) => (screen.token = v),
+              'Create a fine-grained, read-only token with Projects: read on the owner and Issues: read on the project’s repositories. A classic token with repo and read:project also works, but can write to every repository it reaches. A ticket in a repository the token can’t read shows as not found.',
+            )}
+            {@render field(
+              'tracker-iteration-field',
+              'iteration_field',
+              'Iteration field (optional)',
+              'text',
+              screen.iterationField,
+              (v) => (screen.iterationField = v),
+              'Only when the project has more than one Iteration field: its name, as the project shows it.',
+            )}
+            {#if screen.iterationFields.length > 0}
+              <div class="flex flex-wrap items-center gap-2 text-sm text-ink" data-github-choices>
+                <span class="text-ink-mute">This project’s Iteration fields:</span>
+                {#each screen.iterationFields as name (name)}
+                  <Button
+                    style="outline"
+                    size="sm"
+                    label={name}
+                    onclick={() => (screen.iterationField = name)}
+                  />
+                {/each}
+              </div>
+            {/if}
+          {:else if screen.kind === 'gitlab'}
             {@render field(
               'tracker-board-url',
               'board_url',
