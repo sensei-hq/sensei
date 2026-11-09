@@ -122,7 +122,7 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       'open',
     );
     await expect(
-      tauriPage.locator('[data-timeline]').getByText('Assigned'),
+      tauriPage.locator('[data-timeline-toggle]').filter({ hasText: 'Assigned' }),
     ).toBeVisible();
 
     // Step progress streams in: scaffold done, tests now current. No navigation.
@@ -161,19 +161,26 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       summary: { changed: 'Counter scaffolds; tests ring true' },
     });
     await expect(
-      tauriPage.locator('[data-timeline]').getByText('Reported — Work · impl r1'),
+      tauriPage
+        .locator('[data-timeline-toggle]')
+        .filter({ hasText: 'Reported — Work · impl r1' }),
     ).toBeVisible({ timeout: STREAM_TIMEOUT });
     await expect(tauriPage.locator('[data-task-state]')).toContainText('in review', {
       timeout: STREAM_TIMEOUT,
     });
 
-    // Thin rows expand to the full entry the History renders today.
+    // Thin rows expand to the full entry the History renders today. Only the
+    // clicked row renders a detail, so the bare locator matches exactly one —
+    // no .first() on the assertion path (tauri-playwright-testing §6.1).
     await expect(tauriPage.locator('[data-timeline] [data-timeline-detail]')).toHaveCount(
       0,
     );
     await tauriPage.locator('[data-timeline-toggle]').first().click();
     await expect(
-      tauriPage.locator('[data-timeline] [data-timeline-detail]').first(),
+      tauriPage.locator('[data-timeline] [data-timeline-detail]'),
+    ).toHaveCount(1);
+    await expect(
+      tauriPage.locator('[data-timeline] [data-timeline-detail]'),
     ).toBeVisible();
 
     // Review + merge close the lifecycle on the same unmoved screen.
@@ -182,7 +189,9 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       verdict: 'approved',
       summary: 'Counter rings true',
     });
-    await expect(tauriPage.locator('[data-timeline]').getByText('Review approved')).toBeVisible({
+    await expect(
+      tauriPage.locator('[data-timeline-toggle]').filter({ hasText: 'Review approved' }),
+    ).toBeVisible({
       timeout: STREAM_TIMEOUT,
     });
     await expect(tauriPage.locator('[data-task-state]')).toContainText('approved', {
@@ -195,7 +204,9 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       note: 'F8 e2e merge',
     });
     await expect(
-      tauriPage.locator('[data-timeline]').getByText('Merged into develop'),
+      tauriPage
+        .locator('[data-timeline-toggle]')
+        .filter({ hasText: 'Merged into develop' }),
     ).toBeVisible({ timeout: STREAM_TIMEOUT });
     await expect(tauriPage.locator('[data-task-state]')).toContainText('done', {
       timeout: STREAM_TIMEOUT,
