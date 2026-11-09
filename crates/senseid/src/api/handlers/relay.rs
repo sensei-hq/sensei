@@ -69,8 +69,7 @@ use crate::db::pg_store::relay::{
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
     RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole, RelayStepState,
-    RelaySurface,
-    RelayTaskPhase, RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
+    RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
 };
 
 type RelayResult = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>;
