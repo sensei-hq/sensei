@@ -547,6 +547,7 @@ pub fn daemon_request_for(
                 &[
                     "phase",
                     "round",
+                    "partial",
                     "summary",
                     "report_md",
                     "base",
@@ -1353,7 +1354,7 @@ pub fn handle_list_tools() -> Value {
                     ("timeout_ms", "integer", "Hold length, clamped to 1..=50000 (default 25000)"),
                 ]),
             tool("relay_report_task",
-                "Report a work or rework turn: moves the task to review (first report picks the reviewer, least-loaded live lane).",
+                "Report a work or rework turn: moves the task to review (first report picks the reviewer, least-loaded live lane). partial:true records progress without moving.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
@@ -1362,6 +1363,7 @@ pub fn handle_list_tools() -> Value {
                     ("task_id", "string", "Task uuid"),
                     ("phase", "string", "analysis | tests | impl | docs | mockup"),
                     ("round", "integer", "Must be the task's current round"),
+                    ("partial", "boolean", "Progress only: stays working, no reviewer picked"),
                     ("summary", "object", "{changed, look_at?, flags?} — the ≤600-char turn summary"),
                     ("report_md", "string", "The full report markdown"),
                     ("base", "string", "Base ref the turn builds on"),

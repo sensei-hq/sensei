@@ -366,6 +366,8 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
                 "commits",
                 "files",
                 "gates",
+                // F1: partial progress marker (bool).
+                "partial",
                 "tokens_in",
                 "tokens_out",
                 "tokens_cache",
@@ -379,6 +381,11 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
                 "ended_at",
             ];
             allow(REPORTED_KEYS)?;
+            if let Some(v) = present("partial")
+                && v.as_bool().is_none()
+            {
+                return Err(props_err("partial must be a bool".into()));
+            }
             for key in ["files", "gates", "commits"] {
                 if let Some(v) = present(key)
                     && !v.is_array()

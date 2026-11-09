@@ -183,6 +183,9 @@ pub struct RelayGateInput {
 pub struct RelayReportInput {
     pub phase: RelayTaskPhase,
     pub round: i32,
+    /// F1: a partial turn records the action only — no transition, no
+    /// reviewer pick. The action carries `props.partial = true`.
+    pub partial: bool,
     pub changed: String,
     pub look_at: Option<String>,
     pub flags: Option<String>,
@@ -1917,7 +1920,8 @@ impl PgStore {
     /// A work/rework turn: validate (props, length, leak guard, finding
     /// classes need none here), move working/rework → in_review, pick the
     /// reviewer at first report (Q14), write the `reported` action — one
-    /// transaction, or nothing at all.
+    /// transaction, or nothing at all. A partial turn (`input.partial`)
+    /// writes the action with `props.partial = true` and moves nothing.
     // Wide rows are inherent to the reads: one round trip per shape,
     // destructured at the use site.
     #[allow(clippy::type_complexity)]
@@ -2014,42 +2018,52 @@ impl PgStore {
         for (k, v) in telemetry {
             props.insert(k.clone(), v.clone());
         }
+        if input.partial {
+            props.insert("partial".into(), serde_json::Value::Bool(true));
+        }
         let props = serde_json::Value::Object(props);
         validate_props(RelayActionKind::Reported, &props)
             .map_err(|e| RelayError::Validation(e.message))?;
-        // First report picks the reviewer (Q14); later turns keep the pick.
-        let reviewer = match task_reviewer {
-            Some(reviewer) => Some(reviewer),
-            None => {
-                let now: DateTime<Utc> =
-                    sqlx_core::query_scalar::query_scalar("select current_timestamp")
-                        .fetch_one(&mut *tx)
-                        .await
-                        .map_err(db_err)?;
-                relay_pick_reviewer(RelayPickQuery {
-                    tx: &mut tx,
-                    user_id,
-                    crew_id,
-                    author: caller_lane,
-                    now,
-                })
-                .await?
-            }
+        let (next, reviewer) = if input.partial {
+            // F1: a partial turn records progress only — the task keeps
+            // working, the reviewer stays unpicked, the row untouched.
+            (cur, task_reviewer)
+        } else {
+            // First report picks the reviewer (Q14); later turns keep the pick.
+            let reviewer = match task_reviewer {
+                Some(reviewer) => Some(reviewer),
+                None => {
+                    let now: DateTime<Utc> =
+                        sqlx_core::query_scalar::query_scalar("select current_timestamp")
+                            .fetch_one(&mut *tx)
+                            .await
+                            .map_err(db_err)?;
+                    relay_pick_reviewer(RelayPickQuery {
+                        tx: &mut tx,
+                        user_id,
+                        crew_id,
+                        author: caller_lane,
+                        now,
+                    })
+                    .await?
+                }
+            };
+            let next = transition(cur, TaskEvent::Reported)
+                .map_err(|_| RelayError::Conflict("task cannot move to review".into()))?;
+            sqlx_core::query::query(
+                "update relay.tasks set state = $1::relay.task_state, reviewer_lane_id = $2,
+                        state_changed_at = current_timestamp
+                 where user_id = $3 and id = $4",
+            )
+            .bind(word(next))
+            .bind(reviewer)
+            .bind(user_id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            (next, reviewer)
         };
-        let next = transition(cur, TaskEvent::Reported)
-            .map_err(|_| RelayError::Conflict("task cannot move to review".into()))?;
-        sqlx_core::query::query(
-            "update relay.tasks set state = $1::relay.task_state, reviewer_lane_id = $2,
-                    state_changed_at = current_timestamp
-             where user_id = $3 and id = $4",
-        )
-        .bind(word(next))
-        .bind(reviewer)
-        .bind(user_id)
-        .bind(task_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
         sqlx_core::query::query(
             "insert into relay.actions
                (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
@@ -5296,6 +5310,7 @@ mod tests {
         RelayReportInput {
             phase: RelayTaskPhase::Tests,
             round: 1,
+            partial: false,
             changed: "Wired the header.".into(),
             look_at: Some("app/header".into()),
             flags: None,

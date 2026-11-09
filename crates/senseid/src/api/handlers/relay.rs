@@ -241,6 +241,9 @@ pub(crate) struct ReportBody {
     lane_id: String,
     phase: String,
     round: i32,
+    /// F1: partial progress — records the action, moves nothing. Omitted
+    /// (or explicit null) means a full report.
+    partial: Option<bool>,
     summary: SummaryBody,
     report_md: Option<String>,
     base: Option<String>,
@@ -715,6 +718,7 @@ pub(crate) async fn report(
             RelayReportInput {
                 phase: parse_word::<RelayTaskPhase>(&body.phase, "phase").map_err(err)?,
                 round: body.round,
+                partial: body.partial.unwrap_or(false),
                 changed: body.summary.changed,
                 look_at: body.summary.look_at,
                 flags: body.summary.flags,

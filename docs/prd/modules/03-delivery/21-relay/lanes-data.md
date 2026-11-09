@@ -144,7 +144,7 @@ review → the report it reviews) · `created_at`.
 | `assigned` | the hand-off brief | `docs[]`, `owned_paths[]`, `acceptance[]` |
 | `brief_updated` | the new brief | `docs[]` |
 | `started` | — | — |
-| `reported` | the summary sent with the request for review | `look_at`, `flags`, `base`, `branch`, `commits[]`, `files[{path,added,removed,outside_owned}]`, `gates[{cmd,exit,counts}]`, `family`, `version`, `model`, `tokens_in`, `tokens_out`, `tokens_cache`, `started_at`, `ended_at`, `context_tokens`, `compactions`, `peak_memory_mb`, `subagents[{role,model}]` |
+| `reported` | the summary sent with the request for review | `look_at`, `flags`, `base`, `branch`, `commits[]`, `files[{path,added,removed,outside_owned}]`, `gates[{cmd,exit,counts}]`, `family`, `version`, `model`, `tokens_in`, `tokens_out`, `tokens_cache`, `started_at`, `ended_at`, `context_tokens`, `compactions`, `peak_memory_mb`, `subagents[{role,model}]`, `partial?` (bool; true = progress only, task keeps working, no reviewer picked) |
 | `reviewed` | the review summary | `verdict` (`approved` / `changes_requested`), `findings[{severity,class,text,file,line}]`, `probes`, `subagents[]`, the same telemetry keys |
 | `asked` | the question | `context` (one line: what is waiting on it), `options[{id,label,detail}]`, `recommended`, `blocks[task_id]`, `asked_of` (`person` / lane id) |
 | `answered` | an optional note | `option`, `surface` (`desktop` / `dojo` / `lane`; `lane` is the daemon's on a lane-sent answer and is never sent, Q12) |
