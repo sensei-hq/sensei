@@ -59,27 +59,17 @@ use uuid::Uuid;
 use crate::api::events::StateEvent;
 use crate::api::state::AppState;
 use crate::db::pg_store::relay::{
-<<<<<<< HEAD
     RelayAnswerInput, RelayAnswerOutput, RelayAskInput, RelayAskedOf, RelayAssignInput,
     RelayCaller, RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput,
-    RelayHandoverInput, RelayHeartbeatOutput, RelayLaneSession, RelayMergeInput, RelayMessageInput,
-    RelayMessageTo, RelayPlanInput, RelayReadFilter, RelayRegisterInput, RelayReportInput,
-    RelayResourceRequest, RelayReviewInput, RelayStepInput, RelayTicketInput, RelayTriageInput,
+    RelayHandoverInput, RelayHeartbeatOutput, RelayLaneSession, RelayLimitPauseInput,
+    RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayPlanInput, RelayReadFilter,
+    RelayRegisterInput, RelayReportInput, RelayResourceRequest, RelayReviewInput, RelayStepInput,
+    RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
-    RelayError, RelayFindingSeverity, RelayItemKind, RelayRole, RelayStepState, RelaySurface,
-=======
-    RelayAnswerInput, RelayAskInput, RelayAskedOf, RelayAssignInput, RelayCaller,
-    RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput, RelayHandoverInput,
-    RelayHeartbeatOutput, RelayLaneSession, RelayLimitPauseInput, RelayMergeInput,
-    RelayMessageInput, RelayMessageTo, RelayPlanInput, RelayReadFilter, RelayRegisterInput,
-    RelayReportInput, RelayResourceRequest, RelayReviewInput, RelayTicketInput, RelayTriageInput,
-};
-use crate::relay::envelope::{LaneEnvelope, empty_envelope};
-use crate::relay::{
-    RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole, RelaySurface,
->>>>>>> origin/lane/relay-limit-exhaustion
+    RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole, RelayStepState,
+    RelaySurface,
     RelayTaskPhase, RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
 };
 
@@ -2823,7 +2813,6 @@ mod tests {
         assert!(body["message_id"].is_string());
     }
 
-<<<<<<< HEAD
     // ── Q2 part 2: crew → person messages in Needs-you ──
 
     async fn send_lane_message(
@@ -2849,88 +2838,10 @@ mod tests {
     async fn now_serves_person_messages_newest_first() {
         // Q2-2(a): to.person messages from a lane surface in the person
         // feed newest-first with lane code, text, and task link.
-=======
-    // ── Limit exhaustion: lanes report quota pauses ──
-
-    async fn limit_pause(
-        h: &Harness,
-        lane_id: &str,
-        token: &str,
-        scope: &str,
-        resumes_at: serde_json::Value,
-        note: Option<&str>,
-    ) -> (StatusCode, serde_json::Value) {
-        call(
-            h,
-            "POST",
-            "/api/relay/limit_pause",
-            Some(lane_body(
-                lane_id,
-                json!({"scope": scope, "resumes_at": resumes_at, "note": note}),
-            )),
-            Some(token),
-        )
-        .await
-    }
-
-    async fn now_lane(h: &Harness, lane_id: &str) -> serde_json::Value {
-        let (status, body) = call(h, "GET", "/relay/now", None, None).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        body["lanes"].as_array().unwrap().iter().find(|l| l["id"] == lane_id).cloned().unwrap()
-    }
-
-    #[tokio::test]
-    async fn limit_pause_records_scope_and_resume() {
-        // The lane reports quota exhaustion; the person feed echoes scope
-        // + resume time on the lane row (lease untouched — still live).
-        let h = harness().await;
-        let coord = register_coordinator(&h).await;
-        let (lane_id, token) = register_contributor(&h, &coord.2).await;
-        let (status, body) = limit_pause(
-            &h,
-            &lane_id,
-            &token,
-            "weekly",
-            json!("2030-01-01T00:00:00Z"),
-            Some("weekly cap hit during backfill"),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        let lane = now_lane(&h, &lane_id).await;
-        assert_eq!(lane["limit_scope"], "weekly", "{lane}");
-        // Timestamptz renders zone-dependent (lease_expires_at precedent),
-        // so the resume instant — not the string — is the assertion.
-        let resumes =
-            chrono::DateTime::parse_from_rfc3339(lane["limit_resumes_at"].as_str().unwrap())
-                .unwrap()
-                .to_utc();
-        assert_eq!(
-            resumes,
-            chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap().to_utc()
-        );
-        assert_eq!(lane["lease_state"], "granted", "{lane}");
-    }
-
-    #[tokio::test]
-    async fn limit_pause_unknown_scope_rejected() {
-        let h = harness().await;
-        let coord = register_coordinator(&h).await;
-        let (lane_id, token) = register_contributor(&h, &coord.2).await;
-        let (status, body) =
-            limit_pause(&h, &lane_id, &token, "monthly", serde_json::Value::Null, None).await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    }
-
-    #[tokio::test]
-    async fn sweep_paused_lane_task_interrupts_without_lease_expiry() {
-        // A paused lane's held task suspends for re-offer elsewhere, but
-        // the lane itself is not swept: no expiry, no failure.
->>>>>>> origin/lane/relay-limit-exhaustion
         let h = harness().await;
         let coord = register_coordinator(&h).await;
         let (lane_id, token) = register_contributor(&h, &coord.2).await;
         let task_id = assigned_task(&h, &coord, &lane_id).await;
-<<<<<<< HEAD
         send_lane_message(
             &h,
             &lane_id,
@@ -3030,7 +2941,87 @@ mod tests {
         let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["person_messages"].as_array().unwrap().len(), 0, "{body}");
-=======
+    }
+
+    // ── Limit exhaustion: lanes report quota pauses ──
+
+    async fn limit_pause(
+        h: &Harness,
+        lane_id: &str,
+        token: &str,
+        scope: &str,
+        resumes_at: serde_json::Value,
+        note: Option<&str>,
+    ) -> (StatusCode, serde_json::Value) {
+        call(
+            h,
+            "POST",
+            "/api/relay/limit_pause",
+            Some(lane_body(
+                lane_id,
+                json!({"scope": scope, "resumes_at": resumes_at, "note": note}),
+            )),
+            Some(token),
+        )
+        .await
+    }
+
+    async fn now_lane(h: &Harness, lane_id: &str) -> serde_json::Value {
+        let (status, body) = call(h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["lanes"].as_array().unwrap().iter().find(|l| l["id"] == lane_id).cloned().unwrap()
+    }
+
+    #[tokio::test]
+    async fn limit_pause_records_scope_and_resume() {
+        // The lane reports quota exhaustion; the person feed echoes scope
+        // + resume time on the lane row (lease untouched — still live).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = limit_pause(
+            &h,
+            &lane_id,
+            &token,
+            "weekly",
+            json!("2030-01-01T00:00:00Z"),
+            Some("weekly cap hit during backfill"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let lane = now_lane(&h, &lane_id).await;
+        assert_eq!(lane["limit_scope"], "weekly", "{lane}");
+        // Timestamptz renders zone-dependent (lease_expires_at precedent),
+        // so the resume instant — not the string — is the assertion.
+        let resumes =
+            chrono::DateTime::parse_from_rfc3339(lane["limit_resumes_at"].as_str().unwrap())
+                .unwrap()
+                .to_utc();
+        assert_eq!(
+            resumes,
+            chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap().to_utc()
+        );
+        assert_eq!(lane["lease_state"], "granted", "{lane}");
+    }
+
+    #[tokio::test]
+    async fn limit_pause_unknown_scope_rejected() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) =
+            limit_pause(&h, &lane_id, &token, "monthly", serde_json::Value::Null, None).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+
+    #[tokio::test]
+    async fn sweep_paused_lane_task_interrupts_without_lease_expiry() {
+        // A paused lane's held task suspends for re-offer elsewhere, but
+        // the lane itself is not swept: no expiry, no failure.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
         let (status, _) =
             limit_pause(&h, &lane_id, &token, "daily", serde_json::Value::Null, None).await;
         assert_eq!(status, StatusCode::OK);
@@ -3096,7 +3087,6 @@ mod tests {
         }
         let lane = now_lane(&h, &lane_id).await;
         assert!(lane["limit_scope"].is_null(), "{lane}");
->>>>>>> origin/lane/relay-limit-exhaustion
     }
 
     // ── person reads ──
