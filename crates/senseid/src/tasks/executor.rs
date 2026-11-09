@@ -113,7 +113,8 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         }
     };
 
-    task_logger.info("task_started", None).await;
+    // #339: no `task_started` public.logs row — `task_executions` (above)
+    // already records every execution start; the row duplicated it.
 
     // Dispatch to the handler under a watchdog: a wedged handler (e.g. a stalled
     // network/DB call that never returns) would otherwise hold its worker
@@ -185,7 +186,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
     let duration_ms = start.elapsed().as_millis() as i32;
 
-    // Update task_executions + log to public.logs
+    // Update task_executions. Only terminal failures log to public.logs (#194).
     match &result {
         Ok(items) => {
             if let Some(eid) = &exec_id
@@ -194,15 +195,8 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             {
                 tracing::warn!(error = %e, task_id = task.id, kind = %task.kind, "failed to record task_execution completion");
             }
-            task_logger
-                .info(
-                    "task_completed",
-                    Some(serde_json::json!({
-                        "duration_ms": duration_ms,
-                        "items_processed": items,
-                    })),
-                )
-                .await;
+            // #339: no `task_completed` public.logs row — `complete_task_execution`
+            // (above) already records duration + items; the row duplicated it.
         }
         Err(e) => {
             if let Some(eid) = &exec_id
@@ -293,10 +287,12 @@ mod tests {
 
     /// Count `public.logs` rows for one message predicate.
     async fn log_count(ctx: &TaskContext, pred: &str) -> i64 {
-        sqlx_core::query_scalar::query_scalar(&format!("select count(*) from public.logs where {pred}"))
-            .fetch_one(ctx.pg().pool())
-            .await
-            .unwrap()
+        sqlx_core::query_scalar::query_scalar(&format!(
+            "select count(*) from public.logs where {pred}"
+        ))
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap()
     }
 
     /// The DB logger is fire-and-forget (`tokio::spawn` per write), so a
