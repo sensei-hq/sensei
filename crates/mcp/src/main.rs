@@ -3,9 +3,9 @@ use std::io::{BufRead, Write};
 
 use sensei_mcp::{
     ActiveWorkspace, DaemonRequest, HttpMethod, NEEDS_WORKSPACE, WORKSPACES_FOR_RESOLUTION,
-    WorkspaceResolution, build_log_event_body, daemon_request_for, handle_initialize,
-    handle_list_tools, resolve_active_workspace_in, resolve_default_workspace, resolve_from_cwd_in,
-    resolve_workspace_in,
+    WorkspaceResolution, build_log_event_body, build_relay_wait_request, daemon_request_for,
+    handle_initialize, handle_list_tools, resolve_active_workspace_in, resolve_default_workspace,
+    resolve_from_cwd_in, resolve_workspace_in,
 };
 
 /// The active-workspace pin for THIS MCP session, held in memory — NOT a file.
@@ -481,6 +481,22 @@ fn handle_call_tool(
             let body = build_log_event_body(&args, cwd);
             let result = client.post(format!("{}/hook/event", base)).json(&body).send();
             daemon_result(result)
+        }
+
+        // ── Relay: the long hold (≤50 s outlives the default 30 s client),
+        // so it rides its own client — but through the standard send path,
+        // which is what puts the Authorization header on the wire.
+        "relay_wait_for_task" => {
+            let req = build_relay_wait_request(
+                args["lane_id"].as_str().unwrap_or(""),
+                args["lane_token"].as_str().unwrap_or(""),
+                args["timeout_ms"].as_u64(),
+            );
+            let wait_client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap_or_else(|_| client.clone());
+            daemon_result(send_daemon_request(&wait_client, &req, base))
         }
 
         // Reached only when the library returned `None` — no workspace given
