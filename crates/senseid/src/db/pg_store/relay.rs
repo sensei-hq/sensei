@@ -154,6 +154,25 @@ pub struct RelayCancelOutput {
     pub state: RelayTaskState,
 }
 
+/// `POST /api/relay/tasks/{id}/handover` (coordinator, F1).
+#[derive(Debug, Clone)]
+pub struct RelayHandoverInput {
+    /// The destination lane: live lease, same crew, not the holder or the
+    /// picked reviewer.
+    pub to_lane: Uuid,
+    /// The handoff note (≤ 600 chars, no secrets); empty defaults to the
+    /// move itself.
+    pub note: String,
+}
+
+/// `POST /api/relay/tasks/{id}/handover` (coordinator, F1).
+#[derive(Debug, Clone)]
+pub struct RelayHandoverOutput {
+    pub task_id: Uuid,
+    pub state: RelayTaskState,
+    pub round: i32,
+}
+
 /// `POST /api/relay/crews/{id}/close` (coordinator, F3).
 #[derive(Debug, Clone)]
 pub struct RelayCloseOutput {
@@ -186,6 +205,9 @@ pub struct RelayGateInput {
 pub struct RelayReportInput {
     pub phase: RelayTaskPhase,
     pub round: i32,
+    /// F1: a partial turn records the action only — no transition, no
+    /// reviewer pick. The action carries `props.partial = true`.
+    pub partial: bool,
     pub changed: String,
     pub look_at: Option<String>,
     pub flags: Option<String>,
@@ -837,6 +859,13 @@ fn history_props(kind: &str, props: &serde_json::Value) -> serde_json::Value {
             out.entry("to_lane".to_owned()).or_insert(null.clone());
             serde_json::Value::Object(out)
         }
+        // F1: the handover names both lanes plus the state left (the
+        // screen reads uuids as codes via the crew's lanes).
+        "handed_over" => serde_json::json!({
+            "from_lane": get("from_lane"),
+            "from_state": get("from_state"),
+            "to_lane": get("to_lane"),
+        }),
         _ => props.clone(),
     }
 }
@@ -1926,7 +1955,8 @@ impl PgStore {
     /// A work/rework turn: validate (props, length, leak guard, finding
     /// classes need none here), move working/rework → in_review, pick the
     /// reviewer at first report (Q14), write the `reported` action — one
-    /// transaction, or nothing at all.
+    /// transaction, or nothing at all. A partial turn (`input.partial`)
+    /// writes the action with `props.partial = true` and moves nothing.
     // Wide rows are inherent to the reads: one round trip per shape,
     // destructured at the use site.
     #[allow(clippy::type_complexity)]
@@ -2023,42 +2053,52 @@ impl PgStore {
         for (k, v) in telemetry {
             props.insert(k.clone(), v.clone());
         }
+        if input.partial {
+            props.insert("partial".into(), serde_json::Value::Bool(true));
+        }
         let props = serde_json::Value::Object(props);
         validate_props(RelayActionKind::Reported, &props)
             .map_err(|e| RelayError::Validation(e.message))?;
-        // First report picks the reviewer (Q14); later turns keep the pick.
-        let reviewer = match task_reviewer {
-            Some(reviewer) => Some(reviewer),
-            None => {
-                let now: DateTime<Utc> =
-                    sqlx_core::query_scalar::query_scalar("select current_timestamp")
-                        .fetch_one(&mut *tx)
-                        .await
-                        .map_err(db_err)?;
-                relay_pick_reviewer(RelayPickQuery {
-                    tx: &mut tx,
-                    user_id,
-                    crew_id,
-                    author: caller_lane,
-                    now,
-                })
-                .await?
-            }
+        let (next, reviewer) = if input.partial {
+            // F1: a partial turn records progress only — the task keeps
+            // working, the reviewer stays unpicked, the row untouched.
+            (cur, task_reviewer)
+        } else {
+            // First report picks the reviewer (Q14); later turns keep the pick.
+            let reviewer = match task_reviewer {
+                Some(reviewer) => Some(reviewer),
+                None => {
+                    let now: DateTime<Utc> =
+                        sqlx_core::query_scalar::query_scalar("select current_timestamp")
+                            .fetch_one(&mut *tx)
+                            .await
+                            .map_err(db_err)?;
+                    relay_pick_reviewer(RelayPickQuery {
+                        tx: &mut tx,
+                        user_id,
+                        crew_id,
+                        author: caller_lane,
+                        now,
+                    })
+                    .await?
+                }
+            };
+            let next = transition(cur, TaskEvent::Reported)
+                .map_err(|_| RelayError::Conflict("task cannot move to review".into()))?;
+            sqlx_core::query::query(
+                "update relay.tasks set state = $1::relay.task_state, reviewer_lane_id = $2,
+                        state_changed_at = current_timestamp
+                 where user_id = $3 and id = $4",
+            )
+            .bind(word(next))
+            .bind(reviewer)
+            .bind(user_id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            (next, reviewer)
         };
-        let next = transition(cur, TaskEvent::Reported)
-            .map_err(|_| RelayError::Conflict("task cannot move to review".into()))?;
-        sqlx_core::query::query(
-            "update relay.tasks set state = $1::relay.task_state, reviewer_lane_id = $2,
-                    state_changed_at = current_timestamp
-             where user_id = $3 and id = $4",
-        )
-        .bind(word(next))
-        .bind(reviewer)
-        .bind(user_id)
-        .bind(task_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
         sqlx_core::query::query(
             "insert into relay.actions
                (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
@@ -2838,6 +2878,236 @@ impl PgStore {
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         Ok(RelayCancelOutput { task_id, state: next })
+    }
+
+    /// Hand a held task to another lane (coordinator only, F1): a task
+    /// sitting `working`, `in_review`, or `rework` leaves its holder
+    /// `assigned` on the new lane with a fresh round. The new round
+    /// re-briefs from the prior `assigned` action (the ownership and
+    /// acceptance of the pickle jar travel with the task, not the lane),
+    /// and a `handed_over` event names both lanes so the timeline shows
+    /// the move. Everything else is a 409: states outside the held three
+    /// (terminal included — handover pulls force mid-turn, it is not a
+    /// resurrection route), the current holder, a dead or foreign lane,
+    /// a lane reviewing this task, and a busy lane (assign's unique
+    /// catches the race).
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site (assign's precedent).
+    #[allow(clippy::type_complexity)]
+    pub async fn relay_handover_task(
+        &self,
+        user_id: Uuid,
+        caller_lane: Uuid,
+        task_id: Uuid,
+        input: RelayHandoverInput,
+    ) -> Result<RelayHandoverOutput, RelayError> {
+        let crew_id = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
+        check_summary(&input.note, "note")?;
+        let to_lane = input.to_lane;
+        let note = input.note.as_str();
+        // owned_paths/acceptance read nullable: assign always writes them,
+        // but a hand-built row heals with empties instead of wedging.
+        let task: Option<(
+            Uuid,
+            Option<Uuid>,
+            String,
+            i32,
+            String,
+            String,
+            Option<Vec<String>>,
+            Option<Vec<String>>,
+            Option<Uuid>,
+        )> = sqlx_core::query_as::query_as(
+            "select crew_id, lane_id, state::text, round, title, phase::text,
+                        owned_paths, acceptance, reviewer_lane_id
+                 from relay.tasks where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((task_crew, task_lane, state, round, title, phase, owned, accept, reviewer)) =
+            task
+        else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        let (owned, accept) = (owned.unwrap_or_default(), accept.unwrap_or_default());
+        if task_crew != crew_id {
+            return Err(RelayError::NotFound("task not found".into()));
+        }
+        let from_lane = task_lane
+            .ok_or_else(|| RelayError::Conflict("task has no holder to hand over from".into()))?;
+        if to_lane == from_lane {
+            return Err(RelayError::Conflict("task is already on that lane".into()));
+        }
+        let cur = parse_state(&state)?;
+        // Interrupted stays the sweeper's re-offer job (brief §B): the
+        // machine would 409 anyway, but the message names the way out.
+        if cur == RelayTaskState::Interrupted {
+            return Err(RelayError::Conflict(
+                "cannot hand over an interrupted task (the sweeper re-offers it)".into(),
+            ));
+        }
+        let next = transition(cur, TaskEvent::HandedOver)
+            .map_err(|_| RelayError::Conflict(format!("cannot hand over a {state} task")))?;
+        // The destination lane: foreign lanes are a 404-shaped 409 (the
+        // crew is the caller's own; the task side already 404s), and a
+        // dead or lapsed lease refuses.
+        let dest: Option<(String, Uuid)> = sqlx_core::query_as::query_as(
+            "select code, crew_id from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(to_lane)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((to_code, dest_crew)) = dest else {
+            return Err(RelayError::Conflict("destination lane not found".into()));
+        };
+        if dest_crew != crew_id {
+            return Err(RelayError::Conflict("destination lane is in another crew".into()));
+        }
+        // Liveness is the lease row's call (the picker's precedent): a
+        // granted lane lease past now.
+        let live: bool = sqlx_core::query_scalar::query_scalar(
+            "select exists(select 1 from relay.leases
+             where lane_id = $1 and kind = 'lane' and state = 'granted'
+               and expires_at > current_timestamp)",
+        )
+        .bind(to_lane)
+        .fetch_one(self.pool())
+        .await
+        .map_err(db_err)?;
+        if !live {
+            return Err(RelayError::Conflict("destination lane lease is not live".into()));
+        }
+        // The picked reviewer of the current round: handing a task to its
+        // own reviewer collapses the two ends of the review (the slot
+        // clears on the move, so only the current pick guards).
+        if reviewer == Some(to_lane) {
+            return Err(RelayError::Conflict("destination lane is reviewing this task".into()));
+        }
+        // The prior brief: the latest `assigned` action's body plus its
+        // docs (a held task was assigned once, but a hand-built row heals
+        // instead of wedging).
+        let prior: Option<(String, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select body_md, props from relay.actions
+             where user_id = $1 and task_id = $2 and kind = 'assigned'::relay.action_kind
+             order by created_at desc limit 1",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let (prior_brief, prior_docs) = match prior {
+            Some((body, props)) => {
+                let docs =
+                    props.get("docs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                (body, serde_json::Value::Array(docs))
+            }
+            None => (
+                format!("Task: {title} ({phase}, round {})", round + 1),
+                serde_json::Value::Array(vec![]),
+            ),
+        };
+        let from_code: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select code from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(from_lane)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let from_code = from_code.unwrap_or_else(|| from_lane.to_string());
+        let new_round = round + 1;
+        // An absent note defaults to the move itself (the route's `note`
+        // is optional; the event body always says what happened).
+        let header = format!("Handed over from {from_code} ({state}, round {round}) to {to_code}.");
+        let note_text = if note.trim().is_empty() { header.clone() } else { note.to_string() };
+        let brief = format!("{header}\n\n{note_text}\n\n{prior_brief}");
+        // The re-brief carries the task's own ownership plus the prior
+        // round's docs (validated before the write: a hand-built row with
+        // unshaped columns fails fast instead of half-moving).
+        let props = serde_json::json!({
+            "docs": prior_docs,
+            "owned_paths": owned.clone(),
+            "acceptance": accept.clone(),
+        });
+        validate_props(RelayActionKind::Assigned, &props)
+            .map_err(|e| RelayError::Internal(format!("handover props: {}", e.message)))?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let task_update = sqlx_core::query::query(
+            "update relay.tasks set lane_id = $1, phase = $2::relay.task_phase,
+                    state = $3::relay.task_state, round = $4, reviewer_lane_id = null,
+                    owned_paths = $5, acceptance = $6,
+                    state_changed_at = current_timestamp
+             where user_id = $7 and id = $8",
+        )
+        .bind(to_lane)
+        .bind(phase.as_str())
+        .bind(word(next))
+        .bind(new_round)
+        .bind(owned)
+        .bind(accept)
+        .bind(user_id)
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await;
+        if let Err(e) = task_update {
+            if is_unique_violation(&e) {
+                return Err(RelayError::Conflict("lane is already busy".into()));
+            }
+            return Err(db_err(e));
+        }
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                body_md, props)
+             values ($1, $2, $3, $4, $5, 'assigned'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(crew_id)
+        .bind(task_id)
+        .bind(to_lane)
+        .bind(new_round)
+        .bind(phase.as_str())
+        .bind(brief.as_str())
+        .bind(props)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let event = serde_json::json!({
+            "from_lane": from_lane.to_string(),
+            "from_state": state,
+            "to_lane": to_lane.to_string(),
+        });
+        validate_props(RelayActionKind::HandedOver, &event)
+            .map_err(|e| RelayError::Internal(format!("handover event: {}", e.message)))?;
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                body_md, props)
+             values ($1, $2, $3, $4, $5, 'handed_over'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(crew_id)
+        .bind(task_id)
+        .bind(to_lane)
+        .bind(new_round)
+        .bind(phase.as_str())
+        .bind(note_text.as_str())
+        .bind(event)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayHandoverOutput { task_id, state: next, round: new_round })
     }
 
     /// Close a crew (coordinator only, F3): the crew's work is over when
@@ -5334,6 +5604,7 @@ mod tests {
         RelayReportInput {
             phase: RelayTaskPhase::Tests,
             round: 1,
+            partial: false,
             changed: "Wired the header.".into(),
             look_at: Some("app/header".into()),
             flags: None,

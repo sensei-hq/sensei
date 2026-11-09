@@ -547,6 +547,7 @@ pub fn daemon_request_for(
                 &[
                     "phase",
                     "round",
+                    "partial",
                     "summary",
                     "report_md",
                     "base",
@@ -672,6 +673,18 @@ pub fn daemon_request_for(
             Some(relay_authed(
                 DaemonRequest::post_json(
                     format!("/api/relay/tasks/{}/cancel", path_segment(task_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
+        "relay_handover_task" => {
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, &["to_lane", "note"]);
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/tasks/{}/handover", path_segment(task_id)),
                     Value::Object(body),
                 ),
                 args,
@@ -1353,7 +1366,7 @@ pub fn handle_list_tools() -> Value {
                     ("timeout_ms", "integer", "Hold length, clamped to 1..=50000 (default 25000)"),
                 ]),
             tool("relay_report_task",
-                "Report a work or rework turn: moves the task to review (first report picks the reviewer, least-loaded live lane).",
+                "Report a work or rework turn: moves the task to review (first report picks the reviewer, least-loaded live lane). partial:true records progress without moving.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
@@ -1362,6 +1375,7 @@ pub fn handle_list_tools() -> Value {
                     ("task_id", "string", "Task uuid"),
                     ("phase", "string", "analysis | tests | impl | docs | mockup"),
                     ("round", "integer", "Must be the task's current round"),
+                    ("partial", "boolean", "Progress only: stays working, no reviewer picked"),
                     ("summary", "object", "{changed, look_at?, flags?} — the ≤600-char turn summary"),
                     ("report_md", "string", "The full report markdown"),
                     ("base", "string", "Base ref the turn builds on"),
@@ -1478,6 +1492,17 @@ pub fn handle_list_tools() -> Value {
                     ("task_id", "string", "Task uuid"),
                 ],
                 &[]),
+            tool("relay_handover_task",
+                "Pull a working/in_review/rework task off its holder onto another lane: the task lands assigned with a fresh round, the brief frozen from the prior brief plus a handoff note. Interrupted stays the sweeper's job; a dead, foreign, busy, or reviewing destination is a 409. Coordinator only.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                    ("to_lane", "string", "Destination lane uuid (live lease, same crew, not the reviewer)"),
+                ],
+                &[
+                    ("note", "string", "The ≤600-char handoff note (else the move itself)"),
+                ]),
             tool("relay_close_crew",
                 "Close the crew when its lanes are gone (besides the caller, who unregisters after). Closed crews refuse register/reregister/plan/assign. Coordinator only.",
                 &[
@@ -1974,6 +1999,8 @@ mod tests {
         "relay_release_resource",
         "relay_cancel_task",
         "relay_close_crew",
+        // F1: force-handover.
+        "relay_handover_task",
     ];
 
     fn tools() -> Vec<Value> {
@@ -3029,6 +3056,8 @@ mod tests {
         "relay_release_resource",
         "relay_cancel_task",
         "relay_close_crew",
+        // F1: force-handover.
+        "relay_handover_task",
     ];
 
     const LANE_ID: &str = "01938931-0000-7000-8000-000000000001";
@@ -3195,6 +3224,50 @@ mod tests {
         assert_eq!(body["round"], 2);
         assert_eq!(body["summary"]["changed"], "c");
         assert_eq!(body["files"][0]["path"], "a");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_report_forwards_partial_flag() {
+        // F1: an explicit partial flag rides to the daemon; omitted it
+        // stays absent (never null-filled) and the report is full.
+        let req = daemon_request_for(
+            "relay_report_task",
+            &lane_args(json!({"task_id": "t1", "phase": "impl", "round": 1,
+                              "summary": {"changed": "c"}, "partial": true})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.path, "/api/relay/tasks/t1/report");
+        assert_eq!(req.body.as_ref().unwrap()["partial"], true);
+        let req = daemon_request_for(
+            "relay_report_task",
+            &lane_args(json!({"task_id": "t1", "phase": "impl", "round": 1,
+                              "summary": {"changed": "c"}})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert!(req.body.as_ref().unwrap().get("partial").is_none());
+    }
+
+    #[test]
+    fn relay_handover_posts_with_auth() {
+        // F1: handover posts lane_id + to_lane to the task route, the
+        // token riding the Authorization header only.
+        let req = daemon_request_for(
+            "relay_handover_task",
+            &lane_args(json!({"task_id": "t1", "to_lane": LANE_ID})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/t1/handover");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["to_lane"], LANE_ID);
         assert_token_only_in_headers(&req, TOKEN);
     }
 

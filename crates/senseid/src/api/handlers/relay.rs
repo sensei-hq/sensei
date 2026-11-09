@@ -24,6 +24,7 @@
 //! | lane | `POST /api/relay/messages` | message (lane sent) |
 //! | lane | `POST /api/relay/tasks/{id}/merge` | merge (coordinator) |
 //! | lane | `POST /api/relay/tasks/{id}/cancel` | cancel (coordinator) |
+//! | lane | `POST /api/relay/tasks/{id}/handover` | handover (coordinator) |
 //! | lane | `POST /api/relay/crews/{id}/close` | close the crew (coordinator) |
 //! | person | `GET /relay/now`, `GET /relay/queue`, `GET /relay/tasks/{crew}/{task}` | reads |
 //! | person | `POST /relay/messages`, `POST /relay/answers`, `POST /relay/backlog` | writes |
@@ -53,10 +54,10 @@ use crate::api::events::StateEvent;
 use crate::api::state::AppState;
 use crate::db::pg_store::relay::{
     RelayAnswerInput, RelayAskInput, RelayAskedOf, RelayAssignInput, RelayCaller,
-    RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput, RelayHeartbeatOutput,
-    RelayLaneSession, RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayPlanInput,
-    RelayReadFilter, RelayRegisterInput, RelayReportInput, RelayResourceRequest, RelayReviewInput,
-    RelayTicketInput, RelayTriageInput,
+    RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput, RelayHandoverInput,
+    RelayHeartbeatOutput, RelayLaneSession, RelayMergeInput, RelayMessageInput, RelayMessageTo,
+    RelayPlanInput, RelayReadFilter, RelayRegisterInput, RelayReportInput, RelayResourceRequest,
+    RelayReviewInput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
@@ -241,6 +242,9 @@ pub(crate) struct ReportBody {
     lane_id: String,
     phase: String,
     round: i32,
+    /// F1: partial progress — records the action, moves nothing. Omitted
+    /// (or explicit null) means a full report.
+    partial: Option<bool>,
     summary: SummaryBody,
     report_md: Option<String>,
     base: Option<String>,
@@ -343,6 +347,14 @@ pub(crate) struct MergeBody {
     into: String,
     #[serde(default)]
     gates: Vec<GateBody>,
+    note: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct HandoverBody {
+    lane_id: String,
+    to_lane: String,
+    #[serde(default)]
     note: String,
 }
 
@@ -715,6 +727,7 @@ pub(crate) async fn report(
             RelayReportInput {
                 phase: parse_word::<RelayTaskPhase>(&body.phase, "phase").map_err(err)?,
                 round: body.round,
+                partial: body.partial.unwrap_or(false),
                 changed: body.summary.changed,
                 look_at: body.summary.look_at,
                 flags: body.summary.flags,
@@ -945,6 +958,34 @@ pub(crate) async fn cancel(
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+    }))
+}
+
+pub(crate) async fn handover(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<HandoverBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let to_lane = parse_uuid(&body.to_lane, "to_lane").map_err(err)?;
+    let out = state
+        .pg
+        .relay_handover_task(
+            session.user_id,
+            caller,
+            task_id,
+            RelayHandoverInput { to_lane, note: body.note },
+        )
+        .await
+        .map_err(err)?;
+    emit(&state, "handover");
+    ok(serde_json::json!({
+        "task_id": out.task_id.to_string(),
+        "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+        "round": out.round,
     }))
 }
 
@@ -1655,6 +1696,360 @@ mod tests {
             call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["task"]["state"], "done");
+    }
+
+    // ── Fix gate F1: partial reports ──
+
+    fn partial_report_body(lane_id: &str) -> Value {
+        lane_body(
+            lane_id,
+            json!({
+                "phase": "tests", "round": 1, "partial": true,
+                "summary": {"changed": "Halfway.", "look_at": null, "flags": null},
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn report_partial_stays_working_no_reviewer_pick() {
+        // F1: a partial report records progress without moving the task:
+        // still working, same round, no reviewer picked, and the
+        // reported action carries props.partial=true.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        let _ = call(&h, "GET", &format!("/api/relay/tasks?lane_id={lane_id}"), None, Some(&token))
+            .await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(partial_report_body(&lane_id)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "working");
+        assert!(body["reviewer_lane_id"].is_null(), "{body}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "working");
+        assert_eq!(view["task"]["round"], 1);
+        let reported =
+            view["history"].as_array().unwrap().iter().find(|a| a["kind"] == "reported").unwrap();
+        assert_eq!(reported["props"]["partial"], true);
+    }
+
+    #[tokio::test]
+    async fn report_full_after_partial_lands_in_review() {
+        // F1: a full report after partials moves to in_review and picks
+        // the reviewer, on the same round the partials kept.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        let _ = call(&h, "GET", &format!("/api/relay/tasks?lane_id={lane_id}"), None, Some(&token))
+            .await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(partial_report_body(&lane_id)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&lane_id)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "in_review");
+        assert_eq!(body["round"], 1);
+        assert!(!body["reviewer_lane_id"].is_null(), "{body}");
+    }
+
+    // ── Fix gate F1: force-handover ──
+
+    async fn handover(
+        h: &Harness,
+        coord: &(String, String, String),
+        task_id: &str,
+        to_lane: &str,
+    ) -> (StatusCode, Value) {
+        call(
+            h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/handover"),
+            Some(lane_body(&coord.0, json!({"to_lane": to_lane}))),
+            Some(&coord.1),
+        )
+        .await
+    }
+
+    async fn working_task(
+        h: &Harness,
+        coord: &(String, String, String),
+    ) -> (String, String, String) {
+        // A held working task: returns (task_id, holder_lane, holder_token).
+        let (holder, token) = register_contributor(h, &coord.2).await;
+        let task_id = assigned_task(h, coord, &holder).await;
+        let _ =
+            call(h, "GET", &format!("/api/relay/tasks?lane_id={holder}"), None, Some(&token)).await;
+        (task_id, holder, token)
+    }
+
+    #[tokio::test]
+    async fn handover_happy_path_reassigns_with_note() {
+        // F1: the coordinator pulls a working task off its holder — the
+        // task lands assigned on to_lane with a fresh round, the brief
+        // frozen from the prior brief plus a handoff note, and a
+        // handed_over event in history.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, _) = working_task(&h, &coord).await;
+        let (to_lane, _) = register_contributor(&h, &coord.2).await;
+        let (status, body) = handover(&h, &coord, &task_id, &to_lane).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "assigned");
+        assert_eq!(body["round"], 2);
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "assigned");
+        assert_eq!(view["task"]["round"], 2);
+        let history = view["history"].as_array().unwrap();
+        let handoff = history.iter().find(|a| a["kind"] == "handed_over").unwrap();
+        assert!(handoff["body_md"].as_str().unwrap().contains("Handed over"), "{handoff:?}");
+        // The event names both parties plus the state left (shaped, not raw).
+        assert_eq!(handoff["props"]["from_lane"], holder);
+        assert_eq!(handoff["props"]["from_state"], "working");
+        assert_eq!(handoff["props"]["to_lane"], to_lane);
+        // History reads newest-first: the first `assigned` is the fresh
+        // round-2 brief.
+        let brief = history.iter().find(|a| a["kind"] == "assigned").unwrap();
+        assert_eq!(brief["round"], 2);
+        assert!(brief["body_md"].as_str().unwrap().contains("Handed over"), "{brief:?}");
+    }
+
+    #[tokio::test]
+    async fn handover_requires_coordinator() {
+        // RC-1 (beige-aster r1): handover is coordinator-only — a
+        // contributor caller 403s, like every sibling route pins.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, _, _) = working_task(&h, &coord).await;
+        let (caller, caller_token) = register_contributor(&h, &coord.2).await;
+        let (to_lane, _) = register_contributor(&h, &coord.2).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/handover"),
+            Some(lane_body(&caller, json!({"to_lane": to_lane}))),
+            Some(&caller_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "relay_forbidden");
+    }
+
+    #[tokio::test]
+    async fn handover_terminal_task_is_409() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let task_id = planned_task(&h, &coord).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/cancel"),
+            Some(lane_body(&coord.0, json!({}))),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (to_lane, _) = register_contributor(&h, &coord.2).await;
+        let (status, body) = handover(&h, &coord, &task_id, &to_lane).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn handover_to_dead_lane_is_409() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, _, _) = working_task(&h, &coord).await;
+        let (to_lane, _) = register_contributor(&h, &coord.2).await;
+        sqlx_core::query::query("update relay.leases set expires_at = $1 where lane_id = $2")
+            .bind(chrono::Utc::now() - chrono::Duration::seconds(1))
+            .bind(to_lane.parse::<uuid::Uuid>().unwrap())
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        let (status, body) = handover(&h, &coord, &task_id, &to_lane).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn handover_cross_crew_lane_is_409() {
+        // Cross-crew reads as not-found at assign; handover says 409 with
+        // a specific error instead (F1 brief).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, _, _) = working_task(&h, &coord).await;
+        let coord2 = register_coordinator(&h).await;
+        let (other_lane, _) = register_contributor(&h, &coord2.2).await;
+        let (status, body) = handover(&h, &coord, &task_id, &other_lane).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn handover_to_reviewer_lane_is_409() {
+        // A task never reviews itself: the picked reviewer cannot take
+        // over the task.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&holder)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let reviewer = body["reviewer_lane_id"].as_str().unwrap().to_string();
+        let (status, body) = handover(&h, &coord, &task_id, &reviewer).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn handover_interrupted_task_is_409() {
+        // Interrupted tasks re-offer through the sweeper; handover is refused.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/unregister",
+            Some(lane_body(&holder, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (to_lane, _) = register_contributor(&h, &coord.2).await;
+        let (status, body) = handover(&h, &coord, &task_id, &to_lane).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn handover_rejects_non_handoff_states() {
+        // F1 interpretation: handover pulls from working/in_review/rework
+        // only — assigned (no holder), blocked, approved, and same-holder
+        // handoffs all 409 with specific errors. One holder per case (one
+        // active task per lane).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (to_lane, _) = register_contributor(&h, &coord.2).await;
+        // Assigned: nothing held yet.
+        let (holder_a, _) = register_contributor(&h, &coord.2).await;
+        let fresh = assigned_task(&h, &coord, &holder_a).await;
+        let (status, body) = handover(&h, &coord, &fresh, &to_lane).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        // Blocked: resolve it first.
+        let (holder_b, token_b) = register_contributor(&h, &coord.2).await;
+        let blocked = assigned_task(&h, &coord, &holder_b).await;
+        let _ =
+            call(&h, "GET", &format!("/api/relay/tasks?lane_id={holder_b}"), None, Some(&token_b))
+                .await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &coord.0,
+                json!({
+                    "task_id": blocked, "question": "Where?",
+                    "options": [{"id": "db", "label": "Db"}],
+                    "blocks": [blocked], "asked_of": "person",
+                }),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = handover(&h, &coord, &blocked, &to_lane).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        // Same holder: nothing to pull.
+        let (holder_c, token_c) = register_contributor(&h, &coord.2).await;
+        let working = assigned_task(&h, &coord, &holder_c).await;
+        let _ =
+            call(&h, "GET", &format!("/api/relay/tasks?lane_id={holder_c}"), None, Some(&token_c))
+                .await;
+        let (status, body) = handover(&h, &coord, &working, &holder_c).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        // Approved: the work is done; merge it. Own two-lane crew so the
+        // coordinator is the picked reviewer, deterministically.
+        let coord_b = register_coordinator(&h).await;
+        let (worker_b, token_wb) = register_contributor(&h, &coord_b.2).await;
+        let approved = assigned_task(&h, &coord_b, &worker_b).await;
+        let _ =
+            call(&h, "GET", &format!("/api/relay/tasks?lane_id={worker_b}"), None, Some(&token_wb))
+                .await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{approved}/report"),
+            Some(report_body(&worker_b)),
+            Some(&token_wb),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{approved}/review"),
+            Some(lane_body(&coord_b.0, json!({"verdict": "approved", "summary": "Clean."}))),
+            Some(&coord_b.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (to_lane_b, _) = register_contributor(&h, &coord_b.2).await;
+        let (status, body) = handover(&h, &coord_b, &approved, &to_lane_b).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn handover_note_is_a_checked_summary() {
+        // F1: the handoff note is person-facing (it lands in the brief and
+        // the handed_over body), so it keeps the house summary bar: ≤ 600
+        // chars, no secrets.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, _, _) = working_task(&h, &coord).await;
+        let (to_lane, _) = register_contributor(&h, &coord.2).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/handover"),
+            Some(lane_body(&coord.0, json!({"to_lane": to_lane, "note": "x".repeat(700)}))),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "relay_invalid");
     }
 
     #[tokio::test]

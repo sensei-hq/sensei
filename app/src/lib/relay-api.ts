@@ -62,7 +62,8 @@ export type RelayActionKind =
   | 'merged'
   | 'interrupted'
   | 'reoffered'
-  | 'compacted';
+  | 'compacted'
+  | 'handed_over';
 
 /** The tracker ticket an item references by its portable identity, resolved on this side. */
 export interface RelayTicket {
@@ -361,6 +362,8 @@ export interface RelayActionProps {
   brief_updated: { docs: string[] };
   started: Record<string, never>;
   reported: RelayTelemetry & {
+    /** F1: a partial turn records progress only — the task keeps working, no reviewer picked. */
+    partial?: boolean | null;
     look_at?: string | null;
     flags?: string | null;
     base?: string | null;
@@ -393,6 +396,8 @@ export interface RelayActionProps {
   /** `to_lane` is the lane's uuid; the screen shows its code. */
   reoffered: { checkpoint?: unknown; to_lane: string | null };
   compacted: { context_tokens_before?: number | null; context_tokens_after?: number | null };
+  /** F1: uuids read as codes via the crew's lanes; `from_state` is the state word the task left. */
+  handed_over: { from_lane: string; from_state: RelayTaskState; to_lane: string };
 }
 
 interface RelayActionBase {

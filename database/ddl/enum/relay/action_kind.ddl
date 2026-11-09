@@ -16,7 +16,8 @@ create type relay.action_kind as enum (
   'merged',
   'interrupted',
   'reoffered',
-  'compacted'
+  'compacted',
+  'handed_over'
 );
 
 comment on type relay.action_kind is
