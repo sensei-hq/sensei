@@ -2261,13 +2261,10 @@ mod tests {
         text: &str,
     ) {
         let (status, body) = call(
-            &h,
+            h,
             "POST",
             "/api/relay/messages",
-            Some(lane_body(
-                lane_id,
-                json!({"to": to, "task_id": task_id, "text": text}),
-            )),
+            Some(lane_body(lane_id, json!({"to": to, "task_id": task_id, "text": text}))),
             Some(token),
         )
         .await;
@@ -2307,9 +2304,7 @@ mod tests {
         assert_eq!(messages[0]["text"], "second, blocks the merge");
         assert_eq!(messages[1]["text"], "first, needs your eyes");
         let lanes = body["lanes"].as_array().unwrap();
-        let code = lanes.iter().find(|l| l["id"] == lane_id).unwrap()["code"]
-            .as_str()
-            .unwrap();
+        let code = lanes.iter().find(|l| l["id"] == lane_id).unwrap()["code"].as_str().unwrap();
         assert_eq!(messages[0]["from_lane_code"], code);
         assert_eq!(messages[0]["task_id"], task_id);
         assert_eq!(messages[0]["crew_id"], coord.2);
