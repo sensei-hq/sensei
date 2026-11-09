@@ -153,6 +153,7 @@ review → the report it reviews) · `created_at`.
 | `merged` | the merge note | `commits[]`, `into`, `gates[]` |
 | `interrupted` / `reoffered` | — | `checkpoint`, `to_lane` |
 | `compacted` | — | `context_tokens_before`, `context_tokens_after` |
+| `handed_over` | the handoff note (or the move itself when no note was sent) | `from_lane`, `from_state` (the state word the task left), `to_lane` (lanes by uuid; the screen shows codes) |
 
 - **Decisions are actions** (`asked` and `answered`, linked by `reply_to`). An open decision is an `asked` with no answer,
   and its task reads "needs your answer" while it is open. The same applies to messages.
@@ -162,7 +163,11 @@ review → the report it reviews) · `created_at`.
 ## Stages of a task (user question, 2026-11-05)
 `assigned → working → in_review → (rework → in_review)* → approved → done`
 - **assigned:** handed to a lane. The brief is frozen.
-- **working:** the lane has started. On `report`, it goes to in_review.
+- **working:** the lane has started. On `report`, it goes to in_review — unless the report is partial
+  (`props.partial`), which records progress and keeps the task working with no reviewer picked.
+- A held task (`working` / `in_review` / `rework`) can be **handed over** mid-turn: the coordinator pulls it off its
+  holder onto another lane, where it lands `assigned` with the round bumped and the brief frozen from the prior brief
+  plus a handoff note. `interrupted` stays the sweeper's re-offer job.
 - **in_review:** a reviewer lane (never the author) holds it.
 - **rework:** changes were requested. The round increments, and the next report returns it to in_review.
 - **approved:** the review passed, waiting for the coordinator's merge with gates. This is its own stage because this week

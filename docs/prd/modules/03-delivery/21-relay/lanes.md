@@ -170,7 +170,8 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
 
 `register` · `heartbeat` · `reregister` · `unregister` · `get_tasks` · `claim_task` · `checkpoint_task` ·
 `report_task` · `get_reviews` · `submit_review` · `ask_decision` · `answer_decision` · `request_resource` ·
-`release_resource` · `plan_item` (coordinator) · `assign_task` (coordinator) · `merge_task` (coordinator).
+`release_resource` · `plan_item` (coordinator) · `assign_task` (coordinator) · `merge_task` (coordinator) ·
+`handover_task` (coordinator, F1: pull a held task off its lane mid-turn).
 The existing `start_run` / `register_plan` / `update_task_status` / `report_run_outcome` /
 `run_status` / `pause_run` are reused where they already fit, and not cloned.
 
@@ -252,3 +253,21 @@ Sensei-mediated channel — the daemon brokers, exactly as slice 1 does for ever
 proves the direct path; the fallback keeps every other family working unchanged. Direct traffic stays visible: whenever
 a direct handshake carries an interaction, a copy is fed into Sensei so the daemon tracks it, tagged with the mode of
 communication (direct vs Sensei-mediated). The broker never goes blind on lanes that talk around it.
+
+## 17. Mid-turn handover (F1; run-02 round-1 verdict)
+
+Two gaps made mid-task handover impossible: every report moved to `in_review`, and `assign` 409'd from
+`in_review` / `rework` / `interrupted`. F1 closes both halves.
+
+**Partial reports.** `report` takes a partial marker. A partial report keeps the task `working` — it records a
+`reported` action with `props.partial = true` and picks no reviewer. A later full report moves to `in_review`
+normally. The history reads a partial as progress so far ("Partial · Work … rN", still working), never as a
+request for review.
+
+**Force-handover.** `POST /api/relay/tasks/{id}/handover` with `{to_lane}` (coordinator only; MCP
+`relay_handover_task`) pulls a task off its holder from `working` / `in_review` / `rework`. Effects: the task lands
+`assigned` on `to_lane`, the round bumps, a fresh `assigned` brief freezes the prior brief plus the handoff note, and
+a `handed_over` event names both lanes. Guards, each a 409 with a specific error: the from-set is exactly the held
+three (terminal tasks, `assigned` with nothing held, `blocked`, and `approved` all refuse; `interrupted` stays the
+sweeper's re-offer job and says so); `to_lane` must hold a live lease in the same crew, must not be the current
+holder, must not be the picked reviewer (a task never reviews itself), and must not already hold a task.

@@ -38,8 +38,10 @@
     {#if action.body_md}<p class="text-sm text-ink-soft m-0">{action.body_md}</p>{/if}
 
   {:else if action.kind === 'reported'}
-    <p class="text-sm font-medium m-0" data-entry-title>{turnTitle(action)}</p>
-    <p class="text-xs text-ink-faint m-0">Summary sent with the request for review</p>
+    <p class="text-sm font-medium m-0" data-entry-title>{action.props.partial ? 'Partial · ' : ''}{turnTitle(action)}</p>
+    <p class="text-xs text-ink-faint m-0">
+      {action.props.partial ? 'Progress so far (still working)' : 'Summary sent with the request for review'}
+    </p>
     {#if action.body_md}<p class="text-sm text-ink-soft m-0">{action.body_md}</p>{/if}
     {#if action.props.look_at}<p class="text-xs m-0">Look at <code>{action.props.look_at}</code></p>{/if}
     {#if action.props.flags}<p class="text-xs m-0">{action.props.flags}</p>{/if}
@@ -122,6 +124,12 @@
     <p class="text-xs text-ink-mute m-0">
       {num(action.props.context_tokens_before)} → {num(action.props.context_tokens_after)} tokens
     </p>
+
+  {:else if action.kind === 'handed_over'}
+    <p class="text-sm font-medium m-0" data-entry-title>
+      Handed over from {codeOf(lanes, action.props.from_lane)} to {codeOf(lanes, action.props.to_lane)}
+    </p>
+    {#if action.body_md}<p class="text-sm text-ink-soft m-0">{action.body_md}</p>{/if}
   {/if}
 
   <p class="text-xs text-ink-faint m-0">{hhmm(action.created_at)}{action.lane_code ? ` · ${action.lane_code}` : ''}</p>

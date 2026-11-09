@@ -24,6 +24,7 @@
 //! | lane | `POST /api/relay/messages` | message (lane sent) |
 //! | lane | `POST /api/relay/tasks/{id}/merge` | merge (coordinator) |
 //! | lane | `POST /api/relay/tasks/{id}/cancel` | cancel (coordinator) |
+//! | lane | `POST /api/relay/tasks/{id}/handover` | handover (coordinator) |
 //! | lane | `POST /api/relay/crews/{id}/close` | close the crew (coordinator) |
 //! | person | `GET /relay/now`, `GET /relay/queue`, `GET /relay/tasks/{crew}/{task}` | reads |
 //! | person | `POST /relay/messages`, `POST /relay/answers`, `POST /relay/backlog` | writes |
@@ -53,10 +54,10 @@ use crate::api::events::StateEvent;
 use crate::api::state::AppState;
 use crate::db::pg_store::relay::{
     RelayAnswerInput, RelayAskInput, RelayAskedOf, RelayAssignInput, RelayCaller,
-    RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput, RelayHeartbeatOutput,
-    RelayLaneSession, RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayPlanInput,
-    RelayReadFilter, RelayRegisterInput, RelayReportInput, RelayResourceRequest, RelayReviewInput,
-    RelayTicketInput, RelayTriageInput,
+    RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput, RelayHandoverInput,
+    RelayHeartbeatOutput, RelayLaneSession, RelayMergeInput, RelayMessageInput, RelayMessageTo,
+    RelayPlanInput, RelayReadFilter, RelayRegisterInput, RelayReportInput, RelayResourceRequest,
+    RelayReviewInput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
@@ -346,6 +347,14 @@ pub(crate) struct MergeBody {
     into: String,
     #[serde(default)]
     gates: Vec<GateBody>,
+    note: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct HandoverBody {
+    lane_id: String,
+    to_lane: String,
+    #[serde(default)]
     note: String,
 }
 
@@ -949,6 +958,34 @@ pub(crate) async fn cancel(
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+    }))
+}
+
+pub(crate) async fn handover(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<HandoverBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let to_lane = parse_uuid(&body.to_lane, "to_lane").map_err(err)?;
+    let out = state
+        .pg
+        .relay_handover_task(
+            session.user_id,
+            caller,
+            task_id,
+            RelayHandoverInput { to_lane, note: body.note },
+        )
+        .await
+        .map_err(err)?;
+    emit(&state, "handover");
+    ok(serde_json::json!({
+        "task_id": out.task_id.to_string(),
+        "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+        "round": out.round,
     }))
 }
 
@@ -1776,7 +1813,7 @@ mod tests {
         // handed_over event in history.
         let h = harness().await;
         let coord = register_coordinator(&h).await;
-        let (task_id, _, _) = working_task(&h, &coord).await;
+        let (task_id, holder, _) = working_task(&h, &coord).await;
         let (to_lane, _) = register_contributor(&h, &coord.2).await;
         let (status, body) = handover(&h, &coord, &task_id, &to_lane).await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -1790,7 +1827,13 @@ mod tests {
         let history = view["history"].as_array().unwrap();
         let handoff = history.iter().find(|a| a["kind"] == "handed_over").unwrap();
         assert!(handoff["body_md"].as_str().unwrap().contains("Handed over"), "{handoff:?}");
-        let brief = history.iter().filter(|a| a["kind"] == "assigned").last().unwrap();
+        // The event names both parties plus the state left (shaped, not raw).
+        assert_eq!(handoff["props"]["from_lane"], holder);
+        assert_eq!(handoff["props"]["from_state"], "working");
+        assert_eq!(handoff["props"]["to_lane"], to_lane);
+        // History reads newest-first: the first `assigned` is the fresh
+        // round-2 brief.
+        let brief = history.iter().find(|a| a["kind"] == "assigned").unwrap();
         assert_eq!(brief["round"], 2);
         assert!(brief["body_md"].as_str().unwrap().contains("Handed over"), "{brief:?}");
     }
@@ -1965,6 +2008,27 @@ mod tests {
         let (status, body) = handover(&h, &coord_b, &approved, &to_lane_b).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn handover_note_is_a_checked_summary() {
+        // F1: the handoff note is person-facing (it lands in the brief and
+        // the handed_over body), so it keeps the house summary bar: ≤ 600
+        // chars, no secrets.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, _, _) = working_task(&h, &coord).await;
+        let (to_lane, _) = register_contributor(&h, &coord.2).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/handover"),
+            Some(lane_body(&coord.0, json!({"to_lane": to_lane, "note": "x".repeat(700)}))),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "relay_invalid");
     }
 
     #[tokio::test]

@@ -105,6 +105,7 @@ pub enum RelayActionKind {
     Interrupted,
     Reoffered,
     Compacted,
+    HandedOver,
 }
 
 /// `reviewed.props.verdict`.
@@ -155,6 +156,9 @@ pub enum TaskEvent {
     /// task goes back to `working` and starts a new round (the round is the
     /// store's write, part 2).
     Reassigned,
+    /// The coordinator pulls a held task off its lane mid-turn (F1): it
+    /// lands `assigned` on the new lane with a fresh round.
+    HandedOver,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,6 +201,12 @@ pub fn transition(
         | (S::Rework, E::LeaseLost)
         | (S::Blocked, E::LeaseLost) => Ok(S::Interrupted),
         (S::Interrupted, E::Reoffered) => Ok(S::Assigned),
+        // F1: handover pulls from the three held states only (blocked and
+        // interrupted keep their own exits; assigned/approved have nothing
+        // to pull).
+        (S::Working, E::HandedOver) | (S::InReview, E::HandedOver) | (S::Rework, E::HandedOver) => {
+            Ok(S::Assigned)
+        }
         (cur, E::Cancelled) if !matches!(cur, S::Done | S::Cancelled) => Ok(S::Cancelled),
         _ => Err(bad()),
     }
@@ -517,6 +527,19 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
         }
         K::Compacted => {
             allow(&["context_tokens_before", "context_tokens_after"])?;
+            Ok(())
+        }
+        K::HandedOver => {
+            allow(&["from_lane", "from_state", "to_lane"])?;
+            for key in ["from_lane", "to_lane"] {
+                match present(key).and_then(|v| v.as_str()) {
+                    Some(id) if is_uuid_str(id) => {}
+                    _ => return Err(props_err(format!("{key} must be a uuid"))),
+                }
+            }
+            if present("from_state").and_then(|v| v.as_str()).is_none() {
+                return Err(missing("from_state"));
+            }
             Ok(())
         }
         K::Started | K::Delivered | K::Read => {
@@ -889,6 +912,19 @@ mod tests {
     }
 
     #[test]
+    fn transition_handover_from_held_states_only() {
+        // F1: working/in_review/rework hand over to assigned; every other
+        // state refuses (blocked/interrupted keep their own exits;
+        // assigned/approved have nothing to pull).
+        for s in [S::Working, S::InReview, S::Rework] {
+            assert_eq!(transition(s, E::HandedOver), Ok(S::Assigned), "{s:?} hands over");
+        }
+        for s in [S::Assigned, S::Approved, S::Blocked, S::Interrupted, S::Done, S::Cancelled] {
+            assert!(transition(s, E::HandedOver).is_err(), "{s:?} refuses handover");
+        }
+    }
+
+    #[test]
     fn transition_cancelled_from_any_non_terminal() {
         for s in [
             S::Assigned,
@@ -1081,6 +1117,30 @@ mod tests {
                 &json!({"look_at": null, "tokens_in": 900000, "gates": []})
             )
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_props_handed_over_pins_parties() {
+        // F1: the handover event names both lanes (uuids) plus the state
+        // the task left.
+        assert!(
+            validate_props(
+                RelayActionKind::HandedOver,
+                &json!({"from_lane": "01938931-0000-7000-8000-000000000001",
+                        "from_state": "working",
+                        "to_lane": "01938931-0000-7000-8000-000000000002"})
+            )
+            .is_ok()
+        );
+        assert!(validate_props(RelayActionKind::HandedOver, &json!({})).is_err());
+        assert!(
+            validate_props(
+                RelayActionKind::HandedOver,
+                &json!({"from_lane": "nope", "from_state": "working",
+                        "to_lane": "01938931-0000-7000-8000-000000000002"})
+            )
+            .is_err()
         );
     }
 

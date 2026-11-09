@@ -678,6 +678,18 @@ pub fn daemon_request_for(
                 args,
             ))
         }
+        "relay_handover_task" => {
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, &["to_lane", "note"]);
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/tasks/{}/handover", path_segment(task_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
         "relay_close_crew" => {
             let crew_id = args["crew_id"].as_str().unwrap_or("");
             let body = relay_lane_body(args);
@@ -1480,6 +1492,17 @@ pub fn handle_list_tools() -> Value {
                     ("task_id", "string", "Task uuid"),
                 ],
                 &[]),
+            tool("relay_handover_task",
+                "Pull a working/in_review/rework task off its holder onto another lane: the task lands assigned with a fresh round, the brief frozen from the prior brief plus a handoff note. Interrupted stays the sweeper's job; a dead, foreign, busy, or reviewing destination is a 409. Coordinator only.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                    ("to_lane", "string", "Destination lane uuid (live lease, same crew, not the reviewer)"),
+                ],
+                &[
+                    ("note", "string", "The ≤600-char handoff note (else the move itself)"),
+                ]),
             tool("relay_close_crew",
                 "Close the crew when its lanes are gone (besides the caller, who unregisters after). Closed crews refuse register/reregister/plan/assign. Coordinator only.",
                 &[
@@ -1976,6 +1999,8 @@ mod tests {
         "relay_release_resource",
         "relay_cancel_task",
         "relay_close_crew",
+        // F1: force-handover.
+        "relay_handover_task",
     ];
 
     fn tools() -> Vec<Value> {
