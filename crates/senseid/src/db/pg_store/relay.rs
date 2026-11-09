@@ -23,10 +23,10 @@ use crate::relay::envelope::{
 use crate::relay::{
     Caller, DISK_FLOOR_GB, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS, RESOURCE_LEASE_TTL_SECS,
     RegisterMode, RelayActionKind, RelayError, RelayFindingSeverity, RelayFloors, RelayGuidance,
-    RelayItemKind, RelayLeaseState, RelayRole, RelaySurface, RelayTaskPhase, RelayTaskState,
-    RelayTicketProvider, ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent, check_summary_len,
-    decide_resource_grant, guard_markdown, hash_lane_token, pick_reviewer, register_mode,
-    relay_guidance_for, resolve_surface, transition, validate_props,
+    RelayItemKind, RelayLeaseState, RelayLimitScope, RelayRole, RelaySurface, RelayTaskPhase,
+    RelayTaskState, RelayTicketProvider, ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent,
+    check_summary_len, decide_resource_grant, guard_markdown, hash_lane_token, pick_reviewer,
+    register_mode, relay_guidance_for, resolve_surface, transition, validate_props,
 };
 use serde_json::json;
 
@@ -74,6 +74,24 @@ pub struct RelayLaneSession {
 #[derive(Debug, Clone)]
 pub struct RelayHeartbeatOutput {
     pub expires_at: DateTime<Utc>,
+}
+
+/// `POST /api/relay/limit_pause`: the lane reports quota exhaustion. The
+/// pause is distinct from lease expiry (the lease may be live); the sweep
+/// suspends the held task without expiring the lane.
+#[derive(Debug, Clone)]
+pub struct RelayLimitPauseInput {
+    pub scope: RelayLimitScope,
+    /// Quota-reset time from the warning; null when unknown (any beat
+    /// resumes then).
+    pub resumes_at: Option<DateTime<Utc>>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RelayLimitPauseOutput {
+    pub scope: RelayLimitScope,
+    pub resumes_at: Option<DateTime<Utc>>,
 }
 
 /// `POST /api/relay/reregister`: resume with the checkpoint. No new token —
@@ -1136,8 +1154,62 @@ impl PgStore {
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
+        // A beat at or past the resume time ends a limit pause (unknown
+        // resume: any beat resumes). Earlier beats renew only.
+        sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = null, limit_scope = null,
+                    limit_resumes_at = null, limit_note = null
+             where id = $1 and limit_paused_at is not null
+               and (limit_resumes_at is null or limit_resumes_at <= $2)",
+        )
+        .bind(lane_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         Ok(RelayHeartbeatOutput { expires_at: expires })
+    }
+
+    /// Record a lane's quota exhaustion (re-pausable: a later report
+    /// overwrites). The lease is untouched — heartbeat alone renews —
+    /// and the sweep suspends the held task without expiring the lane.
+    pub async fn relay_report_limit_pause(
+        &self,
+        lane_id: Uuid,
+        input: RelayLimitPauseInput,
+        now: DateTime<Utc>,
+    ) -> Result<RelayLimitPauseOutput, RelayError> {
+        let lane: Option<Option<DateTime<Utc>>> = sqlx_core::query_scalar::query_scalar(
+            "select unregistered_at from relay.lanes where id = $1",
+        )
+        .bind(lane_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some(unregistered_at) = lane else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        if unregistered_at.is_some() {
+            return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
+        if let Some(note) = input.note.as_deref() {
+            check_summary(note, "note")?;
+        }
+        sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = $1, limit_scope = $2::relay.limit_scope,
+                    limit_resumes_at = $3, limit_note = $4
+             where id = $5",
+        )
+        .bind(now)
+        .bind(word(input.scope))
+        .bind(input.resumes_at)
+        .bind(input.note.as_deref())
+        .bind(lane_id)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(RelayLimitPauseOutput { scope: input.scope, resumes_at: input.resumes_at })
     }
 
     /// Resume an unregistered (or lapsed) lane: a fresh lease plus the
@@ -1162,11 +1234,17 @@ impl PgStore {
         let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
         let mut tx = self.pool().begin().await.map_err(db_err)?;
         Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
-        sqlx_core::query::query("update relay.lanes set unregistered_at = null where id = $1")
-            .bind(lane_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+        // Resuming returns the lane to live duty: no stale limit pause
+        // survives the round trip.
+        sqlx_core::query::query(
+            "update relay.lanes set unregistered_at = null, limit_paused_at = null,
+                    limit_scope = null, limit_resumes_at = null, limit_note = null
+             where id = $1",
+        )
+        .bind(lane_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
         sqlx_core::query::query(
             "insert into relay.leases
                (user_id, id, crew_id, lane_id, kind, state, expires_at, granted_at)
@@ -3618,6 +3696,71 @@ impl PgStore {
                 interrupted_tasks += 1;
             }
         }
+        // Limit-paused lanes keep their leases but cannot work: suspend
+        // their active set for re-offer elsewhere WITHOUT expiring them —
+        // the lane is paused, not dead, and never lands in expired_leases.
+        // Same writes as the expiry branch (fed `now`, block memory
+        // cleared), distinct event; already-suspended lanes no-op.
+        let paused: Vec<(Uuid, Uuid, Uuid)> = sqlx_core::query_as::query_as(
+            "select l.user_id, l.crew_id, l.id from relay.lanes l
+             where l.limit_paused_at is not null
+               and exists (
+                 select 1 from relay.leases s
+                 where s.lane_id = l.id and s.kind = 'lane'
+                   and s.state = 'granted' and s.expires_at > $1)",
+        )
+        .bind(now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        for (user_id, crew_id, lane_id) in &paused {
+            let tasks: Vec<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
+                "select id, state::text, round, phase::text from relay.tasks
+                 where user_id = $1 and lane_id = $2
+                   and state in ('assigned', 'working', 'in_review', 'rework', 'blocked')",
+            )
+            .bind(user_id)
+            .bind(lane_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            for (task_id, state, round, phase) in tasks {
+                let next = transition(parse_state(&state)?, TaskEvent::LimitPaused)
+                    .map_err(|_| RelayError::Conflict("task cannot be suspended".into()))?;
+                sqlx_core::query::query(
+                    "update relay.tasks set state = $1::relay.task_state,
+                            blocked_from_state = null,
+                            state_changed_at = $2
+                     where user_id = $3 and id = $4",
+                )
+                .bind(word(next))
+                .bind(now)
+                .bind(user_id)
+                .bind(task_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                sqlx_core::query::query(
+                    "insert into relay.actions
+                       (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                        props, created_at)
+                     values ($1, $2, $3, $4, $5, 'interrupted'::relay.action_kind, $6,
+                             $7::relay.task_phase, '{}', $8)",
+                )
+                .bind(user_id)
+                .bind(new_id())
+                .bind(crew_id)
+                .bind(task_id)
+                .bind(lane_id)
+                .bind(round)
+                .bind(phase)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                interrupted_tasks += 1;
+            }
+        }
         // Re-offer tasks past the grace, measured from the latest
         // `interrupted` action. Tasks without one are left alone (the grace
         // has nothing to measure from).
@@ -3885,6 +4028,9 @@ impl PgStore {
                     "model": payload.get("model"),
                     "lease_state": lease_state,
                     "lease_expires_at": lease_expires_at,
+                    "limit_scope": payload.get("limit_scope"),
+                    "limit_resumes_at": payload.get("limit_resumes_at"),
+                    "limit_note": payload.get("limit_note"),
                     "task": payload.get("task"),
                 })
             })
@@ -4294,26 +4440,50 @@ impl PgStore {
         };
         let lane_json = match lane_id {
             Some(lane_id) => {
-                let lane: Option<(String, Option<String>, String, Option<String>, Option<String>)> =
-                    sqlx_core::query_as::query_as(
-                        "select code, title, family, version, model from relay.lanes
-                         where user_id = $1 and id = $2",
-                    )
-                    .bind(user_id)
-                    .bind(lane_id)
-                    .fetch_optional(self.pool())
-                    .await
-                    .map_err(db_err)?;
-                lane.map(|(code, title, family, version, model)| {
-                    serde_json::json!({
-                        "id": lane_id.to_string(),
-                        "code": code,
-                        "title": title,
-                        "family": family,
-                        "version": version,
-                        "model": model,
-                    })
-                })
+                let lane: Option<(
+                    String,
+                    Option<String>,
+                    String,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                    Option<DateTime<Utc>>,
+                    Option<String>,
+                )> = sqlx_core::query_as::query_as(
+                    "select code, title, family, version, model, limit_scope::text,
+                            limit_resumes_at, limit_note
+                     from relay.lanes
+                     where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(lane_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                lane.map(
+                    |(
+                        code,
+                        title,
+                        family,
+                        version,
+                        model,
+                        limit_scope,
+                        limit_resumes_at,
+                        limit_note,
+                    )| {
+                        serde_json::json!({
+                            "id": lane_id.to_string(),
+                            "code": code,
+                            "title": title,
+                            "family": family,
+                            "version": version,
+                            "model": model,
+                            "limit_scope": limit_scope,
+                            "limit_resumes_at": limit_resumes_at.map(iso),
+                            "limit_note": limit_note,
+                        })
+                    },
+                )
                 .unwrap_or(serde_json::Value::Null)
             }
             None => serde_json::Value::Null,

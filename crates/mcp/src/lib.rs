@@ -690,6 +690,14 @@ pub fn daemon_request_for(
                 args,
             ))
         }
+        "relay_limit_pause" => {
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, &["scope", "resumes_at", "note"]);
+            Some(relay_authed(
+                DaemonRequest::post_json("/api/relay/limit_pause", Value::Object(body)),
+                args,
+            ))
+        }
         "relay_close_crew" => {
             let crew_id = args["crew_id"].as_str().unwrap_or("");
             let body = relay_lane_body(args);
@@ -1503,6 +1511,17 @@ pub fn handle_list_tools() -> Value {
                 &[
                     ("note", "string", "The ≤600-char handoff note (else the move itself)"),
                 ]),
+            tool("relay_limit_pause",
+                "Report quota exhaustion: the lane pauses (daily/weekly/other, with the warning's resume time when known) while its lease stays live; the sweep suspends its held task for re-offer elsewhere without expiring the lane. Beating at or past resumes_at resumes.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("scope", "string", "Which quota ran out: daily, weekly, or other"),
+                ],
+                &[
+                    ("resumes_at", "string", "Quota-reset instant, RFC 3339 (null/unknown: any beat resumes)"),
+                    ("note", "string", "The ≤600-char note on the pause"),
+                ]),
             tool("relay_close_crew",
                 "Close the crew when its lanes are gone (besides the caller, who unregisters after). Closed crews refuse register/reregister/plan/assign. Coordinator only.",
                 &[
@@ -2001,6 +2020,7 @@ mod tests {
         "relay_close_crew",
         // F1: force-handover.
         "relay_handover_task",
+        "relay_limit_pause",
     ];
 
     fn tools() -> Vec<Value> {
@@ -3058,6 +3078,7 @@ mod tests {
         "relay_close_crew",
         // F1: force-handover.
         "relay_handover_task",
+        "relay_limit_pause",
     ];
 
     const LANE_ID: &str = "01938931-0000-7000-8000-000000000001";
@@ -3268,6 +3289,29 @@ mod tests {
         let body = req.body.as_ref().unwrap();
         assert_eq!(body["lane_id"], LANE_ID);
         assert_eq!(body["to_lane"], LANE_ID);
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_limit_pause_posts_with_auth() {
+        // Limit exhaustion posts lane_id + scope (+ optional resumes_at /
+        // note) to the pause route, the token on the header only; scope
+        // is required.
+        assert_eq!(missing_required("relay_limit_pause", &lane_args(json!({}))), vec!["scope"]);
+        let req = daemon_request_for(
+            "relay_limit_pause",
+            &lane_args(json!({"scope": "weekly", "resumes_at": "2030-01-01T00:00:00Z"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/limit_pause");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["scope"], "weekly");
+        assert_eq!(body["resumes_at"], "2030-01-01T00:00:00Z");
+        assert!(body.get("note").is_none());
         assert_token_only_in_headers(&req, TOKEN);
     }
 

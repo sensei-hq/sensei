@@ -13,6 +13,7 @@
 //! | lane | `POST /api/relay/heartbeat` | renew the lease |
 //! | lane | `POST /api/relay/reregister` | resume with the checkpoint |
 //! | lane | `POST /api/relay/unregister` | leave |
+//! | lane | `POST /api/relay/limit_pause` | report quota exhaustion |
 //! | lane | `GET /api/relay/tasks?lane_id=` | the envelope, now |
 //! | lane | `GET /api/relay/tasks/wait?lane_id=&timeout_ms=` | the envelope, held open ≤ 50 s |
 //! | lane | `POST /api/relay/tasks/plan` | plan an item (coordinator) |
@@ -55,14 +56,14 @@ use crate::api::state::AppState;
 use crate::db::pg_store::relay::{
     RelayAnswerInput, RelayAskInput, RelayAskedOf, RelayAssignInput, RelayCaller,
     RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput, RelayHandoverInput,
-    RelayHeartbeatOutput, RelayLaneSession, RelayMergeInput, RelayMessageInput, RelayMessageTo,
-    RelayPlanInput, RelayReadFilter, RelayRegisterInput, RelayReportInput, RelayResourceRequest,
-    RelayReviewInput, RelayTicketInput, RelayTriageInput,
+    RelayHeartbeatOutput, RelayLaneSession, RelayLimitPauseInput, RelayMergeInput,
+    RelayMessageInput, RelayMessageTo, RelayPlanInput, RelayReadFilter, RelayRegisterInput,
+    RelayReportInput, RelayResourceRequest, RelayReviewInput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
-    RelayError, RelayFindingSeverity, RelayItemKind, RelayRole, RelaySurface, RelayTaskPhase,
-    RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
+    RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole, RelaySurface,
+    RelayTaskPhase, RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
 };
 
 type RelayResult = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>;
@@ -151,6 +152,14 @@ pub(crate) struct RegisterBody {
 #[derive(Debug, Deserialize)]
 pub(crate) struct LaneBody {
     lane_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LimitPauseBody {
+    lane_id: String,
+    scope: String,
+    resumes_at: Option<String>,
+    note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -564,6 +573,43 @@ pub(crate) async fn unregister(
     state.pg.relay_unregister(lane_id).await.map_err(err)?;
     emit(&state, "unregister");
     ok(serde_json::json!({ "lane_id": body.lane_id }))
+}
+
+pub(crate) async fn limit_pause(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LimitPauseBody>,
+) -> RelayResult {
+    let _session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let resumes_at = body
+        .resumes_at
+        .as_deref()
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|dt| dt.to_utc())
+                .map_err(|_| RelayError::Validation(format!("bad resumes_at: {s}")))
+        })
+        .transpose()
+        .map_err(err)?;
+    let out = state
+        .pg
+        .relay_report_limit_pause(
+            lane_id,
+            RelayLimitPauseInput {
+                scope: parse_word::<RelayLimitScope>(&body.scope, "scope").map_err(err)?,
+                resumes_at,
+                note: body.note,
+            },
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(err)?;
+    emit(&state, "limit_pause");
+    ok(serde_json::json!({
+        "scope": out.scope,
+        "resumes_at": out.resumes_at.map(iso),
+    }))
 }
 
 type EnvelopeResult = Result<Json<LaneEnvelope>, (StatusCode, Json<serde_json::Value>)>;
@@ -2343,13 +2389,7 @@ mod tests {
     async fn now_lane(h: &Harness, lane_id: &str) -> serde_json::Value {
         let (status, body) = call(h, "GET", "/relay/now", None, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        body["lanes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|l| l["id"] == lane_id)
-            .cloned()
-            .unwrap()
+        body["lanes"].as_array().unwrap().iter().find(|l| l["id"] == lane_id).cloned().unwrap()
     }
 
     #[tokio::test]
@@ -2371,7 +2411,16 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         let lane = now_lane(&h, &lane_id).await;
         assert_eq!(lane["limit_scope"], "weekly", "{lane}");
-        assert_eq!(lane["limit_resumes_at"], "2030-01-01T00:00:00Z", "{lane}");
+        // Timestamptz renders zone-dependent (lease_expires_at precedent),
+        // so the resume instant — not the string — is the assertion.
+        let resumes =
+            chrono::DateTime::parse_from_rfc3339(lane["limit_resumes_at"].as_str().unwrap())
+                .unwrap()
+                .to_utc();
+        assert_eq!(
+            resumes,
+            chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap().to_utc()
+        );
         assert_eq!(lane["lease_state"], "granted", "{lane}");
     }
 
@@ -2393,15 +2442,8 @@ mod tests {
         let coord = register_coordinator(&h).await;
         let (lane_id, token) = register_contributor(&h, &coord.2).await;
         let task_id = assigned_task(&h, &coord, &lane_id).await;
-        let (status, _) = limit_pause(
-            &h,
-            &lane_id,
-            &token,
-            "daily",
-            serde_json::Value::Null,
-            None,
-        )
-        .await;
+        let (status, _) =
+            limit_pause(&h, &lane_id, &token, "daily", serde_json::Value::Null, None).await;
         assert_eq!(status, StatusCode::OK);
         h.state.pg.relay_sweep_leases(chrono::Utc::now()).await.unwrap();
         let lane = now_lane(&h, &lane_id).await;
@@ -2420,15 +2462,8 @@ mod tests {
         let h = harness().await;
         let coord = register_coordinator(&h).await;
         let (lane_id, token) = register_contributor(&h, &coord.2).await;
-        let (status, _) = limit_pause(
-            &h,
-            &lane_id,
-            &token,
-            "daily",
-            json!("2030-01-01T00:00:00Z"),
-            None,
-        )
-        .await;
+        let (status, _) =
+            limit_pause(&h, &lane_id, &token, "daily", json!("2030-01-01T00:00:00Z"), None).await;
         assert_eq!(status, StatusCode::OK);
         let (status, _) = call(
             &h,
@@ -2446,9 +2481,7 @@ mod tests {
             .pg
             .relay_heartbeat(
                 lane_id.parse().unwrap(),
-                chrono::DateTime::parse_from_rfc3339("2030-01-02T00:00:00Z")
-                    .unwrap()
-                    .to_utc(),
+                chrono::DateTime::parse_from_rfc3339("2030-01-02T00:00:00Z").unwrap().to_utc(),
             )
             .await
             .unwrap();
@@ -2468,14 +2501,8 @@ mod tests {
             limit_pause(&h, &lane_id, &token, "other", serde_json::Value::Null, None).await;
         assert_eq!(status, StatusCode::OK);
         for route in ["/api/relay/unregister", "/api/relay/reregister"] {
-            let (status, body) = call(
-                &h,
-                "POST",
-                route,
-                Some(lane_body(&lane_id, json!({}))),
-                Some(&token),
-            )
-            .await;
+            let (status, body) =
+                call(&h, "POST", route, Some(lane_body(&lane_id, json!({}))), Some(&token)).await;
             assert_eq!(status, StatusCode::OK, "{body}");
         }
         let lane = now_lane(&h, &lane_id).await;
