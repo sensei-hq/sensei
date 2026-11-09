@@ -100,6 +100,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/relay/unregister", post(relay::unregister))
         .route("/api/relay/tasks", get(relay::get_tasks))
         .route("/api/relay/tasks/wait", get(relay::wait_for_task))
+        .route("/api/relay/events", get(relay::relay_events_sse))
         .route("/api/relay/tasks/plan", post(relay::plan))
         .route("/api/relay/tasks/{id}/assign", post(relay::assign))
         .route("/api/relay/tasks/{id}/report", post(relay::report))

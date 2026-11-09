@@ -22,6 +22,7 @@
 // formats them.
 
 import { apiBase, type ApiResult } from './api.js';
+import { EventManager } from './events.js';
 
 // ─── Vocabulary (lanes-data.md enums) ───────────────────────────────────────
 
@@ -538,3 +539,36 @@ export const relayApi: RelayApiFactory = (port) => {
     tryAddToBacklog: (body) => call<{ item_id: string }>('POST', '/relay/backlog', body),
   };
 };
+
+// ─── Stream (F8; the dojo seam) ─────────────────────────────────────────────
+
+/** One relay-socket event: the shared {action, entity, data} contract.
+/// Task notifications name the task (the route re-reads its view); step
+/// events carry the step (applied without re-reading); op-only relay
+/// events name the op (unregister re-reads). The dojo replays this same
+/// contract over Supabase realtime — the route dispatches, never the transport. */
+export interface RelayStreamEvent {
+  action: 'add' | 'update' | 'remove' | 'set';
+  entity: string;
+  data: { op?: string; task_id?: string; step?: RelayTaskStep };
+}
+
+/** Shape-check one socket payload; throws (the manager skips it). */
+export function parseRelayStreamEvent(raw: string): RelayStreamEvent {
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('relay stream event is not an object');
+  }
+  const { action, entity, data } = parsed as Record<string, unknown>;
+  if (typeof entity !== 'string' || typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error('relay stream event names no entity');
+  }
+  if (action !== 'add' && action !== 'update' && action !== 'remove' && action !== 'set') {
+    throw new Error('relay stream event names no action');
+  }
+  return { action, entity, data: data as RelayStreamEvent['data'] };
+}
+
+/** The relay socket, owned by the route that subscribes (never by shared state). */
+export const relayStream: (port: number) => EventManager<RelayStreamEvent> = (port) =>
+  new EventManager<RelayStreamEvent>(`${apiBase(port)}/api/relay/events`, parseRelayStreamEvent);

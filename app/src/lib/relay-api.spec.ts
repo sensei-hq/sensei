@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { relayApi } from './relay-api.js';
+import { relayApi, parseRelayStreamEvent } from './relay-api.js';
 
 /**
  * The runtime behind `relayApi(port)` (review relay-screen-impl-r1 F3): every screen
@@ -133,5 +133,35 @@ describe('relayApi — the answers', () => {
       ok: false,
       error: { status: 0, message: 'connection refused' },
     });
+  });
+});
+
+describe('parseRelayStreamEvent', () => {
+  // F8: the relay socket speaks the shared {action, entity, data} contract.
+  // Shape-checked here; the route dispatches by entity.
+  it('parses a step event with its step', () => {
+    expect(
+      parseRelayStreamEvent(
+        JSON.stringify({
+          action: 'add',
+          entity: 'step',
+          data: { task_id: 't1', step: { key: 'a', title: 'A', state: 'open', reason: null, updated_at: 'x' } },
+        }),
+      ),
+    ).toEqual({
+      action: 'add',
+      entity: 'step',
+      data: { task_id: 't1', step: { key: 'a', title: 'A', state: 'open', reason: null, updated_at: 'x' } },
+    });
+  });
+
+  it('parses a task notification', () => {
+    const event = parseRelayStreamEvent(JSON.stringify({ action: 'update', entity: 'task', data: { op: 'report', task_id: 't1' } }));
+    expect(event.entity).toBe('task');
+    expect(event.data.task_id).toBe('t1');
+  });
+
+  it.each(['not json', '{"action":"add"}', '{"entity":"step"}', '[]', 'null'])('rejects %s', (raw) => {
+    expect(() => parseRelayStreamEvent(raw)).toThrow();
   });
 });

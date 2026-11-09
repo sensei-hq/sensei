@@ -194,6 +194,8 @@ pub struct RelayStepOutput {
     pub state: RelayStepState,
     pub reason: Option<String>,
     pub updated_at: String,
+    /// True when the post created the key (the stream reads add/update).
+    pub created: bool,
 }
 
 /// `POST /api/relay/crews/{id}/close` (coordinator, F3).
@@ -308,6 +310,14 @@ pub struct RelayAskInput {
 #[derive(Debug, Clone)]
 pub struct RelayAskOutput {
     pub decision_id: Uuid,
+}
+
+/// Answering a decision: the action id plus the task it unblocks, if
+/// the decision hangs off one (F8 streams the task id).
+#[derive(Debug, Clone)]
+pub struct RelayAnswerOutput {
+    pub action_id: Uuid,
+    pub task_id: Option<Uuid>,
 }
 
 /// `POST /api/relay/decisions/{id}/answer` (person and lane share it; the
@@ -2480,7 +2490,7 @@ impl PgStore {
         caller: RelayCaller,
         decision_id: Uuid,
         input: RelayAnswerInput,
-    ) -> Result<Uuid, RelayError> {
+    ) -> Result<RelayAnswerOutput, RelayError> {
         let ask: Option<(Uuid, Option<Uuid>, serde_json::Value, Option<i32>, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, task_id, props, round, phase::text from relay.actions
@@ -2630,7 +2640,7 @@ impl PgStore {
             .map_err(db_err)?;
         }
         tx.commit().await.map_err(db_err)?;
-        Ok(answer_id)
+        Ok(RelayAnswerOutput { action_id: answer_id, task_id })
     }
 
     /// Queue a message on the bus — person and lane share it.
@@ -3211,6 +3221,7 @@ impl PgStore {
         let stored_reason =
             reason.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null);
         let mut steps = stored.as_array().cloned().unwrap_or_default();
+        let created = !steps.iter().any(|s| s.get("key").and_then(|v| v.as_str()) == Some(key));
         if let Some(existing) =
             steps.iter_mut().find(|s| s.get("key").and_then(|v| v.as_str()) == Some(key))
         {
@@ -3246,6 +3257,7 @@ impl PgStore {
             state: input.state,
             reason,
             updated_at: stamp,
+            created,
         })
     }
 
@@ -6189,7 +6201,7 @@ mod tests {
              from relay.actions a join relay.tasks t on t.id = $1 where a.id = $2",
             )
             .bind(w)
-            .bind(action)
+            .bind(action.action_id)
             .fetch_one(pg.pool())
             .await
             .unwrap();

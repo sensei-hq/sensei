@@ -3287,7 +3287,9 @@ mod tests {
         // route, the token riding the Authorization header only.
         let req = daemon_request_for(
             "relay_post_step",
-            &lane_args(json!({"task_id": "t1", "key": "scaffold", "title": "Scaffold", "state": "open"})),
+            &lane_args(
+                json!({"task_id": "t1", "key": "scaffold", "title": "Scaffold", "state": "open"}),
+            ),
             "/cwd",
             None,
         )
