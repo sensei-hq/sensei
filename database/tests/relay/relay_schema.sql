@@ -21,12 +21,14 @@ declare
   n int;
   v_ok boolean;
 begin
-  -- Seven tables: the six plus the finding-classes lookup.
+  -- Eight tables: the six plus the finding-classes lookup plus the
+  -- machine-local daemon user (local identity; never synced, hence outside
+  -- the PK(user_id, id) sync-key pin below).
   select count(*) into n from pg_catalog.pg_class c
     join pg_catalog.pg_namespace s on s.oid = c.relnamespace
    where s.nspname = 'relay' and c.relkind = 'r';
-  if n <> 7 then
-    raise exception 'relay must hold 7 tables, saw %.', n;
+  if n <> 8 then
+    raise exception 'relay must hold 8 tables, saw %.', n;
   end if;
 
   -- `user_id` uuid NOT NULL on the six (finding_classes is the shared lookup).
@@ -85,12 +87,12 @@ begin
     raise exception '% relay FK(s) point outside the schema.', n;
   end if;
 
-  -- RLS on all seven (the views inherit it through security-invoker).
+  -- RLS on all eight (the views inherit it through security-invoker).
   select count(*) into n from pg_catalog.pg_class c
     join pg_catalog.pg_namespace s on s.oid = c.relnamespace
    where s.nspname = 'relay' and c.relkind = 'r' and c.relrowsecurity;
-  if n <> 7 then
-    raise exception 'RLS must be on all 7 tables, saw % of 7.', n;
+  if n <> 8 then
+    raise exception 'RLS must be on all 8 tables, saw % of 8.', n;
   end if;
 
   -- At least the owner-read policy per table (slice 2 adds dōjō write policies).
@@ -98,8 +100,8 @@ begin
     join pg_catalog.pg_class c on c.oid = p.polrelid
     join pg_catalog.pg_namespace s on s.oid = c.relnamespace
    where s.nspname = 'relay';
-  if n < 7 then
-    raise exception 'relay tables must carry at least 7 policies, saw %.', n;
+  if n < 8 then
+    raise exception 'relay tables must carry at least 8 policies, saw %.', n;
   end if;
 
   -- Portability: no policy dereferences the dōjō-only `auth` schema.

@@ -22,3 +22,5 @@ comment on table relay.daemon_user is 'Single-row (singleton boolean PK) machine
 comment on column relay.daemon_user.singleton is 'Fixed true (CHECK) — enforces exactly one row; the mint keys ON CONFLICT (singleton) DO NOTHING.';
 comment on column relay.daemon_user.user_id is 'The stable machine-local id. v7, like every relay id. Never changes, never re-keyed.';
 comment on column relay.daemon_user.minted_at is 'When this machine minted its relay user.';
+
+alter table relay.daemon_user enable row level security;

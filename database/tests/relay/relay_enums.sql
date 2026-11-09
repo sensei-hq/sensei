@@ -1,6 +1,6 @@
--- `relay` enums — the model's eight vocabularies, labels and order pinned.
+-- `relay` enums — the model's nine vocabularies, labels and order pinned.
 --
--- WHAT BREAKS THIS TEST: a renamed/reordered/dropped label; a ninth enum in
+-- WHAT BREAKS THIS TEST: a renamed/reordered/dropped label; a tenth enum in
 -- `relay`; `item_state` losing `triage` (lanes-data's "one extra state").
 --
 -- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
@@ -22,13 +22,13 @@ declare
   v_labels text[];
   n int;
 begin
-  -- The schema holds exactly the eight vocabularies: a ninth enum is a model
+  -- The schema holds exactly the nine vocabularies: a tenth enum is a model
   -- change, not a quiet addition.
   select count(*) into n from pg_catalog.pg_type t
     join pg_catalog.pg_namespace s on s.oid = t.typnamespace
    where s.nspname = 'relay' and t.typtype = 'e';
-  if n <> 8 then
-    raise exception 'relay must hold exactly 8 enums, saw %.', n;
+  if n <> 9 then
+    raise exception 'relay must hold exactly 9 enums, saw %.', n;
   end if;
 
   select array_agg(e.enumlabel order by e.enumsortorder) into v_labels
@@ -91,10 +91,19 @@ begin
   select array_agg(e.enumlabel order by e.enumsortorder) into v_labels
     from pg_catalog.pg_enum e join pg_catalog.pg_type t on t.oid = e.enumtypid
     join pg_catalog.pg_namespace s on s.oid = t.typnamespace
+   where s.nspname = 'relay' and t.typname = 'limit_scope';
+  if v_labels is distinct from array['daily', 'weekly', 'other'] then
+    raise exception 'limit_scope labels wrong, saw %.', v_labels;
+  end if;
+
+  select array_agg(e.enumlabel order by e.enumsortorder) into v_labels
+    from pg_catalog.pg_enum e join pg_catalog.pg_type t on t.oid = e.enumtypid
+    join pg_catalog.pg_namespace s on s.oid = t.typnamespace
    where s.nspname = 'relay' and t.typname = 'action_kind';
   if v_labels is distinct from
       array['assigned', 'brief_updated', 'started', 'reported', 'reviewed', 'asked', 'answered',
-            'message', 'delivered', 'read', 'merged', 'interrupted', 'reoffered', 'compacted'] then
+            'message', 'delivered', 'read', 'merged', 'interrupted', 'reoffered', 'compacted',
+            'handed_over'] then
     raise exception 'action_kind labels wrong, saw %.', v_labels;
   end if;
 end $$;

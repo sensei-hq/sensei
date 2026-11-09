@@ -18,6 +18,7 @@ create schema if not exists staging;
 \ir ../../ddl/enum/relay/task_phase.ddl
 \ir ../../ddl/enum/relay/task_state.ddl
 \ir ../../ddl/enum/relay/action_kind.ddl
+\ir ../../ddl/enum/relay/limit_scope.ddl
 \ir ../../ddl/table/relay/crews.ddl
 \ir ../../ddl/table/relay/lanes.ddl
 \ir ../../ddl/table/relay/leases.ddl
@@ -25,6 +26,7 @@ create schema if not exists staging;
 \ir ../../ddl/table/relay/tasks.ddl
 \ir ../../ddl/table/relay/actions.ddl
 \ir ../../ddl/table/relay/finding_classes.ddl
+\ir ../../ddl/table/relay/daemon_user.ddl
 \ir ../../ddl/table/staging/finding_classes.ddl
 \ir ../../ddl/procedure/staging/import_finding_classes.ddl
 \ir ../../ddl/view/relay/now.ddl
@@ -36,6 +38,7 @@ create schema if not exists staging;
 \ir ../../policies/relay/tasks.sql
 \ir ../../policies/relay/actions.sql
 \ir ../../policies/relay/finding_classes.sql
+\ir ../../policies/relay/daemon_user.sql
 \ir ../../policies/relay/now.sql
 \ir ../../policies/relay/task_history.sql
 \ir ../../apply/after/relay_api_grants.sql
