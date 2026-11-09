@@ -4055,20 +4055,39 @@ impl PgStore {
         })
     }
 
-    /// The daemon user behind person reads and register (Q19-REC): the
-    /// dōjō principal id from the sign-in session. Fails closed
-    /// (`SignInRequired`) when the machine never signed in — never a
-    /// minted stand-in (a miss is an error, never an invented row).
+    /// The daemon user behind person reads and register (local identity,
+    /// user ruling 2026-11-09; Q19 superseded): the stable machine-local id
+    /// from `relay.daemon_user`, minted once on first use. Persona and
+    /// principal state never affect it — no precedence, no fallback, no
+    /// 401. Sync maps local→principal at the dōjō boundary; this id never
+    /// changes, so relay rows are never re-keyed.
     pub async fn relay_current_user(&self) -> Result<Uuid, RelayError> {
-        // The DDL's own seam: the chosen default persona's dōjō principal.
-        // No default, or an unlinked one, is a machine that never signed in.
-        let principal: Option<Option<Uuid>> = sqlx_core::query_scalar::query_scalar(
-            "select principal_id from sensei.personas where is_chosen_default limit 1",
+        // Steady state is one indexed read; the mint runs once per machine.
+        // Two racing first calls both fall through to the insert, the loser
+        // no-ops on the singleton PK, and both read back the winner's row.
+        let id: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select user_id from relay.daemon_user where singleton",
         )
         .fetch_optional(self.pool())
         .await
         .map_err(db_err)?;
-        principal.flatten().ok_or(RelayError::SignInRequired)
+        if let Some(id) = id {
+            return Ok(id);
+        }
+        sqlx_core::query::query(
+            "insert into relay.daemon_user (singleton, user_id) values (true, $1)
+             on conflict (singleton) do nothing",
+        )
+        .bind(new_id())
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        sqlx_core::query_scalar::query_scalar(
+            "select user_id from relay.daemon_user where singleton",
+        )
+        .fetch_one(self.pool())
+        .await
+        .map_err(db_err)
     }
 
     /// `RelayNow`, exactly per `relay-api.ts` — crews, facets, lanes,
@@ -7615,40 +7634,57 @@ mod tests {
 
     #[tokio::test]
     async fn current_user_is_stable_q19rec() {
-        // Q19-REC (amended, L0 sanction 2026-11-06): with a signed-in
-        // default persona, the daemon user is its principal — one stable
-        // uuid per machine+identity.
+        // Q19-REC amended (local identity, user ruling 2026-11-09; Q19
+        // superseded): the daemon user is a stable machine-local id minted
+        // once — never the dōjō principal, never an error. Zero personas
+        // rows: same id across calls.
         let pg = PgStore::test_store().await;
-        let principal = v7(0x90);
-        sqlx_core::query::query(
-            "insert into sensei.personas (label, is_chosen_default, principal_id)
-             values ('default', true, $1)",
-        )
-        .bind(principal)
-        .execute(pg.pool())
-        .await
-        .unwrap();
         let a = pg.relay_current_user().await.unwrap();
         let b = pg.relay_current_user().await.unwrap();
         assert_eq!(a, b);
-        assert_eq!(a, principal);
     }
 
     #[tokio::test]
-    async fn current_user_never_signed_in_is_sign_in_required_q19rec() {
-        // Q19-REC failure pin (added, L0 sanction 2026-11-06): no default
-        // persona — or an unlinked one — fails closed, never a minted user.
+    async fn current_user_ignores_persona_state_q19rec() {
+        // Q19-REC failure pin amended (local identity, user ruling
+        // 2026-11-09; Q19 superseded; was
+        // current_user_never_signed_in_is_sign_in_required_q19rec): no
+        // default persona, an unlinked default, or a linked one — the
+        // local id is the same in all three states, and never the
+        // principal. No precedence: there is none to test.
         let pg = PgStore::test_store().await;
-        let err = pg.relay_current_user().await.unwrap_err();
-        assert!(matches!(err, RelayError::SignInRequired), "{err:?}");
+        let bare = pg.relay_current_user().await.unwrap();
         sqlx_core::query::query(
             "insert into sensei.personas (label, is_chosen_default) values ('default', true)",
         )
         .execute(pg.pool())
         .await
         .unwrap();
-        let err = pg.relay_current_user().await.unwrap_err();
-        assert!(matches!(err, RelayError::SignInRequired), "{err:?}");
+        assert_eq!(pg.relay_current_user().await.unwrap(), bare);
+        let principal = v7(0x90);
+        sqlx_core::query::query("update sensei.personas set principal_id = $1")
+            .bind(principal)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let linked = pg.relay_current_user().await.unwrap();
+        assert_eq!(linked, bare);
+        assert_ne!(linked, principal);
+    }
+
+    #[tokio::test]
+    async fn current_user_survives_restart_q19rec() {
+        // Q19-REC amendment (local identity, user ruling 2026-11-09): the
+        // id is a persisted row, so a new pool on the same database — a
+        // daemon restart — resolves the same user. (Same test thread, so
+        // the second connect reuses this test's clone.)
+        let pg = PgStore::test_store().await;
+        let before = pg.relay_current_user().await.unwrap();
+        pg.close().await;
+        drop(pg);
+        let pg2 = PgStore::test_store().await;
+        let after = pg2.relay_current_user().await.unwrap();
+        assert_eq!(before, after);
     }
 
     #[tokio::test]

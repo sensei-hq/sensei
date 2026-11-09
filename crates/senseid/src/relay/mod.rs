@@ -814,8 +814,10 @@ pub enum RelayError {
     /// The request or its props are malformed (bad phase, long summary,
     /// leaked secret, unknown finding class, self-review).
     Validation(String),
-    /// The daemon user is unknown (never signed into a dōjō): register and
-    /// the person reads fail closed (Q19-REC).
+    /// Reserved for dōjō-sync operations that need the linked principal:
+    /// raised when the machine has none. Relay routes never raise it —
+    /// local relay runs on the machine-local user, signed in or not (Q19
+    /// superseded, user ruling 2026-11-09).
     SignInRequired,
     /// Valid request, slice-2 work (the tracker pull behind ticketed triage).
     NotImplemented(String),

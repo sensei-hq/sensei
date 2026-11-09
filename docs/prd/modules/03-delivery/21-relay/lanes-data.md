@@ -12,9 +12,12 @@ the "Message the crew" addendum, settled with the user). Relay DDL merged; the d
 ## One `relay` schema, deployed to both the daemon and the dōjō (user, 2026-11-05)
 The same DDL runs on the desktop's sensei DB and on the dōjō, and the daemon syncs rows across (D89 targets, per-target
 marks). For that to work without breaking:
-- **Every table carries `user_id`**: the owning person's dōjō principal id, set on the desktop when the crew is created. On
-  the dōjō it is the RLS key (a row is readable by its owner, and by others only by an explicit share). On the desktop it
-  qualifies rows when more than one signed-in identity runs crews. Every unique constraint and every lookup includes it.
+- **Every table carries `user_id`**: the machine-local daemon user (`relay.daemon_user`), stable per machine, set on the
+  desktop when the crew is created — never the dōjō principal (local identity, user ruling 2026-11-09; Q19 superseded).
+  Sync maps local→principal at the dōjō boundary, so on the dōjō the mapped principal is the RLS key (a row is readable
+  by its owner, and by others only by an explicit share). On the desktop it qualifies rows when more than one local
+  identity runs crews. Every unique constraint and every lookup includes it. Relay rows are never re-keyed: there is no
+  adoption migration.
 - **Ids are minted on the desktop and are stable everywhere.** `uuid` v7 (time-ordered) for every table, `actions`
   included (no `bigserial`), so a row has the same id on both sides and an upsert on `(user_id, id)` is idempotent.
 - **The crew lives in `relay.crews`, not `activity.runs`.** `activity` is desktop-only, so a shared schema can't point at it.
@@ -28,6 +31,7 @@ marks). For that to work without breaking:
   - `crews`, `lanes` (without `token_hash` / `checkpoint`), `items`, `tasks`, `actions`. An action's `report_md` goes only
     when sharing is on.
   - `leases` never leave the machine: they're local resources.
+  - `daemon_user` never leaves the machine either: it is the local side of the sync boundary's local→principal map.
 - **The dōjō is read-mostly.** The person can answer a decision and post a message there (`answered`, `message` actions).
   Those sync back to the desktop through the existing pull path, with the same ids, so neither side ever overwrites the
   other's rows.
@@ -56,7 +60,13 @@ key, or work on those repositories would never appear:
   and validated by the daemon, and metrics read them through views.
 - **Nullable means "not reported" (D83).** A missing prop is absent, never 0. Totals say how many turns reported.
 
-## Tables (six: crews, lanes, leases, items, tasks, actions; all with `user_id`)
+## Tables (seven: daemon_user, crews, lanes, leases, items, tasks, actions; all but `daemon_user` with `user_id`)
+
+### `relay.daemon_user`: the machine-local daemon user (singleton)
+`singleton` (boolean PK, fixed true — exactly one row) · `user_id` (uuid v7, minted once) · `minted_at`.
+- The stable id behind register and the person routes, on every machine, signed in or not. Never the dōjō
+  principal; persona/principal state never affects it (local identity, user ruling 2026-11-09; Q19 superseded).
+- Never synced, never re-keyed (see *What syncs*).
 
 ### `relay.crews`
 See the section above. `user_id` · `id` (uuid v7) · `workspace_id` null · `repo_key` null (**the founding repository**, Q6; tasks

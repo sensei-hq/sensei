@@ -319,3 +319,15 @@ The screen reads a paused lane as paused-with-resume-time, never "lease lost": t
 plus `until HH:MM` (or `resume unknown`), and the task view's facts line carries the same. A dead lease still
 reads lease-lost even with a stale pause on the row. Transcript mining for limit warnings stays out of scope:
 the explicit report path works for every assistant, and an adapter may automate it later.
+
+## 20. Local identity (user, 2026-11-09)
+
+Local relay works always; sign-in is only needed when the user wants relay on the dōjō. The daemon user
+behind register and the person routes is a STABLE machine-local id (`relay.daemon_user`, minted once, never
+changes) — never the dōjō principal, with no precedence and no fallback: linked or not, relay rows are keyed
+by the local id on every machine. This supersedes the Q19 fail-closed ruling, which 401'd
+(`relay_signin_required`) without a linked default persona — a gate a GitHub-signed-in machine couldn't satisfy,
+since sign-in sets no linked default. The `relay_signin_required` code stays for the dōjō-sync operations that
+will need it; relay routes never raise it. Sync maps local→principal at the boundary and never re-keys relay
+rows, so there is no adoption migration. (The enrollment fix — sign-in producing a linked default persona for
+the dōjō side — is a separate squash goal.)

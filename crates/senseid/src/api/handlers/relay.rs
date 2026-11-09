@@ -37,7 +37,8 @@
 //! Lane calls authenticate over the `Authorization: Bearer <lane_token>`
 //! header and name their `lane_id` in the query (GET) or body (POST); the
 //! token never appears anywhere else. Person calls ride the daemon's
-//! localhost trust; the daemon user comes from `relay_current_user` (Q19).
+//! localhost trust; the daemon user comes from `relay_current_user` (the
+//! stable machine-local id — local identity, Q19 superseded).
 //!
 //! Phase A: types and reds only — the handlers and the `routes.rs`
 //! registration land in phase B, so every red below fails on the missing
@@ -127,8 +128,8 @@ async fn auth_lane(
     state.pg.relay_auth_lane(lane_id, token).await
 }
 
-/// The person behind a person route (Q19): fail-closed 401 when the
-/// machine never signed in.
+/// The person behind a person route: the stable machine-local daemon
+/// user, always (local identity, Q19 superseded — no sign-in gate).
 async fn person_user(state: &AppState) -> Result<Uuid, RelayError> {
     state.pg.relay_current_user().await
 }
@@ -1288,8 +1289,10 @@ mod tests {
     async fn harness() -> Harness {
         let ctx = crate::tasks::test_support::make_ctx().await;
         let state = ctx.app_state.clone();
-        // The daemon under test runs on a signed-in machine (Q19): without
-        // a default persona, register and the person routes fail closed.
+        // A linked default persona is present — and must not matter: the
+        // daemon user is machine-local (local identity, user ruling
+        // 2026-11-09; Q19 superseded). The whole suite running green on
+        // this harness is the linked-state arm of that proof.
         sqlx_core::query::query(
             "insert into sensei.personas (label, is_chosen_default, principal_id)
              values ('default', true, $1)",
@@ -1298,6 +1301,14 @@ mod tests {
         .execute(state.pg.pool())
         .await
         .unwrap();
+        Harness { app: crate::api::routes::create_router(state.clone()), state }
+    }
+
+    /// The same daemon on an unlinked machine: zero personas rows. Local
+    /// identity resolves the machine-local user anyway — no 401.
+    async fn harness_bare() -> Harness {
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let state = ctx.app_state.clone();
         Harness { app: crate::api::routes::create_router(state.clone()), state }
     }
 
@@ -1366,6 +1377,35 @@ mod tests {
             body["lane_id"].as_str().unwrap().to_string(),
             body["lane_token"].as_str().unwrap().to_string(),
         )
+    }
+
+    #[tokio::test]
+    async fn register_on_unlinked_machine_succeeds() {
+        // Local identity (user ruling 2026-11-09; Q19 superseded):
+        // register mints on the machine-local user — zero personas rows,
+        // no relay_signin_required.
+        let h = harness_bare().await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "coordinator", "family": "test"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body["lane_id"].is_string(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn person_now_on_unlinked_machine_succeeds() {
+        // Local identity (user ruling 2026-11-09; Q19 superseded): the
+        // person routes share the one choke point (`person_user`), so one
+        // route proving 200 unlinked proves the shape — the rest is the
+        // same call.
+        let h = harness_bare().await;
+        let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
     }
 
     /// Coordinator plans + assigns a tests-phase task to the lane; returns
