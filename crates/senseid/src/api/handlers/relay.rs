@@ -1695,6 +1695,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn assign_to_expired_lane_is_409() {
+        // The F5 bar, end to end: assigning onto a dead lease 409s instead
+        // of stranding the task where no sweep, cancel, or re-assign frees it.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        let task_id = planned_task(&h, &coord).await;
+        sqlx_core::query::query("update relay.leases set expires_at = $1 where lane_id = $2")
+            .bind(chrono::Utc::now() - chrono::Duration::seconds(1))
+            .bind(lane_id.parse::<uuid::Uuid>().unwrap())
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/assign"),
+            Some(lane_body(
+                &coord.0,
+                json!({
+                    "to_lane": lane_id, "title": "T", "phase": "tests",
+                    "brief": {"summary": "Do it.", "docs": []},
+                    "acceptance": ["green"], "owned_paths": ["app/**"],
+                }),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
     async fn unknown_task_is_404_with_code() {
         let h = harness().await;
         let coord = register_coordinator(&h).await;

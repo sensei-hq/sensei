@@ -5217,6 +5217,47 @@ mod tests {
         assert_eq!(count(&pg, "actions").await, 0);
     }
 
+    // ── F5: assign needs a live lease ──
+
+    #[tokio::test]
+    async fn assign_refuses_dead_lease() {
+        // Assigning onto an expired lease strands the task: the sweep only
+        // interrupts leases it sees expire, and cancel/re-assign both refuse
+        // while the lane row reads held — so the bar is at assign (F5).
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        sqlx_core::query::query("update relay.leases set expires_at = $1 where lane_id = $2")
+            .bind(t0() - chrono::Duration::seconds(1))
+            .bind(a2)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let t = v7(0x76);
+        fx_task(&pg, u1(), t, c1, None, "assigned", "tests", 1).await;
+        let err = pg.relay_assign_task(u1(), a1, t, assign_input(a2)).await.unwrap_err();
+        assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
+        let lane: Option<Uuid> =
+            sqlx_core::query_scalar::query_scalar("select lane_id from relay.tasks where id = $1")
+                .bind(t)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(lane, None);
+    }
+
+    #[tokio::test]
+    async fn assign_refuses_unregistered_lane() {
+        // A lane that left holds no live lease either (released on the way
+        // out): same bar, same conflict.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        pg.relay_unregister(a2).await.unwrap();
+        let t = v7(0x77);
+        fx_task(&pg, u1(), t, c1, None, "assigned", "tests", 1).await;
+        let err = pg.relay_assign_task(u1(), a1, t, assign_input(a2)).await.unwrap_err();
+        assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
+    }
+
     #[tokio::test]
     async fn assign_second_active_task_conflicts_not_500() {
         let pg = PgStore::test_store().await;
