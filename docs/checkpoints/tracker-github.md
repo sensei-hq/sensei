@@ -33,4 +33,18 @@ allowlist with a structural test.
   Adapter tests were written after the draft; two mutations (type filter, containment) each
   turned tests red.
 
-**Next:** whole-slice review findings, then G6 live (#376).
+**Whole-slice review (2026-11-09):** security NO FINDINGS; failure-mode, test and adversarial
+findings fixed red-first in f1ab509c4 (+ docs cda9abc2d). User decision: GitHub tokens are per
+project owner (`params.credential_scope`), narrowing the linkage spec's D14 for GitHub. Gates:
+senseid 4448, cli 92, app 3206 (2 pre-existing), clippy and svelte-check clean.
+
+**G6 live (2026-11-09), passed:** this branch's debug daemon; only the `github` enum hook applied
+to the live DB (a backup was taken first; `dbd diff` also shows an unrelated
+`activity.assistant_events` generated-column drift, left alone). The sensei workspace connected to
+github.com/orgs/sensei-hq/projects/1: 5 sprints (Iteration 1 active, 2–5 future, start + 14 days)
+and 113 tickets, equal to the project's 113 non-archived issue items (none has an iteration yet,
+so all are Backlog). `get_ticket` `#39` (bare and full) → the issue; a PR number and a missing
+number → the same 404. Ten existing sessions linked by bare `#n` in their prompts.
+
+**Next:** close #371–#376 (and the GitLab #364–#369) when the user says so; PR to main is the
+user's call.

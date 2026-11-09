@@ -3,9 +3,24 @@
   "spec_path": "docs/spec/daemon/tracker-github.md",
   "plan_path": "docs/plans/2026-11-09-tracker-github.md",
   "mode": "unattended",
-  "phases": ["G1 #371", "G2 #372", "G3 #373", "G4 #374", "G5 #375", "G6 #376"],
-  "current_phase": "G6 (after the whole-slice review of G1-G5)",
-  "completed": ["G1 8ea43ad30", "G2 8ea43ad30", "G3 8ea43ad30 + e7e29afb8", "G4 747c1cffc", "G5 747c1cffc + 9289061f5"],
+  "phases": [
+    "G1 #371",
+    "G2 #372",
+    "G3 #373",
+    "G4 #374",
+    "G5 #375",
+    "G6 #376"
+  ],
+  "current_phase": "complete",
+  "completed": [
+    "G1 8ea43ad30",
+    "G2 8ea43ad30",
+    "G3 8ea43ad30 + e7e29afb8",
+    "G4 747c1cffc",
+    "G5 747c1cffc + 9289061f5",
+    "review f1ab509c4 + cda9abc2d",
+    "G6 live passed"
+  ],
   "gate_status": "pass (senseid 4435, cli 92, app 3206 with 2 pre-existing sessions-digest failures, clippy clean, svelte-check clean)",
   "amendments": [
     "ConnectParams.sprint_field and BoardScope.params: the r2.3 design had no path for the chosen iteration field (spec build amendment)",
@@ -13,6 +28,8 @@
     "GitHub omits archived items from `items`; the isArchived filter stays as a second guard"
   ],
   "open_questions": [],
-  "known_broken": ["app sessions-digest.spec.ts: 2 local-day tests, fail without this branch too"],
-  "next_command": "fix whole-slice review findings red-first, then G6 live: install this branch's daemon, deploy the schema hook, connect the sensei workspace to github.com/orgs/sensei-hq/projects/1"
+  "known_broken": [
+    "app sessions-digest.spec.ts: 2 local-day tests, fail without this branch too"
+  ],
+  "next_command": "close issues #371-#376 on the user's word; PR feature/forge-trackers -> develop/main"
 }
