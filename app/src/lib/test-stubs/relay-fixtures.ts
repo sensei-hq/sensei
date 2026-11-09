@@ -17,6 +17,7 @@ import type {
   RelayDecision,
   RelayLane,
   RelayNow,
+  RelayPersonMessage,
   RelayQueue,
   RelayRunDetails,
   RelayTaskView,
@@ -119,6 +120,19 @@ export function decision(over: Partial<RelayDecision> = {}): RelayDecision {
   };
 }
 
+export function personMessage(over: Partial<RelayPersonMessage> = {}): RelayPersonMessage {
+  return {
+    id: 'msg-1',
+    crew_id: CREW_ID,
+    task_id: 't-logs',
+    task_title: 'Activity logs',
+    from_lane_code: 'L2',
+    text: 'The migration needs your eyes before I merge.',
+    sent_at: minutesAgo(5),
+    ...over,
+  };
+}
+
 export function completed(over: Partial<RelayCompletedTask> = {}): RelayCompletedTask {
   return {
     task_id: 't-header',
@@ -152,6 +166,7 @@ export function now(over: Partial<RelayNow> = {}): RelayNow {
     facets: { repos: [REPO], workspaces: [{ id: 'w1', name: 'Sensei' }] },
     lanes: [coordinatorLane(), lane()],
     decisions: [],
+    person_messages: [],
     // Agrees with queue().triage: one Jira sprint-47 task, one manual item (r2 L6).
     triage: [
       { provider: 'jira', sprint: 'sprint 47', count: 1 },

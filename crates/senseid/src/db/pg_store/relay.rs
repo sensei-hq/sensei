@@ -4093,6 +4093,71 @@ impl PgStore {
                 })
             })
             .collect();
+        // Q2 part 2: crew → person mail for Needs-you, newest first.
+        // Reading walks the envelope's receipt ladder for the person
+        // reader (who is no lane, so the receipts' lane is null):
+        // inclusion delivers, a later fetch reads, and the view retires
+        // read rows — one transaction with the read, no ack tool.
+        let person_rows: Vec<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.id, v.crew_id, v.payload from relay.now v
+                 where v.user_id = $1 and v.section = 'person_message' and v.crew_id = any($2)
+                 order by v.payload->>'sent_at' desc, v.id desc",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let mut person_json = Vec::with_capacity(person_rows.len());
+        for (id, crew_id, payload) in &person_rows {
+            person_json.push(serde_json::json!({
+                "id": id.to_string(),
+                "crew_id": crew_id.to_string(),
+                "task_id": payload.get("task_id"),
+                "task_title": payload.get("task_title"),
+                "from_lane_code": payload.get("from_lane_code"),
+                "text": payload
+                    .get("text")
+                    .filter(|v| !v.is_null())
+                    .cloned()
+                    .unwrap_or(serde_json::Value::String(String::new())),
+                "sent_at": payload.get("sent_at"),
+            }));
+            let kinds: Vec<String> = sqlx_core::query_scalar::query_scalar(
+                "select kind::text from relay.actions
+                 where user_id = $1 and lane_id is null and reply_to = $2
+                   and kind in ('delivered', 'read')",
+            )
+            .bind(user_id)
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            let receipt = if !kinds.iter().any(|k| k == "delivered") {
+                "delivered"
+            } else if !kinds.iter().any(|k| k == "read") {
+                "read"
+            } else {
+                continue;
+            };
+            let receipt_task: Option<Uuid> =
+                payload.get("task_id").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
+            sqlx_core::query::query(
+                "insert into relay.actions
+                   (user_id, id, crew_id, task_id, lane_id, kind, reply_to, props)
+                 values ($1, $2, $3, $4, $5, $6::relay.action_kind, $7, '{}')",
+            )
+            .bind(user_id)
+            .bind(new_id())
+            .bind(crew_id)
+            .bind(receipt_task)
+            .bind(None::<Uuid>)
+            .bind(receipt)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
         // Triage counts are computed in SQL (the view's `triage_count` row
         // cannot take the item-side filter): manual rows plus one row per
         // tracker provider, sprints null until slice 2's pull.
@@ -4246,6 +4311,7 @@ impl PgStore {
             },
             "lanes": lanes_json,
             "decisions": decisions_json,
+            "person_messages": person_json,
             "triage": triage_json,
             "completed_today": completed,
             "today": {

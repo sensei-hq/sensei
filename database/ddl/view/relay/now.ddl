@@ -1,8 +1,9 @@
 set search_path to relay, extensions;
 
--- The Now screen's grain, one view in four sections: one row per lane with
--- its active task and newest lease; open person decisions; the manual triage
--- count; today's completed tasks. Security-invoker: the caller's RLS applies.
+-- The Now screen's grain, one view in five sections: one row per lane with
+-- its active task and newest lease; open person decisions; crew → person
+-- messages the person has not read; the manual triage count; today's
+-- completed tasks. Security-invoker: the caller's RLS applies.
 -- The daemon selects sections and shapes RelayNow; each section carries the
 -- full grain (no per-row re-join). Tracker-side triage is composed by the
 -- daemon per side — this view counts manual triage items only.
@@ -48,6 +49,22 @@ where a.kind = 'asked' and a.props->>'asked_of' = 'person'
     select 1 from relay.actions an
      where an.user_id = a.user_id and an.kind = 'answered' and an.reply_to = a.id)
 union all
+-- Q2 part 2: to.person mail for the Needs-you section. A `read` receipt
+-- with a null lane (the person is no lane) retires the row; the daemon's
+-- person read walks delivered → read exactly like the lane envelope.
+select m.user_id, 'person_message', m.crew_id, m.id,
+  jsonb_build_object(
+    'task_id', m.task_id, 'task_title', t.title,
+    'from_lane_code', l.code, 'text', m.body_md, 'sent_at', m.created_at)
+from relay.actions m
+left join relay.tasks t on t.user_id = m.user_id and t.id = m.task_id
+left join relay.lanes l on l.user_id = m.user_id and l.id = m.lane_id
+where m.kind = 'message' and m.props->'to'->>'kind' = 'person'
+  and not exists (
+    select 1 from relay.actions r
+     where r.user_id = m.user_id and r.kind = 'read' and r.reply_to = m.id
+       and r.lane_id is null)
+union all
 select i.user_id, 'triage_count', null::uuid, null::uuid,
   jsonb_build_object('provider', 'manual', 'sprint', null, 'count', count(*))
 from relay.items i
@@ -74,4 +91,4 @@ where t.state in ('approved', 'done')
       >= date_trunc('day', current_timestamp);
 
 comment on view relay.now is
-'Now grain: lane rows, open person decisions, manual triage count, session-local-day completions. Approved tasks fall back to state_changed_at for the stamp.';
+'Now grain: lane rows, open person decisions, unread crew → person messages, manual triage count, session-local-day completions. Approved tasks fall back to state_changed_at for the stamp.';

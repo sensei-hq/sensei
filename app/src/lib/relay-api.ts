@@ -146,6 +146,20 @@ export interface RelayDecision {
   asked_at: string;
 }
 
+/** An unread `message` action addressed to the person (`to.kind = 'person'`). */
+export interface RelayPersonMessage {
+  /** The `message` action's id. */
+  id: string;
+  crew_id: string;
+  task_id: string | null;
+  task_title: string | null;
+  /** The sending lane's code; null only for person-sent echoes. */
+  from_lane_code: string | null;
+  /** `body_md` of the `message` action. */
+  text: string;
+  sent_at: string;
+}
+
 /** Triage grouped by where it came from: one row per tracker + sprint, plus manual items. */
 export interface RelayTriageSource {
   provider: RelayTicketProvider | 'manual';
@@ -194,6 +208,7 @@ export interface RelayNow {
   facets: RelayFacets;
   lanes: RelayLane[];
   decisions: RelayDecision[];
+  person_messages: RelayPersonMessage[];
   triage: RelayTriageSource[];
   completed_today: RelayCompletedTask[];
   today: RelayToday;
