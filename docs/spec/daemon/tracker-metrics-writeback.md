@@ -44,7 +44,7 @@ never written, or that sync never writes):
 | `prd/modules/04-team/03-dojo-workspace-planning/scenarios/dojo-workspace-planning-gaps.feature` :29-32; `…/dojo-workspace-planning.feature` :5, :14 | "no export action and no write path" | the scenarios are narrowed to "sync never writes sprints, statuses or memberships" |
 | `spec/dojo/daemon-sync.md` :20 | "the dōjō reads; nothing writes back" | the dōjō still never writes to a tracker; the local daemon writes metrics (this spec) |
 | linkage spec Purpose :17-21 ("read-only", "never keyed by person"), Overrides row T3/D9 (:95 "no assignee"), "Out of scope" :657-659 ("write-back to any tracker", "assignee or any per-person figure"), Wrong gate :753 | read-only; no assignee; no per-person figure | The assignee is **compared, never stored**. The figure written is the assignee's own; usage **API output** still carries no person attribute. `assigned_to_me` is a property of the ticket relative to this machine's token, not a person attribute (W1). |
-| linkage spec Done gate 2 :717 and seam list :73 ("GET-only transport"); `tracker/mod.rs:94` doc comment; `tracker/transport.rs:1` module doc | no `post/put/…` call anywhere in `tracker/` | `GetTransport` stays GET-only, and sync, discover and connect only ever get one. Gate 2 is restated as this spec's gate 13. `mod.rs:94` stays true. `transport.rs:1` is reworded to "The shared GET transport, and the write seam that only `writeback.rs` uses: status → error mapping and the 429 policy over one-method raw HTTP seams". |
+| linkage spec Done gate 2 :717 and seam list :73 ("GET-only transport"); `tracker/mod.rs:94` doc comment; `tracker/transport.rs:1` module doc | no `post/put/…` call anywhere in `tracker/` | `GetTransport` stays a read seam: GET, plus validated GraphQL queries since `tracker-github.md` §H2 (a document proved to be one named `query`, sent only by a transport built for an adapter that reads GraphQL). Sync, discover and connect only ever get one. Gate 2 is restated as this spec's gate 13. `mod.rs:94` stays true. `transport.rs:1` is reworded to "The shared GET transport, and the write seam that only `writeback.rs` uses: status → error mapping and the 429 policy over one-method raw HTTP seams". |
 | `backlog.md` :106 Jira deviation (3) | no assignee synced or stored; no per-person figure | as the linkage row above |
 | `database/ddl/table/sensei/{trackers,tracker_tasks}.ddl` comments and `database/design.dbml` :2781, :4135 | "Read-only mirror source"; "mirrored read-only … No assignee or other person data" | W11 wording, in both DDL and dbml |
 | `screen/workspace-integrations.md` sub-line :46-48, wrong gate :172; `screen/workspace-tickets.md` sub-line :45-47, wrong gates :133-134; `app/…/integrations/IntegrationsScreen.svelte:71`; `app/…/tickets/TicketsScreen.svelte:40` | "Read-only: sensei never changes anything in Jira."; "Read from Jira; nothing is changed there."; "any write route called from this screen"; no per-person data shown | W-UI copy for both screens. The screen wrong gates gain: "`assigned_to_me` and the write-back state are not person data; showing them is allowed". The Tickets wrong gate :134 stays: the Tickets screen itself calls no write route. |
@@ -776,11 +776,13 @@ and the test DB unless marked *(tenant)*.
       next pass sends 0 requests for that task.
     - Toggle off and on → the next pass sends 1 list GET and 1 POST.
     - A 404 on both → `not_found`.
-13. **GET-only stays GET-only** (replaces linkage gate 2):
+13. **The read seam stays read-only** (replaces linkage gate 2; GraphQL reads added by `tracker-github.md` §H2):
     - `rg -n 'write_transport\(' crates/senseid/src` → only the trait method and impls in
       `tracker/runtime.rs`, and calls in `tracker/writeback.rs`.
     - `rg -n -U 'client\s*\.\s*(post|put|patch|delete|request)\(|reqwest::Method' crates/senseid/src/tracker`
-      → only the `RawWrite` impl in `transport.rs`. `-U` and `\s*` catch a call rustfmt
+      → only the `RawWrite` impl and `RawGet::post_graphql` in `transport.rs` (the latter a
+      POST to the fixed `/graphql` path, refused unless built with `allow_graphql`; its
+      document is a `GraphqlQuery`, which refuses `mutation`, tested in `tracker::graphql`). `-U` and `\s*` catch a call rustfmt
       splits across lines. The keyring `s.delete(` at connect.rs:177 doesn't match, because
       it isn't a `client.` call.
     - `for f in sync discover connect history; do sed -E '/^(pub(\(crate\))? )?mod tests/q' crates/senseid/src/tracker/$f.rs | rg -n 'WriteMethod|WriteTransport|write_transport'; done; rg -n 'WriteMethod|WriteTransport|write_transport' crates/senseid/src/api`

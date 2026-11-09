@@ -73,3 +73,6 @@ The GitLab adapter syncs a group's or project's iterations, or its milestones wh
 `sensei.sprints` (`external_id` `iteration:<id>` or `milestone:<id>`). They are the sprints of whatever board
 the user connected, at the level the user chose, shown as a Sprints lane like a Jira board's. They are not the
 T3/V11 planning milestones, which stay unread and, when built, come from an epic-level tracker only.
+The same holds for a GitHub Project's iterations (amended 2026-11-09, `daemon/tracker-github.md`): the
+GitHub adapter syncs the iterations of the project's Iteration field into `sensei.sprints`
+(`external_id` `iteration:<id>`), as the sprints of the board the user connected.

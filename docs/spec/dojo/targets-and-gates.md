@@ -704,13 +704,11 @@ pub trait TicketReader: Send + Sync {
     async fn read_ticket(&self, key: &str) -> Result<Option<TicketDetail>, TrackerError>;
 }
 ```
-Jira: a reader over the existing adapter, transport and board credential. GitHub Issues: a reader
-using the person's own forge sign-in, read-only (D71). The token is the Keychain
-`provider_token.<persona>` (`dojo_client/session.rs:38`). Its scopes are `read:org repo`
-(`api/handlers/auth.rs:724`); `repo` covers reading issues. It expires in about 8 hours and the
-`forge_token` task renews it (`dojo_client/forge_token.rs`). An expired or missing token is a 502
-`forge_token_unavailable`, never an empty ticket. `TrackerKind` gains `GithubIssues` only with its
-adapter (`tracker_kind.ddl` comment). VERIFY (not answerable from the repo): where a given Jira site
+Jira: a reader over the existing adapter, transport and board credential. GitLab and GitHub: the
+same, with each board's own token (`tracker-gitlab.md` §G9, `tracker-github.md` §H5). GitHub
+originally used the person's forge sign-in (D71); D92 (2026-11-09) moved it to the GitHub tracker's
+token, because the sign-in lacks `read:project`. The kind is `TrackerKind::Github`, and an issue is
+returned only when it is on the board's project. VERIFY (not answerable from the repo): where a given Jira site
 keeps acceptance criteria. Make the field id configurable per tracker
 (`trackers.params.acceptance_criteria_field`). When it is unset or the field is absent,
 `acceptance_criteria` is `[]` and `acceptance_criteria_source` says why (`"not_configured"` |

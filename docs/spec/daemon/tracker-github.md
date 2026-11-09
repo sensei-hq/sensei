@@ -351,6 +351,7 @@ methods are required, so `github.rs` returns `Err(UnsupportedTracker)` from each
 | Surface | Change |
 |---|---|
 | `tracker/mod.rs` | `TrackerKind::Github` (`"github"`); `GetTransport::graphql` (default `UnsupportedTracker`); the `GetTransport` doc comment (`:205`) becomes "GET, plus validated GraphQL queries (H2)"; `ValidateError` **drops `Copy`** and gains `IterationFieldAmbiguous(Vec<String>)`; `TrackerAdapter::reads_graphql` (default `false`); `adapters()` registers `GithubAdapter` |
+| `tracker/mod.rs` (build amendment, G3) | `ConnectParams` gains `sprint_field: Option<String>` (the connect body's `iteration_field`, read by validate step 3; `None` for Jira and GitLab). `BoardScope` gains `params: serde_json::Value` (the tracker row's stored `params`, so `fetch_snapshot`, `fetch_tasks` and `GithubTicketReader` read `params.iteration_field`) and a `BoardScope::of(&TrackerRow)` constructor used at every production site (`sync.rs:117, :1162`, `discover.rs:158`, `history.rs:73`, `api/handlers/trackers.rs:426`, `targets/http.rs:145`); it derives `Default` for test literals. Found at build: the r2.3 design had no path for either value. |
 | `tracker/runtime.rs`, `api/handlers/trackers.rs:168`, `tracker/history.rs:64`, `tracker/writeback.rs:593` | `TransportFactory::transport(base_url, auth, retries, graphql)`; the callers pass `adapter.reads_graphql()`; the production factory calls `ReqwestRaw::allow_graphql` when true; test factories (`FakeFactory`) take and ignore it |
 | `tracker/gitlab.rs` | `:409-417` rebuilds the `decode` error per use (no `Copy`); `tracker_for_key` moves to `forge.rs` with the host argument (H5) |
 | `tracker/graphql.rs` (new) | `GraphqlQuery` and its lexer (H2.1) |
@@ -528,3 +529,5 @@ listed (MED → H7 Docs); D92 named the classic token (MED → D92 rewritten); f
 citations (LOW → fixed).
 
 **r2.2 narrow re-audit (→ r2.3):** four LOW: parent citations `:162`, `:277-283`; `types.ts:1773-1800`; the iteration-field node id gets its fake `PVTIF_n` and pattern; H3.2's remedy agrees with H1 validate 3.
+
+**Build amendment (G3, 2026-11-09):** `ConnectParams.sprint_field` and `BoardScope.params` (H7): validate and the snapshot had no way to read the chosen iteration field. Also observed while recording: GitHub omits archived items from `items` entirely (H3.4's filter stays as a second guard), and every H2.4 query ran unchanged against the live API.

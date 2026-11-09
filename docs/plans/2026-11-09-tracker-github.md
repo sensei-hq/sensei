@@ -7,7 +7,7 @@ created: 2026-11-09
 depends_on:
   - docs/spec/daemon/tracker-github.md
   - docs/decisions.md (D92)
-related_issues: []
+related_issues: [371, 372, 373, 374, 375, 376]
 references:
   - docs/spec/daemon/tracker-gitlab.md
   - docs/spec/daemon/tracker-jira-linkage.md
@@ -36,6 +36,7 @@ after any `database/` change.
 ## Features
 
 ### G1 · Shared seams (H2, H5 host, H7)
+- **Issue:** #371
 - **Layers:** `tracker/graphql.rs` (new), `tracker/mod.rs`, `tracker/transport.rs`,
   `tracker/runtime.rs`, `api/handlers/trackers.rs:168`, `tracker/history.rs:64`,
   `tracker/writeback.rs:593`, `tracker/gitlab.rs`, `tracker/forge.rs`, `targets/http.rs`.
@@ -55,6 +56,7 @@ after any `database/` change.
   - E1: the whole senseid suite green; the `Ref` transport tests unchanged.
 
 ### G2 · Fixture and recorder (Build order 1)
+- **Issue:** #372
 - **Depends on:** P1.
 - **Acceptance:** the sensei-hq project exists with the H-spec's iterations and item
   types; `scripts/record-github-fixtures.py` records `project`, `issue-on`, `issue-off`,
@@ -63,6 +65,7 @@ after any `database/` change.
   and the spec corrected first if any differ.
 
 ### G3 · The `github` kind (H1, H3, H4, H6)
+- **Issue:** #373
 - **Depends on:** G1, G2.
 - **Lands as one unit:** `tracker_kind.ddl` `'github'`,
   `database/apply/before/sensei_tracker_kind_github.sql` + `design.yaml`, column comments
@@ -72,16 +75,19 @@ after any `database/` change.
   `url` and `iteration_field`.
 
 ### G4 · `get_ticket` (H5)
+- **Issue:** #374
 - **Depends on:** G3.
 - **Acceptance:** E12 in full: host-aware selection, the candidate loop (only `Ok(None)`
   advances), uniform 404, 502 with no content, the unmirrored-repo fallback.
 
 ### G5 · CLI, app, docs (H7)
+- **Issue:** #375
 - **Depends on:** G3 (G4 for the docs of `get_ticket`).
 - **Acceptance:** E17; every Docs-row surface of H7 updated (D71/D91 notes already done);
   `make test-fast`, the app's tests and clippy green (E18).
 
 ### G6 · Live (E19, human-assisted)
+- **Issue:** #376
 - **Depends on:** G1–G5 and a fine-grained token.
 - **Acceptance:** the sensei workspace connected to the sensei project; sprint and
   non-archived issue counts equal the project's; a session on a `12-…` branch links;

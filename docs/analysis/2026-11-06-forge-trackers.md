@@ -1,6 +1,6 @@
 ---
 name: Forge trackers — GitLab (incl. self-managed) and GitHub
-description: Analysis — add GitLab (gitlab.com + self-managed, Free/CE up) and github.com as tracker adapters on the daemon path, milestones as sprints
+description: Analysis — add GitLab (gitlab.com + self-managed, Free/CE up) and github.com as tracker adapters on the daemon path, milestones as sprints (GitHub superseded by D92: Projects iterations and a token)
 date: 2026-11-06
 stage: analysis
 depends_on:
@@ -11,6 +11,8 @@ next: /sensei:design
 ---
 
 # Forge trackers: GitLab and GitHub (analysis)
+
+> **GitHub superseded (D92, 2026-11-09).** The GitHub parts of this analysis (FT3, FT5's GitHub half, §4, §5's milestone mapping for GitHub, §6's GitHub cells, §7's PR row, §8 step 2, O5, O6) no longer hold: a GitHub board is a Project (v2) whose Iteration field gives the sprints, read with GraphQL and a GitHub token. See `docs/spec/daemon/tracker-github.md`. The GitLab parts stand.
 
 **Ask (verbatim):** *"lets implment self hosted gitlab and github.com as trackers"*
 
@@ -43,9 +45,9 @@ adapters", `tracker-jira-linkage.md:670`). This slice adds two adapters, **GitLa
 |---|---|
 | FT1 | **Daemon path** for both adapters: tokens in the local Keychain, like Jira. Neither waits for #310. The dōjō-owned path (D49) is a later slice. |
 | FT2 | **GitLab must work on Free/CE.** At connect, the adapter **detects the version** and **probes for iterations**. It uses iterations where they exist and **milestones** otherwise. |
-| FT3 | **GitHub: milestones are sprints.** |
+| FT3 | ~~**GitHub: milestones are sprints.**~~ Superseded by D92: a Project's Iteration field. |
 | FT4 | **No milestones → the board connects as `level = sprint` and shows "No sprints yet".** Tickets sit in backlog. The daemon never changes the level the user picked, and never invents sprints (D83). |
-| FT5 | GitLab auth in v1 is a **PAT** (`read_api`). GitHub uses the person's forge sign-in (D71). |
+| FT5 | GitLab auth in v1 is a **PAT** (`read_api`). ~~GitHub uses the person's forge sign-in (D71).~~ Superseded by D92: a GitHub token. |
 | FT6 | O1–O6 (§9) accepted as recommended (user, 2026-11-06). |
 
 ## 3 · GitLab
@@ -101,7 +103,7 @@ user confirms at connect**:
 **O4 (decided, out of v1):** should a self-signed TLS certificate be supported (a custom CA path),
 or is it out of v1?
 
-## 4 · GitHub
+## 4 · GitHub (superseded by D92)
 
 ### 4.1 Auth
 
@@ -163,7 +165,7 @@ file), with the shared part being provider-neutral.
 ## 8 · Order
 
 1. **GitLab first.** Its seam is already specified, and it covers both the iteration and the milestone paths.
-2. **GitHub second.** It reuses `forge.rs` and adds only its own endpoints and the cross-repo milestone merge.
+2. **GitHub second.** It reuses `forge.rs` and adds only its own endpoints (built per D92 on Projects iterations, not milestones).
 
 Each ships as its own slice.
 
@@ -175,5 +177,5 @@ Each ships as its own slice.
 | O2 | GitLab milestone with no dates | Keep it as an undated sprint |
 | O3 | GitLab group vs project milestones | Both; `board_ref` names which |
 | O4 | Self-signed TLS on self-managed GitLab | Out of v1 |
-| O5 | GitHub milestone scope across repos | Option A, merge by title |
-| O6 | GitHub milestone has no start date | `start_at` NULL; rollups by membership |
+| O5 | GitHub milestone scope across repos | ~~Option A, merge by title~~ Superseded by D92 |
+| O6 | GitHub milestone has no start date | ~~`start_at` NULL~~ Superseded by D92: iterations have a start date |
