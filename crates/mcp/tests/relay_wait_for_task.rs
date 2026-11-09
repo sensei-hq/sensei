@@ -19,7 +19,10 @@ const MARKER: &str = "wait-header-proof";
 
 /// Serve one canned 200 + JSON body per connection, recording every request
 /// head. Raw TCP, no new deps.
-fn stub_daemon(body: &'static str, heads: Arc<Mutex<Vec<String>>>) -> (u16, std::thread::JoinHandle<()>) {
+fn stub_daemon(
+    body: &'static str,
+    heads: Arc<Mutex<Vec<String>>>,
+) -> (u16, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("stub bind");
     let port = listener.local_addr().expect("stub addr").port();
     let handle = std::thread::spawn(move || {
