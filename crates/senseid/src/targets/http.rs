@@ -131,8 +131,10 @@ pub(crate) async fn fetch_ticket(
     };
 
     // The live read, with each board's own credential, until one has the ticket.
-    let answer =
-        first_answer(&candidates, |tracker| read_ticket_on(&state, tracker, &canonical)).await;
+    let answer = within_ticket_deadline(first_answer(&candidates, |tracker| {
+        read_ticket_on(&state, tracker, &canonical)
+    }))
+    .await;
     let ticket = match answer {
         Answer::Found(t) => t,
         Answer::NoCandidate => {
@@ -214,6 +216,17 @@ async fn read_ticket_on(
         tracing::warn!(code = e.code(), "fetch_ticket: the live read failed");
         e.code()
     })
+}
+
+/// How long the read may take across every candidate board: under the MCP client's
+/// 30 s, so a slow board answers as a 502 here instead of a dropped request there.
+const TICKET_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(25);
+
+/// `read`, or `transport` once [`TICKET_READ_DEADLINE`] has passed.
+async fn within_ticket_deadline<T>(
+    read: impl std::future::Future<Output = Answer<T>>,
+) -> Answer<T> {
+    tokio::time::timeout(TICKET_READ_DEADLINE, read).await.unwrap_or(Answer::Failed("transport"))
 }
 
 /// How the candidate boards answered one ticket read (tracker-github §H5).
@@ -1029,5 +1042,38 @@ mod tests {
             );
             assert!(b.get("ticket").is_none() && !b.to_string().contains("Issue"), "{b}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_board_that_fails_stops_the_read_with_its_code_and_no_ticket() {
+        use crate::tracker::github::test_support::RecordedGithub;
+        let h = harness().await;
+        let w = github_world(&h).await;
+        let forbidden = RecordedGithub::load(&["project"]).with(
+            "Issue",
+            json!({"owner": "acme", "name": "platform", "number": 2, "field": "Sprint", "after": null}),
+            json!({"data": {"repository": null}, "errors": [{"type": "FORBIDDEN", "path": ["repository"]}]}),
+        );
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(forbidden));
+        let (st, b) = post_fetch(&h, "%232", json!({"folder": w.folder})).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::BAD_GATEWAY, json!("forbidden")));
+        assert!(b.get("ticket").is_none() && !b.to_string().contains("Issue"), "{b}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_read_across_boards_has_one_deadline() {
+        // Boards are tried one after another; together they never outlast the MCP client.
+        let slow = super::within_ticket_deadline(async {
+            tokio::time::sleep(super::TICKET_READ_DEADLINE * 2).await;
+            super::Answer::<u32>::NotOnAnyBoard
+        })
+        .await;
+        assert_eq!(slow, super::Answer::Failed("transport"));
+        let quick = super::within_ticket_deadline(async { super::Answer::Found(7u32) }).await;
+        assert_eq!(quick, super::Answer::Found(7));
+        assert!(
+            super::TICKET_READ_DEADLINE < std::time::Duration::from_secs(30),
+            "the MCP client waits 30 s"
+        );
     }
 }

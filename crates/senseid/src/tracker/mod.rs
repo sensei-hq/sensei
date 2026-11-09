@@ -1620,6 +1620,58 @@ mod seam_tests {
                 a.kind()
             );
         }
+        let dbml = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../database/design.dbml"
+        ))
+        .unwrap();
+        let start = dbml.find("Enum \"sensei\".\"tracker_kind\"").expect("the dbml enum");
+        let block = &dbml[start..start + dbml[start..].find('}').unwrap()];
+        for a in adapters() {
+            assert!(
+                block.contains(&format!("\"{}\"", a.kind().as_str())),
+                "dbml lacks {:?}",
+                a.kind()
+            );
+        }
+    }
+
+    /// E14: on a database whose `tracker_kind` predates the GitLab and GitHub adapters,
+    /// the apply/before hooks add both values in the DDL's order, and a second run is a
+    /// no-op. Run against a type in a scratch schema, so the shared template is untouched.
+    #[tokio::test]
+    async fn the_upgrade_hooks_add_the_forge_kinds_to_an_existing_enum() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let schema = format!("zt_kind_{}", uuid::Uuid::new_v4().simple());
+        let exec = |sql: String| {
+            let pool = pg.pool().clone();
+            async move { sqlx_core::raw_sql::raw_sql(&sql).execute(&pool).await.unwrap() }
+        };
+        exec(format!(
+            "CREATE SCHEMA {schema}; CREATE TYPE {schema}.tracker_kind AS ENUM ('jira');"
+        ))
+        .await;
+        let hook = |name: &str| {
+            std::fs::read_to_string(format!(
+                "{}/../../database/apply/before/{name}",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap()
+            .replace("sensei.tracker_kind", &format!("{schema}.tracker_kind"))
+        };
+        for _ in 0..2 {
+            for name in ["sensei_tracker_kind_gitlab.sql", "sensei_tracker_kind_github.sql"] {
+                exec(hook(name)).await;
+            }
+        }
+        let labels: Vec<String> = sqlx_core::query_scalar::query_scalar(&format!(
+            "SELECT enumlabel::text FROM pg_enum WHERE enumtypid = '{schema}.tracker_kind'::regtype ORDER BY enumsortorder"
+        ))
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        exec(format!("DROP SCHEMA {schema} CASCADE")).await;
+        assert_eq!(labels, ["jira", "gitlab", "github"]);
     }
 
     #[test]

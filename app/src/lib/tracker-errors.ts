@@ -85,9 +85,12 @@ const GITHUB_WORDS: Record<string, string> = {
   not_found: 'GitHub no longer has this project, or its Iteration field (it may have been deleted or renamed).',
   rate_limited: 'GitHub is rate-limiting requests. Try again in a minute.',
   transport: reach('transport', 'GitHub'),
-  http_error: reach('http_error', 'GitHub'),
+  // Lasting failures say what fixes them (whole-slice review).
+  http_error:
+    'GitHub failed the request (http_error). If it keeps failing, the project may be larger than sensei reads: 100 fields, or 20,000 items.',
   redirect: reach('redirect', 'GitHub'),
-  decode: reach('decode', 'GitHub'),
+  decode:
+    'GitHub’s answer didn’t match the project sensei connected: usually an Iteration field was added, removed or renamed. Use Replace token to pick the field again.',
   bad_request: 'GitHub rejected the request.',
 };
 
@@ -142,8 +145,11 @@ export function errorFor(
     return { code, text: `No GitHub project at ${String(body?.board_ref ?? '')}, or the token can’t see it.`, field, link: null };
   }
   if (code === 'iteration_field_ambiguous') {
-    const names = Array.isArray(body?.fields) ? (body.fields as unknown[]).map(String).join(', ') : '';
-    return { code, text: `Choose the project’s Iteration field: ${names}.`, field, link: null };
+    const names = Array.isArray(body?.fields) ? (body.fields as unknown[]).map(String) : [];
+    const text = names.length
+      ? `Choose the project’s Iteration field: ${names.join(', ')}.`
+      : 'This project has no Iteration field. Leave the field name empty.';
+    return { code, text, field, link: null };
   }
   if (code === 'board_not_found') {
     const what = kind === 'gitlab' ? `group or project ${String(body?.board_ref ?? '')}` : `board #${String(body?.board_ref ?? '')}`;

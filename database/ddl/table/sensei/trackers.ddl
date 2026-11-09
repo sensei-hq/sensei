@@ -53,7 +53,7 @@ comment on column trackers.board_ref
 comment on column trackers.params
      is 'Adapter-specific extras (e.g. board_name; GitLab: full_path, version, sprint_source, sprint_source_changed_at; GitHub: owner, owner_kind, number, url, iteration_field). Never secrets.';
 comment on column trackers.secret_service
-     is 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Shared by every tracker of the workspace on the same (kind, base_url): a connect re-keys them all. Changing it tombstones the old value; the drain keeps a secret another tracker still references.';
+     is 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Shared by every tracker of the workspace on the same (kind, base_url) and params.credential_scope (GitHub: the project owner; none for Jira and GitLab): a connect re-keys them all. Changing it tombstones the old value; the drain keeps a secret another tracker still references.';
 comment on column trackers.last_attempt_at
      is 'When a sync last started (written before the fetch, outside any transaction).';
 comment on column trackers.last_success_at

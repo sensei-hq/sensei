@@ -65,10 +65,11 @@ impl OwnerKind {
     }
 }
 
-/// A GitHub login: 1–39 of `[A-Za-z0-9-]`, not starting with `-` (§H1.1).
+/// A GitHub login: 1–39 of `[A-Za-z0-9_-]`, starting with a letter or digit (§H1.1).
+/// `_` is in Enterprise Managed Users' logins (`handle_shortcode`).
 fn is_owner(s: &str) -> bool {
     (1..=39).contains(&s.len())
-        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         && s.as_bytes()[0].is_ascii_alphanumeric()
 }
 
@@ -199,6 +200,9 @@ fn board_params(
     );
     m.insert("url".into(), text(project, "url").ok_or(TrackerError::Decode)?.into());
     m.insert("iteration_field".into(), field.map(String::from).into());
+    // A fine-grained token covers one owner: projects share a token per owner, not per
+    // site (user decision 2026-11-09, amending D14 for GitHub).
+    m.insert("credential_scope".into(), m["owner"].clone());
     Ok(m)
 }
 
@@ -385,13 +389,22 @@ async fn item_pages(
             .pointer("/pageInfo/hasNextPage")
             .and_then(|v| v.as_bool())
             .ok_or(TrackerError::Decode)?;
-        after = items.pointer("/pageInfo/endCursor").and_then(|v| v.as_str()).map(String::from);
         pages.push(items.clone());
         if !more {
             return Ok(pages);
         }
+        // More pages but no cursor would re-read page 1: a malformed answer.
+        after = Some(next_cursor(items)?);
     }
     Err(TrackerError::HttpError)
+}
+
+/// The `endCursor` of a page that says there are more: `Decode` when it is missing.
+fn next_cursor(page: &serde_json::Value) -> Result<String, TrackerError> {
+    page.pointer("/pageInfo/endCursor")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or(TrackerError::Decode)
 }
 
 /// One issue and the project item that puts it on this board, if any (§H4): `None`
@@ -414,22 +427,33 @@ async fn issue_on_board(
         )?
         .absent_on_not_found(ISSUE_ABSENT);
         let data = t.graphql(&q).await?;
-        let Some(issue) = data.pointer("/repository/issue").filter(|i| !i.is_null()) else {
+        // Only an explicit null is absence; a missing key is a malformed answer.
+        let repository = data.get("repository").ok_or(TrackerError::Decode)?;
+        if repository.is_null() {
             return Ok(None);
-        };
+        }
+        let issue = repository.get("issue").ok_or(TrackerError::Decode)?;
+        if issue.is_null() {
+            return Ok(None);
+        }
         let items = issue.get("projectItems").ok_or(TrackerError::Decode)?;
         let nodes = items.get("nodes").and_then(|v| v.as_array()).ok_or(TrackerError::Decode)?;
-        let on_board = nodes.iter().find(|n| {
-            n.pointer("/project/id").and_then(|v| v.as_str()) == Some(board_id)
-                && n.get("isArchived").and_then(|v| v.as_bool()) == Some(false)
-        });
-        if let Some(node) = on_board {
-            return Ok(Some((issue.clone(), node.clone())));
+        for node in nodes {
+            let archived =
+                node.get("isArchived").and_then(|v| v.as_bool()).ok_or(TrackerError::Decode)?;
+            let project = node.pointer("/project/id").and_then(|v| v.as_str());
+            if project == Some(board_id) && !archived {
+                return Ok(Some((issue.clone(), node.clone())));
+            }
         }
-        if items.pointer("/pageInfo/hasNextPage").and_then(|v| v.as_bool()) != Some(true) {
+        let more = items
+            .pointer("/pageInfo/hasNextPage")
+            .and_then(|v| v.as_bool())
+            .ok_or(TrackerError::Decode)?;
+        if !more {
             return Ok(None);
         }
-        after = items.pointer("/pageInfo/endCursor").and_then(|v| v.as_str()).map(String::from);
+        after = Some(next_cursor(items)?);
     }
     Err(TrackerError::HttpError)
 }
@@ -1136,7 +1160,7 @@ mod tests {
         // Keys GitHub cannot have are never requested.
         let gh = RecordedGithub::load(&[]);
         let shapes: Vec<String> =
-            ["acme/x/y#1", "acme/platform#2147483648", "a_b/platform#1", "#3"]
+            ["acme/x/y#1", "acme/platform#2147483648", "_ab/platform#1", "#3"]
                 .into_iter()
                 .map(String::from)
                 .collect();
@@ -1207,5 +1231,161 @@ mod tests {
         for key in ["acme/platform#6", "acme/platform#7", "acme/missing#8"] {
             assert_eq!(reader.read_ticket(key).await, Ok(None), "{key}");
         }
+    }
+
+    // ── Whole-slice review (2026-11-09): failures never read as absence ──────
+
+    #[tokio::test]
+    async fn a_malformed_issue_answer_is_a_decode_error_never_absent() {
+        let vars = json!({"owner": "acme", "name": "platform", "number": 6, "field": "Sprint", "after": null});
+        let read = |envelope: serde_json::Value| {
+            let gh = RecordedGithub::load(&[]).with("Issue", vars.clone(), envelope);
+            async move { issue_on_board(&gh, "PVT_1", Some("Sprint"), ("acme", "platform", 6)).await }
+        };
+        assert_eq!(read(json!({"data": {}})).await, Err(TrackerError::Decode), "no repository key");
+        assert_eq!(
+            read(json!({"data": {"repository": {}}})).await,
+            Err(TrackerError::Decode),
+            "no issue key"
+        );
+        let mut no_page_info = super::test_support::fixture_body("issue-off", "issue");
+        no_page_info["data"]["repository"]["issue"]["projectItems"]
+            .as_object_mut()
+            .unwrap()
+            .remove("pageInfo");
+        assert_eq!(read(no_page_info).await, Err(TrackerError::Decode), "no pageInfo");
+        let mut no_archived = super::test_support::fixture_body("issue-off", "issue");
+        no_archived["data"]["repository"]["issue"]["projectItems"]["nodes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("isArchived");
+        assert_eq!(read(no_archived).await, Err(TrackerError::Decode), "a node with no isArchived");
+        // An explicit null is absence.
+        assert_eq!(read(json!({"data": {"repository": null}})).await, Ok(None));
+        assert_eq!(read(json!({"data": {"repository": {"issue": null}}})).await, Ok(None));
+    }
+
+    #[tokio::test]
+    async fn more_pages_without_a_cursor_is_a_decode_error_not_a_loop() {
+        let gh = RecordedGithub::load(&[]).with(
+            "Items",
+            json!({"id": "PVT_9", "field": "", "after": null}),
+            json!({"data": {"node": {"items": {"pageInfo": {"hasNextPage": true, "endCursor": null}, "nodes": []}}}}),
+        );
+        assert_eq!(item_pages(&gh, "PVT_9", None).await, Err(TrackerError::Decode));
+        assert_eq!(gh.calls().len(), 1);
+        let mut issue = super::test_support::fixture_body("issue-off", "issue");
+        issue["data"]["repository"]["issue"]["projectItems"]["pageInfo"] =
+            json!({"hasNextPage": true, "endCursor": null});
+        let gh = RecordedGithub::load(&[]).with(
+            "Issue",
+            json!({"owner": "acme", "name": "platform", "number": 6, "field": "Sprint", "after": null}),
+            issue,
+        );
+        assert_eq!(
+            issue_on_board(&gh, "PVT_1", Some("Sprint"), ("acme", "platform", 6)).await,
+            Err(TrackerError::Decode)
+        );
+        assert_eq!(gh.calls().len(), 1);
+    }
+
+    #[test]
+    fn an_owner_may_hold_an_underscore_as_managed_users_do() {
+        assert!(parse_board_url("https://github.com/users/alice_acme/projects/1").is_some());
+        assert_eq!(
+            github_key("alice_acme/platform#1").map(|k| k.0),
+            Some("alice_acme".to_string())
+        );
+        assert!(
+            parse_board_url("https://github.com/users/_alice/projects/1").is_none(),
+            "not first"
+        );
+    }
+
+    #[test]
+    fn a_sync_reads_no_issue_body() {
+        // Only `get_ticket` shows a body; a sync would hold every body of every page.
+        assert!(!Q_ITEMS.contains("body"), "{Q_ITEMS}");
+        assert!(Q_ISSUE.contains("body"));
+    }
+
+    /// E16: every committed GitHub fixture is scrubbed: each string leaf is a kept
+    /// enum value or a fake, every id is in a fake range, and no token is present. A
+    /// real login or org name fails this without being listed.
+    #[test]
+    fn fixtures_are_scrubbed() {
+        fn string_ok(key: &str, v: &str) -> bool {
+            let fake = |re: &str| regex::Regex::new(re).unwrap().is_match(v);
+            match key {
+                "__typename" | "type" | "state" => fake(r"^[A-Za-z0-9_]+$"),
+                "startDate" | "createdAt" | "updatedAt" => {
+                    fake(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}Z)?$")
+                }
+                "id" | "iterationId" => fake(r"^(PVT(I|IF)?_\d+|it\d+)$"),
+                "endCursor" => fake(r"^c\d+$"),
+                "login" => fake(r"^(acme|user\d+)$"),
+                "nameWithOwner" => fake(r"^acme/(platform|core|missing)$"),
+                "url" => fake(
+                    r"^https://github\.com/(orgs/acme/projects/\d+|acme/(platform|core)(/issues/\d+)?)$",
+                ),
+                "name" => fake(r"^(Sprint|Type \d+|platform|core|missing)$"),
+                "title" => fake(r"^(Iteration \d+|Project \d+|Issue \d+|Title)$"),
+                "body" => fake(r"^(Body of issue \d+|Body)$"),
+                "message" => v == "scrubbed message",
+                "path" => fake(r"^[a-zA-Z]+$"),
+                "operation" | "request" => fake(r"^[A-Za-z/]+$"),
+                "owner" => v == "acme",
+                "field" => v == "Sprint" || v.is_empty(),
+                "after" => fake(r"^c\d+$"),
+                _ => false,
+            }
+        }
+        fn walk(key: &str, v: &serde_json::Value, file: &str) {
+            match v {
+                serde_json::Value::Object(m) => m.iter().for_each(|(k, x)| walk(k, x, file)),
+                serde_json::Value::Array(a) => a.iter().for_each(|x| walk(key, x, file)),
+                serde_json::Value::String(s) => {
+                    assert!(
+                        !regex::Regex::new(r"gh[pousr]_|github_pat_").unwrap().is_match(s),
+                        "{file}: a token"
+                    );
+                    assert!(
+                        string_ok(key, s),
+                        "{file}: {key} = {s:?} is not a kept value or a fake"
+                    );
+                }
+                serde_json::Value::Number(n)
+                    if key == "databaseId" || (key == "id" && file.ends_with("user.json")) =>
+                {
+                    let n = n.as_u64().unwrap();
+                    assert!(
+                        (1001..2000).contains(&n) || (9001..10000).contains(&n),
+                        "{file}: {key} = {n}"
+                    );
+                }
+                _ => {}
+            }
+        }
+        let root = super::test_support::fixture_dir("");
+        let mut files = 0;
+        for set in std::fs::read_dir(&root).unwrap() {
+            for f in std::fs::read_dir(set.unwrap().path()).unwrap() {
+                let path = f.unwrap().path();
+                let doc: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                walk("", &doc, &path.display().to_string());
+                files += 1;
+            }
+        }
+        assert!(files >= 11, "{files} fixture files");
+    }
+
+    #[tokio::test]
+    async fn naming_a_field_on_a_project_without_one_lists_no_names() {
+        let gh = RecordedGithub::load(&["project", "no-field"]);
+        assert_eq!(
+            GithubAdapter.validate(&gh, &typed("orgs/acme/3", Some("Sprint"))).await,
+            Err(ValidateError::IterationFieldAmbiguous(vec![]))
+        );
     }
 }

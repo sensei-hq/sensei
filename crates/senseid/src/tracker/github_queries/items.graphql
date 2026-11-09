@@ -14,7 +14,7 @@ query Items($id: ID!, $field: String!, $after: String) {
           content {
             __typename
             ... on Issue {
-              databaseId number title body state url createdAt updatedAt
+              databaseId number title state url createdAt updatedAt
               issueType { name }
               repository { nameWithOwner url }
               assignees(first: 1) { nodes { databaseId login } }

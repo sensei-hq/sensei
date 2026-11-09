@@ -113,9 +113,8 @@ async fn run(
     // 2. Fetch, with no connection checked out, under the whole-sync deadline
     // (shared with step 3). Every write below is conditional on this credential
     // still being current.
+    let board = BoardScope::of(&row);
     let secret_service = row.secret_service;
-    let board =
-        BoardScope { base_url: row.base_url, board_ref: row.board_ref, params: row.params.clone() };
     let snapshot = match tokio::time::timeout_at(
         until,
         adapter.fetch_snapshot(transport, &board, &prev),

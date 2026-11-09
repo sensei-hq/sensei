@@ -477,6 +477,18 @@ pub fn describe_error_for(p: Provider, status: u16, body: &Value) -> String {
         ("board_not_found", Provider::Github) => {
             format!("No GitHub project at {}, or the token can't see it.", field("board_ref"))
         }
+        ("iteration_field_ambiguous", _)
+            if body.get("fields").and_then(Value::as_array).is_some_and(|a| a.is_empty()) =>
+        {
+            "This project has no Iteration field: connect again without --iteration-field.".into()
+        }
+        ("decode", Provider::Github) => "GitHub's answer didn't match the project sensei connected: \
+             usually an Iteration field was added, removed or renamed. Connect again (with \
+             --iteration-field if it now has several) to pick the field."
+            .into(),
+        ("http_error", Provider::Github) => "GitHub failed the request (http_error). If it keeps failing, the \
+             project may be larger than sensei reads: 100 fields, or 20,000 items."
+            .into(),
         ("iteration_field_ambiguous", _) => {
             let names: Vec<&str> = body
                 .get("fields")
@@ -1245,6 +1257,27 @@ mod tests {
             ambiguous.contains("Sprint, Release") && ambiguous.contains("--iteration-field"),
             "{ambiguous}"
         );
+        // Lasting failures say what fixes them, never "check your connection".
+        assert!(
+            e("decode").contains("Iteration field") && e("decode").contains("connect"),
+            "{}",
+            e("decode")
+        );
+        assert!(e("http_error").contains("20,000"), "{}", e("http_error"));
+        assert!(!e("decode").contains("connection") || e("decode").contains("connect again"));
+        // A field named for a project with none: leave the name out.
+        let none = describe_error_for(
+            Provider::Github,
+            422,
+            &json!({"error": "iteration_field_ambiguous", "fields": []}),
+        );
+        assert!(
+            none.contains("no Iteration field") && none.contains("without --iteration-field"),
+            "{none}"
+        );
+        // The GitHub connect reads its own variable.
+        assert_eq!(Provider::Github.token_env(), Some(GITHUB_TOKEN_ENV));
+        assert_eq!(GITHUB_TOKEN_ENV, "SENSEI_GITHUB_TOKEN");
         for code in ["unauthorized", "invalid_base_url", "board_not_found", "forbidden"] {
             assert!(
                 !e(code).contains("Jira") && !e(code).contains("GitLab"),

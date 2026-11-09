@@ -336,6 +336,13 @@ describe('the connect form', () => {
       expect(text, code).not.toMatch(/Jira|Atlassian|GitLab/);
     }
     expect(errorFor(403, { error: 'forbidden' }, 'github').text).toContain('Projects: read');
+    // Lasting failures say what fixes them, never "check your connection".
+    expect(errorFor(502, { error: 'decode' }, 'github').text).toContain('Replace token');
+    expect(errorFor(502, { error: 'decode' }, 'github').text).not.toContain('connection');
+    expect(errorFor(502, { error: 'http_error' }, 'github').text).toContain('20,000');
+    expect(errorFor(422, { error: 'iteration_field_ambiguous', fields: [] }, 'github').text).toBe(
+      'This project has no Iteration field. Leave the field name empty.',
+    );
     expect(errorFor(401, { error: 'unauthorized' }, 'github').link?.href).toBe('https://github.com/settings/personal-access-tokens/new');
     expect(errorFor(404, { error: 'board_not_found', board_ref: 'orgs/acme/3' }, 'github').text).toBe(
       'No GitHub project at orgs/acme/3, or the token can\u2019t see it.',

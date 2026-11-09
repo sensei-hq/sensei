@@ -1186,11 +1186,15 @@ impl PgStore {
         // One credential per site (D14): the workspace's other boards on this site
         // move to the new token; the swap trigger tombstones each old secret. The
         // old token's failure no longer describes them; the caller re-syncs them.
+        // An adapter whose tokens cover less than a site names that narrower scope in
+        // `params.credential_scope` (GitHub: the project's owner); only boards with
+        // the same scope share the token. Jira and GitLab name none (NULL = NULL).
         let rekeyed: Vec<uuid::Uuid> = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
             "UPDATE sensei.trackers SET account = $4, secret_service = $5, last_error = NULL,
                     owner_ref = NULL, owner_state = NULL, owner_error = NULL, writeback_error = NULL
               WHERE workspace_id = $1 AND kind = $2::sensei.tracker_kind AND base_url = $3
                 AND secret_service <> $5
+                AND (params->>'credential_scope') IS NOT DISTINCT FROM $6
              RETURNING id",
         )
         .bind(t.workspace_id)
@@ -1198,6 +1202,7 @@ impl PgStore {
         .bind(&t.base_url)
         .bind(&t.account)
         .bind(&t.secret_service)
+        .bind(t.params.get("credential_scope").and_then(|v| v.as_str()))
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?

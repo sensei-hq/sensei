@@ -1114,6 +1114,216 @@ mod tests {
         );
     }
 
+    /// tracker-github E10: the board is the project's node id, so the same project under
+    /// a renamed owner path is still the same board.
+    #[tokio::test]
+    async fn a_github_project_under_a_renamed_path_is_still_one_board() {
+        use crate::tracker::github::test_support::{RecordedGithub, fixture_body};
+        let h = harness().await;
+        let (p, other) = (workspace(&h).await, workspace(&h).await);
+        let renamed = RecordedGithub::load(&["project"]).with(
+            "ValidateOrg",
+            json!({"owner": "acme2", "number": 2}),
+            fixture_body("project", "validate_org"),
+        );
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(renamed));
+        let connect = |board_url: &str| json!({"kind": "github", "level": "sprint", "board_url": board_url, "api_token": SENTINEL});
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{p}/trackers"),
+            Some(connect("https://github.com/orgs/acme/projects/2")),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{other}/trackers"),
+            Some(connect("https://github.com/orgs/acme2/projects/2")),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("board_already_connected"))
+        );
+    }
+
+    /// tracker-github E8, E9, E13, end to end: a project with no Iteration field syncs
+    /// with no sprints and no error; a failing items page fails the sync with
+    /// `http_error` and leaves the tickets as they were; history-based figures read
+    /// `unsupported_by_tracker`; the board holds its repository's scope.
+    #[tokio::test]
+    async fn a_github_sync_records_its_failure_and_changes_nothing() {
+        use crate::tracker::github::test_support::RecordedGithub;
+        let h = harness().await;
+        let p = workspace(&h).await;
+        h.factory.serve_transport(
+            crate::tracker::github::API_BASE,
+            Arc::new(RecordedGithub::load(&["project", "no-field"])),
+        );
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{p}/trackers"),
+            Some(json!({"kind": "github", "level": "sprint",
+                        "board_url": "https://github.com/orgs/acme/projects/3", "api_token": SENTINEL})),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        let listed = settled(&h, p).await;
+        assert_eq!(listed[0]["last_error"], Value::Null, "{listed}");
+        assert_eq!(listed[0]["counts"], json!({"tasks": 1, "sprints": 0}));
+        assert_eq!(listed[0]["iteration_field"], Value::Null);
+        let t = tracker(&h, p).await;
+        let (_, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers/{t}/tasks"), None, None).await;
+        assert!(json(&b).to_string().contains("acme/platform#2"), "{b}");
+        let tracker_id: uuid::Uuid = t.parse().unwrap();
+        assert_eq!(
+            h.state.pg.trackers_holding_scope(p, "github.com/acme/platform").await.unwrap(),
+            vec![tracker_id]
+        );
+        assert!(
+            h.state.pg.trackers_holding_scope(p, "github.com/acme/none").await.unwrap().is_empty()
+        );
+
+        // Now the items page fails: the sync fails whole and the ticket stays.
+        let failing = RecordedGithub::load(&["no-field"]).with(
+            "Items",
+            json!({"id": "PVT_3", "field": "", "after": null}),
+            json!({"errors": [{"type": "SOMETHING_ELSE", "path": ["node"]}]}),
+        );
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(failing));
+        let (st, _) =
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/{t}/sync"), None, None).await;
+        assert_eq!(st, StatusCode::BAD_GATEWAY);
+        let listed = settled(&h, p).await;
+        assert_eq!(listed[0]["last_error"], json!("http_error"));
+        assert_eq!(listed[0]["counts"], json!({"tasks": 1, "sprints": 0}), "nothing was removed");
+
+        // A project with sprints: their history-based figures are unsupported, not pending.
+        let q = workspace(&h).await;
+        h.factory.serve_transport(
+            crate::tracker::github::API_BASE,
+            Arc::new(RecordedGithub::load(&["project"])),
+        );
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{q}/trackers"),
+            Some(json!({"kind": "github", "level": "sprint",
+                        "board_url": "https://github.com/orgs/acme/projects/2", "api_token": SENTINEL})),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, q).await;
+        let t = tracker(&h, q).await;
+        let (st, b) =
+            call(&h, "GET", &format!("/api/workspaces/{q}/trackers/{t}/sprints"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let reasons: Vec<Value> = json(&b)
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|s| {
+                s["sdlc"]["reasons"].as_object().cloned().unwrap_or_default().into_values()
+            })
+            .collect();
+        assert!(reasons.contains(&json!("unsupported_by_tracker")), "{reasons:?}");
+        assert!(!reasons.contains(&json!("history_pending")), "{reasons:?}");
+    }
+
+    /// A GitHub credential is per owner (user decision 2026-11-09, amending D14 for
+    /// GitHub): a fine-grained token covers one owner, so connecting a project of
+    /// another owner keeps the first project's token; a project of the same owner
+    /// moves it to the newest token, as one site does for Jira and GitLab.
+    #[tokio::test]
+    async fn github_tokens_are_shared_per_owner_not_per_site() {
+        use crate::tracker::github::test_support::{RecordedGithub, fixture_body};
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let project = |kind: &str, owner: &str, number: u64, id: &str| {
+            let mut env = fixture_body("project", "validate_org");
+            let mut board = env["data"]["organization"]["projectV2"].take();
+            board["id"] = json!(id);
+            board["number"] = json!(number);
+            board["owner"] = json!({"__typename": kind, "login": owner});
+            let segment = if kind == "User" { "users" } else { "orgs" };
+            board["url"] = json!(format!("https://github.com/{segment}/{owner}/projects/{number}"));
+            if kind == "User" {
+                json!({"data": {"user": {"projectV2": board}}})
+            } else {
+                json!({"data": {"organization": {"projectV2": board}}})
+            }
+        };
+        let (bob, acme9) =
+            (project("User", "bob", 5, "PVT_7"), project("Organization", "acme", 9, "PVT_8"));
+        let node = |env: &Value, root: &str| json!({"data": {"node": env["data"][root]["projectV2"].clone()}});
+        let no_items = json!({"data": {"node": {"items": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}}}});
+        let gh = RecordedGithub::load(&["project"])
+            .with("ValidateUser", json!({"owner": "bob", "number": 5}), bob.clone())
+            .with("ValidateOrg", json!({"owner": "acme", "number": 9}), acme9.clone())
+            .with("Board", json!({"id": "PVT_7"}), node(&bob, "user"))
+            .with("Board", json!({"id": "PVT_8"}), node(&acme9, "organization"))
+            .with(
+                "Items",
+                json!({"id": "PVT_7", "field": "Sprint", "after": null}),
+                no_items.clone(),
+            )
+            .with("Items", json!({"id": "PVT_8", "field": "Sprint", "after": null}), no_items);
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(gh));
+        let connect = |board_url: &str| json!({"kind": "github", "level": "sprint", "board_url": board_url, "api_token": SENTINEL});
+        let uri = format!("/api/workspaces/{p}/trackers");
+        let secret_of = |board_ref: &'static str| {
+            let pg = h.state.pg.clone();
+            async move {
+                let (s,): (String,) = sqlx_core::query_as::query_as(
+                    "SELECT secret_service FROM sensei.trackers WHERE workspace_id = $1 AND board_ref = $2",
+                )
+                .bind(p)
+                .bind(board_ref)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+                s
+            }
+        };
+        let (st, b) =
+            call(&h, "POST", &uri, Some(connect("https://github.com/orgs/acme/projects/2")), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        let acme_token = secret_of("project:PVT_1").await;
+        let (st, b) =
+            call(&h, "POST", &uri, Some(connect("https://github.com/users/bob/projects/5")), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        assert_eq!(
+            secret_of("project:PVT_1").await,
+            acme_token,
+            "another owner keeps its own token"
+        );
+        assert_ne!(secret_of("project:PVT_7").await, acme_token);
+        let (st, b) =
+            call(&h, "POST", &uri, Some(connect("https://github.com/orgs/acme/projects/9")), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        assert_eq!(
+            secret_of("project:PVT_1").await,
+            secret_of("project:PVT_8").await,
+            "the same owner moves to the newest token"
+        );
+        assert_ne!(secret_of("project:PVT_7").await, secret_of("project:PVT_8").await);
+    }
+
     /// D10, end to end: a GitLab board connects over HTTP against the recorded CE,
     /// syncs, refuses write-back, and reads `unsupported_by_tracker` where its
     /// figures need history.
