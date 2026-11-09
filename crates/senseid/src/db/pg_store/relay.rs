@@ -23,10 +23,10 @@ use crate::relay::envelope::{
 use crate::relay::{
     Caller, DISK_FLOOR_GB, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS, RESOURCE_LEASE_TTL_SECS,
     RegisterMode, RelayActionKind, RelayError, RelayFindingSeverity, RelayFloors, RelayGuidance,
-    RelayItemKind, RelayLeaseState, RelayRole, RelaySurface, RelayTaskPhase, RelayTaskState,
-    RelayTicketProvider, ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent, check_summary_len,
-    decide_resource_grant, guard_markdown, hash_lane_token, pick_reviewer, register_mode,
-    relay_guidance_for, resolve_surface, transition, validate_props,
+    RelayItemKind, RelayLeaseState, RelayRole, RelayStepState, RelaySurface, RelayTaskPhase,
+    RelayTaskState, RelayTicketProvider, ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent,
+    check_summary_len, decide_resource_grant, guard_markdown, hash_lane_token, pick_reviewer,
+    register_mode, relay_guidance_for, resolve_surface, transition, validate_props,
 };
 use serde_json::json;
 
@@ -173,6 +173,27 @@ pub struct RelayHandoverOutput {
     pub task_id: Uuid,
     pub state: RelayTaskState,
     pub round: i32,
+}
+
+/// `POST /api/relay/tasks/{id}/steps` (holder, F8).
+#[derive(Debug, Clone)]
+pub struct RelayStepInput {
+    /// Stable within the task; upserts by this.
+    pub key: String,
+    pub title: String,
+    pub state: RelayStepState,
+    /// Required on `skipped`, forbidden elsewhere.
+    pub reason: Option<String>,
+}
+
+/// `POST /api/relay/tasks/{id}/steps` (holder, F8).
+#[derive(Debug, Clone)]
+pub struct RelayStepOutput {
+    pub key: String,
+    pub title: String,
+    pub state: RelayStepState,
+    pub reason: Option<String>,
+    pub updated_at: String,
 }
 
 /// `POST /api/relay/crews/{id}/close` (coordinator, F3).
@@ -3119,6 +3140,115 @@ impl PgStore {
         Ok(RelayHandoverOutput { task_id, state: next, round: new_round })
     }
 
+    /// Post a checklist-step update (holder only, F8): the lane narrates
+    /// its turn step by step (`open` → `done`, or `skipped` with a
+    /// reason). Steps live on the task as a flat jsonb checklist in
+    /// insertion order; the task view serves them as-is and the screen
+    /// renders the checklist. Only the holding lane posts, only while
+    /// `working` or `rework` (steps describe the work turn — reporting
+    /// moves on). Done/skipped never reopen (re-posting the same state
+    /// is a no-op); a new turn posts a new key.
+    pub async fn relay_post_step(
+        &self,
+        user_id: Uuid,
+        caller_lane: Uuid,
+        task_id: Uuid,
+        input: RelayStepInput,
+    ) -> Result<RelayStepOutput, RelayError> {
+        let key = input.key.trim();
+        if key.is_empty() {
+            return Err(RelayError::Validation("step key is empty".into()));
+        }
+        if key.len() > 120 {
+            return Err(RelayError::Validation(format!(
+                "step key too long: {} > 120 chars",
+                key.len()
+            )));
+        }
+        if input.title.trim().is_empty() {
+            return Err(RelayError::Validation("step title is empty".into()));
+        }
+        check_summary(&input.title, "title")?;
+        let reason = match (&input.state, input.reason.as_deref()) {
+            (RelayStepState::Skipped, Some(r)) if !r.trim().is_empty() => {
+                check_summary(r, "reason")?;
+                Some(r.to_string())
+            }
+            (RelayStepState::Skipped, _) => {
+                return Err(RelayError::Validation("a skipped step needs a reason".into()));
+            }
+            (_, Some(r)) if !r.trim().is_empty() => {
+                return Err(RelayError::Validation("only a skipped step carries a reason".into()));
+            }
+            _ => None,
+        };
+        let task: Option<(Option<Uuid>, String, serde_json::Value)> =
+            sqlx_core::query_as::query_as(
+                "select lane_id, state::text, steps from relay.tasks
+                 where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+        let Some((task_lane, state, stored)) = task else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        if task_lane != Some(caller_lane) {
+            return Err(RelayError::Forbidden("only the holder posts steps".into()));
+        }
+        let cur = parse_state(&state)?;
+        if !matches!(cur, RelayTaskState::Working | RelayTaskState::Rework) {
+            return Err(RelayError::Conflict(format!("cannot post steps to a {state} task")));
+        }
+        let next = word(input.state);
+        let now: DateTime<Utc> = sqlx_core::query_scalar::query_scalar("select current_timestamp")
+            .fetch_one(self.pool())
+            .await
+            .map_err(db_err)?;
+        let stamp = iso(now);
+        let stored_reason =
+            reason.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null);
+        let mut steps = stored.as_array().cloned().unwrap_or_default();
+        if let Some(existing) =
+            steps.iter_mut().find(|s| s.get("key").and_then(|v| v.as_str()) == Some(key))
+        {
+            let prev = existing.get("state").and_then(|v| v.as_str()).unwrap_or("open");
+            if prev != next && prev != "open" {
+                return Err(RelayError::Conflict(format!("step '{key}' is already {prev}")));
+            }
+            existing["title"] = serde_json::Value::String(input.title.clone());
+            existing["state"] = serde_json::Value::String(next);
+            existing["reason"] = stored_reason;
+            existing["updated_at"] = serde_json::Value::String(stamp.clone());
+        } else {
+            steps.push(serde_json::json!({
+                "key": key,
+                "title": input.title.clone(),
+                "state": next,
+                "reason": stored_reason,
+                "updated_at": stamp.clone(),
+            }));
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        sqlx_core::query::query("update relay.tasks set steps = $1 where user_id = $2 and id = $3")
+            .bind(serde_json::Value::Array(steps))
+            .bind(user_id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayStepOutput {
+            key: key.to_string(),
+            title: input.title,
+            state: input.state,
+            reason,
+            updated_at: stamp,
+        })
+    }
+
     /// Close a crew (coordinator only, F3): the crew's work is over when
     /// its lanes are gone. "Zero live lanes" counts beside the caller —
     /// the coordinator closes, then unregisters (a strict zero is
@@ -4245,9 +4375,10 @@ impl PgStore {
             DateTime<Utc>,
             Option<DateTime<Utc>>,
             DateTime<Utc>,
+            serde_json::Value,
         )> = sqlx_core::query_as::query_as(
             "select title, repo_key, phase::text, workspace_id, state::text, round,
-                    item_id, lane_id, assigned_at, completed_at, state_changed_at
+                    item_id, lane_id, assigned_at, completed_at, state_changed_at, steps
              from relay.tasks where user_id = $1 and crew_id = $2 and id = $3",
         )
         .bind(user_id)
@@ -4268,6 +4399,7 @@ impl PgStore {
             assigned_at,
             completed_at,
             state_changed_at,
+            steps,
         )) = task
         else {
             return Err(RelayError::NotFound("task not found".into()));
@@ -4661,6 +4793,8 @@ impl PgStore {
             "decision": decision_json,
             "handoff": handoff_json,
             "history": history_json,
+            // F8: the flat checklist, stored insertion order, served as-is.
+            "steps": steps,
             "lanes": lane_refs
                 .iter()
                 .map(|(id, code, title)| serde_json::json!({

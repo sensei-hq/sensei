@@ -14,6 +14,7 @@
   import { hhmm, providerLabel, roundsLabel, taskStateLabel } from './relay-format.js';
   import DecisionRow from './DecisionRow.svelte';
   import HistoryEntry from './HistoryEntry.svelte';
+  import RelayChecklist from './RelayChecklist.svelte';
   import RelayTimeline from './RelayTimeline.svelte';
 
   let {
@@ -138,6 +139,8 @@
           {hhmm(task.assigned_at)} → {task.completed_at ? hhmm(task.completed_at) : 'now'} ·
           {roundsLabel(task.rounds)}
         </p>
+
+        <RelayChecklist steps={view.steps} />
 
         <RelayTimeline {view} />
 

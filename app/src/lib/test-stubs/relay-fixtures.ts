@@ -551,6 +551,7 @@ export function taskView(over: Partial<RelayTaskView> = {}): RelayTaskView {
       at: minutesAgo(240),
     },
     history: history(),
+    steps: [],
     lanes: laneRefs(),
     ...over,
   };

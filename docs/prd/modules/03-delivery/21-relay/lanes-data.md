@@ -92,7 +92,7 @@ and sprint from the tracker) · `state` (`'backlog','planned','closed'`) · `pos
 null (never the author's lane; checked) · `title` · `phase` (`'analysis','tests','impl','docs','mockup'`) · `state`
 (`'assigned','working','in_review','rework','approved','done','blocked','interrupted','cancelled'`; see *Stages*)
 · `round` · `owned_paths`, `acceptance`, `resources` text[] · `deps` uuid[] · `assigned_at`, `state_changed_at`,
-`completed_at` null.
+`completed_at` null · `steps` jsonb (flat checklist, F8: `[{key, title, state, reason, updated_at}]`, insertion order).
 - The ticket comes through `item_id → ticket_provider / ticket_key`.
 - The **brief is the `assigned` action's `body_md`**, frozen. A change is a `brief_updated` action.
 - A review is a stage of the task: the reviewer's queue is `reviewer_lane_id = me and state = 'in_review'`.

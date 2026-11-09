@@ -426,6 +426,15 @@ export interface RelayLaneRef {
   title: string | null;
 }
 
+/** One flat-checklist step (F8): the holder's turn narrated step by step. */
+export interface RelayTaskStep {
+  key: string;
+  title: string;
+  state: 'open' | 'done' | 'skipped';
+  reason: string | null;
+  updated_at: string;
+}
+
 export interface RelayTaskView {
   task: RelayTaskHeader;
   run: RelayRunDetails;
@@ -434,6 +443,8 @@ export interface RelayTaskView {
   handoff: RelayHandoff | null;
   /** Newest first, down to `assigned`, as the view orders it. */
   history: RelayAction[];
+  /** The flat checklist, stored insertion order, served as-is. */
+  steps: RelayTaskStep[];
   /** The crew's lanes, for the codes behind uuids in props. */
   lanes: RelayLaneRef[];
 }

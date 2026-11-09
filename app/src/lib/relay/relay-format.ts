@@ -8,6 +8,7 @@ import type {
   RelayCrew,
   RelayLane,
   RelayLaneRef,
+  RelayTaskStep,
   RelayTicket,
   RelayTicketProvider,
 } from '$lib/relay-api.js';
@@ -105,4 +106,9 @@ export function todayLine(today: { completed: number; reviewed: number | null; f
     return { value, text: 'First-pass approval not reported' };
   }
   return { value, text: `${today.first_pass_approved} of ${today.reviewed} passed review first time` };
+}
+
+/** The checklist's current step: the first open one, or null when none is. */
+export function currentStepKey(steps: RelayTaskStep[]): string | null {
+  return steps.find((s) => s.state === 'open')?.key ?? null;
 }

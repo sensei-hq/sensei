@@ -56,6 +56,17 @@ pub enum RelayTaskState {
     Cancelled,
 }
 
+/// A checklist step's state (F8): `open` advances to `done`, or to
+/// `skipped` with a reason. Done/skipped never reopen — a new turn
+/// posts a new key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayStepState {
+    Open,
+    Done,
+    Skipped,
+}
+
 /// `RelayLeaseState`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

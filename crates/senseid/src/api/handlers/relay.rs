@@ -25,6 +25,7 @@
 //! | lane | `POST /api/relay/tasks/{id}/merge` | merge (coordinator) |
 //! | lane | `POST /api/relay/tasks/{id}/cancel` | cancel (coordinator) |
 //! | lane | `POST /api/relay/tasks/{id}/handover` | handover (coordinator) |
+//! | lane | `POST /api/relay/tasks/{id}/steps` | step update (holder) |
 //! | lane | `POST /api/relay/crews/{id}/close` | close the crew (coordinator) |
 //! | person | `GET /relay/now`, `GET /relay/queue`, `GET /relay/tasks/{crew}/{task}` | reads |
 //! | person | `POST /relay/messages`, `POST /relay/answers`, `POST /relay/backlog` | writes |
@@ -57,12 +58,12 @@ use crate::db::pg_store::relay::{
     RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput, RelayHandoverInput,
     RelayHeartbeatOutput, RelayLaneSession, RelayMergeInput, RelayMessageInput, RelayMessageTo,
     RelayPlanInput, RelayReadFilter, RelayRegisterInput, RelayReportInput, RelayResourceRequest,
-    RelayReviewInput, RelayTicketInput, RelayTriageInput,
+    RelayReviewInput, RelayStepInput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
-    RelayError, RelayFindingSeverity, RelayItemKind, RelayRole, RelaySurface, RelayTaskPhase,
-    RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
+    RelayError, RelayFindingSeverity, RelayItemKind, RelayRole, RelayStepState, RelaySurface,
+    RelayTaskPhase, RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
 };
 
 type RelayResult = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>;
@@ -356,6 +357,16 @@ pub(crate) struct HandoverBody {
     to_lane: String,
     #[serde(default)]
     note: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct StepBody {
+    lane_id: String,
+    key: String,
+    title: String,
+    state: String,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -991,6 +1002,44 @@ pub(crate) async fn handover(
         "task_id": out.task_id.to_string(),
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
         "round": out.round,
+    }))
+}
+
+pub(crate) async fn post_step(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<StepBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let step_state = parse_word::<RelayStepState>(&body.state, "state").map_err(err)?;
+    let out = state
+        .pg
+        .relay_post_step(
+            session.user_id,
+            caller,
+            task_id,
+            RelayStepInput {
+                key: body.key,
+                title: body.title,
+                state: step_state,
+                reason: body.reason,
+            },
+        )
+        .await
+        .map_err(err)?;
+    emit(&state, "post_step");
+    ok(serde_json::json!({
+        "task_id": task_id.to_string(),
+        "step": {
+            "key": out.key,
+            "title": out.title,
+            "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+            "reason": out.reason,
+            "updated_at": out.updated_at,
+        },
     }))
 }
 
@@ -1924,6 +1973,218 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         assert_eq!(body["error"], "relay_forbidden");
+    }
+
+    // ── F8-B: step progress ──
+
+    async fn post_step(
+        h: &Harness,
+        lane_id: &str,
+        token: &str,
+        task_id: &str,
+        extra: Value,
+    ) -> (StatusCode, Value) {
+        call(
+            h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/steps"),
+            Some(lane_body(lane_id, extra)),
+            Some(token),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn step_create_posts_open_and_view_serves_it() {
+        // F8: the holder posts a step; the task view serves the checklist.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["step"]["key"], "scaffold");
+        assert_eq!(body["step"]["state"], "open");
+        assert!(body["step"]["updated_at"].is_string(), "{body}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["steps"][0]["key"], "scaffold");
+        assert_eq!(view["steps"][0]["title"], "Scaffold the crate");
+        assert_eq!(view["steps"][0]["state"], "open");
+    }
+
+    #[tokio::test]
+    async fn step_update_open_to_done() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, _) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "done"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["step"]["state"], "done");
+    }
+
+    #[tokio::test]
+    async fn step_skipped_needs_reason() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "bench", "title": "Benchmark", "state": "skipped"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "relay_invalid");
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "bench", "title": "Benchmark", "state": "skipped", "reason": "No perf gate this slice"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["step"]["reason"], "No perf gate this slice");
+    }
+
+    #[tokio::test]
+    async fn step_done_is_terminal_but_idempotent() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, _) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "done"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // Re-posting done is a no-op…
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "done"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // …but done never reopens.
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn step_non_holder_is_403() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, _, _) = working_task(&h, &coord).await;
+        let (other, other_token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = post_step(
+            &h,
+            &other,
+            &other_token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "relay_forbidden");
+    }
+
+    #[tokio::test]
+    async fn step_wrong_state_is_409() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        // Assigned: the work (and its steps) has not started.
+        let (holder, token) = register_contributor(&h, &coord.2).await;
+        let fresh = assigned_task(&h, &coord, &holder).await;
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &fresh,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        // In review: the turn is over, steps with it. (Cancelled needs no
+        // pin: cancel refuses a live holder while steps require one. Done
+        // shares this same state gate.)
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&holder)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn step_reason_only_on_skipped() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open", "reason": "why"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "relay_invalid");
     }
 
     #[tokio::test]
