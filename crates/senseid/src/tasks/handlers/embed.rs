@@ -45,6 +45,44 @@ const EMBED_TIMEOUT_SECS: u64 = 30;
 /// Give up embedding a folder after this many consecutive batch failures — the
 /// backend is unhealthy; leave the remaining nodes for `/api/embed/backfill`.
 const EMBED_MAX_CONSECUTIVE_FAILURES: u32 = 5;
+/// Default per-run cap on embedding backend calls (#359). A first scan of a
+/// monorepo packs thousands of batches; firing them all in one run bursts the
+/// local encoder and wedges the app. Each run spends at most this many calls,
+/// then a follow-up task continues the rest in the background. Config
+/// `embed.calls_per_run` overrides.
+const DEFAULT_EMBED_CALLS_PER_RUN: usize = 64;
+
+/// Parse `embed.calls_per_run`: positive integers win; anything else (unset,
+/// garbage, zero, negative) falls back to the default (batch_per_tick precedent).
+fn embed_calls_per_run(cfg: Option<String>) -> usize {
+    cfg.and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|&n| n > 0)
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_EMBED_CALLS_PER_RUN)
+}
+
+/// Per-run call budget (#359): every gateway invocation spends one `take()`.
+/// Past zero the run stops and the remainder waits for the follow-up task, so
+/// the burst is bounded no matter how many batches or per-text retries remain.
+struct CallBudget {
+    remaining: usize,
+}
+
+impl CallBudget {
+    fn new(cap: usize) -> Self {
+        Self { remaining: cap }
+    }
+    /// Spend one call. False = budget exhausted, stop the run. (Callers track
+    /// the denial itself: an empty budget at loop end may mean the work fit
+    /// exactly, which must NOT reenqueue.)
+    fn take(&mut self) -> bool {
+        if self.remaining == 0 {
+            return false;
+        }
+        self.remaining -= 1;
+        true
+    }
+}
 
 /// Build the text fed to the embedding model for a node. Combines kind, name,
 /// signature, and file location so semantically related symbols land near each
@@ -230,9 +268,18 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
         .collect();
     let batches = pack_embed_batches(&texts);
 
+    // #359: bound the burst — batch attempts AND per-text retries share one
+    // per-run call budget, spent via `take()` at both gateway call sites below.
+    let cap = embed_calls_per_run(ctx.pg().get_config("embed.calls_per_run").await.ok().flatten());
+    let mut budget = CallBudget::new(cap);
     let mut embedded = 0u32;
     let mut consecutive_failures = 0u32;
+    let mut exhausted = false;
     for batch in &batches {
+        if !budget.take() {
+            exhausted = true;
+            break;
+        }
         let batch_texts: Vec<String> = batch.iter().map(|&i| texts[i].clone()).collect();
 
         // Embedding is best-effort and backfillable: a stalled or erroring
@@ -257,6 +304,10 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
                 }
                 let mut any_ok = false;
                 for (&i, text) in batch.iter().zip(batch_texts) {
+                    if !budget.take() {
+                        exhausted = true;
+                        break;
+                    }
                     match embed_batch(ctx, vec![text]).await {
                         BatchOutcome::Ok(mut v) => {
                             if let Some(vector) = v.pop() {
@@ -277,6 +328,9 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
                         }
                     }
                 }
+                if exhausted {
+                    break;
+                }
                 consecutive_failures = if any_ok { 0 } else { consecutive_failures + 1 };
                 if consecutive_failures >= EMBED_MAX_CONSECUTIVE_FAILURES {
                     tracing::warn!(
@@ -296,6 +350,25 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
         }
     }
 
+    // #359: budget spent with progress made and nodes still pending — continue
+    // in the background instead of bursting. Plain `enqueue`, not
+    // `enqueue_unique`: the running self covers the twin check, so unique
+    // would drop the follow-up. No reenqueue on unhealthy backends (failures /
+    // timeouts return early or break above with `exhausted` false) or without
+    // progress (a wedged backend must not spin the queue). The pending query
+    // is limit-capped, so leftovers are re-checked cheaply rather than inferred.
+    if exhausted && embedded > 0 {
+        let leftover = ctx.pg().nodes_without_embeddings(&folder_id, 1).await?;
+        if !leftover.is_empty() {
+            let follow = Task::new(super::super::TaskKind::EmbedNodes, &task.folder_path, "");
+            ctx.queue.enqueue(follow).await;
+            tracing::info!(
+                "embed_nodes: {} — call budget spent after {embedded} nodes, follow-up queued",
+                task.folder_name(),
+            );
+        }
+    }
+
     tracing::info!("embed_nodes: {} — embedded {} nodes", task.folder_name(), embedded);
     Ok(embedded)
 }
@@ -303,6 +376,29 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embed_calls_per_run_defaults_parses_and_rejects_garbage() {
+        // #359: the per-run LLM-call budget is configurable, with a sane
+        // default when unset or unparseable (batch_per_tick precedent).
+        assert_eq!(embed_calls_per_run(None), DEFAULT_EMBED_CALLS_PER_RUN);
+        assert_eq!(embed_calls_per_run(Some("nonsense".into())), DEFAULT_EMBED_CALLS_PER_RUN);
+        assert_eq!(embed_calls_per_run(Some("0".into())), DEFAULT_EMBED_CALLS_PER_RUN);
+        assert_eq!(embed_calls_per_run(Some("-5".into())), DEFAULT_EMBED_CALLS_PER_RUN);
+        assert_eq!(embed_calls_per_run(Some("32".into())), 32);
+    }
+
+    #[test]
+    fn call_budget_denies_past_zero() {
+        // #359: every gateway invocation spends one call; past zero the run
+        // stops and the rest waits for the follow-up (backfill), so the burst
+        // is bounded no matter how many batches or per-text retries remain.
+        let mut budget = CallBudget::new(2);
+        assert!(budget.take());
+        assert!(budget.take());
+        assert!(!budget.take());
+        assert!(!budget.take());
+    }
 
     #[test]
     fn embed_text_combines_kind_name_signature_and_path() {
