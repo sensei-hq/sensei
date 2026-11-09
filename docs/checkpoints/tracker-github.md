@@ -22,5 +22,15 @@ host so GitLab could answer for GitHub (H5 keeps the host); the GraphQL guard an
 NOT_FOUND oracle (security, signed off on r2.1); D71 had to be amended; fixture scrub by
 allowlist with a structural test.
 
-**Next:** P1 (human): `gh auth refresh -s project`. Then `/sensei:build` from G1 (G1 needs no
-fixture and can start now).
+**Build (2026-11-09, unattended):**
+- Fixture projects created in sensei-hq: #2 "sensei tracker fixture" (Sprint field: A completed,
+  B current, C future; issues from sensei and dbd, a PR, a draft, an archived item) and #3 (no
+  Iteration field). The user's real board is #1 (Iteration field, 100 sensei issues), for G6.
+- G1–G3 8ea43ad30 (+ docs e7e29afb8), G4–G5 747c1cffc (+ docs 9289061f5).
+- Build amendments: `ConnectParams.sprint_field`, `BoardScope.params`; `normalize_repo_key` at
+  its real path (ratchet); the recorder's iteration-title scrub fixed after a test caught it.
+- Gates: senseid 4435, cli 92, app 3206 (2 pre-existing failures), clippy and svelte-check clean.
+  Adapter tests were written after the draft; two mutations (type filter, containment) each
+  turned tests red.
+
+**Next:** whole-slice review findings, then G6 live (#376).
