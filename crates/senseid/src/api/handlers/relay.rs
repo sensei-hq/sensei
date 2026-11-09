@@ -25,6 +25,8 @@
 //! | lane | `POST /api/relay/tasks/{id}/merge` | merge (coordinator) |
 //! | lane | `POST /api/relay/tasks/{id}/cancel` | cancel (coordinator) |
 //! | lane | `POST /api/relay/tasks/{id}/handover` | handover (coordinator) |
+//! | lane | `POST /api/relay/tasks/{id}/steps` | step update (holder) |
+//! | screen | `GET /api/relay/events` | SSE: task + step + relay-op events |
 //! | lane | `POST /api/relay/crews/{id}/close` | close the crew (coordinator) |
 //! | person | `GET /relay/now`, `GET /relay/queue`, `GET /relay/tasks/{crew}/{task}` | reads |
 //! | person | `POST /relay/messages`, `POST /relay/answers`, `POST /relay/backlog` | writes |
@@ -46,23 +48,26 @@ use axum::{
     Json,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
+    response::sse::{Event, Sse},
 };
 use serde::Deserialize;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 
 use crate::api::events::StateEvent;
 use crate::api::state::AppState;
 use crate::db::pg_store::relay::{
-    RelayAnswerInput, RelayAskInput, RelayAskedOf, RelayAssignInput, RelayCaller,
-    RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput, RelayHandoverInput,
-    RelayHeartbeatOutput, RelayLaneSession, RelayMergeInput, RelayMessageInput, RelayMessageTo,
-    RelayPlanInput, RelayReadFilter, RelayRegisterInput, RelayReportInput, RelayResourceRequest,
-    RelayReviewInput, RelayTicketInput, RelayTriageInput,
+    RelayAnswerInput, RelayAnswerOutput, RelayAskInput, RelayAskedOf, RelayAssignInput,
+    RelayCaller, RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput,
+    RelayHandoverInput, RelayHeartbeatOutput, RelayLaneSession, RelayMergeInput, RelayMessageInput,
+    RelayMessageTo, RelayPlanInput, RelayReadFilter, RelayRegisterInput, RelayReportInput,
+    RelayResourceRequest, RelayReviewInput, RelayStepInput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
-    RelayError, RelayFindingSeverity, RelayItemKind, RelayRole, RelaySurface, RelayTaskPhase,
-    RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
+    RelayError, RelayFindingSeverity, RelayItemKind, RelayRole, RelayStepState, RelaySurface,
+    RelayTaskPhase, RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
 };
 
 type RelayResult = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>;
@@ -128,6 +133,11 @@ async fn person_user(state: &AppState) -> Result<Uuid, RelayError> {
 
 fn emit(state: &AppState, op: &str) {
     let _ = state.event_tx.send(StateEvent::relay(op));
+}
+
+/// A task changed: the screen re-reads that task's view (F8).
+fn emit_task(state: &AppState, op: &str, task_id: &Uuid) {
+    let _ = state.event_tx.send(StateEvent::relay_task(op, task_id));
 }
 
 // ─── Wire bodies ───
@@ -356,6 +366,16 @@ pub(crate) struct HandoverBody {
     to_lane: String,
     #[serde(default)]
     note: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct StepBody {
+    lane_id: String,
+    key: String,
+    title: String,
+    state: String,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -707,7 +727,7 @@ pub(crate) async fn assign(
         )
         .await
         .map_err(err)?;
-    emit(&state, "assign");
+    emit_task(&state, "assign", &task_id);
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "round": out.round,
@@ -760,7 +780,7 @@ pub(crate) async fn report(
         )
         .await
         .map_err(err)?;
-    emit(&state, "report");
+    emit_task(&state, "report", &task_id);
     ok(serde_json::json!({
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
         "round": out.round,
@@ -811,7 +831,7 @@ pub(crate) async fn review(
         )
         .await
         .map_err(err)?;
-    emit(&state, "review");
+    emit_task(&state, "review", &task_id);
     ok(serde_json::json!({
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
         "round": out.round,
@@ -836,18 +856,15 @@ pub(crate) async fn ask(
         .map(|b| parse_uuid(b, "blocks[]"))
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
+    let task_id =
+        body.task_id.as_deref().map(|t| parse_uuid(t, "task_id")).transpose().map_err(err)?;
     let out = state
         .pg
         .relay_ask_decision(
             session.user_id,
             caller,
             RelayAskInput {
-                task_id: body
-                    .task_id
-                    .as_deref()
-                    .map(|t| parse_uuid(t, "task_id"))
-                    .transpose()
-                    .map_err(err)?,
+                task_id,
                 question: body.question,
                 context: body.context,
                 options: body
@@ -862,7 +879,10 @@ pub(crate) async fn ask(
         )
         .await
         .map_err(err)?;
-    emit(&state, "ask");
+    match task_id {
+        Some(task_id) => emit_task(&state, "ask", &task_id),
+        None => emit(&state, "ask"),
+    }
     ok(serde_json::json!({ "decision_id": out.decision_id.to_string() }))
 }
 
@@ -875,7 +895,7 @@ pub(crate) async fn lane_answer(
     let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let decision_id = parse_uuid(&decision_id, "decision_id").map_err(err)?;
-    let action_id = state
+    let out: RelayAnswerOutput = state
         .pg
         .relay_answer_decision(
             session.user_id,
@@ -885,8 +905,11 @@ pub(crate) async fn lane_answer(
         )
         .await
         .map_err(err)?;
-    emit(&state, "answer");
-    ok(serde_json::json!({ "action_id": action_id.to_string() }))
+    match out.task_id {
+        Some(task_id) => emit_task(&state, "answer", &task_id),
+        None => emit(&state, "answer"),
+    }
+    ok(serde_json::json!({ "action_id": out.action_id.to_string() }))
 }
 
 pub(crate) async fn lane_message(
@@ -896,25 +919,21 @@ pub(crate) async fn lane_message(
 ) -> RelayResult {
     let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id =
+        body.task_id.as_deref().map(|t| parse_uuid(t, "task_id")).transpose().map_err(err)?;
     let out = state
         .pg
         .relay_send_message(
             session.user_id,
             RelayCaller::Lane { lane_id: caller },
-            RelayMessageInput {
-                to: message_to(&body.to).map_err(err)?,
-                task_id: body
-                    .task_id
-                    .as_deref()
-                    .map(|t| parse_uuid(t, "task_id"))
-                    .transpose()
-                    .map_err(err)?,
-                text: body.text,
-            },
+            RelayMessageInput { to: message_to(&body.to).map_err(err)?, task_id, text: body.text },
         )
         .await
         .map_err(err)?;
-    emit(&state, "message");
+    match task_id {
+        Some(task_id) => emit_task(&state, "message", &task_id),
+        None => emit(&state, "message"),
+    }
     ok(serde_json::json!({ "message_id": out.message_id.to_string() }))
 }
 
@@ -946,7 +965,7 @@ pub(crate) async fn merge(
         )
         .await
         .map_err(err)?;
-    emit(&state, "merge");
+    emit_task(&state, "merge", &task_id);
     ok(serde_json::json!({ "task_id": task_id.to_string() }))
 }
 
@@ -960,7 +979,7 @@ pub(crate) async fn cancel(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
     let out = state.pg.relay_cancel_task(session.user_id, caller, task_id).await.map_err(err)?;
-    emit(&state, "cancel");
+    emit_task(&state, "cancel", &task_id);
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
@@ -987,12 +1006,70 @@ pub(crate) async fn handover(
         )
         .await
         .map_err(err)?;
-    emit(&state, "handover");
+    emit_task(&state, "handover", &task_id);
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
         "round": out.round,
     }))
+}
+
+pub(crate) async fn post_step(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<StepBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let step_state = parse_word::<RelayStepState>(&body.state, "state").map_err(err)?;
+    let out = state
+        .pg
+        .relay_post_step(
+            session.user_id,
+            caller,
+            task_id,
+            RelayStepInput {
+                key: body.key,
+                title: body.title,
+                state: step_state,
+                reason: body.reason,
+            },
+        )
+        .await
+        .map_err(err)?;
+    let step = serde_json::json!({
+        "key": out.key,
+        "title": out.title,
+        "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+        "reason": out.reason,
+        "updated_at": out.updated_at,
+    });
+    let _ = state.event_tx.send(StateEvent::relay_step(&task_id, &step, out.created));
+    ok(serde_json::json!({
+        "task_id": task_id.to_string(),
+        "step": step,
+    }))
+}
+
+/// `GET /api/relay/events` — SSE stream of the relay family's events
+/// (F8): task notifications carry the task id (the screen re-reads the
+/// view), step events carry the step itself (applied without re-reading),
+/// op-only relay events cover the rest (unregister interrupts). Same
+/// BroadcastStream-over-`event_tx` shape as the scan socket.
+pub(crate) async fn relay_events_sse(
+    State(state): State<AppState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let rx = state.event_tx.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
+        Ok(event) if StateEvent::is_relay_family(&event.entity) => {
+            let data = serde_json::to_string(&event).unwrap_or_default();
+            Some(Ok(Event::default().data(data)))
+        }
+        _ => None,
+    });
+    Sse::new(stream)
 }
 
 pub(crate) async fn close_crew(
@@ -1053,25 +1130,21 @@ pub(crate) async fn person_message(
     // delivery is by address (the store derives the row's crew).
     let _ = body.crew_id.as_deref().map(|c| parse_uuid(c, "crew_id")).transpose().map_err(err)?;
     let surface = parse_word::<RelaySurface>(&body.surface, "surface").map_err(err)?;
+    let task_id =
+        body.task_id.as_deref().map(|t| parse_uuid(t, "task_id")).transpose().map_err(err)?;
     let out = state
         .pg
         .relay_send_message(
             user_id,
             RelayCaller::Person { surface },
-            RelayMessageInput {
-                to: message_to(&body.to).map_err(err)?,
-                task_id: body
-                    .task_id
-                    .as_deref()
-                    .map(|t| parse_uuid(t, "task_id"))
-                    .transpose()
-                    .map_err(err)?,
-                text: body.text,
-            },
+            RelayMessageInput { to: message_to(&body.to).map_err(err)?, task_id, text: body.text },
         )
         .await
         .map_err(err)?;
-    emit(&state, "message");
+    match task_id {
+        Some(task_id) => emit_task(&state, "message", &task_id),
+        None => emit(&state, "message"),
+    }
     ok(serde_json::json!({ "message_id": out.message_id.to_string() }))
 }
 
@@ -1081,7 +1154,7 @@ pub(crate) async fn person_answer(
 ) -> RelayResult {
     let user_id = person_user(&state).await.map_err(err)?;
     let surface = parse_word::<RelaySurface>(&body.surface, "surface").map_err(err)?;
-    let action_id = state
+    let out: RelayAnswerOutput = state
         .pg
         .relay_answer_decision(
             user_id,
@@ -1091,8 +1164,11 @@ pub(crate) async fn person_answer(
         )
         .await
         .map_err(err)?;
-    emit(&state, "answer");
-    ok(serde_json::json!({ "action_id": action_id.to_string() }))
+    match out.task_id {
+        Some(task_id) => emit_task(&state, "answer", &task_id),
+        None => emit(&state, "answer"),
+    }
+    ok(serde_json::json!({ "action_id": out.action_id.to_string() }))
 }
 
 pub(crate) async fn triage(
@@ -1925,6 +2001,344 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         assert_eq!(body["error"], "relay_forbidden");
+    }
+
+    // ── F8-B: step progress ──
+
+    async fn post_step(
+        h: &Harness,
+        lane_id: &str,
+        token: &str,
+        task_id: &str,
+        extra: Value,
+    ) -> (StatusCode, Value) {
+        call(
+            h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/steps"),
+            Some(lane_body(lane_id, extra)),
+            Some(token),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn step_create_posts_open_and_view_serves_it() {
+        // F8: the holder posts a step; the task view serves the checklist.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["step"]["key"], "scaffold");
+        assert_eq!(body["step"]["state"], "open");
+        assert!(body["step"]["updated_at"].is_string(), "{body}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["steps"][0]["key"], "scaffold");
+        assert_eq!(view["steps"][0]["title"], "Scaffold the crate");
+        assert_eq!(view["steps"][0]["state"], "open");
+    }
+
+    #[tokio::test]
+    async fn step_update_open_to_done() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, _) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "done"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["step"]["state"], "done");
+    }
+
+    #[tokio::test]
+    async fn step_skipped_needs_reason() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "bench", "title": "Benchmark", "state": "skipped"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "relay_invalid");
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "bench", "title": "Benchmark", "state": "skipped", "reason": "No perf gate this slice"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["step"]["reason"], "No perf gate this slice");
+    }
+
+    #[tokio::test]
+    async fn step_done_is_terminal_but_idempotent() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, _) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "done"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // Re-posting done is a no-op…
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "done"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // …but done never reopens.
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    #[tokio::test]
+    async fn step_non_holder_is_403() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, _, _) = working_task(&h, &coord).await;
+        let (other, other_token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = post_step(
+            &h,
+            &other,
+            &other_token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "relay_forbidden");
+    }
+
+    #[tokio::test]
+    async fn step_wrong_state_is_409() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        // Assigned: the work (and its steps) has not started.
+        let (holder, token) = register_contributor(&h, &coord.2).await;
+        let fresh = assigned_task(&h, &coord, &holder).await;
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &fresh,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        // In review: the turn is over, steps with it. (Cancelled needs no
+        // pin: cancel refuses a live holder while steps require one. Done
+        // shares this same state gate.)
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&holder)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+    }
+
+    // ── F8-C: relay SSE ──
+
+    async fn next_event(
+        rx: &mut tokio::sync::broadcast::Receiver<crate::api::events::StateEvent>,
+    ) -> crate::api::events::StateEvent {
+        tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("event arrives")
+            .expect("channel open")
+    }
+
+    #[tokio::test]
+    async fn relay_report_emits_task_event() {
+        // F8: a task mutation emits a task-entity event naming the task.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&holder)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let event = next_event(&mut rx).await;
+        assert_eq!(event.entity, "task");
+        assert_eq!(event.data["op"], "report");
+        assert_eq!(event.data["task_id"], task_id);
+    }
+
+    #[tokio::test]
+    async fn relay_step_post_emits_step_event() {
+        // F8: step posts stream the step itself (add on create, update on
+        // restate) — the screen applies them without re-reading.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, _) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let event = next_event(&mut rx).await;
+        assert_eq!(event.entity, "step");
+        assert!(matches!(event.action, crate::api::events::Action::Add));
+        assert_eq!(event.data["task_id"], task_id);
+        assert_eq!(event.data["step"]["key"], "scaffold");
+        let (status, _) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "done"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let event = next_event(&mut rx).await;
+        assert!(matches!(event.action, crate::api::events::Action::Update));
+        assert_eq!(event.data["step"]["state"], "done");
+    }
+
+    #[tokio::test]
+    async fn relay_answer_emits_task_event() {
+        // F8: answering a task-bound decision names the task (the store
+        // already reads it — the event just carries it).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &holder,
+                json!({
+                    "task_id": task_id, "question": "Where?",
+                    "options": [{"id": "db", "label": "Db"}],
+                    "blocks": [], "asked_of": "person",
+                }),
+            )),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let decision_id = body["decision_id"].as_str().unwrap().to_string();
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/answers",
+            Some(json!({"decision_id": decision_id, "option": "db", "note": null, "surface": "desktop"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let event = next_event(&mut rx).await;
+        assert_eq!(event.entity, "task");
+        assert_eq!(event.data["op"], "answer");
+        assert_eq!(event.data["task_id"], task_id);
+    }
+
+    #[tokio::test]
+    async fn relay_events_endpoint_streams_event_stream() {
+        // F8: GET /api/relay/events speaks SSE (headers only — the stream
+        // never ends, so the test never reads the body).
+        let h = harness().await;
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/api/relay/events")
+            .header("host", "127.0.0.1:7744")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = h.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let content_type = resp.headers()["content-type"].to_str().unwrap().to_string();
+        assert!(content_type.starts_with("text/event-stream"), "{content_type}");
+    }
+
+    #[tokio::test]
+    async fn step_reason_only_on_skipped() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, body) = post_step(
+            &h,
+            &holder,
+            &token,
+            &task_id,
+            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open", "reason": "why"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "relay_invalid");
     }
 
     #[tokio::test]

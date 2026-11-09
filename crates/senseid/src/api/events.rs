@@ -230,6 +230,33 @@ impl StateEvent {
     pub fn relay(op: &str) -> Self {
         Self { action: Action::Add, entity: "relay".into(), data: serde_json::json!({ "op": op }) }
     }
+
+    /// A task changed (F8): the screen re-reads that task's view. The op
+    /// says what happened; the view is the state (same split as the
+    /// envelope above — the event notifies, it never invents rows).
+    pub fn relay_task(op: &str, task_id: &uuid::Uuid) -> Self {
+        Self {
+            action: Action::Update,
+            entity: "task".into(),
+            data: serde_json::json!({ "op": op, "task_id": task_id.to_string() }),
+        }
+    }
+
+    /// A checklist step was created (`Add`) or restated (`Update`), with
+    /// the step itself — the screen applies it without re-reading.
+    pub fn relay_step(task_id: &uuid::Uuid, step: &serde_json::Value, created: bool) -> Self {
+        Self {
+            action: if created { Action::Add } else { Action::Update },
+            entity: "step".into(),
+            data: serde_json::json!({ "task_id": task_id.to_string(), "step": step }),
+        }
+    }
+
+    /// The relay family's entities, the only ones `/api/relay/events`
+    /// forwards (workspace/folder/activity ride the scan socket).
+    pub fn is_relay_family(entity: &str) -> bool {
+        matches!(entity, "relay" | "task" | "step")
+    }
 }
 
 impl ActivityEvent {

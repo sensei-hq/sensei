@@ -25,6 +25,7 @@ create table if not exists relay.tasks (
   assigned_at        timestamptz       not null default current_timestamp,
   state_changed_at   timestamptz       not null default current_timestamp,
   completed_at       timestamptz,
+  steps              jsonb             not null default '[]',
   constraint tasks_pkey primary key (user_id, id),
   constraint tasks_id_v7 check (substring(id::text from 15 for 1) = '7'),
   constraint tasks_crew_fk foreign key (user_id, crew_id) references relay.crews (user_id, id),
@@ -49,3 +50,4 @@ comment on column relay.tasks.repo_key is 'Required: the repository this work be
 comment on column relay.tasks.deps is 'Task ids this one waits on. Plain uuids, no FK: graphs, not trees.';
 comment on column relay.tasks.blocked_from_state is 'Where the task was when it blocked (Q5). Set on block, cleared on resume.';
 comment on column relay.tasks.state_changed_at is 'Every transition stamps it. completed_today falls back to it when completed_at is null.';
+comment on column relay.tasks.steps is 'Flat checklist (F8): [{key, title, state, reason, updated_at}], insertion order. The holder posts it turn by turn; the task view serves it as-is.';

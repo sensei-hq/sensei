@@ -291,3 +291,14 @@ a `handed_over` event names both lanes. Guards, each a 409 with a specific error
 three (terminal tasks, `assigned` with nothing held, `blocked`, and `approved` all refuse; `interrupted` stays the
 sweeper's re-offer job and says so); `to_lane` must hold a live lease in the same crew, must not be the current
 holder, must not be the picked reviewer (a task never reviews itself), and must not already hold a task.
+
+## 18. Step progress (F8; run-02 round-1 verdict)
+
+Steps lived in transcripts and the broker never received them, so no screen could show progress. The holder
+narrates its turn step by step: `POST /api/relay/tasks/{id}/steps` with `{key, title, state}` (holder only;
+MCP `relay_post_step`), working/rework turns only. Each step carries a key stable within the task (upserts by
+it), a title, and a state: `open` advances to `done`, or to `skipped` with a reason (required on skipped,
+forbidden elsewhere). Done/skipped never reopen — re-posting the same state is a no-op, and a new turn posts a
+new key. The broker stores the flat checklist on the task in insertion order and serves it on the task view;
+the screen renders it as a checklist (completed checked, the first open step highlighted as current). Flat only:
+no dependencies, no graphs, no cross-task aggregation.

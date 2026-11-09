@@ -48,6 +48,43 @@ const INSTANCE  = 'e2e';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
+/** Resolve psql: PATH first, then the homebrew locations (a spawned app env may not carry the user's PATH). */
+function psqlBin(): string {
+  for (const candidate of ['psql', '/opt/homebrew/bin/psql', '/usr/local/bin/psql']) {
+    try {
+      execFileSync(candidate, ['--version'], { stdio: 'ignore' });
+      return candidate;
+    } catch { /* not here */ }
+  }
+  throw new Error('[globalSetup] psql not found (PATH, /opt/homebrew/bin, /usr/local/bin)');
+}
+
+/**
+ * Seed the linked default persona the relay lane API requires. Idempotent:
+ * a re-run (reset=false) keeps the existing principal and re-asserts the
+ * default. Retries while the boot schema deploy is still converging.
+ */
+async function seedRelayPersona(dbName: string): Promise<void> {
+  const psql = psqlBin();
+  const sql = `insert into sensei.personas (label, is_chosen_default, principal_id)
+    values ('default', true, gen_random_uuid())
+    on conflict (lower(label)) do update set is_chosen_default = true,
+      principal_id = coalesce(sensei.personas.principal_id, excluded.principal_id)`;
+  const deadline = Date.now() + 120_000;
+  let lastErr = '';
+  while (Date.now() < deadline) {
+    try {
+      execFileSync(psql, ['-d', dbName, '-v', 'ON_ERROR_STOP=1', '-c', sql], { stdio: 'pipe' });
+      console.log('[globalSetup] Relay sign-in seed present.');
+      return;
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+      await sleep(2_000);
+    }
+  }
+  throw new Error(`[globalSetup] Relay sign-in seed never landed in ${dbName}: ${lastErr}`);
+}
+
 async function waitForSocket(path: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -186,6 +223,15 @@ export default async function globalSetup(): Promise<void> {
     );
   }
   console.log(`[globalSetup] Daemon DB verified: ${health.dbName}`);
+
+  // 5b. Relay sign-in seed (F8): the lane API requires a linked default
+  //     persona (`relay_signin_required` otherwise), and a fresh e2e DB has
+  //     no sign-ins by design. One idempotent row — the same shape the
+  //     daemon's own relay tests seed — so the relay specs can register
+  //     crews. A bare linked row carries no tokens, no renewal, and no
+  //     memberships, so the identity specs' clean-launch expectations hold
+  //     (proven by running them with the seed in place).
+  await seedRelayPersona(expectedDb);
 
   // 6. WAIT FOR READY, NOT JUST FOR BOUND. A listening port says the daemon
   //    exists; it says nothing about whether the app can render anything.

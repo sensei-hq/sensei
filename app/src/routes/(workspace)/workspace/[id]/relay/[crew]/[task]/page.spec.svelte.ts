@@ -20,6 +20,8 @@ const LOADER = './+page.js';
 
 const relay = vi.hoisted(() => ({ api: null as unknown }));
 vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api) }));
+// The socket is the route's, pinned in relay-task-stream.spec — not here.
+vi.mock('$lib/relay/relay-task-stream.js', () => ({ subscribeTaskStream: vi.fn(() => () => {}) }));
 
 const route = vi.hoisted(() => ({ id: 'w1', crew: '', task: 't-header' }));
 vi.mock('$app/state', () => ({
