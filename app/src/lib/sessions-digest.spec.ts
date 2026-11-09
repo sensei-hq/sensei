@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import type { SessionRow } from '$lib/types.js';
 import {
   sessionsCopy,
@@ -490,5 +490,57 @@ describe('turnsByDay', () => {
   it('leaves out hours outside the axis', () => {
     const t = turnsByDay([[hourOf(30, 10), 9, 9, 9, 9]], days, NOW);
     expect(t.every((d) => d.turns === 0)).toBe(true);
+  });
+});
+
+// #357: a UTC hour filed by its start instant lands on the wrong local day
+// wherever the zone's midnight falls inside the bucket (half-hour zones and
+// :45 zones). These pins force the zone themselves, so they fail on any
+// runner until the filing counts minutes, not instants.
+describe('midnight-straddling buckets (#357)', () => {
+  const REAL_TZ = process.env.TZ;
+  afterEach(() => {
+    if (REAL_TZ === undefined) delete process.env.TZ;
+    else process.env.TZ = REAL_TZ;
+  });
+  // Local July 8 2026, noon — built after the TZ switch, like every date here.
+  const localNow = () => new Date(2026, 6, 8, 12, 0, 0);
+
+  it('files activity across local midnight under each day in IST (+05:30)', () => {
+    process.env.TZ = 'Asia/Kolkata';
+    const now = localNow();
+    const days = buildDays('7d', now);
+    const late = wire({ id: 'late', startedAt: isoDaysAgo(1, 23), activeByHour: [
+      [hourOf(1, 23), 20 * 60_000, 10 * 60_000],
+      [hourOf(0, 0), 30 * 60_000, 5 * 60_000],
+    ] });
+    const a = activityByDay([late], days, now);
+    expect(a.days.at(-2)).toMatchObject({ agentMins: 20, userMins: 10 });
+    expect(a.days.at(-1)).toMatchObject({ agentMins: 30, userMins: 5 });
+  });
+
+  it('files turns across local midnight under each day in IST (+05:30)', () => {
+    process.env.TZ = 'Asia/Kolkata';
+    const now = localNow();
+    const days = buildDays('7d', now);
+    const t = turnsByDay([
+      [hourOf(1, 23), 4, 1, 1000, 100],
+      [hourOf(0, 0), 3, 0, 500, 50],
+      [hourOf(0, 9), 1, 0, 200, 20],
+    ], days, now);
+    expect(t.at(-2)).toMatchObject({ turns: 4, corrections: 1 });
+    expect(t.at(-1)).toMatchObject({ turns: 4, corrections: 0 });
+  });
+
+  it('files the straddling hour under its majority day in +05:45', () => {
+    process.env.TZ = 'Asia/Kathmandu';
+    const now = localNow();
+    const days = buildDays('7d', now);
+    // Local midnight sits 15 minutes into the UTC hour, so 45 of its 60
+    // minutes happened on the later day.
+    const late = wire({ id: 'late', activeByHour: [[hourOf(0, 0), 60 * 60_000, 0]] });
+    const a = activityByDay([late], days, now);
+    expect(a.days.at(-2)).toMatchObject({ agentMins: 0 });
+    expect(a.days.at(-1)).toMatchObject({ agentMins: 60 });
   });
 });
