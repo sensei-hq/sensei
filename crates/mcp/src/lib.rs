@@ -3031,6 +3031,8 @@ mod tests {
         "relay_release_resource",
         "relay_cancel_task",
         "relay_close_crew",
+        // F1: force-handover.
+        "relay_handover_task",
     ];
 
     const LANE_ID: &str = "01938931-0000-7000-8000-000000000001";
@@ -3223,6 +3225,25 @@ mod tests {
         )
         .unwrap();
         assert!(req.body.as_ref().unwrap().get("partial").is_none());
+    }
+
+    #[test]
+    fn relay_handover_posts_with_auth() {
+        // F1: handover posts lane_id + to_lane to the task route, the
+        // token riding the Authorization header only.
+        let req = daemon_request_for(
+            "relay_handover_task",
+            &lane_args(json!({"task_id": "t1", "to_lane": LANE_ID})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/t1/handover");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["to_lane"], LANE_ID);
+        assert_token_only_in_headers(&req, TOKEN);
     }
 
     #[test]
