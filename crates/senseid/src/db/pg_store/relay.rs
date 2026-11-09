@@ -22,11 +22,11 @@ use crate::relay::envelope::{
 };
 use crate::relay::{
     Caller, DISK_FLOOR_GB, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS, RESOURCE_LEASE_TTL_SECS,
-    RegisterMode, RelayActionKind, RelayError, RelayFindingSeverity, RelayFloors, RelayItemKind,
-    RelayLeaseState, RelayRole, RelaySurface, RelayTaskPhase, RelayTaskState, RelayTicketProvider,
-    ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent, check_summary_len,
+    RegisterMode, RelayActionKind, RelayError, RelayFindingSeverity, RelayFloors, RelayGuidance,
+    RelayItemKind, RelayLeaseState, RelayRole, RelaySurface, RelayTaskPhase, RelayTaskState,
+    RelayTicketProvider, ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent, check_summary_len,
     decide_resource_grant, guard_markdown, hash_lane_token, pick_reviewer, register_mode,
-    resolve_surface, transition, validate_props,
+    relay_guidance_for, resolve_surface, transition, validate_props,
 };
 use serde_json::json;
 
@@ -52,13 +52,15 @@ pub struct RelayRegisterInput {
 
 /// The register response. `crew_id` is always present (Q16-REC): minted or
 /// joined, the coordinator needs it for the paste line. The raw token is
-/// returned once, here — never stored, never returned again.
+/// returned once, here — never stored, never returned again. `guidance`
+/// (F9) is the versioned join-time contract plus the family override.
 #[derive(Debug, Clone)]
 pub struct RelayRegisterOutput {
     pub lane_token: String,
     pub lane_id: Uuid,
     pub lane_title: Option<String>,
     pub crew_id: Uuid,
+    pub guidance: RelayGuidance,
 }
 
 /// An authenticated lane: what `relay_auth_lane` resolves a token to.
@@ -1021,7 +1023,14 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayRegisterOutput { lane_token: token, lane_id, lane_title: Some(title), crew_id })
+        let guidance = relay_guidance_for(&input.family, input.model.as_deref());
+        Ok(RelayRegisterOutput {
+            lane_token: token,
+            lane_id,
+            lane_title: Some(title),
+            crew_id,
+            guidance,
+        })
     }
 
     /// Resolve a lane caller's identity: token hash → lane. Unknown token is

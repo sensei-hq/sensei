@@ -454,6 +454,11 @@ pub(crate) async fn register(
         "lane_id": out.lane_id.to_string(),
         "lane_title": out.lane_title,
         "crew_id": out.crew_id.to_string(),
+        "guidance": {
+            "version": out.guidance.version,
+            "generic": out.guidance.generic,
+            "family_notes": out.guidance.family_notes,
+        },
     }))
 }
 

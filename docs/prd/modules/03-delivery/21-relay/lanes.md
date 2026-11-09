@@ -48,9 +48,15 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
   - `capabilities` is e.g. `rust`, `sql`, `ts`, `mockups`, `can-push`, `can-run-hooks`.
   - It returns a **lane token** and the lane it was given: the first open lane whose requirements its
     capabilities meet.
-- **Leases, not just unregister.** A lane holds a lease renewed by every MCP call (or a `heartbeat`). When a
-  lease expires (crash, restart, closed session) the lane is **suspended**, its in-flight task is marked
-  `interrupted` with its last checkpoint, and after a grace period it goes back to the queue.
+  - It returns a **`guidance` block** (F9): `version` (schema, currently `"1"`) + `generic`, the
+    self-sufficient join-time contract (300s lease/heartbeat cadence, poll paths, report → review → merge
+    flow, re-offer/`wait` pickup, no-transcript rule) + `family_notes`, the override for the request's
+    `family`/`model`. Four families have notes: `muse`, `claude` (prefix match, so `claude-code` counts),
+    `opencode`, `freebuff`; the family wins, else the model id is matched the same way, else `family_notes`
+    is null and the block is generic-only. MCP `relay_register` surfaces the block verbatim.
+- **Leases, not just unregister.** A lane holds a lease renewed **only by `heartbeat`** (no other call touches
+  it). When a lease expires (crash, restart, closed session) the lane is **suspended**, its in-flight task is
+  marked `interrupted` with its last checkpoint, and after a grace period it goes back to the queue.
 - `re-register(lane_token)` resumes the same lane after a restart or a context clear, and gets the task's
   checkpoint back. `unregister` releases the lane cleanly.
 - **Fewer workers → rebalance.** Tasks queued for a lane that's gone are re-offered to live lanes whose

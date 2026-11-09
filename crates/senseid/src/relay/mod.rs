@@ -620,7 +620,8 @@ pub fn resolve_surface(
 
 // ─── Lease math (Q7, settled) ───
 
-/// A lane lease lives 300 s; every authenticated call renews it.
+/// A lane lease lives 300 s; only heartbeat renews it (no other call
+/// touches the lease — `relay_auth_lane` authenticates, it does not renew).
 pub const LANE_LEASE_TTL_SECS: u64 = 300;
 /// An interrupted task waits 900 s for its lane, then is re-offered.
 pub const REOFFER_GRACE_SECS: u64 = 900;
@@ -634,6 +635,107 @@ pub fn lease_expired(expires_at_unix: i64, now_unix: i64) -> bool {
 /// True once the grace after the interrupt has run out.
 pub fn reoffer_due(interrupted_at_unix: i64, now_unix: i64) -> bool {
     now_unix - interrupted_at_unix >= 900
+}
+
+// ─── Register guidance (F9) ───
+
+/// Guidance schema version. Bump when the generic contract's meaning
+/// changes (new routes, new TTLs); prose-only clarifications keep it.
+pub const RELAY_GUIDANCE_VERSION: &str = "1";
+
+/// The self-sufficient join-time contract: a lane that reads nothing but
+/// endpoint.md plus this text can join, beat, poll, work, and report.
+/// Every claim here is pinned to code (`LANE_LEASE_TTL_SECS`,
+/// `REOFFER_GRACE_SECS`, `clamp_wait_timeout`, the heartbeat-only renewal
+/// in `relay_heartbeat`, the Bearer scheme in `auth_lane`).
+pub const RELAY_GUIDANCE_GENERIC: &str = "You joined a relay crew as a lane. The contract, in full:\n\
+- Lease: your lane holds a 300s lease and ONLY heartbeat renews it. \
+POST /api/relay/heartbeat {\"lane_id\": \"<you>\"} (MCP: relay_heartbeat) \
+with header Authorization: Bearer <lane_token>. Beat every 60s from a loop \
+you own. A lapsed lease suspends the lane; your held task is marked \
+interrupted (checkpoint kept) and re-offered to a live lane after a 900s \
+grace. No other call renews the lease.\n\
+- Poll: GET /api/relay/tasks?lane_id=<you> (MCP: relay_get_tasks) lists your \
+queue. GET /api/relay/tasks/wait?lane_id=<you>&timeout_ms= (MCP: \
+relay_wait_for_task) holds the connection up to 50s (default 25s) for the \
+next assignment or re-offer. Prefer wait over spinning.\n\
+- Flow: the coordinator plans and assigns; you work, then report with POST \
+/api/relay/tasks/{id}/report (MCP: relay_report_task). A partial report \
+({\"partial\": true}) records progress and keeps the task working; a full \
+report moves it to in_review and names a reviewer, whose approval lets the \
+coordinator merge. Only the coordinator merges; only the named reviewer \
+approves.\n\
+- Resume: after a restart or context clear, POST /api/relay/reregister (MCP: \
+relay_reregister) with your lane_id resumes the same lane and returns the \
+task checkpoint. POST /api/relay/unregister releases the lane cleanly when \
+you leave.\n\
+- Silence: no transcripts in any field. Titles, summaries, notes, and \
+messages carry decisions and diffs, never pasted session text.";
+
+/// Per-family overrides, selected by `relay_guidance_for`. Each names its
+/// family first (so a lane can confirm the match) and covers transport,
+/// wakeups, and quirks. Families grow here as runs observe them; unknown
+/// families get generic-only, never an empty block.
+pub const RELAY_GUIDANCE_MUSE: &str = "muse lanes: drive the crew over MCP — run \
+sensei-mcp with SENSEI_DAEMON_URL pointing at the broker and call the relay_* \
+tools (relay_register mints the token and is the one call that needs no auth \
+header). Keep the 60s heartbeat loop in a shell you own; if the session dies, \
+reregister from a fresh shell with the saved lane_id and the checkpoint \
+restores. No known quirks at guidance v1 — report yours to the coordinator.";
+
+pub const RELAY_GUIDANCE_CLAUDE: &str = "claude lanes (claude-code included): the same \
+MCP stdio shape — sensei-mcp plus SENSEI_DAEMON_URL, relay_* tools. Claude \
+sessions clear context often, so save lane_id and lane_token outside the \
+session (the coordinator paste line) and reregister to resume with the \
+checkpoint. No known quirks at guidance v1 — report yours to the coordinator.";
+
+pub const RELAY_GUIDANCE_OPENCODE: &str = "opencode lanes: raw HTTP is the reliable \
+path — curl the broker routes with -H \"Authorization: Bearer $LANE_TOKEN\" \
+(the token never goes in the query string). Beat POST /api/relay/heartbeat \
+every 60s from a background loop and pick work up via tasks/wait (timeout_ms \
+up to 50000) instead of spinning tasks. If your harness has an MCP bridge, \
+the relay_* tools mirror the HTTP routes one-to-one. No known quirks at \
+guidance v1 — report yours to the coordinator.";
+
+pub const RELAY_GUIDANCE_FREEBUFF: &str = "freebuff lanes: raw HTTP like opencode — \
+curl plus the Bearer header, a 60s heartbeat loop, tasks/wait for pickup. \
+Wakeups are yours to schedule: without a beat the 300s lease lapses and the \
+held task re-offers after the grace, so prefer an external loop or cron over \
+in-session timers. No known quirks at guidance v1 — report yours to the \
+coordinator.";
+
+/// The register-time guidance block: versioned generic contract plus the
+/// selected family override (`None` for unknown families).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayGuidance {
+    pub version: &'static str,
+    pub generic: &'static str,
+    pub family_notes: Option<&'static str>,
+}
+
+/// Select the guidance for a register's `family`/`model`: the family wins
+/// on a case-insensitive exact-or-prefix match (`claude-code` reads as
+/// claude), else the model gets the same match (a model id like
+/// `claude-opus-4-1` still finds its notes), else generic-only. Never
+/// fails — unknown input yields `family_notes: None`, not an error.
+pub fn relay_guidance_for(family: &str, model: Option<&str>) -> RelayGuidance {
+    let key = guidance_family_key(family).or_else(|| model.and_then(guidance_family_key));
+    let family_notes = match key {
+        Some("muse") => Some(RELAY_GUIDANCE_MUSE),
+        Some("claude") => Some(RELAY_GUIDANCE_CLAUDE),
+        Some("opencode") => Some(RELAY_GUIDANCE_OPENCODE),
+        Some("freebuff") => Some(RELAY_GUIDANCE_FREEBUFF),
+        _ => None,
+    };
+    RelayGuidance { version: RELAY_GUIDANCE_VERSION, generic: RELAY_GUIDANCE_GENERIC, family_notes }
+}
+
+fn guidance_family_key(value: &str) -> Option<&'static str> {
+    let normalized = value.trim().to_ascii_lowercase();
+    ["muse", "claude", "opencode", "freebuff"].into_iter().find(|key| {
+        let key: &str = key;
+        normalized == key || normalized.starts_with(key)
+    })
 }
 
 // ─── Reviewer pick (Q14, settled) ───
@@ -967,6 +1069,53 @@ mod tests {
     }
 
     // ── Timeout / token / guard / length ──
+
+    // ── Register guidance (F9) ──
+
+    #[test]
+    fn guidance_selects_exact_family() {
+        let g = relay_guidance_for("muse", None);
+        assert_eq!(g.version, "1");
+        assert!(!g.generic.is_empty());
+        assert!(g.family_notes.unwrap().starts_with("muse lanes"));
+    }
+
+    #[test]
+    fn guidance_selects_family_prefix_case_insensitive() {
+        // `claude-code` reads as claude; so does any case variant.
+        for family in ["claude-code", "Claude-Code", " CLAUDE "] {
+            let g = relay_guidance_for(family, None);
+            assert!(g.family_notes.unwrap().starts_with("claude lanes"), "{family}");
+        }
+    }
+
+    #[test]
+    fn guidance_falls_back_to_model() {
+        // Unknown family, known model id: the model finds its notes.
+        let g = relay_guidance_for("custom-harness", Some("claude-opus-4-1"));
+        assert!(g.family_notes.unwrap().starts_with("claude lanes"));
+    }
+
+    #[test]
+    fn guidance_family_beats_model() {
+        let g = relay_guidance_for("muse", Some("claude-opus-4-1"));
+        assert!(g.family_notes.unwrap().starts_with("muse lanes"));
+    }
+
+    #[test]
+    fn guidance_unknown_is_generic_only() {
+        // Documented-but-unlisted families (codex), empties, and unknown
+        // models all yield a full generic block with null notes — never a
+        // crash, never an empty block.
+        for (family, model) in
+            [("codex", None), ("", None), ("", Some("")), ("cowork", Some("gpt-x"))]
+        {
+            let g = relay_guidance_for(family, model);
+            assert_eq!(g.version, "1");
+            assert!(!g.generic.is_empty());
+            assert_eq!(g.family_notes, None, "{family:?}/{model:?}");
+        }
+    }
 
     #[test]
     fn clamp_wait_timeout_defaults_and_clamps() {
