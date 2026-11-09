@@ -685,6 +685,7 @@ pub(crate) async fn assign(
                     .transpose()
                     .map_err(err)?,
                 lane_title: body.lane_title,
+                now: chrono::Utc::now(),
             },
         )
         .await

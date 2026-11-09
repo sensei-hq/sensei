@@ -135,6 +135,8 @@ pub struct RelayAssignInput {
     pub reviewer_lane: Option<Uuid>,
     /// Sets the lane's objective (first or later assign; absent = unchanged).
     pub lane_title: Option<String>,
+    /// The assign clock: the assignee's lease must be live against it (F5).
+    pub now: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
@@ -1649,6 +1651,24 @@ impl PgStore {
         .map_err(db_err)?;
         if to_lane.is_none() {
             return Err(RelayError::NotFound("lane not found".into()));
+        }
+        // F5: the assignee must hold a live lease (granted, unexpired) —
+        // assigning onto a dead lease strands the task where no sweep,
+        // cancel, or re-assign frees it. Same liveness shape as the
+        // reviewer pick; wake the lane first, then assign.
+        let live: bool = sqlx_core::query_scalar::query_scalar(
+            "select exists (
+               select 1 from relay.leases
+               where lane_id = $1 and kind = 'lane' and state = 'granted'
+                 and expires_at > $2)",
+        )
+        .bind(input.to_lane)
+        .bind(input.now)
+        .fetch_one(self.pool())
+        .await
+        .map_err(db_err)?;
+        if !live {
+            return Err(RelayError::Conflict("lane has no live lease".into()));
         }
         if let Some(reviewer) = input.reviewer_lane {
             if reviewer == input.to_lane {
@@ -5146,6 +5166,7 @@ mod tests {
             resources: vec![],
             reviewer_lane: None,
             lane_title: None,
+            now: t0(),
         }
     }
 
