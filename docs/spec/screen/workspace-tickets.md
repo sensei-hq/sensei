@@ -74,9 +74,11 @@ only reads.
 
 **Eyebrow:** `札 · TICKETS`. **Header:** the board name (`board_name`, else
 `board #<board_ref>`). **Sub-line:** "Active AI time and tokens per ticket and sprint,
-from AI sessions whose branch or prompt names the ticket. Read from Jira. On tickets
-assigned to you, sensei writes these numbers back, as set on Integrations." (Superseded
-2026-10-26 by tracker-metrics-writeback W-UI; the screen itself still calls no write route.)
+from AI sessions whose branch or prompt names the ticket. Read from the connected
+tracker. On Jira tickets assigned to you, sensei writes these numbers back, as set on
+Integrations." (Superseded 2026-10-26 by tracker-metrics-writeback W-UI, and 2026-11-07
+by `tracker-gitlab.md`, which made the copy kind-neutral; the screen itself still calls
+no write route.)
 
 ## States
 
@@ -103,7 +105,8 @@ message (same words as the Integrations screen's table; one shared mapping) and 
      sessions, **active AI time**, fresh tokens; **Not linked** is a button when > 0 and
      opens those sessions, each linking to the replay. Without a window, one line:
      `not_started` → "Not started. Usage counts from the sprint's start."; `no_dates` →
-     "Jira has no dates for this sprint, so its sessions can't be placed in it." Never zeros.
+     "The tracker has no dates for this sprint, so its sessions can't be placed in it." (an
+     undated GitLab milestone reads this too). Never zeros.
    - the Backlog: "N tickets in no sprint", then one part — **Linked to backlog
      tickets** — all-time (the backlog has no window), each session once.
 3. **Ticket table** (`GET …/tracker-tasks`, `?sprint=<id>`, or `?backlog=true`): ticket
@@ -161,7 +164,11 @@ message (same words as the Integrations screen's table; one shared mapping) and 
      shows "≥ 1") and the row says "2 runs with unknown outcome". With `runs_unknown = 0`,
      there is no "≥" and no note.
    - A lane on one sprint shows that sprint's row; on All tickets or the Backlog, the board's
-     project row. A `history_pending` sprint shows that reason's summary.
+     project row. A `history_pending` sprint shows that reason's summary. On a GitLab
+     or GitHub board, a started, dated sprint's row, the project row's predictability and a
+     ticket's estimate show the summary of
+     `unsupported_by_tracker` ("Not available from this tracker"), never `history_pending`
+     or `not_synced` (`tracker-gitlab.md` §G8, `tracker-github.md` §H6).
    - The reason vocabulary failing to load is the daemon-error state with Retry.
    - Tests: state spec and component spec.
 
@@ -173,7 +180,8 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 - "hours" or "time spent" without "active AI time".
 - A cycle time computed by adding session times, or session time by adding active times.
 - Any assignee, author or other person attribute shown. (`assigned_to_me` and the write-back state are not person data; showing them is allowed.)
-- Any request that changes Jira, or any write route called from this screen.
+- Any request that changes the tracker, or any write route called from this screen.
+- "Jira" named for a GitLab or GitHub board's sprints or tickets.
 - An SDLC figure shown as `0`, `0%` or "—" when the daemon gave a reason. A reason shown
   as its raw code. A defect count without "≥" while runs are unknown. A sprint row built from its tickets' figures. A project row when a
   sprint is chosen.

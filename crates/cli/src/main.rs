@@ -114,7 +114,7 @@ enum Commands {
     /// Show relay registration — one line: the lane and crew, or not-registered
     Relay,
 
-    /// Issue-tracker connections (Jira) for a workspace
+    /// Issue-tracker connections (Jira, GitLab, GitHub) for a workspace
     Tracker {
         #[command(subcommand)]
         cmd: tracker::TrackerCmd,

@@ -42,8 +42,13 @@ pub async fn connect(
     params: ConnectParams,
 ) -> Result<Connected, ConnectError> {
     let kind = adapter.kind().as_str();
+    let validated = adapter.validate(transport, &params).await.map_err(ConnectError::Validate)?;
+    // The provider's identity for the board and the token, where it has one (§G1):
+    // the owner check, the tombstone, the keyring and the row all use these.
+    let board_ref = validated.board_ref.clone().unwrap_or_else(|| params.board_ref.clone());
+    let account = validated.account.clone().unwrap_or_else(|| params.account.clone());
     let owner = pg
-        .tracker_board_owner(kind, &params.base_url, &params.board_ref)
+        .tracker_board_owner(kind, &params.base_url, &board_ref)
         .await
         .map_err(ConnectError::Db)?;
     if let Some(owner) = owner.filter(|o| o.workspace_id != workspace_id) {
@@ -52,19 +57,18 @@ pub async fn connect(
             workspace_name: owner.workspace_name,
         });
     }
-    let validated = adapter.validate(transport, &params).await.map_err(ConnectError::Validate)?;
 
     // 1. Record the new secret before it exists, so no crash can orphan it.
     let service = format!("{}{kind}.{}", store.namespace(), uuid::Uuid::new_v4());
     let grace =
         chrono::Duration::from_std(PENDING_GRACE).unwrap_or_else(|_| chrono::Duration::minutes(10));
-    pg.write_pending_tombstone(&service, &params.account, chrono::Utc::now() + grace)
+    pg.write_pending_tombstone(&service, &account, chrono::Utc::now() + grace)
         .await
         .map_err(ConnectError::Db)?;
 
     // 2. Write it, outside any transaction, bounded.
-    let (svc, account, token) = (service.clone(), params.account.clone(), params.token.clone());
-    bounded(store.clone(), KEYRING_TIMEOUT, move |s| s.set(&svc, &account, &token))
+    let (svc, acct, token) = (service.clone(), account.clone(), params.token.clone());
+    bounded(store.clone(), KEYRING_TIMEOUT, move |s| s.set(&svc, &acct, &token))
         .await
         .map_err(|_| ConnectError::CredentialStore)?;
 
@@ -74,10 +78,14 @@ pub async fn connect(
         kind: kind.to_string(),
         level: level.as_str().to_string(),
         base_url: params.base_url.clone(),
-        account: params.account.clone(),
+        account,
         external_scope: validated.external_scope,
-        board_ref: params.board_ref.clone(),
-        params: serde_json::json!({ "board_name": validated.board_name }),
+        board_ref: board_ref.clone(),
+        params: {
+            let mut p = validated.params;
+            p.insert("board_name".into(), serde_json::json!(validated.board_name));
+            serde_json::Value::Object(p)
+        },
         secret_service: service,
         owner: validated.owner,
     };
@@ -85,7 +93,7 @@ pub async fn connect(
         Ok(ok) => ok,
         Err(ConnectDbError::BoardTaken) => {
             let owner = pg
-                .tracker_board_owner(kind, &params.base_url, &params.board_ref)
+                .tracker_board_owner(kind, &params.base_url, &board_ref)
                 .await
                 .map_err(ConnectError::Db)?
                 .ok_or_else(|| ConnectError::Db("board taken, owner not found".into()))?;
@@ -215,6 +223,7 @@ pub(crate) mod tests {
             account: "dev@example.com".into(),
             token: ApiToken("SENTINEL-TOKEN-XYZ".into()),
             project_key: None,
+            sprint_field: None,
         }
     }
     fn site() -> String {
@@ -344,6 +353,91 @@ pub(crate) mod tests {
             p2,
             TrackerLevel::Sprint,
             params(&s, "42"),
+        )
+        .await;
+        assert!(
+            matches!(r, Err(ConnectError::BoardAlreadyConnected { workspace_id, .. }) if workspace_id == p1),
+            "{r:?}"
+        );
+        assert!(store.entries.lock().unwrap().is_empty(), "nothing stored for a refused connect");
+    }
+
+    /// A GitLab-shaped validate: the board's numeric id and the token's username
+    /// replace what the connect body typed (§G1).
+    fn validating_to(
+        board_ref: &str,
+        account: &str,
+    ) -> &'static crate::tracker::test_support::FakeAdapter {
+        crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
+            scopes: [String::new(), String::new()],
+            validated: Some(crate::tracker::Validated {
+                external_scope: "acme/platform".into(),
+                board_name: "Platform".into(),
+                owner: crate::tracker::OwnerLookup::Unknown,
+                account: Some(account.into()),
+                board_ref: Some(board_ref.into()),
+                params: serde_json::from_value(serde_json::json!({"full_path": "acme/platform"}))
+                    .unwrap(),
+            }),
+            ..crate::tracker::test_support::FakeAdapter::gitlab_like()
+        })
+    }
+
+    #[tokio::test]
+    async fn the_validated_board_ref_and_account_replace_the_typed_ones() {
+        let pg = PgStore::test_store().await;
+        let p = workspace(&pg).await;
+        let store = Arc::new(MemoryStore::default());
+        let c = connect(
+            &pg,
+            store.clone(),
+            validating_to("project:123", "alice"),
+            &FakeBoard::empty(),
+            p,
+            TrackerLevel::Sprint,
+            params(&site(), "acme/platform"),
+        )
+        .await
+        .unwrap();
+        let row = pg.tracker_by_id(c.tracker_id).await.unwrap().unwrap();
+        assert_eq!((row.board_ref.as_str(), row.account.as_str()), ("project:123", "alice"));
+        assert_eq!(
+            row.params,
+            serde_json::json!({"board_name": "Platform", "full_path": "acme/platform"})
+        );
+        let stored = store.entries.lock().unwrap();
+        assert!(
+            stored.keys().any(|(_, account)| account == "alice"),
+            "the keyring entry is under the validated account"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_board_under_two_typed_paths_is_one_board() {
+        // D4: a rename must not let the same board connect twice.
+        let pg = PgStore::test_store().await;
+        let (p1, p2) = (workspace(&pg).await, workspace(&pg).await);
+        let s = site();
+        connect(
+            &pg,
+            Arc::new(MemoryStore::default()),
+            validating_to("project:123", "alice"),
+            &FakeBoard::empty(),
+            p1,
+            TrackerLevel::Sprint,
+            params(&s, "acme/platform"),
+        )
+        .await
+        .unwrap();
+        let store = Arc::new(MemoryStore::default());
+        let r = connect(
+            &pg,
+            store.clone(),
+            validating_to("project:123", "alice"),
+            &FakeBoard::empty(),
+            p2,
+            TrackerLevel::Sprint,
+            params(&s, "acme/core"),
         )
         .await;
         assert!(

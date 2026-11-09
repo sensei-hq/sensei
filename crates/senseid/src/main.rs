@@ -34,6 +34,7 @@ pub mod maturity;
 pub mod memory_slot;
 pub mod model_insight;
 pub mod model_provision;
+mod net;
 pub mod notifications;
 pub mod observatory_home;
 pub mod paths;

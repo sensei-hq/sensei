@@ -39,6 +39,34 @@ pub struct TrackerRow {
     pub writeback_error: Option<String>,
 }
 
+#[cfg(test)]
+impl TrackerRow {
+    /// A row with every field empty, for pure tests that set the few they read.
+    pub fn test_default() -> Self {
+        TrackerRow {
+            id: uuid::Uuid::nil(),
+            workspace_id: uuid::Uuid::nil(),
+            kind: String::new(),
+            level: "sprint".into(),
+            base_url: String::new(),
+            account: String::new(),
+            external_scope: String::new(),
+            board_ref: String::new(),
+            params: serde_json::json!({}),
+            secret_service: String::new(),
+            last_attempt_at: None,
+            last_success_at: None,
+            last_error: None,
+            discovered_through: chrono::DateTime::UNIX_EPOCH,
+            owner_ref: None,
+            owner_state: None,
+            owner_error: None,
+            writeback_enabled: false,
+            writeback_error: None,
+        }
+    }
+}
+
 impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for TrackerRow {
     fn from_row(r: &'r sqlx_postgres::PgRow) -> Result<Self, sqlx_core::Error> {
         use sqlx_core::row::Row;
@@ -434,6 +462,26 @@ impl PgStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// The workspace's trackers whose mirror holds a live task of the repository
+    /// `scope` (a `normalize_repo_key` value): the GitHub boards `get_ticket` tries
+    /// first for a key of that repository (tracker-github §H5).
+    pub async fn trackers_holding_scope(
+        &self,
+        workspace_id: uuid::Uuid,
+        scope: &str,
+    ) -> Result<Vec<uuid::Uuid>, String> {
+        sqlx_core::query_scalar::query_scalar(
+            "SELECT DISTINCT t.id FROM sensei.trackers t
+               JOIN sensei.tracker_tasks tt ON tt.tracker_id = t.id
+              WHERE t.workspace_id = $1 AND tt.scope = $2 AND tt.removed_at IS NULL",
+        )
+        .bind(workspace_id)
+        .bind(scope)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
     }
 
     /// The workspace's trackers, by level (epic, sprint, task) then age.
@@ -1138,11 +1186,15 @@ impl PgStore {
         // One credential per site (D14): the workspace's other boards on this site
         // move to the new token; the swap trigger tombstones each old secret. The
         // old token's failure no longer describes them; the caller re-syncs them.
+        // An adapter whose tokens cover less than a site names that narrower scope in
+        // `params.credential_scope` (GitHub: the project's owner); only boards with
+        // the same scope share the token. Jira and GitLab name none (NULL = NULL).
         let rekeyed: Vec<uuid::Uuid> = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
             "UPDATE sensei.trackers SET account = $4, secret_service = $5, last_error = NULL,
                     owner_ref = NULL, owner_state = NULL, owner_error = NULL, writeback_error = NULL
               WHERE workspace_id = $1 AND kind = $2::sensei.tracker_kind AND base_url = $3
                 AND secret_service <> $5
+                AND (params->>'credential_scope') IS NOT DISTINCT FROM $6
              RETURNING id",
         )
         .bind(t.workspace_id)
@@ -1150,6 +1202,7 @@ impl PgStore {
         .bind(&t.base_url)
         .bind(&t.account)
         .bind(&t.secret_service)
+        .bind(t.params.get("credential_scope").and_then(|v| v.as_str()))
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?

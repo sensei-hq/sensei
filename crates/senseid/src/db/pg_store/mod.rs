@@ -596,7 +596,7 @@ pub(crate) use personas::ForgeTokenRow;
 mod playbook;
 mod reasons;
 pub(crate) mod relay;
-mod repo_key;
+pub(crate) mod repo_key;
 mod runs;
 mod schedules;
 mod sessions;
@@ -606,7 +606,6 @@ pub(crate) mod tracker_usage;
 pub(crate) mod trackers;
 mod transcript;
 mod workspaces;
-pub(crate) use repo_key::normalize_repo_key;
 pub(crate) use schedules::{SchedulePatch, StoredSchedule};
 
 #[cfg(test)]

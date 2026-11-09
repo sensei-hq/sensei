@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::api::state::AppState;
 use crate::db::pg_store::targets::FetchStart;
 use crate::tracker::ticket::{JiraTicketReader, TicketReader};
-use crate::tracker::{TrackerKind, adapter_for_kind, jira, runtime};
+use crate::tracker::{TrackerKind, adapter_for_kind, gitlab, jira, runtime};
 
 /// Body of `POST /api/tickets/{key}/fetch`.
 #[derive(serde::Deserialize)]
@@ -74,9 +74,6 @@ pub(crate) async fn fetch_ticket(
         }
     };
 
-    // The tracker that answers to the key: one of THIS workspace's trackers whose
-    // project key is the key's prefix.
-    let upper = key.to_ascii_uppercase();
     let trackers = match pg.trackers_for_workspace(workspace).await {
         Ok(t) => t,
         Err(e) => {
@@ -84,41 +81,69 @@ pub(crate) async fn fetch_ticket(
             return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", json!({}));
         }
     };
-    let prefix = upper.split_once('-').map(|(p, _)| p);
-    let tracker = trackers.iter().find(|t| {
-        TrackerKind::parse(&t.kind) == Some(TrackerKind::Jira)
-            && jira::is_jira_key(&upper)
-            && prefix.is_some_and(|p| p.eq_ignore_ascii_case(&t.external_scope))
-    });
-    let Some(tracker) = tracker else {
-        return refuse(StatusCode::NOT_FOUND, "no_tracker_for_key", json!({"key": key}));
-    };
-    let Some(adapter) = adapter_for_kind(TrackerKind::Jira) else {
-        return refuse(StatusCode::BAD_GATEWAY, "unsupported_tracker", json!({"key": key}));
+    // The key in its canonical form and the trackers that may answer it, in order. A
+    // Jira key is upper-cased; a forge key (`acme/platform#12`, or a bare `#12` read
+    // in the folder's own repository) keeps a lowercased path (§G9, tracker-github §H5).
+    let (canonical, candidates) = if key.contains('#') {
+        let (canonical, host) = match forge_key(pg, &folder_id, &key).await {
+            Ok(ForgeKey::Key(k, host)) => (k, host),
+            Ok(ForgeKey::Invalid) => {
+                return refuse(StatusCode::NOT_FOUND, "ticket_not_found", json!({"key": key}));
+            }
+            Ok(ForgeKey::NoRepository) => {
+                return refuse(StatusCode::NOT_FOUND, "no_tracker_for_key", json!({"key": key}));
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "fetch_ticket: the folder's repository read failed");
+                return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", json!({}));
+            }
+        };
+        // GitHub boards already holding the key's repository are tried first.
+        let holding = match crate::tracker::forge::parse_key(&canonical) {
+            Some((path, _)) => {
+                match pg.trackers_holding_scope(workspace, &format!("github.com/{path}")).await {
+                    Ok(ids) => ids,
+                    Err(e) => {
+                        tracing::error!(error = %e, "fetch_ticket: tracker scopes read failed");
+                        return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", json!({}));
+                    }
+                }
+            }
+            None => Vec::new(),
+        };
+        let candidates = crate::tracker::forge::candidates_for_key(
+            &trackers,
+            &canonical,
+            host.as_deref(),
+            &holding,
+        );
+        (canonical, candidates)
+    } else {
+        // One of THIS workspace's Jira trackers whose project key is the key's prefix.
+        let upper = key.to_ascii_uppercase();
+        let prefix = upper.split_once('-').map(|(p, _)| p);
+        let tracker = trackers.iter().find(|t| {
+            TrackerKind::parse(&t.kind) == Some(TrackerKind::Jira)
+                && jira::is_jira_key(&upper)
+                && prefix.is_some_and(|p| p.eq_ignore_ascii_case(&t.external_scope))
+        });
+        (upper, tracker.into_iter().collect())
     };
 
-    // The live read, with the board's own credential.
-    let transport = match runtime::transport_for(&state.trackers, adapter, tracker, 0).await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!(code = e.code(), "fetch_ticket: no transport for the tracker");
-            return refuse(StatusCode::BAD_GATEWAY, e.code(), json!({"key": key}));
+    // The live read, with each board's own credential, until one has the ticket.
+    let answer = within_ticket_deadline(first_answer(&candidates, |tracker| {
+        read_ticket_on(&state, tracker, &canonical)
+    }))
+    .await;
+    let ticket = match answer {
+        Answer::Found(t) => t,
+        Answer::NoCandidate => {
+            return refuse(StatusCode::NOT_FOUND, "no_tracker_for_key", json!({"key": key}));
         }
-    };
-    let reader = JiraTicketReader {
-        transport: transport.as_ref(),
-        base_url: tracker.base_url.clone(),
-        acceptance_criteria_field: tracker.params["acceptance_criteria_field"]
-            .as_str()
-            .map(String::from),
-    };
-    let ticket = match reader.read_ticket(&upper).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return refuse(StatusCode::NOT_FOUND, "ticket_not_found", json!({"key": key})),
-        Err(e) => {
-            tracing::warn!(code = e.code(), "fetch_ticket: the live read failed");
-            return refuse(StatusCode::BAD_GATEWAY, e.code(), json!({"key": key}));
+        Answer::NotOnAnyBoard => {
+            return refuse(StatusCode::NOT_FOUND, "ticket_not_found", json!({"key": key}));
         }
+        Answer::Failed(code) => return refuse(StatusCode::BAD_GATEWAY, code, json!({"key": key})),
     };
 
     // The ticket's rules (D73): the repository's resolved rules.
@@ -143,9 +168,141 @@ pub(crate) async fn fetch_ticket(
             }
         };
 
-    let start_of_work = start_work(&state, workspace, &upper, body.session_id.as_deref()).await;
+    let start_of_work = start_work(&state, workspace, &canonical, body.session_id.as_deref()).await;
     Json(json!({ "ticket": ticket, "rules": rules, "start_of_work": start_of_work }))
         .into_response()
+}
+
+/// One board's live read of `key`, with its own credential: `Ok(None)` when the board
+/// does not have the ticket, `Err(code)` when the read failed.
+async fn read_ticket_on(
+    state: &AppState,
+    tracker: &crate::db::pg_store::trackers::TrackerRow,
+    key: &str,
+) -> Result<Option<crate::tracker::ticket::TicketDetail>, &'static str> {
+    let Some(adapter) = TrackerKind::parse(&tracker.kind).and_then(adapter_for_kind) else {
+        return Err("unsupported_tracker");
+    };
+    let transport =
+        runtime::transport_for(&state.trackers, adapter, tracker, 0).await.map_err(|e| {
+            tracing::warn!(code = e.code(), "fetch_ticket: no transport for the tracker");
+            e.code()
+        })?;
+    let board = crate::tracker::BoardScope::of(tracker);
+    let read = match adapter.kind() {
+        TrackerKind::Jira => {
+            JiraTicketReader {
+                transport: transport.as_ref(),
+                base_url: tracker.base_url.clone(),
+                acceptance_criteria_field: tracker.params["acceptance_criteria_field"]
+                    .as_str()
+                    .map(String::from),
+            }
+            .read_ticket(key)
+            .await
+        }
+        TrackerKind::Gitlab => {
+            gitlab::GitlabTicketReader { transport: transport.as_ref(), board }
+                .read_ticket(key)
+                .await
+        }
+        TrackerKind::Github => {
+            crate::tracker::github::GithubTicketReader { transport: transport.as_ref(), board }
+                .read_ticket(key)
+                .await
+        }
+    };
+    read.map_err(|e| {
+        tracing::warn!(code = e.code(), "fetch_ticket: the live read failed");
+        e.code()
+    })
+}
+
+/// How long the read may take across every candidate board: under the MCP client's
+/// 30 s, so a slow board answers as a 502 here instead of a dropped request there.
+const TICKET_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(25);
+
+/// `read`, or `transport` once [`TICKET_READ_DEADLINE`] has passed.
+async fn within_ticket_deadline<T>(
+    read: impl std::future::Future<Output = Answer<T>>,
+) -> Answer<T> {
+    match tokio::time::timeout(TICKET_READ_DEADLINE, read).await {
+        Ok(answer) => answer,
+        // Out of time is a failure, reported as one: never a "not found".
+        Err(_elapsed) => Answer::Failed("transport"),
+    }
+}
+
+/// How the candidate boards answered one ticket read (tracker-github §H5).
+#[derive(Debug, PartialEq)]
+enum Answer<T> {
+    Found(T),
+    /// Every board answered: not mine. Missing, invisible, a pull request and off the
+    /// board read alike, so the answer never says which.
+    NotOnAnyBoard,
+    NoCandidate,
+    /// A board failed: the loop stops there, with that error's code.
+    Failed(&'static str),
+}
+
+/// Try each candidate in order: only "not on this board" moves to the next one.
+async fn first_answer<C, T, F, Fut>(candidates: &[C], mut read: F) -> Answer<T>
+where
+    F: FnMut(&C) -> Fut,
+    Fut: std::future::Future<Output = Result<Option<T>, &'static str>>,
+{
+    if candidates.is_empty() {
+        return Answer::NoCandidate;
+    }
+    for c in candidates {
+        match read(c).await {
+            Ok(Some(found)) => return Answer::Found(found),
+            Ok(None) => continue,
+            Err(code) => return Answer::Failed(code),
+        }
+    }
+    Answer::NotOnAnyBoard
+}
+
+/// A forge key, as the route reads it.
+enum ForgeKey {
+    /// Canonical: the lowercased path, `#`, the number; and the host it was read on,
+    /// known only for a bare `#n` (the folder's `repo_key`), so selection can keep
+    /// to that host (spec tracker-github §H5).
+    Key(String, Option<String>),
+    /// Not a key (an empty, `.` or `..` path segment, no number): nothing is fetched.
+    Invalid,
+    /// A bare `#n` from a folder with no repository key to read it in.
+    NoRepository,
+}
+
+/// `key` in canonical form. A bare `#n` is read in the folder's own repository:
+/// its `repo_key` (`host/org/repo`) gives the path.
+async fn forge_key(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    key: &str,
+) -> Result<ForgeKey, String> {
+    use crate::tracker::forge::{is_key_path, parse_key};
+    if let Some(n) = key.strip_prefix('#') {
+        if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+            return Ok(ForgeKey::Invalid);
+        }
+        let Some(repo_key) = pg.repo_key_of_folder(folder_id).await? else {
+            return Ok(ForgeKey::NoRepository);
+        };
+        // `host/org/repo`: the path is everything after the host.
+        return Ok(match repo_key.split_once('/') {
+            Some((host, path)) if is_key_path(path) => {
+                ForgeKey::Key(format!("{path}#{n}"), Some(host.to_ascii_lowercase()))
+            }
+            _ => ForgeKey::NoRepository,
+        });
+    }
+    Ok(match parse_key(key) {
+        Some((path, n)) => ForgeKey::Key(format!("{path}#{n}"), None),
+        None => ForgeKey::Invalid,
+    })
 }
 
 /// Link the session to the ticket as the start of work, or say why not. The
@@ -650,5 +807,277 @@ mod tests {
         let mut expected = rules.clone();
         expected.as_object_mut().unwrap().remove("folder");
         assert_eq!(b["rules"], expected);
+    }
+
+    // ── §G9: GitLab keys, against the recorded CE ───────────────────────────
+
+    /// A workspace with the recorded GitLab group `acme` (group:857) connected and
+    /// synced, a repository folder whose `repo_key` is `acme/backend`, and a session.
+    /// Issue 44 is the recorded one; 99 is missing; 7 lives in a project outside the
+    /// group; 8 answers 500.
+    async fn gitlab_world(h: &Harness) -> World {
+        use crate::tracker::gitlab::test_support::{RecordedGitlab, body};
+        let outside = {
+            let mut i = body("ce-closed-milestone", "project_issue_one");
+            i["project_id"] = json!(999);
+            i
+        };
+        let gl = RecordedGitlab::load("ce-closed-milestone")
+            .with(
+                "projects/acme%2Fbackend/issues/44",
+                200,
+                body("ce-closed-milestone", "project_issue_one"),
+            )
+            .with("projects/acme%2Fbackend/issues/99", 404, json!({}))
+            .with("projects/acme%2Fbackend/issues/7", 200, outside)
+            .with("projects/999", 200, json!({"id": 999, "namespace": {"full_path": "elsewhere"}}))
+            .with("projects/acme%2Fbackend/issues/8", 500, json!({}));
+        h.factory.serve_transport("https://gitlab.example.com", Arc::new(gl));
+        let pg = &h.state.pg;
+        let workspace = pg
+            .create_workspace(&format!("_test:g9:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let (st, b) = call(
+            h,
+            "POST",
+            &format!("/api/workspaces/{workspace}/trackers"),
+            Some(json!({
+                "kind": "gitlab", "level": "sprint",
+                "board_url": "https://gitlab.example.com/groups/acme",
+                "confirm_host": "gitlab.example.com", "api_token": API_TOKEN,
+            })),
+        )
+        .await;
+        assert!(st.is_success(), "connect: {st} {b}");
+        for _ in 0..300 {
+            let (_, b) =
+                call(h, "GET", &format!("/api/workspaces/{workspace}/trackers"), None).await;
+            if b[0]["status"] != json!("pending") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let w = repository_in(h, workspace).await;
+        sqlx_core::query::query(
+            "UPDATE sensei.repositories SET repo_key = 'gitlab.example.com/acme/backend'
+              WHERE id = (SELECT repository_id FROM sensei.folders WHERE abs_path = $1)",
+        )
+        .bind(&w.folder)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        w
+    }
+
+    #[tokio::test]
+    async fn a_gitlab_key_reads_the_issue_and_links_the_session() {
+        let h = harness().await;
+        let w = gitlab_world(&h).await;
+        let (st, b) = post_fetch(
+            &h,
+            "Acme%2FBackend%2344",
+            json!({"folder": w.folder, "session_id": w.client_session}),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let t = &b["ticket"];
+        assert_eq!(
+            (t["key"].clone(), t["tracker"].clone()),
+            (json!("acme/backend#44"), json!("gitlab"))
+        );
+        assert_eq!(t["title"], json!("Issue 44"));
+        assert_eq!(t["acceptance_criteria_source"], json!("not_configured"));
+        assert_eq!(t["url"], json!("https://gitlab.example.com/acme/backend/-/work_items/44"));
+        assert_eq!(
+            b["start_of_work"],
+            json!({"recorded": true}),
+            "the canonical key finds the mirror"
+        );
+        assert_eq!(
+            links_of(&h, w.session).await,
+            [("fetch".into(), "acme/backend#44".into(), 1, true)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bare_key_is_read_in_the_folder_s_repository() {
+        let h = harness().await;
+        let w = gitlab_world(&h).await;
+        let (st, b) = post_fetch(&h, "%2344", json!({"folder": w.folder})).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert_eq!(b["ticket"]["key"], json!("acme/backend#44"));
+    }
+
+    #[tokio::test]
+    async fn a_gitlab_issue_outside_the_board_is_not_returned() {
+        // The token can see it; the board does not hold it.
+        let h = harness().await;
+        let w = gitlab_world(&h).await;
+        let (st, b) = post_fetch(&h, "acme%2Fbackend%237", json!({"folder": w.folder})).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::NOT_FOUND, json!("ticket_not_found")));
+        assert!(b.get("ticket").is_none() && !b.to_string().contains("Issue 44"), "{b}");
+    }
+
+    #[tokio::test]
+    async fn gitlab_misses_failures_and_bad_keys_answer_with_their_codes() {
+        let h = harness().await;
+        let w = gitlab_world(&h).await;
+        let folder = json!({"folder": w.folder});
+        let (st, b) = post_fetch(&h, "acme%2Fbackend%2399", folder.clone()).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::NOT_FOUND, json!("ticket_not_found")));
+        let (st, b) = post_fetch(&h, "acme%2Fbackend%238", folder.clone()).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::BAD_GATEWAY, json!("http_error")));
+        let (st, b) = post_fetch(&h, "acme%2F..%2Fx%231", folder.clone()).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::NOT_FOUND, json!("ticket_not_found")));
+        let (st, b) = post_fetch(&h, "other%2Frepo%231", folder).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::NOT_FOUND, json!("no_tracker_for_key")));
+    }
+
+    // ── tracker-github §H5: GitHub keys ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn only_not_on_this_board_moves_to_the_next_board() {
+        let read = |answers: Vec<Result<Option<u32>, &'static str>>| {
+            let answers = std::sync::Mutex::new(answers.into_iter());
+            let tried = std::sync::Mutex::new(0u32);
+            async move {
+                let boards = [1, 2, 3];
+                let a = super::first_answer(&boards, |_| {
+                    *tried.lock().unwrap() += 1;
+                    let next = answers.lock().unwrap().next().unwrap();
+                    async move { next }
+                })
+                .await;
+                (a, *tried.lock().unwrap())
+            }
+        };
+        use super::Answer;
+        assert_eq!(read(vec![Ok(None), Ok(Some(7)), Ok(Some(9))]).await, (Answer::Found(7), 2));
+        assert_eq!(read(vec![Ok(None), Ok(None), Ok(None)]).await, (Answer::NotOnAnyBoard, 3));
+        assert_eq!(
+            read(vec![Err("forbidden"), Ok(Some(7))]).await,
+            (Answer::Failed("forbidden"), 1)
+        );
+        let none: [u32; 0] = [];
+        let a: Answer<u32> = super::first_answer(&none, |_| async { Ok(None) }).await;
+        assert_eq!(a, Answer::NoCandidate);
+    }
+
+    /// A workspace with a GitHub project (recorded) and a GitLab board whose path
+    /// (`acme`) matches every `acme/…` key, and a folder of `github.com/acme/platform`.
+    async fn github_world(h: &Harness) -> World {
+        use crate::tracker::github::test_support::RecordedGithub;
+        let sets = ["project", "issue-on", "issue-off", "pr", "missing-repo"];
+        h.factory.serve_transport(
+            crate::tracker::github::API_BASE,
+            Arc::new(RecordedGithub::load(&sets)),
+        );
+        h.factory.serve_transport(
+            "https://gitlab.example.com",
+            Arc::new(crate::tracker::gitlab::test_support::RecordedGitlab::load(
+                "ce-closed-milestone",
+            )),
+        );
+        let pg = &h.state.pg;
+        let workspace = pg
+            .create_workspace(&format!("_test:h5:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        for body in [
+            json!({"kind": "gitlab", "level": "sprint", "board_url": "https://gitlab.example.com/groups/acme",
+                   "confirm_host": "gitlab.example.com", "api_token": API_TOKEN}),
+            json!({"kind": "github", "level": "sprint", "board_url": "https://github.com/orgs/acme/projects/2",
+                   "api_token": API_TOKEN}),
+        ] {
+            let (st, b) =
+                call(h, "POST", &format!("/api/workspaces/{workspace}/trackers"), Some(body)).await;
+            assert!(st.is_success(), "connect: {st} {b}");
+        }
+        for _ in 0..300 {
+            let (_, b) =
+                call(h, "GET", &format!("/api/workspaces/{workspace}/trackers"), None).await;
+            if b.as_array().unwrap().iter().all(|t| t["status"] != json!("pending")) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let w = repository_in(h, workspace).await;
+        sqlx_core::query::query(
+            "UPDATE sensei.repositories SET repo_key = 'github.com/acme/platform'
+              WHERE id = (SELECT repository_id FROM sensei.folders WHERE abs_path = $1)",
+        )
+        .bind(&w.folder)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        w
+    }
+
+    #[tokio::test]
+    async fn a_bare_key_from_a_github_folder_is_answered_by_github_not_a_matching_gitlab_board() {
+        let h = harness().await;
+        let w = github_world(&h).await;
+        let (st, b) = post_fetch(&h, "%232", json!({"folder": w.folder})).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let t = &b["ticket"];
+        assert_eq!(
+            (t["key"].clone(), t["tracker"].clone()),
+            (json!("acme/platform#2"), json!("github"))
+        );
+        assert_eq!(
+            (t["title"].clone(), t["sprint"].clone()),
+            (json!("Issue 2"), json!("Iteration 1"))
+        );
+    }
+
+    #[tokio::test]
+    async fn off_the_board_and_missing_read_alike() {
+        let h = harness().await;
+        let w = github_world(&h).await;
+        let folder = json!({"folder": w.folder});
+        // #6 is visible to the token but on another project; #7 is a pull request.
+        for bare in ["%236", "%237"] {
+            let (st, b) = post_fetch(&h, bare, folder.clone()).await;
+            assert_eq!(
+                (st, b["error"].clone()),
+                (StatusCode::NOT_FOUND, json!("ticket_not_found")),
+                "{bare}"
+            );
+            assert!(b.get("ticket").is_none() && !b.to_string().contains("Issue"), "{b}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_board_that_fails_stops_the_read_with_its_code_and_no_ticket() {
+        use crate::tracker::github::test_support::RecordedGithub;
+        let h = harness().await;
+        let w = github_world(&h).await;
+        let forbidden = RecordedGithub::load(&["project"]).with(
+            "Issue",
+            json!({"owner": "acme", "name": "platform", "number": 2, "field": "Sprint", "after": null}),
+            json!({"data": {"repository": null}, "errors": [{"type": "FORBIDDEN", "path": ["repository"]}]}),
+        );
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(forbidden));
+        let (st, b) = post_fetch(&h, "%232", json!({"folder": w.folder})).await;
+        assert_eq!((st, b["error"].clone()), (StatusCode::BAD_GATEWAY, json!("forbidden")));
+        assert!(b.get("ticket").is_none() && !b.to_string().contains("Issue"), "{b}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_read_across_boards_has_one_deadline() {
+        // Boards are tried one after another; together they never outlast the MCP client.
+        let slow = super::within_ticket_deadline(async {
+            tokio::time::sleep(super::TICKET_READ_DEADLINE * 2).await;
+            super::Answer::<u32>::NotOnAnyBoard
+        })
+        .await;
+        assert_eq!(slow, super::Answer::Failed("transport"));
+        let quick = super::within_ticket_deadline(async { super::Answer::Found(7u32) }).await;
+        assert_eq!(quick, super::Answer::Found(7));
+        assert!(
+            super::TICKET_READ_DEADLINE < std::time::Duration::from_secs(30),
+            "the MCP client waits 30 s"
+        );
     }
 }

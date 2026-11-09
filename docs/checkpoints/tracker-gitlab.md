@@ -1,0 +1,41 @@
+# Checkpoint — GitLab tracker adapter (2026-11-06)
+
+**Slice:** GitLab as a tracker (gitlab.com + self-managed, Free/CE up), daemon path. Slice 1 of
+`docs/analysis/2026-11-06-forge-trackers.md`; GitHub is slice 2. Branch `feature/forge-trackers`.
+
+**Stage:** design done, gate PASSED. Spec `docs/spec/daemon/tracker-gitlab.md` (r3, commit e345df047; r3's §G5 change was audited by `sensei-spec-conformance-auditor` at build start, 6 findings fixed).
+Decision D91 (amends D49).
+
+**Claims found false, and what each changed:**
+- C9: sync already merges `params` → r2 extends the existing patch instead of adding a second merge path.
+- C16: 5 transport sites, not 4, and history/write-back bypass `transport_for` → r3 puts the address check inside `ReqwestRaw`, which both factory methods build (C34).
+- C25: `points_field = None` means "not asked" → GitLab v1 reports no points (`unsupported_by_tracker`).
+- r1 "No sprints yet" copy, the 400 status, the CLI prompt → corrected.
+- Not ledgered in r1: `is_public_ip` already existed (`indexer/lib_indexer.rs:250`) → extracted to `net/addr.rs` (DRY).
+
+**Decided (user, 2026-11-06):** OPEN-G1 and OPEN-G2: no ports, subpaths or private networks. The opt-in and `NetPolicy` are removed (spec r3).
+**Plan:** `docs/plans/2026-11-06-tracker-gitlab.md`, F1–F6 = issues #364–#369.
+**Human prerequisites for build:** recorded fixtures from a gitlab.com Free group and a Premium trial group.
+
+**Build (2026-11-06, unattended):**
+- F1 #364 done: 881558907 (public-only resolver, no proxy), 3a2bfb80a (header auth, trailing dot),
+  2e43fdac0 (validated board_ref/account, params_extra), 34d1351d8 (capabilities + guards,
+  `unsupported_by_tracker`), c542f9a28 (review fixes). Full senseid suite 4367 passed at 34d1351d8.
+  Review: security NO FINDINGS; test reviewer's 4 gaps fixed; adversarial: 1 fixed, 1 LOW left
+  (`reads_history` re-reads the tracker row).
+- F2 #365 done: 40f8984cc (`tracker::forge`, `link::tally_links` shared with Jira).
+- Two `#[allow(dead_code)]` wait for F3 to remove: `AuthScheme::Header`, `mod forge`.
+- Amended: D10 end to end (HTTP 409, SDLC reasons through the DB) moves to F3.
+
+**Build (2026-11-07):**
+- Fixtures: `ce-no-milestones` (5d99ce051), `ce-closed-milestone` (a887862df), recorded from a
+  self-managed CE 19.5.3 with `scripts/record-gitlab-fixtures.py` and scrubbed.
+- F3 #366 adapter 91cd165f2 · F4 #367 get_ticket b975e3d0f · F5 #368 CLI 6291a5c25, app 2205c8766,
+  docs cf8902b13. Full senseid suite 4404 passed at b975e3d0f; app suite green except
+  `sessions-digest.spec.ts` (2 local-day tests that fail without these changes too).
+- Not yet recorded: a Premium group (iterations), an undated or project-level milestone, a Task issue.
+  Iteration mapping is tested on GitLab's documented shape.
+
+**Next:** F6 #369, live (D18): install this branch's daemon, connect the group from the CLI or the
+app, sync, compare sprint and ticket counts with GitLab, then a session on a `44-…` branch links and
+MCP `get_ticket` returns `#44`.

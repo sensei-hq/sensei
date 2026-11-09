@@ -61,6 +61,11 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
           external_scope: 'AUTH',
           board_ref: '42',
           board_name: 'AUTH Scrum',
+          sprint_source: null,
+          sprint_source_changed_at: null,
+          full_path: null,
+          url: null,
+          iteration_field: null,
           level: 'sprint',
           status: 'connected',
           last_success_at: null,
@@ -148,7 +153,7 @@ describe('ready', () => {
   it('the header says the numbers are written back to tickets assigned to you (W-UI)', async () => {
     const { m } = await open();
     expect(m.container.textContent).toContain(
-      'Read from Jira. On tickets assigned to you, sensei writes these numbers back, as set on Integrations.',
+      'Read from the connected tracker. On Jira tickets assigned to you, sensei writes these numbers back, as set on Integrations.',
     );
     expect(m.container.textContent).not.toContain('nothing is changed there');
   });

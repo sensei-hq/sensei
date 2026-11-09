@@ -155,7 +155,7 @@ async fn run(
     }
 
     // 4. Fetch, board-scoped, under the deadline; no DB connection held.
-    let board = BoardScope { base_url: row.base_url.clone(), board_ref: row.board_ref.clone() };
+    let board = BoardScope::of(&row);
     let fetched = match tokio::time::timeout(
         DISCOVER_DEADLINE,
         adapter.fetch_tasks(transport, &board, &asked),

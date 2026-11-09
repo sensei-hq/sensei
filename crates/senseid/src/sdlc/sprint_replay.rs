@@ -355,12 +355,15 @@ pub async fn sprint_sdlc(
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<HashMap<uuid::Uuid, SprintSdlc>, String> {
     let inputs = pg.replay_inputs(tracker_id).await?;
-    figures_by_sprint(&inputs, now)
+    figures_by_sprint(&inputs, now, crate::sdlc::reads_history(pg, tracker_id).await?)
 }
 
+/// `history`: whether the tracker's adapter reads ticket history at all (§G8). Every
+/// sprint figure is a replay of it, so without it each reads `unsupported_by_tracker`.
 fn figures_by_sprint(
     inputs: &crate::db::pg_store::tracker_history::ReplayInputs,
     now: chrono::DateTime<chrono::Utc>,
+    history: bool,
 ) -> Result<HashMap<uuid::Uuid, SprintSdlc>, String> {
     use crate::tracker::sprint::SprintState;
     let refs: Vec<SprintRef> = inputs
@@ -384,7 +387,9 @@ fn figures_by_sprint(
             )
             .map_err(|why| if why == "not_started" { "sprint_not_started" } else { why });
             let window = window.and_then(|(from, to)| {
-                if history_pending(&inputs.tasks, to.timestamp_millis()) {
+                if !history {
+                    Err("unsupported_by_tracker")
+                } else if history_pending(&inputs.tasks, to.timestamp_millis()) {
                     Err("history_pending")
                 } else {
                     Ok((from, to))
@@ -405,6 +410,11 @@ fn figures_by_sprint(
         .collect()
 }
 
+/// Why predictability is absent: a tracker without history never has it (§G8).
+fn predictability_reason(history: bool, why: &'static str) -> &'static str {
+    if history { why } else { "unsupported_by_tracker" }
+}
+
 /// The tracker's project figures (S6): predictability over its last six closed
 /// sprints, and tokens and prompts per ticket over the distinct union of its
 /// tickets' sessions (a session shared by two tickets counts once).
@@ -415,7 +425,8 @@ pub async fn project_sdlc(
 ) -> Result<ProjectSdlc, String> {
     let mut p = ProjectSdlc::default();
     let inputs = pg.replay_inputs(tracker_id).await?;
-    let by_sprint = figures_by_sprint(&inputs, now)?;
+    let history = crate::sdlc::reads_history(pg, tracker_id).await?;
+    let by_sprint = figures_by_sprint(&inputs, now, history)?;
     let closed: Vec<Option<f64>> = inputs
         .sprints
         .iter()
@@ -425,7 +436,7 @@ pub async fn project_sdlc(
     match predictability(&closed) {
         Ok(v) => p.predictability = Some(v),
         Err(why) => {
-            p.reasons.insert("predictability", why);
+            p.reasons.insert("predictability", predictability_reason(history, why));
         }
     }
 
@@ -465,6 +476,42 @@ pub async fn project_sdlc(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tracker_without_history_reads_unsupported_on_every_sprint_key() {
+        // §G8: not "history_pending" (coming) — this tracker never supplies it.
+        let inputs = crate::db::pg_store::tracker_history::ReplayInputs {
+            sprints: vec![crate::db::pg_store::tracker_history::ReplaySprint {
+                id: uuid::Uuid::nil(),
+                external_id: "milestone:7".into(),
+                seq: 7,
+                state: "closed".into(),
+                start_at: Some(chrono::DateTime::from_timestamp(0, 0).unwrap()),
+                end_at: Some(chrono::DateTime::from_timestamp(86_400 * 14, 0).unwrap()),
+                complete_at: Some(chrono::DateTime::from_timestamp(86_400 * 14, 0).unwrap()),
+            }],
+            tasks: vec![],
+            statuses: Default::default(),
+            estimation: Err("not_synced"),
+        };
+        let now = chrono::DateTime::from_timestamp(86_400 * 30, 0).unwrap();
+        let f = &figures_by_sprint(&inputs, now, false).unwrap()[&uuid::Uuid::nil()];
+        assert_eq!(f.reasons.len(), 7, "{:?}", f.reasons);
+        assert!(f.reasons.values().all(|r| *r == "unsupported_by_tracker"), "{:?}", f.reasons);
+        assert!(registered_reason("unsupported_by_tracker"));
+        let with_history = &figures_by_sprint(&inputs, now, true).unwrap()[&uuid::Uuid::nil()];
+        assert!(!with_history.reasons.values().any(|r| *r == "unsupported_by_tracker"));
+    }
+
+    #[test]
+    fn predictability_without_history_is_unsupported() {
+        assert_eq!(predictability_reason(false, "too_few_sprints"), "unsupported_by_tracker");
+        assert_eq!(predictability_reason(true, "too_few_sprints"), "too_few_sprints");
+    }
+
+    fn registered_reason(code: &str) -> bool {
+        crate::sdlc::registered_reasons().contains(code)
+    }
 
     const DAY: i64 = 86_400_000;
 

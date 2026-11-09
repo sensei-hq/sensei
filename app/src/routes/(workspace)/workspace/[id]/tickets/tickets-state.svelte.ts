@@ -217,7 +217,7 @@ const tickets = (n: number) => `${n} ticket${n === 1 ? '' : 's'}`;
 
 const REASONS: Record<string, string> = {
   not_started: 'Not started. Usage counts from the sprint’s start.',
-  no_dates: 'Jira has no dates for this sprint, so its sessions can’t be placed in it.',
+  no_dates: 'The tracker has no dates for this sprint, so its sessions can’t be placed in it.',
 };
 
 /** One option of the sprint filter. */

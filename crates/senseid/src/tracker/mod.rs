@@ -7,6 +7,10 @@
 
 pub mod connect;
 pub mod discover;
+pub mod forge;
+pub mod github;
+pub mod gitlab;
+pub mod graphql;
 pub mod history;
 pub mod http;
 pub mod jira;
@@ -27,17 +31,23 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TrackerKind {
     Jira,
+    Gitlab,
+    Github,
 }
 
 impl TrackerKind {
     pub fn as_str(self) -> &'static str {
         match self {
             TrackerKind::Jira => "jira",
+            TrackerKind::Gitlab => "gitlab",
+            TrackerKind::Github => "github",
         }
     }
     pub fn parse(s: &str) -> Option<TrackerKind> {
         match s {
             "jira" => Some(TrackerKind::Jira),
+            "gitlab" => Some(TrackerKind::Gitlab),
+            "github" => Some(TrackerKind::Github),
             _ => None,
         }
     }
@@ -156,21 +166,50 @@ pub fn needs_owner_backfill(owner_ref: Option<&str>, owner_state: Option<&str>) 
     owner_ref.is_none() && owner_state != Some(TrackerOwnerState::NotAPerson.as_str())
 }
 
+/// What an adapter can do beyond sync (§G8). Guards read this, never the kind's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capabilities {
+    /// It reads ticket history (S4): the history task and the SDLC figures built on it.
+    pub history: bool,
+    /// It writes figures back to tickets (D50).
+    pub writeback: bool,
+}
+
+/// The capabilities of the adapter registered for `kind`. An unregistered kind is an
+/// error, never a guess.
+pub fn capabilities_of_kind(kind: &str) -> Result<Capabilities, String> {
+    TrackerKind::parse(kind)
+        .and_then(adapter_for_kind)
+        .map(|a| a.capabilities())
+        .ok_or_else(|| format!("no adapter registered for tracker kind {kind:?}"))
+}
+
 /// How the shared transport authenticates, chosen by the adapter.
 #[derive(Clone, PartialEq, Eq)]
 pub enum AuthScheme {
-    Basic { user: String, token: ApiToken },
+    Basic {
+        user: String,
+        token: ApiToken,
+    },
+    /// The token as the whole value of one header (GitLab: `PRIVATE-TOKEN`, §G2).
+    Header {
+        name: &'static str,
+        token: ApiToken,
+    },
 }
 
 impl std::fmt::Debug for AuthScheme {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AuthScheme::Basic { user, .. } => write!(f, "Basic({user}, ***)"),
+            AuthScheme::Header { name, .. } => write!(f, "Header({name}, ***)"),
         }
     }
 }
 
-/// GET-only access to a tracker's API. One method, so no other verb can be sent.
+/// Read access to a tracker's API: GET, plus validated GraphQL queries (spec
+/// tracker-github §H2). No other verb can be sent, and a GraphQL document is
+/// proved to be a single `query` before it can be built.
 #[async_trait::async_trait]
 pub trait GetTransport: Send + Sync {
     async fn get_json(
@@ -178,6 +217,12 @@ pub trait GetTransport: Send + Sync {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<serde_json::Value, TrackerError>;
+
+    /// A GraphQL read: the response's `data`, or its error (§H2.3). A transport not
+    /// built for GraphQL refuses, sending nothing.
+    async fn graphql(&self, _q: &graphql::GraphqlQuery) -> Result<serde_json::Value, TrackerError> {
+        Err(TrackerError::UnsupportedTracker)
+    }
 }
 
 /// The verbs a write may use (spec W10).
@@ -245,6 +290,9 @@ pub struct ConnectParams {
     pub account: String,
     pub token: ApiToken,
     pub project_key: Option<String>,
+    /// The sprint field the user named at connect (GitHub's `iteration_field`,
+    /// tracker-github §H1); `None` for Jira and GitLab.
+    pub sprint_field: Option<String>,
 }
 
 /// Why connect input was refused before any network call.
@@ -253,6 +301,8 @@ pub enum ParamError {
     InvalidBaseUrl,
     EmailRequired,
     TokenRequired,
+    /// The typed confirmation of a self-managed host is missing or differs (§G5.2).
+    HostNotConfirmed,
 }
 
 impl ParamError {
@@ -261,6 +311,7 @@ impl ParamError {
             ParamError::InvalidBaseUrl => "invalid_base_url",
             ParamError::EmailRequired => "email_required",
             ParamError::TokenRequired => "token_required",
+            ParamError::HostNotConfirmed => "host_not_confirmed",
         }
     }
 }
@@ -272,21 +323,47 @@ pub struct Validated {
     pub board_name: String,
     /// Who the token belongs to (W1).
     pub owner: OwnerLookup,
+    /// The account the provider names for the token, replacing the connect body's
+    /// (GitLab: `/user`'s username). `None` keeps the body's (Jira's email).
+    pub account: Option<String>,
+    /// The board's stable identity, replacing the typed one (GitLab: `project:<id>`,
+    /// so a rename can never connect one board twice). `None` keeps the typed one.
+    pub board_ref: Option<String>,
+    /// Settings stored with the row beside `board_name` (no secrets).
+    pub params: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Why `validate` refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidateError {
     Tracker(TrackerError),
     BoardNotFound,
     BoardProjectMismatch,
+    /// The board has several sprint fields and none was named, or the named one
+    /// does not exist: the names to choose from, in the board's order
+    /// (tracker-github §H1 validate 3).
+    IterationFieldAmbiguous(Vec<String>),
 }
 
 /// The board a sync fetches.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BoardScope {
     pub base_url: String,
     pub board_ref: String,
+    /// The tracker row's stored `params`; an adapter reads only its own keys
+    /// (GitHub: `iteration_field`, tracker-github §H3.2).
+    pub params: serde_json::Value,
+}
+
+impl BoardScope {
+    /// The board a stored tracker row names.
+    pub fn of(row: &crate::db::pg_store::trackers::TrackerRow) -> Self {
+        BoardScope {
+            base_url: row.base_url.clone(),
+            board_ref: row.board_ref.clone(),
+            params: row.params.clone(),
+        }
+    }
 }
 
 /// One sprint as the provider reports it.
@@ -335,6 +412,9 @@ pub struct Snapshot {
     /// The estimation field this snapshot read points under (S4, A6): its id, or
     /// `none` when it cleared them; `None` when it asked for no points.
     pub points_field: Option<String>,
+    /// Settings this sync learned (GitLab: the current `full_path`, the sprint
+    /// source), merged into the row's `params` beside `board_name`.
+    pub params_extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// What the previous sync stored, so an adapter can skip immutable data.
@@ -442,6 +522,13 @@ pub struct Link {
 #[async_trait::async_trait]
 pub trait TrackerAdapter: Send + Sync {
     fn kind(&self) -> TrackerKind;
+    /// What this adapter supports beyond sync (§G8).
+    fn capabilities(&self) -> Capabilities;
+    /// Whether this adapter reads with GraphQL; only then may its transport POST to
+    /// `/graphql` (tracker-github §H2.2).
+    fn reads_graphql(&self) -> bool {
+        false
+    }
     /// Parse and canonicalise the connect body.
     fn connect_params(&self, body: &serde_json::Value) -> Result<ConnectParams, ParamError>;
     /// The auth scheme the transport uses for this account.
@@ -551,7 +638,7 @@ pub trait TrackerAdapter: Send + Sync {
 
 /// The registered adapters — the only place a new tracker is added.
 pub fn adapters() -> &'static [&'static dyn TrackerAdapter] {
-    &[&jira::JiraAdapter]
+    &[&jira::JiraAdapter, &gitlab::GitlabAdapter, &github::GithubAdapter]
 }
 
 /// The adapter for a kind, if one is registered.
@@ -622,6 +709,26 @@ impl TrackerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jira_reads_history_and_writes_back_and_an_unknown_kind_is_an_error() {
+        assert_eq!(
+            capabilities_of_kind("jira"),
+            Ok(Capabilities { history: true, writeback: true })
+        );
+        assert!(capabilities_of_kind("not-a-kind").is_err());
+    }
+
+    #[test]
+    fn a_header_scheme_never_prints_its_token() {
+        let auth = AuthScheme::Header {
+            name: "PRIVATE-TOKEN",
+            token: ApiToken("glpat-secret-value".into()),
+        };
+        let shown = format!("{auth:?}");
+        assert!(!shown.contains("glpat-secret-value"), "{shown}");
+        assert_eq!(shown, "Header(PRIVATE-TOKEN, ***)");
+    }
 
     /// TG5: every link source the daemon writes is a label of `sensei.link_source`
     /// (a missing one is a failed insert at runtime), and `fetch` is one of them.
@@ -721,6 +828,9 @@ mod tests {
             external_scope: "AUTH".into(),
             board_name: "AUTH Scrum".into(),
             owner: OwnerLookup::Person(AccountRef::new("SENTINEL-ACCOUNT-ID")),
+            account: None,
+            board_ref: None,
+            params: Default::default(),
         };
         for printed in [format!("{id:?}"), format!("{task:?}"), format!("{validated:?}")] {
             assert!(!printed.contains("SENTINEL-ACCOUNT-ID"), "{printed}");
@@ -733,6 +843,220 @@ mod tests {
 pub mod test_support {
     use super::*;
     use std::sync::Mutex;
+
+    /// A second, non-Jira adapter: GitLab-like `#12` keys relative to a project
+    /// scope, and iteration-named sprints. The coordinator must handle it unchanged
+    /// (gate 1l). Leaked so it is `'static`, like a registered adapter.
+    pub struct FakeAdapter {
+        pub scopes: [String; 2],
+        /// What `validate` returns; `None` is `BoardNotFound`.
+        pub validated: Option<Validated>,
+        /// What `fetch_snapshot` reports in `params_extra`.
+        pub params_extra: serde_json::Map<String, serde_json::Value>,
+        pub capabilities: Capabilities,
+    }
+
+    pub fn fake_adapter(scopes: [String; 2]) -> &'static FakeAdapter {
+        leak(FakeAdapter { scopes, ..FakeAdapter::gitlab_like() })
+    }
+
+    impl FakeAdapter {
+        /// No scopes, no validate result, no extra params, and every capability.
+        pub fn gitlab_like() -> Self {
+            FakeAdapter {
+                scopes: [String::new(), String::new()],
+                validated: None,
+                params_extra: Default::default(),
+                capabilities: Capabilities { history: true, writeback: true },
+            }
+        }
+    }
+
+    /// A pass's IO with nothing behind it: a run that reaches the keyring fails.
+    pub fn empty_pass_io() -> crate::tracker::writeback::PassIo {
+        crate::tracker::writeback::PassIo {
+            secrets: std::sync::Arc::new(
+                crate::tracker::secret::test_support::MemoryStore::default(),
+            ),
+            transports: std::sync::Arc::new(
+                crate::tracker::runtime::test_support::FakeFactory::default(),
+            ),
+        }
+    }
+
+    /// `'static`, like a registered adapter.
+    pub fn leak(a: FakeAdapter) -> &'static FakeAdapter {
+        Box::leak(Box::new(a))
+    }
+
+    #[async_trait::async_trait]
+    impl crate::tracker::TrackerAdapter for FakeAdapter {
+        fn kind(&self) -> crate::tracker::TrackerKind {
+            crate::tracker::TrackerKind::Jira
+        }
+        fn capabilities(&self) -> Capabilities {
+            self.capabilities
+        }
+        fn connect_params(
+            &self,
+            _body: &serde_json::Value,
+        ) -> Result<crate::tracker::ConnectParams, crate::tracker::ParamError> {
+            Err(crate::tracker::ParamError::InvalidBaseUrl)
+        }
+        fn auth(
+            &self,
+            account: &str,
+            token: &crate::tracker::ApiToken,
+        ) -> crate::tracker::AuthScheme {
+            crate::tracker::AuthScheme::Basic { user: account.into(), token: token.clone() }
+        }
+        async fn owner(
+            &self,
+            _t: &dyn GetTransport,
+        ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
+            Ok(crate::tracker::OwnerLookup::Unknown)
+        }
+        async fn find_comment(
+            &self,
+            _t: &dyn GetTransport,
+            _task: &str,
+            _owner: &crate::tracker::AccountRef,
+        ) -> Result<Option<String>, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn create_comment(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _report: &crate::tracker::writeback::Report,
+        ) -> Result<String, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn update_comment(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _comment: &str,
+            _report: &crate::tracker::writeback::Report,
+        ) -> Result<(), TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn issue_exists(
+            &self,
+            _t: &dyn GetTransport,
+            _task: &str,
+        ) -> Result<bool, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        fn field_ref_shape(&self, _f: &str) -> bool {
+            false
+        }
+        async fn check_fields(
+            &self,
+            _t: &dyn GetTransport,
+            _f: &[String],
+        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn field_in_use(
+            &self,
+            _t: &dyn GetTransport,
+            _b: &BoardScope,
+            _f: &str,
+        ) -> Result<bool, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn write_fields(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _f: &[(String, crate::tracker::FieldValue)],
+        ) -> Result<(), TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn validate(
+            &self,
+            _t: &dyn GetTransport,
+            _p: &crate::tracker::ConnectParams,
+        ) -> Result<crate::tracker::Validated, crate::tracker::ValidateError> {
+            self.validated.clone().ok_or(crate::tracker::ValidateError::BoardNotFound)
+        }
+        async fn fetch_snapshot(
+            &self,
+            _t: &dyn GetTransport,
+            _board: &BoardScope,
+            _prev: &crate::tracker::PrevState,
+        ) -> Result<crate::tracker::Snapshot, TrackerError> {
+            use crate::tracker::sprint::SprintState;
+            use crate::tracker::{Snapshot, SprintRow, TaskRow};
+            let task = |id: &str, key: &str, scope: &str| TaskRow {
+                external_id: id.into(),
+                key: key.into(),
+                scope: Some(scope.into()),
+                summary: None,
+                issue_type: None,
+                status: Some("opened".into()),
+                assignee: None,
+                ..Default::default()
+            };
+            let iteration = |id: &str, seq: i64, state| SprintRow {
+                external_id: id.into(),
+                seq,
+                name: format!("Iteration {seq}"),
+                state,
+                start_at: None,
+                end_at: None,
+                complete_at: None,
+            };
+            Ok(Snapshot {
+                board_name: Some("Group board".into()),
+                sprints: vec![iteration("gid://iteration/7", 7, SprintState::Active)],
+                tasks: vec![
+                    task("gid://issue/1", "#12", &self.scopes[0]),
+                    task("gid://issue/2", "#12", &self.scopes[1]),
+                ],
+                members: vec![("gid://iteration/7".into(), Some(vec!["gid://issue/1".into()]))],
+                points_field: None,
+                params_extra: self.params_extra.clone(),
+            })
+        }
+        /// `#N` in a prompt, for the task of that key whose scope is the session's repo.
+        fn match_links(
+            &self,
+            session: &crate::tracker::SessionText,
+            known: &[crate::tracker::KnownTask],
+        ) -> Vec<crate::tracker::Link> {
+            known
+                .iter()
+                .filter(|k| k.scope.is_some() && k.scope == session.repo_key)
+                .filter_map(|k| {
+                    let n: usize = session.prompts.iter().map(|p| p.matches(&k.key).count()).sum();
+                    (n > 0).then(|| crate::tracker::Link {
+                        session_id: session.session_id,
+                        task_external_id: k.external_id.clone(),
+                        source: crate::tracker::LinkSource::Prompt,
+                        matched_key: k.key.clone(),
+                        mentions: n as u32,
+                    })
+                })
+                .collect()
+        }
+        fn unknown_keys(
+            &self,
+            _session: &crate::tracker::SessionText,
+            _known: &[crate::tracker::KnownTask],
+        ) -> Vec<String> {
+            Vec::new()
+        }
+        async fn fetch_tasks(
+            &self,
+            _t: &dyn GetTransport,
+            _board: &BoardScope,
+            _keys: &[String],
+        ) -> Result<crate::tracker::Discovered, TrackerError> {
+            Ok(Default::default())
+        }
+    }
 
     /// A scripted Jira board served over [`GetTransport`]: responses keyed by
     /// `(path, startAt)`, with failure injection and a call log. Shapes follow the
@@ -1268,10 +1592,18 @@ mod seam_tests {
     use super::*;
 
     #[test]
-    fn jira_is_registered_and_kinds_round_trip() {
-        assert_eq!(adapter_for_kind(TrackerKind::Jira).map(|a| a.kind()), Some(TrackerKind::Jira));
-        assert_eq!(TrackerKind::parse(TrackerKind::Jira.as_str()), Some(TrackerKind::Jira));
-        assert_eq!(TrackerKind::parse("gitlab"), None, "no adapter, no kind");
+    fn every_kind_is_registered_and_round_trips() {
+        for kind in [TrackerKind::Jira, TrackerKind::Gitlab, TrackerKind::Github] {
+            assert_eq!(adapter_for_kind(kind).map(|a| a.kind()), Some(kind));
+            assert_eq!(TrackerKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(TrackerKind::parse("azure_devops"), None, "no adapter, no kind");
+        for kind in ["gitlab", "github"] {
+            assert_eq!(
+                capabilities_of_kind(kind),
+                Ok(Capabilities { history: false, writeback: false })
+            );
+        }
     }
 
     #[test]
@@ -1288,6 +1620,58 @@ mod seam_tests {
                 a.kind()
             );
         }
+        let dbml = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../database/design.dbml"
+        ))
+        .unwrap();
+        let start = dbml.find("Enum \"sensei\".\"tracker_kind\"").expect("the dbml enum");
+        let block = &dbml[start..start + dbml[start..].find('}').unwrap()];
+        for a in adapters() {
+            assert!(
+                block.contains(&format!("\"{}\"", a.kind().as_str())),
+                "dbml lacks {:?}",
+                a.kind()
+            );
+        }
+    }
+
+    /// E14: on a database whose `tracker_kind` predates the GitLab and GitHub adapters,
+    /// the apply/before hooks add both values in the DDL's order, and a second run is a
+    /// no-op. Run against a type in a scratch schema, so the shared template is untouched.
+    #[tokio::test]
+    async fn the_upgrade_hooks_add_the_forge_kinds_to_an_existing_enum() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let schema = format!("zt_kind_{}", uuid::Uuid::new_v4().simple());
+        let exec = |sql: String| {
+            let pool = pg.pool().clone();
+            async move { sqlx_core::raw_sql::raw_sql(&sql).execute(&pool).await.unwrap() }
+        };
+        exec(format!(
+            "CREATE SCHEMA {schema}; CREATE TYPE {schema}.tracker_kind AS ENUM ('jira');"
+        ))
+        .await;
+        let hook = |name: &str| {
+            std::fs::read_to_string(format!(
+                "{}/../../database/apply/before/{name}",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap()
+            .replace("sensei.tracker_kind", &format!("{schema}.tracker_kind"))
+        };
+        for _ in 0..2 {
+            for name in ["sensei_tracker_kind_gitlab.sql", "sensei_tracker_kind_github.sql"] {
+                exec(hook(name)).await;
+            }
+        }
+        let labels: Vec<String> = sqlx_core::query_scalar::query_scalar(&format!(
+            "SELECT enumlabel::text FROM pg_enum WHERE enumtypid = '{schema}.tracker_kind'::regtype ORDER BY enumsortorder"
+        ))
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        exec(format!("DROP SCHEMA {schema} CASCADE")).await;
+        assert_eq!(labels, ["jira", "gitlab", "github"]);
     }
 
     #[test]

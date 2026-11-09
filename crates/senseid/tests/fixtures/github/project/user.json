@@ -1,0 +1,9 @@
+{
+  "body": {
+    "id": 9999,
+    "login": "user1",
+    "type": "User"
+  },
+  "request": "/user",
+  "status": 200
+}
