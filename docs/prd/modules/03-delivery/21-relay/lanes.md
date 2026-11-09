@@ -277,3 +277,20 @@ a `handed_over` event names both lanes. Guards, each a 409 with a specific error
 three (terminal tasks, `assigned` with nothing held, `blocked`, and `approved` all refuse; `interrupted` stays the
 sweeper's re-offer job and says so); `to_lane` must hold a live lease in the same crew, must not be the current
 holder, must not be the picked reviewer (a task never reviews itself), and must not already hold a task.
+
+## 18. Limit exhaustion (user, 2026-11-09)
+
+Assistants hit daily/weekly usage limits, usually visible only as transcript warnings with a resume time. A lane
+that goes quiet on quota used to read exactly like a dead lane. Now the lane reports it:
+`POST /api/relay/limit_pause` with `scope` (`daily` | `weekly` | `other`), `resumes_at` (the warning's reset
+time; null when unknown), and an optional note (MCP `relay_limit_pause`). Re-pausing overwrites.
+
+The pause is recorded on the lane and is **distinct from lease expiry**: the lease may stay live (the heartbeat
+loop is not quota work) while the lane cannot work. The sweep suspends a paused lane's held task for re-offer
+elsewhere on the normal grace **without** expiring the lane or counting it failed. The lane resumes by beating
+at or past `resumes_at` (unknown resume: any beat resumes); leaving and resuming clears any stale pause.
+
+The screen reads a paused lane as paused-with-resume-time, never "lease lost": the lanes list shows the scope
+plus `until HH:MM` (or `resume unknown`), and the task view's facts line carries the same. A dead lease still
+reads lease-lost even with a stale pause on the row. Transcript mining for limit warnings stays out of scope:
+the explicit report path works for every assistant, and an adapter may automate it later.
