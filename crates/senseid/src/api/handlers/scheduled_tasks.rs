@@ -63,6 +63,10 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("metrics", "Metrics engine — one compute wave per workspace against its watermark"),
     ("reconcile", "Folder/index reconcile — self-healing scan-drift repair"),
     (
+        "relay_lease",
+        "Relay lease sweeper — expires lapsed lane leases, suspends their work, re-offers past the grace, re-picks dead reviewers",
+    ),
+    (
         "tracker_sync",
         "Tracker sync — mirrors each connected Jira, GitLab or GitHub board's sprints and tickets, writes usage and SDLC metrics back to tickets assigned to you (Jira), and drains removed credentials",
     ),

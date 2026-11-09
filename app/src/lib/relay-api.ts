@@ -62,7 +62,8 @@ export type RelayActionKind =
   | 'merged'
   | 'interrupted'
   | 'reoffered'
-  | 'compacted';
+  | 'compacted'
+  | 'handed_over';
 
 /** The tracker ticket an item references by its portable identity, resolved on this side. */
 export interface RelayTicket {
@@ -82,8 +83,8 @@ export interface RelayFilter {
 
 export interface RelayCrew {
   id: string;
-  /** The crew's repository; the main window groups its rows under it (L0 ruling, r2). */
-  repo_key: string;
+  /** The crew's repository (`null` = none — Q18; the screen reads it as "no repository · crew XXXX"); the main window groups its rows under it (L0 ruling, r2). */
+  repo_key: string | null;
   /** Optional: a crew may work on repositories that belong to no workspace. */
   workspace_id: string | null;
   goal: string | null;
@@ -361,6 +362,8 @@ export interface RelayActionProps {
   brief_updated: { docs: string[] };
   started: Record<string, never>;
   reported: RelayTelemetry & {
+    /** F1: a partial turn records progress only — the task keeps working, no reviewer picked. */
+    partial?: boolean | null;
     look_at?: string | null;
     flags?: string | null;
     base?: string | null;
@@ -393,6 +396,8 @@ export interface RelayActionProps {
   /** `to_lane` is the lane's uuid; the screen shows its code. */
   reoffered: { checkpoint?: unknown; to_lane: string | null };
   compacted: { context_tokens_before?: number | null; context_tokens_after?: number | null };
+  /** F1: uuids read as codes via the crew's lanes; `from_state` is the state word the task left. */
+  handed_over: { from_lane: string; from_state: RelayTaskState; to_lane: string };
 }
 
 interface RelayActionBase {
@@ -442,6 +447,7 @@ export interface RelaySendMessage {
   task_id: string | null;
   /** ≤ 600 characters, plain text. */
   text: string;
+  /** Person-only: 'lane' is set by the daemon, never sent (Q12). */
   surface: 'desktop' | 'dojo';
 }
 
@@ -451,6 +457,7 @@ export interface RelayAnswer {
   option: string;
   note: string | null;
   /** No `by`: the daemon records the person as `lane_id = null` (lanes-data), CONTRACT §3e's `by: 'person'`. */
+  /** Person-only: 'lane' is set by the daemon, never sent (Q12). */
   surface: 'desktop' | 'dojo';
 }
 

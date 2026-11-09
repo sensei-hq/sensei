@@ -7,7 +7,7 @@
   // and the side panel out.
   import { onMount } from 'svelte';
   import type { CodeMapState } from './state.svelte';
-  import { inspect, LIBRARIES } from './inspector';
+  import { LIBRARIES } from './inspector';
   import { listView } from './list';
   import { budgetLine, drawnBands, legendFor, segmentLabel } from './view';
   import type { CodeMapPort } from './types';
@@ -21,12 +21,9 @@
   import ModuleList from './ModuleList.svelte';
   import FileColumns from './FileColumns.svelte';
   import SymbolView from './SymbolView.svelte';
-  import Inspector from './Inspector.svelte';
-  import Takeaways from './Takeaways.svelte';
-  import ZonesDetails from './ZonesDetails.svelte';
   import ZoomFrame from './ZoomFrame.svelte';
   import CodeMapControls from './CodeMapControls.svelte';
-  import { takeaways } from './takeaways';
+  import CodeMapSide from './CodeMapSide.svelte';
   import Legend from './Legend.svelte';
 
   let {
@@ -61,10 +58,8 @@
   /** The focus as the empty states name it. */
   const focusLabel = $derived(map.focus ? (map.focus.kind === 'module' ? map.focus.id : segmentLabel(map.groupBy, map.focus.id)) : null);
   const bands = $derived(l0 ? drawnBands(map.lens, l0, cochange, { edgeMode: map.edgeMode, minWeight: map.minWeight }) : []);
-  const toAct = $derived(l0 ? takeaways(map.lens, l0, cochange, zones, complexity) : []);
   // A focused module is what the side panel inspects when nothing else is selected.
   const focused = $derived(map.focus?.kind === 'module' ? map.focus.id : null);
-  const inspection = $derived(inspect({ level: map.level, l0, l1: map.l1, l2: map.l2, selected: map.selected ?? focused }));
   /** Open a module's files — the side panel's explicit action, not a click on a lens. */
   const open = (id: string) => void map.openModule(port, id);
   /** The narrow list stands in for Zones and Hidden coupling from their own data;
@@ -170,20 +165,7 @@
     {#if side && !narrow}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="flex flex-col gap-6 min-w-0 min-h-0 overflow-auto pl-6 border-l border-paper-edge" tabindex="0" role="region" aria-label="Side panel" data-testid="codemap-side">
-        {#if map.level === 'modules' && map.lens === 'zones'}
-          {#if zones}
-            <ZonesDetails data={zones} filter={map.zoneFilter} onfocus={focusOn} />
-          {/if}
-          <Takeaways items={toAct} onfocus={focusOn} {label} />
-        {:else if map.level === 'modules' && !map.selected && !map.focus}
-          <Takeaways items={toAct} onfocus={focusOn} {label} />
-        {:else}
-          <Inspector data={inspection} onopen={open}
-            onclear={map.focus && map.level === 'modules' ? () => void map.clearFocus(port) : undefined} />
-          {#if map.level === 'modules' && map.focus && !map.selected}
-            <Takeaways items={toAct} onfocus={focusOn} {label} />
-          {/if}
-        {/if}
+        <CodeMapSide state={map} {port} {label} />
       </div>
     {/if}
   </div>

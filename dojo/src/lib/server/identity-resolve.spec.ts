@@ -6,22 +6,23 @@ import { pickBestIdentity, resolveDisplayNames, resolveViewerNames, type Identit
 import { AdminError, type DojoClient } from './admin-data';
 
 function row(over: Partial<IdentityNameRow> = {}): IdentityNameRow {
-	return { principal_id: 'u1', display_name: null, email: null, last_login_at: null, ...over };
+	return { principal_id: 'u1', display_name: null, handle: null, email: null, last_login_at: null, ...over };
 }
 
 describe('pickBestIdentity', () => {
 	it('returns null/null for no rows', () => {
-		expect(pickBestIdentity([])).toEqual({ display_name: null, email: null });
+		expect(pickBestIdentity([])).toEqual({ display_name: null, handle: null, email: null });
 	});
 	it('returns the name + email of a single row', () => {
 		expect(pickBestIdentity([row({ display_name: 'Ada', email: 'ada@x.co' })])).toEqual({
 			display_name: 'Ada',
+			handle: null,
 			email: 'ada@x.co'
 		});
 	});
 	it('prefers a named row over an email-only row over a bare row', () => {
 		const rows = [row({ email: 'only@x.co' }), row({}), row({ display_name: 'Grace', email: 'g@x.co' })];
-		expect(pickBestIdentity(rows)).toEqual({ display_name: 'Grace', email: 'g@x.co' });
+		expect(pickBestIdentity(rows)).toEqual({ display_name: 'Grace', handle: null, email: 'g@x.co' });
 	});
 	it('within the same tier, the most recent last_login_at wins', () => {
 		const rows = [
@@ -40,11 +41,34 @@ describe('pickBestIdentity', () => {
 	it('treats a whitespace-only display_name as absent (falls back to email)', () => {
 		expect(pickBestIdentity([row({ display_name: '   ', email: 'e@x.co' })])).toEqual({
 			display_name: null,
+			handle: null,
 			email: 'e@x.co'
 		});
 	});
 	it('returns null/null when every row is bare', () => {
-		expect(pickBestIdentity([row({}), row({})])).toEqual({ display_name: null, email: null });
+		expect(pickBestIdentity([row({}), row({})])).toEqual({ display_name: null, handle: null, email: null });
+	});
+	it('prefers a named row over a handle-only row', () => {
+		const rows = [row({ handle: 'octocat' }), row({ display_name: 'Ada', email: 'ada@x.co' })];
+		expect(pickBestIdentity(rows)).toEqual({ display_name: 'Ada', handle: null, email: 'ada@x.co' });
+	});
+	it('treats a whitespace-only handle as absent', () => {
+		expect(pickBestIdentity([row({ handle: '   ' })])).toEqual({
+			display_name: null,
+			handle: null,
+			email: null
+		});
+	});
+	it('L4 forge-handle — a handle-only row beats an email-only row', () => {
+		const rows = [row({ email: 'only@x.co' }), row({ handle: 'octocat' })];
+		expect(pickBestIdentity(rows)).toEqual({ display_name: null, handle: 'octocat', email: null });
+	});
+	it('L4 forge-handle — the best row carries its handle too', () => {
+		expect(pickBestIdentity([row({ display_name: 'Ada', handle: 'ada-l', email: 'ada@x.co' })])).toEqual({
+			display_name: 'Ada',
+			handle: 'ada-l',
+			email: 'ada@x.co'
+		});
 	});
 });
 
@@ -88,8 +112,8 @@ describe('resolveDisplayNames', () => {
 			principals: []
 		});
 		const map = await resolveDisplayNames(db, 't1', ['u1', 'u2']);
-		expect(map.get('u1')).toEqual({ display_name: 'Ada', email: null });
-		expect(map.get('u2')).toEqual({ display_name: 'Bob', email: 'bob@x.co' });
+		expect(map.get('u1')).toEqual({ display_name: 'Ada', handle: null, email: null });
+		expect(map.get('u2')).toEqual({ display_name: 'Bob', handle: null, email: 'bob@x.co' });
 	});
 	it('reads null/null for a scoped id nothing names (the mapper says so in words)', async () => {
 		const { db } = makeTableDb({
@@ -103,8 +127,8 @@ describe('resolveDisplayNames', () => {
 			principals: []
 		});
 		const map = await resolveDisplayNames(db, 't1', ['u1', 'ghost']);
-		expect(map.get('u1')).toEqual({ display_name: 'Ada', email: null });
-		expect(map.get('ghost')).toEqual({ display_name: null, email: null });
+		expect(map.get('u1')).toEqual({ display_name: 'Ada', handle: null, email: null });
+		expect(map.get('ghost')).toEqual({ display_name: null, handle: null, email: null });
 	});
 	it('treats null data as no identities', async () => {
 		const { db } = makeDb({ data: null, error: null });
@@ -113,6 +137,16 @@ describe('resolveDisplayNames', () => {
 	it('throws AdminError(500) on a query error (fail-closed, no fabrication)', async () => {
 		const { db } = makeDb({ data: null, error: { message: 'boom' } });
 		await expect(resolveDisplayNames(db, 't1', ['u1'])).rejects.toBeInstanceOf(AdminError);
+	});
+	it('L4 forge-handle — the identity read selects the handle column', async () => {
+		const { db, calls } = makeTableDb({
+			memberships: [{ tenant_id: 't1', user_id: 'u1' }],
+			identities: [],
+			principals: []
+		});
+		await resolveDisplayNames(db, 't1', ['u1']);
+		const identityRead = calls.find((c) => c.table === 'identities' && c.op === 'select');
+		expect(identityRead?.args[0], 'handle is selected').toContain('handle');
 	});
 });
 

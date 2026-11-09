@@ -1,0 +1,168 @@
+-- `relay.items` — the queue: manual items and tracker references.
+--
+-- WHAT BREAKS THIS TEST: a title or kind turning nullable; a half ticket
+-- identity (provider without key or key without provider); tags on a ticketed
+-- item (it reads them from the tracker); `added_by` pointing at no lane; a
+-- non-v7 id; a non-owner reading a row.
+--
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_items.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_items.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
+--
+-- NOTE (for L0): `added_by` is null when the person added the item and the
+-- lane otherwise (the `actions.lane_id` convention) — the `+` button is a
+-- person flow, `plan_item` a lane flow, and one column serves both.
+
+begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
+
+insert into relay.crews (user_id, id, status) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f501', 'active');
+
+insert into relay.lanes (user_id, id, crew_id, code, role, family, repo, token_hash) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f511',
+   '11111111-1111-7000-8000-00000000f501', 'L1', 'coordinator', 'claude-code',
+   'github.com/sensei-hq/sensei', 'x');
+
+-- I1: manual triage, tagged, added by the person. I2: manual backlog, untagged,
+-- planned by the coordinator lane. I3: ticketed backlog (title/kind snapshot at
+-- `+` time; the screen reads the live values from the tracker). I4: U2's.
+insert into relay.items
+  (user_id, id, workspace_id, repo_key, ticket_provider, ticket_key, title, kind, tags, state, position, added_by) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f521',
+   null, null, null, null, 'Empty states say nothing', 'gap', '{ux,copy}', 'triage', null, null),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f522',
+   'b1111111-1111-4111-8111-111111111111', 'github.com/sensei-hq/sensei', null, null,
+   'Diagrams header on ScreenShell', 'feature', null, 'backlog', 1,
+   '11111111-1111-7000-8000-00000000f511'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f523',
+   null, 'github.com/sensei-hq/sensei', 'jira', 'SEN-52',
+   'Activity log parity', 'feature', null, 'backlog', 2, null),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f524',
+   null, null, null, null, 'Their item', 'bug', null, 'backlog', 1, null);
+
+do $$
+declare
+  n int;
+  v_text text;
+  v_arr text[];
+  v_ts timestamptz;
+begin
+  -- A manual item roundtrips with its tags and the server stamp.
+  select tags into v_arr from relay.items where id = '11111111-1111-7000-8000-00000000f521';
+  if v_arr is distinct from '{ux,copy}' then
+    raise exception 'item tags should read back, saw %.', v_arr;
+  end if;
+  select added_at into v_ts from relay.items where id = '11111111-1111-7000-8000-00000000f521';
+  if v_ts is null then
+    raise exception 'items.added_at must default when omitted.';
+  end if;
+
+  -- A ticketed item keeps its portable identity and no tags.
+  select ticket_key into v_text from relay.items where id = '11111111-1111-7000-8000-00000000f523';
+  if v_text is distinct from 'SEN-52' then
+    raise exception 'ticket_key should read back, saw %.', v_text;
+  end if;
+
+  -- Title and kind are required, manual or ticketed alike.
+  begin
+    insert into relay.items (user_id, id, kind, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f531', 'bug', 'backlog');
+    raise exception 'items.title accepted null.';
+  exception when not_null_violation then null;
+  end;
+  begin
+    insert into relay.items (user_id, id, title, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f532', 'No kind', 'backlog');
+    raise exception 'items.kind accepted null.';
+  exception when not_null_violation then null;
+  end;
+
+  -- The ticket identity is atomic: both halves or neither.
+  begin
+    insert into relay.items (user_id, id, title, kind, state, ticket_provider) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f533',
+       'Half ticket', 'bug', 'backlog', 'jira');
+    raise exception 'a provider without a key was accepted.';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into relay.items (user_id, id, title, kind, state, ticket_key) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f534',
+       'Half ticket', 'bug', 'backlog', 'SEN-53');
+    raise exception 'a key without a provider was accepted.';
+  exception when check_violation then null;
+  end;
+
+  -- Tags are manual-only: a ticketed item reads them from the tracker.
+  begin
+    insert into relay.items (user_id, id, title, kind, state, ticket_provider, ticket_key, tags) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f535',
+       'Tagged ticket', 'bug', 'backlog', 'jira', 'SEN-54', '{sprint}');
+    raise exception 'tags on a ticketed item were accepted.';
+  exception when check_violation then null;
+  end;
+
+  -- `added_by` names a lane of this user, or null for the person.
+  begin
+    insert into relay.items (user_id, id, title, kind, state, added_by) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f536',
+       'Ghost adder', 'bug', 'backlog', '11111111-1111-7000-8000-00000000f599');
+    raise exception 'an added_by pointing at no lane was accepted.';
+  exception when foreign_key_violation then null;
+  end;
+
+  -- Ids are v7.
+  begin
+    insert into relay.items (user_id, id, title, kind, state) values
+      ('a1111111-1111-4111-8111-111111111111', '99999999-9999-4999-8999-999999999996',
+       'v4 item', 'bug', 'backlog');
+    raise exception 'a v4 item id was accepted.';
+  exception when check_violation then null;
+  end;
+
+  -- The daemon owner sees all four items.
+  select count(*) into n from relay.items
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
+  if n <> 4 then
+    raise exception 'the owner should see 4 items, saw %.', n;
+  end if;
+
+  if has_table_privilege('authenticated', 'relay.items', 'INSERT') then
+    raise exception 'authenticated must hold no INSERT grant on items.';
+  end if;
+end $$;
+
+-- U1 reads their three; U2 reads their one.
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"a1111111-1111-4111-8111-111111111111","role":"authenticated"}', true);
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from relay.items;
+  if n <> 3 then
+    raise exception 'U1 should read 3 items, saw %.', n;
+  end if;
+end $$;
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"a2222222-2222-4222-8222-222222222222","role":"authenticated"}', true);
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from relay.items;
+  if n <> 1 then
+    raise exception 'U2 should read 1 item, saw %.', n;
+  end if;
+end $$;
+reset role;
+
+rollback;

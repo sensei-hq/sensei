@@ -73,7 +73,7 @@ describe('ScrRoleSurfaces — the Viewers tab', () => {
 				orgName: 'Acme',
 				tab: 'members',
 				invite: s,
-				viewers: [{ principalId: 'v1', name: 'The Boss', email: null, workspaces: [] }],
+				viewers: [{ principalId: 'v1', name: 'The Boss', handle: null, email: null, workspaces: [] }],
 				viewerWorkspaces: []
 			}
 		});

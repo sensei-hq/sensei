@@ -1,0 +1,228 @@
+-- `relay.task_history` — a task's actions, newest first, props unpacked.
+--
+-- WHAT BREAKS THIS TEST: the order (newest first, id breaks ties — "as the
+-- view orders it"); an unpacked fold reading null or wrong (verdict/findings,
+-- files/gates, options, to); a lane shown by id instead of code; the person
+-- shown as anything but null; another task's or user's rows leaking in.
+--
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_task_history.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_task_history.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
+--
+-- NOTE (for L0): the unpacked set is verdict/findings/files/gates/options/to
+-- (the folds' primary structures); context/recommended/blocks ride in `props`.
+-- Run totals (RelayRunDetails) are daemon-computed over this view. Rule if otherwise.
+
+begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
+
+insert into relay.crews (user_id, id, status) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa01', 'active'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000fa02', 'active');
+
+insert into relay.lanes (user_id, id, crew_id, code, role, family, repo, token_hash) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa11',
+   '11111111-1111-7000-8000-00000000fa01', 'L1', 'coordinator', 'claude-code', 'r', 'x'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa12',
+   '11111111-1111-7000-8000-00000000fa01', 'L2', 'contributor', 'claude-code', 'r', 'x'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000fa19',
+   '22222222-2222-7000-8000-00000000fa02', 'L1', 'coordinator', 'claude-code', 'r', 'x');
+
+insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, title, phase, state) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa31',
+   '11111111-1111-7000-8000-00000000fa01', '11111111-1111-7000-8000-00000000fa12',
+   'r', 'The task', 'tests', 'working'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa32',
+   '11111111-1111-7000-8000-00000000fa01', null, 'r', 'Other task', 'tests', 'assigned'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000fa39',
+   '22222222-2222-7000-8000-00000000fa02', '22222222-2222-7000-8000-00000000fa19',
+   'r', 'Their task', 'tests', 'working');
+
+-- H1..H7: T1's history, oldest to newest. H7 shares H6's stamp: the higher id
+-- reads first. H8: T2's (out). H9: U2's (out).
+insert into relay.actions
+  (user_id, id, crew_id, task_id, lane_id, kind, round, phase, body_md, props, reply_to, created_at) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa41',
+   '11111111-1111-7000-8000-00000000fa01', '11111111-1111-7000-8000-00000000fa31',
+   '11111111-1111-7000-8000-00000000fa11', 'assigned', 1, 'tests', 'The frozen brief.',
+   '{"docs": ["d.md"], "owned_paths": ["a/**"], "acceptance": ["green"]}', null, '2026-11-05T10:00:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa42',
+   '11111111-1111-7000-8000-00000000fa01', '11111111-1111-7000-8000-00000000fa31',
+   '11111111-1111-7000-8000-00000000fa12', 'started', 1, 'tests', null, '{}', null,
+   '2026-11-05T10:05:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa43',
+   '11111111-1111-7000-8000-00000000fa01', '11111111-1111-7000-8000-00000000fa31',
+   '11111111-1111-7000-8000-00000000fa12', 'reported', 1, 'tests', 'Done, review please.',
+   '{"branch": "lane/x", "files": [{"path": "a.ts", "added": 3, "removed": 1, "outside_owned": false}], "gates": [{"cmd": "make test-fast", "exit": 0, "counts": "ok"}]}',
+   null, '2026-11-05T10:30:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa44',
+   '11111111-1111-7000-8000-00000000fa01', '11111111-1111-7000-8000-00000000fa31',
+   '11111111-1111-7000-8000-00000000fa11', 'reviewed', 1, 'tests', 'Two findings.',
+   '{"verdict": "changes_requested", "findings": [{"severity": "high", "class": "silent_drop", "text": "dropped", "file": "a.ts", "line": 3}]}',
+   '11111111-1111-7000-8000-00000000fa43', '2026-11-05T11:00:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa45',
+   '11111111-1111-7000-8000-00000000fa01', '11111111-1111-7000-8000-00000000fa31',
+   '11111111-1111-7000-8000-00000000fa12', 'asked', 1, 'tests', 'Which store?',
+   '{"context": "Blocked on this.", "options": [{"id": "pg", "label": "Postgres", "detail": null}], "recommended": "pg", "blocks": ["11111111-1111-7000-8000-00000000fa31"], "asked_of": "person"}',
+   null, '2026-11-05T11:05:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa46',
+   '11111111-1111-7000-8000-00000000fa01', '11111111-1111-7000-8000-00000000fa31',
+   null, 'answered', 1, 'tests', 'Postgres.', '{"option": "pg", "surface": "desktop"}',
+   '11111111-1111-7000-8000-00000000fa45', '2026-11-05T11:10:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa47',
+   '11111111-1111-7000-8000-00000000fa01', '11111111-1111-7000-8000-00000000fa31',
+   null, 'message', null, null, 'Noted, thanks.',
+   '{"to": {"kind": "everyone"}, "surface": "desktop"}', null, '2026-11-05T11:10:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fa48',
+   '11111111-1111-7000-8000-00000000fa01', '11111111-1111-7000-8000-00000000fa32',
+   '11111111-1111-7000-8000-00000000fa11', 'assigned', 1, 'tests', 'Other brief.', '{}', null,
+   '2026-11-05T12:00:00Z'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000fa49',
+   '22222222-2222-7000-8000-00000000fa02', '22222222-2222-7000-8000-00000000fa39',
+   '22222222-2222-7000-8000-00000000fa19', 'assigned', 1, 'tests', 'Their brief.', '{}', null,
+   '2026-11-05T12:00:00Z');
+
+do $$
+declare
+  n int;
+  v_ids uuid[];
+  v_text text;
+  v_json jsonb;
+begin
+  -- Newest first, down to assigned; the stamp tie breaks by id.
+  -- (No ORDER BY here on purpose: the view's own order is what's pinned.)
+  select array_agg(action_id) into v_ids from relay.task_history
+   where task_id = '11111111-1111-7000-8000-00000000fa31';
+  if v_ids is distinct from array[
+      '11111111-1111-7000-8000-00000000fa47', '11111111-1111-7000-8000-00000000fa46',
+      '11111111-1111-7000-8000-00000000fa45', '11111111-1111-7000-8000-00000000fa44',
+      '11111111-1111-7000-8000-00000000fa43', '11111111-1111-7000-8000-00000000fa42',
+      '11111111-1111-7000-8000-00000000fa41']::uuid[] then
+    raise exception 'task_history order wrong, saw %.', v_ids;
+  end if;
+
+  -- The report's folds: files and gates unpacked, review fields null.
+  select files into v_json from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa43';
+  if v_json is distinct from '[{"path": "a.ts", "added": 3, "removed": 1, "outside_owned": false}]'::jsonb then
+    raise exception 'reported files wrong: %.', v_json;
+  end if;
+  select gates into v_json from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa43';
+  if v_json is distinct from '[{"cmd": "make test-fast", "exit": 0, "counts": "ok"}]'::jsonb then
+    raise exception 'reported gates wrong: %.', v_json;
+  end if;
+  select verdict into v_text from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa43';
+  if v_text is not null then
+    raise exception 'reported verdict should be null, saw %.', v_text;
+  end if;
+
+  -- The review's folds: verdict and findings unpacked.
+  select verdict into v_text from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa44';
+  if v_text is distinct from 'changes_requested' then
+    raise exception 'reviewed verdict wrong, saw %.', v_text;
+  end if;
+  select findings into v_json from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa44';
+  if v_json is distinct from
+      '[{"severity": "high", "class": "silent_drop", "text": "dropped", "file": "a.ts", "line": 3}]'::jsonb then
+    raise exception 'reviewed findings wrong: %.', v_json;
+  end if;
+
+  -- The question's options and the message's audience unpacked.
+  select options into v_json from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa45';
+  if v_json is distinct from '[{"id": "pg", "label": "Postgres", "detail": null}]'::jsonb then
+    raise exception 'asked options wrong: %.', v_json;
+  end if;
+  select "to" into v_json from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa47';
+  if v_json is distinct from '{"kind": "everyone"}'::jsonb then
+    raise exception 'message to wrong: %.', v_json;
+  end if;
+
+  -- Who acted, by code; the person is null.
+  select lane_code into v_text from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa41';
+  if v_text is distinct from 'L1' then
+    raise exception 'H1 lane_code should be L1, saw %.', v_text;
+  end if;
+  select lane_code into v_text from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa46';
+  if v_text is not null then
+    raise exception 'a person-acted row should read null lane_code, saw %.', v_text;
+  end if;
+
+  -- The kind discriminant rides through (it tells the folds apart).
+  select kind::text into v_text from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa41';
+  if v_text is distinct from 'assigned' then
+    raise exception 'H1 kind should be assigned, saw %.', v_text;
+  end if;
+  select kind::text into v_text from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa44';
+  if v_text is distinct from 'reviewed' then
+    raise exception 'H4 kind should be reviewed, saw %.', v_text;
+  end if;
+
+  -- The rest rides through: text, links, round, phase, stamp, full props.
+  select body_md into v_text from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa41';
+  if v_text is distinct from 'The frozen brief.' then
+    raise exception 'body_md should read back, saw %.', v_text;
+  end if;
+  select reply_to::text into v_text from relay.task_history where action_id = '11111111-1111-7000-8000-00000000fa44';
+  if v_text is distinct from '11111111-1111-7000-8000-00000000fa43' then
+    raise exception 'reply_to should read back, saw %.', v_text;
+  end if;
+  select count(*) into n from relay.task_history
+   where action_id = '11111111-1111-7000-8000-00000000fa41'
+     and round = 1 and phase = 'tests'
+     and created_at = '2026-11-05T10:00:00Z'::timestamptz
+     and props = '{"docs": ["d.md"], "owned_paths": ["a/**"], "acceptance": ["green"]}'::jsonb
+     and user_id = 'a1111111-1111-4111-8111-111111111111'
+     and crew_id = '11111111-1111-7000-8000-00000000fa01'
+     and task_id = '11111111-1111-7000-8000-00000000fa31';
+  if n <> 1 then
+    raise exception 'H1 carry-through wrong.';
+  end if;
+
+  -- Other tasks stay out.
+  select count(*) into n from relay.task_history
+   where task_id = '11111111-1111-7000-8000-00000000fa31'
+     and action_id = '11111111-1111-7000-8000-00000000fa48';
+  if n <> 0 then
+    raise exception 'another task''s action leaked into the history.';
+  end if;
+
+  -- The daemon owner sees all nine rows (H1..H7 + H8 + H9).
+  select count(*) into n from relay.task_history
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
+  if n <> 9 then
+    raise exception 'the owner should see 9 history rows, saw %.', n;
+  end if;
+end $$;
+
+-- U1 reads their eight (7 + T2's); U2 reads their one.
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"a1111111-1111-4111-8111-111111111111","role":"authenticated"}', true);
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from relay.task_history;
+  if n <> 8 then
+    raise exception 'U1 should read 8 history rows, saw %.', n;
+  end if;
+end $$;
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"a2222222-2222-4222-8222-222222222222","role":"authenticated"}', true);
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from relay.task_history;
+  if n <> 1 then
+    raise exception 'U2 should read 1 history row, saw %.', n;
+  end if;
+end $$;
+reset role;
+
+rollback;

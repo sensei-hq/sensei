@@ -48,6 +48,8 @@ export interface Membership {
 	 *  `principals.display_name` (null → the mapper says so in words; never a
 	 *  fabricated name). */
 	display_name: string | null;
+	/** The forge login last seen at sign-in (null when the identity names no handle). */
+	handle: string | null;
 	email: string | null;
 }
 
@@ -146,8 +148,34 @@ export async function listMembers(db: DojoClient, tenantId: string, nameDb: Dojo
 	);
 	return rows.map((r) => {
 		const n = names.get(r.user_id);
-		return { ...r, display_name: n?.display_name ?? null, email: n?.email ?? null };
+		return { ...r, display_name: n?.display_name ?? null, handle: n?.handle ?? null, email: n?.email ?? null };
 	});
+}
+
+export interface OrgRepository {
+	repository_id: string;
+	repo_key: string;
+	name: string;
+	provider: string;
+	forge_visibility: string | null;
+	member_count: number;
+	last_synced_at: string | null;
+	elected: boolean;
+	configurable_by_me: boolean;
+	configured_by: string | null;
+	configured_at: string | null;
+	entitlement_refusal: string | null;
+	billing_hidden: boolean;
+}
+
+// The org's repositories for its admin (billing tab) — one row per standing
+// with the tab's verdict columns, via the SECURITY DEFINER read (the
+// repositories table admits no client reads). Counts come from the DB,
+// never inferred (D83).
+export async function listOrgRepositories(db: DojoClient, tenantId: string): Promise<OrgRepository[]> {
+	const { data, error } = await db.rpc('org_repositories', { p_tenant_id: tenantId });
+	if (error) throw new AdminError(500, error.message);
+	return (data ?? []) as unknown as OrgRepository[];
 }
 
 // ── identity scoping ─────────────────────────────────────────────────────────

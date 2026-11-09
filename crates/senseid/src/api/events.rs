@@ -223,6 +223,13 @@ impl StateEvent {
             data: serde_json::to_value(&event).unwrap(),
         }
     }
+
+    /// A relay write happened (`op`: message, answer, report, …). Lane
+    /// `wait_for_task` holds wake on these and re-read the envelope; the
+    /// payload names the op only — the envelope is the state.
+    pub fn relay(op: &str) -> Self {
+        Self { action: Action::Add, entity: "relay".into(), data: serde_json::json!({ "op": op }) }
+    }
 }
 
 impl ActivityEvent {

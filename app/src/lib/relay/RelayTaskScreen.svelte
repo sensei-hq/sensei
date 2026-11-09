@@ -97,6 +97,18 @@
           detail="It may belong to another crew, another person, or have been removed."
           code="http_404"
         />
+      {:else if state.error}
+        <!-- A failed re-read keeps the old view; drawing it would pass stale data off as
+             fresh, so the fault comes first and Retry reads again (D83, N8). -->
+        <Notice
+          data-relay-error
+          tone="fault"
+          size="panel"
+          title="Couldn't read this task"
+          detail={state.reason ?? ''}
+          code={state.error.status === 0 ? 'daemon_unreachable' : `http_${state.error.status}`}
+          primary={{ label: 'Retry', name: 'retry', onclick: () => void state.retry() }}
+        />
       {:else if task && view}
         <header class="flex flex-wrap items-center gap-2">
           <h2 class="text-lg font-medium m-0" data-task-title>{task.title}</h2>
@@ -166,16 +178,6 @@
             <HistoryEntry {action} lanes={view.lanes} messageState={receipts[action.id] ?? (action.kind === 'message' ? 'sent' : null)} />
           {/each}
         </section>
-      {:else if state.error}
-        <Notice
-          data-relay-error
-          tone="fault"
-          size="panel"
-          title="Couldn't read this task"
-          detail={state.reason ?? ''}
-          code={state.error.status === 0 ? 'daemon_unreachable' : `http_${state.error.status}`}
-          primary={{ label: 'Retry', name: 'retry', onclick: () => void state.retry() }}
-        />
       {/if}
     </div>
   </ShellScreen>

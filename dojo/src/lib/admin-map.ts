@@ -57,7 +57,7 @@ export function toKitMember(
 			? relativeAge(m.last_heartbeat_at, now)
 			: 'never';
 	const member: KitMember = {
-		name: m.display_name ?? m.email ?? 'Name not shared yet',
+		name: m.display_name ?? m.handle ?? m.email ?? 'Name not shared yet',
 		userId: m.user_id,
 		git: accessLine(m.authenticated_via),
 		role: m.role,

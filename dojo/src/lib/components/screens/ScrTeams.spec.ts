@@ -24,11 +24,12 @@ const wire = (per_person: boolean): TeamMetricsWire => ({
 						{
 							principal_id: 'lena',
 							display_name: 'Lena',
+							handle: null,
 							email: null,
 							you: true,
 							metrics: { throughput: { total: 12, weighted: null, days: 3, repositories: 2, last_on: '2026-10-21' } }
 						},
-						{ principal_id: 'mo', display_name: 'Mo', email: null, you: false, metrics: {} }
+						{ principal_id: 'mo', display_name: 'Mo', handle: null, email: null, you: false, metrics: {} }
 					]
 				: []
 		}

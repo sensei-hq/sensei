@@ -170,7 +170,8 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
 
 `register` · `heartbeat` · `reregister` · `unregister` · `get_tasks` · `claim_task` · `checkpoint_task` ·
 `report_task` · `get_reviews` · `submit_review` · `ask_decision` · `answer_decision` · `request_resource` ·
-`release_resource` · `plan_item` (coordinator) · `assign_task` (coordinator) · `merge_task` (coordinator).
+`release_resource` · `plan_item` (coordinator) · `assign_task` (coordinator) · `merge_task` (coordinator) ·
+`handover_task` (coordinator, F1: pull a held task off its lane mid-turn).
 The existing `start_run` / `register_plan` / `update_task_status` / `report_run_outcome` /
 `run_status` / `pause_run` are reused where they already fit, and not cloned.
 
@@ -203,4 +204,70 @@ The existing `start_run` / `register_plan` / `update_task_status` / `report_run_
 2. Coordinator tools: `plan_item` (with the depth gate checklist recorded) and `assign_task`.
 3. The event log in the daemon; a minimal desktop board (crew, lanes, queue). The dōjō push comes in slice 2.
 4. A resource lease for heavy builds.
-5. Dogfood: run this repository's next item through it, with one coordinator and two contributors.
+5. Dogfood: run this repository's next item through it, with one coordinator and two contributors. First dogfood
+   item (user, 2026-11-06): first-class Muse support in Sensei — an assistant adapter for Muse (MCP registration,
+   sensei-skills install and peers of the existing adapters' duties), using the direct session connection where
+   available, plus transcript scan and/or a background sensei↔Muse channel. Decomposed when slice 1 lands.
+
+## 15. Waiting, nudges and the hand-off trail (user, 2026-11-06)
+Today the person carries every hand-off between lanes by pasting messages. Relay must make each of those hand-offs a
+row, and must make waiting visible.
+- **Every hand-off is an action in the task's history.** A report, a review assigned, a verdict, a rebase note, a
+  merge, and a "standing by" are all actions on the timeline (`reported`, `reviewed`, `message`, `merged` …). The person
+  never relays a status line by hand. A lane re-sending a status it has already sent is a no-op: the broker
+  de-duplicates on (lane, task, kind, round).
+- **Waiting is a state with a clock.** Each task shows how long it has waited and on whom. The cases:
+  - a report with no reviewer assigned;
+  - a verdict the author has not picked up;
+  - an approval not yet merged;
+  - a lane idle with nothing assigned.
+- **The waiting record.** A waiting task carries `task.waiting {since, reason, waiting_on}`, cleared into
+  `task.waiting_ended` on resume. Reasons: `review_unassigned` / `merge_pending` / `no_work` → the coordinator;
+  `verdict_unread` → the author's lane; `decision` → the person; `resource` → the broker. (From the approved
+  addendum-2 mockup, gap 17.)
+- **"Waiting" is a stat on the Relay screen** (ShellStat). Clicking it filters to the waiting tasks, oldest first.
+- **Nudge.** The person, or the broker after a threshold (default 15 min, per crew), nudges the party being waited on:
+  - the coordinator, for an unassigned report or an unmerged approval;
+  - a lane, for an unread verdict.
+
+  A nudge is a `message` action with `props.nudge = true`, delivered on the lane's next `wait_for_task`. The
+  coordinator's queue lists unreviewed reports **before** new assignments.
+- **Why (observed 2026-11-05/06):** four reports sat without a reviewer for 30 min to 3 h, because the coordinator
+  scanned by time instead of matching reports to reviews. Two lanes idled on verdicts that had already been filed. One
+  lane got a stale review of a round it had already replaced. Each was a lost hand-off that a row and a clock would have
+  shown.
+- **Coordinator hand-off.** The coordinator role must be transferable mid-crew: `reregister` as coordinator with the
+  crew's checkpoint, for example when one assistant's quota runs out. Until Relay ships,
+  `coord/HANDOFF-COORDINATOR.md` is the manual form.
+
+## 16. Lane codenames (slice 2; user, 2026-11-06)
+Lanes read better as names than as codes. The broker mints each lane a stable codename at register, in the
+"colour + celestial" style the sessions already use (e.g. "Beige Aster", "Gold Antares"), unique per crew. Screens
+show the codename as the primary human handle next to the objective title ("Beige Aster · Diagrams"); the code (L1)
+stays for compact and technical contexts. Slice 1 ships code + objective title as contracted; codenames land as a
+tests-first slice-2 item (model column + minting rule + uniqueness, in `lanes-data.md` and `relay-api.ts` then).
+Handshake is negotiated, not assumed. At register the broker probes what the assistant family supports: the probe
+itself, session-minted codenames, and direct session-to-session handshakes (as Muse sessions do today). Where an
+assistant (freebuff, opencode, claude, cowork, chatgpt, …) lacks direct-handshake support, traffic falls back to the
+Sensei-mediated channel — the daemon brokers, exactly as slice 1 does for every lane. The dogfood adapter (§14.5)
+proves the direct path; the fallback keeps every other family working unchanged. Direct traffic stays visible: whenever
+a direct handshake carries an interaction, a copy is fed into Sensei so the daemon tracks it, tagged with the mode of
+communication (direct vs Sensei-mediated). The broker never goes blind on lanes that talk around it.
+
+## 17. Mid-turn handover (F1; run-02 round-1 verdict)
+
+Two gaps made mid-task handover impossible: every report moved to `in_review`, and `assign` 409'd from
+`in_review` / `rework` / `interrupted`. F1 closes both halves.
+
+**Partial reports.** `report` takes a partial marker. A partial report keeps the task `working` — it records a
+`reported` action with `props.partial = true` and picks no reviewer. A later full report moves to `in_review`
+normally. The history reads a partial as progress so far ("Partial · Work … rN", still working), never as a
+request for review.
+
+**Force-handover.** `POST /api/relay/tasks/{id}/handover` with `{to_lane}` (coordinator only; MCP
+`relay_handover_task`) pulls a task off its holder from `working` / `in_review` / `rework`. Effects: the task lands
+`assigned` on `to_lane`, the round bumps, a fresh `assigned` brief freezes the prior brief plus the handoff note, and
+a `handed_over` event names both lanes. Guards, each a 409 with a specific error: the from-set is exactly the held
+three (terminal tasks, `assigned` with nothing held, `blocked`, and `approved` all refuse; `interrupted` stays the
+sweeper's re-offer job and says so); `to_lane` must hold a live lease in the same crew, must not be the current
+holder, must not be the picked reviewer (a task never reviews itself), and must not already hold a task.

@@ -36,6 +36,7 @@ pub const SCHEDULABLE: &[&str] = &[
     "log_prune",
     "metrics",
     "reconcile",
+    "relay_lease",
     "tracker_sync",
     "watchdog",
 ];

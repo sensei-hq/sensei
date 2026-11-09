@@ -1,0 +1,7 @@
+-- Routing probe: passes only on the scratch lane database, which alone holds
+-- the marker table. Proves --apply sensei ran where TEST_DATABASE_URL points,
+-- not the live daemon DB. No transaction statements of its own.
+do $$
+begin
+    perform 1 from public.__apply_route_marker;
+end $$;

@@ -10,6 +10,7 @@
   import { untrack } from 'svelte';
   import { Notice } from '@sensei/ui';
   import type { RelayCrew, RelayLane, RelayMessageTo, RelaySendMessage } from '$lib/relay-api.js';
+  import { crewRepoLabel } from './relay-format.js';
 
   let {
     crews,
@@ -83,7 +84,7 @@
           bind:value={crewId}
         >
           {#each crews as crew (crew.id)}
-            <option value={crew.id}>{crew.repo_key}</option>
+            <option value={crew.id}>{crewRepoLabel(crew)}</option>
           {/each}
         </select>
       </label>
