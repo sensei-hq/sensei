@@ -1,6 +1,6 @@
 ---
 name: Tracker delivery metrics
-status: built (F1–F6, #351–#356, 2026-11-05; amendments A1–A4)
+status: built (F1–F6, #351–#356, 2026-11-05; amendments A1–A4); A5 designed 2026-11-09 (gate passed)
 date: 2026-11-04
 analysis: none (brainstorm 2026-11-04, decisions B1–B15 below)
 parent:
@@ -226,7 +226,7 @@ per-person rows would not reproduce what one daemon holding every session comput
 
 *Amendment A1 (F2 pre-build audit, 2026-11-04): eligibility reads the plan's tenant; facts are
 built once per tick; removed sprints carry no figures and removed tickets do not travel; the
-hash is canonical and leaves `history_at` out; marks are written before sending, keyed by
+hash is canonical and leaves `history_at` out (and `synced_at`, A5); marks are written before sending, keyed by
 persona id, expire, and record failures; the push skips a tracker whose guard is held.*
 
 **Where it runs.** A new step in the `dojo_sync` tick, after the graph push (`push_planned`).
@@ -263,6 +263,7 @@ on one board produce one key. It is a stable pseudonym, not anonymisation: names
 { v: 1, tenant_id, repo_keys: [text], board_key, kind, board_name,
   facts: {                                   // one-copy part
     history_at,                              // trackers.history_at; sent, not hashed
+    synced_at,                               // last_success_at, only for a no-history tracker; else null. Not hashed (A5)
     pending_tickets: int,                    // tickets the history task would still read
     predictability, predictability_reason,
     sprints: [{ external_id, seq, name, state, start_at, end_at, complete_at,
@@ -274,6 +275,13 @@ on one board produce one key. It is a stable pseudonym, not anonymisation: names
 
 - `pending_tickets` counts with the history task's own candidate predicate (non-removed, with
   an `issue_updated_at`, whose `history_through` is null or older), one shared SQL fragment.
+  A tracker whose adapter reads no history (`capabilities().history == false`: GitHub, GitLab)
+  sends 0: the history task never reads it (2026-11-09).
+- `synced_at` (A5) is the `last_success_at` of the consistency token read before the facts,
+  sent **only when the tracker's adapter reads no history**; a Jira board sends null, so its
+  order is untouched. A token whose `last_success_at` reads null (the tracker was reconnected
+  after the board list was read) skips the board this tick, as the Data invariants require. Every successful sync moves it, so like
+  `history_at` it is left out of the facts hash: a sync that changed nothing re-sends nothing.
 - A sprint's `sdlc` is its `SprintSdlc` (whose `facts` carries the counts); a removed sprint
   has no replay and sends `null`, never a made-up figure.
 - A ticket's `sprints` is its membership (`sensei.tracker_task_sprints`, non-removed sprints),
@@ -328,7 +336,8 @@ tracker and persona delete.
 
 - `hash` is sha256 of the part's **canonical** JSON: object keys sorted recursively, sprints
   ordered by `(seq, external_id)`, tickets by key, each ticket's `sprints` sorted;
-  `history_at` is left out (it moves on every history run, even one that read nothing).
+  `history_at` and `synced_at` are left out (each moves on every history run or sync, even one
+  that read nothing; A5).
 - The row is written (`attempted_at`) **before** sending, so a push that commits in the Dōjō
   but times out on the way back still leaves a trace a withdrawal can find (F5).
 - Sent when the hash differs from `hash`, or `pushed_at` is older than **6 hours** (so a copy
@@ -381,7 +390,7 @@ security-definer functions):
 
 | Table | Key | Holds |
 |---|---|---|
-| `delivery_boards` | `id` uuid; unique `(workspace_id, board_key)` | `tenant_id`, kind, name, and the one copy's `reported_by` (a principal), `reported_at`, `history_at`, `pending_tickets`, `predictability`, `predictability_reason` — **nothing else (B11)** |
+| `delivery_boards` | `id` uuid; unique `(workspace_id, board_key)` | `tenant_id`, kind, name, and the one copy's `reported_by` (a principal), `reported_at`, `history_at`, `synced_at` (A5; within B11, DF3), `pending_tickets`, `predictability`, `predictability_reason` — **nothing else (B11)** |
 | `delivery_sprints` | `(board_id, external_id)` | details, `removed`, `sdlc` (null for a removed sprint) |
 | `delivery_tickets` | `(board_id, key)` | title, status category, points, sprint ids, `issue_created_at` |
 | `delivery_effort` | `(board_id, item_kind, item_ref, principal_id)`; `item_kind ∈ {project, sprint, ticket}`, `item_ref` = `''` / sprint `external_id` / ticket key | `repository_ids uuid[]` (whose sessions), `values` jsonb (D1 wire fields), `reported_at` |
@@ -392,10 +401,64 @@ All cascade from `delivery_boards`, which cascades from `dojo.workspaces`.
 nothing`), then locks it (`select … for update`), then compares, so two concurrent pushes are
 ordered. The stored copy is replaced **whole** (board row, all its sprints and tickets) unless
 it is greater: complete (`pending_tickets = 0`) beats incomplete, then the later `history_at`
-wins (null sorts lowest); on a tie the later arrival wins. So a daemon mid-backfill never
+wins (null sorts lowest), then, for two copies without history that both carry one, the later
+`synced_at` (A5); on a tie the later arrival wins. So a daemon mid-backfill never
 replaces a complete copy, and a copy's sprints and tickets always come from the same report.
 A lesser copy answers `stale` and changes nothing.
 
+*Amendment A5 (2026-11-09, DF1 of `docs/analysis/2026-11-09-delivery-metrics-forge-trackers.md`;
+revised after the design review the same day).* A board whose tracker reads no history (GitHub,
+GitLab) never has a `history_at`, so its copies tie on every comparison and the last arrival
+wins: a daemon that last synced hours ago can replace a copy synced minutes ago.
+
+**What travels.** The daemon sends `facts.synced_at` = its token's `last_success_at` **only for
+a tracker whose adapter has `capabilities().history == false`**; for Jira it sends null. So the
+dōjō needs no knowledge of tracker kinds, and Jira's order is untouched, before and after its
+first history read (DF1).
+
+**Order.** The stored copy is kept (`stale`) or replaced (`accepted`) by the first rule that
+decides:
+
+1. Complete beats incomplete (unchanged).
+2. At least one copy has a `history_at`: the later wins, null lowest (unchanged).
+3. Both `history_at` null **and both `synced_at` non-null**: the incoming copy is `stale` when its
+   `synced_at` is earlier than the stored one's.
+4. Otherwise the later arrival wins (unchanged). This covers equal `synced_at`, and any pair where
+   either side has none: a Jira board, an old daemon, a row filed before A5.
+
+Rule 3 compares only two values that are both present, so an old daemon (no `synced_at`) is
+never locked out by a new one: it keeps today's later-arrival behaviour (design review F-DC1).
+
+**Clamp, not refuse.** The function stores `least(synced_at, now())`. `last_success_at` is
+never legitimately in the future, so a future value only shifts to the dōjō's clock: it can
+not pin a copy past real time, and a daemon whose clock runs fast is not refused (design
+review F-SEC1; `history_at` keeps its existing one-day refusal).
+
+**Malformed timestamps.** `checkDeliveryBody` refuses with 400 a `history_at` or `synced_at`
+that is a string `Date.parse` cannot read, through one shared check for both fields; today such
+a string reaches the function's cast and fails as 500 (design review F-SEC2).
+
+**B11.** `synced_at` is held per copy only to order copies, as `history_at` already is. It is
+not a connection setting: it names no URL, account or field, and nothing can be connected or
+re-synced from it. B11's "no sync state" does not cover it (user, 2026-11-09, DF3).
+
+**Rollout**, in either order: the ingest passes facts keys it does not name through to the
+function, which reads only named keys, so an old dōjō ignores `synced_at`; an old daemon sends
+none, which reads as null and falls to rule 4. The column is nullable and added by the schema
+reconcile (schema unreleased), with no backfill.
+
+**Changes, by surface.**
+
+| Surface | Change |
+|---|---|
+| `crates/senseid/src/dojo/delivery.rs` | `BoardFacts.synced_at: Option<DateTime<Utc>>`; `facts_json` emits it; `facts_hash` also removes `synced_at` and its doc says so; tests building `BoardFacts` (e.g. `:485`) set it |
+| `crates/senseid/src/tasks/dojo_delivery.rs` | `build_one` skips the board (`Ok(None)`) when `before.last_success_at` is null; sets `synced_at` from it when `capabilities_of_kind(&t.kind)?.history` is false, else `None`; module doc |
+| `crates/senseid/src/tasks/dojo_sync.rs` | tests for gate 19 |
+| `database/ddl/table/dojo/delivery_boards.ddl` | nullable `synced_at timestamptz` and its column comment; table comment's order and its B11 sentence; `history_at` comment no longer "the" orderer |
+| `database/ddl/function/dojo/file_delivery_facts.ddl` | `v_synced := least((v_facts ->> 'synced_at')::timestamptz, now())`; rule 3 in the stale predicate; insert and update set `synced_at`; header comment and `comment on function` state the four rules |
+| `database/tests/dojo/delivery_facts.sql` | header restates the order; gates 20–23 (sql) |
+| `dojo/src/lib/server/delivery-ingest.ts` | `DeliveryFacts.synced_at?: string \| null`; the shared timestamp check for `history_at` and `synced_at`; its spec file for gate 23 (dojo) |
+| `docs/backlog.md` | close the DF1 entry when built |
 **Workspace.** Resolved from the `repository_id`s of the caller's verified
 `all_my_repositories` rows for `tenant_id`, through `dojo.repositories_in_workspaces` — never
 by matching `repo_key` across tenants. No workspace → 404; more than one → 409.
@@ -406,7 +469,7 @@ admits only the kind's D1 fields, each of its type, with ≥ 1 session; the effo
 bounded like the facts (5 000 tickets, 1 000 sprints, 4 MB) in the database itself. *A2:* one function, `dojo.file_delivery(p_tenant, p_repo_keys, p_board,
 p_effort)`, files the facts (as `file_delivery_facts`) and then the effort in one transaction
 and answers `{facts, effort}`; effort is filed even when the facts answer `stale` (it is the
-caller's own). A row's `repo_keys` outside the request's → 400 (`invalid_parameter_value`);
+caller's own). A row's `repo_keys` outside the request's → 422 (`invalid_parameter_value`, mapped by `db-refusal.ts`; corrected 2026-11-09, was 400);
 its `repository_ids` are the verified ids of those keys.
 
 **Merge** (*A2, as built*): `dojo.delivery_effort_merged(p_kind, p_rows jsonb,
@@ -549,6 +612,31 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
 18. **View (dojo).** With fixture 14 loaded, the Delivery view shows `T-1`'s title,
     "from 2 contributors", and an error state on a failed read.
 
+**A5 (copy order without history).**
+
+19. **Push (daemon).** `facts_json` carries `synced_at`; two facts differing only in `synced_at`
+    give one `facts_hash`. In `tasks/dojo_sync.rs`, beside
+    `an_unchanged_board_is_not_sent_again_until_its_mark_expires` and on its fixture: a GitLab
+    tracker's pushed body carries `synced_at` = its `last_success_at`; the same board as Jira
+    carries `synced_at: null`; moving only `last_success_at` (`UPDATE … SET last_success_at =
+    now()`) sends nothing on the next tick; a GitLab tracker whose `last_success_at` is set to
+    NULL after the board list is read is not posted.
+20. **Order without history (sql).** Both `history_at` null, both `pending_tickets` 0, stored
+    `synced_at` t5: incoming t3 → `stale`, the stored row, sprints and tickets unchanged;
+    incoming t7 → `accepted`, the row holds t7; incoming t5 → `accepted` (arrival). Incoming
+    with no `synced_at` against stored t5 → `accepted` (old daemon); incoming t3 against a
+    stored null → `accepted`.
+21. **Jira order unchanged (sql).** Stored `history_at` h2, `synced_at` null; incoming h3 →
+    `accepted`; incoming h1 → `stale`; incoming null history → `stale`. Two copies with both
+    `history_at` and both `synced_at` null, pending 3 each → the later arrives `accepted`.
+22. **Completeness first (sql).** Stored `pending_tickets` 0 at t1, incoming 3 at t9, both
+    history null → `stale`.
+23. **Clamp and shape (sql + dojo).** Incoming `synced_at` now + 2 days → `accepted`, and the
+    stored `synced_at` ≤ `now()`; a following copy with `synced_at` = now() → `accepted`.
+    `checkDeliveryBody`: `synced_at` absent, null or an ISO string → ok; `5` → 400;
+    `"garbage"` as `synced_at` or as `history_at` → 400 `facts.<field> must be a timestamp or
+    null`.
+
 ## Wrong gate
 
 - The Metrics section changes, or Delivery Metrics reads `workspace_metrics` or any
@@ -560,6 +648,10 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
 - An unknown value merges as 0, or a merged figure hides that it is partial.
 - A mid-backfill copy replaces a complete one, or a board's sprints and tickets come from
   different reports.
+- (A5) A no-history board's older-synced copy replaces a newer one; a Jira board sends a
+  `synced_at` or its order changes; `synced_at` is hashed, so every sync re-sends every board;
+  an old daemon's push (no `synced_at`) is refused or answered `stale` for lack of one; a
+  future `synced_at` is stored as given or refused.
 - `base_url`, an account, an issue URL, a description, comment or assignee, the hourly rate or
   `minutes_per_point` reaches the Dōjō, or `expected_minutes` / `time_variance_minutes` shows
   there.
@@ -600,3 +692,21 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
 | C22 | The Dōjō workspace route had one page, no sub-routes | `+page.svelte`, `+page.ts`, `metrics-load.spec.ts` | CONFIRMED (corrected); superseded by F2, which adds `workspaces/[id]/delivery` |
 | C23 | `GET /api/reason-codes/{domain}` serves `sdlc_metrics` | `routes.rs:491` | CONFIRMED |
 | C24 | Two installs produce the same `board_ref` for one board | `canonical_board_id` (`tracker/jira.rs:27`) for typed and pasted board ids; `normalize_base_url` | CONFIRMED (F2 build start) |
+
+### Claims for A5 (independent claims-verifier 2026-11-09, then corrected)
+
+| # | claim | evidence | verdict |
+|---|---|---|---|
+| C25 | GitHub and GitLab adapters read no history, so their trackers' `history_at` stays null | `github.rs:468`, `gitlab.rs:318` `history: false`; `history.rs:46` skips before writing; only writer `tracker_history.rs:149` | CONFIRMED |
+| C26 | every successful sync sets `last_success_at = now()`, unconditionally; nothing else sets it but a reconnect (NULL) | `trackers.rs:755`, `:1141`; failure path `:545` sets only `last_error` | CONFIRMED |
+| C27 | the consistency token carries `last_success_at`, read before and after the facts | `delivery.rs:50-56, :213`; `dojo_delivery.rs:102-106` | CONFIRMED |
+| C28 | `facts_hash` leaves out `history_at` and nothing else | `dojo/delivery.rs:165-171` | CONFIRMED |
+| C29 | the ingest checks no key set on `facts` and hands it whole to the function, which reads only named keys | `delivery-ingest.ts` `checkDeliveryBody` (`facts: f`); `file_delivery_facts.ddl` `->>` / `jsonb_to_recordset` | CONFIRMED |
+| C30 | an absent `facts.synced_at` reads as null | `('{"a":1}'::jsonb->>'synced_at')::timestamptz is null` → t | CONFIRMED |
+| C31 | today, equally complete copies with both `history_at` null are ordered by arrival only | `file_delivery_facts.ddl:90-93` | CONFIRMED |
+| C32 | the schema is unreleased and reconciled; a nullable column on an existing dōjō table needs no `apply/` script | no `released` in `design.yaml`; `deploy-dojo-db.sh:38-43`; precedent `f2b39c355` (v0.20.0) | CONFIRMED |
+| C33 | a `stale` answer is acknowledged, and that hash is re-sent only after the 6 h mark expiry | `dojo_delivery.rs:440-454`; `is_due` (`dojo/delivery.rs:424-435`) | MISLEADING → corrected (was "not retried") |
+| C34 | ~~a future value is refused with `invalid_parameter_value`, 400~~ | `db-refusal.ts:15` maps `22023` → 422 via `callFn` (`tenant-rows.ts:9-12`) | **FALSE**. Found by the verifier and the spec reviewer independently. Cost: gate 23 would have asserted a status the route never gives. A5 now clamps instead, so no refusal remains; the inherited D4 line (effort `repo_keys` → "400") was the same error and is corrected to 422 |
+| C35 | a board with `last_success_at` null is never listed, but the token is re-read separately and can read null | `delivery_trackers` `WHERE … last_success_at IS NOT NULL` (`delivery.rs:124`); `delivery_token`; `build_one` compares tokens for equality only | CONFIRMED. The first rewrite sent null here, which broke the Data invariant (spec:60) and let a reconnected tracker's copy win by arrival; corrected to skip (re-audit) |
+| C36 | `history_at` is the daemon's own clock and has a one-day future refusal | `tracker_history.rs:149` `now()`; `file_delivery_facts.ddl:69-71` | CONFIRMED |
+| C37 | a malformed timestamp string passes `checkDeliveryBody` and fails at the function's cast as 500 | `textOrNull` (`delivery-ingest.ts:225`) tests only "is a string"; 22007 is not in `db-refusal.ts` → 500 | CONFIRMED (security review; re-checked against `db-refusal.ts`) |
