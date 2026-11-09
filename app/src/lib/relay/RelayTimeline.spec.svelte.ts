@@ -70,7 +70,7 @@ describe('RelayTimeline', () => {
     cleanup.push(m.destroy);
     const lines = rows(m.container).map((r) => r.textContent?.replace(/\s+/g, ' ').trim());
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain('Assigned to L2');
+    expect(lines[0]).toContain('Assigned');
     expect(lines[0]).toContain('L2');
     expect(lines[1]).toContain('Reported');
     // Thin: the full detail stays folded until asked.

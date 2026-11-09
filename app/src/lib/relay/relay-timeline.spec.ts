@@ -77,11 +77,11 @@ describe('buildTimeline', () => {
         { ...base('assigned'), kind: 'assigned', props: { docs: [], owned_paths: [], acceptance: [] } } as unknown as RelayAction,
       ]),
     );
-    expect(rows.map((r) => r.title)).toEqual(['Assigned to L2', 'Reported — Work · impl r1']);
+    expect(rows.map((r) => r.title)).toEqual(['Assigned', 'Reported — Work · impl r1']);
   });
 
   it.each([
-    ['assigned', { docs: [], owned_paths: [], acceptance: [] }, 'Assigned to L2'],
+    ['assigned', { docs: [], owned_paths: [], acceptance: [] }, 'Assigned'],
     ['brief_updated', { docs: [] }, 'Brief updated'],
     ['started', {}, 'Started'],
     ['merged', { commits: [], into: 'develop', gates: [] }, 'Merged into develop'],
@@ -208,7 +208,7 @@ describe('buildTimeline', () => {
         'cancelled',
       ),
     );
-    expect(rows.map((r) => r.title)).toEqual(['Assigned to L2', 'Cancelled']);
+    expect(rows.map((r) => r.title)).toEqual(['Assigned', 'Cancelled']);
     expect(rows[1].at).toBe('2026-11-06T10:09:00Z');
     expect(rows[1].action).toBeNull();
   });
@@ -217,7 +217,7 @@ describe('buildTimeline', () => {
     const rows = buildTimeline(
       view([{ ...base('assigned'), kind: 'assigned', props: { docs: [], owned_paths: [], acceptance: [] } } as unknown as RelayAction]),
     );
-    expect(rows.map((r) => r.title)).toEqual(['Assigned to L2']);
+    expect(rows.map((r) => r.title)).toEqual(['Assigned']);
   });
 
   it('an unknown kind renders honestly, never silently', () => {

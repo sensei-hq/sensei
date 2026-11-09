@@ -25,7 +25,9 @@ const turn = (a: Extract<RelayAction, { kind: 'reported' }>): string =>
 function titleFor(action: RelayAction, lanes: RelayLaneRef[]): string | null {
   switch (action.kind) {
     case 'assigned':
-      return `Assigned to ${action.lane_code ?? '—'}`;
+      // History's precedent, plain: the action's lane is the assigner and
+      // props carry no assignee — naming the actor as the recipient lies.
+      return 'Assigned';
     case 'brief_updated':
       return 'Brief updated';
     case 'started':
