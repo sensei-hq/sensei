@@ -44,7 +44,7 @@ guards (§G8). Changed: `get_ticket`'s tracker selection (H5) and the read seam 
 | `board_ref` | **`project:<node id>`**: the project's GraphQL node id (`PVT_…`) from validate. A renamed project or owner keeps it, so one project can never be connected twice (the existing `board_already_connected` check on `board_ref`). |
 | `external_scope` | `<owner login>/<project number>`, lowercased, **at connect** (written only by connect, `db/pg_store/trackers.rs:1119`) |
 | `account` | The token's `login` from `GET /user` at validate |
-| `params` | `{"board_name", "owner", "owner_kind": "organization"\|"user", "number", "url", "iteration_field": <name>\|null}`. **`iteration_field` is set at validate** and refreshed by every snapshot. |
+| `params` | `{"board_name", "owner", "owner_kind": "organization"\|"user", "number", "url", "iteration_field": <name>\|null, "credential_scope": <owner>}`. **`iteration_field` is set at validate** and refreshed by every snapshot. |
 
 **Connect body** (`POST /api/workspaces/{id}/trackers`):
 
@@ -65,7 +65,7 @@ guards (§G8). Changed: `get_ticket`'s tracker selection (H5) and the read seam 
    with no port and no username or password. The path must be
    `/orgs/<owner>/projects/<n>` or `/users/<owner>/projects/<n>`, optionally followed
    by `/views/<v>` or `/`. A query or fragment is ignored. `<owner>` must match
-   `^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$` (no `%`-encoded bytes), `<n>` `^[0-9]{1,9}$`.
+   `^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$` (`_` for Enterprise Managed Users, amended at review) (no `%`-encoded bytes), `<n>` `^[0-9]{1,9}$`.
    Anything else → **`invalid_base_url`**.
 2. `api_token` missing or blank → `token_required`. `email_required` and
    `host_not_confirmed` are never returned: the host is fixed.
@@ -184,7 +184,7 @@ does not carry (`transport.rs:11`), and its docs give no shape for an iteration 
      fieldValueByName(name: $field) { __typename
        ... on ProjectV2ItemFieldIterationValue { iterationId } }
      content { __typename ... on Issue {
-       databaseId number title body state url createdAt updatedAt
+       databaseId number title state url createdAt updatedAt
        issueType { name }
        repository { nameWithOwner url }
        assignees(first: 1) { nodes { databaseId login } } } } }
@@ -430,7 +430,7 @@ headers in `RawResponse`).
 | E8 | Snapshot failures (DB) | a failing second items page → `last_error = 'http_error'` and the tasks untouched; 200 pages + `hasNextPage` → `http_error`; an unknown `iterationId` → `decode`; a named field gone → `not_found`; null name with two fields → `decode` |
 | E9 | No iteration field (recorded `no-field`) | `sprints` empty, every task `current_sprint_id IS NULL`, `last_error IS NULL` |
 | E10 | Board identity (DB) | the same project connected to workspace A, then (as `orgs/acme/3` and after a rename as `orgs/acme2/3`) to workspace B → `board_already_connected` |
-| E11 | Discovery (recorded `issue-on/off`, `pr`) | on the project → found with its sprint; off → absent; a PR number → absent; a missing repository (scripted `NOT_FOUND`) → absent; `acme/x/y#1`, `acme/platform#2147483648`, `a_b/platform#1` → absent with **no request sent**; containment on page 2 of `projectItems` → found; 10 pages, no match → `http_error` |
+| E11 | Discovery (recorded `issue-on/off`, `pr`) | on the project → found with its sprint; off → absent; a PR number → absent; a missing repository (scripted `NOT_FOUND`) → absent; `acme/x/y#1`, `acme/platform#2147483648`, `_ab/platform#1` → absent with **no request sent**; containment on page 2 of `projectItems` → found; 10 pages, no match → `http_error` |
 | E12 | `get_ticket` | `acme/platform#12` → 200; an issue the token sees but off the project → 404 `ticket_not_found`, no title in the body; a bare `#12` from a folder with `repo_key github.com/acme/platform`, in a workspace with a GitLab tracker `full_path acme` and a GitHub tracker → the **GitHub** tracker answers; a bare key from a `gitlab.example.com` folder never reaches GitHub; two GitHub trackers, the first `Ok(None)` → the second answers; the first `Err(Forbidden)` → 502 `forbidden`, no content; a nonexistent issue and an off-board issue → the **same** 404 `ticket_not_found` body; a repository the first tracker's token cannot see (`NOT_FOUND`) → the second tracker still answers; a GitHub tracker with no mirrored task in the repo → still found; no GitHub tracker → 404 `no_tracker_for_key` |
 | E13 | Guards and owner | PATCH write-back on a GitHub tracker → 409 `writeback_unsupported`; SDLC reasons `unsupported_by_tracker`; `/user` `type: "Bot"` → `NotAPerson`, `"User"` → `Person(id)` |
 | E14 | Kinds and DDL | `every_registered_kind_is_a_label_of_the_ddl_enum` green; the upgrade hook adds `github` to an enum holding `jira, gitlab`; the dbml enum lists `github` |
@@ -531,3 +531,21 @@ citations (LOW → fixed).
 **r2.2 narrow re-audit (→ r2.3):** four LOW: parent citations `:162`, `:277-283`; `types.ts:1773-1800`; the iteration-field node id gets its fake `PVTIF_n` and pattern; H3.2's remedy agrees with H1 validate 3.
 
 **Build amendment (G3, 2026-11-09):** `ConnectParams.sprint_field` and `BoardScope.params` (H7): validate and the snapshot had no way to read the chosen iteration field. Also observed while recording: GitHub omits archived items from `items` entirely (H3.4's filter stays as a second guard), and every H2.4 query ran unchanged against the live API.
+
+**Whole-slice review (2026-11-09, after G5; security NO FINDINGS):** a malformed `Q_ISSUE`
+answer (a missing `repository` or `issue` key, `pageInfo` or `isArchived`) is `decode`, and only
+an explicit `null` is absence (failure-mode, MED); a page with `hasNextPage` and no
+`endCursor` is `decode`, never a re-read of page 1 (LOW); `get_ticket` reads every candidate
+within one 25 s deadline (`TICKET_READ_DEADLINE`, under the MCP client's 30 s), else 502
+`transport` (MED); `Q_ITEMS` no longer selects `body`, which only `get_ticket` shows (LOW);
+GitHub's `decode` and `http_error` say what fixes them (MED); `iteration_field_ambiguous` with
+no names says to leave the field out (LOW); owners may hold `_` (LOW); tests added for E8,
+E9, E10 (renamed path), E12 (Forbidden → 502), E13 (`unsupported_by_tracker`), E14 (the
+hooks on a scratch enum, the dbml) and E16 (`fixtures_are_scrubbed`). **Open (user decision):**
+D14 keys a credential by `(workspace, kind, base_url)`, and GitHub's `base_url` is always
+`https://api.github.com`, so every GitHub project of a workspace shares the last token
+connected; a fine-grained token covers one owner, so projects of two owners cannot both sync.
+**Decided (user, 2026-11-09): per owner.** `params.credential_scope` = the owner, and connect
+re-keys only the workspace's boards with the same `(kind, base_url, credential_scope)`. Jira
+and GitLab store no scope, so their re-keying is unchanged (D14, amended). Test:
+`github_tokens_are_shared_per_owner_not_per_site`.

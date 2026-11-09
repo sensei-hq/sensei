@@ -37,7 +37,7 @@ week; `—` means no lane holds it yet. Per-module status and its evidence:
 | Sync hardening (L3 F8) | — | stored:None complement marks + warns once per cycle | remove the complement when every supported dōjō returns `stored` (then the warn and this row go away) | L3 |
 | Governance | ~50% | scope resolution, rule packs + adoption, resolved rules pulled | no violation/override store (G-GOV-AUDIT); no "what adopting changed here"; team scope #318 | — |
 | Learnings | ~60% | memories, Learnings screen, share-review, k ≥ 3 promotion, playbook rules | no `report_learning` / `report_memory_use`; no failure → lesson loop; too many competing verbs (D65) | L1 (after #314), L0 (spec) |
-| Trackers / sprints | ~35% | Jira and GitLab (daemon), boards per level (D40), sprints, Tickets screen | GitHub Issues / ADO adapters (D49, behind #310); tracker-ownership conflict; epics unread | L7 |
+| Trackers / sprints | ~40% | Jira, GitLab and GitHub Projects (daemon, D91, D92), boards per level (D40), sprints, Tickets screen | ADO adapter, dōjō-owned connections (D49, behind #310); tracker-ownership conflict; epics unread | L7 |
 | Teams / viewers | ~70% | roles, teams, invites, viewers, lead view | no viewer shell (D68); leads have no menu of their own; A4 writable workspaces | L4 |
 | Billing / plans | ~15% | `billing_accounts`, `seats`, `ScrBilling` | no provider, no subscription table; D46 entitlement is WP8; price to be announced (D75) | L4 (screen), L1 (WP8) |
 
