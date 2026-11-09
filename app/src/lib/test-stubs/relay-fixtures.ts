@@ -536,6 +536,7 @@ export function taskView(over: Partial<RelayTaskView> = {}): RelayTaskView {
       lane: { id: LANE.L1, code: 'L1', title: 'Diagrams', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5' },
       assigned_at: minutesAgo(240),
       completed_at: minutesAgo(10),
+      state_changed_at: minutesAgo(10),
       rounds: [
         { phase: 'tests', count: 1 },
         { phase: 'impl', count: 2 },

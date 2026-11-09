@@ -1,7 +1,8 @@
 <script lang="ts">
   // Relay · one task (D90; CONTRACT §1e, `relay.task_history`). Back link, title,
-  // state and ticket; one facts line; Run details folded; the task's open decision;
-  // Handed off; then the history, newest first, down to Assigned.
+  // state and ticket; one facts line; the timeline (F8, oldest first, entries
+  // expand); Run details folded; the task's open decision; Handed off; then the
+  // history, newest first, down to Assigned.
   //
   // Shared by both windows: the loader decides what was read, the base decides
   // where the back link and the view id point.
@@ -13,6 +14,7 @@
   import { hhmm, providerLabel, roundsLabel, taskStateLabel } from './relay-format.js';
   import DecisionRow from './DecisionRow.svelte';
   import HistoryEntry from './HistoryEntry.svelte';
+  import RelayTimeline from './RelayTimeline.svelte';
 
   let {
     state,
@@ -136,6 +138,8 @@
           {hhmm(task.assigned_at)} → {task.completed_at ? hhmm(task.completed_at) : 'now'} ·
           {roundsLabel(task.rounds)}
         </p>
+
+        <RelayTimeline {view} />
 
         <details class="rounded-sm border border-paper-edge p-3" data-run-details>
           <summary class="text-sm cursor-pointer">Run details</summary>

@@ -4244,9 +4244,10 @@ impl PgStore {
             Option<Uuid>,
             DateTime<Utc>,
             Option<DateTime<Utc>>,
+            DateTime<Utc>,
         )> = sqlx_core::query_as::query_as(
             "select title, repo_key, phase::text, workspace_id, state::text, round,
-                    item_id, lane_id, assigned_at, completed_at
+                    item_id, lane_id, assigned_at, completed_at, state_changed_at
              from relay.tasks where user_id = $1 and crew_id = $2 and id = $3",
         )
         .bind(user_id)
@@ -4266,6 +4267,7 @@ impl PgStore {
             lane_id,
             assigned_at,
             completed_at,
+            state_changed_at,
         )) = task
         else {
             return Err(RelayError::NotFound("task not found".into()));
@@ -4627,6 +4629,9 @@ impl PgStore {
                 "lane": lane_json,
                 "assigned_at": iso(assigned_at),
                 "completed_at": completed_at.map(iso),
+                // F8: the timeline stamps its derived terminal row from
+                // this (a cancel writes no action).
+                "state_changed_at": iso(state_changed_at),
                 "rounds": rounds
                     .iter()
                     .map(|(phase, count)| serde_json::json!({"phase": phase, "count": count}))
@@ -7029,6 +7034,26 @@ mod tests {
         assert_eq!(v["history"][0]["lane_code"], "L2");
         assert_eq!(v["lanes"][0]["code"], "L1");
         assert_eq!(v["decision"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn task_view_serves_state_changed_at() {
+        // F8: the timeline stamps its derived terminal row (a cancel writes
+        // no action) from the header's state_changed_at.
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xf2);
+        fx_task(&pg, u1(), t, c1, Some(a2), "cancelled", "tests", 1).await;
+        sqlx_core::query::query(
+            "update relay.tasks set state_changed_at = '2026-11-06T10:05:00Z' where id = $1",
+        )
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let v = pg.relay_task_view(u1(), c1, t).await.unwrap();
+        assert_eq!(v["task"]["state"], "cancelled");
+        assert_eq!(v["task"]["state_changed_at"], "2026-11-06T10:05:00Z");
     }
 
     #[tokio::test]

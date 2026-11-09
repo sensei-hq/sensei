@@ -263,6 +263,8 @@ export interface RelayTaskHeader {
   lane: RelayTaskLane | null;
   assigned_at: string;
   completed_at: string | null;
+  /** F8: every transition stamps it; the timeline stamps derived rows from it. */
+  state_changed_at: string;
   /** Rounds by phase ("tests 1 · impl 2"). */
   rounds: { phase: RelayTaskPhase; count: number }[];
   needs_answer: boolean;
