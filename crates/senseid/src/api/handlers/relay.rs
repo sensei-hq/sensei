@@ -1696,12 +1696,8 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{view}");
         assert_eq!(view["task"]["state"], "working");
         assert_eq!(view["task"]["round"], 1);
-        let reported = view["history"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|a| a["kind"] == "reported")
-            .unwrap();
+        let reported =
+            view["history"].as_array().unwrap().iter().find(|a| a["kind"] == "reported").unwrap();
         assert_eq!(reported["props"]["partial"], true);
     }
 

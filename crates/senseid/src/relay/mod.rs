@@ -1080,12 +1080,8 @@ mod tests {
     #[test]
     fn validate_props_reported_accepts_partial_flag() {
         // F1: `partial` is an optional bool on reported actions.
-        assert!(
-            validate_props(RelayActionKind::Reported, &json!({"partial": true})).is_ok()
-        );
-        assert!(
-            validate_props(RelayActionKind::Reported, &json!({"partial": "yes"})).is_err()
-        );
+        assert!(validate_props(RelayActionKind::Reported, &json!({"partial": true})).is_ok());
+        assert!(validate_props(RelayActionKind::Reported, &json!({"partial": "yes"})).is_err());
     }
 
     #[test]
