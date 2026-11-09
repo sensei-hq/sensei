@@ -74,6 +74,12 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
    - **tests** (red, disabled, each failing for its own reason) → **review** → **impl** → **review** → **merge**.
    - Each step is its own task with a dependency on the one before.
 6. **Assign.** The task goes to a live lane whose capabilities fit, so work stays even across lanes.
+   Live means holding a granted, unexpired lease: assigning onto a dead lease is refused (409),
+   because nothing would ever recover the task — the sweep only interrupts leases it sees expire,
+   and cancel refuses while the holder is still registered while re-assign refuses a held task.
+   Wake the lane first, then assign. Crews are isolated at assign: a lane or task from another
+   crew reads as not found, and a lane's role never changes — swapping roles means registering
+   a new lane.
 
 ## 6. The task queue
 
@@ -111,6 +117,14 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
   - mutation probes run, plus who reviewed and with which model.
 
   Rulings are separate events, so they're never lost in an appended file.
+- **Reviewer pick and re-pick.** `assign_task` may name a `reviewer_lane`; the name is recorded as
+  the task's reviewer. The first `report_task` keeps a named reviewer as-is; with none named, the
+  broker picks the least-loaded live lane that is not the author (ties to the smallest id, else the
+  coordinator unless it is the author). Leases die after the pick: the lease sweep (60 s cadence)
+  re-picks dead reviewers over the live lanes and clears the slot when nobody is live (Q17-REC).
+  The re-pick is silent — no history row names it and the task view shows no reviewer — so the
+  coordinator learns the reviewer from the report response, and after a re-pick only from the filed
+  review itself (round-1 R3 healed L3→L4→L5 unheard and merged as "approved by L4" while L5 filed it).
 - **Decisions** (`ask_decision` / `answer_decision`): options, a recommendation, and who answered. A person
   answers on the desktop app or the dōjō (mobile relay).
 
