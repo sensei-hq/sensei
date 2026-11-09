@@ -41,22 +41,24 @@ This section overrides "one project has one tracker" below (spec `docs/spec/trac
 
 
 
-Where a user **connects this project to its issue tracker**: Jira or GitLab (amended
-2026-11-07, `tracker-gitlab.md`). One project has one tracker (spec R1), so this is a
+Where a user **connects this project to its issue tracker**: Jira, GitLab or GitHub
+(amended 2026-11-07, `tracker-gitlab.md`; 2026-11-09, `tracker-github.md`). One project has one tracker (spec R1), so this is a
 per-project screen, not a global setting.
 
 **Eyebrow:** `繋 · INTEGRATIONS`. **Header:** "Issue trackers". **Sub-line** (superseded
-2026-10-26 by tracker-metrics-writeback W-UI, and 2026-11-07 by `tracker-gitlab.md`):
-"Connect this workspace's Jira or GitLab boards, each at a level, so sensei can link AI
-sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to
-you, sensei writes these numbers back to Jira, as a comment or in the fields you map
-(GitLab boards are read-only for now)."
+2026-10-26 by tracker-metrics-writeback W-UI, 2026-11-07 by `tracker-gitlab.md`, and
+2026-11-09 by `tracker-github.md`):
+"Connect this workspace's Jira, GitLab or GitHub boards, each at a level, so sensei can
+link AI sessions to tickets and report time, tokens and cost per ticket. On tickets
+assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields
+you map (GitLab and GitHub boards are read-only for now)."
 
 ## Write-back on each board card (tracker-metrics-writeback W-UI)
 
-A **GitLab** card has neither the checkbox nor **Fields**. In their place it shows
-"Write-back: not available for GitLab yet" (`data-writeback="unsupported"`): the daemon
-refuses write-back for GitLab with 409 `writeback_unsupported` (`tracker-gitlab.md` §G8).
+A **GitLab** or **GitHub** card has neither the checkbox nor **Fields**. In their place it
+shows "Write-back: not available for GitLab yet" (or "…for GitHub yet",
+`data-writeback="unsupported"`): the daemon refuses write-back for both with 409
+`writeback_unsupported` (`tracker-gitlab.md` §G8, `tracker-github.md` §H6).
 Everything below is the Jira card's.
 
 - **Write back to Jira**: a labelled checkbox (`data-action="writeback"`) that sends
@@ -94,8 +96,8 @@ Everything below is the Jira card's.
 
 ## States
 
-**1 · Not connected.** A tracker picker of two radios, **Jira** (selected) and
-**GitLab** (amended 2026-11-07: it replaced "GitLab, coming soon"). The radios are
+**1 · Not connected.** A tracker picker of three radios, **Jira** (selected), **GitLab**
+(amended 2026-11-07: it replaced "GitLab, coming soon") and **GitHub** (amended 2026-11-09). The radios are
 disabled while a token is being replaced, so the board's own tracker stays chosen. Below
 it is the chosen tracker's form. The Jira form has its fields in this order everywhere
 they appear:
@@ -120,6 +122,21 @@ The **GitLab form** (`tracker-gitlab.md` §G1) has no email and no *Advanced* fi
 
 The GitLab form sends `{board_url, api_token}`, plus `confirm_host` when one was typed.
 The daemon compares the host; the UI only reads it to decide whether to ask.
+
+The **GitHub form** (`tracker-github.md` §H1, §H2) has no email, no host and no *Advanced*
+fields:
+
+| # | Label | Input | Help text |
+|---|---|---|---|
+| 1 | Project URL | text | "Open the project on GitHub and copy the address bar, e.g. https://github.com/orgs/acme/projects/3." |
+| 2 | Access token | `type="password"`, never echoed | "Create a fine-grained, read-only token with Projects: read on the owner and Issues: read on the project's repositories. A classic token with repo and read:project also works, but can write to every repository it reaches. A ticket in a repository the token can't read shows as not found." The `unauthorized` alert links to `https://github.com/settings/personal-access-tokens/new`. |
+| 3 | Iteration field (optional) | text | "Only when the project has more than one Iteration field: its name, as the project shows it." |
+
+The GitHub form sends `{board_url, api_token}`, plus `iteration_field` when one was typed.
+On 422 `iteration_field_ambiguous` the alert reads "Choose the project's Iteration field:
+<names>." and, under field 3, a row of buttons (`data-github-choices`), one per name the
+daemon returned; a button fills field 3. **Connect** for GitHub needs the URL and the
+token.
 
 **Connect** stays disabled until Board URL (or Site + Board id), email and token are
 all non-empty (Jira), or until the URL, the token and, for a host other than
@@ -156,7 +173,12 @@ Write-back: not available for GitLab yet
 
 - Fields come from `GET …/trackers`: `base_url`, `external_scope`, `board_name`,
   `board_ref`, `status`, `last_success_at`, `counts`; for GitLab also `full_path`,
-  `sprint_source` and `sprint_source_changed_at` (from the row's `params`, null for Jira).
+  `sprint_source` and `sprint_source_changed_at`; for GitHub also `url` and
+  `iteration_field` (all from the row's `params`, null for the other kinds).
+- A GitHub card (amended 2026-11-09) is titled `GitHub · <owner>/<number> · <board_name>`,
+  its sprints line reads "Sprints: the <iteration_field> iteration field" (none when the
+  project has no Iteration field), and **Replace token** re-sends `board_url = url` and
+  the stored `iteration_field`, so only the token is new.
 - GitLab's title is `GitLab · <host> · <full_path>` (`external_scope` when `full_path`
   is absent), followed by ` (<board_name>)` when the name differs from the path.
 - **Sprints line** (GitLab, `data-sprint-source`): "Sprints: iterations" or "Sprints:

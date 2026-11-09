@@ -165,10 +165,10 @@ message (same words as the Integrations screen's table; one shared mapping) and 
      there is no "≥" and no note.
    - A lane on one sprint shows that sprint's row; on All tickets or the Backlog, the board's
      project row. A `history_pending` sprint shows that reason's summary. On a GitLab
-     board, a started, dated sprint's row, the project row's predictability and a
+     or GitHub board, a started, dated sprint's row, the project row's predictability and a
      ticket's estimate show the summary of
      `unsupported_by_tracker` ("Not available from this tracker"), never `history_pending`
-     or `not_synced` (`tracker-gitlab.md` §G8).
+     or `not_synced` (`tracker-gitlab.md` §G8, `tracker-github.md` §H6).
    - The reason vocabulary failing to load is the daemon-error state with Retry.
    - Tests: state spec and component spec.
 
@@ -181,7 +181,7 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 - A cycle time computed by adding session times, or session time by adding active times.
 - Any assignee, author or other person attribute shown. (`assigned_to_me` and the write-back state are not person data; showing them is allowed.)
 - Any request that changes the tracker, or any write route called from this screen.
-- "Jira" named for a GitLab board's sprints or tickets.
+- "Jira" named for a GitLab or GitHub board's sprints or tickets.
 - An SDLC figure shown as `0`, `0%` or "—" when the daemon gave a reason. A reason shown
   as its raw code. A defect count without "≥" while runs are unknown. A sprint row built from its tickets' figures. A project row when a
   sprint is chosen.
