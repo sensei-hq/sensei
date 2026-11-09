@@ -168,6 +168,22 @@ describe('Relay · Now — Needs you', () => {
     expect(section(c, 'needs-you')).toBeNull();
   });
 
+  it('a crew-to-person message: sending lane code, excerpt, and its task link', async () => {
+    // Q2 part 2: to.person mail surfaces in Needs you newest-first. Read
+    // state is the daemon's (delivered/read receipts retire the row); the
+    // screen re-reads rather than guessing, as with answered decisions.
+    const { c } = await open({
+      now: F.ok(F.now({ decisions: [], triage: [], person_messages: [F.personMessage()] })),
+    });
+    const needs = need(section(c, 'needs-you'), 'needs-you');
+    const row = need(one(needs, '[data-person-message]'), 'message row');
+    expect(text(row)).toContain('L2');
+    expect(text(row)).toContain('The migration needs your eyes');
+    expect(one(row, `a[href="/workspace/w1/relay/${F.CREW_ID}/t-logs"]`)).not.toBeNull();
+    // Retirement is the daemon's (read receipts); the screen draws what the
+    // feed serves — an empty feed draws no section, per the test above.
+  });
+
   it('each decision: question, context, options with its own recommended one marked, Answer, and its task', async () => {
     const { c } = await open({
       now: F.ok(
