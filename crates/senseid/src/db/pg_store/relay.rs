@@ -23,10 +23,11 @@ use crate::relay::envelope::{
 use crate::relay::{
     Caller, DISK_FLOOR_GB, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS, RESOURCE_LEASE_TTL_SECS,
     RegisterMode, RelayActionKind, RelayError, RelayFindingSeverity, RelayFloors, RelayGuidance,
-    RelayItemKind, RelayLeaseState, RelayRole, RelaySurface, RelayTaskPhase, RelayTaskState,
-    RelayTicketProvider, ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent, check_summary_len,
-    decide_resource_grant, guard_markdown, hash_lane_token, pick_reviewer, register_mode,
-    relay_guidance_for, resolve_surface, transition, validate_props,
+    RelayItemKind, RelayLeaseState, RelayLimitScope, RelayRole, RelayStepState, RelaySurface,
+    RelayTaskPhase, RelayTaskState, RelayTicketProvider, ResourceGrant, ReviewVerdict,
+    SWAP_FLOOR_GB, TaskEvent, check_summary_len, decide_resource_grant, guard_markdown,
+    hash_lane_token, pick_reviewer, register_mode, relay_guidance_for, resolve_surface, transition,
+    validate_props,
 };
 use serde_json::json;
 
@@ -74,6 +75,24 @@ pub struct RelayLaneSession {
 #[derive(Debug, Clone)]
 pub struct RelayHeartbeatOutput {
     pub expires_at: DateTime<Utc>,
+}
+
+/// `POST /api/relay/limit_pause`: the lane reports quota exhaustion. The
+/// pause is distinct from lease expiry (the lease may be live); the sweep
+/// suspends the held task without expiring the lane.
+#[derive(Debug, Clone)]
+pub struct RelayLimitPauseInput {
+    pub scope: RelayLimitScope,
+    /// Quota-reset time from the warning; null when unknown (any beat
+    /// resumes then).
+    pub resumes_at: Option<DateTime<Utc>>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RelayLimitPauseOutput {
+    pub scope: RelayLimitScope,
+    pub resumes_at: Option<DateTime<Utc>>,
 }
 
 /// `POST /api/relay/reregister`: resume with the checkpoint. No new token —
@@ -175,6 +194,29 @@ pub struct RelayHandoverOutput {
     pub task_id: Uuid,
     pub state: RelayTaskState,
     pub round: i32,
+}
+
+/// `POST /api/relay/tasks/{id}/steps` (holder, F8).
+#[derive(Debug, Clone)]
+pub struct RelayStepInput {
+    /// Stable within the task; upserts by this.
+    pub key: String,
+    pub title: String,
+    pub state: RelayStepState,
+    /// Required on `skipped`, forbidden elsewhere.
+    pub reason: Option<String>,
+}
+
+/// `POST /api/relay/tasks/{id}/steps` (holder, F8).
+#[derive(Debug, Clone)]
+pub struct RelayStepOutput {
+    pub key: String,
+    pub title: String,
+    pub state: RelayStepState,
+    pub reason: Option<String>,
+    pub updated_at: String,
+    /// True when the post created the key (the stream reads add/update).
+    pub created: bool,
 }
 
 /// `POST /api/relay/crews/{id}/close` (coordinator, F3).
@@ -289,6 +331,14 @@ pub struct RelayAskInput {
 #[derive(Debug, Clone)]
 pub struct RelayAskOutput {
     pub decision_id: Uuid,
+}
+
+/// Answering a decision: the action id plus the task it unblocks, if
+/// the decision hangs off one (F8 streams the task id).
+#[derive(Debug, Clone)]
+pub struct RelayAnswerOutput {
+    pub action_id: Uuid,
+    pub task_id: Option<Uuid>,
 }
 
 /// `POST /api/relay/decisions/{id}/answer` (person and lane share it; the
@@ -1138,8 +1188,62 @@ impl PgStore {
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
+        // A beat at or past the resume time ends a limit pause (unknown
+        // resume: any beat resumes). Earlier beats renew only.
+        sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = null, limit_scope = null,
+                    limit_resumes_at = null, limit_note = null
+             where id = $1 and limit_paused_at is not null
+               and (limit_resumes_at is null or limit_resumes_at <= $2)",
+        )
+        .bind(lane_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         Ok(RelayHeartbeatOutput { expires_at: expires })
+    }
+
+    /// Record a lane's quota exhaustion (re-pausable: a later report
+    /// overwrites). The lease is untouched — heartbeat alone renews —
+    /// and the sweep suspends the held task without expiring the lane.
+    pub async fn relay_report_limit_pause(
+        &self,
+        lane_id: Uuid,
+        input: RelayLimitPauseInput,
+        now: DateTime<Utc>,
+    ) -> Result<RelayLimitPauseOutput, RelayError> {
+        let lane: Option<Option<DateTime<Utc>>> = sqlx_core::query_scalar::query_scalar(
+            "select unregistered_at from relay.lanes where id = $1",
+        )
+        .bind(lane_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some(unregistered_at) = lane else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        if unregistered_at.is_some() {
+            return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
+        if let Some(note) = input.note.as_deref() {
+            check_summary(note, "note")?;
+        }
+        sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = $1, limit_scope = $2::relay.limit_scope,
+                    limit_resumes_at = $3, limit_note = $4
+             where id = $5",
+        )
+        .bind(now)
+        .bind(word(input.scope))
+        .bind(input.resumes_at)
+        .bind(input.note.as_deref())
+        .bind(lane_id)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(RelayLimitPauseOutput { scope: input.scope, resumes_at: input.resumes_at })
     }
 
     /// Resume an unregistered (or lapsed) lane: a fresh lease plus the
@@ -1164,11 +1268,17 @@ impl PgStore {
         let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
         let mut tx = self.pool().begin().await.map_err(db_err)?;
         Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
-        sqlx_core::query::query("update relay.lanes set unregistered_at = null where id = $1")
-            .bind(lane_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+        // Resuming returns the lane to live duty: no stale limit pause
+        // survives the round trip.
+        sqlx_core::query::query(
+            "update relay.lanes set unregistered_at = null, limit_paused_at = null,
+                    limit_scope = null, limit_resumes_at = null, limit_note = null
+             where id = $1",
+        )
+        .bind(lane_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
         sqlx_core::query::query(
             "insert into relay.leases
                (user_id, id, crew_id, lane_id, kind, state, expires_at, granted_at)
@@ -2479,7 +2589,7 @@ impl PgStore {
         caller: RelayCaller,
         decision_id: Uuid,
         input: RelayAnswerInput,
-    ) -> Result<Uuid, RelayError> {
+    ) -> Result<RelayAnswerOutput, RelayError> {
         let ask: Option<(Uuid, Option<Uuid>, serde_json::Value, Option<i32>, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, task_id, props, round, phase::text from relay.actions
@@ -2629,7 +2739,7 @@ impl PgStore {
             .map_err(db_err)?;
         }
         tx.commit().await.map_err(db_err)?;
-        Ok(answer_id)
+        Ok(RelayAnswerOutput { action_id: answer_id, task_id })
     }
 
     /// Queue a message on the bus — person and lane share it.
@@ -3139,6 +3249,117 @@ impl PgStore {
         Ok(RelayHandoverOutput { task_id, state: next, round: new_round })
     }
 
+    /// Post a checklist-step update (holder only, F8): the lane narrates
+    /// its turn step by step (`open` → `done`, or `skipped` with a
+    /// reason). Steps live on the task as a flat jsonb checklist in
+    /// insertion order; the task view serves them as-is and the screen
+    /// renders the checklist. Only the holding lane posts, only while
+    /// `working` or `rework` (steps describe the work turn — reporting
+    /// moves on). Done/skipped never reopen (re-posting the same state
+    /// is a no-op); a new turn posts a new key.
+    pub async fn relay_post_step(
+        &self,
+        user_id: Uuid,
+        caller_lane: Uuid,
+        task_id: Uuid,
+        input: RelayStepInput,
+    ) -> Result<RelayStepOutput, RelayError> {
+        let key = input.key.trim();
+        if key.is_empty() {
+            return Err(RelayError::Validation("step key is empty".into()));
+        }
+        if key.len() > 120 {
+            return Err(RelayError::Validation(format!(
+                "step key too long: {} > 120 chars",
+                key.len()
+            )));
+        }
+        if input.title.trim().is_empty() {
+            return Err(RelayError::Validation("step title is empty".into()));
+        }
+        check_summary(&input.title, "title")?;
+        let reason = match (&input.state, input.reason.as_deref()) {
+            (RelayStepState::Skipped, Some(r)) if !r.trim().is_empty() => {
+                check_summary(r, "reason")?;
+                Some(r.to_string())
+            }
+            (RelayStepState::Skipped, _) => {
+                return Err(RelayError::Validation("a skipped step needs a reason".into()));
+            }
+            (_, Some(r)) if !r.trim().is_empty() => {
+                return Err(RelayError::Validation("only a skipped step carries a reason".into()));
+            }
+            _ => None,
+        };
+        let task: Option<(Option<Uuid>, String, serde_json::Value)> =
+            sqlx_core::query_as::query_as(
+                "select lane_id, state::text, steps from relay.tasks
+                 where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+        let Some((task_lane, state, stored)) = task else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        if task_lane != Some(caller_lane) {
+            return Err(RelayError::Forbidden("only the holder posts steps".into()));
+        }
+        let cur = parse_state(&state)?;
+        if !matches!(cur, RelayTaskState::Working | RelayTaskState::Rework) {
+            return Err(RelayError::Conflict(format!("cannot post steps to a {state} task")));
+        }
+        let next = word(input.state);
+        let now: DateTime<Utc> = sqlx_core::query_scalar::query_scalar("select current_timestamp")
+            .fetch_one(self.pool())
+            .await
+            .map_err(db_err)?;
+        let stamp = iso(now);
+        let stored_reason =
+            reason.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null);
+        let mut steps = stored.as_array().cloned().unwrap_or_default();
+        let created = !steps.iter().any(|s| s.get("key").and_then(|v| v.as_str()) == Some(key));
+        if let Some(existing) =
+            steps.iter_mut().find(|s| s.get("key").and_then(|v| v.as_str()) == Some(key))
+        {
+            let prev = existing.get("state").and_then(|v| v.as_str()).unwrap_or("open");
+            if prev != next && prev != "open" {
+                return Err(RelayError::Conflict(format!("step '{key}' is already {prev}")));
+            }
+            existing["title"] = serde_json::Value::String(input.title.clone());
+            existing["state"] = serde_json::Value::String(next);
+            existing["reason"] = stored_reason;
+            existing["updated_at"] = serde_json::Value::String(stamp.clone());
+        } else {
+            steps.push(serde_json::json!({
+                "key": key,
+                "title": input.title.clone(),
+                "state": next,
+                "reason": stored_reason,
+                "updated_at": stamp.clone(),
+            }));
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        sqlx_core::query::query("update relay.tasks set steps = $1 where user_id = $2 and id = $3")
+            .bind(serde_json::Value::Array(steps))
+            .bind(user_id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayStepOutput {
+            key: key.to_string(),
+            title: input.title,
+            state: input.state,
+            reason,
+            updated_at: stamp,
+            created,
+        })
+    }
+
     /// Close a crew (coordinator only, F3): the crew's work is over when
     /// its lanes are gone. "Zero live lanes" counts beside the caller —
     /// the coordinator closes, then unregisters (a strict zero is
@@ -3638,6 +3859,71 @@ impl PgStore {
                 interrupted_tasks += 1;
             }
         }
+        // Limit-paused lanes keep their leases but cannot work: suspend
+        // their active set for re-offer elsewhere WITHOUT expiring them —
+        // the lane is paused, not dead, and never lands in expired_leases.
+        // Same writes as the expiry branch (fed `now`, block memory
+        // cleared), distinct event; already-suspended lanes no-op.
+        let paused: Vec<(Uuid, Uuid, Uuid)> = sqlx_core::query_as::query_as(
+            "select l.user_id, l.crew_id, l.id from relay.lanes l
+             where l.limit_paused_at is not null
+               and exists (
+                 select 1 from relay.leases s
+                 where s.lane_id = l.id and s.kind = 'lane'
+                   and s.state = 'granted' and s.expires_at > $1)",
+        )
+        .bind(now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        for (user_id, crew_id, lane_id) in &paused {
+            let tasks: Vec<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
+                "select id, state::text, round, phase::text from relay.tasks
+                 where user_id = $1 and lane_id = $2
+                   and state in ('assigned', 'working', 'in_review', 'rework', 'blocked')",
+            )
+            .bind(user_id)
+            .bind(lane_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            for (task_id, state, round, phase) in tasks {
+                let next = transition(parse_state(&state)?, TaskEvent::LimitPaused)
+                    .map_err(|_| RelayError::Conflict("task cannot be suspended".into()))?;
+                sqlx_core::query::query(
+                    "update relay.tasks set state = $1::relay.task_state,
+                            blocked_from_state = null,
+                            state_changed_at = $2
+                     where user_id = $3 and id = $4",
+                )
+                .bind(word(next))
+                .bind(now)
+                .bind(user_id)
+                .bind(task_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                sqlx_core::query::query(
+                    "insert into relay.actions
+                       (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                        props, created_at)
+                     values ($1, $2, $3, $4, $5, 'interrupted'::relay.action_kind, $6,
+                             $7::relay.task_phase, '{}', $8)",
+                )
+                .bind(user_id)
+                .bind(new_id())
+                .bind(crew_id)
+                .bind(task_id)
+                .bind(lane_id)
+                .bind(round)
+                .bind(phase)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                interrupted_tasks += 1;
+            }
+        }
         // Re-offer tasks past the grace, measured from the latest
         // `interrupted` action. Tasks without one are left alone (the grace
         // has nothing to measure from).
@@ -3769,20 +4055,39 @@ impl PgStore {
         })
     }
 
-    /// The daemon user behind person reads and register (Q19-REC): the
-    /// dōjō principal id from the sign-in session. Fails closed
-    /// (`SignInRequired`) when the machine never signed in — never a
-    /// minted stand-in (a miss is an error, never an invented row).
+    /// The daemon user behind person reads and register (local identity,
+    /// user ruling 2026-11-09; Q19 superseded): the stable machine-local id
+    /// from `relay.daemon_user`, minted once on first use. Persona and
+    /// principal state never affect it — no precedence, no fallback, no
+    /// 401. Sync maps local→principal at the dōjō boundary; this id never
+    /// changes, so relay rows are never re-keyed.
     pub async fn relay_current_user(&self) -> Result<Uuid, RelayError> {
-        // The DDL's own seam: the chosen default persona's dōjō principal.
-        // No default, or an unlinked one, is a machine that never signed in.
-        let principal: Option<Option<Uuid>> = sqlx_core::query_scalar::query_scalar(
-            "select principal_id from sensei.personas where is_chosen_default limit 1",
+        // Steady state is one indexed read; the mint runs once per machine.
+        // Two racing first calls both fall through to the insert, the loser
+        // no-ops on the singleton PK, and both read back the winner's row.
+        let id: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select user_id from relay.daemon_user where singleton",
         )
         .fetch_optional(self.pool())
         .await
         .map_err(db_err)?;
-        principal.flatten().ok_or(RelayError::SignInRequired)
+        if let Some(id) = id {
+            return Ok(id);
+        }
+        sqlx_core::query::query(
+            "insert into relay.daemon_user (singleton, user_id) values (true, $1)
+             on conflict (singleton) do nothing",
+        )
+        .bind(new_id())
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        sqlx_core::query_scalar::query_scalar(
+            "select user_id from relay.daemon_user where singleton",
+        )
+        .fetch_one(self.pool())
+        .await
+        .map_err(db_err)
     }
 
     /// `RelayNow`, exactly per `relay-api.ts` — crews, facets, lanes,
@@ -3905,6 +4210,9 @@ impl PgStore {
                     "model": payload.get("model"),
                     "lease_state": lease_state,
                     "lease_expires_at": lease_expires_at,
+                    "limit_scope": payload.get("limit_scope"),
+                    "limit_resumes_at": payload.get("limit_resumes_at"),
+                    "limit_note": payload.get("limit_note"),
                     "task": payload.get("task"),
                 })
             })
@@ -3951,6 +4259,71 @@ impl PgStore {
                 })
             })
             .collect();
+        // Q2 part 2: crew → person mail for Needs-you, newest first.
+        // Reading walks the envelope's receipt ladder for the person
+        // reader (who is no lane, so the receipts' lane is null):
+        // inclusion delivers, a later fetch reads, and the view retires
+        // read rows — one transaction with the read, no ack tool.
+        let person_rows: Vec<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.id, v.crew_id, v.payload from relay.now v
+                 where v.user_id = $1 and v.section = 'person_message' and v.crew_id = any($2)
+                 order by v.payload->>'sent_at' desc, v.id desc",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let mut person_json = Vec::with_capacity(person_rows.len());
+        for (id, crew_id, payload) in &person_rows {
+            person_json.push(serde_json::json!({
+                "id": id.to_string(),
+                "crew_id": crew_id.to_string(),
+                "task_id": payload.get("task_id"),
+                "task_title": payload.get("task_title"),
+                "from_lane_code": payload.get("from_lane_code"),
+                "text": payload
+                    .get("text")
+                    .filter(|v| !v.is_null())
+                    .cloned()
+                    .unwrap_or(serde_json::Value::String(String::new())),
+                "sent_at": payload.get("sent_at"),
+            }));
+            let kinds: Vec<String> = sqlx_core::query_scalar::query_scalar(
+                "select kind::text from relay.actions
+                 where user_id = $1 and lane_id is null and reply_to = $2
+                   and kind in ('delivered', 'read')",
+            )
+            .bind(user_id)
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            let receipt = if !kinds.iter().any(|k| k == "delivered") {
+                "delivered"
+            } else if !kinds.iter().any(|k| k == "read") {
+                "read"
+            } else {
+                continue;
+            };
+            let receipt_task: Option<Uuid> =
+                payload.get("task_id").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
+            sqlx_core::query::query(
+                "insert into relay.actions
+                   (user_id, id, crew_id, task_id, lane_id, kind, reply_to, props)
+                 values ($1, $2, $3, $4, $5, $6::relay.action_kind, $7, '{}')",
+            )
+            .bind(user_id)
+            .bind(new_id())
+            .bind(crew_id)
+            .bind(receipt_task)
+            .bind(None::<Uuid>)
+            .bind(receipt)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
         // Triage counts are computed in SQL (the view's `triage_count` row
         // cannot take the item-side filter): manual rows plus one row per
         // tracker provider, sprints null until slice 2's pull.
@@ -4104,6 +4477,7 @@ impl PgStore {
             },
             "lanes": lanes_json,
             "decisions": decisions_json,
+            "person_messages": person_json,
             "triage": triage_json,
             "completed_today": completed,
             "today": {
@@ -4264,9 +4638,11 @@ impl PgStore {
             Option<Uuid>,
             DateTime<Utc>,
             Option<DateTime<Utc>>,
+            DateTime<Utc>,
+            serde_json::Value,
         )> = sqlx_core::query_as::query_as(
             "select title, repo_key, phase::text, workspace_id, state::text, round,
-                    item_id, lane_id, assigned_at, completed_at
+                    item_id, lane_id, assigned_at, completed_at, state_changed_at, steps
              from relay.tasks where user_id = $1 and crew_id = $2 and id = $3",
         )
         .bind(user_id)
@@ -4286,6 +4662,8 @@ impl PgStore {
             lane_id,
             assigned_at,
             completed_at,
+            state_changed_at,
+            steps,
         )) = task
         else {
             return Err(RelayError::NotFound("task not found".into()));
@@ -4314,26 +4692,50 @@ impl PgStore {
         };
         let lane_json = match lane_id {
             Some(lane_id) => {
-                let lane: Option<(String, Option<String>, String, Option<String>, Option<String>)> =
-                    sqlx_core::query_as::query_as(
-                        "select code, title, family, version, model from relay.lanes
-                         where user_id = $1 and id = $2",
-                    )
-                    .bind(user_id)
-                    .bind(lane_id)
-                    .fetch_optional(self.pool())
-                    .await
-                    .map_err(db_err)?;
-                lane.map(|(code, title, family, version, model)| {
-                    serde_json::json!({
-                        "id": lane_id.to_string(),
-                        "code": code,
-                        "title": title,
-                        "family": family,
-                        "version": version,
-                        "model": model,
-                    })
-                })
+                let lane: Option<(
+                    String,
+                    Option<String>,
+                    String,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                    Option<DateTime<Utc>>,
+                    Option<String>,
+                )> = sqlx_core::query_as::query_as(
+                    "select code, title, family, version, model, limit_scope::text,
+                            limit_resumes_at, limit_note
+                     from relay.lanes
+                     where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(lane_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                lane.map(
+                    |(
+                        code,
+                        title,
+                        family,
+                        version,
+                        model,
+                        limit_scope,
+                        limit_resumes_at,
+                        limit_note,
+                    )| {
+                        serde_json::json!({
+                            "id": lane_id.to_string(),
+                            "code": code,
+                            "title": title,
+                            "family": family,
+                            "version": version,
+                            "model": model,
+                            "limit_scope": limit_scope,
+                            "limit_resumes_at": limit_resumes_at.map(iso),
+                            "limit_note": limit_note,
+                        })
+                    },
+                )
                 .unwrap_or(serde_json::Value::Null)
             }
             None => serde_json::Value::Null,
@@ -4647,6 +5049,9 @@ impl PgStore {
                 "lane": lane_json,
                 "assigned_at": iso(assigned_at),
                 "completed_at": completed_at.map(iso),
+                // F8: the timeline stamps its derived terminal row from
+                // this (a cancel writes no action).
+                "state_changed_at": iso(state_changed_at),
                 "rounds": rounds
                     .iter()
                     .map(|(phase, count)| serde_json::json!({"phase": phase, "count": count}))
@@ -4676,6 +5081,8 @@ impl PgStore {
             "decision": decision_json,
             "handoff": handoff_json,
             "history": history_json,
+            // F8: the flat checklist, stored insertion order, served as-is.
+            "steps": steps,
             "lanes": lane_refs
                 .iter()
                 .map(|(id, code, title)| serde_json::json!({
@@ -6112,7 +6519,7 @@ mod tests {
              from relay.actions a join relay.tasks t on t.id = $1 where a.id = $2",
             )
             .bind(w)
-            .bind(action)
+            .bind(action.action_id)
             .fetch_one(pg.pool())
             .await
             .unwrap();
@@ -7094,6 +7501,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn task_view_serves_state_changed_at() {
+        // F8: the timeline stamps its derived terminal row (a cancel writes
+        // no action) from the header's state_changed_at.
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xf2);
+        fx_task(&pg, u1(), t, c1, Some(a2), "cancelled", "tests", 1).await;
+        sqlx_core::query::query(
+            "update relay.tasks set state_changed_at = '2026-11-06T10:05:00Z' where id = $1",
+        )
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let v = pg.relay_task_view(u1(), c1, t).await.unwrap();
+        assert_eq!(v["task"]["state"], "cancelled");
+        assert_eq!(v["task"]["state_changed_at"], "2026-11-06T10:05:00Z");
+    }
+
+    #[tokio::test]
     async fn task_view_404s_across_users_crews_and_unknown() {
         let pg = PgStore::test_store().await;
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
@@ -7207,40 +7634,57 @@ mod tests {
 
     #[tokio::test]
     async fn current_user_is_stable_q19rec() {
-        // Q19-REC (amended, L0 sanction 2026-11-06): with a signed-in
-        // default persona, the daemon user is its principal — one stable
-        // uuid per machine+identity.
+        // Q19-REC amended (local identity, user ruling 2026-11-09; Q19
+        // superseded): the daemon user is a stable machine-local id minted
+        // once — never the dōjō principal, never an error. Zero personas
+        // rows: same id across calls.
         let pg = PgStore::test_store().await;
-        let principal = v7(0x90);
-        sqlx_core::query::query(
-            "insert into sensei.personas (label, is_chosen_default, principal_id)
-             values ('default', true, $1)",
-        )
-        .bind(principal)
-        .execute(pg.pool())
-        .await
-        .unwrap();
         let a = pg.relay_current_user().await.unwrap();
         let b = pg.relay_current_user().await.unwrap();
         assert_eq!(a, b);
-        assert_eq!(a, principal);
     }
 
     #[tokio::test]
-    async fn current_user_never_signed_in_is_sign_in_required_q19rec() {
-        // Q19-REC failure pin (added, L0 sanction 2026-11-06): no default
-        // persona — or an unlinked one — fails closed, never a minted user.
+    async fn current_user_ignores_persona_state_q19rec() {
+        // Q19-REC failure pin amended (local identity, user ruling
+        // 2026-11-09; Q19 superseded; was
+        // current_user_never_signed_in_is_sign_in_required_q19rec): no
+        // default persona, an unlinked default, or a linked one — the
+        // local id is the same in all three states, and never the
+        // principal. No precedence: there is none to test.
         let pg = PgStore::test_store().await;
-        let err = pg.relay_current_user().await.unwrap_err();
-        assert!(matches!(err, RelayError::SignInRequired), "{err:?}");
+        let bare = pg.relay_current_user().await.unwrap();
         sqlx_core::query::query(
             "insert into sensei.personas (label, is_chosen_default) values ('default', true)",
         )
         .execute(pg.pool())
         .await
         .unwrap();
-        let err = pg.relay_current_user().await.unwrap_err();
-        assert!(matches!(err, RelayError::SignInRequired), "{err:?}");
+        assert_eq!(pg.relay_current_user().await.unwrap(), bare);
+        let principal = v7(0x90);
+        sqlx_core::query::query("update sensei.personas set principal_id = $1")
+            .bind(principal)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let linked = pg.relay_current_user().await.unwrap();
+        assert_eq!(linked, bare);
+        assert_ne!(linked, principal);
+    }
+
+    #[tokio::test]
+    async fn current_user_survives_restart_q19rec() {
+        // Q19-REC amendment (local identity, user ruling 2026-11-09): the
+        // id is a persisted row, so a new pool on the same database — a
+        // daemon restart — resolves the same user. (Same test thread, so
+        // the second connect reuses this test's clone.)
+        let pg = PgStore::test_store().await;
+        let before = pg.relay_current_user().await.unwrap();
+        pg.close().await;
+        drop(pg);
+        let pg2 = PgStore::test_store().await;
+        let after = pg2.relay_current_user().await.unwrap();
+        assert_eq!(before, after);
     }
 
     #[tokio::test]

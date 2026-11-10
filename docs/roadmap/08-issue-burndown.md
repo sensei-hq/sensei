@@ -141,8 +141,8 @@ The settings screen lists them as repositories.
   - ~~#181~~ **Closed 2026-10-19**: `SKIP_DB_BACKUP`, prune after writing (12 → 8 GB), a failed export fails
     the backup.
   - ~~#194~~ **closed 2026-10-26**: one `task_failed` row per task on every day since b3dfaf7b; the 2,409 old duplicates deleted
-    (user OK). The success path does the same at 2 rows per execution (31.7M): #339.
-    Pending a user decision: the 145k/day `task_started`/`task_completed` rows duplicate `task_executions`.
+    (user OK). The success path does the same at 2 rows per execution (31.7M): #339
+    (user OK on cleanup; duplicate writes stopped, prune runs backup-first L0-coordinated).
   - ~~#179~~ **Closed 2026-10-19**: every pre-bind exit records why; `senseid status` shows it.
 - **Gates:**
   - #187: e2e typecheck in `bun run check`; **gate in and errors fixed (18eb0cde)**, closing once the changed

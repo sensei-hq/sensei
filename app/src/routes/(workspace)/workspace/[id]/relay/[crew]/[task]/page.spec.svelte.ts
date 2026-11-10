@@ -20,6 +20,8 @@ const LOADER = './+page.js';
 
 const relay = vi.hoisted(() => ({ api: null as unknown }));
 vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api) }));
+// The socket is the route's, pinned in relay-task-stream.spec — not here.
+vi.mock('$lib/relay/relay-task-stream.js', () => ({ subscribeTaskStream: vi.fn(() => () => {}) }));
 
 const route = vi.hoisted(() => ({ id: 'w1', crew: '', task: 't-header' }));
 vi.mock('$app/state', () => ({
@@ -145,6 +147,24 @@ describe('Relay · task — the header', () => {
     expect(facts).toContain('claude-opus-5-5');
     expect(facts).toContain('tests 1');
     expect(facts).toContain('impl 2');
+  });
+
+  it('a limit-paused holder reads paused with scope and resume time', async () => {
+    const resumes = new Date(Date.now() + 120 * 60_000).toISOString();
+    const view = F.taskView();
+    const { c } = await open({
+      task: F.ok({
+        ...view,
+        task: {
+          ...view.task,
+          lane: { ...view.task.lane!, limit_scope: 'weekly', limit_resumes_at: resumes, limit_note: null },
+        },
+      }),
+    });
+    const facts = text(one(c, '[data-task-facts]'));
+    expect(facts).toContain('paused');
+    expect(facts).toContain('weekly');
+    expect(facts).toContain(hhmm(resumes));
   });
 });
 

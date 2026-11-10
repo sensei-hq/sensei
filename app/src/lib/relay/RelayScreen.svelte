@@ -27,6 +27,7 @@
     todayLine,
   } from './relay-format.js';
   import DecisionRow from './DecisionRow.svelte';
+  import MessageRow from './MessageRow.svelte';
   import ComposeBand from './ComposeBand.svelte';
   import QueueRow from './QueueRow.svelte';
   import RoleMark from './RoleMark.svelte';
@@ -256,7 +257,7 @@
         />
       </div>
     {:else if state.now && state.hasCrew && state.tab === 'now'}
-      {#if state.now.decisions.length > 0 || triageTotal > 0}
+      {#if state.now.decisions.length > 0 || triageTotal > 0 || state.now.person_messages.length > 0}
         <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="needs-you">
           <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Needs you</h2>
           {#each state.now.decisions as decision (decision.id)}
@@ -264,6 +265,12 @@
               {decision}
               href={decision.task_id ? taskHref(base, decision.crew_id, decision.task_id) : null}
               onanswer={(option) => state.answer(decision, option)}
+            />
+          {/each}
+          {#each state.now.person_messages as message (message.id)}
+            <MessageRow
+              {message}
+              href={message.task_id ? taskHref(base, message.crew_id, message.task_id) : null}
             />
           {/each}
           {#if triageTotal > 0}
@@ -299,6 +306,13 @@
                   <span class="ml-auto text-xs rounded-sm px-2 py-1 bg-paper-soft text-ink-soft" data-state>{lost}</span>
                   {#if lost === 'lease lost' && lane.lease_expires_at}
                     <span class="text-xs text-warning">at {hhmm(lane.lease_expires_at)}</span>
+                  {/if}
+                  {#if lost === 'paused'}
+                    <span class="text-xs text-warning"
+                      >{lane.limit_scope} · {lane.limit_resumes_at
+                        ? `until ${hhmm(lane.limit_resumes_at)}`
+                        : 'resume unknown'}</span
+                    >
                   {/if}
                 </div>
                 <div class="text-sm text-ink-soft" data-row-line="2">

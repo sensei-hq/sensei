@@ -168,6 +168,22 @@ describe('Relay · Now — Needs you', () => {
     expect(section(c, 'needs-you')).toBeNull();
   });
 
+  it('a crew-to-person message: sending lane code, excerpt, and its task link', async () => {
+    // Q2 part 2: to.person mail surfaces in Needs you newest-first. Read
+    // state is the daemon's (delivered/read receipts retire the row); the
+    // screen re-reads rather than guessing, as with answered decisions.
+    const { c } = await open({
+      now: F.ok(F.now({ decisions: [], triage: [], person_messages: [F.personMessage()] })),
+    });
+    const needs = need(section(c, 'needs-you'), 'needs-you');
+    const row = need(one(needs, '[data-person-message]'), 'message row');
+    expect(text(row)).toContain('L2');
+    expect(text(row)).toContain('The migration needs your eyes');
+    expect(one(row, `a[href="/workspace/w1/relay/${F.CREW_ID}/t-logs"]`)).not.toBeNull();
+    // Retirement is the daemon's (read receipts); the screen draws what the
+    // feed serves — an empty feed draws no section, per the test above.
+  });
+
   it('each decision: question, context, options with its own recommended one marked, Answer, and its task', async () => {
     const { c } = await open({
       now: F.ok(
@@ -999,6 +1015,27 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
     expect(text(one(lost, '[data-state]'))).toBe('lease lost');
     expect(text(lost)).toContain(`at ${hhmm(expired)}`);
     expect(text(one(c, '[data-lane-row="L5"] [data-state]'))).toBe('interrupted');
+  });
+
+  it('a limit-paused lane reads "paused" with scope and resume time — never "lease lost" on a live lease', async () => {
+    const resumes = new Date(Date.now() + 120 * 60_000).toISOString();
+    const { c } = await open({
+      now: F.ok(
+        F.now({
+          lanes: [
+            F.lane({ id: F.LANE.L2, code: 'L2', title: 'Billing', lease_state: 'granted', limit_scope: 'weekly', limit_resumes_at: resumes, limit_note: null, task: task({ id: 't-b', state: 'working' }) }),
+            F.lane({ id: F.LANE.L5, code: 'L5', title: 'Docs', lease_state: 'granted', limit_scope: 'daily', limit_resumes_at: null, limit_note: null, task: null }),
+          ],
+        }),
+      ),
+    });
+    const paused = need(one(c, '[data-lane-row="L2"]'), 'the L2 row');
+    expect(text(one(paused, '[data-state]'))).toBe('paused');
+    expect(text(paused)).toContain('weekly');
+    expect(text(paused)).toContain(`until ${hhmm(resumes)}`);
+    const unknown = need(one(c, '[data-lane-row="L5"]'), 'the L5 row');
+    expect(text(one(unknown, '[data-state]'))).toBe('paused');
+    expect(text(unknown)).toContain('resume unknown');
   });
 });
 

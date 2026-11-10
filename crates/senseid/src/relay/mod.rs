@@ -29,6 +29,16 @@ pub enum RelayRole {
     Contributor,
 }
 
+/// `RelayLimitScope`: which quota a limit-paused lane ran out of. Mirrors
+/// the assistant warnings (`daily`/`weekly`); `other` is everything else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayLimitScope {
+    Daily,
+    Weekly,
+    Other,
+}
+
 /// `RelayTaskPhase`. No `merge` phase (Q3 settled): merging is the `merged`
 /// action, `approved → done`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +64,17 @@ pub enum RelayTaskState {
     Blocked,
     Interrupted,
     Cancelled,
+}
+
+/// A checklist step's state (F8): `open` advances to `done`, or to
+/// `skipped` with a reason. Done/skipped never reopen — a new turn
+/// posts a new key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayStepState {
+    Open,
+    Done,
+    Skipped,
 }
 
 /// `RelayLeaseState`.
@@ -159,6 +180,9 @@ pub enum TaskEvent {
     /// The coordinator pulls a held task off its lane mid-turn (F1): it
     /// lands `assigned` on the new lane with a fresh round.
     HandedOver,
+    /// A limit-paused lane's held task suspends for re-offer elsewhere.
+    /// Same target as `LeaseLost`, distinct cause: the lease may be live.
+    LimitPaused,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,6 +224,13 @@ pub fn transition(
         | (S::InReview, E::LeaseLost)
         | (S::Rework, E::LeaseLost)
         | (S::Blocked, E::LeaseLost) => Ok(S::Interrupted),
+        // Limit exhaustion suspends the same active set (distinct cause,
+        // same landing: the sweep re-offers from `interrupted`).
+        (S::Assigned, E::LimitPaused)
+        | (S::Working, E::LimitPaused)
+        | (S::InReview, E::LimitPaused)
+        | (S::Rework, E::LimitPaused)
+        | (S::Blocked, E::LimitPaused) => Ok(S::Interrupted),
         (S::Interrupted, E::Reoffered) => Ok(S::Assigned),
         // F1: handover pulls from the three held states only (blocked and
         // interrupted keep their own exits; assigned/approved have nothing
@@ -783,8 +814,10 @@ pub enum RelayError {
     /// The request or its props are malformed (bad phase, long summary,
     /// leaked secret, unknown finding class, self-review).
     Validation(String),
-    /// The daemon user is unknown (never signed into a dōjō): register and
-    /// the person reads fail closed (Q19-REC).
+    /// Reserved for dōjō-sync operations that need the linked principal:
+    /// raised when the machine has none. Relay routes never raise it —
+    /// local relay runs on the machine-local user, signed in or not (Q19
+    /// superseded, user ruling 2026-11-09).
     SignInRequired,
     /// Valid request, slice-2 work (the tracker pull behind ticketed triage).
     NotImplemented(String),
@@ -1007,6 +1040,12 @@ mod tests {
         assert_eq!(transition(S::Working, E::LeaseLost), Ok(S::Interrupted));
         assert_eq!(transition(S::InReview, E::LeaseLost), Ok(S::Interrupted));
         assert_eq!(transition(S::Blocked, E::LeaseLost), Ok(S::Interrupted));
+        // Limit exhaustion lands the same set, terminal excluded.
+        assert_eq!(transition(S::Assigned, E::LimitPaused), Ok(S::Interrupted));
+        assert_eq!(transition(S::Working, E::LimitPaused), Ok(S::Interrupted));
+        assert_eq!(transition(S::Rework, E::LimitPaused), Ok(S::Interrupted));
+        assert!(transition(S::Done, E::LimitPaused).is_err());
+        assert!(transition(S::Interrupted, E::LimitPaused).is_err());
         assert_eq!(transition(S::Interrupted, E::Reoffered), Ok(S::Assigned));
         assert!(transition(S::Working, E::Reoffered).is_err());
         assert!(transition(S::Done, E::LeaseLost).is_err());

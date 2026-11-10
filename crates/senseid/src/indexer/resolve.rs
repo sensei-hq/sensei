@@ -4574,9 +4574,9 @@ mod tests {
         // this slice to earn a print for that reason.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,128, headroom {})",
+             (ceiling 1,136, headroom {})",
             elsewhere.len(),
-            1_128_i64 - other as i64
+            1_136_i64 - other as i64
         );
         // Lowered from 1,300 on 2026-10-26: the store's row types moved to the
         // path their callers name (`pg_store::FolderRow`), so the re-exports the
@@ -4623,12 +4623,28 @@ mod tests {
         // 0 new identities — `AppState·pg` alias reaches from the two new
         // lane handlers and the sweeper-driving test. Same documented
         // class, same backlog cure (follow the alias), not a lower number.
-        // Raised 1,123 → 1,128 on 2026-11-09, measured 1,126 over 229
-        // identities: merging develop into the delivery-metrics slice sums
-        // the two branches' raises (each measured against its own base); the
-        // merge adds no code of its own here. Same class, same cure.
+        // Raised 1,123 → 1,128 on 2026-11-09, measured 1,126 over 228
+        // identities (develop base 1,122/228 — F1/F2/F9 spent the headroom
+        // to 1 without raising): the F8 timeline slice adds 4 over 0 new
+        // identities — `AppState·pg`/`event_tx` alias reaches from the new
+        // steps + SSE handlers and their driving tests (view field
+        // included). Same documented class, same backlog cure (follow the
+        // alias), not a lower number.
+        // Raised 1,128 → 1,131 on 2026-11-09, measured 1,129 over 227
+        // identities (develop base 1,126/227): the #339 pins observe
+        // public.logs through a pg-backed `Logger` built inline in the
+        // executor's test helper — the codebase idiom (server.rs builds two
+        // the same way) — and the three construction spellings
+        // (`Logger::new`, `LogWriter::pg`, `LogLevel::Info`) dangle one each:
+        // cross-crate `sensei_logger::` paths the walk does not follow (the
+        // re-export cause above). Same documented class, same backlog cure
+        // (follow the re-export), not a lower number.
+        // Raised 1,131 → 1,136 on 2026-11-10, measured 1,134 over 229
+        // identities: merging develop (1,129/227) into the delivery-metrics
+        // slice sums the two branches' raises, each measured against its own
+        // base; the merge adds no code of its own here. Same class, same cure.
         assert!(
-            other <= 1_128,
+            other <= 1_136,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

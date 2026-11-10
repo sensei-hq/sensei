@@ -12,9 +12,12 @@ the "Message the crew" addendum, settled with the user). Relay DDL merged; the d
 ## One `relay` schema, deployed to both the daemon and the dōjō (user, 2026-11-05)
 The same DDL runs on the desktop's sensei DB and on the dōjō, and the daemon syncs rows across (D89 targets, per-target
 marks). For that to work without breaking:
-- **Every table carries `user_id`**: the owning person's dōjō principal id, set on the desktop when the crew is created. On
-  the dōjō it is the RLS key (a row is readable by its owner, and by others only by an explicit share). On the desktop it
-  qualifies rows when more than one signed-in identity runs crews. Every unique constraint and every lookup includes it.
+- **Every table carries `user_id`**: the machine-local daemon user (`relay.daemon_user`), stable per machine, set on the
+  desktop when the crew is created — never the dōjō principal (local identity, user ruling 2026-11-09; Q19 superseded).
+  Sync maps local→principal at the dōjō boundary, so on the dōjō the mapped principal is the RLS key (a row is readable
+  by its owner, and by others only by an explicit share). On the desktop it qualifies rows when more than one local
+  identity runs crews. Every unique constraint and every lookup includes it. Relay rows are never re-keyed: there is no
+  adoption migration.
 - **Ids are minted on the desktop and are stable everywhere.** `uuid` v7 (time-ordered) for every table, `actions`
   included (no `bigserial`), so a row has the same id on both sides and an upsert on `(user_id, id)` is idempotent.
 - **The crew lives in `relay.crews`, not `activity.runs`.** `activity` is desktop-only, so a shared schema can't point at it.
@@ -28,6 +31,7 @@ marks). For that to work without breaking:
   - `crews`, `lanes` (without `token_hash` / `checkpoint`), `items`, `tasks`, `actions`. An action's `report_md` goes only
     when sharing is on.
   - `leases` never leave the machine: they're local resources.
+  - `daemon_user` never leaves the machine either: it is the local side of the sync boundary's local→principal map.
 - **The dōjō is read-mostly.** The person can answer a decision and post a message there (`answered`, `message` actions).
   Those sync back to the desktop through the existing pull path, with the same ids, so neither side ever overwrites the
   other's rows.
@@ -56,7 +60,13 @@ key, or work on those repositories would never appear:
   and validated by the daemon, and metrics read them through views.
 - **Nullable means "not reported" (D83).** A missing prop is absent, never 0. Totals say how many turns reported.
 
-## Tables (six: crews, lanes, leases, items, tasks, actions; all with `user_id`)
+## Tables (seven: daemon_user, crews, lanes, leases, items, tasks, actions; all but `daemon_user` with `user_id`)
+
+### `relay.daemon_user`: the machine-local daemon user (singleton)
+`singleton` (boolean PK, fixed true — exactly one row) · `user_id` (uuid v7, minted once) · `minted_at`.
+- The stable id behind register and the person routes, on every machine, signed in or not. Never the dōjō
+  principal; persona/principal state never affects it (local identity, user ruling 2026-11-09; Q19 superseded).
+- Never synced, never re-keyed (see *What syncs*).
 
 ### `relay.crews`
 See the section above. `user_id` · `id` (uuid v7) · `workspace_id` null · `repo_key` null (**the founding repository**, Q6; tasks
@@ -67,14 +77,16 @@ carry their own, so a crew spans repos, and null is read as "no repository", Q18
 `user_id` · `id` uuid v7 · `crew_id` · `code` (`L1`…, unique per crew) · `title` null (the objective, e.g. "Diagrams") · `role`
 (`'coordinator','contributor'`; one coordinator per crew) · `family` / `version` null / `model` null · `capabilities` text[]
 · `repo`, `worktree` null (the broker creates it) · `token_hash` · `checkpoint` jsonb null (for `reregister`) ·
-`registered_at` / `unregistered_at` null.
-Liveness is **not** a column here; it's the lane's lease (below).
+`registered_at` / `unregistered_at` null · `limit_paused_at` / `limit_scope` (`'daily','weekly','other'`) /
+`limit_resumes_at` / `limit_note` (all null when working; paused ⟺ scope set).
+Liveness is **not** a column here; it's the lane's lease (below). A limit pause is not liveness either: the
+lane may hold a live lease while paused, and the sweep suspends its held task without expiring it.
 
 ### `relay.leases`: one table for every lease
 `user_id` · `id` · `crew_id` · `lane_id` · `kind` (`'lane','resource'`) · `resource` text null (`rust-build`, `e2e`…; null for a lane
 lease) · `state` (`'queued','granted','released','expired','refused'`) · `expires_at` null · `granted_at`,
 `released_at` null · `props` jsonb (disk/swap at grant, refusal reason).
-- A lane lease is renewed by every MCP call. When it expires, the lane is suspended.
+- A lane lease is renewed only by `heartbeat`. When it expires, the lane is suspended.
 - A resource lease is the build slot: at most one granted per resource, machine-wide (partial unique).
 
 ### `relay.items`: the queue (triage and backlog)
@@ -92,7 +104,7 @@ and sprint from the tracker) · `state` (`'backlog','planned','closed'`) · `pos
 null (never the author's lane; checked) · `title` · `phase` (`'analysis','tests','impl','docs','mockup'`) · `state`
 (`'assigned','working','in_review','rework','approved','done','blocked','interrupted','cancelled'`; see *Stages*)
 · `round` · `owned_paths`, `acceptance`, `resources` text[] · `deps` uuid[] · `assigned_at`, `state_changed_at`,
-`completed_at` null.
+`completed_at` null · `steps` jsonb (flat checklist, F8: `[{key, title, state, reason, updated_at}]`, insertion order).
 - The ticket comes through `item_id → ticket_provider / ticket_key`.
 - The **brief is the `assigned` action's `body_md`**, frozen. A change is a `brief_updated` action.
 - A review is a stage of the task: the reviewer's queue is `reviewer_lane_id = me and state = 'in_review'`.

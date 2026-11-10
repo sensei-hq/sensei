@@ -4,7 +4,7 @@
 // 404 and the screen says "not found" — nothing broke, and Retry would ask the
 // same question again. Everything else that fails is a fault with a Retry.
 import { failureReason, type ApiError } from '$lib/api.js';
-import type { RelayApi, RelayDecision, RelayTaskView } from '$lib/relay-api.js';
+import type { RelayApi, RelayDecision, RelayTaskStep, RelayTaskView } from '$lib/relay-api.js';
 
 export interface TaskReads {
   view: RelayTaskView | null;
@@ -71,6 +71,24 @@ export class RelayTaskState {
     if (!answer.ok) return failureReason(answer.error);
     await this.reRead();
     return null;
+  }
+
+  /** A streamed step lands directly (F8): new keys append, restated keys
+   *  update in place. Anything for another task, or before the view reads,
+   *  is ignored — the stream is crew-wide, the state is one task's. */
+  applyStep(taskId: string, step: RelayTaskStep): void {
+    if (taskId !== this.taskId || !this.view) return;
+    const at = this.view.steps.findIndex((s) => s.key === step.key);
+    if (at === -1) this.view.steps.push(step);
+    else this.view.steps[at] = step;
+  }
+
+  /** A streamed task notification (F8): re-read, but only when the task is
+   *  this one. (Op-only events like unregister re-read through `reRead`,
+   *  routed by the route — they name no task.) */
+  async applyTaskChanged(taskId: string): Promise<void> {
+    if (taskId !== this.taskId) return;
+    await this.reRead();
   }
 
   /** Read the task again after a write. A failed re-read is a fault, not a no-op:

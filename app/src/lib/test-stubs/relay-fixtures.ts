@@ -17,6 +17,7 @@ import type {
   RelayDecision,
   RelayLane,
   RelayNow,
+  RelayPersonMessage,
   RelayQueue,
   RelayRunDetails,
   RelayTaskView,
@@ -66,6 +67,9 @@ export function lane(over: Partial<RelayLane> = {}): RelayLane {
     model: 'claude-opus-5-5',
     lease_state: 'granted',
     lease_expires_at: null,
+    limit_scope: null,
+    limit_resumes_at: null,
+    limit_note: null,
     task: {
       id: 't-structure',
       title: 'Structure view on the shell',
@@ -119,6 +123,19 @@ export function decision(over: Partial<RelayDecision> = {}): RelayDecision {
   };
 }
 
+export function personMessage(over: Partial<RelayPersonMessage> = {}): RelayPersonMessage {
+  return {
+    id: 'msg-1',
+    crew_id: CREW_ID,
+    task_id: 't-logs',
+    task_title: 'Activity logs',
+    from_lane_code: 'L2',
+    text: 'The migration needs your eyes before I merge.',
+    sent_at: minutesAgo(5),
+    ...over,
+  };
+}
+
 export function completed(over: Partial<RelayCompletedTask> = {}): RelayCompletedTask {
   return {
     task_id: 't-header',
@@ -152,6 +169,7 @@ export function now(over: Partial<RelayNow> = {}): RelayNow {
     facets: { repos: [REPO], workspaces: [{ id: 'w1', name: 'Sensei' }] },
     lanes: [coordinatorLane(), lane()],
     decisions: [],
+    person_messages: [],
     // Agrees with queue().triage: one Jira sprint-47 task, one manual item (r2 L6).
     triage: [
       { provider: 'jira', sprint: 'sprint 47', count: 1 },
@@ -533,9 +551,10 @@ export function taskView(over: Partial<RelayTaskView> = {}): RelayTaskView {
       state: 'done',
       round: 2,
       ticket: { provider: 'jira', key: 'SEN-52', url: 'https://acme.atlassian.net/browse/SEN-52' },
-      lane: { id: LANE.L1, code: 'L1', title: 'Diagrams', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5' },
+      lane: { id: LANE.L1, code: 'L1', title: 'Diagrams', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5', limit_scope: null, limit_resumes_at: null, limit_note: null },
       assigned_at: minutesAgo(240),
       completed_at: minutesAgo(10),
+      state_changed_at: minutesAgo(10),
       rounds: [
         { phase: 'tests', count: 1 },
         { phase: 'impl', count: 2 },
@@ -550,6 +569,7 @@ export function taskView(over: Partial<RelayTaskView> = {}): RelayTaskView {
       at: minutesAgo(240),
     },
     history: history(),
+    steps: [],
     lanes: laneRefs(),
     ...over,
   };

@@ -291,3 +291,43 @@ a `handed_over` event names both lanes. Guards, each a 409 with a specific error
 three (terminal tasks, `assigned` with nothing held, `blocked`, and `approved` all refuse; `interrupted` stays the
 sweeper's re-offer job and says so); `to_lane` must hold a live lease in the same crew, must not be the current
 holder, must not be the picked reviewer (a task never reviews itself), and must not already hold a task.
+
+## 18. Step progress (F8; run-02 round-1 verdict)
+
+Steps lived in transcripts and the broker never received them, so no screen could show progress. The holder
+narrates its turn step by step: `POST /api/relay/tasks/{id}/steps` with `{key, title, state}` (holder only;
+MCP `relay_post_step`), working/rework turns only. Each step carries a key stable within the task (upserts by
+it), a title, and a state: `open` advances to `done`, or to `skipped` with a reason (required on skipped,
+forbidden elsewhere). Done/skipped never reopen — re-posting the same state is a no-op, and a new turn posts a
+new key. The broker stores the flat checklist on the task in insertion order and serves it on the task view;
+the screen renders it as a checklist (completed checked, the first open step highlighted as current). Flat only:
+no dependencies, no graphs, no cross-task aggregation.
+
+## 19. Limit exhaustion (user, 2026-11-09)
+
+Assistants hit daily/weekly usage limits, usually visible only as transcript warnings with a resume time. A lane
+that goes quiet on quota used to read exactly like a dead lane. Now the lane reports it:
+`POST /api/relay/limit_pause` with `scope` (`daily` | `weekly` | `other`), `resumes_at` (the warning's reset
+time; null when unknown), and an optional note (MCP `relay_limit_pause`). Re-pausing overwrites.
+
+The pause is recorded on the lane and is **distinct from lease expiry**: the lease may stay live (the heartbeat
+loop is not quota work) while the lane cannot work. The sweep suspends a paused lane's held task for re-offer
+elsewhere on the normal grace **without** expiring the lane or counting it failed. The lane resumes by beating
+at or past `resumes_at` (unknown resume: any beat resumes); leaving and resuming clears any stale pause.
+
+The screen reads a paused lane as paused-with-resume-time, never "lease lost": the lanes list shows the scope
+plus `until HH:MM` (or `resume unknown`), and the task view's facts line carries the same. A dead lease still
+reads lease-lost even with a stale pause on the row. Transcript mining for limit warnings stays out of scope:
+the explicit report path works for every assistant, and an adapter may automate it later.
+
+## 20. Local identity (user, 2026-11-09)
+
+Local relay works always; sign-in is only needed when the user wants relay on the dōjō. The daemon user
+behind register and the person routes is a STABLE machine-local id (`relay.daemon_user`, minted once, never
+changes) — never the dōjō principal, with no precedence and no fallback: linked or not, relay rows are keyed
+by the local id on every machine. This supersedes the Q19 fail-closed ruling, which 401'd
+(`relay_signin_required`) without a linked default persona — a gate a GitHub-signed-in machine couldn't satisfy,
+since sign-in sets no linked default. The `relay_signin_required` code stays for the dōjō-sync operations that
+will need it; relay routes never raise it. Sync maps local→principal at the boundary and never re-keys relay
+rows, so there is no adoption migration. (The enrollment fix — sign-in producing a linked default persona for
+the dōjō side — is a separate squash goal.)

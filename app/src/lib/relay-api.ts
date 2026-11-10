@@ -22,6 +22,7 @@
 // formats them.
 
 import { apiBase, type ApiResult } from './api.js';
+import { EventManager } from './events.js';
 
 // ─── Vocabulary (lanes-data.md enums) ───────────────────────────────────────
 
@@ -108,6 +109,9 @@ export interface RelayLaneTask {
   needs_answer: boolean;
 }
 
+/** Which quota a limit-paused lane ran out of. */
+export type RelayLimitScope = 'daily' | 'weekly' | 'other';
+
 export interface RelayLane {
   id: string;
   crew_id: string;
@@ -121,6 +125,12 @@ export interface RelayLane {
   model: string | null;
   lease_state: RelayLeaseState;
   lease_expires_at: string | null;
+  /** Set exactly when the lane reported quota exhaustion (lease may be live). */
+  limit_scope: RelayLimitScope | null;
+  /** Quota-reset instant; null when unknown (any beat resumes). */
+  limit_resumes_at: string | null;
+  /** The lane's own words on the pause (audit; shown nowhere yet). */
+  limit_note: string | null;
   task: RelayLaneTask | null;
 }
 
@@ -143,6 +153,20 @@ export interface RelayDecision {
   options: RelayDecisionOption[];
   recommended: string | null;
   asked_at: string;
+}
+
+/** An unread `message` action addressed to the person (`to.kind = 'person'`). */
+export interface RelayPersonMessage {
+  /** The `message` action's id. */
+  id: string;
+  crew_id: string;
+  task_id: string | null;
+  task_title: string | null;
+  /** The sending lane's code; null only for person-sent echoes. */
+  from_lane_code: string | null;
+  /** `body_md` of the `message` action. */
+  text: string;
+  sent_at: string;
 }
 
 /** Triage grouped by where it came from: one row per tracker + sprint, plus manual items. */
@@ -193,6 +217,7 @@ export interface RelayNow {
   facets: RelayFacets;
   lanes: RelayLane[];
   decisions: RelayDecision[];
+  person_messages: RelayPersonMessage[];
   triage: RelayTriageSource[];
   completed_today: RelayCompletedTask[];
   today: RelayToday;
@@ -248,6 +273,12 @@ export interface RelayTaskLane {
   family: string;
   version: string | null;
   model: string | null;
+  /** Set exactly when the lane reported quota exhaustion. */
+  limit_scope: RelayLimitScope | null;
+  /** Quota-reset instant; null when unknown. */
+  limit_resumes_at: string | null;
+  /** The lane's own words on the pause (audit; shown nowhere yet). */
+  limit_note: string | null;
 }
 
 export interface RelayTaskHeader {
@@ -263,6 +294,8 @@ export interface RelayTaskHeader {
   lane: RelayTaskLane | null;
   assigned_at: string;
   completed_at: string | null;
+  /** F8: every transition stamps it; the timeline stamps derived rows from it. */
+  state_changed_at: string;
   /** Rounds by phase ("tests 1 · impl 2"). */
   rounds: { phase: RelayTaskPhase; count: number }[];
   needs_answer: boolean;
@@ -424,6 +457,15 @@ export interface RelayLaneRef {
   title: string | null;
 }
 
+/** One flat-checklist step (F8): the holder's turn narrated step by step. */
+export interface RelayTaskStep {
+  key: string;
+  title: string;
+  state: 'open' | 'done' | 'skipped';
+  reason: string | null;
+  updated_at: string;
+}
+
 export interface RelayTaskView {
   task: RelayTaskHeader;
   run: RelayRunDetails;
@@ -432,6 +474,8 @@ export interface RelayTaskView {
   handoff: RelayHandoff | null;
   /** Newest first, down to `assigned`, as the view orders it. */
   history: RelayAction[];
+  /** The flat checklist, stored insertion order, served as-is. */
+  steps: RelayTaskStep[];
   /** The crew's lanes, for the codes behind uuids in props. */
   lanes: RelayLaneRef[];
 }
@@ -525,3 +569,36 @@ export const relayApi: RelayApiFactory = (port) => {
     tryAddToBacklog: (body) => call<{ item_id: string }>('POST', '/relay/backlog', body),
   };
 };
+
+// ─── Stream (F8; the dojo seam) ─────────────────────────────────────────────
+
+/** One relay-socket event: the shared {action, entity, data} contract.
+/// Task notifications name the task (the route re-reads its view); step
+/// events carry the step (applied without re-reading); op-only relay
+/// events name the op (unregister re-reads). The dojo replays this same
+/// contract over Supabase realtime — the route dispatches, never the transport. */
+export interface RelayStreamEvent {
+  action: 'add' | 'update' | 'remove' | 'set';
+  entity: string;
+  data: { op?: string; task_id?: string; step?: RelayTaskStep };
+}
+
+/** Shape-check one socket payload; throws (the manager skips it). */
+export function parseRelayStreamEvent(raw: string): RelayStreamEvent {
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('relay stream event is not an object');
+  }
+  const { action, entity, data } = parsed as Record<string, unknown>;
+  if (typeof entity !== 'string' || typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error('relay stream event names no entity');
+  }
+  if (action !== 'add' && action !== 'update' && action !== 'remove' && action !== 'set') {
+    throw new Error('relay stream event names no action');
+  }
+  return { action, entity, data: data as RelayStreamEvent['data'] };
+}
+
+/** The relay socket, owned by the route that subscribes (never by shared state). */
+export const relayStream: (port: number) => EventManager<RelayStreamEvent> = (port) =>
+  new EventManager<RelayStreamEvent>(`${apiBase(port)}/api/relay/events`, parseRelayStreamEvent);

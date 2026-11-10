@@ -690,6 +690,26 @@ pub fn daemon_request_for(
                 args,
             ))
         }
+        "relay_post_step" => {
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, &["key", "title", "state", "reason"]);
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/tasks/{}/steps", path_segment(task_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
+        "relay_limit_pause" => {
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, &["scope", "resumes_at", "note"]);
+            Some(relay_authed(
+                DaemonRequest::post_json("/api/relay/limit_pause", Value::Object(body)),
+                args,
+            ))
+        }
         "relay_close_crew" => {
             let crew_id = args["crew_id"].as_str().unwrap_or("");
             let body = relay_lane_body(args);
@@ -1503,6 +1523,30 @@ pub fn handle_list_tools() -> Value {
                 &[
                     ("note", "string", "The ≤600-char handoff note (else the move itself)"),
                 ]),
+            tool("relay_post_step",
+                "Post a checklist-step update on the held task: open → done, or skipped with a reason. Done/skipped never reopen. Working/rework turns only; holder only.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                    ("key", "string", "Step key, stable within the task (upserts by this)"),
+                    ("title", "string", "Step title"),
+                    ("state", "string", "open | done | skipped"),
+                ],
+                &[
+                    ("reason", "string", "Required on skipped, forbidden elsewhere"),
+                ]),
+            tool("relay_limit_pause",
+                "Report quota exhaustion: the lane pauses (daily/weekly/other, with the warning's resume time when known) while its lease stays live; the sweep suspends its held task for re-offer elsewhere without expiring the lane. Beating at or past resumes_at resumes.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("scope", "string", "Which quota ran out: daily, weekly, or other"),
+                ],
+                &[
+                    ("resumes_at", "string", "Quota-reset instant, RFC 3339 (null/unknown: any beat resumes)"),
+                    ("note", "string", "The ≤600-char note on the pause"),
+                ]),
             tool("relay_close_crew",
                 "Close the crew when its lanes are gone (besides the caller, who unregisters after). Closed crews refuse register/reregister/plan/assign. Coordinator only.",
                 &[
@@ -2001,6 +2045,9 @@ mod tests {
         "relay_close_crew",
         // F1: force-handover.
         "relay_handover_task",
+        // F8: step progress.
+        "relay_post_step",
+        "relay_limit_pause",
     ];
 
     fn tools() -> Vec<Value> {
@@ -3058,6 +3105,9 @@ mod tests {
         "relay_close_crew",
         // F1: force-handover.
         "relay_handover_task",
+        // F8: step progress.
+        "relay_post_step",
+        "relay_limit_pause",
     ];
 
     const LANE_ID: &str = "01938931-0000-7000-8000-000000000001";
@@ -3253,6 +3303,28 @@ mod tests {
     }
 
     #[test]
+    fn relay_post_step_sends_step_with_auth() {
+        // F8: a step update posts lane_id + key/title/state to the steps
+        // route, the token riding the Authorization header only.
+        let req = daemon_request_for(
+            "relay_post_step",
+            &lane_args(
+                json!({"task_id": "t1", "key": "scaffold", "title": "Scaffold", "state": "open"}),
+            ),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/t1/steps");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["key"], "scaffold");
+        assert_eq!(body["state"], "open");
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
     fn relay_handover_posts_with_auth() {
         // F1: handover posts lane_id + to_lane to the task route, the
         // token riding the Authorization header only.
@@ -3268,6 +3340,29 @@ mod tests {
         let body = req.body.as_ref().unwrap();
         assert_eq!(body["lane_id"], LANE_ID);
         assert_eq!(body["to_lane"], LANE_ID);
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_limit_pause_posts_with_auth() {
+        // Limit exhaustion posts lane_id + scope (+ optional resumes_at /
+        // note) to the pause route, the token on the header only; scope
+        // is required.
+        assert_eq!(missing_required("relay_limit_pause", &lane_args(json!({}))), vec!["scope"]);
+        let req = daemon_request_for(
+            "relay_limit_pause",
+            &lane_args(json!({"scope": "weekly", "resumes_at": "2030-01-01T00:00:00Z"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/limit_pause");
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["lane_id"], LANE_ID);
+        assert_eq!(body["scope"], "weekly");
+        assert_eq!(body["resumes_at"], "2030-01-01T00:00:00Z");
+        assert!(body.get("note").is_none());
         assert_token_only_in_headers(&req, TOKEN);
     }
 
