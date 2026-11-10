@@ -4,10 +4,12 @@
 // label, a crew's grouping. Both windows draw the same rows, so the wording lives
 // in one place; and every one of them says "not reported" rather than inventing a
 // zero (D83).
+import type { ApiError } from '$lib/api.js';
 import type {
   RelayCrew,
   RelayLane,
   RelayLaneRef,
+  RelayNow,
   RelayTaskStep,
   RelayTicket,
   RelayTicketProvider,
@@ -47,6 +49,19 @@ export const crewTail = (id: string): string => id.slice(-4);
  */
 export const crewRepoLabel = (crew: Pick<RelayCrew, 'repo_key' | 'id'>): string =>
   crew.repo_key ?? `no repository · crew ${crewTail(crew.id)}`;
+
+/**
+ * The main window's context line: the crew's size — the assistant sessions the read
+ * shows, across every crew it shows — never the crew count, which is always one and
+ * says nothing (#394). "assistant" is the mockup's word ("Your crew of assistant
+ * sessions"); the label lives here alone. A read that failed counted nobody: it says
+ * so, never "0 assistants" (D83).
+ */
+export function crewSizeContext(now: Pick<RelayNow, 'lanes'> | null, error: ApiError | null): string {
+  if (!now || error) return 'assistants not reported';
+  const n = now.lanes.length;
+  return `${n} ${n === 1 ? 'assistant' : 'assistants'}`;
+}
 
 /** One lane's state pill: the lease first, then the person's open question, then the task. */
 export function laneState(lane: RelayLane): string {
