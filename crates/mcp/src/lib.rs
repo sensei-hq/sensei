@@ -3137,6 +3137,38 @@ mod tests {
         assert!(req.headers.contains(&auth_header(token)), "no auth header: {req:?}");
     }
 
+    /// #399: every field the broker caps at 600 chars says so in its own
+    /// parameter description, and `relay_register` says the caps are spelled
+    /// out in the guidance it answers — so an MCP lane learns the cap from the
+    /// catalog, never from a 422.
+    #[test]
+    fn relay_tools_name_the_600_char_cap_on_every_capped_field() {
+        let ts = tools();
+        for (tool, param) in [
+            ("relay_send_message", "text"),
+            ("relay_assign_task", "brief"),
+            ("relay_report_task", "summary"),
+            ("relay_submit_review", "summary"),
+            ("relay_ask_decision", "question"),
+            ("relay_answer_decision", "note"),
+            ("relay_merge_task", "note"),
+            ("relay_handover_task", "note"),
+            ("relay_limit_pause", "note"),
+            ("relay_post_step", "title"),
+            ("relay_post_step", "reason"),
+        ] {
+            let desc = tool_named(&ts, tool)["inputSchema"]["properties"][param]["description"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{tool}.{param} has no description"));
+            assert!(desc.contains("600"), "{tool}.{param} must name the 600-char cap: {desc}");
+        }
+        let register = tool_named(&ts, "relay_register")["description"].as_str().unwrap();
+        assert!(
+            register.contains("600"),
+            "relay_register points a lane at the caps its guidance spells out: {register}"
+        );
+    }
+
     #[test]
     fn relay_tools_are_listed() {
         let tools = handle_list_tools();

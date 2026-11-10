@@ -1141,6 +1141,30 @@ mod tests {
         assert!(g.family_notes.unwrap().starts_with("muse lanes"));
     }
 
+    /// #399: two lanes learned the 600-char caps from 422s (`text too long:
+    /// 765 > 600`, `brief too long`). The generic block every family gets
+    /// names the cap (the same number the store enforces), the fields it
+    /// covers, the failure it otherwise becomes, and both workarounds — so a
+    /// lane discovers the cap at register, not at its first rejected call.
+    #[test]
+    fn guidance_names_the_text_caps_before_a_lane_hits_them() {
+        let g = relay_guidance_for("", None);
+        let caps = g
+            .generic
+            .lines()
+            .find(|l| l.starts_with("- Caps:"))
+            .expect("generic guidance carries a '- Caps:' bullet");
+        let cap = super::MAX_SUMMARY_CHARS.to_string();
+        assert!(caps.contains(&cap), "the bullet names the enforced number: {caps}");
+        for field in ["message", "brief", "summary", "question", "note", "step title"] {
+            assert!(caps.contains(field), "the bullet names the capped field '{field}': {caps}");
+        }
+        assert!(caps.contains("422"), "the bullet names the failure a lane otherwise meets");
+        assert!(caps.contains("parts"), "the split-into-parts workaround for messages");
+        assert!(caps.contains("docs"), "the slim-brief-plus-docs workaround for assigns");
+        assert!(caps.contains("report_md"), "where a long report belongs instead");
+    }
+
     #[test]
     fn guidance_unknown_is_generic_only() {
         // Documented-but-unlisted families (codex), empties, and unknown
