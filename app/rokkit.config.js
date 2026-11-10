@@ -11,6 +11,10 @@ export default {
   overrides: {
     // Modal/dialog backdrop scrim — a dark veil in both modes.
     "scrim":        { light: "oklch(0.150 0.008 50 / 0.45)", dark: "oklch(0.120 0.008 50 / 0.55)" },
+    // The stronger hairline (mockup `--edge2`): a pressed toolbar button's rim
+    // and the host tag's. Rokkit emits `--paper-edge` only, so this ADDS one
+    // (COMPONENTS.md §1 maps `--edge2` → `border-paper-edge-strong`).
+    "paper-edge-strong": { light: "oklch(0.800 0.012 72)", dark: "oklch(0.340 0.012 50)" },
   },
 
   typography: {

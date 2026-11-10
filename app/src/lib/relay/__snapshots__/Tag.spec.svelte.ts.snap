@@ -1,0 +1,7 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Tag > pins all three kinds 1`] = `
+"<span data-tag="family" class="inline-flex items-center text-xs px-2 rounded-full whitespace-nowrap py-0.5 bg-paper-mute text-ink">Muse</span>
+<span data-tag="model" class="inline-flex items-center text-xs px-2 rounded-full whitespace-nowrap py-0.5 font-mono border border-solid border-paper-edge text-ink-soft">claude-opus-5-5</span>
+<span data-tag="host" title="Cursor is the editor; the assistant inside it does the work." class="inline-flex items-center text-xs px-2 rounded-full whitespace-nowrap py-0 border border-solid border-paper-edge-strong text-ink-soft">in Cursor</span>"
+`;
