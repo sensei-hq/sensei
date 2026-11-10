@@ -67,6 +67,12 @@ status — open or closed is GitHub's answer.
 
 ## Open — not yet filed
 
+- **The dev daemon runs behind its branch's schema (2026-11-10, found completing A5).** With `SENSEI_DDL_DIR` set, the
+  boot deploy still runs only when `sensei.config.schema_deployed_version` differs from the binary's version
+  (`tasks/schema_deploy.rs`), so a branch that adds tables leaves `dojo_sync` failing every tick (here: no
+  `sensei.delivery_withdrawals`) until someone clears the key and restarts. Option: when `SENSEI_DDL_DIR` is set, key
+  the deploy on the DDL tree's fingerprint (`scripts/test-template-fingerprint.sh` already computes one) as well as the version.
+
 - **Forge tickets from unshared repositories travel with the board (DF2, 2026-11-09, deferred).** Matches Jira. Forge tickets
   carry their repository, so a later slice could send only tickets from the workspace's shared repositories.
 
