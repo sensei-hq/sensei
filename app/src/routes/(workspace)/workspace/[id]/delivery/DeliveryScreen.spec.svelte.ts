@@ -27,6 +27,12 @@ const tracker: TrackerConnection = {
   external_scope: 'AUTH',
   board_ref: '42',
   board_name: 'AUTH Scrum',
+  // Jira: no GitLab sprint source, path or GitHub project address.
+  sprint_source: null,
+  sprint_source_changed_at: null,
+  full_path: null,
+  url: null,
+  iteration_field: null,
   level: 'sprint',
   status: 'connected',
   last_success_at: null,
