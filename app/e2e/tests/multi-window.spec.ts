@@ -204,6 +204,7 @@ test.describe('Workspace window — chrome', () => {
       { kanji: '型', label: 'Patterns'     },
       { kanji: '響', label: 'Impact'       },
       { kanji: '札', label: 'Tickets'      },
+      { kanji: '納', label: 'Delivery Metrics' },
       { kanji: '繋', label: 'Integrations' },
       { kanji: '情', label: 'About'        },
       // The Diagrams subsection (M16): one entry per diagram.

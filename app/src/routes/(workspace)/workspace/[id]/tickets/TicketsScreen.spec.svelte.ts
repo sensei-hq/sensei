@@ -307,15 +307,14 @@ describe('SDLC figures (tracker-sdlc-metrics S8)', () => {
     expect(group.textContent).not.toMatch(/no_sessions|null|NaN/);
   });
 
-  it("the lane header shows the board's row on All tickets and the sprint's row on a sprint", async () => {
+  it('has no SDLC lane row: sprint and board figures live in Delivery Metrics (B3)', async () => {
     const { q, screen } = await open();
-    expect(q('[data-sdlc-lane="project"] [data-sdlc="predictability"]')!.textContent).toBe('Too few sprints');
+    expect(q('[data-sdlc-lane]')).toBe(null);
     await screen.lanes[0].setFilter('s13');
     flushSync();
-    expect(q('[data-sdlc-lane="project"]')).toBe(null);
-    expect(q('[data-sdlc-lane="sprint"] [data-sdlc="commitment_reliability"]')!.textContent).toBe(
-      'Ticket history not read yet',
-    );
+    expect(q('[data-sdlc-lane]')).toBe(null);
+    expect(q('[data-filter="sprint"]')).not.toBe(null);
+    expect(q('[data-strip]')).not.toBe(null);
   });
 
   it('a failed read of the reason words is the daemon error with Retry, which recovers', async () => {
@@ -331,24 +330,7 @@ describe('SDLC figures (tracker-sdlc-metrics S8)', () => {
     await settle();
     await settle();
     expect(q('[data-view="daemon_error"]')).toBe(null);
-    expect(q('[data-sdlc-lane="project"]')).not.toBe(null);
-  });
-
-  it('a real 0 renders as 0, never as a reason or —', async () => {
-    const { q } = await open({
-      tryListTrackers: async () => ({
-        ok: true,
-        data: [
-          {
-            ...(await api().tryListTrackers('p-1').then((r) => (r.ok ? r.data[0] : null)))!,
-            sdlc_project: projectSdlc({ predictability: 0, tokens_per_ticket: 0, prompts_per_ticket: 0, reasons: {} }),
-          },
-        ],
-      }),
-    });
-    expect(q('[data-sdlc="predictability"]')!.textContent).toBe('0 pts');
-    expect(q('[data-sdlc="tokens_per_ticket"]')!.textContent).toBe('0');
-    expect(q('[data-sdlc="prompts_per_ticket"]')!.textContent).toBe('0.0');
+    expect(q('[data-lane="t"]')).not.toBe(null);
   });
 });
 

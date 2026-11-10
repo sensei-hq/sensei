@@ -67,6 +67,15 @@ status — open or closed is GitHub's answer.
 
 ## Open — not yet filed
 
+- **The dev daemon runs behind its branch's schema (2026-11-10, found completing A5).** With `SENSEI_DDL_DIR` set, the
+  boot deploy still runs only when `sensei.config.schema_deployed_version` differs from the binary's version
+  (`tasks/schema_deploy.rs`), so a branch that adds tables leaves `dojo_sync` failing every tick (here: no
+  `sensei.delivery_withdrawals`) until someone clears the key and restarts. Option: when `SENSEI_DDL_DIR` is set, key
+  the deploy on the DDL tree's fingerprint (`scripts/test-template-fingerprint.sh` already computes one) as well as the version.
+
+- **Forge tickets from unshared repositories travel with the board (DF2, 2026-11-09, deferred).** Matches Jira. Forge tickets
+  carry their repository, so a later slice could send only tickets from the workspace's shared repositories.
+
 - **Known limitation: two windows can race on the single `ui.views` config entry (D87 panel store, 2026-11-04).** The last save
   wins, so a panel toggled in another window at the same moment can be lost. Fix if it's ever seen: per-view keys, or
   compare-and-set on the daemon.
@@ -125,6 +134,10 @@ and file what is still true as an issue.
   repo-grain watermark engine; current spec draft at `spec/2026-08-18-…`.
   **In progress:** the sync work packages WP1–9 are this week's L1 lane
   (`plan/2026-11-03-parallel-lanes.md` §L1).
+- **Tracker delivery metrics (#351–#356)** — built on `feature/delivery_metrics`: the app's
+  Delivery Metrics section, board facts and per-person effort pushed to the Dōjō and merged
+  there, per-person visibility, withdrawal (`spec/daemon/tracker-delivery-metrics.md`,
+  decisions D87–D90). **In review:** awaiting the PR to develop.
 - **Operating-model Phase 2 (front-door intake conversation + playbook catalog).**
 - **Codebase-wide silent-error audit** (directed after the `node_kind` drop) → roadmap gaps `F-*`.
 - **Stale / orphaned project cleanup** — list endpoints + gated purge + housekeeping UI.

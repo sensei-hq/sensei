@@ -108,6 +108,24 @@ pub struct TicketSdlc {
     pub effort_cost: Option<f64>,
     pub rework_cost: Option<f64>,
     pub reasons: BTreeMap<&'static str, &'static str>,
+    /// What the dōjō merge sums (tracker-delivery-metrics D1); never served.
+    #[serde(skip)]
+    pub numerators: Numerators,
+}
+
+/// A ticket's raw counts and milliseconds behind its ratios, so figures merged
+/// across people are recomputed from sums, never averaged (tracker-delivery-metrics
+/// D1). Each is `None` exactly where its figure is unknown.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Numerators {
+    pub worked_ms: Option<i64>,
+    pub on_hold_ms: Option<i64>,
+    pub execution_ms: Option<i64>,
+    pub rework_ms: Option<i64>,
+    pub build_ok: Option<i64>,
+    pub build_fail: Option<i64>,
+    pub recovery_ms_sum: Option<i64>,
+    pub recovery_n: Option<i64>,
 }
 
 /// An instant in Unix milliseconds, as RFC 3339 like every other API timestamp.
@@ -233,8 +251,9 @@ fn from_signals(input: &TicketInput, t: &mut TicketSdlc) {
     if union.is_empty() {
         t.reasons.insert("worked_minutes", "no_activity");
     } else {
-        t.worked_minutes =
-            Some(union.iter().map(|u| (u.end - u.start) as f64).sum::<f64>() / MS_PER_MIN);
+        let worked_ms: i64 = union.iter().map(|u| u.end - u.start).sum();
+        t.numerators.worked_ms = Some(worked_ms);
+        t.worked_minutes = Some(worked_ms as f64 / MS_PER_MIN);
     }
 
     let prompts = count(K::Prompt);
@@ -300,7 +319,10 @@ fn from_signals(input: &TicketInput, t: &mut TicketSdlc) {
     }
 
     let build_fail = count(K::BuildFail);
-    let build_runs = count(K::BuildOk) + build_fail;
+    let build_ok = count(K::BuildOk);
+    t.numerators.build_ok = Some(build_ok);
+    t.numerators.build_fail = Some(build_fail);
+    let build_runs = build_ok + build_fail;
     t.build_runs = Some(build_runs);
     let unmatched = |categorised: bool| {
         order
@@ -319,15 +341,18 @@ fn from_signals(input: &TicketInput, t: &mut TicketSdlc) {
     let mut unrecovered = 0;
     for (f, s) in order.iter().enumerate().filter(|(_, s)| s.kind == K::BuildFail) {
         match order[f + 1..].iter().find(|x| x.kind == K::BuildOk && x.category == s.category) {
-            Some(ok) => gaps.push((ok.at - s.at) as f64 / MS_PER_MIN),
+            Some(ok) => gaps.push(ok.at - s.at),
             None => unrecovered += 1,
         }
     }
     t.build_unrecovered = Some(unrecovered);
+    let recovery_ms_sum: i64 = gaps.iter().sum();
+    t.numerators.recovery_ms_sum = Some(recovery_ms_sum);
+    t.numerators.recovery_n = Some(gaps.len() as i64);
     t.mean_build_recovery_minutes = if gaps.is_empty() {
         why(t, "mean_build_recovery_minutes", "no_recovery")
     } else {
-        Some(gaps.iter().sum::<f64>() / gaps.len() as f64)
+        Some(recovery_ms_sum as f64 / gaps.len() as f64 / MS_PER_MIN)
     };
 
     // Timing: work starts at the first code edit; submission is the first PR (else
@@ -359,6 +384,7 @@ fn from_signals(input: &TicketInput, t: &mut TicketSdlc) {
         }
     }
     let window = started.zip(submitted.map(|(at, _)| at));
+    t.numerators.execution_ms = window.map(|(w, s)| s - w);
     t.execution_hours = match window {
         Some((w, s)) => Some((s - w) as f64 / MS_PER_HOUR),
         None => why(t, "execution_hours", not_submitted),
@@ -381,7 +407,7 @@ fn from_signals(input: &TicketInput, t: &mut TicketSdlc) {
         Some((w, s)) => {
             let clipped: Vec<&Interval> =
                 union.iter().filter(|u| u.end >= w && u.start <= s).collect();
-            let mut minutes = 0.0;
+            let mut held_ms = 0;
             let mut holds = 0;
             let mut by_reason: BTreeMap<&'static str, f64> = BTreeMap::new();
             for pair in clipped.windows(2) {
@@ -389,13 +415,15 @@ fn from_signals(input: &TicketInput, t: &mut TicketSdlc) {
                 let gap = after.start.min(s) - before.end.max(w);
                 if gap > threshold {
                     let m = gap as f64 / MS_PER_MIN;
-                    minutes += m;
+                    held_ms += gap;
                     holds += 1;
                     *by_reason
                         .entry(before.reason.unwrap_or(HoldReason::Unknown).as_str())
                         .or_default() += m;
                 }
             }
+            let minutes = held_ms as f64 / MS_PER_MIN;
+            t.numerators.on_hold_ms = Some(held_ms);
             t.on_hold_minutes = Some(minutes);
             t.on_hold_count = Some(holds);
             t.on_hold_by_reason = Some(by_reason);
@@ -428,6 +456,7 @@ fn from_signals(input: &TicketInput, t: &mut TicketSdlc) {
                         .map(|&at| u.end - at)
                 })
                 .sum();
+            t.numerators.rework_ms = Some(rework_ms);
             let rework = rework_ms as f64 / MS_PER_MIN;
             t.rework_minutes = Some(rework);
             let mut cycles = 0;
@@ -538,6 +567,19 @@ pub async fn ticket_figures(
     usage: &std::collections::HashMap<uuid::Uuid, Usage>,
 ) -> Result<std::collections::HashMap<uuid::Uuid, TicketSdlc>, String> {
     let pairs = pg.ticket_sessions(tracker_id, Some(task_ids)).await?;
+    ticket_figures_of(pg, tracker_id, workspace_id, task_ids, &pairs, usage).await
+}
+
+/// Every ticket's figures among `task_ids` over exactly these (ticket, session)
+/// pairs, and `usage` computed over the same pairs.
+pub async fn ticket_figures_of(
+    pg: &crate::db::pg_store::PgStore,
+    tracker_id: uuid::Uuid,
+    workspace_id: uuid::Uuid,
+    task_ids: &[uuid::Uuid],
+    pairs: &[crate::db::pg_store::tracker_usage::TicketSession],
+    usage: &std::collections::HashMap<uuid::Uuid, Usage>,
+) -> Result<std::collections::HashMap<uuid::Uuid, TicketSdlc>, String> {
     let catalogue = pg.command_catalogue().await?;
     let settings = pg.metric_settings(workspace_id).await?;
     let mut ids: Vec<uuid::Uuid> = pairs.iter().map(|p| p.session_id).collect();
@@ -658,6 +700,53 @@ mod tests {
         assert_eq!((t.rework_minutes, t.rework_cycles), (Some(3.0), Some(1)));
         assert_eq!(t.worked_minutes, Some(7.0));
         assert_eq!(t.on_hold_ratio, Some(28.0 / 32.0 * 100.0));
+    }
+
+    /// tracker-delivery-metrics D1: the ✚ numerators and the milliseconds the merge
+    /// sums, so the dōjō recomputes the ratios rather than averaging them.
+    #[test]
+    fn fixture_a_exposes_the_numerators_the_merge_sums() {
+        let sessions = [fixture_a()];
+        let (u, s) = (Usage::default(), settings(15));
+        let n = compute(&input(&sessions, &u, &s)).numerators;
+        assert_eq!(
+            n,
+            Numerators {
+                worked_ms: Some(7 * MIN),
+                on_hold_ms: Some(28 * MIN),
+                execution_ms: Some(32 * MIN),
+                rework_ms: Some(3 * MIN),
+                build_ok: Some(1),
+                build_fail: Some(1),
+                recovery_ms_sum: Some(30 * MIN),
+                recovery_n: Some(1),
+            }
+        );
+    }
+
+    #[test]
+    fn numerators_are_unknown_where_their_figures_are() {
+        // No sessions: nothing was measured, so nothing is 0.
+        let (u, s) = (Usage::default(), settings(15));
+        assert_eq!(compute(&input(&[], &u, &s)).numerators, Numerators::default());
+        // Worked but never submitted: no window, no rework, but runs are counted.
+        let sessions = [current(vec![
+            sig(CodeEdit, 0),
+            run(BuildFail, 1, Category::Build),
+            slice(0, 2, None),
+        ])];
+        let n = compute(&input(&sessions, &u, &s)).numerators;
+        assert_eq!((n.worked_ms, n.build_ok, n.build_fail), (Some(2 * MIN), Some(0), Some(1)));
+        assert_eq!((n.recovery_ms_sum, n.recovery_n), (Some(0), Some(0)));
+        assert_eq!((n.execution_ms, n.on_hold_ms, n.rework_ms), (None, None, None));
+    }
+
+    #[test]
+    fn the_numerators_never_reach_the_api() {
+        let sessions = [fixture_a()];
+        let (u, s) = (Usage::default(), settings(15));
+        let json = serde_json::to_value(compute(&input(&sessions, &u, &s))).unwrap();
+        assert!(json.get("numerators").is_none() && json.get("worked_ms").is_none());
     }
 
     #[test]

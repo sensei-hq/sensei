@@ -42,7 +42,7 @@ comment on column tracker_tasks.key
 comment on column tracker_tasks.scope
      is 'What the key is relative to, when it is not globally unique (GitLab: normalize_repo_key of the project URL; GitHub: of the issue''s repository URL). NULL for Jira.';
 comment on column tracker_tasks.summary
-     is 'Issue title. Client-confidential: never leaves the machine.';
+     is 'Issue title. Travels to the dōjō of a workspace whose repositories the person shares, as the only ticket free text (tracker-delivery-metrics B9, B12, 2026-11-04); never anywhere else.';
 comment on column tracker_tasks.issue_type
      is 'Provider issue type, raw (Story, Bug, Task, ...). Not mapped in v1.';
 comment on column tracker_tasks.status

@@ -230,6 +230,13 @@ describe("the identity's own sync — its plan and forge mirror", () => {
     expect(s.activity[0]).toMatchObject({ label: 'forge mirror · pull', line: 'failing · never agreed' });
   });
 
+  it('a tracker board’s push is the identity’s too, named by its key’s start, never a URL (tracker-delivery-metrics D3)', () => {
+    const board = repo({ entity: 'tracker_board', entity_key: 'ab'.repeat(32), direction: 'push', state: 'error', last_error: 'dōjō returned 400: bad', synced_at: null });
+    const { s } = screen({ sync: [board] });
+    expect(s.activity).toMatchObject([{ label: 'board abababab · push', line: 'failing · never agreed' }]);
+    expect(s.identityIssues).toMatchObject([{ title: 'board abababab is failing', detail: 'dōjō returned 400: bad' }]);
+  });
+
   it("only the selected identity's", () => {
     const { s } = screen({ sync: [repo({ entity: 'dojo_sync_plan', entity_key: 'x', direction: 'pull', persona: 'jerry-seneca' })] });
     expect(s.activity).toEqual([]);
