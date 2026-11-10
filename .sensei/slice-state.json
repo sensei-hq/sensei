@@ -20,17 +20,21 @@
     "clippy -D warnings 0, fmt clean, make test-template restamped",
     "T1-T3 3c5b40838 (senseid 4706/0, dojo 2400/2400)",
     "review 2c1a17046 (F-DC2 negative age; test gaps; failure-mode none)",
-    "T4 wrong-gate checked, backlog DF1 closed, spec/plan built"
+    "T4 wrong-gate checked, backlog DF1 closed, spec/plan built",
+    "complete: done gates 19-23 verified (done-gate-verifier), wrong gates absent (wrong-gate-hunter)",
+    "E2E 2026-11-10: real GitHub board filed in local dojo, pending 0 (was 125), synced_at = sync + 1.8 s; C40 FALSE corrected 4c1153973",
+    "backlog: dev daemon behind branch schema d6bd89d98"
   ],
   "gate_status": "pass",
   "claims_rerun": "2026-11-09 build start: C25-C37 unchanged, 0 FALSE",
   "open_questions": [],
   "known_broken": [
-    "full `cargo test -p senseid` OOM-kills (137) at default test threads, even alone; run with RUST_TEST_THREADS=4 in background",
-    "local Supabase (54322) lacks develop functions (org_repositories, repo_entitlement): definer_functions_gate_the_caller.sql fails locally for drift, not A5; CI deploys fresh"
+    "GitLab and Jira boards not shown E2E: their workspaces repos are on git.senecaglobal.in (unknown_host, no tenant), so not eligible to push",
+    "app/src-tauri/Cargo.lock dbd-core 0.27.9 bump uncommitted (desktop dev build, not this slice)",
+    "sensei daemon run d9ebaff7 not marked done (MCP unavailable in the completing session)"
   ],
   "amendments": [
     "A5 r3 (user, 2026-11-09): synced_age_s replaces synced_at on the wire (F-FM1 clock skew); C38 FALSE recorded"
   ],
-  "next_command": "/sensei:complete, then PR feature/delivery_metrics -> develop"
+  "next_command": "PR feature/delivery_metrics -> develop"
 }
