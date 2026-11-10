@@ -1,6 +1,6 @@
 ---
 name: Tracker delivery metrics
-status: built (F1–F6, #351–#356, 2026-11-05; amendments A1–A4); A5 built 2026-11-10 (3c5b40838, 2c1a17046)
+status: built (F1–F6, #351–#356, 2026-11-05; amendments A1–A4); A5 built 2026-11-10 (3c5b40838, 2c1a17046), end-to-end shown on a real GitHub board 2026-11-10
 date: 2026-11-04
 analysis: none (brainstorm 2026-11-04, decisions B1–B15 below)
 parent:
@@ -440,7 +440,9 @@ design sent `last_success_at` itself and capped it at the dōjō's clock. That c
 machines' clocks: a daemon running 3 h fast whose last good sync was 2 h ago could replace a copy
 synced 10 minutes ago, and a slow clock's fresh copy was answered `stale`, then acknowledged and
 not re-sent for 6 h. An age measured on one clock and turned into a time on another has neither
-fault. Transit only makes a copy look older, the safe direction. A `synced_age_s` that is not a
+fault. The time from the daemon's read of the age to the dōjō's `now()` (one tick's build-to-push,
+seconds) and the floor to whole seconds make a copy look slightly *newer* than its sync: two copies
+are ordered right whenever their syncs are further apart than that (C40). A `synced_age_s` that is not a
 whole number from 0 to 315 360 000 (ten years of seconds) is refused by the ingest with 400; the
 function refuses one outside that range with an explicit `invalid_parameter_value` (422) when
 called directly, before `make_interval`, which by itself accepts a negative value and errors on a
@@ -731,3 +733,4 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
 | C37 | a malformed timestamp string passes `checkDeliveryBody` and fails at the function's cast as 500 | `textOrNull` (`delivery-ingest.ts:225`) tests only "is a string"; 22007 is not in `db-refusal.ts` → 500 | CONFIRMED (security review; re-checked against `db-refusal.ts`) |
 | C38 | ~~a `least(synced_at, now())` cap makes two daemons' `synced_at` comparable~~ | the cap catches only a value ahead of the dōjō's clock; a fast clock by less than the sync's age, or a slow clock, passes | **FALSE** (build-start failure-mode audit, F-FM1). Cost: an older copy could replace a newer one, and the newer one go unsent for 6 h, with no error. A5 sends an age measured on one clock (user, 2026-11-09) |
 | C39 | `last_success_at` is written by the database's `now()`, so an age computed in SQL against `now()` uses one clock | `trackers.rs:755` `last_success_at = now()` | CONFIRMED |
+| C40 | ~~transit only makes a copy look older~~ | completion E2E 2026-11-10: the real GitHub board synced 05:03:41.87, filed as `synced_at` 05:03:43.69 (`now() - floor(age)` after the build-to-push delay) | **FALSE**, found at `/sensei:complete`. A copy looks newer by the build-to-push delay plus < 1 s of flooring. Cost: none in practice (the age is re-read every tick, pushed within seconds); copies whose syncs are closer than that may order by arrival instead. Spec sentence corrected |
