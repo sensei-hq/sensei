@@ -35,6 +35,16 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
     }
 }
 
+/// One pass at a fed `now`, announcing what it changed on `event_tx`.
+pub async fn sweep_at(
+    pg: &PgStore,
+    event_tx: &tokio::sync::broadcast::Sender<crate::api::events::StateEvent>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<crate::db::pg_store::relay::RelaySweepReport, crate::relay::RelayError> {
+    let _ = event_tx;
+    pg.relay_sweep_leases(now).await
+}
+
 fn is_missing_schema(detail: &str) -> bool {
     detail.contains("does not exist") || detail.contains("undefined_table")
 }

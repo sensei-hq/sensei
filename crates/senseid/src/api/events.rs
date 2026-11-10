@@ -165,6 +165,48 @@ pub enum ActivityLevel {
     Error,
 }
 
+// ── Relay crew + run entities ──────────────────────────────────────────────
+
+/// What happened to a lane's crew membership. Each change is one `lane`
+/// event; the screen re-reads the crew (the event notifies, it never
+/// invents rows — the F8 split).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneChange {
+    /// Joined the crew (`register`).
+    Registered,
+    /// Came back after leaving (`reregister`).
+    Reregistered,
+    /// Left the crew (`unregister`).
+    Unregistered,
+    /// Still a member, but cannot work.
+    Suspended(LaneReason),
+    /// Able to work again.
+    Resumed(LaneReason),
+}
+
+/// Why a lane was suspended or resumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaneReason {
+    /// The sweeper expired its lease (no heartbeat within the TTL).
+    LeaseExpired,
+    /// The lane reported quota exhaustion (`limit_pause`).
+    LimitPause,
+    /// A heartbeat granted a fresh lease after the old one lapsed.
+    LeaseRegranted,
+    /// A heartbeat at or past the resume time ended a limit pause.
+    LimitPauseEnded,
+}
+
+/// What happened to a run (CONTRACT §3k). A run is a crew's active
+/// lifecycle, so `run_id` is the crew id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunChange {
+    Completed,
+    Archived,
+    Deleted,
+}
+
 // ── Constructors ────────────────────────────────────────────────────────────
 
 impl StateEvent {
@@ -250,6 +292,18 @@ impl StateEvent {
             entity: "step".into(),
             data: serde_json::json!({ "task_id": task_id.to_string(), "step": step }),
         }
+    }
+
+    /// A lane's crew membership changed.
+    pub fn relay_lane(change: LaneChange, lane_id: &uuid::Uuid, crew_id: &uuid::Uuid) -> Self {
+        let _ = (change, lane_id, crew_id);
+        Self::relay("lane")
+    }
+
+    /// A run reached a lifecycle point.
+    pub fn relay_run(change: RunChange, crew_id: &uuid::Uuid) -> Self {
+        let _ = (change, crew_id);
+        Self::relay("run")
     }
 
     /// The relay family's entities, the only ones `/api/relay/events`
@@ -356,6 +410,101 @@ mod tests {
     fn workspace_status_serializes_snake_case() {
         let json = serde_json::to_value(WorkspaceStatus::Active).unwrap();
         assert_eq!(json, "active");
+    }
+
+    fn ids() -> (uuid::Uuid, uuid::Uuid) {
+        (
+            uuid::Uuid::parse_str("01a1c5e8-2117-7351-9818-700adc3c08f5").unwrap(),
+            uuid::Uuid::parse_str("01a1c5e6-06a5-7d12-9f38-267a671a28f9").unwrap(),
+        )
+    }
+
+    #[test]
+    fn relay_lane_contract_shape_per_change() {
+        // Crew-change SSE: every membership change is a `lane` event on the
+        // F8 contract. The action is what the screen does with the row.
+        let (lane, crew) = ids();
+        let cases = [
+            (LaneChange::Registered, "add", "registered", None),
+            (LaneChange::Reregistered, "add", "reregistered", None),
+            (LaneChange::Unregistered, "remove", "unregistered", None),
+            (
+                LaneChange::Suspended(LaneReason::LeaseExpired),
+                "update",
+                "suspended",
+                Some("lease_expired"),
+            ),
+            (
+                LaneChange::Suspended(LaneReason::LimitPause),
+                "update",
+                "suspended",
+                Some("limit_pause"),
+            ),
+            (
+                LaneChange::Resumed(LaneReason::LeaseRegranted),
+                "update",
+                "resumed",
+                Some("lease_regranted"),
+            ),
+            (
+                LaneChange::Resumed(LaneReason::LimitPauseEnded),
+                "update",
+                "resumed",
+                Some("limit_pause_ended"),
+            ),
+        ];
+        for (change, action, op, reason) in cases {
+            let json = serde_json::to_value(StateEvent::relay_lane(change, &lane, &crew)).unwrap();
+            let mut data = serde_json::json!({
+                "op": op,
+                "lane_id": lane.to_string(),
+                "crew_id": crew.to_string(),
+            });
+            if let Some(reason) = reason {
+                data["reason"] = serde_json::json!(reason);
+            }
+            assert_eq!(
+                json,
+                serde_json::json!({"action": action, "entity": "lane", "data": data}),
+                "{change:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn relay_run_contract_shape_per_change() {
+        // CONTRACT §3k: run.completed / run.archived / run.deleted. The run
+        // is the crew's lifecycle, so run_id and crew_id are the same id.
+        let (_, crew) = ids();
+        let cases = [
+            (RunChange::Completed, "update", "completed"),
+            (RunChange::Archived, "update", "archived"),
+            (RunChange::Deleted, "remove", "deleted"),
+        ];
+        for (change, action, op) in cases {
+            let json = serde_json::to_value(StateEvent::relay_run(change, &crew)).unwrap();
+            assert_eq!(
+                json,
+                serde_json::json!({
+                    "action": action,
+                    "entity": "run",
+                    "data": {"op": op, "run_id": crew.to_string(), "crew_id": crew.to_string()},
+                }),
+                "{change:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn relay_family_forwards_lane_and_run() {
+        // `/api/relay/events` forwards only the relay family: the new
+        // entities must ride it, the scan entities must not.
+        for entity in ["relay", "task", "step", "lane", "run"] {
+            assert!(StateEvent::is_relay_family(entity), "{entity}");
+        }
+        for entity in ["workspace", "folder", "activity", "assistant"] {
+            assert!(!StateEvent::is_relay_family(entity), "{entity}");
+        }
     }
 
     #[tokio::test]
