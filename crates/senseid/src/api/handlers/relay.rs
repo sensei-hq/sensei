@@ -57,7 +57,7 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 
-use crate::api::events::StateEvent;
+use crate::api::events::{LaneChange, LaneReason, RunChange, StateEvent};
 use crate::api::state::AppState;
 use crate::db::pg_store::relay::{
     RelayAnswerInput, RelayAnswerOutput, RelayAskInput, RelayAskedOf, RelayAssignInput,
@@ -141,6 +141,11 @@ fn emit(state: &AppState, op: &str) {
 /// A task changed: the screen re-reads that task's view (F8).
 fn emit_task(state: &AppState, op: &str, task_id: &Uuid) {
     let _ = state.event_tx.send(StateEvent::relay_task(op, task_id));
+}
+
+/// A lane's crew membership changed: the Lanes section follows.
+fn emit_lane(state: &AppState, change: LaneChange, lane_id: &Uuid, crew_id: &Uuid) {
+    let _ = state.event_tx.send(StateEvent::relay_lane(change, lane_id, crew_id));
 }
 
 // ─── Wire bodies ───
@@ -480,6 +485,7 @@ pub(crate) async fn register(
         )
         .await
         .map_err(err)?;
+    emit_lane(&state, LaneChange::Registered, &out.lane_id, &out.crew_id);
     ok(serde_json::json!({
         "lane_token": out.lane_token,
         "lane_id": out.lane_id.to_string(),
@@ -552,12 +558,27 @@ pub(crate) async fn heartbeat(
     Json(body): Json<LaneBody>,
 ) -> RelayResult {
     let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
-    let RelayHeartbeatOutput { expires_at } = state
-        .pg
-        .relay_heartbeat(parse_uuid(&body.lane_id, "lane_id").map_err(err)?, chrono::Utc::now())
-        .await
-        .map_err(err)?;
-    let _ = session;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let RelayHeartbeatOutput { expires_at, regranted, pause_ended } =
+        state.pg.relay_heartbeat(lane_id, chrono::Utc::now()).await.map_err(err)?;
+    // A routine renewal changes nothing the screen shows; only a beat
+    // that brings the lane back to work is announced.
+    if regranted {
+        emit_lane(
+            &state,
+            LaneChange::Resumed(LaneReason::LeaseRegranted),
+            &lane_id,
+            &session.crew_id,
+        );
+    }
+    if pause_ended {
+        emit_lane(
+            &state,
+            LaneChange::Resumed(LaneReason::LimitPauseEnded),
+            &lane_id,
+            &session.crew_id,
+        );
+    }
     ok(serde_json::json!({ "expires_at": iso(expires_at) }))
 }
 
@@ -577,6 +598,7 @@ pub(crate) async fn reregister(
         .relay_reregister(parse_uuid(&body.lane_id, "lane_id").map_err(err)?, chrono::Utc::now())
         .await
         .map_err(err)?;
+    emit_lane(&state, LaneChange::Reregistered, &out.lane_id, &out.crew_id);
     ok(serde_json::json!({
         "lane_id": out.lane_id.to_string(),
         "crew_id": out.crew_id.to_string(),
@@ -590,10 +612,14 @@ pub(crate) async fn unregister(
     headers: HeaderMap,
     Json(body): Json<LaneBody>,
 ) -> RelayResult {
-    let _session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
     let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
-    state.pg.relay_unregister(lane_id).await.map_err(err)?;
+    let out = state.pg.relay_unregister(lane_id).await.map_err(err)?;
     emit(&state, "unregister");
+    emit_lane(&state, LaneChange::Unregistered, &lane_id, &session.crew_id);
+    if let Some(task_id) = out.interrupted {
+        emit_task(&state, "interrupt", &task_id);
+    }
     ok(serde_json::json!({ "lane_id": body.lane_id }))
 }
 
@@ -602,7 +628,7 @@ pub(crate) async fn limit_pause(
     headers: HeaderMap,
     Json(body): Json<LimitPauseBody>,
 ) -> RelayResult {
-    let _session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
     let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let resumes_at = body
         .resumes_at
@@ -627,7 +653,7 @@ pub(crate) async fn limit_pause(
         )
         .await
         .map_err(err)?;
-    emit(&state, "limit_pause");
+    emit_lane(&state, LaneChange::Suspended(LaneReason::LimitPause), &lane_id, &session.crew_id);
     ok(serde_json::json!({
         "scope": out.scope,
         "resumes_at": out.resumes_at.map(iso),
@@ -1130,7 +1156,7 @@ pub(crate) async fn close_crew(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_close_crew(session.user_id, caller, crew_id).await.map_err(err)?;
-    emit(&state, "close");
+    let _ = state.event_tx.send(StateEvent::relay_run(RunChange::Completed, &out.crew_id));
     ok(serde_json::json!({
         "crew_id": out.crew_id.to_string(),
         "status": out.status,
@@ -3992,11 +4018,19 @@ mod tests {
         crate::tasks::relay_lease_sweep::sweep_at(&h.state.pg, &h.state.event_tx, past_lease)
             .await
             .unwrap();
-        let event = event_for(&mut rx, "lane", "suspended").await;
-        assert_eq!(
-            event,
-            lane_event_why("update", "suspended", &lane_id, &coord.2, "lease_expired")
-        );
+        // Every lane's lease lapsed: one suspend per lane, the
+        // coordinator's and this one's.
+        let mut suspended = vec![
+            event_for(&mut rx, "lane", "suspended").await,
+            event_for(&mut rx, "lane", "suspended").await,
+        ];
+        suspended.sort_by_key(|e| e["data"]["lane_id"].as_str().unwrap().to_string());
+        let mut expected = vec![
+            lane_event_why("update", "suspended", &coord.0, &coord.2, "lease_expired"),
+            lane_event_why("update", "suspended", &lane_id, &coord.2, "lease_expired"),
+        ];
+        expected.sort_by_key(|e| e["data"]["lane_id"].as_str().unwrap().to_string());
+        assert_eq!(suspended, expected);
         let mut rx = h.state.event_tx.subscribe();
         let (status, _) = call(
             &h,
@@ -4036,9 +4070,13 @@ mod tests {
         let coord = register_coordinator(&h).await;
         let _ = register_contributor(&h, &coord.2).await;
         let mut rx = h.state.event_tx.subscribe();
-        crate::tasks::relay_lease_sweep::sweep_at(&h.state.pg, &h.state.event_tx, chrono::Utc::now())
-            .await
-            .unwrap();
+        crate::tasks::relay_lease_sweep::sweep_at(
+            &h.state.pg,
+            &h.state.event_tx,
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
         assert!(rx.try_recv().is_err(), "an idle sweep emitted an event");
     }
 

@@ -294,22 +294,48 @@ impl StateEvent {
         }
     }
 
-    /// A lane's crew membership changed.
+    /// A lane's crew membership changed: the screen adds, re-reads or
+    /// drops the lane row and recounts its crew. `reason` rides only on
+    /// suspend/resume.
     pub fn relay_lane(change: LaneChange, lane_id: &uuid::Uuid, crew_id: &uuid::Uuid) -> Self {
-        let _ = (change, lane_id, crew_id);
-        Self::relay("lane")
+        let (action, op, reason) = match change {
+            LaneChange::Registered => (Action::Add, "registered", None),
+            LaneChange::Reregistered => (Action::Add, "reregistered", None),
+            LaneChange::Unregistered => (Action::Remove, "unregistered", None),
+            LaneChange::Suspended(reason) => (Action::Update, "suspended", Some(reason)),
+            LaneChange::Resumed(reason) => (Action::Update, "resumed", Some(reason)),
+        };
+        let mut data = serde_json::json!({
+            "op": op,
+            "lane_id": lane_id.to_string(),
+            "crew_id": crew_id.to_string(),
+        });
+        if let Some(reason) = reason {
+            data["reason"] = serde_json::to_value(reason).unwrap();
+        }
+        Self { action, entity: "lane".into(), data }
     }
 
-    /// A run reached a lifecycle point.
+    /// A run reached a lifecycle point (CONTRACT §3k). Deletion drops the
+    /// run; completion and archiving restate it.
     pub fn relay_run(change: RunChange, crew_id: &uuid::Uuid) -> Self {
-        let _ = (change, crew_id);
-        Self::relay("run")
+        let (action, op) = match change {
+            RunChange::Completed => (Action::Update, "completed"),
+            RunChange::Archived => (Action::Update, "archived"),
+            RunChange::Deleted => (Action::Remove, "deleted"),
+        };
+        let id = crew_id.to_string();
+        Self {
+            action,
+            entity: "run".into(),
+            data: serde_json::json!({ "op": op, "run_id": id, "crew_id": id }),
+        }
     }
 
     /// The relay family's entities, the only ones `/api/relay/events`
     /// forwards (workspace/folder/activity ride the scan socket).
     pub fn is_relay_family(entity: &str) -> bool {
-        matches!(entity, "relay" | "task" | "step")
+        matches!(entity, "relay" | "task" | "step" | "lane" | "run")
     }
 }
 
