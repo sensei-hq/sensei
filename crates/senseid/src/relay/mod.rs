@@ -696,6 +696,13 @@ next assignment or re-offer. Prefer wait over spinning.\n\
 report moves it to in_review and names a reviewer, whose approval lets the \
 coordinator merge. Only the coordinator merges; only the named reviewer \
 approves.\n\
+- Caps: every short text field is at most 600 characters; longer text is \
+rejected with 422 (`text too long: 765 > 600`). Capped: message text, an \
+assign brief summary, a report summary (changed), a review summary, a decision \
+question, an answer note, merge/handover/pause notes, a step title and reason. \
+Split a long message into numbered parts (1/2, 2/2); keep a brief slim and put \
+the detail in the docs files it names; a full report rides report_md, which is \
+not capped.\n\
 - Resume: after a restart or context clear, POST /api/relay/reregister (MCP: \
 relay_reregister) with your lane_id resumes the same lane and returns the \
 task checkpoint. POST /api/relay/unregister releases the lane cleanly when \

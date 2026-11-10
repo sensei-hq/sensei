@@ -1332,7 +1332,7 @@ pub fn handle_list_tools() -> Value {
             // Lane calls authenticate over the Authorization header (never the
             // query); `lane_token` never appears in a path, query or body.
             tool("relay_register",
-                "Register a relay lane: join a crew with its crew_id, or mint a crew as a coordinator (goal/repo_key/workspace_id ride the mint). Answers the lane token — every other lane call authenticates with it — plus lane_title, minted as `<code> · <family>` (bare code when family is empty), persisted on the lane and shown in census.",
+                "Register a relay lane: join a crew with its crew_id, or mint a crew as a coordinator (goal/repo_key/workspace_id ride the mint). Answers the lane token — every other lane call authenticates with it — plus lane_title, minted as `<code> · <family>` (bare code when family is empty), persisted on the lane and shown in census. The guidance it answers spells out the 600-char caps (messages, briefs, summaries, notes — 422 above) and how to work within them.",
                 &[
                     ("role", "string", "coordinator (mint or join) | contributor (join: crew_id required)"),
                     ("family", "string", "Lane family, e.g. claude-code"),
@@ -1396,7 +1396,7 @@ pub fn handle_list_tools() -> Value {
                     ("phase", "string", "analysis | tests | impl | docs | mockup"),
                     ("round", "integer", "Must be the task's current round"),
                     ("partial", "boolean", "Progress only: stays working, no reviewer picked"),
-                    ("summary", "object", "{changed, look_at?, flags?} — the ≤600-char turn summary"),
+                    ("summary", "object", "{changed, look_at?, flags?} — the turn summary; changed is ≤600 chars (422 above), the full text rides report_md"),
                     ("report_md", "string", "The full report markdown"),
                     ("base", "string", "Base ref the turn builds on"),
                     ("branch", "string", "Branch the turn lives on"),
@@ -1451,7 +1451,7 @@ pub fn handle_list_tools() -> Value {
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
                     ("to", "object", "{kind: coordinator|lane|everyone|person, lane_id?}"),
-                    ("text", "string", "The ≤600-char message text"),
+                    ("text", "string", "The ≤600-char message text (422 above) — split a longer message into numbered parts"),
                 ],
                 &[
                     ("task_id", "string", "Task uuid the message belongs to"),
@@ -1479,7 +1479,7 @@ pub fn handle_list_tools() -> Value {
                     ("to_lane", "string", "Assignee lane uuid"),
                     ("title", "string", "Task title"),
                     ("phase", "string", "analysis | tests | impl | docs | mockup"),
-                    ("brief", "object", "{summary, docs[]} — the frozen hand-off"),
+                    ("brief", "object", "{summary, docs[]} — the frozen hand-off. summary is ≤600 chars (422 above): keep it slim and put the detail in docs[] files"),
                 ],
                 &[
                     ("ticket", "object", "{provider, key, url?}"),
@@ -1530,11 +1530,11 @@ pub fn handle_list_tools() -> Value {
                     ("lane_token", "string", "The register-minted token"),
                     ("task_id", "string", "Task uuid"),
                     ("key", "string", "Step key, stable within the task (upserts by this)"),
-                    ("title", "string", "Step title"),
+                    ("title", "string", "Step title, ≤600 chars"),
                     ("state", "string", "open | done | skipped"),
                 ],
                 &[
-                    ("reason", "string", "Required on skipped, forbidden elsewhere"),
+                    ("reason", "string", "Required on skipped, forbidden elsewhere; ≤600 chars"),
                 ]),
             tool("relay_limit_pause",
                 "Report quota exhaustion: the lane pauses (daily/weekly/other, with the warning's resume time when known) while its lease stays live; the sweep suspends its held task for re-offer elsewhere without expiring the lane. Beating at or past resumes_at resumes.",
