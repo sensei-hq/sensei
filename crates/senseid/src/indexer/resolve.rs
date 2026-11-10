@@ -4574,9 +4574,9 @@ mod tests {
         // this slice to earn a print for that reason.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,136, headroom {})",
+             (ceiling 1,140, headroom {})",
             elsewhere.len(),
-            1_136_i64 - other as i64
+            1_140_i64 - other as i64
         );
         // Lowered from 1,300 on 2026-10-26: the store's row types moved to the
         // path their callers name (`pg_store::FolderRow`), so the re-exports the
@@ -4643,8 +4643,18 @@ mod tests {
         // identities: merging develop (1,129/227) into the delivery-metrics
         // slice sums the two branches' raises, each measured against its own
         // base; the merge adds no code of its own here. Same class, same cure.
+        // Raised 1,136 → 1,140 on 2026-11-10, measured 1,138 over 230
+        // identities (develop base 1,136/229 — the ratchet stood at zero
+        // headroom): the #359 r2 pin adds 2 over 1 new identity. The new
+        // one is the test-only `FakeEmbedAdapter`'s `self.clone()` in
+        // `register_into` (the codebase idiom; `Arc::clone` exists in no
+        // walked source — the derive-generated cause above), and the
+        // shared-identity +1 is another `Logger::noop` reach (the ctx
+        // mirrors `make_ctx`; cross-crate `sensei_logger::` paths the
+        // walk does not follow — the #339 re-export cause). Same
+        // documented classes, same backlog cures, not a lower number.
         assert!(
-            other <= 1_136,
+            other <= 1_140,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),
