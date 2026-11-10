@@ -6,6 +6,7 @@
 //!     per synced sprint board:   try_lock — skipped this tick while a sync or history run holds it
 //!         token ← delivery_token            sprints, tickets, board_figures (one replay)
 //!         token' ← delivery_token           moved? skipped this tick, never sent half-updated
+//!         sync age (A5)                     null or moved sync? skipped; sent only without history
 //!         facts, canonical hash
 //! push_delivery (per persona)
 //!     per built board:  eligibility (plan tenant) — not shared / ambiguous → sync state skipped
@@ -24,7 +25,7 @@ use crate::db::pg_store::sync::SyncMark;
 use crate::dojo::delivery::{
     BoardFacts, Effort, FactSprint, FactTicket, board_key, effort_from, effort_hash, effort_json,
     eligibility, facts_hash, facts_json, is_due, project_effort, request_body, sized_body,
-    sprint_effort, ticket_effort,
+    sprint_effort, sync_age, ticket_effort,
 };
 use crate::dojo_client::user_plane::{DeliveryError, SyncPlan, UserPlane};
 use crate::tracker::sync::TrackerLocks;
@@ -105,6 +106,12 @@ async fn build_one(
     if pg.delivery_token(t.id).await? != before {
         return Ok(None);
     }
+    let history = crate::tracker::capabilities_of_kind(&t.kind)?.history;
+    let Some(synced_age_s) =
+        sync_age(history, before.last_success_at, pg.delivery_sync_age(t.id).await?)
+    else {
+        return Ok(None);
+    };
     let mut fact_sprints = Vec::with_capacity(sprints.len());
     for s in sprints {
         // A removed sprint has no replay and travels with no figures; a live one
@@ -136,6 +143,7 @@ async fn build_one(
     let ticket_count = tickets.len();
     let facts = BoardFacts {
         history_at: t.history_at,
+        synced_age_s,
         pending_tickets: before.pending,
         predictability: figures.predictability.ok(),
         predictability_reason: figures.predictability.err().map(str::to_string),

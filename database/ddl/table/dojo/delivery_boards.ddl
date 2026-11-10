@@ -12,6 +12,7 @@ create table if not exists delivery_boards (
 , reported_by            uuid         not null references dojo.principals(id) on delete cascade
 , reported_at            timestamptz  not null default now()
 , history_at             timestamptz
+, synced_at              timestamptz
 , pending_tickets        integer      not null check (pending_tickets >= 0)
 , predictability         numeric
 , predictability_reason  text
@@ -23,12 +24,12 @@ create index if not exists delivery_boards_tenant_idx on delivery_boards(tenant_
 alter table delivery_boards enable row level security;
 
 comment on table delivery_boards is
-'A tracker board of a workspace and the ONE copy of its Jira-derived facts the dōjō keeps: the report that is not lesser (complete beats incomplete, then the later history_at, then the later arrival) replaces the board row and all its sprints and tickets together. Holds no tracker connection — no URL, account, secret, field mapping or sync state (B11). Written and read only through security-definer functions (dojo.file_delivery_facts, dojo.workspace_delivery_*).';
+'A tracker board of a workspace and the ONE copy of its tracker-derived facts the dōjō keeps: the report that is not lesser (complete beats incomplete; then the later history_at when either copy has one; then, when neither has and both carry one, the later synced_at; then the later arrival — A5) replaces the board row and all its sprints and tickets together. Holds no tracker connection — no URL, account, secret, field mapping or sync setting (B11); synced_at only orders copies (DF3). Written and read only through security-definer functions (dojo.file_delivery_facts, dojo.workspace_delivery_*).';
 
 comment on column delivery_boards.board_key
      is 'hex(sha256(kind + LF + base_url + LF + board_ref)) of the board, computed by each daemon from its canonical connection: the same board gives the same key on every install, and no URL travels.';
 comment on column delivery_boards.kind
-     is 'The tracker kind, e.g. jira.';
+     is 'The tracker kind: jira, gitlab or github.';
 comment on column delivery_boards.name
      is 'The board''s display name as the provider shows it (B15).';
 comment on column delivery_boards.reported_by
@@ -36,7 +37,9 @@ comment on column delivery_boards.reported_by
 comment on column delivery_boards.reported_at
      is 'When the dōjō accepted the copy kept (its own clock).';
 comment on column delivery_boards.history_at
-     is 'When the reporting daemon last read the board''s ticket history; NULL when never. Orders copies of equal completeness.';
+     is 'When the reporting daemon last read the board''s ticket history; NULL when never. Orders copies of equal completeness when either has one.';
+comment on column delivery_boards.synced_at
+     is 'now() minus the sync age the daemon sent, on the dōjō''s clock: when the copy''s board was last synced. Sent only for a tracker that reads no history; NULL otherwise. Orders two copies without history that both carry one (A5).';
 comment on column delivery_boards.pending_tickets
      is 'Tickets whose history the reporting daemon had still to read; 0 = complete.';
 comment on column delivery_boards.predictability

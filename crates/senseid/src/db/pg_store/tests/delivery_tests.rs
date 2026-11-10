@@ -118,6 +118,24 @@ async fn a_board_whose_tracker_reads_no_history_has_nothing_pending() {
 }
 
 #[tokio::test]
+async fn the_sync_age_is_read_on_the_database_clock_with_its_sync() {
+    let s = pg_store().await;
+    let t = board(&s).await;
+    exec(
+        &s,
+        "UPDATE sensei.trackers SET last_success_at = now() - interval '90 seconds' WHERE id = $1",
+        t,
+    )
+    .await;
+    let (at, age) = s.delivery_sync_age(t).await.unwrap();
+    assert!(at.is_some());
+    let age = age.unwrap();
+    assert!((90..=95).contains(&age), "whole seconds since the sync: {age}");
+    exec(&s, "UPDATE sensei.trackers SET last_success_at = NULL WHERE id = $1", t).await;
+    assert_eq!(s.delivery_sync_age(t).await.unwrap(), (None, None));
+}
+
+#[tokio::test]
 async fn the_token_moves_when_the_history_task_or_a_sync_writes() {
     let s = pg_store().await;
     let t = board(&s).await;

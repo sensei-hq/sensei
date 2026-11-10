@@ -80,6 +80,24 @@ describe('checkDeliveryBody', () => {
 		expect(checkDeliveryBody(body({ effort: undefined })).ok).toBe(true);
 	});
 
+	it('takes a sync age of whole seconds from 0 to ten years, or none (A5); else 400', () => {
+		for (const age of [undefined, null, 0, 7200, 315360000]) {
+			expect(checkDeliveryBody(body({}, { synced_age_s: age })).ok, String(age)).toBe(true);
+		}
+		for (const age of [-1, 1.5, 1e15, 315360001, '60', NaN]) {
+			const r = refused(checkDeliveryBody(body({}, { synced_age_s: age })));
+			expect(r?.status, String(age)).toBe(400);
+			expect(r?.message).toBe('facts.synced_age_s must be a whole number of seconds from 0 to 315360000, or null');
+		}
+	});
+
+	it('refuses a history_at that is not a timestamp, before it reaches the cast: 400', () => {
+		const r = refused(checkDeliveryBody(body({}, { history_at: 'garbage' })));
+		expect(r?.status).toBe(400);
+		expect(r?.message).toBe('facts.history_at must be a timestamp or null');
+		expect(checkDeliveryBody(body({}, { history_at: null })).ok).toBe(true);
+	});
+
 	it('refuses a ticket carrying anything but the D3 keys (B9): 400', () => {
 		for (const extra of [{ description: 'x' }, { assignee: 'ola' }, { url: 'https://acme.atlassian.net/browse/AUTH-2' }]) {
 			const r = refused(checkDeliveryBody(body({}, { tickets: [{ ...ticket(), ...extra }] })));

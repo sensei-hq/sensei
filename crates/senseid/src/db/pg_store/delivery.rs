@@ -229,6 +229,24 @@ impl PgStore {
         Ok(DeliveryToken { last_success_at, pending, history_through, issue_updated_at })
     }
 
+    /// The tracker's `last_success_at` and the whole seconds since it, both on the
+    /// database's clock in one read (A5): the age a no-history board sends.
+    pub async fn delivery_sync_age(
+        &self,
+        tracker_id: uuid::Uuid,
+    ) -> Result<(Option<chrono::DateTime<chrono::Utc>>, Option<i64>), String> {
+        let row: Option<(Option<chrono::DateTime<chrono::Utc>>, Option<i64>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT last_success_at, floor(extract(epoch FROM now() - last_success_at))::bigint
+                   FROM sensei.trackers WHERE id = $1",
+            )
+            .bind(tracker_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| format!("delivery_sync_age({tracker_id}): {e}"))?;
+        row.ok_or_else(|| format!("delivery_sync_age({tracker_id}): no such tracker"))
+    }
+
     /// Each of a tracker's candidate sessions and its repository's `repo_key` (`None`
     /// when the repository has none): what proves a session a persona's (#240, A2).
     pub async fn candidate_session_keys(

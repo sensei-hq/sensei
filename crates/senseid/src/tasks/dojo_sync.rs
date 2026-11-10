@@ -4421,6 +4421,44 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn a_board_without_history_sends_its_sync_age_and_jira_sends_none() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
+            let plane = StubPlane::default();
+            // As Jira (the fixture's kind): no age travels (A5).
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1
+            );
+            assert_eq!(
+                plane.delivered.lock().unwrap()[0]["facts"]["synced_age_s"],
+                serde_json::Value::Null
+            );
+            // As GitLab, synced 90 s ago: the age travels.
+            exec(
+                &pg,
+                "UPDATE sensei.trackers SET kind = 'gitlab', last_success_at = now() - interval '90 seconds' WHERE id = $1",
+                t,
+            )
+            .await;
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1,
+                "another kind is another board"
+            );
+            let age = plane.delivered.lock().unwrap()[1]["facts"]["synced_age_s"].as_i64().unwrap();
+            assert!((90..=95).contains(&age), "{age}");
+            // A sync that changed nothing moves only last_success_at: nothing is re-sent.
+            exec(&pg, "UPDATE sensei.trackers SET last_success_at = now() WHERE id = $1", t).await;
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                0,
+                "the sync age is not hashed"
+            );
+        }
+
+        #[tokio::test]
         async fn a_refused_board_waits_for_a_change_and_is_recorded() {
             let pg = PgStore::connect_test().await.unwrap();
             let (t, _ws, key) = fixture(&pg).await;

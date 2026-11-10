@@ -1,14 +1,15 @@
 -- A board's facts filed by a contributor's daemon, kept as one copy per board
 -- (spec docs/spec/daemon/tracker-delivery-metrics.md D4; #352).
 --
--- dojo.file_delivery_facts files the Jira-derived facts of one board for the
+-- dojo.file_delivery_facts files the tracker-derived facts of one board for the
 -- caller: every repo_key must be the caller's own shared and elected repository
 -- in the tenant (their verdict row says sync_enabled), the workspace is the one
 -- those repositories are filed in (none → no_data_found, two → 55000), and the
 -- stored copy is replaced whole only by a copy that is not lesser: complete
 -- (pending_tickets = 0) beats incomplete, then the later history_at (null
--- lowest), then the later arrival. A lesser copy answers 'stale' and changes
--- nothing. The reads answer only a reader of the workspace, hide removed
+-- lowest) when either has one, then — neither having one and both carrying it —
+-- the later synced_at (now() - the sent sync age, A5), then the later arrival.
+-- A lesser copy answers 'stale' and changes nothing. The reads answer only a reader of the workspace, hide removed
 -- sprints, order sprints as the daemon does and tickets as the app does.
 --
 -- WHAT BREAKS THIS TEST: a gate that trusts the repo_keys or the tenant in the
@@ -349,5 +350,99 @@ begin
 end
 $$;
 reset role;
+
+-- ── A5: a board without history orders its copies by sync age ─────────────
+-- Run as the owner (claims still name ola) so the stored synced_at can be read.
+-- One transaction: now() is fixed, so now() - age is exact.
+do $$
+declare
+    t   constant uuid := 'b0000000-0000-4000-8000-00000000052a';
+    w1  constant uuid := 'c0000000-0000-4000-8000-000000000521';
+    one constant text[] := array['github.com/ztest-df/one'];
+    forge jsonb := jsonb_set(jsonb_set(jsonb_set((select board from fixture),
+                     '{board_key}', to_jsonb(repeat('12', 32))), '{kind}', '"gitlab"'),
+                     '{facts,history_at}', 'null');
+    jira jsonb := jsonb_set((select board from fixture), '{board_key}', to_jsonb(repeat('34', 32)));
+    full_ jsonb := jsonb_set(jsonb_set((select board from fixture),
+                     '{board_key}', to_jsonb(repeat('56', 32))), '{facts,history_at}', 'null');
+    out text;
+    stored timestamptz;
+    fewer jsonb;
+    age_of constant text[] := '{facts,synced_age_s}';
+begin
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000522"}', true);
+
+    -- Gate 20. First copy, synced 10 minutes ago on the daemon's own clock.
+    out := dojo.file_delivery_facts(t, one, jsonb_set(forge, age_of, '600'));
+    if out is distinct from 'accepted' then raise exception 'A5: the first copy answered %', out; end if;
+    select synced_at into stored from dojo.delivery_boards where board_key = repeat('12', 32);
+    if stored is distinct from now() - interval '600 seconds' then
+        raise exception 'A5: synced_at is %, not now() - age on the dōjō clock', stored;
+    end if;
+    -- A copy synced 2 h ago (whatever its daemon's clock says) is stale, and changes nothing.
+    fewer := jsonb_set(jsonb_set(forge, age_of, '7200'), '{facts,tickets}', '[]');
+    out := dojo.file_delivery_facts(t, one, fewer);
+    if out is distinct from 'stale' then raise exception 'A5: an older-synced copy answered %', out; end if;
+    if (select count(*) from dojo.delivery_tickets x join dojo.delivery_boards b on b.id = x.board_id
+         where b.board_key = repeat('12', 32)) <> 4 then
+        raise exception 'A5: a stale copy changed the stored tickets';
+    end if;
+    if (select synced_at from dojo.delivery_boards where board_key = repeat('12', 32)) is distinct from stored then
+        raise exception 'A5: a stale copy moved synced_at';
+    end if;
+    -- A newer sync replaces it; an equal one too (arrival).
+    out := dojo.file_delivery_facts(t, one, jsonb_set(forge, age_of, '60'));
+    if out is distinct from 'accepted' then raise exception 'A5: a newer-synced copy answered %', out; end if;
+    if (select synced_at from dojo.delivery_boards where board_key = repeat('12', 32)) is distinct from now() - interval '60 seconds' then
+        raise exception 'A5: the newer copy''s synced_at was not kept';
+    end if;
+    out := dojo.file_delivery_facts(t, one, jsonb_set(forge, age_of, '60'));
+    if out is distinct from 'accepted' then raise exception 'A5: an equally synced copy answered %', out; end if;
+    -- An old daemon (no age) is never locked out: arrival decides.
+    out := dojo.file_delivery_facts(t, one, forge);
+    if out is distinct from 'accepted' then raise exception 'A5: an old daemon''s copy answered %', out; end if;
+    if (select synced_at from dojo.delivery_boards where board_key = repeat('12', 32)) is not null then
+        raise exception 'A5: a copy without an age kept a synced_at';
+    end if;
+    -- And against a stored copy without one, any age is accepted.
+    out := dojo.file_delivery_facts(t, one, jsonb_set(forge, age_of, '7200'));
+    if out is distinct from 'accepted' then raise exception 'A5: an aged copy over a stored null answered %', out; end if;
+
+    -- Gate 21. Jira: history decides, an age never does.
+    out := dojo.file_delivery_facts(t, one, jira);  -- history 2026-11-01, no age
+    if out is distinct from 'accepted' then raise exception 'A5 jira: the first copy answered %', out; end if;
+    out := dojo.file_delivery_facts(t, one, jsonb_set(jsonb_set(jira, '{facts,history_at}', '"2026-10-01T10:00:00Z"'), age_of, '0'));
+    if out is distinct from 'stale' then raise exception 'A5 jira: older history with an age answered %', out; end if;
+    out := dojo.file_delivery_facts(t, one, jsonb_set(jsonb_set(jira, '{facts,history_at}', 'null'), age_of, '0'));
+    if out is distinct from 'stale' then raise exception 'A5 jira: no history with an age answered %', out; end if;
+    out := dojo.file_delivery_facts(t, one, jsonb_set(jira, '{facts,history_at}', '"2026-11-02T10:00:00Z"'));
+    if out is distinct from 'accepted' then raise exception 'A5 jira: later history answered %', out; end if;
+    -- Before any history, with no ages, the later arrival wins (as before A5).
+    out := dojo.file_delivery_facts(t, one, jsonb_set(jsonb_set(jsonb_set(jira, '{board_key}', to_jsonb(repeat('78', 32))),
+                                                     '{facts,history_at}', 'null'), '{facts,pending_tickets}', '3'));
+    if out is distinct from 'accepted' then raise exception 'A5 jira: a pre-history copy answered %', out; end if;
+    out := dojo.file_delivery_facts(t, one, jsonb_set(jsonb_set(jsonb_set(jira, '{board_key}', to_jsonb(repeat('78', 32))),
+                                                     '{facts,history_at}', 'null'), '{facts,pending_tickets}', '3'));
+    if out is distinct from 'accepted' then raise exception 'A5 jira: the later pre-history copy answered %', out; end if;
+
+    -- Gate 22. Completeness first: an incomplete copy loses however fresh its sync.
+    out := dojo.file_delivery_facts(t, one, jsonb_set(full_, age_of, '3600'));
+    if out is distinct from 'accepted' then raise exception 'A5 complete: the first copy answered %', out; end if;
+    out := dojo.file_delivery_facts(t, one, jsonb_set(jsonb_set(full_, age_of, '0'), '{facts,pending_tickets}', '3'));
+    if out is distinct from 'stale' then raise exception 'A5 complete: a fresher incomplete copy answered %', out; end if;
+
+    -- Gate 23 (sql). An age outside 0..315360000 is refused before it is used.
+    begin
+        perform dojo.file_delivery_facts(t, one, jsonb_set(forge, age_of, '-1'));
+        raise exception 'A5 shape: a negative age was accepted';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+        perform dojo.file_delivery_facts(t, one, jsonb_set(forge, age_of, '315360001'));
+        raise exception 'A5 shape: an age over ten years was accepted';
+    exception when invalid_parameter_value then null;
+    end;
+end
+$$;
 
 rollback;

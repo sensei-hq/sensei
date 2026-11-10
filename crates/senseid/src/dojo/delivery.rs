@@ -114,6 +114,9 @@ pub struct FactTicket {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoardFacts {
     pub history_at: Option<DateTime<Utc>>,
+    /// Whole seconds since the board's last successful sync, on its database's clock;
+    /// only for a tracker that reads no history (A5). Never hashed.
+    pub synced_age_s: Option<i64>,
     pub pending_tickets: i64,
     pub predictability: Option<f64>,
     pub predictability_reason: Option<String>,
@@ -130,6 +133,7 @@ pub fn facts_json(f: &BoardFacts) -> Value {
     tickets.sort_by(|a, b| a.key.cmp(&b.key));
     json!({
         "history_at": f.history_at,
+        "synced_age_s": f.synced_age_s,
         "pending_tickets": f.pending_tickets,
         "predictability": f.predictability,
         "predictability_reason": f.predictability_reason,
@@ -160,14 +164,33 @@ pub fn facts_json(f: &BoardFacts) -> Value {
 }
 
 /// sha256 of what the dōjō keeps of the facts part — the board's kind and name and
-/// its facts — in canonical JSON, without `history_at`, which moves on every history
-/// run even one that read nothing new (D3). A renamed board hashes differently.
+/// its facts — in canonical JSON, without `history_at` and `synced_age_s`, which move
+/// on every history run and every tick even when nothing was read (D3, A5). A renamed
+/// board hashes differently.
 pub fn facts_hash(kind: &str, board_name: &str, facts: &Value) -> String {
     let mut facts = facts.clone();
     if let Some(o) = facts.as_object_mut() {
         o.remove("history_at");
+        o.remove("synced_age_s");
     }
     effort_hash(&json!({ "kind": kind, "board_name": board_name, "facts": facts }))
+}
+
+/// What a board sends as `synced_age_s` (A5), or `None` to skip it this tick.
+/// `token_at` is the consistency token's `last_success_at`; `read` is the
+/// `(last_success_at, age)` read after the facts. A null or moved sync skips the
+/// board: never pushed without a sync (Data invariants), never with an age from a
+/// sync the facts do not reflect. A tracker that reads history sends no age.
+pub fn sync_age(
+    history: bool,
+    token_at: Option<DateTime<Utc>>,
+    read: (Option<DateTime<Utc>>, Option<i64>),
+) -> Option<Option<i64>> {
+    let (at, age) = read;
+    if at.is_none() || at != token_at {
+        return None;
+    }
+    Some(if history { None } else { age })
 }
 
 /// One effort row (A2): the repositories its sessions came from, its values, and
@@ -483,6 +506,7 @@ mod tests {
     fn facts() -> BoardFacts {
         BoardFacts {
             history_at: Some(at(9)),
+            synced_age_s: Some(90),
             pending_tickets: 0,
             predictability: Some(12.5),
             predictability_reason: None,
@@ -592,6 +616,41 @@ mod tests {
             v["sprints"].as_array().unwrap().iter().find(|s| s["external_id"] == "102").unwrap();
         assert_eq!(removed["removed"], json!(true));
         assert_eq!(removed["sdlc"], Value::Null);
+    }
+
+    #[test]
+    fn the_sync_age_travels_and_is_not_hashed() {
+        // A5: the age moves every tick, so hashing it would re-send every board.
+        let a = facts();
+        assert_eq!(facts_json(&a)["synced_age_s"], json!(90));
+        let mut b = facts();
+        b.synced_age_s = Some(4000);
+        assert_eq!(
+            facts_hash("gitlab", "Web", &facts_json(&a)),
+            facts_hash("gitlab", "Web", &facts_json(&b))
+        );
+        b.synced_age_s = None;
+        assert_eq!(facts_json(&b)["synced_age_s"], Value::Null);
+        assert_eq!(
+            facts_hash("gitlab", "Web", &facts_json(&a)),
+            facts_hash("gitlab", "Web", &facts_json(&b))
+        );
+    }
+
+    #[test]
+    fn a_board_sends_its_sync_age_only_without_history_and_skips_a_moved_or_missing_sync() {
+        let t = Some(at(9));
+        // No history (GitHub, GitLab): the age read on the same sync travels.
+        assert_eq!(sync_age(false, t, (t, Some(90))), Some(Some(90)));
+        // History (Jira): nothing travels, so its order is untouched.
+        assert_eq!(sync_age(true, t, (t, Some(90))), Some(None));
+        // A sync landed while the facts were built: skipped this tick.
+        assert_eq!(sync_age(false, t, (Some(at(10)), Some(1))), None);
+        assert_eq!(sync_age(true, t, (Some(at(10)), Some(1))), None);
+        // Reconnected (last_success_at null): never pushed (Data invariants).
+        assert_eq!(sync_age(false, t, (None, None)), None);
+        assert_eq!(sync_age(false, None, (None, None)), None);
+        assert_eq!(sync_age(true, None, (None, None)), None);
     }
 
     #[test]

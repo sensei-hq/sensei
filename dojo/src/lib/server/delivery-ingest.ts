@@ -39,6 +39,9 @@ export type DeliveryTicket = DeliveryTicketWire;
 
 export interface DeliveryFacts {
 	history_at: string | null;
+	/** Whole seconds since the board's last sync, on its daemon's own clock; only a
+	 *  tracker without history sends it (A5). The dōjō stores now() - age. */
+	synced_age_s?: number | null;
 	pending_tickets: number;
 	predictability: number | null;
 	predictability_reason: string | null;
@@ -105,6 +108,12 @@ const ROW_KEYS = ['repo_keys', 'values', 'reasons'];
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 const text = (x: unknown) => typeof x === 'string' && x.length > 0;
 const textOrNull = (x: unknown) => x === null || typeof x === 'string';
+/** A string `Date.parse` reads, or null: a time the function's cast will take. */
+const timeOrNull = (x: unknown) => x === null || (typeof x === 'string' && !Number.isNaN(Date.parse(x)));
+/** The most seconds a sync age may be (ten years, A5): `make_interval` errors past interval range. */
+export const DELIVERY_MAX_SYNC_AGE_S = 315360000;
+const syncAgeOk = (x: unknown) =>
+	x === undefined || x === null || (Number.isInteger(x) && (x as number) >= 0 && (x as number) <= DELIVERY_MAX_SYNC_AGE_S);
 const numberOrNull = (x: unknown) => x === null || (typeof x === 'number' && Number.isFinite(x));
 
 /** Exactly these keys, no more and no fewer. */
@@ -151,7 +160,7 @@ const finite = (n: unknown) => typeof n === 'number' && Number.isFinite(n);
  *  a time a timestamp, submitted_via pr or push, a map of numbers, else a number. */
 function valueOk(key: string, x: unknown): boolean {
 	if (x === null) return true;
-	if (TIMES.has(key)) return typeof x === 'string' && !Number.isNaN(Date.parse(x));
+	if (TIMES.has(key)) return timeOrNull(x);
 	if (key === 'submitted_via') return x === 'pr' || x === 'push';
 	if (MAPS.has(key)) return isObject(x) && Object.values(x).every(finite);
 	return finite(x);
@@ -222,7 +231,10 @@ export function checkDeliveryBody(raw: unknown): DeliveryCheck {
 	if (typeof raw.board_name !== 'string') return bad('board_name is required');
 	const f = raw.facts;
 	if (!isObject(f)) return bad('facts is required');
-	if (!textOrNull(f.history_at)) return bad('facts.history_at must be a timestamp or null');
+	if (!timeOrNull(f.history_at)) return bad('facts.history_at must be a timestamp or null');
+	if (!syncAgeOk(f.synced_age_s)) {
+		return bad(`facts.synced_age_s must be a whole number of seconds from 0 to ${DELIVERY_MAX_SYNC_AGE_S}, or null`);
+	}
 	if (!Number.isInteger(f.pending_tickets) || (f.pending_tickets as number) < 0) {
 		return bad('facts.pending_tickets must be a whole number, 0 or more');
 	}
