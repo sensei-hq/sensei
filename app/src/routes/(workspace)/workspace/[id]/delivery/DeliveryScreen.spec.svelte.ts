@@ -202,9 +202,14 @@ describe('Delivery Metrics', () => {
   });
 
   it('names no one tracker: a GitHub or GitLab board reads the same screen', async () => {
-    const { container } = await open();
-    expect(container.textContent).toContain('read from your tracker');
-    expect(container.textContent).not.toMatch(/Jira/);
+    for (const kind of ['jira', 'gitlab', 'github'] as const) {
+      const { container } = await open({
+        tryListTrackers: async () => ({ ok: true, data: [{ ...tracker, kind }] }),
+      });
+      expect(container.textContent, kind).toContain('read from your tracker');
+      expect(container.textContent, kind).not.toMatch(/Jira/);
+      expect(container.querySelectorAll('[data-sprint]').length, kind).toBe(2);
+    }
   });
 
   it('no sprint board shows the not-connected words and the Integrations link', async () => {

@@ -180,14 +180,16 @@ pub fn facts_hash(kind: &str, board_name: &str, facts: &Value) -> String {
 /// `token_at` is the consistency token's `last_success_at`; `read` is the
 /// `(last_success_at, age)` read after the facts. A null or moved sync skips the
 /// board: never pushed without a sync (Data invariants), never with an age from a
-/// sync the facts do not reflect. A tracker that reads history sends no age.
+/// sync the facts do not reflect. A negative age (the clock stepped back after the
+/// sync) skips too: the dōjō refuses one, and 0 would claim the freshest copy. A
+/// tracker that reads history sends no age.
 pub fn sync_age(
     history: bool,
     token_at: Option<DateTime<Utc>>,
     read: (Option<DateTime<Utc>>, Option<i64>),
 ) -> Option<Option<i64>> {
     let (at, age) = read;
-    if at.is_none() || at != token_at {
+    if at.is_none() || at != token_at || age.is_some_and(|a| a < 0) {
         return None;
     }
     Some(if history { None } else { age })
@@ -647,6 +649,9 @@ mod tests {
         // A sync landed while the facts were built: skipped this tick.
         assert_eq!(sync_age(false, t, (Some(at(10)), Some(1))), None);
         assert_eq!(sync_age(true, t, (Some(at(10)), Some(1))), None);
+        // A clock stepped back after the sync gives a negative age: skipped, never
+        // sent (the dōjō refuses it) nor clamped to 0 (the freshest a copy can look).
+        assert_eq!(sync_age(false, t, (t, Some(-1))), None);
         // Reconnected (last_success_at null): never pushed (Data invariants).
         assert_eq!(sync_age(false, t, (None, None)), None);
         assert_eq!(sync_age(false, None, (None, None)), None);

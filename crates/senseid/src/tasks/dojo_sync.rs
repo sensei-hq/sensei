@@ -4459,6 +4459,21 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn a_board_whose_sync_reads_null_after_listing_is_not_built() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, _key) = fixture(&pg).await;
+            exec(&pg, "UPDATE sensei.trackers SET kind = 'gitlab' WHERE id = $1", t).await;
+            let listed: Vec<_> =
+                pg.delivery_trackers().await.unwrap().into_iter().filter(|d| d.id == t).collect();
+            assert_eq!(listed.len(), 1);
+            // Reconnected between the list and the build (A5, Data invariants).
+            exec(&pg, "UPDATE sensei.trackers SET last_success_at = NULL WHERE id = $1", t).await;
+            let built =
+                crate::tasks::dojo_delivery::build_one(&pg, &listed[0], chrono::Utc::now()).await;
+            assert!(matches!(built, Ok(None)), "{built:?}");
+        }
+
+        #[tokio::test]
         async fn a_refused_board_waits_for_a_change_and_is_recorded() {
             let pg = PgStore::connect_test().await.unwrap();
             let (t, _ws, key) = fixture(&pg).await;

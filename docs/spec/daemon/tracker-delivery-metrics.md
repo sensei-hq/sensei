@@ -636,7 +636,9 @@ with a stub Dōjō; **sql** = pgTAP or the dojo SQL test harness against `sensei
     next tick; a GitLab tracker whose `last_success_at` is set to NULL after the board list is
     read is not posted — asserted on the pure `sync_age(history, token, read)` in
     `dojo/delivery.rs`, which also skips when the read's `last_success_at` differs from the
-    token's (a sync landed while the facts were built). `delivery_sync_age` (store test) answers the column and its age in whole
+    token's (a sync landed while the facts were built) or the age is negative (the clock
+    stepped back after the sync; build review F-DC2), and through `build_one` itself
+    (`a_board_whose_sync_reads_null_after_listing_is_not_built`). `delivery_sync_age` (store test) answers the column and its age in whole
     seconds, and `(None, None)` for a null column.
 20. **Order without history (sql).** Both `history_at` null, both `pending_tickets` 0, stored
     `synced_at` = now() - 10 min: incoming `synced_age_s` 7200 → `stale`, the stored row,

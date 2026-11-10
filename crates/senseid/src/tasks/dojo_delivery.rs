@@ -94,7 +94,7 @@ pub async fn build_boards(
     Ok(out)
 }
 
-async fn build_one(
+pub(crate) async fn build_one(
     pg: &PgStore,
     t: &crate::db::pg_store::delivery::DeliveryTracker,
     now: chrono::DateTime<chrono::Utc>,

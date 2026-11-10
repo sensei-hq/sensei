@@ -380,12 +380,16 @@ begin
         raise exception 'A5: synced_at is %, not now() - age on the dōjō clock', stored;
     end if;
     -- A copy synced 2 h ago (whatever its daemon's clock says) is stale, and changes nothing.
-    fewer := jsonb_set(jsonb_set(forge, age_of, '7200'), '{facts,tickets}', '[]');
+    fewer := jsonb_set(jsonb_set(jsonb_set(forge, age_of, '7200'), '{facts,tickets}', '[]'), '{facts,sprints}', '[]');
     out := dojo.file_delivery_facts(t, one, fewer);
     if out is distinct from 'stale' then raise exception 'A5: an older-synced copy answered %', out; end if;
     if (select count(*) from dojo.delivery_tickets x join dojo.delivery_boards b on b.id = x.board_id
          where b.board_key = repeat('12', 32)) <> 4 then
         raise exception 'A5: a stale copy changed the stored tickets';
+    end if;
+    if (select count(*) from dojo.delivery_sprints x join dojo.delivery_boards b on b.id = x.board_id
+         where b.board_key = repeat('12', 32)) <> 4 then
+        raise exception 'A5: a stale copy changed the stored sprints';
     end if;
     if (select synced_at from dojo.delivery_boards where board_key = repeat('12', 32)) is distinct from stored then
         raise exception 'A5: a stale copy moved synced_at';
@@ -440,6 +444,16 @@ begin
     begin
         perform dojo.file_delivery_facts(t, one, jsonb_set(forge, age_of, '315360001'));
         raise exception 'A5 shape: an age over ten years was accepted';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+        perform dojo.file_delivery_facts(t, one, jsonb_set(forge, age_of, '1.5'));
+        raise exception 'A5 shape: a fractional age was accepted';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+        perform dojo.file_delivery_facts(t, one, jsonb_set(forge, age_of, '"60"'));
+        raise exception 'A5 shape: an age as text was accepted';
     exception when invalid_parameter_value then null;
     end;
 end
