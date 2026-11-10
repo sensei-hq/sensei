@@ -2,7 +2,7 @@
 title: Delivery copy order for boards without history — plan
 description: Build amendment A5 of tracker-delivery-metrics — order a GitHub/GitLab board's dōjō copies by sync age
 type: plan
-status: plan
+status: built (3c5b40838, 2c1a17046; 2026-11-10)
 created: 2026-11-09
 depends_on:
   - docs/spec/daemon/tracker-delivery-metrics.md (A5, gates 19–23, claims C25–C39)

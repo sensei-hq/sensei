@@ -1,6 +1,6 @@
 ---
 name: Tracker delivery metrics
-status: built (F1–F6, #351–#356, 2026-11-05; amendments A1–A4); A5 designed 2026-11-09 (gate passed)
+status: built (F1–F6, #351–#356, 2026-11-05; amendments A1–A4); A5 built 2026-11-10 (3c5b40838, 2c1a17046)
 date: 2026-11-04
 analysis: none (brainstorm 2026-11-04, decisions B1–B15 below)
 parent:

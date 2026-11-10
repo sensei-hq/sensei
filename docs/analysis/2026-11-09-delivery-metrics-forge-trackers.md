@@ -8,7 +8,7 @@ depends_on:
   - spec/daemon/tracker-gitlab.md
   - spec/daemon/tracker-github.md
   - analysis/2026-11-06-forge-trackers.md
-next: /sensei:build (A5)
+next: /sensei:complete (A5 built 2026-11-10)
 ---
 
 # Delivery metrics with GitHub and GitLab boards

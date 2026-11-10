@@ -67,12 +67,6 @@ status — open or closed is GitHub's answer.
 
 ## Open — not yet filed
 
-- **Delivery copy order for boards without history (DF1, 2026-11-09).** GitHub and GitLab boards never set `history_at`, so the
-  dōjō keeps whichever push came last; a stale daemon can overwrite a fresher copy. Add the sync age (`synced_age_s`) to the facts, sent only by a
-  tracker that reads no history, and order by it when neither copy has history and both carry one (A5 of
-  `spec/daemon/tracker-delivery-metrics.md`). DF3: within B11 (user, 2026-11-09).
-  `docs/analysis/2026-11-09-delivery-metrics-forge-trackers.md`.
-
 - **Forge tickets from unshared repositories travel with the board (DF2, 2026-11-09, deferred).** Matches Jira. Forge tickets
   carry their repository, so a later slice could send only tickets from the workspace's shared repositories.
 
