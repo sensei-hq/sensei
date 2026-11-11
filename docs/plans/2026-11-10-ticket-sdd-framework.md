@@ -30,38 +30,48 @@ tracker ticket it is linked to, set once and never overwritten. Branch: `feature
 ### Feature 1: Session SDD-framework detection
 
 - **Issue:** #390
-- **Layers:** DDL (`sensei.sdd_framework` enum; `activity.sessions.sdd_framework`, `sdd_framework_source`) →
-  `activity.session_signal_marks.derive_version` → `SignalEvent` gains `prompt` + `skill` →
-  `sdlc/framework.rs` (signature table, pure `behavioural` / `from_markers` / `detect`, thin `repo_markers` disk probe)
-  → `tasks/session_signals.rs` (detect + store in the same per-session transaction)
+- **Layers:** DDL (`sensei.sdd_framework` enum; `activity.sessions.sdd_framework`, `sdd_framework_source` + pair check;
+  `activity.session_signal_marks.derive_version not null default 0`) → `SignalEvent` gains `prompt` + `skill` →
+  `sdlc/framework.rs` (signature table; pure `behavioural` / `from_markers`; thin `repo_markers`) →
+  `tasks/session_signals.rs` (selection order, bounded probe, one-transaction store) → docs (`tracker-sdlc-metrics.md`
+  S2, `design.dbml`, `docs/database/activity.md`, column comments)
 - **Depends on:** none
-- **Acceptance criteria:**
-  - `detect` returns `openspec` / `spec_kit` / `kiro` / `bmad` for each row of the blueprint's signature table, from
-    behavioural evidence alone (a slash command, a Skill call, or an Edit/Write path).
-  - Behavioural wins over static: a session with a `/speckit.*` prompt in a repo holding `openspec/` stores
-    `spec_kit`, `behavioural`.
-  - When a session matches two frameworks, the earliest-`ts` event decides.
-  - With no behavioural hit, a single repo marker gives `static`. Two or more markers give the first in order
-    `openspec, spec_kit, kiro, bmad` with `static_ambiguous`.
-  - No match stores `NULL` and `NULL` source. sensei's own `docs/spec`, plan graph and `/sensei:*` commands never
-    produce a value (B3).
-  - A slash command after leading IDE context (`<ide_opened_file>…</ide_opened_file>\n/opsx:apply x`) is detected
-    (blueprint B8).
-  - Static markers are probed on disk under the repo's `abs_path`, so `.specify/`, `.kiro/specs/`, `.bmad-core/` are
-    found (B7).
-  - A repo folder missing on disk gives no markers: the session is derived, not failed (B6).
-  - Any other marker-probe failure (permission, I/O) is an `Err`: the session is counted `failed` in `PassReport`, and
-    its framework columns are not written as `NULL`.
-  - Sessions already derived before this ships are re-derived once: the pass re-selects a session whose
-    `session_signal_marks.derive_version` is older than the current constant (B9).
-  - `make test-template` is run after the DDL change; `make test-fast` is green.
+- **Acceptance criteria** (blueprint B4–B12):
+  - Behavioural detection per framework from each evidence kind in the blueprint's signature table: prompt prefix,
+    skill name (with or without a `plugin:` prefix), repo-relative path, Bash command word.
+  - Paths are repo-relative (B4): `/r/b/openspec/x.md` in a session of repo `/r/a` is not evidence; `/r/a/openspec/x.md`
+    is. A session with no repo has no path evidence.
+  - `specs/002a-x/spec.md` and `specs/107917-y/plan.md` are Spec Kit; `docs/specs/001-z/a.md` and
+    `spec/models/user_spec.rb` are not.
+  - Path evidence is `PostToolUse` of Edit/MultiEdit/Write/NotebookEdit only; a lone `PreToolUse` is not evidence.
+  - Bash: `cd x && openspec new change y` is OpenSpec; `grep -i openspec f` is not.
+  - Prompts (B8): `<ide_opened_file>…</ide_opened_file>\n/opsx:apply x` is OpenSpec; a prompt starting
+    `<agent-message` or `<task-notification` that quotes `/opsx:apply` is not evidence; `/bmad-agent-dev` is BMAD;
+    `/speckit-plan` is Spec Kit; `/sensei:plan` is nothing (B3).
+  - The earliest matching event by `(ts, id)` decides; behavioural beats static.
+  - Static: one distinct framework → `static`; `{_bmad, .bmad-core}` → `bmad`/`static`; `{openspec, bmad}` →
+    `openspec`/`static_ambiguous`; none → `NULL`/`NULL`. Repo dir missing or folder row gone → no markers (B6).
+  - A probe permission error or a probe exceeding 5 s → `NULL`/`probe_failed`; the session's signals and mark are stored
+    as usual, `PassReport.failed` is not incremented, and a second pass with no new events does not select it (B10).
+  - The probe runs at most once per repo per pass, off the async runtime.
+  - B12: a session stored `spec_kit`/`static` keeps it when re-derived with its repo dir removed or unreadable.
+  - B9: a pre-existing mark (version 0) is re-selected once; every mark write (success and failure) stores the current
+    version; with `limit = 1`, an unmarked new session is taken before a version-stale one.
+  - A session deleted mid-pass is skipped, not failed.
+  - The DDL rejects a source without a framework (other than `probe_failed`) and a framework without a source.
+  - `grep derive_version` hits `docs/spec/daemon/tracker-sdlc-metrics.md` and `database/design.dbml`.
+  - `make test-template` run after the DDL change; `make test-fast` green.
 - **Test scenarios:**
   ```gherkin
   Given a session whose first prompt is "/opsx:apply add-auth"
   When the session-signals pass runs
   Then activity.sessions.sdd_framework = 'openspec' and sdd_framework_source = 'behavioural'
 
-  Given a session with no framework commands or paths, in a repo containing .specify/
+  Given a session in repo /r/a whose only evidence is an edit of /r/b/openspec/changes/x/tasks.md
+  When the pass runs
+  Then sdd_framework IS NULL
+
+  Given a session with no behavioural evidence, in a repo containing .specify/
   When the pass runs
   Then sdd_framework = 'spec_kit' and source = 'static'
 
@@ -69,17 +79,14 @@ tracker ticket it is linked to, set once and never overwritten. Branch: `feature
   When the pass runs
   Then sdd_framework IS NULL
 
-  Given a session whose repo folder exists but cannot be read, and no behavioural hit
-  When the pass runs
-  Then the pass reports 1 failed and the session's sdd_framework is unchanged
+  Given a session with no behavioural evidence whose repo folder cannot be read
+  When the pass runs twice with no new events
+  Then the session has sdd_framework NULL, source 'probe_failed', its signals are kept,
+  And the first pass reports 0 failed and the second pass does not select it
 
-  Given a session whose repo folder was deleted from disk, and no behavioural hit
-  When the pass runs
-  Then the session is derived with sdd_framework IS NULL and the pass reports 0 failed
-
-  Given a session derived before this change (mark at the old derive_version)
-  When the pass runs
-  Then the session is selected and derived again
+  Given a session stored 'spec_kit'/'static' whose repo was since deleted
+  When it is re-derived
+  Then it is still 'spec_kit'/'static'
   ```
 
 ### Feature 2: Pin the framework onto tickets (first wins) and expose it
@@ -90,13 +97,16 @@ tracker ticket it is linked to, set once and never overwritten. Branch: `feature
   framework is stored) → `get_ticket` MCP response carries `sdd_framework`
 - **Depends on:** #390 (Feature 1)
 - **Acceptance criteria:**
-  - A ticket with `sdd_framework IS NULL` and at least one linked session holding a framework gets the framework of
-    the earliest-`started_at` such session, with `sdd_framework_session_id` and `sdd_framework_at` set.
+  - A ticket with `sdd_framework IS NULL` and at least one linked session holding a `behavioural` or `static` framework
+    gets the framework of the earliest-`started_at` such session, with `sdd_framework_session_id` and `sdd_framework_at` set.
   - A ticket that already has a value is never updated, whether by a later session, a different framework, or an
     earlier session linked by a later sync (B1).
+  - A session whose source is `static_ambiguous` or `probe_failed` is never pinned (blueprint B11).
   - A relink that removes the provenance session's link leaves the ticket's value as it is.
   - Deleting the provenance session sets `sdd_framework_session_id` to `NULL` and keeps `sdd_framework`.
   - Pinning runs in the same transaction as `write_links`: if the relink rolls back, no pin persists.
+  - The session-signals pass pins in its per-session transaction; a pin error rolls back the whole session write and
+    the session is retried.
   - `get_ticket` returns `sdd_framework` (string or `null`) for the fetched ticket.
 - **Test scenarios:**
   ```gherkin
@@ -154,10 +164,6 @@ F2 and F3 are independent of each other once F1 lands.
 
 ## Build-start corrections (2026-11-10/11)
 
-Found by checking F1 against the code and the live DB before writing tests; recorded in the blueprint as B6–B9.
-
-- `SignalEvent` carried no prompt text or skill name; F1 projects both.
-- The mark had no derivation version (backfill impossible); F1 adds `derive_version` (B9).
-- `sensei.folders` holds no hidden directories; static markers are probed on disk (B7).
-- Prompts can lead with IDE context; commands match at any line start (B8).
-- A deleted repo folder is "no markers", not an error (B6, user).
+Found by checking F1 against the code and live DB, then by the pre-implementation audit (spec-conformance,
+data-correctness, failure-mode reviewers; 7 HIGH). Recorded in the blueprint as B4–B12; user decisions on B10, B11,
+B12 (2026-11-11).
