@@ -53,6 +53,8 @@ impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for SignalEvent 
             notification_type: r.try_get("notification_type")?,
             is_interrupt: r.try_get("is_interrupt")?,
             last_assistant_message: r.try_get("last_assistant_message")?,
+            prompt: r.try_get("prompt")?,
+            skill: r.try_get("skill")?,
         })
     }
 }

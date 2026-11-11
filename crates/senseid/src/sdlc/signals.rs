@@ -19,6 +19,9 @@ pub const BASE_SLICE_GAP_MS: i64 = 60_000;
 /// The cap on output and review text read per event: result lines are at the end.
 pub const TEXT_TAIL_BYTES: i64 = 65_536;
 
+/// The tools that write a file: a `PostToolUse` of one is a completed edit.
+pub const EDIT_TOOLS: &[&str] = &["Edit", "MultiEdit", "Write", "NotebookEdit"];
+
 /// One hook event, projected to what derivation reads (spec S2 "Reading a
 /// session's events").
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -53,6 +56,10 @@ pub struct SignalEvent {
     pub notification_type: Option<String>,
     pub is_interrupt: Option<bool>,
     pub last_assistant_message: Option<String>,
+    /// A `UserPromptSubmit`'s typed text (framework detection, B8).
+    pub prompt: Option<String>,
+    /// A `Skill` call's `tool_input.skill` (framework detection).
+    pub skill: Option<String>,
 }
 
 /// A row of `activity.session_signals`.
@@ -250,7 +257,7 @@ pub fn derive_signals(
                     push(&mut out, SignalKind::UnmatchedCall, e.ts, Some(c), None);
                 }
             }
-            ("PostToolUse", "Edit" | "MultiEdit" | "Write" | "NotebookEdit") => {
+            ("PostToolUse", t) if EDIT_TOOLS.contains(&t) => {
                 let Some(path) = e.path.as_deref() else { continue };
                 for task in ticked(e, path) {
                     push(

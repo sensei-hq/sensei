@@ -3,6 +3,7 @@
 //! from captured hook events and read alongside the tracker's own history.
 
 pub mod classify;
+pub mod framework;
 pub mod settings;
 pub mod signals;
 pub mod sprint_replay;
