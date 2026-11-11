@@ -36,6 +36,7 @@ mod session_signals_tests;
 mod stub_gc_tests;
 mod targets_tests;
 mod tasks_tests;
+mod ticket_framework_tests;
 mod turn_usage_tests;
 mod typed_rows_tests;
 mod workspaces_tests;

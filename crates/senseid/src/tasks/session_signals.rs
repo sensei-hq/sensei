@@ -143,7 +143,13 @@ pub async fn pass_with(
             }
         };
         match outcome {
-            Ok(true) => report.derived += 1,
+            Ok(true) => {
+                report.derived += 1;
+                // B15: after the session's write, on its own; a sync heals a miss.
+                if let Err(e) = pg.pin_session_tickets(c.session_id).await {
+                    tracing::warn!(session_id = %c.session_id, error = %e, "derive_session_signals: ticket pin failed; the next tracker sync retries it");
+                }
+            }
             Ok(false) => {
                 tracing::debug!(session_id = %c.session_id, "derive_session_signals: session removed mid-pass");
             }

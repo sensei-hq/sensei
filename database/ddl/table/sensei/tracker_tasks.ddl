@@ -24,6 +24,10 @@ create table if not exists tracker_tasks (
 , points             numeric
 , status_category    text         check (status_category in ('new', 'indeterminate', 'done', 'undefined'))
 , history_through    timestamptz
+, sdd_framework      sensei.sdd_framework
+, sdd_framework_session_id uuid   references activity.sessions(id) on delete set null
+, sdd_framework_at   timestamptz
+, check ((sdd_framework is null) = (sdd_framework_at is null))
 , unique (tracker_id, external_id)
 );
 
@@ -76,3 +80,9 @@ comment on column tracker_tasks.status_category
      is 'The status''s category (new, indeterminate, done), from the tracker''s status.statusCategory.key.';
 comment on column tracker_tasks.history_through
      is 'The issue_updated_at the changelog was last read through (S4); NULL until first read.';
+comment on column tracker_tasks.sdd_framework
+     is 'The third-party SDD framework the ticket was worked in: the first one detected on an eligible linked session (behavioural or static, an R1 candidate), then frozen. Pinned by pin_ticket_frameworks (blueprint 2026-11-10-ticket-sdd-framework B1, B13-B17). Follows its provenance session only while that session is still running (B14). NULL = none detected yet.';
+comment on column tracker_tasks.sdd_framework_session_id
+     is 'The session sdd_framework was pinned from (provenance). NULL beside a value when that session was deleted; the value is kept.';
+comment on column tracker_tasks.sdd_framework_at
+     is 'When sdd_framework was pinned (or last followed its running provenance session, B14). Set exactly when sdd_framework is.';

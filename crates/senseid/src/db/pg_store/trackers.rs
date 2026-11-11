@@ -208,6 +208,8 @@ pub struct TaskDetail {
     /// The last write-back outcome (W9), and when a write last landed.
     pub writeback_status: Option<String>,
     pub writeback_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The SDD framework pinned onto the ticket (blueprint B1, B13); `None` while none is.
+    pub sdd_framework: Option<String>,
     pub sessions: Vec<LinkedSession>,
 }
 
@@ -267,6 +269,89 @@ fn is_unique_violation(e: &sqlx_core::Error) -> bool {
 }
 
 type Conn = sqlx_postgres::PgConnection;
+
+/// How long the pass's pin waits for a ticket a tracker apply holds (blueprint B15).
+pub const PIN_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Which tickets a pin reconsiders (blueprint B16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinScope {
+    /// Every ticket of this tracker.
+    Tracker(uuid::Uuid),
+    /// The tickets linked to this session or pinned from it.
+    Session(uuid::Uuid),
+}
+
+/// Pin the SDD framework onto the tickets in `scope`, on the caller's transaction
+/// (blueprint B1, B11, B13–B18). The scope's tickets are fixed first, so a ticket the
+/// follow clears is still pinned afresh. A session's tickets are taken `SKIP LOCKED`:
+/// the pass never waits on a ticket a tracker apply holds (B15), so the two can never
+/// deadlock; the apply pins what was skipped. Then a ticket whose provenance session
+/// is still running follows it (B14), and each ticket still without one takes its
+/// earliest-started eligible session (B13). Returns the tickets changed.
+pub(crate) async fn pin_ticket_frameworks(
+    c: &mut Conn,
+    scope: PinScope,
+) -> Result<u64, sqlx_core::Error> {
+    let (select, id) = match scope {
+        PinScope::Tracker(id) => ("SELECT id FROM sensei.tracker_tasks WHERE tracker_id = $1", id),
+        PinScope::Session(id) => (
+            "SELECT id FROM sensei.tracker_tasks
+              WHERE id IN (SELECT task_id FROM sensei.session_task_links WHERE session_id = $1)
+                 OR sdd_framework_session_id = $1
+              ORDER BY id
+                FOR NO KEY UPDATE SKIP LOCKED",
+            id,
+        ),
+    };
+    let tasks: Vec<uuid::Uuid> =
+        sqlx_core::query_scalar::query_scalar(select).bind(id).fetch_all(&mut *c).await?;
+    if tasks.is_empty() {
+        return Ok(0);
+    }
+    let followed: Vec<uuid::Uuid> = sqlx_core::query_scalar::query_scalar(
+        "UPDATE sensei.tracker_tasks t
+            SET sdd_framework = CASE WHEN s.eligible THEN s.sdd_framework END,
+                sdd_framework_session_id = CASE WHEN s.eligible THEN s.id END,
+                sdd_framework_at = CASE WHEN s.eligible THEN now() END
+           FROM (SELECT id, sdd_framework,
+                        coalesce(sdd_framework_source IN ('behavioural', 'static'), false) AS eligible
+                   FROM activity.sessions WHERE completed_at IS NULL) s
+          WHERE s.id = t.sdd_framework_session_id AND t.id = ANY($1)
+            AND (NOT s.eligible OR s.sdd_framework IS DISTINCT FROM t.sdd_framework)
+         RETURNING t.id",
+    )
+    .bind(&tasks)
+    .fetch_all(&mut *c)
+    .await?;
+    let pinned: Vec<uuid::Uuid> = sqlx_core::query_scalar::query_scalar(&format!(
+        "WITH pick AS (
+             SELECT DISTINCT ON (l.task_id) l.task_id, s.id AS session_id, s.sdd_framework
+               FROM sensei.session_task_links l
+               JOIN sensei.tracker_tasks t ON t.id = l.task_id
+               JOIN activity.sessions s ON s.id = l.session_id
+              WHERE t.sdd_framework IS NULL AND t.id = ANY($1)
+                AND s.sdd_framework_source IN ('behavioural', 'static')
+                AND l.session_id IN (SELECT session_id FROM ({candidates}) c)
+              ORDER BY l.task_id, s.started_at, s.id),
+         held AS (
+             SELECT id FROM activity.sessions
+              WHERE id IN (SELECT session_id FROM pick) FOR KEY SHARE)
+         UPDATE sensei.tracker_tasks t
+            SET sdd_framework = p.sdd_framework, sdd_framework_session_id = p.session_id,
+                sdd_framework_at = now()
+           FROM pick p JOIN held h ON h.id = p.session_id
+          WHERE t.id = p.task_id AND t.sdd_framework IS NULL
+         RETURNING t.id",
+        candidates = candidate_sessions("t.tracker_id"),
+    ))
+    .bind(&tasks)
+    .fetch_all(&mut *c)
+    .await?;
+    let changed: std::collections::HashSet<uuid::Uuid> =
+        followed.into_iter().chain(pinned).collect();
+    Ok(changed.len() as u64)
+}
 
 /// Upsert tickets by `(tracker_id, external_id)`: a seen ticket is live again.
 async fn upsert_tasks(
@@ -410,7 +495,8 @@ async fn add_task_keys(c: &mut Conn, id: uuid::Uuid) -> Result<(), sqlx_core::Er
 }
 
 /// Write links for the sessions still present (locked against a concurrent
-/// prune), resolving external ids in SQL. A link already there is refreshed.
+/// prune), resolving external ids in SQL. A link already there is refreshed. Then
+/// the tracker's tickets are pinned, in the same transaction (blueprint B16).
 async fn write_links(
     c: &mut Conn,
     id: uuid::Uuid,
@@ -436,7 +522,7 @@ async fn write_links(
     let l_key: Vec<String> = kept.iter().map(|l| l.matched_key.clone()).collect();
     let l_mentions: Vec<i32> =
         kept.iter().map(|l| i32::try_from(l.mentions).unwrap_or(i32::MAX)).collect();
-    sqlx_core::query::query(
+    let linked = sqlx_core::query::query(
         "INSERT INTO sensei.session_task_links (session_id, task_id, source, matched_key, mentions)
          SELECT x.s, t.id, x.src::sensei.link_source, x.k, x.m
            FROM unnest($2::uuid[], $3::text[], $4::text[], $5::text[], $6::int[]) AS x(s, e, src, k, m)
@@ -451,11 +537,30 @@ async fn write_links(
     .bind(&l_key)
     .bind(&l_mentions)
     .execute(&mut *c)
-    .await
-    .map(|r| r.rows_affected())
+    .await?
+    .rows_affected();
+    pin_ticket_frameworks(c, PinScope::Tracker(id)).await?;
+    Ok(linked)
 }
 
 impl PgStore {
+    /// The session-signals pass's pin (blueprint B15): the tickets linked to or pinned
+    /// from `session_id`, in their own short transaction after the session's write.
+    pub async fn pin_session_tickets(&self, session_id: uuid::Uuid) -> Result<u64, String> {
+        let db = |e: sqlx_core::Error| format!("pin_session_tickets({session_id}): {e}");
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        sqlx_core::query::query(&format!(
+            "SET LOCAL lock_timeout = '{}ms'",
+            PIN_LOCK_TIMEOUT.as_millis()
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        let n = pin_ticket_frameworks(&mut tx, PinScope::Session(session_id)).await.map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(n)
+    }
+
     pub async fn tracker_by_id(&self, id: uuid::Uuid) -> Result<Option<TrackerRow>, String> {
         sqlx_core::query_as::query_as::<_, TrackerRow>(&format!("{TRACKER_SELECT} WHERE id = $1"))
             .bind(id)
@@ -874,6 +979,7 @@ impl PgStore {
             assigned_to_me,
             writeback_status,
             writeback_at,
+            sdd_framework,
         )) =
             sqlx_core::query_as::query_as::<
                 _,
@@ -888,10 +994,11 @@ impl PgStore {
                     Option<bool>,
                     Option<String>,
                     Option<chrono::DateTime<chrono::Utc>>,
+                    Option<String>,
                 ),
             >(
                 "SELECT t.id, t.tracker_id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL,
-                        t.assigned_to_me, t.writeback_status::text, t.writeback_at
+                        t.assigned_to_me, t.writeback_status::text, t.writeback_at, t.sdd_framework::text
                    FROM sensei.tracker_tasks t JOIN sensei.trackers tr ON tr.id = t.tracker_id
                   WHERE tr.workspace_id = $1
                     AND (upper(t.key) = upper($2)
@@ -945,6 +1052,7 @@ impl PgStore {
             assigned_to_me,
             writeback_status,
             writeback_at,
+            sdd_framework,
             removed,
             sessions,
         }))
@@ -1707,7 +1815,7 @@ impl PgStore {
 }
 
 #[cfg(test)]
-mod schema_tests {
+pub(crate) mod schema_tests {
     use crate::db::pg_store::PgStore;
 
     async fn workspace(pg: &PgStore, tag: &str) -> uuid::Uuid {
@@ -1800,7 +1908,7 @@ mod schema_tests {
         assert!(pg.tracker_history_state(uuid::Uuid::new_v4()).await.is_err());
     }
 
-    async fn insert_tracker(
+    pub(crate) async fn insert_tracker(
         pg: &PgStore,
         workspace_id: uuid::Uuid,
         base_url: &str,

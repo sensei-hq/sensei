@@ -168,9 +168,33 @@ pub(crate) async fn fetch_ticket(
             }
         };
 
-    let start_of_work = start_work(&state, workspace, &canonical, body.session_id.as_deref()).await;
-    Json(json!({ "ticket": ticket, "rules": rules, "start_of_work": start_of_work }))
-        .into_response()
+    // The mirror row, read once and before anything is written (B19): it gives the
+    // ticket's pinned SDD framework, and the start of work links to it. A failed read
+    // is a 500 that leaves nothing to undo.
+    let mirrored = match pg.tracker_task_detail(workspace, &canonical).await {
+        Ok(task) => task,
+        Err(e) => {
+            tracing::error!(error = %e, "fetch_ticket: mirror read failed");
+            return refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", json!({"key": key}));
+        }
+    };
+    let sdd_framework = mirrored.as_ref().and_then(|t| t.sdd_framework.clone());
+
+    let start_of_work = start_work(
+        &state,
+        workspace,
+        &canonical,
+        body.session_id.as_deref(),
+        mirrored.map(|t| t.id),
+    )
+    .await;
+    Json(json!({
+        "ticket": ticket,
+        "rules": rules,
+        "sdd_framework": sdd_framework,
+        "start_of_work": start_of_work,
+    }))
+    .into_response()
 }
 
 /// One board's live read of `key`, with its own credential: `Ok(None)` when the board
@@ -312,6 +336,7 @@ async fn start_work(
     workspace: uuid::Uuid,
     key: &str,
     client: Option<&str>,
+    mirrored: Option<uuid::Uuid>,
 ) -> Value {
     let not = |reason: &str| json!({"recorded": false, "reason": reason});
     let Some(client) = client.filter(|c| !c.is_empty()) else { return not("no_session") };
@@ -324,23 +349,19 @@ async fn start_work(
             return not("internal");
         }
     };
-    // The mirror row: as synced, else discovered now (the tracker-task lookup's path).
-    let task = match pg.tracker_task_detail(workspace, key).await {
-        Ok(Some(t)) => t.id,
-        Ok(None) => {
-            match crate::api::handlers::trackers::discover_on_miss(state, workspace, key).await {
-                Ok(t) => t.id,
-                Err((_, Json(e))) => {
-                    let code = e["error"].as_str().unwrap_or("internal").to_string();
-                    tracing::warn!(code = %code, "fetch_ticket: the ticket could not be mirrored");
-                    return not(&code);
-                }
+    // The mirror row: as synced (read by the caller), else discovered now (the
+    // tracker-task lookup's path).
+    let task = match mirrored {
+        Some(id) => id,
+        None => match crate::api::handlers::trackers::discover_on_miss(state, workspace, key).await
+        {
+            Ok(t) => t.id,
+            Err((_, Json(e))) => {
+                let code = e["error"].as_str().unwrap_or("internal").to_string();
+                tracing::warn!(code = %code, "fetch_ticket: the ticket could not be mirrored");
+                return not(&code);
             }
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "fetch_ticket: mirror read failed");
-            return not("internal");
-        }
+        },
     };
     match pg.record_fetch_link(&session, &task, key).await {
         Ok(FetchStart::Recorded) => json!({"recorded": true}),
@@ -576,6 +597,55 @@ mod tests {
         assert_eq!(st, StatusCode::NOT_FOUND, "{b}");
         assert_eq!(b, json!({"error": "ticket_not_found", "key": "AUTH-404"}));
         assert_eq!(links_of(&h, w.session).await, vec![], "no link for a ticket that is not there");
+    }
+
+    /// B19: the mirror row is read once, before anything is written: a failed read is
+    /// a 500 and the start of work is not recorded.
+    #[tokio::test]
+    async fn a_failed_mirror_read_is_500_and_records_no_start() {
+        let h = harness().await;
+        let w = world(&h, FakeBoard::standard().with(AUTH_2, 0, auth_2())).await;
+        sqlx_core::query::query(
+            "ALTER TABLE sensei.tracker_tasks RENAME COLUMN sdd_framework TO sdd_framework_gone",
+        )
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (st, b) =
+            post_fetch(&h, "AUTH-2", json!({"folder": w.folder, "session_id": w.client_session}))
+                .await;
+        assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{b}");
+        assert_eq!(b["error"], json!("internal"));
+        assert_eq!(links_of(&h, w.session).await, vec![], "no start of work");
+    }
+
+    /// B19: the ticket's pinned SDD framework comes with it, read from the mirror,
+    /// with or without a session; a ticket with none says `null`.
+    #[tokio::test]
+    async fn a_fetch_carries_the_ticket_s_pinned_framework() {
+        let h = harness().await;
+        let w = world(&h, FakeBoard::standard().with(AUTH_2, 0, auth_2())).await;
+        let (st, b) = post_fetch(&h, "AUTH-2", json!({"folder": w.folder})).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert_eq!(b.get("sdd_framework"), Some(&json!(null)), "none pinned: {b}");
+
+        let pinned = sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks SET sdd_framework = 'openspec', sdd_framework_at = now()
+              WHERE key = 'AUTH-2'",
+        )
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap()
+        .rows_affected();
+        assert_eq!(pinned, 1, "AUTH-2 is mirrored");
+        for body in [
+            json!({"folder": w.folder}),
+            json!({"folder": w.folder, "session_id": w.client_session}),
+        ] {
+            let (st, b) = post_fetch(&h, "AUTH-2", body).await;
+            assert_eq!(st, StatusCode::OK, "{b}");
+            assert_eq!(b["sdd_framework"], json!("openspec"), "{b}");
+        }
     }
 
     /// The ticket is still handed over when the session is unknown (or not
