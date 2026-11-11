@@ -279,6 +279,10 @@ and `database/import/staging/schedules.jsonl`, and spawned in `api/server.rs` li
    repository's marker directories are probed on disk, once per repository per pass, off the runtime, under a
    5 s timeout. A probe error or timeout is stored as `probe_failed` and does **not** fail the session: its
    signals are kept. A session deleted mid-pass is skipped, not failed.
+5. **Ticket pin.** After the session's transaction commits, its tickets (linked to it, or pinned from it) are
+   pinned in a separate short transaction (`lock_timeout` 5 s): `pin_ticket_frameworks`, blueprint B13–B18.
+   A pin failure (e.g. a tracker apply holding the ticket) is logged, is **not** a session failure, and leaves
+   the session's signals in place; the next tracker apply, which pins its whole tracker, heals it (B15).
 
 ### S3 · Build/test classifier (D8)
 

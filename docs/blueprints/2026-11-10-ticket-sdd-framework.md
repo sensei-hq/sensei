@@ -47,7 +47,7 @@ and `doc_indexer` knows only OpenSpec paths. This blueprint makes it a recorded 
 | B11 | `static_ambiguous` (markers of two or more **distinct** frameworks) stays on the session but is **never pinned** onto a ticket; the ticket waits for unambiguous evidence. Real case: `ai-project-metrics-bmad` has an empty `openspec/` scaffold beside a populated `_bmad/` | user, 2026-11-11 |
 | B13 | "First" = **first detected**: a ticket takes its value the first time a pin finds an eligible linked session. Among the sessions eligible at that moment, the earliest `started_at` (then `id`) wins. A session derived later, even one that started earlier (the B9 backfill derives old sessions last), never displaces it | user, 2026-11-11 (pre-build audit) |
 | B14 | While the ticket's provenance session is **still running** (`completed_at IS NULL`), the ticket follows that session's current value: a re-derivation to another framework re-pins it, and one to `static_ambiguous` clears the ticket (all three columns `NULL`) so it can be pinned afresh. Once the session completes, the ticket is frozen. No other session ever changes it | user, 2026-11-11 (pre-build audit) |
-| B15 | The pass pins **after** the session's write commits, in its own short transaction (`lock_timeout` 5 s). A pin failure is logged and never touches the session's signals; the next tracker sync, which pins tracker-wide, heals it | user, 2026-11-11 (pre-build audit) |
+| B15 | The pass pins **after** the session's write commits, in its own short transaction (`lock_timeout` 5 s, which bounds only the session locks: tickets are taken `SKIP LOCKED`). A ticket held by an apply is skipped; a pin failure is logged and never touches the session's signals; the next tracker sync, which pins tracker-wide, heals both | user, 2026-11-11 (pre-build audit) |
 | B16 | Each pin is scoped to what its caller touched: a tracker sync pins **all** its tracker's tickets (so it heals pins missed in a race with the pass); the pass pins the tickets linked to, or provenanced by, its session. The `get_ticket` fetch link does **not** pin: a pin there could wait on a running sync past the MCP client's 30 s, and a failure would roll back the start of work. Sync and pass both read fetch links | pre-build audit 2026-11-11 |
 | B17 | Only R1 candidate sessions of the ticket's tracker (`candidate_sessions`, as every ticket read counts them) are eligible: a fetch link or a removed repo's link that R1 no longer counts never pins | pre-build audit 2026-11-11 |
 | B18 | The pin locks its chosen sessions `FOR KEY SHARE` before writing `sdd_framework_session_id`, so a session pruned concurrently is skipped (the ticket waits for the next pin) instead of failing the write with an FK violation | pre-build audit 2026-11-11 |
@@ -125,11 +125,14 @@ change a **session's** value (more events arrived), subject to the B12 guard. On
 A check keeps `sdd_framework` and `sdd_framework_at` set together; `sdd_framework_session_id` may be `NULL` beside a
 value (its session was deleted).
 
-Pinning (`pin_ticket_frameworks(conn, scope)`), two statements over the tickets in `scope` (B16: `Tracker(id)` → the
-tracker's tickets; `Session(id)` → tickets linked to it or provenanced by it):
+Pinning (`pin_ticket_frameworks(conn, scope)`). The scope's tickets are fixed **first** (B16: `Tracker(id)` → the
+tracker's tickets; `Session(id)` → tickets linked to it or provenanced by it, taken `FOR NO KEY UPDATE SKIP LOCKED`, so
+the pass never waits on a ticket a tracker apply holds and the two cannot deadlock; the apply pins what was skipped).
+Fixing them first keeps a ticket the follow clears in scope for the pin. Then two statements over that list, each
+`RETURNING t.id`; the tickets changed are counted once:
 
 1. **Follow** (B14): a ticket whose provenance session is still running takes that session's current value, or is
-   cleared when the session's source is no longer `behavioural`/`static`.
+   cleared when the session's source is no longer `behavioural`/`static` (even with the same framework).
 2. **Pin** (B1, B13): each ticket still `NULL` takes its earliest-`started_at` eligible session: source `behavioural` or
    `static` (B11), an R1 candidate of the ticket's tracker (B17), locked `FOR KEY SHARE` first (B18).
 
@@ -139,7 +142,7 @@ WITH pick AS (
     FROM sensei.session_task_links l
     JOIN sensei.tracker_tasks t ON t.id = l.task_id
     JOIN activity.sessions s ON s.id = l.session_id
-   WHERE t.sdd_framework IS NULL AND <scope>
+   WHERE t.sdd_framework IS NULL AND t.id = ANY(<scope's tickets>)
      AND s.sdd_framework_source IN ('behavioural', 'static')                     -- B11
      AND l.session_id IN (SELECT session_id FROM (<candidate_sessions(t.tracker_id)>) c)  -- B17
    ORDER BY l.task_id, s.started_at, s.id),

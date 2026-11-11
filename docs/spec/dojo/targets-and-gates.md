@@ -730,8 +730,11 @@ the cwd repository; else 404 `no_tracker_for_key`.
   `discover_on_miss` path), map `session_id` → `activity.sessions.id` by `client_session_id`, and
   `insert … source 'fetch', started_at now(), mentions 1 on conflict do nothing` (a second fetch
   records nothing new). Session not found → the ticket is still returned with `start_of_work:
-  { recorded: false, reason: "session_not_found" }`. Response also carries the `get_targets`
-  payload, so one call starts the work (M14).
+  { recorded: false, reason: "session_not_found" }`. The response also carries top-level
+  `sdd_framework` (string or `null`): the ticket's pinned SDD framework, read from the mirror row
+  before the start of work is recorded, so a failed read is a 500 that leaves no link
+  (blueprint `2026-11-10-ticket-sdd-framework` B19). *Not built:* the `get_targets` payload in
+  the response (M14); the route returns `ticket`, `rules`, `sdd_framework`, `start_of_work`.
 - `GET /api/targets?folder=<cwd>[&key=]` → the repository from the folder (`resolve_folder`,
   `knowledge.rs:1314`), the context from `key` (sprint, issue type from the mirror), the replica
   (`resolve_now` on a miss), plus **the ticket's rules** (D73) = the repository's resolved rules
