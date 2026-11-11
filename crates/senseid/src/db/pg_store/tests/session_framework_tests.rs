@@ -2,6 +2,7 @@
 //! database (blueprint 2026-11-10-ticket-sdd-framework B4–B12, #390). Each test has
 //! its own database, so pass counts are exact.
 use super::*;
+use crate::db::pg_store::session_signals::SignalMark;
 use crate::sdlc::signals::DERIVE_VERSION;
 use crate::tasks::session_signals::{Probe, pass, pass_with};
 use serde_json::json;
@@ -310,6 +311,71 @@ async fn an_old_mark_is_derived_again_once_after_new_sessions() {
     assert_eq!(v, DERIVE_VERSION);
     let third = pass(&s, NOW, 10_000).await.unwrap();
     assert_eq!(third.derived, 0, "derived once");
+}
+
+/// B6: a repo whose folder row is gone has no markers, though its directory still
+/// carries them.
+#[tokio::test]
+async fn a_session_whose_folder_row_is_gone_has_no_markers() {
+    let s = PgStore::test_store().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".specify")).unwrap();
+    let folder = repo(&s, dir.path().to_str().unwrap()).await;
+    let id = session(&s, Some(folder), 10, &[prompt("hi")]).await;
+    sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+        .bind(folder)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    let r = pass(&s, NOW, 10_000).await.unwrap();
+    assert_eq!((r.derived, r.failed), (1, 0));
+    assert_eq!(framework(&s, id).await, (None, None));
+}
+
+/// A session removed between selection and store is skipped: nothing is written and
+/// it is not a failure.
+#[tokio::test]
+async fn a_session_removed_mid_pass_is_skipped_not_failed() {
+    let s = PgStore::test_store().await;
+    let id = session(&s, None, 10, &[]).await;
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+        .bind(id)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    let mark = SignalMark {
+        session_id: id,
+        through_event_id: 0,
+        event_count: 0,
+        catalogue_hash: "h".into(),
+        derive_version: DERIVE_VERSION,
+        error: None,
+    };
+    assert_eq!(s.store_session_signals(&mark, &[], Default::default()).await, Ok(false));
+    let (n,): (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM activity.session_signal_marks WHERE session_id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0, "no mark is written for a vanished session");
+}
+
+/// The version re-selects a session; it does not make its signals stale (spec S6).
+/// Signals derived before versions existed reflect the same events and catalogue,
+/// so a ticket's figures keep counting them while the backfill catches up.
+#[tokio::test]
+async fn an_old_mark_stays_current_for_the_metrics_while_it_waits() {
+    let s = PgStore::test_store().await;
+    let id = session(&s, None, 10, &[edit("/r/src/a.rs")]).await;
+    pass(&s, NOW, 10_000).await.unwrap();
+    exec(&s, "UPDATE activity.session_signal_marks SET derive_version = 0").await;
+    let hash = s.command_catalogue().await.unwrap().hash;
+    let got = s.session_signals_for(&[id], &hash).await.unwrap();
+    assert_eq!(got.len(), 1);
+    assert!(got[0].1.current, "a version-stale mark is still current");
+    assert!(!got[0].1.signals.is_empty());
 }
 
 #[tokio::test]

@@ -218,7 +218,8 @@ impl PgStore {
 
     /// The stored signals of these sessions, each with whether they reflect its
     /// current events and `catalogue_hash` (spec S6 "Derivation must be current"),
-    /// in the sessions' start order.
+    /// in the sessions' start order. A mark's `derive_version` does not enter it: the
+    /// version re-selects a session for the pass, it does not void its signals (B9).
     pub async fn session_signals_for(
         &self,
         session_ids: &[uuid::Uuid],
@@ -237,14 +238,13 @@ impl PgStore {
                ) ev
                CROSS JOIN LATERAL (
                    SELECT m.catalogue_hash = $2 AND m.through_event_id = ev.max_id
-                          AND m.event_count = ev.n AND m.derive_version = $3 AS fresh
+                          AND m.event_count = ev.n AS fresh
                ) f
               WHERE s.id = ANY($1)
               ORDER BY s.started_at, s.id",
         )
         .bind(session_ids)
         .bind(catalogue_hash)
-        .bind(DERIVE_VERSION)
         .fetch_all(&self.pool)
         .await
         .map_err(db)?;

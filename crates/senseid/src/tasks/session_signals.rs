@@ -160,16 +160,23 @@ pub async fn pass_with(
     Ok(report)
 }
 
-/// A repository's markers, probed on a blocking thread under `timeout`. An error or
-/// a timeout is [`StaticOutcome::Failed`] (B10); the reason is logged.
+/// A repository's markers, probed on a detached thread under `timeout`. An error or
+/// a timeout is [`StaticOutcome::Failed`] (B10); the reason is logged. The thread is
+/// not the runtime's, so a probe stuck on a dead mount cannot hold shutdown open.
 async fn probe_markers(repo: &str, probe: Probe, timeout: std::time::Duration) -> StaticOutcome {
     let path = std::path::PathBuf::from(repo);
-    let task = tokio::task::spawn_blocking(move || repo_markers(&path, |p| probe(p)));
-    let why = match tokio::time::timeout(timeout, task).await {
-        Ok(Ok(Ok(found))) => return StaticOutcome::Found(found),
-        Ok(Ok(Err(e))) => e,
-        Ok(Err(join)) => join.to_string(),
-        Err(_) => format!("timed out after {timeout:?}"),
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let spawned = std::thread::Builder::new().name("sdd-marker-probe".into()).spawn(move || {
+        let _ = tx.send(repo_markers(&path, |p| probe(p)));
+    });
+    let why = match spawned {
+        Err(e) => format!("could not start the probe thread: {e}"),
+        Ok(_) => match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(Ok(found))) => return StaticOutcome::Found(found),
+            Ok(Ok(Err(e))) => e,
+            Ok(Err(_)) => "the probe thread ended without a result".to_string(),
+            Err(_) => format!("timed out after {timeout:?}"),
+        },
     };
     tracing::warn!(repo, error = %why, "derive_session_signals: SDD marker probe failed");
     StaticOutcome::Failed
@@ -184,5 +191,26 @@ mod tests {
         assert_eq!(outcome(&PassReport { derived: 3, failed: 0 }), Ok(()));
         let err = outcome(&PassReport { derived: 3, failed: 2 }).unwrap_err();
         assert!(err.contains("2 of 5"), "{err}");
+    }
+
+    /// A probe stuck on a dead mount must not hold the runtime open at shutdown:
+    /// dropping a runtime waits for its blocking tasks, so a SIGTERM would then need
+    /// a SIGKILL.
+    #[test]
+    fn a_hung_probe_does_not_hold_the_runtime_open() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+            let hung: Probe = Arc::new(|_: &std::path::Path| -> std::io::Result<bool> {
+                loop {
+                    std::thread::park();
+                }
+            });
+            let out =
+                rt.block_on(probe_markers("/_fw/hung", hung, std::time::Duration::from_millis(50)));
+            drop(rt);
+            tx.send(matches!(out, StaticOutcome::Failed)).unwrap();
+        });
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(true));
     }
 }

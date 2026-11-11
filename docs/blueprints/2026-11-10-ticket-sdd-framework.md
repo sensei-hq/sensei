@@ -42,7 +42,7 @@ and `doc_indexer` knows only OpenSpec paths. This blueprint makes it a recorded 
 | B6 | A repo folder missing on disk (or whose `sensei.folders` row is gone) = no static markers. It is not an error | user, 2026-11-11 |
 | B7 | Static markers are probed on disk under the repo's `abs_path`, not read from `sensei.folders`: that table holds no hidden directories (0 rows with a leading dot, 2026-11-10), so `.specify/`, `.kiro/`, `.bmad-core/` are never in it | build-start check, 2026-11-10 |
 | B8 | A prompt is a command only when, after stripping leading `<ide_…>…</ide_…>` blocks, it **starts** with the command. Prompts that are relays (`<task-notification`, `<agent-message`) never count: 100 of 580 real prompts are relays, and a quoted `/opsx:apply` inside one must not classify the session | build-start check 2026-11-10; spec audit 2026-11-11 |
-| B9 | Backfill: `activity.session_signal_marks.derive_version int not null default 0`; the code constant starts at 1; **every** mark write (success and failure) sets it. The pass re-selects a mark whose version is older. Sessions never derived or stale by events/catalogue are taken **before** sessions stale only by version, so a backfill never delays new sessions | build-start check 2026-11-10; spec audit 2026-11-11 |
+| B9 | Backfill: `activity.session_signal_marks.derive_version int not null default 0`; the code constant starts at 1; **every** mark write (success and failure) sets it. The pass re-selects a mark whose version is older. Sessions never derived or stale by events/catalogue are taken **before** sessions stale only by version, so a backfill never delays new sessions. The version only re-selects: a version-stale mark still counts as current for the metrics (spec S6), so a backfill blanks no ticket's figures | build-start check 2026-11-10; spec audit 2026-11-11 |
 | B10 | A probe permission error or timeout does **not** fail the session: its signals and mark are stored as usual, and the session gets `sdd_framework = NULL, sdd_framework_source = 'probe_failed'`, an explicit error state. It is retried only when the session's events or `derive_version` change, so the schedule is never held red by one unreadable repo | user, 2026-11-11 |
 | B11 | `static_ambiguous` (markers of two or more **distinct** frameworks) stays on the session but is **never pinned** onto a ticket; the ticket waits for unambiguous evidence. Real case: `ai-project-metrics-bmad` has an empty `openspec/` scaffold beside a populated `_bmad/` | user, 2026-11-11 |
 | B12 | `static` means "the repo as found when the session was derived" (a repo that adopted a framework later is attributed to its earlier sessions on re-derivation; accepted). Guard: a re-derivation never replaces a session's non-NULL value with `NULL` or `probe_failed` because static evidence went missing or failed | user, 2026-11-11 |
@@ -52,7 +52,7 @@ and `doc_indexer` knows only OpenSpec paths. This blueprint makes it a recorded 
 ```
 hook events ──► tasks/session_signals.rs ──► sdlc::framework::behavioural(events, repo_root) ──┐
                          │                                                                   │ none
-              repo_folder_id → abs_path ──► repo_markers (spawn_blocking, 5 s, once per repo/pass) ─► from_markers
+              repo_folder_id → abs_path ──► repo_markers (detached thread, 5 s, once per repo/pass) ─► from_markers
                                                                                              ▼
                                                     activity.sessions.sdd_framework (+ source), B12 guard
                                                                                              │
@@ -80,7 +80,7 @@ signature table.
   checks the fixed marker paths only (never lists or walks a directory). Repo dir `NotFound` → `Ok(vec![])` (B6).
 
 `SignalEvent` gains two projected fields (in `session_events_for_signals`): `prompt` (a `UserPromptSubmit`'s
-`payload.prompt` after stripping leading `<ide_…>` blocks in SQL, its first 512 characters) and `skill` (a `Skill`
+`payload.prompt`, whole; `typed_command` skips leading `<ide_…>` blocks in Rust, so no cap may cut it first) and `skill` (a `Skill`
 call's `tool_input.skill`).
 
 Signature table (one place, reused by `is_code` and `doc_indexer`; see Integration). Paths are **repo-relative** (B4):
@@ -135,7 +135,7 @@ After that, nothing changes it.
 
 1. Hook events land, and the session-signals pass selects the session (B9 ordering).
 2. The pass loads the repo's `abs_path` (a gone folder row = no repo, B6) and runs `behavioural(events, repo_root)`.
-3. No behavioural hit and a repo: `repo_markers` runs in `spawn_blocking` under a **5 s timeout**, at most once per repo
+3. No behavioural hit and a repo: `repo_markers` runs on a detached thread (not the runtime's blocking pool, so a probe stuck on a dead mount cannot hold daemon shutdown open) under a **5 s timeout**, at most once per repo
    per pass (memoised; a repo whose probe timed out is not probed again that pass). Then `from_markers`.
 4. A probe permission error or timeout → `probe_failed` (B10). The session is derived, not failed.
 5. The B12 guard: a static-side `None` / `probe_failed` never replaces an existing non-NULL value.

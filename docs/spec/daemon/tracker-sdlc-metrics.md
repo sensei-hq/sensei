@@ -585,7 +585,9 @@ means these merged slices.
 
 **Derivation must be current.** Every session in `S` needs a mark with no `error`, whose
 `through_event_id` and `event_count` equal its events' `max(id)` and `count(*)`, and whose
-catalogue hash is current. Otherwise every
+catalogue hash is current. The mark's `derive_version` does not enter it: an older version
+re-selects the session for the pass (S2), but its signals still reflect these events and keep
+counting until it is derived again. Otherwise every
 signal-based figure (everything below except `ai_token_cost`, `estimated_points` and
 `expected_minutes`) is null with reason `not_derived`. A not-yet-derived session never reads
 as zeros.
