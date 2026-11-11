@@ -31,8 +31,9 @@ tracker ticket it is linked to, set once and never overwritten. Branch: `feature
 
 - **Issue:** #390
 - **Layers:** DDL (`sensei.sdd_framework` enum; `activity.sessions.sdd_framework`, `sdd_framework_source`) →
-  `sdlc/framework.rs` (signature table + pure `detect`) → `tasks/session_signals.rs` (detect + store in the same
-  per-session transaction)
+  `activity.session_signal_marks.derive_version` → `SignalEvent` gains `prompt` + `skill` →
+  `sdlc/framework.rs` (signature table, pure `behavioural` / `from_markers` / `detect`, thin `repo_markers` disk probe)
+  → `tasks/session_signals.rs` (detect + store in the same per-session transaction)
 - **Depends on:** none
 - **Acceptance criteria:**
   - `detect` returns `openspec` / `spec_kit` / `kiro` / `bmad` for each row of the blueprint's signature table, from
@@ -44,10 +45,15 @@ tracker ticket it is linked to, set once and never overwritten. Branch: `feature
     `openspec, spec_kit, kiro, bmad` with `static_ambiguous`.
   - No match stores `NULL` and `NULL` source. sensei's own `docs/spec`, plan graph and `/sensei:*` commands never
     produce a value (B3).
-  - A repo-marker read failure is an `Err`: the session is counted `failed` in `PassReport`, and its framework columns
-    are not written as `NULL`.
-  - Sessions already derived before this ships are re-derived once (the derivation mark is invalidated) so existing
-    rows get a value.
+  - A slash command after leading IDE context (`<ide_opened_file>…</ide_opened_file>\n/opsx:apply x`) is detected
+    (blueprint B8).
+  - Static markers are probed on disk under the repo's `abs_path`, so `.specify/`, `.kiro/specs/`, `.bmad-core/` are
+    found (B7).
+  - A repo folder missing on disk gives no markers: the session is derived, not failed (B6).
+  - Any other marker-probe failure (permission, I/O) is an `Err`: the session is counted `failed` in `PassReport`, and
+    its framework columns are not written as `NULL`.
+  - Sessions already derived before this ships are re-derived once: the pass re-selects a session whose
+    `session_signal_marks.derive_version` is older than the current constant (B9).
   - `make test-template` is run after the DDL change; `make test-fast` is green.
 - **Test scenarios:**
   ```gherkin
@@ -63,9 +69,17 @@ tracker ticket it is linked to, set once and never overwritten. Branch: `feature
   When the pass runs
   Then sdd_framework IS NULL
 
-  Given a session whose repo folder cannot be read and no behavioural hit
+  Given a session whose repo folder exists but cannot be read, and no behavioural hit
   When the pass runs
   Then the pass reports 1 failed and the session's sdd_framework is unchanged
+
+  Given a session whose repo folder was deleted from disk, and no behavioural hit
+  When the pass runs
+  Then the session is derived with sdd_framework IS NULL and the pass reports 0 failed
+
+  Given a session derived before this change (mark at the old derive_version)
+  When the pass runs
+  Then the session is selected and derived again
   ```
 
 ### Feature 2: Pin the framework onto tickets (first wins) and expose it
@@ -138,7 +152,12 @@ graph LR
 
 F2 and F3 are independent of each other once F1 lands.
 
-## Open check (resolve at F1 build start)
+## Build-start corrections (2026-11-10/11)
 
-- How the session-signals pass invalidates already-derived sessions (`SignalMark`). If the mark has no derivation
-  version, F1 adds one; that is the backfill.
+Found by checking F1 against the code and the live DB before writing tests; recorded in the blueprint as B6–B9.
+
+- `SignalEvent` carried no prompt text or skill name; F1 projects both.
+- The mark had no derivation version (backfill impossible); F1 adds `derive_version` (B9).
+- `sensei.folders` holds no hidden directories; static markers are probed on disk (B7).
+- Prompts can lead with IDE context; commands match at any line start (B8).
+- A deleted repo folder is "no markers", not an error (B6, user).

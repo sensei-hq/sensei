@@ -39,6 +39,10 @@ and `doc_indexer` knows only OpenSpec paths. This blueprint makes it a recorded 
 | B3 | Only third-party frameworks. sensei's own plan graph / `docs/spec` is **not** a framework value; the sensei repo resolves to `NULL` | user, 2026-11-10 |
 | B4 | Scope = the session's repo, among repos sensei observes | user, 2026-11-10 |
 | B5 | No match → `NULL`. Never a default (no-fabrication rule). A detection failure (unreadable repo) is an error, not `NULL` | CLAUDE.md hard rule |
+| B6 | A repo folder that no longer exists on disk = no static markers (`NULL`). A permission or other I/O error is still an `Err` (B5). A deleted repo must not turn the pass red on every run | user, 2026-11-11 |
+| B7 | Static markers are probed on disk under the repo's `abs_path`, not read from `sensei.folders`: that table holds no hidden directories (0 rows with a leading dot, 2026-11-10), so `.specify/`, `.kiro/`, `.bmad-core/` are never in it | build-start check, 2026-11-10 |
+| B8 | Slash commands are matched at the start of **any line** of the prompt: a prompt can begin with IDE context (`<ide_opened_file>…`) before the command | build-start check, 2026-11-10 |
+| B9 | Existing sessions are backfilled by a derivation version on `activity.session_signal_marks`: the pass re-selects a session whose mark has an older version. Today it re-selects only on an event or catalogue change | build-start check, 2026-11-10 |
 
 ## Architecture
 
@@ -64,15 +68,19 @@ signature table.
 
 ### Detector: `crates/senseid/src/sdlc/framework.rs` (new, pure)
 
-`detect(events: &[SignalEvent], repo_markers: &[RepoMarker]) -> Option<(SddFramework, DetectionSource)>`.
-Pure, with no I/O. The marker list is passed in, so it can be unit-tested.
+`detect(events: &[SignalEvent], markers: &[SddFramework]) -> Option<(SddFramework, DetectionSource)>`.
+Pure, with no I/O. The marker list is passed in, so it can be unit-tested. The disk probe is a separate thin function,
+`repo_markers(repo: &Path, probe) -> Result<Vec<SddFramework>, String>`, whose `probe` is injected (B6, B7).
+
+`SignalEvent` gains two projected fields for this (read in `session_events_for_signals`): `prompt` (a
+`UserPromptSubmit`'s `payload.prompt`, its first 4 KiB) and `skill` (a `Skill` call's `tool_input.skill`).
 
 Signature table (one place, reused by `is_code` and `doc_indexer` and not duplicated there; see Integration):
 
 | Framework | Behavioural (B2, first) | Static marker (fallback) |
 |---|---|---|
-| OpenSpec | prompt/skill `/opsx:*`, `/openspec:*`, `openspec-*` skills; Edit/Write under `openspec/` | `openspec/` dir |
-| Spec Kit | `/speckit.*`; Edit/Write under `specs/NNN-*/` or `.specify/` | `.specify/` dir |
+| OpenSpec | prompt line starting `/opsx:` or `/openspec:` (B8); skill `openspec-*`; Edit/Write under `openspec/` | `openspec/` dir |
+| Spec Kit | prompt line starting `/speckit.` (B8); skill `speckit*`; Edit/Write under `specs/NNN-*/` or `.specify/` | `.specify/` dir |
 | Kiro | Edit/Write under `.kiro/specs/` | `.kiro/specs/` dir |
 | BMAD | Edit/Write under `_bmad/`, `.bmad-core/` | `_bmad/` or `.bmad-core/` dir |
 
@@ -117,8 +125,9 @@ After that, nothing changes it.
 ## Data flow
 
 1. Hook events land, and the session-signals task re-derives the session.
-2. `detect(events, markers)`. Markers are read from the session's `repo_folder_id` path only when there is no
-   behavioural hit. A read failure is an `Err` and is logged; the column is left untouched and not set to `NULL` (B5).
+2. `detect(events, markers)`. Markers are probed on disk under the `abs_path` of the session's `repo_folder_id`, only
+   when there is no behavioural hit (B7). A missing repo folder gives no markers (B6). Any other probe failure is an
+   `Err`: the session counts as failed and its columns are left untouched, not set to `NULL` (B5).
 3. Session columns are stored, then `pin_ticket_frameworks` runs for that session's linked tickets.
 4. Tracker sync relinks in `write_links`, then `pin_ticket_frameworks` runs in the same tx, for tickets that gained
    their first framework-bearing session.
