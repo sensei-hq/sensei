@@ -1108,6 +1108,8 @@ pub mod test_support {
                     && !l.starts_with("--")
                     && !l.starts_with("unique")
                     && !l.starts_with("primary key (")
+                    && !l.starts_with("check ")
+                    && !l.starts_with("check(")
             })
             .filter_map(|l| l.split_whitespace().next().map(String::from))
             .collect()

@@ -33,8 +33,11 @@ fn without_test_modules(text: &str) -> String {
     let mut out = String::new();
     for (i, line) in lines.iter().enumerate() {
         let next = lines[i + 1..].iter().find(|l| !l.trim().is_empty());
-        if line.trim() == "#[cfg(test)]" && next.is_some_and(|l| l.trim_start().starts_with("mod "))
-        {
+        let is_mod = |l: &&str| {
+            let l = l.trim_start();
+            ["mod ", "pub mod ", "pub(crate) mod "].iter().any(|p| l.starts_with(p))
+        };
+        if line.trim() == "#[cfg(test)]" && next.is_some_and(is_mod) {
             break;
         }
         out.push_str(line.split("//").next().unwrap_or(""));
