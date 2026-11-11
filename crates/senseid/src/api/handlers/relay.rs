@@ -57,7 +57,7 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 
-use crate::api::events::StateEvent;
+use crate::api::events::{LaneChange, LaneReason, RunChange, StateEvent};
 use crate::api::state::AppState;
 use crate::db::pg_store::relay::{
     RelayAnswerInput, RelayAnswerOutput, RelayAskInput, RelayAskedOf, RelayAssignInput,
@@ -141,6 +141,11 @@ fn emit(state: &AppState, op: &str) {
 /// A task changed: the screen re-reads that task's view (F8).
 fn emit_task(state: &AppState, op: &str, task_id: &Uuid) {
     let _ = state.event_tx.send(StateEvent::relay_task(op, task_id));
+}
+
+/// A lane's crew membership changed: the Lanes section follows.
+fn emit_lane(state: &AppState, change: LaneChange, lane_id: &Uuid, crew_id: &Uuid) {
+    let _ = state.event_tx.send(StateEvent::relay_lane(change, lane_id, crew_id));
 }
 
 // ─── Wire bodies ───
@@ -480,6 +485,7 @@ pub(crate) async fn register(
         )
         .await
         .map_err(err)?;
+    emit_lane(&state, LaneChange::Registered, &out.lane_id, &out.crew_id);
     ok(serde_json::json!({
         "lane_token": out.lane_token,
         "lane_id": out.lane_id.to_string(),
@@ -552,12 +558,27 @@ pub(crate) async fn heartbeat(
     Json(body): Json<LaneBody>,
 ) -> RelayResult {
     let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
-    let RelayHeartbeatOutput { expires_at } = state
-        .pg
-        .relay_heartbeat(parse_uuid(&body.lane_id, "lane_id").map_err(err)?, chrono::Utc::now())
-        .await
-        .map_err(err)?;
-    let _ = session;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let RelayHeartbeatOutput { expires_at, regranted, pause_ended } =
+        state.pg.relay_heartbeat(lane_id, chrono::Utc::now()).await.map_err(err)?;
+    // A routine renewal changes nothing the screen shows; only a beat
+    // that brings the lane back to work is announced.
+    if regranted {
+        emit_lane(
+            &state,
+            LaneChange::Resumed(LaneReason::LeaseRegranted),
+            &lane_id,
+            &session.crew_id,
+        );
+    }
+    if pause_ended {
+        emit_lane(
+            &state,
+            LaneChange::Resumed(LaneReason::LimitPauseEnded),
+            &lane_id,
+            &session.crew_id,
+        );
+    }
     ok(serde_json::json!({ "expires_at": iso(expires_at) }))
 }
 
@@ -577,6 +598,7 @@ pub(crate) async fn reregister(
         .relay_reregister(parse_uuid(&body.lane_id, "lane_id").map_err(err)?, chrono::Utc::now())
         .await
         .map_err(err)?;
+    emit_lane(&state, LaneChange::Reregistered, &out.lane_id, &out.crew_id);
     ok(serde_json::json!({
         "lane_id": out.lane_id.to_string(),
         "crew_id": out.crew_id.to_string(),
@@ -590,10 +612,14 @@ pub(crate) async fn unregister(
     headers: HeaderMap,
     Json(body): Json<LaneBody>,
 ) -> RelayResult {
-    let _session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
     let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
-    state.pg.relay_unregister(lane_id).await.map_err(err)?;
+    let out = state.pg.relay_unregister(lane_id).await.map_err(err)?;
     emit(&state, "unregister");
+    emit_lane(&state, LaneChange::Unregistered, &lane_id, &session.crew_id);
+    if let Some(task_id) = out.interrupted {
+        emit_task(&state, "interrupt", &task_id);
+    }
     ok(serde_json::json!({ "lane_id": body.lane_id }))
 }
 
@@ -602,7 +628,7 @@ pub(crate) async fn limit_pause(
     headers: HeaderMap,
     Json(body): Json<LimitPauseBody>,
 ) -> RelayResult {
-    let _session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
     let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let resumes_at = body
         .resumes_at
@@ -627,7 +653,7 @@ pub(crate) async fn limit_pause(
         )
         .await
         .map_err(err)?;
-    emit(&state, "limit_pause");
+    emit_lane(&state, LaneChange::Suspended(LaneReason::LimitPause), &lane_id, &session.crew_id);
     ok(serde_json::json!({
         "scope": out.scope,
         "resumes_at": out.resumes_at.map(iso),
@@ -1130,7 +1156,7 @@ pub(crate) async fn close_crew(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_close_crew(session.user_id, caller, crew_id).await.map_err(err)?;
-    emit(&state, "close");
+    let _ = state.event_tx.send(StateEvent::relay_run(RunChange::Completed, &out.crew_id));
     ok(serde_json::json!({
         "crew_id": out.crew_id.to_string(),
         "status": out.status,
@@ -3768,6 +3794,315 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["status"], "closed");
+    }
+
+    // ── Crew-change + run-lifecycle SSE ──
+
+    /// The first event matching `entity` + `op`, skipping others (a
+    /// mutation can emit several: a lane event plus its tasks'). Fails
+    /// naming everything seen when none arrives.
+    async fn event_for(
+        rx: &mut tokio::sync::broadcast::Receiver<crate::api::events::StateEvent>,
+        entity: &str,
+        op: &str,
+    ) -> Value {
+        let mut seen = Vec::new();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Ok(event)) => {
+                    let json = serde_json::to_value(&event).unwrap();
+                    if json["entity"] == entity && json["data"]["op"] == op {
+                        return json;
+                    }
+                    seen.push(json);
+                }
+                _ => panic!("no {entity}/{op} event; saw {seen:?}"),
+            }
+        }
+    }
+
+    fn lane_event(action: &str, op: &str, lane_id: &str, crew_id: &str) -> Value {
+        json!({
+            "action": action, "entity": "lane",
+            "data": {"op": op, "lane_id": lane_id, "crew_id": crew_id},
+        })
+    }
+
+    fn lane_event_why(action: &str, op: &str, lane_id: &str, crew_id: &str, reason: &str) -> Value {
+        let mut event = lane_event(action, op, lane_id, crew_id);
+        event["data"]["reason"] = json!(reason);
+        event
+    }
+
+    #[tokio::test]
+    async fn register_emits_lane_registered() {
+        // The first live run's hole: a lane joined and the screen stayed
+        // still. Join must fire, naming the lane and its crew.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        let event = event_for(&mut rx, "lane", "registered").await;
+        assert_eq!(event, lane_event("add", "registered", &lane_id, &coord.2));
+    }
+
+    #[tokio::test]
+    async fn coordinator_register_emits_lane_registered() {
+        // The crew-minting register is a join too.
+        let h = harness().await;
+        let mut rx = h.state.event_tx.subscribe();
+        let coord = register_coordinator(&h).await;
+        let event = event_for(&mut rx, "lane", "registered").await;
+        assert_eq!(event, lane_event("add", "registered", &coord.0, &coord.2));
+    }
+
+    #[tokio::test]
+    async fn unregister_emits_lane_unregistered() {
+        // Leaving removes the row.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/unregister",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let event = event_for(&mut rx, "lane", "unregistered").await;
+        assert_eq!(event, lane_event("remove", "unregistered", &lane_id, &coord.2));
+    }
+
+    #[tokio::test]
+    async fn unregister_keeps_the_legacy_relay_op() {
+        // The app's task stream re-reads on `relay`/`unregister` today;
+        // the lane event rides beside it until the screen moves over.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/unregister",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let legacy = event_for(&mut rx, "relay", "unregister").await;
+        assert_eq!(legacy["action"], "add");
+    }
+
+    #[tokio::test]
+    async fn unregister_names_the_interrupted_task() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/unregister",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let event = event_for(&mut rx, "task", "interrupt").await;
+        assert_eq!(event["action"], "update");
+        assert_eq!(event["data"]["task_id"], task_id);
+    }
+
+    #[tokio::test]
+    async fn reregister_emits_lane_reregistered() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/unregister",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/reregister",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let event = event_for(&mut rx, "lane", "reregistered").await;
+        assert_eq!(event, lane_event("add", "reregistered", &lane_id, &coord.2));
+    }
+
+    #[tokio::test]
+    async fn limit_pause_emits_lane_suspended() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, _) =
+            limit_pause(&h, &lane_id, &token, "daily", serde_json::Value::Null, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let event = event_for(&mut rx, "lane", "suspended").await;
+        assert_eq!(event, lane_event_why("update", "suspended", &lane_id, &coord.2, "limit_pause"));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_ending_a_pause_emits_lane_resumed() {
+        // Unknown resume time: the next beat ends the pause.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, _) =
+            limit_pause(&h, &lane_id, &token, "daily", serde_json::Value::Null, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let event = event_for(&mut rx, "lane", "resumed").await;
+        assert_eq!(
+            event,
+            lane_event_why("update", "resumed", &lane_id, &coord.2, "limit_pause_ended")
+        );
+    }
+
+    #[tokio::test]
+    async fn plain_heartbeat_emits_nothing() {
+        // A routine renewal changes nothing the screen shows: no event
+        // every 60 s per lane.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(rx.try_recv().is_err(), "a plain beat emitted an event");
+    }
+
+    #[tokio::test]
+    async fn sweep_lease_loss_emits_lane_suspended_then_beat_resumes() {
+        // Lease loss: the sweeper expires the lane (row → suspended), then
+        // a late beat re-grants the lease (row → resumed).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let past_lease = chrono::Utc::now() + chrono::Duration::seconds(301);
+        crate::tasks::relay_lease_sweep::sweep_at(&h.state.pg, &h.state.event_tx, past_lease)
+            .await
+            .unwrap();
+        // Every lane's lease lapsed: one suspend per lane, the
+        // coordinator's and this one's.
+        let mut suspended = vec![
+            event_for(&mut rx, "lane", "suspended").await,
+            event_for(&mut rx, "lane", "suspended").await,
+        ];
+        suspended.sort_by_key(|e| e["data"]["lane_id"].as_str().unwrap().to_string());
+        let mut expected = vec![
+            lane_event_why("update", "suspended", &coord.0, &coord.2, "lease_expired"),
+            lane_event_why("update", "suspended", &lane_id, &coord.2, "lease_expired"),
+        ];
+        expected.sort_by_key(|e| e["data"]["lane_id"].as_str().unwrap().to_string());
+        assert_eq!(suspended, expected);
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let event = event_for(&mut rx, "lane", "resumed").await;
+        assert_eq!(
+            event,
+            lane_event_why("update", "resumed", &lane_id, &coord.2, "lease_regranted")
+        );
+    }
+
+    #[tokio::test]
+    async fn sweep_names_the_interrupted_task() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let past_lease = chrono::Utc::now() + chrono::Duration::seconds(301);
+        crate::tasks::relay_lease_sweep::sweep_at(&h.state.pg, &h.state.event_tx, past_lease)
+            .await
+            .unwrap();
+        let event = event_for(&mut rx, "task", "interrupt").await;
+        assert_eq!(event["action"], "update");
+        assert_eq!(event["data"]["task_id"], task_id);
+    }
+
+    #[tokio::test]
+    async fn sweep_with_nothing_lapsed_emits_nothing() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let _ = register_contributor(&h, &coord.2).await;
+        let mut rx = h.state.event_tx.subscribe();
+        crate::tasks::relay_lease_sweep::sweep_at(
+            &h.state.pg,
+            &h.state.event_tx,
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+        assert!(rx.try_recv().is_err(), "an idle sweep emitted an event");
+    }
+
+    #[tokio::test]
+    async fn close_crew_emits_run_completed() {
+        // CONTRACT §3k: the run (the crew's lifecycle) completes on close.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(lane_body(&coord.0, json!({}))),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let event = event_for(&mut rx, "run", "completed").await;
+        assert_eq!(
+            event,
+            json!({
+                "action": "update", "entity": "run",
+                "data": {"op": "completed", "run_id": coord.2, "crew_id": coord.2},
+            })
+        );
     }
 
     // ── failure paths ──

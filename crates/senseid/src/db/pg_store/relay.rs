@@ -75,6 +75,18 @@ pub struct RelayLaneSession {
 #[derive(Debug, Clone)]
 pub struct RelayHeartbeatOutput {
     pub expires_at: DateTime<Utc>,
+    /// The lane's lease had lapsed (or was swept): this beat granted a
+    /// fresh one, so the lane is live again.
+    pub regranted: bool,
+    /// This beat ended a limit pause (at or past its resume time).
+    pub pause_ended: bool,
+}
+
+/// `POST /api/relay/unregister`: the task the leave interrupted, if the
+/// lane held one.
+#[derive(Debug, Clone)]
+pub struct RelayUnregisterOutput {
+    pub interrupted: Option<Uuid>,
 }
 
 /// `POST /api/relay/limit_pause`: the lane reports quota exhaustion. The
@@ -401,6 +413,21 @@ pub struct RelaySweepReport {
     pub expired_resource_leases: u64,
     /// Queued requests auto-granted this pass (item 3).
     pub granted_from_queue: u64,
+    /// Lanes whose lease expired this pass, as `(crew_id, lane_id)`.
+    pub expired_lanes: Vec<(Uuid, Uuid)>,
+    /// Every task this pass changed, and how, in pass order.
+    pub task_changes: Vec<(Uuid, RelaySweptTask)>,
+}
+
+/// What a sweeper pass did to one task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelaySweptTask {
+    /// Its lane's lease expired or its lane is limit-paused.
+    Interrupted,
+    /// The grace passed: back in the queue for another lane.
+    Reoffered,
+    /// Its reviewer died: a new reviewer, or a cleared slot.
+    ReviewerRepicked,
 }
 
 /// `POST /api/relay/resources/request` (item 3): the lease input carries an
@@ -1150,7 +1177,8 @@ impl PgStore {
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
-        if renewed.rows_affected() == 0 {
+        let regranted = renewed.rows_affected() == 0;
+        if regranted {
             sqlx_core::query::query(
                 "insert into relay.leases
                    (user_id, id, crew_id, lane_id, kind, state, expires_at, granted_at)
@@ -1190,7 +1218,7 @@ impl PgStore {
         .map_err(db_err)?;
         // A beat at or past the resume time ends a limit pause (unknown
         // resume: any beat resumes). Earlier beats renew only.
-        sqlx_core::query::query(
+        let pause_ended = sqlx_core::query::query(
             "update relay.lanes set limit_paused_at = null, limit_scope = null,
                     limit_resumes_at = null, limit_note = null
              where id = $1 and limit_paused_at is not null
@@ -1200,9 +1228,11 @@ impl PgStore {
         .bind(now)
         .execute(&mut *tx)
         .await
-        .map_err(db_err)?;
+        .map_err(db_err)?
+        .rows_affected()
+            > 0;
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayHeartbeatOutput { expires_at: expires })
+        Ok(RelayHeartbeatOutput { expires_at: expires, regranted, pause_ended })
     }
 
     /// Record a lane's quota exhaustion (re-pausable: a later report
@@ -1301,7 +1331,10 @@ impl PgStore {
     /// Leave: stamp `unregistered_at`, release the lane lease, and interrupt
     /// the lane's active task (a voluntary leave suspends work like a lost
     /// lease) — all in one transaction.
-    pub async fn relay_unregister(&self, lane_id: Uuid) -> Result<(), RelayError> {
+    pub async fn relay_unregister(
+        &self,
+        lane_id: Uuid,
+    ) -> Result<RelayUnregisterOutput, RelayError> {
         let lane: Option<(Uuid, Uuid, Option<DateTime<Utc>>)> = sqlx_core::query_as::query_as(
             "select user_id, crew_id, unregistered_at from relay.lanes where id = $1",
         )
@@ -1349,6 +1382,7 @@ impl PgStore {
         .fetch_optional(&mut *tx)
         .await
         .map_err(db_err)?;
+        let interrupted = task.as_ref().map(|(task_id, ..)| *task_id);
         if let Some((task_id, state, round, phase)) = task {
             let next = transition(parse_state(&state)?, TaskEvent::LeaseLost)
                 .map_err(|_| RelayError::Conflict("task cannot be suspended".into()))?;
@@ -1406,7 +1440,7 @@ impl PgStore {
             }
         }
         tx.commit().await.map_err(db_err)?;
-        Ok(())
+        Ok(RelayUnregisterOutput { interrupted })
     }
 
     /// Request a resource lease (item 3, Q1–Q3/Q5/Q6): the lane's live
@@ -3806,6 +3840,9 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         let expired_leases = expired.len() as u64;
+        let expired_lanes =
+            expired.iter().map(|(_, crew_id, lane_id)| (*crew_id, *lane_id)).collect();
+        let mut task_changes = Vec::new();
         let mut interrupted_tasks = 0u64;
         for (user_id, crew_id, lane_id) in &expired {
             let tasks: Vec<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
@@ -3857,6 +3894,7 @@ impl PgStore {
                 .await
                 .map_err(db_err)?;
                 interrupted_tasks += 1;
+                task_changes.push((task_id, RelaySweptTask::Interrupted));
             }
         }
         // Limit-paused lanes keep their leases but cannot work: suspend
@@ -3922,6 +3960,7 @@ impl PgStore {
                 .await
                 .map_err(db_err)?;
                 interrupted_tasks += 1;
+                task_changes.push((task_id, RelaySweptTask::Interrupted));
             }
         }
         // Re-offer tasks past the grace, measured from the latest
@@ -3976,6 +4015,7 @@ impl PgStore {
             .await
             .map_err(db_err)?;
             reoffered_tasks += 1;
+            task_changes.push((task_id, RelaySweptTask::Reoffered));
         }
         // Re-pick dead reviewers over the live lanes (Q17): a new pick, or
         // a cleared slot when nobody is live. Silent (no action kind names
@@ -4008,6 +4048,7 @@ impl PgStore {
             .await
             .map_err(db_err)?;
             repicked_reviewers += 1;
+            task_changes.push((task_id, RelaySweptTask::ReviewerRepicked));
         }
         // Item 3: expire stale resource grants (the same `<=` comparison
         // as lane leases), then release grants held by lanes with no live
@@ -4052,6 +4093,8 @@ impl PgStore {
             repicked_reviewers,
             expired_resource_leases,
             granted_from_queue,
+            expired_lanes,
+            task_changes,
         })
     }
 

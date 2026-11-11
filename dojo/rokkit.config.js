@@ -87,6 +87,13 @@ export default {
 	colorSpace: 'oklch',
 	skin: zenSumi.skin,
 
+	// One added token, none of rokkit's overridden: the stronger hairline
+	// (mockup `--edge2`) that the shared ToolbarItem's pressed rim and the host
+	// Tag use. The app adds the same value, so `@sensei/ui` reads one token.
+	overrides: {
+		'paper-edge-strong': { light: 'oklch(0.800 0.012 72)', dark: 'oklch(0.340 0.012 50)' }
+	},
+
 	typography: {
 		sans: "'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif",
 		mono: "'JetBrains Mono', 'SF Mono', Menlo, monospace",

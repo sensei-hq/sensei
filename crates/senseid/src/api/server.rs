@@ -561,7 +561,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // Relay lanes: expire lapsed lane leases, suspend their work, re-offer
     // past the grace, re-pick dead reviewers. The `relay_lease` schedule
     // owns the cadence; a not-yet-converged relay schema warns, never fatals.
-    crate::tasks::relay_lease_sweep::spawn(Arc::new(state.pg.clone()));
+    crate::tasks::relay_lease_sweep::spawn(Arc::new(state.pg.clone()), state.event_tx.clone());
     // Tracker integrations: mirror connected boards, drain removed credentials.
     crate::tasks::tracker_sync::spawn(Arc::new(state.pg.clone()), state.trackers.clone());
 
@@ -756,7 +756,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // Dōjō sync: establishes repository IDENTITY (which tenant) and ENTITLEMENT
     // (what may sync) for every signed-in persona. Pushes no metrics yet — see
     // the module docs for why that is a separate slice.
-    crate::tasks::dojo_sync::spawn(Arc::new(state.pg.clone()));
+    crate::tasks::dojo_sync::spawn(Arc::new(state.pg.clone()), state.trackers.clone());
 
     // Capture watchdog: hourly sweep over configured ACP adapters. Auto-resolves
     // config-side failures (reinstall), trips a per-adapter breaker on give-up,

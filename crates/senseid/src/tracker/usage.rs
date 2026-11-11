@@ -88,6 +88,8 @@ pub struct RepoUsage {
 pub struct SprintParts {
     pub candidates_in_window: i64,
     pub linked_sprint: Usage,
+    /// The sessions behind `linked_sprint`, sorted.
+    pub linked_sprint_sessions: Vec<uuid::Uuid>,
     pub linked_other: Usage,
     pub unlinked: Usage,
 }
@@ -106,6 +108,15 @@ pub async fn ticket_usages(
     only: Option<&[uuid::Uuid]>,
 ) -> Result<HashMap<uuid::Uuid, Usage>, String> {
     let pairs = pg.ticket_sessions(tracker_id, only).await?;
+    ticket_usages_of(pg, tracker_id, &pairs).await
+}
+
+/// Usage of each ticket over exactly these (ticket, session) pairs.
+pub async fn ticket_usages_of(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    pairs: &[crate::db::pg_store::tracker_usage::TicketSession],
+) -> Result<HashMap<uuid::Uuid, Usage>, String> {
     let members: Vec<(String, uuid::Uuid)> =
         pairs.iter().map(|p| (p.task_id.to_string(), p.session_id)).collect();
     let targets: Vec<(String, uuid::Uuid)> =
@@ -150,6 +161,17 @@ pub async fn sprint_usages(
     tracker_id: uuid::Uuid,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<SprintUsage>, String> {
+    sprint_usages_among(pg, tracker_id, now, None).await
+}
+
+/// Every non-removed sprint's partition over the candidate sessions in `only`
+/// (all of them when `None`), newest first.
+pub async fn sprint_usages_among(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    now: chrono::DateTime<chrono::Utc>,
+    only: Option<&std::collections::HashSet<uuid::Uuid>>,
+) -> Result<Vec<SprintUsage>, String> {
     use crate::db::pg_store::tracker_usage::Part;
     let sprints = pg.tracker_sprints(tracker_id).await?;
     let windows: Vec<(uuid::Uuid, Result<_, &'static str>)> = sprints
@@ -162,7 +184,10 @@ pub async fn sprint_usages(
         .collect::<Result<_, String>>()?;
     let open: Vec<_> =
         windows.iter().filter_map(|(id, w)| w.as_ref().ok().map(|(f, t)| (*id, *f, *t))).collect();
-    let classified = pg.sprint_window_sessions(tracker_id, &open).await?;
+    let mut classified = pg.sprint_window_sessions(tracker_id, &open).await?;
+    if let Some(only) = only {
+        classified.retain(|(_, s, _)| only.contains(s));
+    }
     let group = |sprint: uuid::Uuid, part: &str| format!("{sprint}/{part}");
     let name = |part: Part| match part {
         Part::LinkedSprint => "linked_sprint",
@@ -192,6 +217,16 @@ pub async fn sprint_usages(
                 candidates_in_window: classified.iter().filter(|(sp, _, _)| *sp == id).count()
                     as i64,
                 linked_sprint: take(id, "linked_sprint"),
+                linked_sprint_sessions: {
+                    let mut s: Vec<uuid::Uuid> = classified
+                        .iter()
+                        .filter(|(sp, _, p)| *sp == id && *p == Part::LinkedSprint)
+                        .map(|(_, s, _)| *s)
+                        .collect();
+                    s.sort();
+                    s.dedup();
+                    s
+                },
                 linked_other: take(id, "linked_other"),
                 unlinked: take(id, "unlinked"),
             });

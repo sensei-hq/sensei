@@ -4574,9 +4574,9 @@ mod tests {
         // this slice to earn a print for that reason.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,131, headroom {})",
+             (ceiling 1,136, headroom {})",
             elsewhere.len(),
-            1_131_i64 - other as i64
+            1_136_i64 - other as i64
         );
         // Lowered from 1,300 on 2026-10-26: the store's row types moved to the
         // path their callers name (`pg_store::FolderRow`), so the re-exports the
@@ -4598,6 +4598,10 @@ mod tests {
         // unchanged — `AppState·pg` (484) through the alias, `task_queue`
         // (31), `gateway` (26) — plus macro-declared items. The cure is still
         // following the alias (backlog), not a lower number.
+        //
+        // Merged with the delivery-metrics slice on 2026-11-05/06: there,
+        // `AppState·pg` grew 481 → 484 and `AppState·trackers` (the tick takes
+        // the tracker runtime) joined the list. Same class; same cure.
         //
         // Raised 1,080 → 1,105 on 2026-11-06, measured 1,103 over 227
         // identities: the relay slice adds 25 over 0 new identities — every
@@ -4635,8 +4639,12 @@ mod tests {
         // cross-crate `sensei_logger::` paths the walk does not follow (the
         // re-export cause above). Same documented class, same backlog cure
         // (follow the re-export), not a lower number.
+        // Raised 1,131 → 1,136 on 2026-11-10, measured 1,134 over 229
+        // identities: merging develop (1,129/227) into the delivery-metrics
+        // slice sums the two branches' raises, each measured against its own
+        // base; the merge adds no code of its own here. Same class, same cure.
         assert!(
-            other <= 1_131,
+            other <= 1_136,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

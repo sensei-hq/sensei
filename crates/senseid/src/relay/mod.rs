@@ -696,6 +696,13 @@ next assignment or re-offer. Prefer wait over spinning.\n\
 report moves it to in_review and names a reviewer, whose approval lets the \
 coordinator merge. Only the coordinator merges; only the named reviewer \
 approves.\n\
+- Caps: every short text field is at most 600 characters; longer text is \
+rejected with 422 (`text too long: 765 > 600`). Capped: message text, an \
+assign brief summary, a report summary (changed), a review summary, a decision \
+question, an answer note, merge/handover/pause notes, a step title and reason. \
+Split a long message into numbered parts (1/2, 2/2); keep a brief slim and put \
+the detail in the docs files it names; a full report rides report_md, which is \
+not capped.\n\
 - Resume: after a restart or context clear, POST /api/relay/reregister (MCP: \
 relay_reregister) with your lane_id resumes the same lane and returns the \
 task checkpoint. POST /api/relay/unregister releases the lane cleanly when \
@@ -1139,6 +1146,30 @@ mod tests {
     fn guidance_family_beats_model() {
         let g = relay_guidance_for("muse", Some("claude-opus-4-1"));
         assert!(g.family_notes.unwrap().starts_with("muse lanes"));
+    }
+
+    /// #399: two lanes learned the 600-char caps from 422s (`text too long:
+    /// 765 > 600`, `brief too long`). The generic block every family gets
+    /// names the cap (the same number the store enforces), the fields it
+    /// covers, the failure it otherwise becomes, and both workarounds — so a
+    /// lane discovers the cap at register, not at its first rejected call.
+    #[test]
+    fn guidance_names_the_text_caps_before_a_lane_hits_them() {
+        let g = relay_guidance_for("", None);
+        let caps = g
+            .generic
+            .lines()
+            .find(|l| l.starts_with("- Caps:"))
+            .expect("generic guidance carries a '- Caps:' bullet");
+        let cap = super::MAX_SUMMARY_CHARS.to_string();
+        assert!(caps.contains(&cap), "the bullet names the enforced number: {caps}");
+        for field in ["message", "brief", "summary", "question", "note", "step title"] {
+            assert!(caps.contains(field), "the bullet names the capped field '{field}': {caps}");
+        }
+        assert!(caps.contains("422"), "the bullet names the failure a lane otherwise meets");
+        assert!(caps.contains("parts"), "the split-into-parts workaround for messages");
+        assert!(caps.contains("docs"), "the slim-brief-plus-docs workaround for assigns");
+        assert!(caps.contains("report_md"), "where a long report belongs instead");
     }
 
     #[test]

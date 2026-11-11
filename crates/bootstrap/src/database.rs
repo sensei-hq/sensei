@@ -98,9 +98,56 @@ pub fn ensure_extensions(db_name: &str) -> Result<(), String> {
 /// directory — useful when iterating on DDL before publishing a release.
 pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
     let cfg = SenseiConfig::from_env();
+    let backup_dir = cfg.sensei_dir().join("backup").join("pre-reconcile");
+    deploy_with_source(db_name, app_version, &cfg.db_schema_source(app_version), &backup_dir)
+}
+
+/// `sensei.config` key holding the version whose schema this database has.
+/// Mirrors `senseid`'s `DEPLOYED_VERSION_KEY` — that crate depends on this
+/// one, so the constant cannot be shared and the two must stay in sync.
+const DEPLOYED_VERSION_KEY: &str = "schema_deployed_version";
+
+/// [`deploy`] with its environment-derived inputs as arguments: the schema
+/// source string (GitHub `owner/repo/path@ref` or a local directory) and the
+/// pre-reconcile backup root. A test points both at fixtures instead of the
+/// network and `~/.sensei`.
+///
+/// The deploy is gated on the recorded version (#397): when the database
+/// already carries this version's schema (or a newer one's — a downgrade
+/// deploy would be a destructive step backwards), the run is a no-op. The
+/// version is recorded only after a successful deploy, so a failed run
+/// retries instead of pretending it landed.
+pub fn deploy_with_source(
+    db_name: &str,
+    app_version: &str,
+    source: &str,
+    backup_dir: &Path,
+) -> Result<(), String> {
     // postgres:// with no user — psql / dbd use the OS user by default.
     let db_url = format!("postgres://localhost/{db_name}");
-    let source = cfg.db_schema_source(app_version);
+
+    if let Some(recorded) = read_deployed_version(&db_url)? {
+        match compare_versions(&recorded, app_version) {
+            VersionCmp::CurrentOrNewer => {
+                tracing::info!(
+                    db = db_name,
+                    recorded,
+                    current = app_version,
+                    "schema already at this version; skipping dbd deploy"
+                );
+                return Ok(());
+            }
+            VersionCmp::Older => {}
+            VersionCmp::Unknown => {
+                tracing::warn!(
+                    db = db_name,
+                    recorded,
+                    current = app_version,
+                    "deployed version is not comparable; deploying anyway"
+                );
+            }
+        }
+    }
 
     tracing::info!(db = db_name, source = %source, url = %db_url, "starting dbd deploy");
 
@@ -110,12 +157,11 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
         .map_err(|e| format!("tokio runtime error: {e}"))?;
 
     rt.block_on(async {
-        let project_dir = resolve_source(&source, false)
+        let project_dir = resolve_source(source, false)
             .await
             .map_err(|e| format!("dbd source resolution failed ({source}): {e}"))?;
         tracing::debug!(project_dir = %project_dir.display(), "dbd source resolved");
-        deploy_to(&db_url, &project_dir, &cfg.sensei_dir().join("backup").join("pre-reconcile"))
-            .await
+        deploy_to(&db_url, &project_dir, backup_dir).await
     })?;
 
     // The bundled packs (D-SEED: the default constitution + ponytail) are seeded
@@ -125,7 +171,79 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
     // been silently seeding NOTHING since rule_packs.source was renamed to
     // attribution. A datafile cannot drift from its table that way, and an
     // import failure surfaces through surface_step_failures instead of a warning.
+    record_deployed_version(&db_url, app_version)?;
     Ok(())
+}
+
+/// How a recorded schema version compares to the version being deployed.
+#[derive(Debug, PartialEq, Eq)]
+enum VersionCmp {
+    /// Recorded is equal or newer: the deploy would be a no-op or a
+    /// destructive downgrade, so it is skipped.
+    CurrentOrNewer,
+    /// Recorded is older: the deploy proceeds.
+    Older,
+    /// Either side is not dot-numeric: the deploy proceeds (fail-open keeps
+    /// the pre-#397 behavior for versions this gate cannot read).
+    Unknown,
+}
+
+/// Numeric dot-separated version compare (`0.21.10` beats `0.21.9`).
+/// A part's leading digits are its value, so `1.2.3-rc1` still reads;
+/// a part with no leading digits (or an empty side) is [`VersionCmp::Unknown`].
+fn compare_versions(recorded: &str, current: &str) -> VersionCmp {
+    fn parts(v: &str) -> Option<Vec<u64>> {
+        if v.is_empty() {
+            return None;
+        }
+        v.split('.')
+            .map(|part| {
+                let digits: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if digits.is_empty() { None } else { digits.parse().ok() }
+            })
+            .collect()
+    }
+    let (Some(r), Some(c)) = (parts(recorded), parts(current)) else {
+        return VersionCmp::Unknown;
+    };
+    for i in 0..r.len().max(c.len()) {
+        let (a, b) = (r.get(i).copied().unwrap_or(0), c.get(i).copied().unwrap_or(0));
+        if a > b {
+            return VersionCmp::CurrentOrNewer;
+        }
+        if a < b {
+            return VersionCmp::Older;
+        }
+    }
+    VersionCmp::CurrentOrNewer
+}
+
+/// The version whose schema the database carries, if one is recorded. `None`
+/// on a fresh database (no `sensei.config` yet) — the deploy proceeds. Any
+/// other read failure is a loud Err: deploying blind over an unreadable
+/// database is how the pre-#397 flow re-ran destructive plans.
+fn read_deployed_version(db_url: &str) -> Result<Option<String>, String> {
+    let sql = format!("select value from sensei.config where key = '{DEPLOYED_VERSION_KEY}'");
+    let out = match query_psql(db_url, &sql) {
+        Ok(out) => out,
+        Err(e) if e.contains("does not exist") => return Ok(None),
+        Err(e) => return Err(format!("reading {DEPLOYED_VERSION_KEY} failed: {e}")),
+    };
+    let v = out.trim().to_string();
+    Ok(if v.is_empty() { None } else { Some(v) })
+}
+
+/// Record a successful deploy's version. A failure is a loud Err (the daemon
+/// boot path treats it the same way): recording nothing means the next
+/// trigger retries the deploy rather than skipping a schema that landed.
+fn record_deployed_version(db_url: &str, app_version: &str) -> Result<(), String> {
+    let v = app_version.replace('\'', "''");
+    let sql = format!(
+        "insert into sensei.config (key, value) values ('{DEPLOYED_VERSION_KEY}', '{v}') \
+         on conflict (key) do update set value = excluded.value"
+    );
+    run_psql(db_url, &sql)
+        .map_err(|e| format!("recording {DEPLOYED_VERSION_KEY} {app_version} failed: {e}"))
 }
 
 /// Deploy the design at `project_dir` to the database at `db_url`: the schema,
@@ -154,8 +272,11 @@ pub async fn deploy_to(db_url: &str, project_dir: &Path, backup_dir: &Path) -> R
     // what is missing but never ALTERs what an older release left — an enum
     // that gained a value stayed at the old shape on every upgraded install, and
     // the seed that used the value failed the import (0.11 → 0.12). So:
-    //   1. plan the reconcile; when it drops data, copy the tables it alters out
-    //      and drop the views that read them (views hold no rows);
+    //   1. plan the reconcile; refuse before touching anything when live rows
+    //      hold enum values the design drops (the swap cannot run — #397);
+    //      otherwise, when the plan drops data, copy the tables it alters out,
+    //      snapshot the views that read them, and drop those views (views
+    //      hold no rows);
     //   2. reconcile with allow_destructive — creates what is missing and ALTERs
     //      tables and enums to the design. Whole tables are never pruned here;
     //   3. apply — every view and function at this release's definition, those
@@ -167,7 +288,11 @@ pub async fn deploy_to(db_url: &str, project_dir: &Path, backup_dir: &Path) -> R
     // Reconcile alters tables before it re-applies views, and `create or
     // replace view` cannot drop a view's column, so without step 1 a column an
     // old view read could not be dropped (0.11's views read folders.project_id).
-    // Each phase surfaces per-item failures as a hard Err.
+    // Each phase surfaces per-item failures as a hard Err, and a failure after
+    // the drop recreates the dropped views before returning — exact snapshots
+    // first, a design re-apply as fallback for views whose tables the failed
+    // run already altered — so a failed deploy never leaves dropped views
+    // unrestored.
     let schema_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let import_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
@@ -183,46 +308,356 @@ pub async fn deploy_to(db_url: &str, project_dir: &Path, backup_dir: &Path) -> R
         .await
         .map_err(|e| format!("dbd reconcile plan failed: {e}"))?;
     surface_step_failures("reconcile plan", &schema_failures)?;
-    if preview.destructive {
+    let snapshots = if preview.destructive {
+        refuse_if_rows_hold_dropped_enum_values(
+            &design,
+            preview.altered.iter().map(|s| s.entity_name.as_str()),
+            db_url,
+        )?;
         let tables = tables_among(&design, preview.altered.iter().map(|s| s.entity_name.as_str()));
         let saved = back_up_tables(db_url, &tables, backup_dir)?;
         tracing::warn!(backup = %saved.display(), ?tables, "the schema drops data the design no longer declares; backed up first");
+        let snapshots = snapshot_views_reading(db_url, &tables)?;
+        tracing::info!(views = snapshots.len(), "snapshotted the views the destructive plan drops");
         drop_views_reading(db_url, &tables)?;
+        Some(snapshots)
+    } else {
+        None
+    };
+
+    let outcome: Result<(), String> = async {
+        tracing::info!("dbd phase: reconcile");
+        let plan = design
+            .reconcile(
+                &adapter,
+                false,
+                true,
+                false,
+                Some(&scope),
+                step_progress("reconcile", &schema_failures),
+            )
+            .await
+            .map_err(|e| format!("dbd reconcile failed: {e}"))?;
+        surface_step_failures("reconcile", &schema_failures)?;
+        for warning in &plan.warnings {
+            tracing::warn!(dbd_step = "reconcile", warning, "reconcile advisory");
+        }
+
+        tracing::info!("dbd phase: apply");
+        design
+            .apply(&adapter, None, false, Some(&scope), step_progress("apply", &schema_failures))
+            .await
+            .map_err(|e| format!("dbd apply failed: {e}"))?;
+        surface_step_failures("apply", &schema_failures)?;
+
+        tracing::info!("dbd phase: import_data");
+        design
+            .import_data(
+                &adapter,
+                None,
+                false,
+                Some(&scope),
+                step_progress("import", &import_failures),
+            )
+            .await
+            .map_err(|e| format!("dbd import failed: {e}"))?;
+        surface_step_failures("import", &import_failures)?;
+        Ok(())
     }
-
-    tracing::info!("dbd phase: reconcile");
-    let plan = design
-        .reconcile(
-            &adapter,
-            false,
-            true,
-            false,
-            Some(&scope),
-            step_progress("reconcile", &schema_failures),
-        )
-        .await
-        .map_err(|e| format!("dbd reconcile failed: {e}"))?;
-    surface_step_failures("reconcile", &schema_failures)?;
-    for warning in &plan.warnings {
-        tracing::warn!(dbd_step = "reconcile", warning, "reconcile advisory");
+    .await;
+    if let Err(failure) = outcome {
+        if let Some(snapshots) = snapshots {
+            let report = restore_views(db_url, &design, &adapter, &scope, &snapshots).await;
+            return Err(format!("{failure}; view restore after failure: {report}"));
+        }
+        return Err(failure);
     }
-
-    tracing::info!("dbd phase: apply");
-    design
-        .apply(&adapter, None, false, Some(&scope), step_progress("apply", &schema_failures))
-        .await
-        .map_err(|e| format!("dbd apply failed: {e}"))?;
-    surface_step_failures("apply", &schema_failures)?;
-
-    tracing::info!("dbd phase: import_data");
-    design
-        .import_data(&adapter, None, false, Some(&scope), step_progress("import", &import_failures))
-        .await
-        .map_err(|e| format!("dbd import failed: {e}"))?;
-    surface_step_failures("import", &import_failures)?;
 
     tracing::info!("dbd deploy complete");
     Ok(())
+}
+
+/// The names among `altered` the design declares as enums: only an altered
+/// enum can hit the value-swap failure (a dropped enum *type* dbd skips when
+/// anything still references it, so it needs no pre-check).
+fn enums_among<'a>(design: &Design, altered: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
+    altered
+        .filter(|name| {
+            design
+                .entities()
+                .iter()
+                .any(|e| e.entity_type == EntityType::Enum && e.qualified_key() == *name)
+        })
+        .collect()
+}
+
+/// Refuse a deploy whose reconcile cannot run: an altered enum whose dropped
+/// values live rows still hold (#397 — the tag tree drops `enum` from
+/// `schema_object_kind` while 164 live rows hold it, so the type swap dies
+/// mid-run). Runs BEFORE the backup and the view drop, so a refusal leaves
+/// the database exactly as it found it.
+fn refuse_if_rows_hold_dropped_enum_values<'a>(
+    design: &Design,
+    altered: impl Iterator<Item = &'a str>,
+    db_url: &str,
+) -> Result<(), String> {
+    for name in enums_among(design, altered) {
+        let design_values: Vec<String> = design
+            .entities()
+            .iter()
+            .find(|e| e.entity_type == EntityType::Enum && e.qualified_key() == name)
+            .map(|e| e.enum_values.iter().map(|v| v.name.clone()).collect())
+            .unwrap_or_default();
+        let regtype = name.replace('\'', "''");
+        let live = match query_psql(
+            db_url,
+            &format!(
+                "select enumlabel from pg_enum e join pg_type t on t.oid = e.enumtypid \
+                 where t.oid = '{regtype}'::regtype order by e.enumsortorder"
+            ),
+        ) {
+            Ok(out) => out,
+            Err(e) if e.contains("does not exist") => continue, // type absent live: nothing held
+            Err(e) => return Err(format!("reading live values of enum {name} failed: {e}")),
+        };
+        let live_values: Vec<&str> =
+            live.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let dropped: Vec<&str> = live_values
+            .iter()
+            .filter(|l| !design_values.iter().any(|d| d == **l))
+            .copied()
+            .collect();
+        if dropped.is_empty() {
+            continue;
+        }
+        let cols = query_psql(
+            db_url,
+            &format!(
+                "select n.nspname || '.' || c.relname || '.' || a.attname \
+                 from pg_attribute a join pg_class c on c.oid = a.attrelid \
+                 join pg_namespace n on n.oid = c.relnamespace \
+                 join pg_type t on t.oid = a.atttypid \
+                 where t.oid = '{regtype}'::regtype and c.relkind = 'r' and not a.attisdropped"
+            ),
+        )?;
+        let in_list = dropped
+            .iter()
+            .map(|v| format!("'{}'", v.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut held = 0i64;
+        for col in cols.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            let mut parts = col.split('.');
+            let (Some(schema), Some(table), Some(column)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let count: i64 = query_psql(
+                db_url,
+                &format!(
+                    "select count(*) from {schema}.{table} where {column}::text in ({in_list})",
+                    schema = quoted_ident(schema),
+                    table = quoted_ident(table),
+                    column = quoted_ident(column),
+                ),
+            )?
+            .trim()
+            .parse()
+            .unwrap_or(0);
+            held += count;
+        }
+        if held > 0 {
+            return Err(format!(
+                "refusing to deploy: {held} row(s) hold dropped value(s) [{}] of enum {name} — \
+                 update those rows first (the reconcile cannot swap the type while they exist)",
+                dropped.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// One view or materialized view in the drop closure, with everything needed
+/// to recreate it after a failed deploy.
+struct ViewSnapshot {
+    name: String,
+    kind: String,
+    definition: String,
+    indexes: Vec<String>,
+}
+
+/// Capture the definitions of every view (and materialized view, with its
+/// indexes) the destructive plan's drop would take — the directly reading
+/// views plus what cascades from them — so [`restore_views`] can put them
+/// back if a later phase fails.
+fn snapshot_views_reading(db_url: &str, tables: &[&str]) -> Result<Vec<ViewSnapshot>, String> {
+    if tables.is_empty() {
+        return Ok(Vec::new());
+    }
+    let relations = tables
+        .iter()
+        .map(|t| format!("'{}'", quoted_relation(t).replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",");
+    // The drop closure: views reading the altered tables, then everything
+    // that reads those (the cascade), as `oid|kind` lines.
+    let list = query_psql(
+        db_url,
+        &format!(
+            "with recursive doomed as ( \
+               select distinct vc.oid as v_oid from pg_depend d \
+               join pg_rewrite r on r.oid = d.objid \
+               join pg_class vc on vc.oid = r.ev_class and vc.relkind = 'v' \
+               where d.refobjid = any(array[{relations}]::regclass[]) and vc.oid <> d.refobjid \
+             ), closure as ( \
+               select v_oid as oid from doomed \
+               union \
+               select vc.oid from pg_depend d \
+               join pg_rewrite r on r.oid = d.objid \
+               join pg_class vc on vc.oid = r.ev_class \
+               join closure c on c.oid = d.refobjid \
+               where vc.relkind in ('v', 'm') and vc.oid <> d.refobjid \
+             ) \
+             select c.oid::text || '|' || cls.relkind::text \
+             from closure c join pg_class cls on cls.oid = c.oid"
+        ),
+    )?;
+    let mut snapshots = Vec::new();
+    for line in list.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let (Some(oid), Some(kind)) = (line.split('|').next(), line.split('|').nth(1)) else {
+            continue;
+        };
+        let oid_num: u32 = oid.parse().map_err(|_| format!("bad oid in drop closure: {line}"))?;
+        let name = query_psql(
+            db_url,
+            &format!(
+                "select format('%I.%I', n.nspname, c.relname) \
+            from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.oid = {oid_num}"
+            ),
+        )?;
+        let definition = if kind == "m" {
+            query_psql(
+                db_url,
+                &format!(
+                    "select m.definition from pg_matviews m \
+                     join pg_class c on c.relname = m.matviewname \
+                     join pg_namespace n on n.oid = c.relnamespace and n.nspname = m.schemaname \
+                     where c.oid = {oid_num}"
+                ),
+            )?
+        } else {
+            query_psql(db_url, &format!("select pg_get_viewdef({oid_num})"))?
+        };
+        let indexes = if kind == "m" {
+            query_psql(
+                db_url,
+                &format!(
+                    "select pg_get_indexdef(i.indexrelid) from pg_index i \
+                where i.indrelid = {oid_num}"
+                ),
+            )?
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect()
+        } else {
+            Vec::new()
+        };
+        snapshots.push(ViewSnapshot {
+            name: name.trim().to_string(),
+            kind: kind.to_string(),
+            definition: definition.trim().to_string(),
+            indexes,
+        });
+    }
+    Ok(snapshots)
+}
+
+/// Recreate snapshotted views after a failed deploy: the exact pre-drop
+/// definitions first (dependency order falls out of fixpoint retries), then —
+/// for anything still missing because the failed run altered tables under it
+/// (#397's mixed state) — a best-effort design re-apply, whose definitions
+/// fit the altered tables. Returns a one-line report naming anything still
+/// missing — callers fold it into the deploy error, never swallow it.
+async fn restore_views(
+    db_url: &str,
+    design: &Design,
+    adapter: &PostgresAdapter,
+    scope: &dbd_core::ResolvedScope,
+    snapshots: &[ViewSnapshot],
+) -> String {
+    let mut pending: Vec<&ViewSnapshot> = snapshots.iter().collect();
+    let mut restored = 0usize;
+    for _ in 0..=snapshots.len() {
+        if pending.is_empty() {
+            break;
+        }
+        let mut still = Vec::new();
+        let mut progress = false;
+        for s in pending {
+            let sql = match s.kind.as_str() {
+                "m" => format!(
+                    "create materialized view if not exists {} as {} with data",
+                    s.name, s.definition
+                ),
+                _ => format!("create or replace view {} as {}", s.name, s.definition),
+            };
+            match run_psql(db_url, &sql) {
+                Ok(()) => {
+                    restored += 1;
+                    progress = true;
+                    if s.kind == "m" {
+                        for index in &s.indexes {
+                            if run_psql(db_url, index).is_ok() {
+                                progress = true;
+                            }
+                        }
+                    }
+                }
+                Err(_) => still.push(s),
+            }
+        }
+        pending = still;
+        if !progress {
+            break;
+        }
+    }
+    if !pending.is_empty() {
+        // Mixed state: the failed run altered tables the snapshot definitions
+        // read. The design's definitions fit the altered tables, so re-apply
+        // them — best effort, failures swallowed, the re-check below judges.
+        tracing::warn!(
+            missing = pending.len(),
+            "snapshot restore incomplete; re-applying design views as fallback"
+        );
+        let _ = design.apply(adapter, None, false, Some(scope), Progress::none()).await;
+        pending = snapshots
+            .iter()
+            .filter(|s| {
+                query_psql(
+                    db_url,
+                    &format!("select to_regclass('{}') is not null", s.name.replace('\'', "''")),
+                )
+                .map(|o| o.trim() != "t")
+                .unwrap_or(true)
+            })
+            .collect();
+        restored = snapshots.len() - pending.len();
+    }
+    if pending.is_empty() {
+        tracing::info!(restored, "views dropped by the failed deploy are back");
+        format!("all {restored} restored")
+    } else {
+        let missing: Vec<&str> = pending.iter().map(|s| s.name.as_str()).collect();
+        tracing::error!(restored, missing = ?missing, "view restore after failed deploy is INCOMPLETE");
+        format!(
+            "INCOMPLETE: {restored} of {} restored; still missing: {}",
+            snapshots.len(),
+            missing.join(", ")
+        )
+    }
 }
 
 /// The names among `altered` the design declares as tables: a plan also alters
@@ -305,10 +740,27 @@ fn run_psql(db_url: &str, command: &str) -> Result<(), String> {
 
 /// `schema.table` as a quoted SQL identifier pair.
 fn quoted_relation(name: &str) -> String {
-    name.split('.')
-        .map(|part| format!("\"{}\"", part.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(".")
+    name.split('.').map(quoted_ident).collect::<Vec<_>>().join(".")
+}
+
+/// One identifier as a quoted SQL name.
+fn quoted_ident(part: &str) -> String {
+    format!("\"{}\"", part.replace('"', "\"\""))
+}
+
+/// Run one query through psql and return its raw output; the Err is psql's
+/// own message. Tuples-only unaligned, so a single-column result is one value
+/// per line.
+fn query_psql(db_url: &str, command: &str) -> Result<String, String> {
+    let out = crate::util::command_for("psql")?
+        .args([db_url, "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", command])
+        .output()
+        .map_err(|e| format!("could not run psql: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
 }
 
 /// The Progress a deploy phase reports through: each step logged, each failed
@@ -408,5 +860,22 @@ mod tests {
             let err = setup("definitely_not_a_real_db", "0.0.0").unwrap_err();
             assert!(err.contains("not accepting connections"), "got: {err}");
         }
+    }
+
+    #[test]
+    fn version_compare_current_newer_older_and_unknown() {
+        use VersionCmp::*;
+        assert!(matches!(compare_versions("0.21.1", "0.21.1"), CurrentOrNewer));
+        assert!(matches!(compare_versions("0.21", "0.21.0"), CurrentOrNewer));
+        assert!(matches!(compare_versions("0.21.2", "0.21.1"), CurrentOrNewer));
+        assert!(matches!(compare_versions("1.0.0", "0.21.9"), CurrentOrNewer));
+        assert!(matches!(compare_versions("0.21.0", "0.21.1"), Older));
+        assert!(matches!(compare_versions("0.21.1", "0.21.10"), Older)); // numeric, not lexicographic
+        assert!(matches!(compare_versions("0.21", "0.21.1"), Older));
+        assert!(matches!(compare_versions("", "0.21.1"), Unknown));
+        assert!(matches!(compare_versions("abc", "0.21.1"), Unknown));
+        assert!(matches!(compare_versions("0.21.1", ""), Unknown));
+        // A leading-digit part still reads through a pre-release suffix.
+        assert!(matches!(compare_versions("1.2.3-rc1", "1.2.3"), CurrentOrNewer));
     }
 }

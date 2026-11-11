@@ -9,6 +9,13 @@ export { default as Banner } from './Banner.svelte';
 export { default as Loading } from './Loading.svelte';
 export { default as Mark } from './Mark.svelte';
 export { default as StateView } from './StateView.svelte';
+export { default as ToolbarItem } from './ToolbarItem.svelte';
+export {
+  toolbarItemClass,
+  toolbarIconClass,
+  toolbarBadgeClass,
+  toolbarLabel,
+} from './toolbar-item.js';
 export {
   NOTICE_TONES,
   noticeTone,

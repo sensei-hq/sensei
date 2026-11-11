@@ -146,9 +146,23 @@ describe('Observatory · Relay — every crew, workspace or not', () => {
     expect(text(one(loose, '[data-crew-heading]'))).toBe('no repository · crew b10c');
   });
 
-  it('the context counts the crews it shows', async () => {
+  // #394: there is always one crew, so a crew count says nothing. The context
+  // line reads the crew's size — the assistant sessions it shows.
+  it('the context reads the crew’s size — the assistants it shows — never a crew count (#394)', async () => {
     const { c } = await open();
-    expect(text(one(c, '[data-screen-context]'))).toContain('2 crews');
+    const context = text(one(c, '[data-screen-context]'));
+    expect(context).toBe('4 assistants');
+    expect(context).not.toMatch(/\bcrews?\b/);
+  });
+
+  it('one assistant reads singular (#394)', async () => {
+    const { c } = await open({ now: F.ok(F.now({ lanes: [F.coordinatorLane()] })) });
+    expect(text(one(c, '[data-screen-context]'))).toBe('1 assistant');
+  });
+
+  it('a failed read says the size was not reported, never "0 assistants" (D83)', async () => {
+    const { c } = await open({ now: F.fail(503, 'Service Unavailable') });
+    expect(text(one(c, '[data-screen-context]'))).toBe('assistants not reported');
   });
 });
 

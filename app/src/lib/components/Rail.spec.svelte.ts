@@ -57,7 +57,7 @@ describe("the three sidebars are one Rail", () => {
     flushSync();
     const links = [...m.container.querySelectorAll("[data-list] a[data-list-item]")] as HTMLAnchorElement[];
     expect(links.map((a) => a.getAttribute("href"))).toContain("/workspace/w1/overview");
-    // 13 sections, then the Diagrams subsection's 8 diagrams.
-    expect(links.length).toBe(21);
+    // 14 sections, then the Diagrams subsection's 8 diagrams.
+    expect(links.length).toBe(22);
   });
 });

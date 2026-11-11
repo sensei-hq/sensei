@@ -537,6 +537,7 @@ Enum "sensei"."schema_object_kind" {
   "materialized_view"
   "function"
   "procedure"
+  "enum"
 }
 
 Enum "sensei"."schema_source" {
@@ -661,6 +662,7 @@ Enum "sensei"."sync_entity" {
   "dojo_sync_plan"
   "repository_graph"
   "forge_mirror"
+  "tracker_board"
 }
 
 Enum "sensei"."task_execution_kind" {
@@ -2085,6 +2087,17 @@ import/staging/memories.jsonl (produced by export.memories) via dbd import, then
 CALL staging.import_memories() to move into sensei.memories.'''
 }
 
+Table "staging"."metric_gating" {
+  "metric_key" text [note: 'The catalogue key (sensei.metrics.key). An unknown or missing key fails the import.']
+  "eligible" boolean [note: 'Whether the metric may be a target.']
+  "delta_scoped" boolean [note: 'true: what a change introduced; false: an absolute reading.']
+  "min_coverage" numeric [note: 'The share of the measured scope a reading must cover to count.']
+  "note" text [note: 'Why the metric is or is not eligible.']
+  "modified_at" timestamptz [note: 'The row\'s edit time; a live row newer than this is not overwritten.']
+
+  Note: 'Staging rows for sensei.metric_gating, one per catalogue key (import/staging/metric_gating.jsonl).'
+}
+
 Table "staging"."metrics" {
   "key" text
   "name" text
@@ -2310,6 +2323,7 @@ Table "activity"."assistant_events" {
     id [name: 'assistant_events_unenriched_idx', note: 'where: enriched_at IS NULL']
     (repository_id, created_at) [name: 'assistant_events_repository_id_idx', note: 'where: repository_id IS NOT NULL\norder: asc, desc']
     (session_id, tool_use_id, id) [name: 'assistant_events_tool_use_idx', note: 'where: tool_use_id IS NOT NULL']
+    (session_id, ts) [name: 'assistant_events_file_edits_idx', note: 'where: event_type = \'PostToolUse\' AND tool_name IN (\'Edit\', \'Write\', \'MultiEdit\')\norder: asc, desc']
   }
 
   Note: '''Raw assistant event log — one row per hook/event invocation, from any
@@ -2774,6 +2788,21 @@ default and needs no seeding. Rewritten whole on each successful plan pull;
 ruling: staleness costs a cycle of compute, never consent.'''
 }
 
+Table "sensei"."metric_gating" {
+  "metric_id" uuid [pk, not null, note: 'The catalogue metric (sensei.metrics.id) this row gates.']
+  "eligible" boolean [not null, note: 'Whether the metric may be a target. Session-behaviour metrics (FTR, rework, throughput, …) are insights, never targets.']
+  "delta_scoped" boolean [not null, note: 'true: the reading is what a change introduced; false: an absolute reading of the repository, which a target can ratchet.']
+  "min_coverage" numeric [not null, note: 'The share of the measured scope a reading must cover to count (0 < x <= 1): 0.5 for coverage (guarded files seen), 1.0 for graph-derived readings (the index complete).']
+  "note" text [not null, note: 'Why the metric is or is not eligible, in one sentence.']
+  "modified_at" timestamptz [not null, default: `now()`, note: 'When the row last changed; the import only overwrites a row with a staging row at least this new.']
+
+  checks {
+    `min_coverage > 0 AND min_coverage <= 1`
+  }
+
+  Note: 'Target eligibility per catalogue metric (TG1). A metric with no row is not eligible. A neutral metric (no direction) is never eligible; staging.import_metric_gating refuses to make one so.'
+}
+
 Table "sensei"."metric_watermarks" {
   "repository_id" uuid [pk, not null, note: 'The repository this watermark tracks (FK sensei.repositories, ON DELETE CASCADE).']
   "metric_group" text [pk, not null, note: 'The compute group (registry task_name + cadence, e.g. \'session_outcomes\', \'churn\') this cursor is for. Free text — groups are code-defined.']
@@ -3217,6 +3246,7 @@ Table "inference"."recommendations" {
   "acted_at" timestamptz [note: 'Timestamp when the user accepted — the point-in-time marker for before/after FTR comparison.']
   "measured_at" timestamptz [note: 'Timestamp when verdict was last computed.']
   "materialized_ref" jsonb [note: 'What accepting this recommendation PRODUCED (spec 2026-08-20 insight-acceptance-\nmaterialization): {kind, ...ref, scope, enforcement}. For a rule-class accept →\n{kind:"rule", memory_id, namespace_id, scope, enforcement}; later phases add\n{kind:"skill"|"agent", file_path} and {kind:"pack_rule", pack_rule_id}. NULL when\nthe accept was a plain status flip (no artifact materialized). The provenance the\neffect-measurement + un-apply read.']
+  "snoozed_until" timestamptz [note: 'While in the future, the pending recommendation is hidden from the pending read and is never the focal pick (metric detail · action items "Snooze"). It stays pending; it is shown again once this passes. A re-snooze replaces it. NULL when never snoozed.']
 
   indexes {
     (workspace_id, status) [name: 'recommendations_workspace_id_idx']
@@ -3864,6 +3894,25 @@ Table "sensei"."tracker_fields" {
   Note: 'A tracker\'s custom fields for usage and SDLC write-back. A row with a metric is mapped: that metric is written into the field. A row without one is retired: sensei wrote the field before, so it clears it on each ticket\'s next write. Replaced by PUT …/trackers/{tracker}/fields.'
 }
 
+Table "sensei"."tracker_push_marks" {
+  "tracker_id" uuid [pk, not null]
+  "persona_id" uuid [pk, not null, note: 'The signed-in persona whose session pushed; a persona\'s marks go with it.']
+  "tenant_id" uuid [pk, not null, note: 'The dōjō tenant (dojo.tenants.id) the part went to; a re-filed workspace in another tenant starts afresh.']
+  "part" text [pk, not null, note: 'facts (the board\'s one-copy part) or effort (this person\'s).']
+  "attempted_at" timestamptz [not null, default: `now()`, note: 'When a push of this part was last attempted, written before sending.']
+  "hash" text [note: 'sha256 of the canonical JSON of the part last acknowledged (accepted or stale); NULL until one is.']
+  "pushed_at" timestamptz [note: 'When the dōjō last acknowledged the part.']
+  "failed_hash" text [note: 'The hash of the part the dōjō last refused (4xx); not re-sent within the hour.']
+  "failed_at" timestamptz [note: 'When the dōjō last refused the part.']
+  "error" text [note: 'The dōjō\'s refusal, as it answered.']
+
+  checks {
+    `part IN ('facts', 'effort')`
+  }
+
+  Note: 'The re-push watermark of a tracker board\'s delivery part, per persona and dōjō tenant. Written BEFORE a push (attempted_at), so a push the dōjō committed but whose answer was lost still leaves a row a withdrawal can find; acknowledged (hash, pushed_at) on accepted or stale; a refusal records failed_hash, failed_at and error. A part is sent when its hash differs or its mark is older than 6 hours, unless that very hash was refused within the hour.'
+}
+
 Table "sensei"."tracker_statuses" {
   "tracker_id" uuid [pk, not null, note: 'The tracker.']
   "status_id" text [pk, not null, note: 'The provider\'s status id, as the changelog records it.']
@@ -4396,7 +4445,7 @@ Table "sensei"."tracker_tasks" {
   "external_id" text [not null, note: 'The provider\'s immutable issue id.']
   "key" text [not null, note: 'The provider\'s display key (Jira: AUTH-420, stored upper-case). Overwritten when the issue is renamed or moved.']
   "scope" text [note: 'What the key is relative to, when it is not globally unique (GitLab: normalize_repo_key of the project URL; GitHub: of the issue\'s repository URL). NULL for Jira.']
-  "summary" text [note: 'Issue title. Client-confidential: never leaves the machine.']
+  "summary" text [note: 'Issue title. Travels to the dōjō of a workspace whose repositories the person shares, as the only ticket free text (tracker-delivery-metrics B9, B12, 2026-11-04); never anywhere else.']
   "issue_type" text [note: 'Provider issue type, raw (Story, Bug, Task, ...). Not mapped in v1.']
   "status" text [note: 'Provider workflow status, raw.']
   "current_sprint_id" uuid [note: 'The sprint the ticket is in now: among non-removed sprints listing it, active > future > closed (crate::tracker::sprint::pick_current_sprint). NULL = backlog.']
@@ -4532,6 +4581,7 @@ Table "sensei"."schema_entities" {
   "naming" sensei.schema_naming [not null]
   "note" text
   "note_md" text
+  "enum_values" text[] [not null, default: '{}', note: 'An enum\'s values, in declaration order; empty for every other kind.']
   "modified_at" timestamptz [not null, default: `now()`]
 
   Note: '''One database object — a table, view, materialized view, function or procedure —
@@ -4687,6 +4737,7 @@ Ref: "sensei"."library_versions"."library_id" > "sensei"."libraries"."id" [delet
 Ref: "sensei"."mcp_servers"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
 Ref: "sensei"."memory_share_batches"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
 Ref: "sensei"."metric_deactivations"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
+Ref: "sensei"."metric_gating"."metric_id" > "sensei"."metrics"."id" [delete: cascade]
 Ref: "sensei"."metric_watermarks"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
 Ref: "sensei"."namespaces"."scope_key" > "sensei"."scopes"."key"
 Ref: "sensei"."persona_emails"."persona_id" > "sensei"."personas"."id" [delete: cascade]
@@ -4741,6 +4792,8 @@ Ref: "sensei"."rule_packs"."owner_namespace_id" > "sensei"."namespaces"."id" [de
 Ref: "sensei"."sprints"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "sensei"."stances"."namespace_id" > "sensei"."namespaces"."id" [delete: cascade]
 Ref: "sensei"."tracker_fields"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
+Ref: "sensei"."tracker_push_marks"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
+Ref: "sensei"."tracker_push_marks"."persona_id" > "sensei"."personas"."id" [delete: cascade]
 Ref: "sensei"."tracker_statuses"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "sensei"."tracker_unknown_keys"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "activity"."memory_loads"."session_id" > "activity"."sessions"."id" [delete: set null]

@@ -1,6 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { crewRepoLabel, currentStepKey } from './relay-format.js';
-import type { RelayTaskStep } from '$lib/relay-api.js';
+import { crewRepoLabel, crewSizeContext, currentStepKey } from './relay-format.js';
+import type { ApiError } from '$lib/api.js';
+import type { RelayLane, RelayTaskStep } from '$lib/relay-api.js';
+import * as F from '$lib/test-stubs/relay-fixtures.js';
+
+describe('crewSizeContext', () => {
+  // #394: the main window's context line reads the crew's size — the assistant
+  // sessions the read shows — never the crew count, which is always one.
+  const read = (...lanes: RelayLane[]) => ({ lanes });
+
+  it('counts the assistant sessions the read shows, across every crew it shows', () => {
+    const lanes = read(
+      F.coordinatorLane(),
+      F.lane(),
+      F.lane({ id: F.LANE.L9, crew_id: F.LOOSE_CREW_ID, code: 'L9' }),
+    );
+    expect(crewSizeContext(lanes, null)).toBe('3 assistants');
+  });
+
+  it('one assistant reads singular', () => {
+    expect(crewSizeContext(read(F.coordinatorLane()), null)).toBe('1 assistant');
+  });
+
+  it('no crew yet is an honest zero: the read answered and showed nobody', () => {
+    expect(crewSizeContext(read(), null)).toBe('0 assistants');
+  });
+
+  it('a read that failed says so, never "0 assistants" (D83)', () => {
+    const error: ApiError = { status: 503, message: 'Service Unavailable' };
+    expect(crewSizeContext(null, null)).toBe('assistants not reported');
+    // A re-read that failed keeps the stale crew in hand; the line still does not count it.
+    expect(crewSizeContext(read(F.coordinatorLane()), error)).toBe('assistants not reported');
+  });
+});
 
 describe('crewRepoLabel', () => {
   it('names the crew’s repository', () => {
