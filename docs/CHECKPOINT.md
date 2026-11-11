@@ -1,30 +1,25 @@
-# Checkpoint — 2026-11-06 (coordinator; lanes in ~/Developer/sensei-hq/coord/TRACKER.md)
+# Checkpoint — 2026-11-10 (lanes/merge on develop)
 
-**Slice:** Relay slice 1 (D90) — `relay` schema (L4) → daemon + MCP tools (L3) → resource lease (L3); Relay screen (L5,
-merged); onboarding lines (L0). Billing is low priority.
+**Slice:** Relay autonomous queue & adversarial planning — plan written, implementation not started.
+Design: `docs/design/relay-autonomous-queue-and-planning.md`. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/`
+(README = estimate + grounding corrections + issue triage; `1-db.md` step-level; `2-daemon.md`, `3-mcp.md`,
+`4-app.md` task-level).
 
 **Done:**
-- Relay screen replaces Intake (2898b4157; L5 r2, reviewed by L4/L6; F2 wordings ratified).
-- rokkit 1.15.2 (ScreenShell/Toolbar attribute passthrough, L7) in app + dōjō (2ef07a55b).
-- dōjō `@rokkit/app` resolution fix (e1d724a14): dōjō check + 40 test files were red since 4aec5a688.
-- dbd 0.27.9 released: a call never resolves to a relation (sensei-hq/dbd#112, PR #113); CI test job pinned to
-  ubuntu-24.04 (26.04 lacks libxml2.so.2).
-- Gates at 2ef07a55b: app check 0 / 3196 tests; dōjō check 0 / 2279 tests; make test-fast green.
+- Design grounded against develop @ 58b66e9fa: F03 narrower than stated (heartbeat clears a pause only when
+  `resumes_at` is null/past); F01 lives in `relay_envelope`; F04 real for `report_md`; F12 already holds; F09 is the
+  props allowlist; F10 is `grant_next_waiter`.
+- Phase order fixed: DB additive (green on the slice-1 daemon) → daemon incl. DDL cutover → MCP → app → docs/issues.
+- Estimate: 9.5–14 days sequential without §10.1–10.3 host health/janitor/shared build; 12.5–18 with.
 
-**Remaining:**
-- L4 relay schema r2: B1 `current_timestamp` (no `now()` in relay DDL) + `dbd inspect` 0 errors both scopes, S1
-  search_path, session-local-day window, policy count line → L6 reviews → L0 rehearses on a clone, converges both local
-  DBs twice, merges.
-- L3: run.sh refuses the live `sensei` DB (tests first) → relay part 2 (pool TimeZone = the Mac's) → resource lease →
-  bump the daemon's dbd-core pin v0.27.8 → v0.27.9.
-- L5: relay follow-ups (`coord/reviews/L5/relay-screen-followups.md`); diagrams-shell phase B after L3 approves tests r2.
-- L6: sensei-hq/dbd#114 (tests spawning git clear GIT_* env) while no review is pending.
-- L0: onboarding lines (slice 1 item 5); dbd develop → main PR.
+**Remaining:** every phase. Phase 1 is executable as written (DDL + SQL pins + `make test-template` + daemon suite
+green + one commit); the live daemon DB is NOT converged until phase 2 task 2.10.
 
-**Next command:** read `coord/reports/L4/` newest (relay-schema-impl-r2) and run `dbd inspect` + `--scope dojo` in
-`lanes/L9/database`.
+**Next command:** open `docs/plan/2026-11-10-relay-autonomous-queue/1-db.md` and run Task 1.1 step 1
+(`cd database/tests && ./run.sh relay/relay_enums.sql` after editing the pins — expect red).
 
-**Open questions (user):** billing edge — a future-start Pro or ended trial shows "once Pro is renewed".
+**Open questions (user):** none blocking. Deviations from the draft design are listed in the plan README
+(`task_queue` view name, enums for run state/executor, `released` action kind, labels appended, claim lands `working`,
+Task 0 claimable by any lane, auto-merge as a broker task, #405 fix folded into phase 1).
 
-**Known broken:** none on develop. Production lacks per-row confirm and refuses `hidden_coupling_pairs` until the next
-sensei release.
+**Known broken:** none on develop.
