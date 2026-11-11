@@ -34,7 +34,7 @@ and `doc_indexer` knows only OpenSpec paths. This blueprint makes it a recorded 
 
 | # | Decision | Source |
 |---|---|---|
-| B1 | Ticket value is set once from the first session that detects a framework; a later or relinked earlier session never changes it | user, 2026-11-10 |
+| B1 | Ticket value is set once from the first session that detects a framework; a later or relinked earlier session never changes it. "First" is B13; the one exception, a still-running provenance session, is B14 | user, 2026-11-10 |
 | B2 | Behavioural detection (what the session did) wins; static repo markers are the fallback | user, 2026-11-10 |
 | B3 | Only third-party frameworks. sensei's own plan graph / `docs/spec` is **not** a framework value; the sensei repo resolves to `NULL` | user, 2026-11-10 |
 | B4 | Scope = the session's repo, among repos sensei observes. **Path evidence counts only inside the repo**: a path is made relative to the repo's `abs_path`; a path outside it is ignored; a session with no repo has no path evidence | user, 2026-11-10; spec audit 2026-11-11 |
@@ -45,6 +45,13 @@ and `doc_indexer` knows only OpenSpec paths. This blueprint makes it a recorded 
 | B9 | Backfill: `activity.session_signal_marks.derive_version int not null default 0`; the code constant starts at 1; **every** mark write (success and failure) sets it. The pass re-selects a mark whose version is older. Sessions never derived or stale by events/catalogue are taken **before** sessions stale only by version, so a backfill never delays new sessions. The version only re-selects: a version-stale mark still counts as current for the metrics (spec S6), so a backfill blanks no ticket's figures | build-start check 2026-11-10; spec audit 2026-11-11 |
 | B10 | A probe permission error or timeout does **not** fail the session: its signals and mark are stored as usual, and the session gets `sdd_framework = NULL, sdd_framework_source = 'probe_failed'`, an explicit error state. It is retried only when the session's events or `derive_version` change, so the schedule is never held red by one unreadable repo | user, 2026-11-11 |
 | B11 | `static_ambiguous` (markers of two or more **distinct** frameworks) stays on the session but is **never pinned** onto a ticket; the ticket waits for unambiguous evidence. Real case: `ai-project-metrics-bmad` has an empty `openspec/` scaffold beside a populated `_bmad/` | user, 2026-11-11 |
+| B13 | "First" = **first detected**: a ticket takes its value the first time a pin finds an eligible linked session. Among the sessions eligible at that moment, the earliest `started_at` (then `id`) wins. A session derived later, even one that started earlier (the B9 backfill derives old sessions last), never displaces it | user, 2026-11-11 (pre-build audit) |
+| B14 | While the ticket's provenance session is **still running** (`completed_at IS NULL`), the ticket follows that session's current value: a re-derivation to another framework re-pins it, and one to `static_ambiguous` clears the ticket (all three columns `NULL`) so it can be pinned afresh. Once the session completes, the ticket is frozen. No other session ever changes it | user, 2026-11-11 (pre-build audit) |
+| B15 | The pass pins **after** the session's write commits, in its own short transaction (`lock_timeout` 5 s). A pin failure is logged and never touches the session's signals; the next tracker sync, which pins tracker-wide, heals it | user, 2026-11-11 (pre-build audit) |
+| B16 | Each pin is scoped to what its caller touched: a tracker sync pins **all** its tracker's tickets (so it heals pins missed in a race with the pass); the pass pins the tickets linked to, or provenanced by, its session. The `get_ticket` fetch link does **not** pin: a pin there could wait on a running sync past the MCP client's 30 s, and a failure would roll back the start of work. Sync and pass both read fetch links | pre-build audit 2026-11-11 |
+| B17 | Only R1 candidate sessions of the ticket's tracker (`candidate_sessions`, as every ticket read counts them) are eligible: a fetch link or a removed repo's link that R1 no longer counts never pins | pre-build audit 2026-11-11 |
+| B18 | The pin locks its chosen sessions `FOR KEY SHARE` before writing `sdd_framework_session_id`, so a session pruned concurrently is skipped (the ticket waits for the next pin) instead of failing the write with an FK violation | pre-build audit 2026-11-11 |
+| B19 | `get_ticket` returns top-level `sdd_framework` (string or `null`) read from the ticket's mirror row **before** the start of work is recorded, independent of the session: no mirror row → `null`; a failed read → 500 before any write, like the rules read | pre-build audit 2026-11-11 |
 | B12 | `static` means "the repo as found when the session was derived" (a repo that adopted a framework later is attributed to its earlier sessions on re-derivation; accepted). Guard: a re-derivation never replaces a session's non-NULL value with `NULL` or `probe_failed` because static evidence went missing or failed | user, 2026-11-11 |
 
 ## Architecture
@@ -56,10 +63,11 @@ hook events ──► tasks/session_signals.rs ──► sdlc::framework::behavi
                                                                                              ▼
                                                     activity.sessions.sdd_framework (+ source), B12 guard
                                                                                              │
-tracker sync ──► write_links (trackers.rs) ──► pin_ticket_frameworks (same tx) ◄─────────────┘
-                                                        │   (behavioural + static only, B11)
+tracker sync ──► write_links (trackers.rs) ──► pin_ticket_frameworks(Tracker) (same tx)        │
+session pass (after its commit, own tx, B15) ──► pin_ticket_frameworks(Session) ◄────────────────┘
+                                                        │   (behavioural + static only, B11; R1 candidates, B17)
                                                         ▼
-                         sensei.tracker_tasks.sdd_framework  (set once, + sdd_framework_session_id)
+                         sensei.tracker_tasks.sdd_framework  (first detected B13, + sdd_framework_session_id)
 ```
 
 ## Components
@@ -114,22 +122,33 @@ change a **session's** value (more events arrived), subject to the B12 guard. On
 - `sdd_framework_session_id uuid references activity.sessions(id) on delete set null`: provenance
 - `sdd_framework_at timestamptz`: when it was pinned
 
-Pinning (`pin_ticket_frameworks`): one statement, run in the same transaction as `write_links`, and in the pass's
-per-session transaction (a pin error there is a write error: the session is retried, nothing half-applies):
+A check keeps `sdd_framework` and `sdd_framework_at` set together; `sdd_framework_session_id` may be `NULL` beside a
+value (its session was deleted).
+
+Pinning (`pin_ticket_frameworks(conn, scope)`), two statements over the tickets in `scope` (B16: `Tracker(id)` → the
+tracker's tickets; `Session(id)` → tickets linked to it or provenanced by it):
+
+1. **Follow** (B14): a ticket whose provenance session is still running takes that session's current value, or is
+   cleared when the session's source is no longer `behavioural`/`static`.
+2. **Pin** (B1, B13): each ticket still `NULL` takes its earliest-`started_at` eligible session: source `behavioural` or
+   `static` (B11), an R1 candidate of the ticket's tracker (B17), locked `FOR KEY SHARE` first (B18).
 
 ```sql
+WITH pick AS (
+  SELECT DISTINCT ON (l.task_id) l.task_id, s.id AS session_id, s.sdd_framework
+    FROM sensei.session_task_links l
+    JOIN sensei.tracker_tasks t ON t.id = l.task_id
+    JOIN activity.sessions s ON s.id = l.session_id
+   WHERE t.sdd_framework IS NULL AND <scope>
+     AND s.sdd_framework_source IN ('behavioural', 'static')                     -- B11
+     AND l.session_id IN (SELECT session_id FROM (<candidate_sessions(t.tracker_id)>) c)  -- B17
+   ORDER BY l.task_id, s.started_at, s.id),
+held AS (SELECT id FROM activity.sessions WHERE id IN (SELECT session_id FROM pick) FOR KEY SHARE)  -- B18
 UPDATE sensei.tracker_tasks t
-   SET sdd_framework = s.sdd_framework, sdd_framework_session_id = s.id, sdd_framework_at = now()
-  FROM (SELECT DISTINCT ON (l.task_id) l.task_id, s.id, s.sdd_framework
-          FROM sensei.session_task_links l JOIN activity.sessions s ON s.id = l.session_id
-         WHERE s.sdd_framework IS NOT NULL
-           AND s.sdd_framework_source IN ('behavioural', 'static')         -- B11
-         ORDER BY l.task_id, s.started_at, s.id) s
- WHERE t.id = s.task_id AND t.sdd_framework IS NULL;      -- B1: never overwrite
+   SET sdd_framework = p.sdd_framework, sdd_framework_session_id = p.session_id, sdd_framework_at = now()
+  FROM pick p JOIN held h ON h.id = p.session_id
+ WHERE t.id = p.task_id AND t.sdd_framework IS NULL;                           -- B1
 ```
-
-`WHERE t.sdd_framework IS NULL` enforces B1. Among sessions linked at pin time, the earliest by `started_at` wins.
-After that, nothing changes it.
 
 ## Data flow
 
@@ -139,9 +158,11 @@ After that, nothing changes it.
    per pass (memoised; a repo whose probe timed out is not probed again that pass). Then `from_markers`.
 4. A probe permission error or timeout → `probe_failed` (B10). The session is derived, not failed.
 5. The B12 guard: a static-side `None` / `probe_failed` never replaces an existing non-NULL value.
-6. Signals, mark (with `derive_version`), session columns and the pin are written in one transaction. A session deleted
+6. Signals, mark (with `derive_version`) and session columns are written in one transaction. A session deleted
    mid-pass (its row is gone) is skipped, not failed.
-7. Tracker sync relinks in `write_links`, then `pin_ticket_frameworks` runs in the same tx.
+7. Then the pass pins the session's tickets in its own transaction (B15); a failure is logged, not a session failure.
+8. A tracker apply (sync relink or discovery) writes links in `write_links`, then pins the whole tracker in the same
+   tx (B16).
 
 ## Integration points
 
@@ -170,8 +191,9 @@ After that, nothing changes it.
 3. Session-signals pass: projection (`prompt`, `skill`), B9 selection/ordering, probe under timeout + memo, B10/B12,
    one-transaction store. Update `docs/spec/daemon/tracker-sdlc-metrics.md` S2 (marks table, projection list,
    selection rule).
-4. `pin_ticket_frameworks` (#391): both `write_links` call sites and the pass's transaction. Tests: first-wins, no
-   overwrite on later or relinked earlier session, ambiguous never pinned, NULL stays NULL.
+4. `pin_ticket_frameworks` (#391): inside `write_links` (sync relink and discovery), and the pass after each session
+   commits (B15); `get_ticket` returns `sdd_framework` (B19). Tests: first detected wins, no overwrite by another
+   session, provenance follows until it completes, ambiguous never pinned, non-candidates never pin, NULL stays NULL.
 5. Re-point `is_code` and `doc_indexer` at the signature table (#392), with existing tests staying green.
 
 ## Personas

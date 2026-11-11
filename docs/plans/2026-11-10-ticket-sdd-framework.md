@@ -89,37 +89,46 @@ tracker ticket it is linked to, set once and never overwritten. Branch: `feature
   Then it is still 'spec_kit'/'static'
   ```
 
-### Feature 2: Pin the framework onto tickets (first wins) and expose it
+### Feature 2: Pin the framework onto tickets (first detected wins) and expose it
 
 - **Issue:** #391
-- **Layers:** DDL (`sensei.tracker_tasks.sdd_framework`, `sdd_framework_session_id`, `sdd_framework_at`) →
-  `pg_store/trackers.rs` `pin_ticket_frameworks` (called in both `write_links` transactions and after a session's
-  framework is stored) → `get_ticket` MCP response carries `sdd_framework`
+- **Layers:** DDL (`sensei.tracker_tasks.sdd_framework`, `sdd_framework_session_id`, `sdd_framework_at` + pair check) →
+  `pg_store/trackers.rs` `pin_ticket_frameworks(conn, PinScope)` (inside `write_links`, scope `Tracker`; the pass after
+  each session commits, scope `Session`, own tx) → `targets/http.rs` `get_ticket` response carries `sdd_framework` →
+  docs (TG5 in `docs/spec/dojo/targets-and-gates.md`, S2 in `tracker-sdlc-metrics.md`, MCP `get_ticket` description)
 - **Depends on:** #390 (Feature 1)
-- **Acceptance criteria:**
-  - A ticket with `sdd_framework IS NULL` and at least one linked session holding a `behavioural` or `static` framework
-    gets the framework of the earliest-`started_at` such session, with `sdd_framework_session_id` and `sdd_framework_at` set.
-  - A ticket that already has a value is never updated, whether by a later session, a different framework, or an
-    earlier session linked by a later sync (B1).
-  - A session whose source is `static_ambiguous` or `probe_failed` is never pinned (blueprint B11).
+- **Acceptance criteria** (blueprint B1, B11, B13–B19):
+  - A ticket with `sdd_framework IS NULL` takes the framework of its earliest-`started_at` eligible linked session the
+    first time a pin finds one (B13), with `sdd_framework_session_id` and `sdd_framework_at` set. Eligible: source
+    `behavioural` or `static` (B11), an R1 candidate of the ticket's tracker (B17).
+  - Another session never changes a ticket's value: not a later one, not an earlier one derived or linked later (B1, B13).
+  - While the provenance session is running, a re-derivation to another framework re-pins the ticket, and one to
+    `static_ambiguous` clears it; once the session has completed, nothing changes it (B14).
+  - A session whose source is `static_ambiguous` or `probe_failed`, or that is not an R1 candidate, is never pinned.
+  - A tracker apply pins all of that tracker's tickets and no other tracker's (B16).
+  - Pinning runs in the same transaction as `write_links`: if the apply rolls back, no pin persists.
+  - The pass pins a session's tickets after the session's write commits; a pin failure is logged, leaves the session's
+    signals in place and does not count as a session failure (B15).
   - A relink that removes the provenance session's link leaves the ticket's value as it is.
   - Deleting the provenance session sets `sdd_framework_session_id` to `NULL` and keeps `sdd_framework`.
-  - Pinning runs in the same transaction as `write_links`: if the relink rolls back, no pin persists.
-  - The session-signals pass pins in its per-session transaction; a pin error rolls back the whole session write and
-    the session is retried.
-  - `get_ticket` returns `sdd_framework` (string or `null`) for the fetched ticket.
+  - `get_ticket` returns top-level `sdd_framework` (string or `null`), with or without a session id; a failed read is
+    a 500 before the start of work is recorded (B19).
 - **Test scenarios:**
   ```gherkin
   Given ticket AUTH-1 linked to session S1 (openspec, started 09:00)
   When the tracker sync relinks
   Then AUTH-1.sdd_framework = 'openspec' and sdd_framework_session_id = S1
 
-  Given AUTH-1 is pinned to 'openspec'
-  And a later sync links session S0 (spec_kit, started 08:00)
-  When the sync relinks
+  Given AUTH-1 is pinned to 'openspec' from completed session S1
+  And session S0 (spec_kit, started 08:00) is derived later
+  When the pass pins S0's tickets
   Then AUTH-1.sdd_framework is still 'openspec'
 
-  Given ticket AUTH-2 whose linked sessions all have sdd_framework NULL
+  Given AUTH-1 pinned 'openspec' from running session S1
+  When S1 is re-derived as behavioural spec_kit
+  Then AUTH-1.sdd_framework = 'spec_kit'
+
+  Given ticket AUTH-2 whose linked sessions all have sdd_framework NULL or static_ambiguous
   When the sync relinks
   Then AUTH-2.sdd_framework IS NULL
 
@@ -167,3 +176,7 @@ F2 and F3 are independent of each other once F1 lands.
 Found by checking F1 against the code and live DB, then by the pre-implementation audit (spec-conformance,
 data-correctness, failure-mode reviewers; 7 HIGH). Recorded in the blueprint as B4–B12; user decisions on B10, B11,
 B12 (2026-11-11).
+
+F2's pre-implementation audit (2026-11-11; 1 HIGH, 10 MEDIUM) found the pin unscoped, a third link writer
+(`record_fetch_link`) unnamed, no R1 candidacy, an FK race with session pruning, and "earliest-started" unreachable
+under the B9 backfill order. Recorded as B13–B19; user decisions on B13, B14, B15 (2026-11-11).
