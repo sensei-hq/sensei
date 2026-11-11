@@ -172,6 +172,7 @@ incremental pass). It never fails the pass.
 | `catalogue_hash` text not null | S3 catalogue hash at derivation |
 | `error` text | NULL when derived. Otherwise why derivation failed, and the session's signals are absent |
 | `derived_at` timestamptz not null default now() | |
+| `derive_version` integer not null default 0 | the derivation code version (`sdlc::signals::DERIVE_VERSION`) that wrote the mark, on success and failure; 0 = written before versions existed |
 
 `activity.session_signals`: PK `(session_id, seq)`.
 
@@ -211,6 +212,8 @@ projects only what derivation reads:
 - the output text `stdout + stderr` (or `error` for a `PostToolUseFailure`), capped at its
   **last 64 KiB**, where result lines are
 - `agent_id`, `notification_type`, `is_interrupt`
+- `prompt` (a `UserPromptSubmit`'s `payload.prompt`) and `skill` (a `Skill` call's `tool_input.skill`), for
+  SDD-framework detection (below)
 
 The existing `get_hook_events_for_session_with_id` (whole payloads, `ts` order only) is not
 used.
@@ -254,10 +257,13 @@ and `database/import/staging/schedules.jsonl`, and spawned in `api/server.rs` li
    where:
    - there is no mark; or
    - the events' `max(id)` ≠ `through_event_id` or `count(*)` ≠ `event_count`; or
-   - `catalogue_hash` ≠ the current hash.
+   - `catalogue_hash` ≠ the current hash; or
+   - `derive_version` ≠ `DERIVE_VERSION` (a code change that must reach sessions already
+     derived; blueprint 2026-11-10-ticket-sdd-framework B9).
 
-   A mark with an `error` is selected again only when one of these inputs changed. A
-   failed session is not retried until then.
+   Sessions stale **only** by `derive_version` come after every other candidate, so a
+   backfill never delays new sessions. A mark with an `error` is selected again only when
+   one of these inputs changed. A failed session is not retried until then.
 3. Per session, in one transaction: read its events, derive, delete its signals, insert the
    new ones, and upsert the mark with the `max(id)` and `count` **actually read**. A
    derivation error or an out-of-range `ts` is deterministic: the session's mark is
@@ -267,6 +273,12 @@ and `database/import/staging/schedules.jsonl`, and spawned in `api/server.rs` li
    signals are removed and the pass **continues** with the next session. A pass in which
    any session failed reports a failed run to the schedule (`N of M session(s)
    failed`). A failed session's figures read as `derivation_failed` (A9, S6): a failure on unchanged inputs is not a lag.
+4. **SDD framework.** In the same transaction, the session's `activity.sessions.sdd_framework` and
+   `sdd_framework_source` are written (`sdlc::framework`; rules in
+   `docs/blueprints/2026-11-10-ticket-sdd-framework.md`). When the session's events name no framework, its
+   repository's marker directories are probed on disk, once per repository per pass, off the runtime, under a
+   5 s timeout. A probe error or timeout is stored as `probe_failed` and does **not** fail the session: its
+   signals are kept. A session deleted mid-pass is skipped, not failed.
 
 ### S3 · Build/test classifier (D8)
 

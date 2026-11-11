@@ -36,6 +36,9 @@ create table if not exists sessions (
 , backfilled               boolean     not null default false  -- synthesized from a historical transcript (#75), not live-captured
 , meta_synced_at           timestamptz -- when the transcript backfill last attempted model+token capture for this session; gates the one-time metadata backfill so a token-less source isn't re-read every cycle
 , process_analyzed_at      timestamptz -- when the LLM process-quality analyzer last scored this session (spec 2026-08-20); gates the daily incremental pass so a session is judged at most once until its transcript changes
+, sdd_framework            sensei.sdd_framework
+, sdd_framework_source     text        check (sdd_framework_source in ('behavioural', 'static', 'static_ambiguous', 'probe_failed'))
+, check ((sdd_framework is null) = (sdd_framework_source is null or sdd_framework_source = 'probe_failed'))
 );
 
 create index if not exists sessions_folder_id_idx
@@ -138,3 +141,8 @@ comment on column sessions.list_cost_usd
      is 'The session''s cost at list price in US dollars, as Claude Code''s /cost totals it, reported by the sensei plugin''s usage mod (SessionMeasure, #238). The largest total any measure reported: it only grows within a session, and a dead-lettered measure may be drained late. NOT billed spend: on a subscription the plan fee is what is paid (crate::cost), and metered_cost holds a source''s billed figure. NULL when no measure carried a cost.';
 comment on column sessions.tokens_fresh
      is 'Fresh (uncached) input tokens for the session. `tokens_in` keeps its meaning as the folded total of everything the model processed; this is its uncached part. Split because cache reads are 96-98% of input and bill far cheaper, so cost read off the folded total is roughly 8x high. See docs/database/activity.md.';
+
+comment on column sessions.sdd_framework
+     is 'The third-party SDD framework the session worked in (sdlc::framework, blueprint 2026-11-10-ticket-sdd-framework): from what it did, else from its repo''s marker directories. NULL = none found, or the probe failed (see sdd_framework_source). Derived by the session-signals pass; a value is never replaced by none (B12).';
+comment on column sessions.sdd_framework_source
+     is 'How sdd_framework was found: behavioural (what the session did), static (the one framework whose markers its repo holds), static_ambiguous (markers of two or more; never pinned onto a ticket), or probe_failed (the marker probe errored or timed out; sdd_framework is NULL). NULL with sdd_framework NULL = nothing found.';

@@ -216,14 +216,11 @@ fn numbered_feature(rel: &str, dir: &str) -> bool {
 /// The framework a repository's present markers name (deduplicated): one →
 /// `Static`, two or more → the first in [`SddFramework::ALL`] order, `StaticAmbiguous`.
 pub fn from_markers(present: &[SddFramework]) -> Option<(SddFramework, DetectionSource)> {
-    let mut distinct = SddFramework::ALL.into_iter().filter(|f| present.contains(f));
-    let first = distinct.next()?;
-    let source = if distinct.next().is_some() {
-        DetectionSource::StaticAmbiguous
-    } else {
-        DetectionSource::Static
-    };
-    Some((first, source))
+    let distinct: Vec<SddFramework> =
+        SddFramework::ALL.into_iter().filter(|f| present.contains(f)).collect();
+    let source =
+        if distinct.len() > 1 { DetectionSource::StaticAmbiguous } else { DetectionSource::Static };
+    distinct.first().map(|&f| (f, source))
 }
 
 /// The frameworks whose markers exist under `repo`. `is_dir` answers whether a path

@@ -4,7 +4,10 @@
 use super::*;
 use crate::sdlc::classify::Category;
 use crate::sdlc::classify::FolderCommand;
-use crate::sdlc::signals::{HoldReason, Signal, SignalEvent, SignalKind, TEXT_TAIL_BYTES};
+use crate::sdlc::framework::{Detection, DetectionSource, SddFramework};
+use crate::sdlc::signals::{
+    DERIVE_VERSION, HoldReason, Signal, SignalEvent, SignalKind, TEXT_TAIL_BYTES,
+};
 use crate::sdlc::ticket::SessionSignals;
 
 /// A session's derivation mark (`activity.session_signal_marks`): the inputs its
@@ -16,6 +19,8 @@ pub struct SignalMark {
     pub through_event_id: i64,
     pub event_count: i32,
     pub catalogue_hash: String,
+    /// The derivation code version that wrote it ([`DERIVE_VERSION`]).
+    pub derive_version: i32,
     /// `None` when derived.
     pub error: Option<String>,
 }
@@ -26,6 +31,11 @@ pub struct SignalCandidate {
     pub session_id: uuid::Uuid,
     pub client_session_id: String,
     pub repo_folder_id: Option<uuid::Uuid>,
+    /// The repository's `abs_path`; `None` without a repository or when its folder
+    /// row is gone (B6).
+    pub repo_path: Option<String>,
+    /// The SDD framework the session holds now (the B12 guard reads it).
+    pub previous: Detection,
 }
 
 impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for SignalEvent {
@@ -60,11 +70,13 @@ impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for SignalEvent 
 }
 
 impl PgStore {
-    /// Sessions whose signals are missing or stale (spec S2 step 2), oldest first:
-    /// no mark, or the events' `max(id)` / `count(*)` differ from the mark, or the
-    /// catalogue changed. A failed mark is selected again only when one of those
-    /// inputs changes. Sessions without a `client_session_id` have no events and
-    /// are never selected.
+    /// Sessions whose signals are missing or stale (spec S2 step 2): no mark, or the
+    /// events' `max(id)` / `count(*)` differ from the mark, or the catalogue or
+    /// [`DERIVE_VERSION`] changed. A failed mark is selected again only when one of
+    /// those inputs changes. Sessions stale only by version come after every other
+    /// candidate, so a backfill never delays new sessions (B9); otherwise oldest
+    /// first. Sessions without a `client_session_id` have no events and are never
+    /// selected.
     pub async fn sessions_needing_signals(
         &self,
         catalogue_hash: &str,
@@ -76,37 +88,57 @@ impl PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let rows: Vec<(uuid::Uuid, String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT s.id, s.client_session_id, s.repo_folder_id
+        type Row = (
+            uuid::Uuid,
+            String,
+            Option<uuid::Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let rows: Vec<Row> = sqlx_core::query_as::query_as(
+            "SELECT s.id, s.client_session_id, s.repo_folder_id, f.abs_path,
+                    s.sdd_framework::text, s.sdd_framework_source
                FROM activity.sessions s
+               LEFT JOIN sensei.folders f ON f.id = s.repo_folder_id
                LEFT JOIN activity.session_signal_marks m ON m.session_id = s.id
                CROSS JOIN LATERAL (
                    SELECT coalesce(max(e.id), 0) AS max_id, count(*)::int AS n
                      FROM activity.assistant_events e
                     WHERE e.session_id = s.client_session_id
                ) ev
+               CROSS JOIN LATERAL (
+                   SELECT m.session_id IS NOT NULL
+                          AND m.through_event_id = ev.max_id
+                          AND m.event_count = ev.n
+                          AND m.catalogue_hash = $1 AS inputs_current
+               ) c
               WHERE s.client_session_id IS NOT NULL
-                AND (m.session_id IS NULL
-                     OR m.through_event_id <> ev.max_id
-                     OR m.event_count <> ev.n
-                     OR m.catalogue_hash <> $1)
-              ORDER BY s.started_at, s.id
+                AND (NOT c.inputs_current OR m.derive_version <> $3)
+              ORDER BY c.inputs_current, s.started_at, s.id
               LIMIT $2",
         )
         .bind(catalogue_hash)
         .bind(limit)
+        .bind(DERIVE_VERSION)
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
         tx.commit().await.map_err(db)?;
-        Ok(rows
-            .into_iter()
-            .map(|(session_id, client_session_id, repo_folder_id)| SignalCandidate {
-                session_id,
-                client_session_id,
-                repo_folder_id,
+        rows.into_iter()
+            .map(|(session_id, client_session_id, repo_folder_id, repo_path, framework, source)| {
+                Ok(SignalCandidate {
+                    session_id,
+                    client_session_id,
+                    repo_folder_id,
+                    repo_path,
+                    previous: Detection {
+                        framework: parse_or(framework.as_deref(), SddFramework::parse)?,
+                        source: parse_or(source.as_deref(), DetectionSource::parse)?,
+                    },
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// A session's events, projected to what derivation reads and ordered by
@@ -142,7 +174,9 @@ impl PgStore {
                     payload->>'notification_type' AS notification_type,
                     CASE WHEN jsonb_typeof(payload->'is_interrupt') = 'boolean'
                          THEN (payload->>'is_interrupt')::boolean END AS is_interrupt,
-                    right(payload->>'last_assistant_message', $2) AS last_assistant_message
+                    right(payload->>'last_assistant_message', $2) AS last_assistant_message,
+                    CASE WHEN event_type = 'UserPromptSubmit' THEN payload->>'prompt' END AS prompt,
+                    CASE WHEN tool_name = 'Skill' THEN payload->'tool_input'->>'skill' END AS skill
                FROM activity.assistant_events,
                     LATERAL (SELECT coalesce(payload->'tool_input'->>'file_path', '') LIKE '%tasks.md' AS tasks) t
               WHERE session_id = $1
@@ -203,13 +237,14 @@ impl PgStore {
                ) ev
                CROSS JOIN LATERAL (
                    SELECT m.catalogue_hash = $2 AND m.through_event_id = ev.max_id
-                          AND m.event_count = ev.n AS fresh
+                          AND m.event_count = ev.n AND m.derive_version = $3 AS fresh
                ) f
               WHERE s.id = ANY($1)
               ORDER BY s.started_at, s.id",
         )
         .bind(session_ids)
         .bind(catalogue_hash)
+        .bind(DERIVE_VERSION)
         .fetch_all(&self.pool)
         .await
         .map_err(db)?;
@@ -254,13 +289,15 @@ impl PgStore {
             .collect())
     }
 
-    /// Replace a session's signals and mark it derived through the events read, in
-    /// one transaction (spec S2 step 3).
+    /// Replace a session's signals and SDD framework and mark it derived through the
+    /// events read, in one transaction (spec S2 step 3). `Ok(false)` when the session
+    /// was removed meanwhile: nothing is written.
     pub async fn store_session_signals(
         &self,
         mark: &SignalMark,
         signals: &[Signal],
-    ) -> Result<(), String> {
+        detection: Detection,
+    ) -> Result<bool, String> {
         let session_id = mark.session_id;
         let db = |e: sqlx_core::Error| format!("store_session_signals({session_id}): {e}");
         let ms = |t: i64| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(t);
@@ -281,6 +318,22 @@ impl PgStore {
             reference.push(s.reference.as_deref());
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
+        let present = sqlx_core::query::query(
+            "UPDATE activity.sessions
+                SET sdd_framework = $2::sensei.sdd_framework, sdd_framework_source = $3
+              WHERE id = $1",
+        )
+        .bind(session_id)
+        .bind(detection.framework.map(SddFramework::as_str))
+        .bind(detection.source.map(DetectionSource::as_str))
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?
+        .rows_affected()
+            > 0;
+        if !present {
+            return Ok(false);
+        }
         sqlx_core::query::query("DELETE FROM activity.session_signals WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
@@ -305,7 +358,7 @@ impl PgStore {
         .await
         .map_err(db)?;
         upsert_mark(&mut tx, mark).await.map_err(db)?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(db).map(|()| true)
     }
 
     /// Record that a session's derivation failed, with the inputs it failed on: its
@@ -330,21 +383,28 @@ async fn upsert_mark(
 ) -> Result<(), sqlx_core::Error> {
     sqlx_core::query::query(
         "INSERT INTO activity.session_signal_marks
-             (session_id, through_event_id, event_count, catalogue_hash, error, derived_at)
-         VALUES ($1, $2, $3, $4, $5, now())
+             (session_id, through_event_id, event_count, catalogue_hash, error, derived_at, derive_version)
+         VALUES ($1, $2, $3, $4, $5, now(), $6)
          ON CONFLICT (session_id) DO UPDATE SET
              through_event_id = excluded.through_event_id
            , event_count      = excluded.event_count
            , catalogue_hash   = excluded.catalogue_hash
            , error            = excluded.error
-           , derived_at       = now()",
+           , derived_at       = now()
+           , derive_version   = excluded.derive_version",
     )
     .bind(mark.session_id)
     .bind(mark.through_event_id)
     .bind(mark.event_count)
     .bind(&mark.catalogue_hash)
     .bind(&mark.error)
+    .bind(mark.derive_version)
     .execute(&mut **tx)
     .await
     .map(|_| ())
+}
+
+/// A stored enum label parsed, `None` staying `None`; an unknown label is an error.
+fn parse_or<T>(label: Option<&str>, parse: fn(&str) -> Option<T>) -> Result<Option<T>, String> {
+    label.map(|l| parse(l).ok_or_else(|| format!("unknown stored label {l}"))).transpose()
 }

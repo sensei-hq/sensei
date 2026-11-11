@@ -19,6 +19,10 @@ pub const BASE_SLICE_GAP_MS: i64 = 60_000;
 /// The cap on output and review text read per event: result lines are at the end.
 pub const TEXT_TAIL_BYTES: i64 = 65_536;
 
+/// The derivation code's version, stored on every mark: a mark below it is derived
+/// again (blueprint B9). Bump it when a change must reach sessions already derived.
+pub const DERIVE_VERSION: i32 = 1;
+
 /// The tools that write a file: a `PostToolUse` of one is a completed edit.
 pub const EDIT_TOOLS: &[&str] = &["Edit", "MultiEdit", "Write", "NotebookEdit"];
 

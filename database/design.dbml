@@ -555,6 +555,13 @@ Enum "sensei"."schema_source" {
   "other"
 }
 
+Enum "sensei"."sdd_framework" {
+  "openspec"
+  "spec_kit"
+  "kiro"
+  "bmad"
+}
+
 Enum "sensei"."service_kind" {
   "data"
   "api"
@@ -3085,6 +3092,8 @@ Table "activity"."sessions" {
   "backfilled" boolean [not null, default: false]
   "meta_synced_at" timestamptz [note: 'When the transcript backfill last attempted to capture this session\'s\ninference model + token usage from the source transcript. Set once the attempt\nruns (whether or not the source carried the values), so a session whose source has\nno tokens (e.g. a Zed thread) is not re-read on every backfill cycle. NULL ⇒ never\nattempted ⇒ eligible for the one-time metadata backfill.']
   "process_analyzed_at" timestamptz [note: 'When the LLM process-quality analyzer last scored this session (spec\n2026-08-20). Gates the daily incremental pass: NULL ⇒ never scored ⇒ eligible;\nset to now() after a successful pass. Cleared when a transcript re-ingest bumps\nthe session so its judgments are recomputed. props.process holds the judgments;\nactivity.session_process_evidence holds the cited turns.']
+  "sdd_framework" sensei.sdd_framework [note: 'The third-party SDD framework the session worked in (sdlc::framework, blueprint 2026-11-10-ticket-sdd-framework): from what it did, else from its repo\'s marker directories. NULL = none found, or the probe failed (see sdd_framework_source). Derived by the session-signals pass; a value is never replaced by none (B12).']
+  "sdd_framework_source" text [note: 'How sdd_framework was found: behavioural (what the session did), static (the one framework whose markers its repo holds), static_ambiguous (markers of two or more; never pinned onto a ticket), or probe_failed (the marker probe errored or timed out; sdd_framework is NULL). NULL with sdd_framework NULL = nothing found.']
 
   indexes {
     (folder_id, started_at) [name: 'sessions_folder_id_idx', note: 'order: asc, desc']
@@ -3092,6 +3101,11 @@ Table "activity"."sessions" {
     (repo_folder_id, started_at) [name: 'sessions_repo_folder_id_idx', note: 'where: repo_folder_id IS NOT NULL\norder: asc, desc']
     ftr [name: 'sessions_ftr_idx', note: 'where: ftr IS NOT NULL']
     client_session_id [unique, name: 'sessions_client_session_id_uniq', note: 'where: client_session_id IS NOT NULL']
+  }
+
+  checks {
+    `sdd_framework_source IN ('behavioural', 'static', 'static_ambiguous', 'probe_failed')`
+    `(sdd_framework IS NULL) = (sdd_framework_source IS NULL OR sdd_framework_source = 'probe_failed')`
   }
 
   Note: '''AI coding sessions captured by hooks.
@@ -3967,8 +3981,9 @@ Table "activity"."session_signal_marks" {
   "catalogue_hash" text [not null, note: 'The build/test command catalogue the signals were derived with.']
   "error" text [note: 'NULL when derived. Otherwise why derivation failed; the session then has no signals and is not retried until its inputs change.']
   "derived_at" timestamptz [not null, default: `now()`, note: 'When the mark was written.']
+  "derive_version" int [not null, default: 0, note: 'The derivation code version (sdlc::signals::DERIVE_VERSION) that wrote the mark, success or failure. A mark below the current version is derived again, after every session stale by its events or catalogue. 0 = written before versions existed.']
 
-  Note: 'Derivation watermark per session (spec tracker-sdlc-metrics S2). A session is derived again when its events\' max(id) or count, or the catalogue hash, differ from the mark.'
+  Note: 'Derivation watermark per session (spec tracker-sdlc-metrics S2). A session is derived again when its events\' max(id) or count, the catalogue hash, or the derivation version differ from the mark.'
 }
 
 Table "activity"."session_signals" {

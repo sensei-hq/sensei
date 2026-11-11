@@ -31,6 +31,7 @@ mod receivers_tests;
 mod recommendation_actions_tests;
 mod repo_anchor_tests;
 mod scan_tests;
+mod session_framework_tests;
 mod session_signals_tests;
 mod stub_gc_tests;
 mod targets_tests;

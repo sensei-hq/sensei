@@ -18,6 +18,14 @@ A stage is either absent or attributed. Recording one without saying where it ca
 [`database/ddl/table/activity/sessions.ddl`](../../database/ddl/table/activity/sessions.ddl)
 
 
+### `sdd_framework`, `sdd_framework_source`
+
+
+A probe that could not answer (permission denied, a hung mount past 5 s) is stored as `probe_failed`, not as NULL and not as a failed session. NULL would read as "this repo uses no framework", a plausible answer the probe never gave; failing the session would delete its build, test and review signals (the failure path removes them) and keep the schedule red on every pass for one unreadable repo. The check constraint keeps a framework and its source written together.
+
+A value is never replaced by NULL when its repo later disappears or becomes unreadable (blueprint B12): `static` means the repo as found when the session was derived. `static_ambiguous` (markers of two frameworks, e.g. an empty `openspec/` scaffold beside a populated `_bmad/`) stays on the session but is never pinned onto a ticket, whose value is set once (blueprint `docs/blueprints/2026-11-10-ticket-sdd-framework.md`).
+
+
 ### `tokens_fresh`
 
 
