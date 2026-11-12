@@ -40,6 +40,7 @@ week; `—` means no lane holds it yet. Per-module status and its evidence:
 | Trackers / sprints | ~40% | Jira, GitLab and GitHub Projects (daemon, D91, D92), boards per level (D40), sprints, Tickets screen | ADO adapter, dōjō-owned connections (D49, behind #310); tracker-ownership conflict; epics unread | L7 |
 | Teams / viewers | ~70% | roles, teams, invites, viewers, lead view | no viewer shell (D68); leads have no menu of their own; A4 writable workspaces | L4 |
 | Billing / plans | ~15% | `billing_accounts`, `seats`, `ScrBilling` | no provider, no subscription table; D46 entitlement is WP8; price to be announced (D75) | L4 (screen), L1 (WP8) |
+| Relay — local crews (2026-11-12) | ~80% | lanes, leases, the autonomous queue (FCFS claims, floating reviews, claim-early, checkpoints), sprint runs + Task 0, the deterministic merge gate, Relay screen sprint band — `plan/2026-11-10-relay-autonomous-queue/` (#399 #400 #401 #402 #403 #404 #405 closed by it; #415 narrowed to the slash command) | #398 close with dead-lease lanes; #396 crew management; #393 archive runs; #415 `/sensei:register`; host health / janitor / shared build (design §10.1–10.3) unbuilt; the dōjō-plane relay unverified (#314) | `lane/relay-autonomous-queue` → develop |
 
 ## Issues this week's plan depends on
 
