@@ -949,6 +949,32 @@ fn swap_free_gb() -> Option<u64> {
 /// any of these is present and non-null (derived; the screen's
 /// `reported_turns of turns` is telemetry coverage, not work product —
 /// files/gates/commits don't count).
+/// The deps of a task that are not done yet, in id order — the one rule
+/// behind the report gate, the queue's classing and the task header
+/// (`relay.task_queue` computes the same in SQL). Cancelled is not done.
+async fn unmet_deps<'e, E>(
+    executor: E,
+    user_id: Uuid,
+    deps: &[Uuid],
+) -> Result<Vec<Uuid>, RelayError>
+where
+    E: sqlx_core::executor::Executor<'e, Database = sqlx_postgres::Postgres>,
+{
+    if deps.is_empty() {
+        return Ok(Vec::new());
+    }
+    sqlx_core::query_scalar::query_scalar(
+        "select id from relay.tasks
+         where user_id = $1 and id = any ($2) and state <> 'done'
+         order by id",
+    )
+    .bind(user_id)
+    .bind(deps)
+    .fetch_all(executor)
+    .await
+    .map_err(db_err)
+}
+
 /// The `set` clause that ends a limit pause: one shape for the sweeper (at
 /// `limit_resumes_at`), `limit_resume` (early) and `reregister` (no stale
 /// pause survives the round trip).
@@ -2438,16 +2464,7 @@ impl PgStore {
         }
         // A full report on a claim-early task waits for its upstream deps.
         if !input.partial {
-            let unmet: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
-                "select id from relay.tasks
-                 where user_id = $1 and id = any ($2) and state <> 'done'
-                 order by id",
-            )
-            .bind(user_id)
-            .bind(&deps)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            let unmet = unmet_deps(&mut *tx, user_id, &deps).await?;
             if !unmet.is_empty() {
                 let ids: Vec<String> = unmet.iter().map(|id| id.to_string()).collect();
                 return Err(RelayError::DepsUnmet(format!(
@@ -6190,7 +6207,49 @@ impl PgStore {
                     "limit_resumes_at": payload.get("limit_resumes_at"),
                     "limit_note": payload.get("limit_note"),
                     "task": payload.get("task"),
+                    // Queue cutover: the name the assistant offered and the
+                    // review the lane holds (both the view's keys).
+                    "suggested_name": payload.get("suggested_name"),
+                    "reviewing": payload.get("reviewing"),
                 })
+            })
+            .collect();
+        // The sprint band: one row per open run with its counts, in the
+        // order the person created them (the view's `sprint_summary`).
+        let runs: Vec<(Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.crew_id, v.payload from relay.now v
+             where v.user_id = $1 and v.section = 'sprint_summary' and v.crew_id = any($2)
+             order by v.payload->>'created_at', v.id",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let runs_json: Vec<serde_json::Value> = runs
+            .into_iter()
+            .map(|(crew_id, mut payload)| {
+                payload["crew_id"] = serde_json::Value::String(crew_id.to_string());
+                payload
+            })
+            .collect();
+        // The review queue's head: every report waiting for a reviewer,
+        // oldest first (the view's `floating_review`).
+        let floating: Vec<(Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.crew_id, v.payload from relay.now v
+             where v.user_id = $1 and v.section = 'floating_review' and v.crew_id = any($2)
+             order by v.payload->>'reported_at', v.id",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let floating_json: Vec<serde_json::Value> = floating
+            .into_iter()
+            .map(|(crew_id, mut payload)| {
+                payload["crew_id"] = serde_json::Value::String(crew_id.to_string());
+                payload
             })
             .collect();
         let decisions: Vec<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
@@ -6452,6 +6511,8 @@ impl PgStore {
                     .collect::<Vec<_>>(),
             },
             "lanes": lanes_json,
+            "runs": runs_json,
+            "floating_reviews": floating_json,
             "decisions": decisions_json,
             "person_messages": person_json,
             "triage": triage_json,
@@ -6617,10 +6678,12 @@ impl PgStore {
             DateTime<Utc>,
             serde_json::Value,
             Option<Uuid>,
+            Option<Uuid>,
+            Vec<Uuid>,
         )> = sqlx_core::query_as::query_as(
             "select title, repo_key, phase::text, workspace_id, state::text, round,
                     item_id, lane_id, assigned_at, completed_at, state_changed_at, steps,
-                    review_claimed_by
+                    review_claimed_by, run_id, deps
              from relay.tasks where user_id = $1 and crew_id = $2 and id = $3",
         )
         .bind(user_id)
@@ -6643,10 +6706,16 @@ impl PgStore {
             state_changed_at,
             steps,
             review_claimed_by,
+            run_id,
+            deps,
         )) = task
         else {
             return Err(RelayError::NotFound("task not found".into()));
         };
+        // The header classes its deps the way the queue does (2.11).
+        let unmet = unmet_deps(self.pool(), user_id, &deps).await?;
+        let deps_status =
+            if unmet.is_empty() { DepsStatus::Satisfied } else { DepsStatus::EarlyClaimGated };
         // The reviewer is the lane holding the review claim (queue
         // cutover); its row is FK-held, so a miss is a real error.
         let reviewer_json = match review_claimed_by {
@@ -7043,6 +7112,9 @@ impl PgStore {
                 "ticket": ticket,
                 "lane": lane_json,
                 "reviewer": reviewer_json,
+                "run_id": run_id.map(|id| id.to_string()),
+                "deps_status": word(deps_status),
+                "unmet_deps": unmet.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                 "assigned_at": assigned_at.map(iso),
                 "completed_at": completed_at.map(iso),
                 // F8: the timeline stamps its derived terminal row from
