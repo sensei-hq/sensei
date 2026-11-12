@@ -1,8 +1,8 @@
 # Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue, cut from develop @ 598045196)
 
-**Slice:** Relay autonomous queue — phase 2 (daemon). Tasks 2.1–2.9 SHIPPED as red/green pairs; task 2.11 (now +
-task view serve the sprint surface — added, phase 4 reads it) next, then 2.10 converge/install/smoke. Plan:
-`docs/plan/2026-11-10-relay-autonomous-queue/2-daemon.md` (each task has ticked steps + "Executed" deviations).
+**Slice:** Relay autonomous queue — phase 2 (daemon) COMPLETE and LIVE: tasks 2.1–2.9 + 2.11 shipped as red/green
+pairs, 2.10 converged the live DB, installed the service and the smoke PASSED. Phase 3 (MCP) red in progress. Plan:
+`docs/plan/2026-11-10-relay-autonomous-queue/{2-daemon,3-mcp}.md` (each task has ticked steps + "Executed" notes).
 
 **Done:**
 - Phase 1 (DB additive) on develop @ `b9eb57ac2`; phase-1 checkpoint docs @ `598045196`.
@@ -21,15 +21,18 @@ task view serve the sprint surface — added, phase 4 reads it) next, then 2.10 
 - Proof at `bc583372f`: `cargo test -p senseid relay -- --test-threads=1` 371/371; mcp green; clippy `-D warnings` +
   fmt clean; fabrication checker clean; `make test-fast` green.
 
-**Remaining:** 2.11 now/task-view sprint surface (`now.runs`, `now.floating_reviews`, lane `reviewing` +
-`suggested_name`; task header `run_id`/`deps_status`/`unmet_deps`), 2.10 live converge (`dbd reconcile
---allow-destructive` — dry-run read: 3 tables, 2 enums, tasks/lanes alters, reviewer_lane_id drop, plus two unrelated
-`sensei.*` enum alters from develop drift; then `dbd import`) + `make crates && make install-service` +
-`scripts/relay-queue-smoke.sh` (drafted, untracked); then phases 3–5.
+- 2.11 `89db14674`+`b73869769` (now.runs / floating_reviews / lane reviewing + suggested_name; task header run_id /
+  deps_status / unmet_deps). 2.10: backup → `dbd reconcile --allow-destructive` (13 planned-unassigned live tasks
+  moved to `ready` first — the coherence check refused the alter) → `dbd import -n staging.finding_classes` →
+  `make install-service` → `scripts/relay-queue-smoke.sh` PASSED (both gate merges real, run completed).
 
-**Next command:** in `lanes/relay-queue`: write the 2.11 reds in `crates/senseid/src/db/pg_store/relay.rs`
-(`now_serves_runs_floating_reviews_and_the_reviewing_lane`, `task_view_serves_run_id_and_deps_status`),
-`cargo test -p senseid -- --test-threads=1 now_serves task_view_serves`.
+**Remaining:** phase 3 MCP (`crates/mcp/src/lib.rs`: seven tool arms + schemas + name lists, register forwards
+suggested_name, wait forwards timeout_seconds, doc edits; marketplace hook text names the no-role join), phase 4 app,
+phase 5 docs + issue triage; merge the lane branch to develop green.
+
+**Next command:** in `lanes/relay-queue`: finish the phase 3 red in `crates/mcp/src/lib.rs` (pins
+`relay_tool_list_names_the_queue_tools`, `claim_next_dispatch_posts_with_bearer_and_no_token_in_body`, …),
+`cargo test -p sensei-mcp`.
 
 **Open questions (user):** none blocking. Deviations recorded per task in `2-daemon.md`.
 
