@@ -127,7 +127,7 @@ fn sweep_events(report: &RelaySweepReport) -> Vec<StateEvent> {
     let runs = report
         .completed_runs
         .iter()
-        .map(|(_, crew_id)| StateEvent::relay_run(RunChange::Completed, crew_id));
+        .map(|(run_id, crew_id)| StateEvent::relay_run(RunChange::Completed, run_id, crew_id));
     suspended.chain(resumed).chain(tasks).chain(runs).collect()
 }
 
@@ -214,7 +214,7 @@ mod tests {
         }
         assert_eq!(
             events[5],
-            serde_json::to_value(StateEvent::relay_run(RunChange::Completed, &crew)).unwrap()
+            serde_json::to_value(StateEvent::relay_run(RunChange::Completed, &run, &crew)).unwrap()
         );
     }
 

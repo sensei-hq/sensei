@@ -315,6 +315,30 @@ pub struct RelayReviewInput {
 pub struct RelayReviewOutput {
     pub state: RelayTaskState,
     pub round: i32,
+    /// The sprint run an approved Task 0 just activated (its plan
+    /// unpacked), for the handler's `run.activated` event.
+    pub run_activated: Option<Uuid>,
+}
+
+/// One row of `relay.task_queue` for a lane's crew (`GET /api/relay/queue`):
+/// the claimable work, read-only, classed for the claim order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayQueueEntry {
+    pub task_id: Uuid,
+    pub run_id: Option<Uuid>,
+    pub title: String,
+    pub phase: RelayTaskPhase,
+    pub state: RelayTaskState,
+    pub round: i32,
+    pub repo_key: String,
+    pub owned_paths: Vec<String>,
+    pub acceptance: Vec<String>,
+    pub author_lane_id: Option<Uuid>,
+    pub review_claimed_by: Option<Uuid>,
+    /// `review_floating | review_claimed | ready_unblocked | ready_claim_early`.
+    pub claim_eligibility: String,
+    pub unmet_deps: Vec<Uuid>,
+    pub state_changed_at: DateTime<Utc>,
 }
 
 /// A gate task as the sweeper hands it to the runner (2.8): whose it is and
@@ -2791,7 +2815,39 @@ impl PgStore {
             None => next,
         };
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayReviewOutput { state: next, round: new_round })
+        Ok(RelayReviewOutput { state: next, round: new_round, run_activated: None })
+    }
+
+    /// The crew's claim queue (2.9): `relay.task_queue` for `crew_id`,
+    /// floating reviews first, then the ready pool oldest first. A read
+    /// never claims.
+    pub async fn relay_lane_queue(
+        &self,
+        _user_id: Uuid,
+        _crew_id: Uuid,
+    ) -> Result<Vec<RelayQueueEntry>, RelayError> {
+        unimplemented!("task 2.9: the lane queue read")
+    }
+
+    /// A `tasks/wait` hold opened (F06): one row per lane, `waiting_since`
+    /// kept across consecutive empty holds, `last_poll_at` stamped now.
+    pub async fn relay_waiter_hold(
+        &self,
+        _user_id: Uuid,
+        _lane_id: Uuid,
+        _crew_id: Uuid,
+    ) -> Result<(), RelayError> {
+        unimplemented!("task 2.9: the waiter hold")
+    }
+
+    /// The hold ended (answered, timed out, or failed): the row goes.
+    /// Idempotent.
+    pub async fn relay_waiter_release(
+        &self,
+        _user_id: Uuid,
+        _lane_id: Uuid,
+    ) -> Result<(), RelayError> {
+        unimplemented!("task 2.9: the waiter release")
     }
 
     /// Mint the broker gate task beside an approved task whose report names
@@ -10922,6 +10978,88 @@ mod tests {
         let rep = crate::tasks::relay_lease_sweep::pass(&pg, &tx, &fake, t0()).await.unwrap();
         assert!(rep.gate_tasks.is_empty());
         assert_eq!(fake.seen.lock().unwrap().len(), 1);
+    }
+
+    // ── queue cutover (2.9): the lane queue read, waiters, run activation ──
+
+    #[tokio::test]
+    async fn lane_queue_reads_the_task_queue_view_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let (c2, _) = fx_second_crew(&pg).await;
+        let (ready, early, floating, elsewhere) = (v7(0xd4), v7(0xd5), v7(0xd6), v7(0xd7));
+        fx_task(&pg, u1(), ready, c1, None, "ready", "tests", 1).await;
+        fx_task(&pg, u1(), early, c1, None, "ready", "impl", 1).await;
+        sqlx_core::query::query("update relay.tasks set deps = $1 where id = $2")
+            .bind(vec![ready])
+            .bind(early)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        fx_floating_review(&pg, c1, a2, floating).await;
+        fx_task(&pg, u1(), elsewhere, c2, None, "ready", "tests", 1).await;
+        let queue = pg.relay_lane_queue(u1(), c1).await.unwrap();
+        let ids: Vec<Uuid> = queue.iter().map(|q| q.task_id).collect();
+        assert_eq!(ids.len(), 3, "{ids:?}");
+        assert_eq!(ids[0], floating, "reviews first");
+        assert!(ids.contains(&ready) && ids.contains(&early));
+        let by = |id: Uuid| queue.iter().find(|q| q.task_id == id).unwrap();
+        assert_eq!(by(floating).claim_eligibility, "review_floating");
+        assert_eq!(by(floating).author_lane_id, Some(a2));
+        assert_eq!(by(floating).state, RelayTaskState::InReview);
+        assert_eq!(by(ready).claim_eligibility, "ready_unblocked");
+        assert!(by(ready).unmet_deps.is_empty());
+        assert_eq!(by(early).claim_eligibility, "ready_claim_early");
+        assert_eq!(by(early).unmet_deps, vec![ready]);
+        assert_eq!(by(early).phase, RelayTaskPhase::Impl);
+        assert_eq!(by(ready).repo_key, "github.com/o/r");
+        // The read claimed nothing.
+        assert_eq!(task_state(&pg, ready).await, "ready");
+        assert!(
+            pg.relay_lane_queue(u1(), c2).await.unwrap().iter().all(|q| q.task_id == elsewhere)
+        );
+    }
+
+    #[tokio::test]
+    async fn waiter_hold_upserts_and_release_deletes() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
+        pg.relay_waiter_hold(u1(), a1, c1).await.unwrap();
+        async fn row(pg: &PgStore, lane: Uuid) -> Option<(Uuid, DateTime<Utc>, DateTime<Utc>)> {
+            sqlx_core::query_as::query_as(
+                "select crew_id, waiting_since, last_poll_at from relay.lane_waiters
+                 where lane_id = $1",
+            )
+            .bind(lane)
+            .fetch_optional(pg.pool())
+            .await
+            .unwrap()
+        }
+        let (crew, since, poll) = row(&pg, a1).await.expect("the hold is a row");
+        assert_eq!(crew, c1);
+        sqlx_core::query::query("select pg_sleep(0.012)").execute(pg.pool()).await.unwrap();
+        // A re-poll that still finds nothing keeps waiting_since.
+        pg.relay_waiter_hold(u1(), a1, c1).await.unwrap();
+        let (_, since2, poll2) = row(&pg, a1).await.unwrap();
+        assert_eq!(since2, since);
+        assert!(poll2 > poll);
+        pg.relay_waiter_release(u1(), a1).await.unwrap();
+        assert!(row(&pg, a1).await.is_none());
+        pg.relay_waiter_release(u1(), a1).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn approving_task0_reports_the_activated_run() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let (run_id, task0) = fx_task0_under_review(&pg, c1, a1, a2, plan_report(&["t1"])).await;
+        let out = pg.relay_submit_review(u1(), a1, task0, review_input()).await.unwrap();
+        assert_eq!(out.run_activated, Some(run_id));
+        // A plain approval activates nothing.
+        let t = v7(0xd8);
+        fx_branched_review(&pg, c1, a2, a1, t, None).await;
+        let out = pg.relay_submit_review(u1(), a1, t, review_input()).await.unwrap();
+        assert_eq!(out.run_activated, None);
     }
 
     // ── person reads ──

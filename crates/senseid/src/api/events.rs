@@ -199,10 +199,15 @@ pub enum LaneReason {
     LimitPauseEnded,
 }
 
-/// What happened to a run (CONTRACT §3k). A run is a crew's active
-/// lifecycle, so `run_id` is the crew id.
+/// What happened to a run (CONTRACT §3k). A sprint run (queue cutover)
+/// carries its own id beside its crew's; the older crew-lifecycle events
+/// pass the crew id as both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunChange {
+    /// `POST /relay/runs` minted it (Task 0 waits in the pool).
+    Created,
+    /// Task 0's plan unpacked: the run is active.
+    Activated,
     Completed,
     Archived,
     Deleted,
@@ -317,19 +322,26 @@ impl StateEvent {
         Self { action, entity: "lane".into(), data }
     }
 
-    /// A run reached a lifecycle point (CONTRACT §3k). Deletion drops the
-    /// run; completion and archiving restate it.
-    pub fn relay_run(change: RunChange, crew_id: &uuid::Uuid) -> Self {
+    /// A run reached a lifecycle point (CONTRACT §3k). Creation adds it;
+    /// deletion drops it; the rest restate it. The data names both the
+    /// run and its crew.
+    pub fn relay_run(change: RunChange, run_id: &uuid::Uuid, crew_id: &uuid::Uuid) -> Self {
         let (action, op) = match change {
+            RunChange::Created | RunChange::Activated => {
+                unimplemented!("task 2.9: sprint run events")
+            }
             RunChange::Completed => (Action::Update, "completed"),
             RunChange::Archived => (Action::Update, "archived"),
             RunChange::Deleted => (Action::Remove, "deleted"),
         };
-        let id = crew_id.to_string();
         Self {
             action,
             entity: "run".into(),
-            data: serde_json::json!({ "op": op, "run_id": id, "crew_id": id }),
+            data: serde_json::json!({
+                "op": op,
+                "run_id": run_id.to_string(),
+                "crew_id": crew_id.to_string(),
+            }),
         }
     }
 
@@ -500,22 +512,25 @@ mod tests {
 
     #[test]
     fn relay_run_contract_shape_per_change() {
-        // CONTRACT §3k: run.completed / run.archived / run.deleted. The run
-        // is the crew's lifecycle, so run_id and crew_id are the same id.
-        let (_, crew) = ids();
+        // CONTRACT §3k: run.created / activated / completed / archived /
+        // deleted. A sprint run (queue cutover) names its own id beside its
+        // crew's; a crew-lifecycle event passes the crew id as both.
+        let (run, crew) = ids();
         let cases = [
+            (RunChange::Created, "add", "created"),
+            (RunChange::Activated, "update", "activated"),
             (RunChange::Completed, "update", "completed"),
             (RunChange::Archived, "update", "archived"),
             (RunChange::Deleted, "remove", "deleted"),
         ];
         for (change, action, op) in cases {
-            let json = serde_json::to_value(StateEvent::relay_run(change, &crew)).unwrap();
+            let json = serde_json::to_value(StateEvent::relay_run(change, &run, &crew)).unwrap();
             assert_eq!(
                 json,
                 serde_json::json!({
                     "action": action,
                     "entity": "run",
-                    "data": {"op": op, "run_id": crew.to_string(), "crew_id": crew.to_string()},
+                    "data": {"op": op, "run_id": run.to_string(), "crew_id": crew.to_string()},
                 }),
                 "{change:?}"
             );

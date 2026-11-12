@@ -1309,7 +1309,7 @@ mod tests {
     #[test]
     fn guidance_selects_exact_family() {
         let g = relay_guidance_for("muse", None);
-        assert_eq!(g.version, "1");
+        assert_eq!(g.version, "2");
         assert!(!g.generic.is_empty());
         assert!(g.family_notes.unwrap().starts_with("muse lanes"));
     }
@@ -1369,10 +1369,35 @@ mod tests {
             [("codex", None), ("", None), ("", Some("")), ("cowork", Some("gpt-x"))]
         {
             let g = relay_guidance_for(family, model);
-            assert_eq!(g.version, "1");
+            assert_eq!(g.version, "2");
             assert!(!g.generic.is_empty());
             assert_eq!(g.family_notes, None, "{family:?}/{model:?}");
         }
+    }
+
+    /// Queue cutover: a lane learns the claim loop at register — reads
+    /// never start work, a claim does; a report floats; a review is
+    /// claimed; the broker's gate merges; a pause ends by the sweeper or
+    /// `limit_resume`; checkpoint and release are the in-turn tools.
+    #[test]
+    fn guidance_v2_names_the_queue_loop() {
+        let g = relay_guidance_for("", None);
+        assert_eq!(g.version, "2");
+        let flow = g
+            .generic
+            .lines()
+            .find(|l| l.starts_with("- Flow:"))
+            .expect("generic guidance carries a '- Flow:' bullet");
+        for word in ["claim_next", "claim_review", "checkpoint", "release", "gate", "never starts"]
+        {
+            assert!(flow.contains(word), "the flow bullet lacks {word:?}: {flow}");
+        }
+        assert!(
+            g.generic.contains("limit_resume"),
+            "the generic block names how a pause ends: {}",
+            g.generic
+        );
+        assert!(!g.generic.contains("assigns"), "the coordinator no longer assigns: {}", g.generic);
     }
 
     #[test]
