@@ -49,6 +49,9 @@ pub enum RelayTaskPhase {
     Impl,
     Docs,
     Mockup,
+    /// A sprint run's Task 0: the decomposition a peer reviews before
+    /// anything unpacks into the queue.
+    Planning,
 }
 
 /// `RelayTaskState`. `Ready` is the pool (queue cutover): minted there,
@@ -66,6 +69,26 @@ pub enum RelayTaskState {
     Interrupted,
     Cancelled,
     Ready,
+}
+
+/// `RelayRunState`: where a sprint run stands — Task 0 under way, the plan
+/// unpacked and tasks flowing, every task done, or stopped by the person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayRunState {
+    Planning,
+    Active,
+    Completed,
+    Cancelled,
+}
+
+/// `RelayExecutor`: who runs a task — a lane (a cognitive turn) or the
+/// broker itself (a deterministic machine operation from `tasks.deterministic`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayExecutor {
+    Agent,
+    Broker,
 }
 
 /// A checklist step's state (F8): `open` advances to `done`, or to
@@ -129,8 +152,14 @@ pub enum RelayActionKind {
     Reoffered,
     Compacted,
     HandedOver,
+    /// A lane took a task from the pool (queue cutover).
+    Claimed,
     /// A lane took a floating review (queue cutover).
     ReviewClaimed,
+    /// A lane gave a claim back: the task to the pool, the review to the float.
+    Released,
+    /// The holder saved an in-turn checkpoint.
+    Checkpointed,
 }
 
 /// `reviewed.props.verdict`.
@@ -187,6 +216,15 @@ pub enum TaskEvent {
     /// A limit-paused lane's held task suspends for re-offer elsewhere.
     /// Same target as `LeaseLost`, distinct cause: the lease may be live.
     LimitPaused,
+    /// A lane took the task from the pool (queue cutover): it lands
+    /// `working` at once — there is no start tool.
+    Claimed,
+    /// The holder gave the task back to the pool.
+    Released,
+    /// The lane re-registered: its interrupted task resumes where it was.
+    Resumed,
+    /// An approved Task 0's plan unpacked into the queue: Task 0 is done.
+    Unpacked,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,8 +273,14 @@ pub fn transition(
         | (S::InReview, E::LimitPaused)
         | (S::Rework, E::LimitPaused)
         | (S::Blocked, E::LimitPaused) => Ok(S::Interrupted),
-        // Queue cutover: a re-offer returns the task to the pool.
+        // Queue cutover: a re-offer returns the task to the pool; a claim
+        // lands working; a release gives a held task back; reregister
+        // resumes interrupted work; an approved Task 0 unpacks to done.
         (S::Interrupted, E::Reoffered) => Ok(S::Ready),
+        (S::Ready, E::Claimed) => Ok(S::Working),
+        (S::Assigned, E::Released) | (S::Working, E::Released) => Ok(S::Ready),
+        (S::Interrupted, E::Resumed) => Ok(S::Working),
+        (S::Approved, E::Unpacked) => Ok(S::Done),
         // F1: handover pulls from the three held states only (blocked and
         // interrupted keep their own exits; assigned/approved have nothing
         // to pull).
@@ -425,6 +469,10 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
                 "waiting_secs",
                 "started_at",
                 "ended_at",
+                // F09: the assistant that produced the turn.
+                "family",
+                "version",
+                "model",
             ];
             allow(REPORTED_KEYS)?;
             if let Some(v) = present("partial")
@@ -476,6 +524,10 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
                 "waiting_secs",
                 "started_at",
                 "ended_at",
+                // F09: the assistant that produced the turn.
+                "family",
+                "version",
+                "model",
             ];
             allow(REVIEWED_KEYS)?;
             match present("verdict").and_then(|v| v.as_str()) {
@@ -530,9 +582,50 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
             Ok(())
         }
         K::Message => {
-            allow(&["to", "surface"])?;
+            // The sweeper's floating-review nudge rides the message shape:
+            // a flag, its reason, the wait so far, the task it is about.
+            allow(&["to", "surface", "nudge", "reason", "waiting_min", "task_id"])?;
             check_to_shape(present("to").ok_or_else(|| missing("to"))?)?;
             check_surface(present("surface").ok_or_else(|| missing("surface"))?)?;
+            if let Some(v) = present("nudge")
+                && v.as_bool().is_none()
+            {
+                return Err(props_err("nudge must be a bool".into()));
+            }
+            if let Some(v) = present("task_id")
+                && v.as_str().is_none_or(|s| !is_uuid_str(s))
+            {
+                return Err(props_err("task_id must be a uuid".into()));
+            }
+            Ok(())
+        }
+        K::Claimed => {
+            allow(&["claim_type", "deps_status", "unmet_deps"])?;
+            match present("claim_type").and_then(|v| v.as_str()) {
+                Some("task") | Some("review") => {}
+                _ => return Err(props_err("claim_type must be task|review".into())),
+            }
+            if let Some(v) = present("deps_status")
+                && !matches!(v.as_str(), Some("satisfied") | Some("early_claim_gated"))
+            {
+                return Err(props_err("deps_status must be satisfied|early_claim_gated".into()));
+            }
+            if let Some(v) = present("unmet_deps")
+                && !v.is_array()
+            {
+                return Err(props_err("unmet_deps must be an array".into()));
+            }
+            Ok(())
+        }
+        K::Released => {
+            allow(&["kind", "reason"])?;
+            match present("kind").and_then(|v| v.as_str()) {
+                Some("task") | Some("review") => Ok(()),
+                _ => Err(props_err("kind must be task|review".into())),
+            }
+        }
+        K::Checkpointed => {
+            allow(&["current_step", "notes"])?;
             Ok(())
         }
         K::Merged => {
@@ -661,6 +754,11 @@ pub fn resolve_surface(
 pub const LANE_LEASE_TTL_SECS: u64 = 300;
 /// An interrupted task waits 900 s for its lane, then is re-offered.
 pub const REOFFER_GRACE_SECS: u64 = 900;
+/// A review claim outlives its lane's lease by 60 s; then the sweeper
+/// releases it back to the float (queue cutover).
+pub const REVIEW_CLAIM_GRACE_SECS: u64 = 60;
+/// A report floating unclaimed this long nudges the crew, once per window.
+pub const NUDGE_AFTER_SECS: u64 = 900;
 
 /// True once `now` reaches the lease's end. Clocks are fed in (tests never
 /// read wall time).
@@ -815,6 +913,13 @@ pub enum RelayError {
     NotImplemented(String),
     /// The database (or the machine) failed under a valid request.
     Internal(String),
+    /// A report on a claim-early task whose upstream dependencies are not
+    /// done yet (queue cutover): the message names them.
+    DepsUnmet(String),
+    /// A register or run that named no crew when the user has no active one.
+    NoActiveCrew,
+    /// A register or run that named no crew when the user has several.
+    CrewAmbiguous,
 }
 
 impl RelayError {
@@ -825,7 +930,10 @@ impl RelayError {
             RelayError::Forbidden(_) => 403,
             RelayError::NotFound(_) => 404,
             RelayError::Gone(_) => 410,
-            RelayError::Conflict(_) => 409,
+            RelayError::Conflict(_)
+            | RelayError::DepsUnmet(_)
+            | RelayError::NoActiveCrew
+            | RelayError::CrewAmbiguous => 409,
             RelayError::Validation(_) => 422,
             RelayError::NotImplemented(_) => 501,
             RelayError::Internal(_) => 500,
@@ -845,6 +953,9 @@ impl RelayError {
             RelayError::SignInRequired => "relay_signin_required",
             RelayError::NotImplemented(_) => "relay_not_implemented",
             RelayError::Internal(_) => "relay_internal",
+            RelayError::DepsUnmet(_) => "relay_upstream_deps_unmet",
+            RelayError::NoActiveCrew => "relay_no_active_crew",
+            RelayError::CrewAmbiguous => "relay_crew_ambiguous",
         }
     }
 }
@@ -1411,7 +1522,9 @@ mod tests {
         let mut review = who.as_object().cloned().unwrap();
         review.insert("verdict".into(), json!("approved"));
         review.insert("findings".into(), json!([]));
-        assert!(validate_props(RelayActionKind::Reviewed, &serde_json::Value::Object(review)).is_ok());
+        assert!(
+            validate_props(RelayActionKind::Reviewed, &serde_json::Value::Object(review)).is_ok()
+        );
         // A gate finding carries the command output tail as `detail`.
         assert!(
             validate_props(
