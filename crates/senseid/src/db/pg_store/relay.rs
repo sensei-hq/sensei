@@ -24,8 +24,8 @@ use crate::relay::{
     Caller, DISK_FLOOR_GB, DepsStatus, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS,
     RESOURCE_LEASE_TTL_SECS, RegisterMode, RelayActionKind, RelayError, RelayFindingSeverity,
     RelayFloors, RelayGuidance, RelayItemKind, RelayLeaseState, RelayLimitScope, RelayRole,
-    RelayStepState, RelaySurface, RelayTaskPhase, RelayTaskState, RelayTicketProvider,
-    ReleaseKind, ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent, check_summary_len,
+    RelayStepState, RelaySurface, RelayTaskPhase, RelayTaskState, RelayTicketProvider, ReleaseKind,
+    ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent, check_summary_len,
     decide_resource_grant, guard_markdown, hash_lane_token, register_mode, relay_guidance_for,
     resolve_surface, transition, validate_props,
 };
@@ -2415,34 +2415,31 @@ impl PgStore {
         Ok(RelayReviewOutput { state: next, round: new_round })
     }
 
-    /// Claim a floating review (queue cutover): the caller takes the review
-    /// of a task sitting `in_review` with no claimant. The caller must be a
-    /// live, unpaused lane of the task's crew and not the author; one claim
-    /// per lane at a time (the review-claim unique). Writes the claim and a
-    /// `review_claimed` action replying to the latest report — one
-    /// transaction — and returns what the reviewer needs to start. A lane
-    /// re-claiming its own claim is a no-op, not a conflict.
+    /// The claim guard shared by `claim_next`, `claim` and `claim_review`:
+    /// the lane exists (404), is registered (410), is not limit-paused (409)
+    /// and holds a live lease (409 — the assign's precedent, F5). Returns
+    /// the lane's crew; the caller checks the crew is open inside its
+    /// transaction.
     // Wide rows are inherent to the reads: one round trip per shape,
     // destructured at the use site.
     #[allow(clippy::type_complexity)]
-    pub async fn relay_claim_review(
+    async fn relay_require_claimable_lane(
         &self,
         user_id: Uuid,
-        caller_lane: Uuid,
-        task_id: Uuid,
+        lane_id: Uuid,
         now: DateTime<Utc>,
-    ) -> Result<RelayClaimedReview, RelayError> {
+    ) -> Result<Uuid, RelayError> {
         let lane: Option<(Uuid, Option<DateTime<Utc>>, Option<DateTime<Utc>>)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, unregistered_at, limit_paused_at from relay.lanes
                  where user_id = $1 and id = $2",
             )
             .bind(user_id)
-            .bind(caller_lane)
+            .bind(lane_id)
             .fetch_optional(self.pool())
             .await
             .map_err(db_err)?;
-        let Some((lane_crew, unregistered_at, limit_paused_at)) = lane else {
+        let Some((crew_id, unregistered_at, limit_paused_at)) = lane else {
             return Err(RelayError::NotFound("lane not found".into()));
         };
         if unregistered_at.is_some() {
@@ -2451,14 +2448,13 @@ impl PgStore {
         if limit_paused_at.is_some() {
             return Err(RelayError::Conflict("lane is limit-paused".into()));
         }
-        // Liveness is the lease row's call (the assign's precedent, F5).
         let live: bool = sqlx_core::query_scalar::query_scalar(
             "select exists (
                select 1 from relay.leases
                where lane_id = $1 and kind = 'lane' and state = 'granted'
                  and expires_at > $2)",
         )
-        .bind(caller_lane)
+        .bind(lane_id)
         .bind(now)
         .fetch_one(self.pool())
         .await
@@ -2466,8 +2462,46 @@ impl PgStore {
         if !live {
             return Err(RelayError::Conflict("lane has no live lease".into()));
         }
-        let mut tx = self.pool().begin().await.map_err(db_err)?;
-        Self::relay_require_crew_open(&mut tx, user_id, lane_crew).await?;
+        Ok(crew_id)
+    }
+
+    /// Whether the lane holds a worker task (the set the worker unique
+    /// guards): a busy lane claims no task from the pool.
+    async fn relay_lane_holds_worker_task(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        lane_id: Uuid,
+    ) -> Result<bool, RelayError> {
+        sqlx_core::query_scalar::query_scalar(
+            "select exists (
+               select 1 from relay.tasks
+               where user_id = $1 and lane_id = $2
+                 and state in ('assigned', 'working', 'rework', 'blocked'))",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_err)
+    }
+
+    /// The review-claim write, inside the caller's transaction: the task is
+    /// locked; it must sit `in_review` in `crew_id`, authored by another
+    /// lane. A floating review is claimed (the claim plus a `review_claimed`
+    /// action replying to the latest report), the lane's own claim is a
+    /// no-op, another lane's is a conflict. Returns what the reviewer
+    /// starts from.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
+    async fn relay_claim_review_in_tx(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        crew_id: Uuid,
+        caller_lane: Uuid,
+        task_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<RelayClaimedReview, RelayError> {
         // Locked for the claim: two lanes racing on one review serialise
         // here, and the loser reads the winner's claim.
         let task: Option<(Uuid, Option<Uuid>, String, String, i32, String, Option<Uuid>)> =
@@ -2477,13 +2511,13 @@ impl PgStore {
             )
             .bind(user_id)
             .bind(task_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(db_err)?;
         let Some((task_crew, author, state, phase, round, title, claimed_by)) = task else {
             return Err(RelayError::NotFound("task not found".into()));
         };
-        if task_crew != lane_crew {
+        if task_crew != crew_id {
             return Err(RelayError::NotFound("task not found".into()));
         }
         let cur = parse_state(&state)?;
@@ -2511,7 +2545,7 @@ impl PgStore {
                 .bind(now)
                 .bind(user_id)
                 .bind(task_id)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await;
                 if let Err(e) = claimed {
                     if is_unique_violation(&e) {
@@ -2526,7 +2560,7 @@ impl PgStore {
                 )
                 .bind(user_id)
                 .bind(task_id)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(&mut **tx)
                 .await
                 .map_err(db_err)?;
                 let props = json!({});
@@ -2534,9 +2568,10 @@ impl PgStore {
                     .map_err(|e| RelayError::Internal(format!("claim props: {}", e.message)))?;
                 sqlx_core::query::query(
                     "insert into relay.actions
-                       (user_id, id, crew_id, task_id, lane_id, kind, round, phase, props, reply_to)
+                       (user_id, id, crew_id, task_id, lane_id, kind, round, phase, props,
+                        reply_to, created_at)
                      values ($1, $2, $3, $4, $5, 'review_claimed'::relay.action_kind, $6,
-                             $7::relay.task_phase, $8, $9)",
+                             $7::relay.task_phase, $8, $9, $10)",
                 )
                 .bind(user_id)
                 .bind(new_id())
@@ -2547,7 +2582,8 @@ impl PgStore {
                 .bind(phase.as_str())
                 .bind(props)
                 .bind(reply_to)
-                .execute(&mut *tx)
+                .bind(now)
+                .execute(&mut **tx)
                 .await
                 .map_err(db_err)?;
             }
@@ -2562,7 +2598,7 @@ impl PgStore {
             )
             .bind(user_id)
             .bind(task_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(db_err)?;
         let Some((summary, report_md, props)) = report else {
@@ -2573,10 +2609,9 @@ impl PgStore {
         )
         .bind(user_id)
         .bind(author)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await
         .map_err(db_err)?;
-        tx.commit().await.map_err(db_err)?;
         Ok(RelayClaimedReview {
             task_id,
             title,
@@ -2590,22 +2625,238 @@ impl PgStore {
         })
     }
 
+    /// The task-claim write, inside the caller's transaction: the task
+    /// (locked here) must be `ready` in `crew_id`; it lands `working` on the
+    /// lane at `now` with `assigned_at` stamped, and a `claimed` action
+    /// records the dependency status (claim-early lists the unmet deps). The
+    /// worker unique catches a busy lane under the race.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
+    async fn relay_claim_task_in_tx(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        crew_id: Uuid,
+        lane_id: Uuid,
+        task_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<RelayClaimedTask, RelayError> {
+        let task: Option<(
+            Uuid,
+            Option<Uuid>,
+            String,
+            String,
+            i32,
+            String,
+            Vec<String>,
+            Vec<String>,
+            Vec<Uuid>,
+            serde_json::Value,
+            String,
+        )> = sqlx_core::query_as::query_as(
+            "select crew_id, run_id, title, phase::text, round, repo_key, owned_paths,
+                    acceptance, deps, checkpoint, state::text
+             from relay.tasks where user_id = $1 and id = $2 for update",
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        let Some((
+            task_crew,
+            run_id,
+            title,
+            phase,
+            round,
+            repo_key,
+            owned_paths,
+            acceptance,
+            deps,
+            checkpoint,
+            state,
+        )) = task
+        else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        if task_crew != crew_id {
+            return Err(RelayError::NotFound("task not found".into()));
+        }
+        let cur = parse_state(&state)?;
+        let next = transition(cur, TaskEvent::Claimed)
+            .map_err(|_| RelayError::Conflict(format!("cannot claim a {} task", word(cur))))?;
+        let unmet_deps: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select id from relay.tasks
+             where user_id = $1 and id = any ($2) and state <> 'done'
+             order by id",
+        )
+        .bind(user_id)
+        .bind(&deps)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        let deps_status =
+            if unmet_deps.is_empty() { DepsStatus::Satisfied } else { DepsStatus::EarlyClaimGated };
+        let claimed = sqlx_core::query::query(
+            "update relay.tasks set lane_id = $1, state = $2::relay.task_state,
+                    assigned_at = $3, state_changed_at = $3
+             where user_id = $4 and id = $5",
+        )
+        .bind(lane_id)
+        .bind(word(next))
+        .bind(now)
+        .bind(user_id)
+        .bind(task_id)
+        .execute(&mut **tx)
+        .await;
+        if let Err(e) = claimed {
+            if is_unique_violation(&e) {
+                return Err(RelayError::Conflict("lane is already busy".into()));
+            }
+            return Err(db_err(e));
+        }
+        let props = json!({
+            "claim_type": "task",
+            "deps_status": word(deps_status),
+            "unmet_deps": unmet_deps.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+        });
+        validate_props(RelayActionKind::Claimed, &props)
+            .map_err(|e| RelayError::Internal(format!("claim props: {}", e.message)))?;
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase, props, created_at)
+             values ($1, $2, $3, $4, $5, 'claimed'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(task_crew)
+        .bind(task_id)
+        .bind(lane_id)
+        .bind(round)
+        .bind(phase.as_str())
+        .bind(props)
+        .bind(now)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        Ok(RelayClaimedTask {
+            task_id,
+            run_id,
+            title,
+            phase: parse_phase(&phase)?,
+            round,
+            repo_key,
+            owned_paths,
+            acceptance,
+            deps_status,
+            unmet_deps,
+            checkpoint,
+        })
+    }
+
+    /// Claim a floating review (queue cutover): the caller takes the review
+    /// of a task sitting `in_review` with no claimant. The caller must be a
+    /// live, unpaused lane of the task's crew and not the author; one claim
+    /// per lane at a time (the review-claim unique). Writes the claim and a
+    /// `review_claimed` action replying to the latest report — one
+    /// transaction — and returns what the reviewer needs to start. A lane
+    /// re-claiming its own claim is a no-op, not a conflict.
+    pub async fn relay_claim_review(
+        &self,
+        user_id: Uuid,
+        caller_lane: Uuid,
+        task_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<RelayClaimedReview, RelayError> {
+        let crew_id = self.relay_require_claimable_lane(user_id, caller_lane, now).await?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
+        let claimed =
+            Self::relay_claim_review_in_tx(&mut tx, user_id, crew_id, caller_lane, task_id, now)
+                .await?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(claimed)
+    }
+
     /// The self-service pull (queue cutover): a floating review first (never
-    /// the lane's own), else — when the lane holds no worker task — the
-    /// oldest ready task, unblocked before claim-early, else nothing. One
-    /// transaction; `for update skip locked` so two lanes never take one row.
+    /// the lane's own, and none while the lane already holds a review), else
+    /// — when the lane holds no worker task — the oldest ready task,
+    /// unblocked before claim-early, else nothing. One transaction; `for
+    /// update skip locked` so two lanes never take one row.
     pub async fn relay_claim_next(
         &self,
         user_id: Uuid,
         lane_id: Uuid,
         now: DateTime<Utc>,
     ) -> Result<RelayClaim, RelayError> {
-        let _ = (user_id, lane_id, now);
-        unimplemented!("task 2.4: claim_next")
+        let crew_id = self.relay_require_claimable_lane(user_id, lane_id, now).await?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
+        let holds_review: bool = sqlx_core::query_scalar::query_scalar(
+            "select exists (
+               select 1 from relay.tasks
+               where user_id = $1 and review_claimed_by = $2 and state = 'in_review')",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if !holds_review {
+            let review: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                "select id from relay.tasks
+                 where user_id = $1 and crew_id = $2 and executor = 'agent'
+                   and state = 'in_review' and review_claimed_by is null and lane_id <> $3
+                 order by state_changed_at, id
+                 for update skip locked limit 1",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .bind(lane_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if let Some(task_id) = review {
+                let claimed = Self::relay_claim_review_in_tx(
+                    &mut tx, user_id, crew_id, lane_id, task_id, now,
+                )
+                .await?;
+                tx.commit().await.map_err(db_err)?;
+                return Ok(RelayClaim::Review(claimed));
+            }
+        }
+        if !Self::relay_lane_holds_worker_task(&mut tx, user_id, lane_id).await? {
+            let ready: Option<(Uuid, bool)> = sqlx_core::query_as::query_as(
+                "select t.id, not exists (
+                          select 1 from relay.tasks d
+                           where d.user_id = t.user_id and d.id = any (t.deps) and d.state <> 'done')
+                        as unblocked
+                   from relay.tasks t
+                  where t.user_id = $1 and t.crew_id = $2 and t.executor = 'agent'
+                    and t.state = 'ready'
+                  order by unblocked desc, t.state_changed_at, t.id
+                  for update of t skip locked limit 1",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if let Some((task_id, _)) = ready {
+                let claimed =
+                    Self::relay_claim_task_in_tx(&mut tx, user_id, crew_id, lane_id, task_id, now)
+                        .await?;
+                tx.commit().await.map_err(db_err)?;
+                return Ok(RelayClaim::Task(claimed));
+            }
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayClaim::None)
     }
 
     /// Claim one named ready task (queue cutover): the same guards and
-    /// writes as a task claim through `claim_next`.
+    /// writes as a task claim through `claim_next`; a busy lane is refused.
     pub async fn relay_claim_task(
         &self,
         user_id: Uuid,
@@ -2613,14 +2864,26 @@ impl PgStore {
         task_id: Uuid,
         now: DateTime<Utc>,
     ) -> Result<RelayClaimedTask, RelayError> {
-        let _ = (user_id, lane_id, task_id, now);
-        unimplemented!("task 2.4: claim_task")
+        let crew_id = self.relay_require_claimable_lane(user_id, lane_id, now).await?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
+        if Self::relay_lane_holds_worker_task(&mut tx, user_id, lane_id).await? {
+            return Err(RelayError::Conflict("lane is already busy".into()));
+        }
+        let claimed =
+            Self::relay_claim_task_in_tx(&mut tx, user_id, crew_id, lane_id, task_id, now).await?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(claimed)
     }
 
     /// Give a claim back (queue cutover): the holder of an assigned or
-    /// working task returns it to the pool (checkpoint kept); the lane
-    /// holding a review claim returns the review to the float. Anyone else
-    /// is refused. A `released` action names which.
+    /// working task returns it to the pool (checkpoint kept, lane and
+    /// assigned_at cleared); the lane holding a review claim returns the
+    /// review to the float. Anyone else is refused. A `released` action
+    /// names which, with the lane's reason.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_release_task(
         &self,
         user_id: Uuid,
@@ -2629,14 +2892,115 @@ impl PgStore {
         reason: Option<String>,
         now: DateTime<Utc>,
     ) -> Result<RelayReleaseOutput, RelayError> {
-        let _ = (user_id, lane_id, task_id, reason, now);
-        unimplemented!("task 2.4: release")
+        let lane: Option<(Uuid, Option<DateTime<Utc>>)> = sqlx_core::query_as::query_as(
+            "select crew_id, unregistered_at from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((lane_crew, unregistered_at)) = lane else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        if unregistered_at.is_some() {
+            return Err(RelayError::Gone("lane unregistered".into()));
+        }
+        if let Some(reason) = reason.as_deref() {
+            check_summary(reason, "reason")?;
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let task: Option<(Uuid, Option<Uuid>, String, Option<Uuid>, i32, String)> =
+            sqlx_core::query_as::query_as(
+                "select crew_id, lane_id, state::text, review_claimed_by, round, phase::text
+                 from relay.tasks where user_id = $1 and id = $2 for update",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let Some((task_crew, holder, state, claimed_by, round, phase)) = task else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        if task_crew != lane_crew {
+            return Err(RelayError::NotFound("task not found".into()));
+        }
+        let cur = parse_state(&state)?;
+        let (kind, next) = if holder == Some(lane_id) {
+            let next = transition(cur, TaskEvent::Released).map_err(|_| {
+                RelayError::Conflict(format!("cannot release a {} task", word(cur)))
+            })?;
+            sqlx_core::query::query(
+                "update relay.tasks set state = $1::relay.task_state, lane_id = null,
+                        assigned_at = null, state_changed_at = $2
+                 where user_id = $3 and id = $4",
+            )
+            .bind(word(next))
+            .bind(now)
+            .bind(user_id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            (ReleaseKind::Task, next)
+        } else if claimed_by == Some(lane_id) {
+            if cur != RelayTaskState::InReview {
+                return Err(RelayError::Conflict(format!(
+                    "cannot release the review of a {} task",
+                    word(cur)
+                )));
+            }
+            sqlx_core::query::query(
+                "update relay.tasks set review_claimed_by = null, review_claimed_at = null
+                 where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            (ReleaseKind::Review, cur)
+        } else {
+            return Err(RelayError::Forbidden(
+                "only the holder releases a task, only the claimant a review".into(),
+            ));
+        };
+        let mut props = serde_json::Map::new();
+        props.insert("kind".into(), serde_json::Value::String(word(kind)));
+        if let Some(reason) = reason {
+            props.insert("reason".into(), serde_json::Value::String(reason));
+        }
+        let props = serde_json::Value::Object(props);
+        validate_props(RelayActionKind::Released, &props)
+            .map_err(|e| RelayError::Internal(format!("release props: {}", e.message)))?;
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase, props, created_at)
+             values ($1, $2, $3, $4, $5, 'released'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(task_crew)
+        .bind(task_id)
+        .bind(lane_id)
+        .bind(round)
+        .bind(phase.as_str())
+        .bind(props)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayReleaseOutput { task_id, kind, state: next })
     }
 
     /// Save an in-turn checkpoint (F07): the holder of a working or rework
     /// task merges `current_step`/`notes` into `tasks.checkpoint`, posts
     /// each step through the F8 path, and writes a `checkpointed` action.
-    /// Nothing moves. Returns the stamp.
+    /// Nothing moves. Steps go first: a bad step refuses the whole save
+    /// before anything merges. Returns the stamp.
     pub async fn relay_checkpoint_task(
         &self,
         user_id: Uuid,
@@ -2644,19 +3008,108 @@ impl PgStore {
         task_id: Uuid,
         input: RelayCheckpointInput,
     ) -> Result<DateTime<Utc>, RelayError> {
-        let _ = (user_id, lane_id, task_id, input);
-        unimplemented!("task 2.4: checkpoint")
+        if let Some(step) = input.current_step.as_deref() {
+            check_summary(step, "current_step")?;
+        }
+        if let Some(notes) = input.notes.as_deref() {
+            check_summary(notes, "notes")?;
+        }
+        let task: Option<(Uuid, Option<Uuid>, String, i32, String)> =
+            sqlx_core::query_as::query_as(
+                "select crew_id, lane_id, state::text, round, phase::text
+                 from relay.tasks where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+        let Some((crew_id, holder, state, round, phase)) = task else {
+            return Err(RelayError::NotFound("task not found".into()));
+        };
+        if holder != Some(lane_id) {
+            return Err(RelayError::Forbidden("only the holder checkpoints".into()));
+        }
+        let cur = parse_state(&state)?;
+        if !matches!(cur, RelayTaskState::Working | RelayTaskState::Rework) {
+            return Err(RelayError::Conflict(format!("cannot checkpoint a {} task", word(cur))));
+        }
+        for step in input.steps {
+            self.relay_post_step(user_id, lane_id, task_id, step).await?;
+        }
+        let mut patch = serde_json::Map::new();
+        if let Some(step) = input.current_step {
+            patch.insert("current_step".into(), serde_json::Value::String(step));
+        }
+        if let Some(notes) = input.notes {
+            patch.insert("notes".into(), serde_json::Value::String(notes));
+        }
+        let patch = serde_json::Value::Object(patch);
+        validate_props(RelayActionKind::Checkpointed, &patch)
+            .map_err(|e| RelayError::Internal(format!("checkpoint props: {}", e.message)))?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let stamp: DateTime<Utc> = sqlx_core::query_scalar::query_scalar(
+            "update relay.tasks set checkpoint = checkpoint || $1
+             where user_id = $2 and id = $3
+             returning current_timestamp",
+        )
+        .bind(&patch)
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        sqlx_core::query::query(
+            "insert into relay.actions
+               (user_id, id, crew_id, task_id, lane_id, kind, round, phase, props, created_at)
+             values ($1, $2, $3, $4, $5, 'checkpointed'::relay.action_kind, $6,
+                     $7::relay.task_phase, $8, $9)",
+        )
+        .bind(user_id)
+        .bind(new_id())
+        .bind(crew_id)
+        .bind(task_id)
+        .bind(lane_id)
+        .bind(round)
+        .bind(phase.as_str())
+        .bind(patch)
+        .bind(stamp)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(stamp)
     }
 
-    /// End a limit pause early (F03): the lane says it is back. Idempotent
-    /// on an unpaused lane.
-    pub async fn relay_limit_resume(
-        &self,
-        lane_id: Uuid,
-        now: DateTime<Utc>,
-    ) -> Result<(), RelayError> {
-        let _ = (lane_id, now);
-        unimplemented!("task 2.4: limit_resume")
+    /// End a limit pause early (F03): the lane says it is back. Returns
+    /// whether a pause actually ended (false on an unpaused lane: a no-op,
+    /// not an error).
+    pub async fn relay_limit_resume(&self, lane_id: Uuid) -> Result<bool, RelayError> {
+        let lane: Option<Option<DateTime<Utc>>> = sqlx_core::query_scalar::query_scalar(
+            "select unregistered_at from relay.lanes where id = $1",
+        )
+        .bind(lane_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some(unregistered_at) = lane else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        if unregistered_at.is_some() {
+            return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
+        let ended = sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = null, limit_scope = null,
+                    limit_resumes_at = null, limit_note = null
+             where id = $1 and limit_paused_at is not null",
+        )
+        .bind(lane_id)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?
+        .rows_affected()
+            > 0;
+        Ok(ended)
     }
 
     /// Ask a decision and block its tasks — one transaction.
@@ -6753,10 +7206,8 @@ mod tests {
         fx_task(&pg, u1(), only, c1, None, "ready", "tests", 1).await;
         let (x, y) =
             tokio::join!(pg.relay_claim_next(u1(), a1, t0()), pg.relay_claim_next(u1(), a2, t0()));
-        let wins = [x.unwrap(), y.unwrap()]
-            .iter()
-            .filter(|c| matches!(c, RelayClaim::Task(_)))
-            .count();
+        let wins =
+            [x.unwrap(), y.unwrap()].iter().filter(|c| matches!(c, RelayClaim::Task(_))).count();
         assert_eq!(wins, 1, "exactly one lane takes the row");
         assert_eq!(count(&pg, "actions").await, 1);
     }
@@ -6820,7 +7271,10 @@ mod tests {
         fx_task(&pg, u1(), q1, c1, None, "ready", "tests", 1).await;
         fx_task(&pg, u1(), q2, c1, None, "ready", "impl", 1).await;
         let t = pg.relay_claim_task(u1(), a1, q1, t0()).await.unwrap();
-        assert_eq!((t.task_id, t.phase, t.deps_status), (q1, RelayTaskPhase::Tests, DepsStatus::Satisfied));
+        assert_eq!(
+            (t.task_id, t.phase, t.deps_status),
+            (q1, RelayTaskPhase::Tests, DepsStatus::Satisfied)
+        );
         assert_eq!(task_row(&pg, q1).await, ("working".into(), Some(a1), Some(t0())));
         // Taken: no longer ready.
         let err = pg.relay_claim_task(u1(), a2, q1, t0()).await.unwrap_err();
@@ -6842,18 +7296,25 @@ mod tests {
         let t = v7(0xae);
         fx_task(&pg, u1(), t, c1, None, "ready", "tests", 1).await;
         pg.relay_claim_task(u1(), a1, t, t0()).await.unwrap();
-        sqlx_core::query::query("update relay.tasks set checkpoint = '{\"current_step\": \"clippy\"}' where id = $1")
-            .bind(t)
-            .execute(pg.pool())
-            .await
-            .unwrap();
+        sqlx_core::query::query(
+            "update relay.tasks set checkpoint = '{\"current_step\": \"clippy\"}' where id = $1",
+        )
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
         // Not the holder: refused.
         let err = pg.relay_release_task(u1(), a2, t, None, t0()).await.unwrap_err();
         assert!(matches!(err, RelayError::Forbidden(_)), "{err:?}");
-        // The holder gives it back: ready, off the lane, checkpoint kept.
-        let out = pg.relay_release_task(u1(), a1, t, Some("context full".into()), t0()).await.unwrap();
-        assert_eq!((out.task_id, out.kind, out.state), (t, ReleaseKind::Task, RelayTaskState::Ready));
-        assert_eq!(task_row(&pg, t).await, ("ready".into(), None, Some(t0())));
+        // The holder gives it back: ready, off the lane (assigned_at goes
+        // with the lane), checkpoint kept.
+        let out =
+            pg.relay_release_task(u1(), a1, t, Some("context full".into()), t0()).await.unwrap();
+        assert_eq!(
+            (out.task_id, out.kind, out.state),
+            (t, ReleaseKind::Task, RelayTaskState::Ready)
+        );
+        assert_eq!(task_row(&pg, t).await, ("ready".into(), None, None));
         let checkpoint: serde_json::Value = sqlx_core::query_scalar::query_scalar(
             "select checkpoint from relay.tasks where id = $1",
         )
@@ -6895,11 +7356,13 @@ mod tests {
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xb0);
         fx_task(&pg, u1(), t, c1, Some(a1), "working", "tests", 1).await;
-        sqlx_core::query::query("update relay.tasks set checkpoint = '{\"files\": [\"a.rs\"]}' where id = $1")
-            .bind(t)
-            .execute(pg.pool())
-            .await
-            .unwrap();
+        sqlx_core::query::query(
+            "update relay.tasks set checkpoint = '{\"files\": [\"a.rs\"]}' where id = $1",
+        )
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
         let input = RelayCheckpointInput {
             current_step: Some("clippy".into()),
             notes: Some("3 warnings left".into()),
@@ -6962,7 +7425,7 @@ mod tests {
         )
         .await
         .unwrap();
-        pg.relay_limit_resume(a2, t0()).await.unwrap();
+        assert!(pg.relay_limit_resume(a2).await.unwrap(), "a pause ended");
         let n: i64 = sqlx_core::query_scalar::query_scalar(
             "select count(*) from relay.lanes where id = $1 and limit_paused_at is null
                and limit_scope is null and limit_resumes_at is null and limit_note is null",
@@ -6972,12 +7435,13 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(n, 1);
-        // Idempotent on an unpaused lane; gone after unregister; unknown is not found.
-        pg.relay_limit_resume(a2, t0()).await.unwrap();
+        // A no-op on an unpaused lane (nothing ended); gone after
+        // unregister; unknown is not found.
+        assert!(!pg.relay_limit_resume(a2).await.unwrap(), "nothing to end");
         pg.relay_unregister(a2).await.unwrap();
-        let err = pg.relay_limit_resume(a2, t0()).await.unwrap_err();
+        let err = pg.relay_limit_resume(a2).await.unwrap_err();
         assert!(matches!(err, RelayError::Gone(_)), "{err:?}");
-        let err = pg.relay_limit_resume(v7(0x99), t0()).await.unwrap_err();
+        let err = pg.relay_limit_resume(v7(0x99)).await.unwrap_err();
         assert!(matches!(err, RelayError::NotFound(_)), "{err:?}");
     }
 
