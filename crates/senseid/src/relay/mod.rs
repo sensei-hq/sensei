@@ -717,29 +717,23 @@ pub fn parse_lane_ref(s: &str) -> Result<uuid::Uuid, uuid::Error> {
 pub enum RegisterMode {
     /// Coordinator without `crew_id`: mints the crew (optional goal,
     /// repo_key, workspace_id ride along; the paste line carries the id out).
-    MintCrew,
+    Mint,
     /// Coordinator with `crew_id`, or contributor with `crew_id`: joins.
     /// "One coordinator per crew" is the store's check (part 2).
-    JoinCrew,
+    Join,
     /// Contributor without `crew_id` (#402, queue cutover): joins the
     /// user's single active crew — none is `relay_no_active_crew`, more
     /// than one `relay_crew_ambiguous` (the store's call).
-    JoinActiveCrew,
+    JoinActive,
 }
 
-/// Coordinator without `crew_id` mints; a contributor without one is refused.
-pub fn register_mode(
-    role: RelayRole,
-    crew_id: Option<&str>,
-) -> Result<RegisterMode, ValidationError> {
+/// Coordinator without `crew_id` mints; a contributor without one joins the
+/// single active crew (#402); either with one joins it.
+pub fn register_mode(role: RelayRole, crew_id: Option<&str>) -> RegisterMode {
     match (role, crew_id) {
-        (RelayRole::Coordinator, None) => Ok(RegisterMode::MintCrew),
-        (RelayRole::Coordinator, Some(_)) | (RelayRole::Contributor, Some(_)) => {
-            Ok(RegisterMode::JoinCrew)
-        }
-        (RelayRole::Contributor, None) => Err(ValidationError {
-            message: "contributors register with crew_id; only a coordinator mints".into(),
-        }),
+        (RelayRole::Coordinator, None) => RegisterMode::Mint,
+        (RelayRole::Coordinator, Some(_)) | (RelayRole::Contributor, Some(_)) => RegisterMode::Join,
+        (RelayRole::Contributor, None) => RegisterMode::JoinActive,
     }
 }
 
@@ -1719,12 +1713,12 @@ mod tests {
     fn register_mode_mint_join_or_join_active_q6_402() {
         use RegisterMode as M;
         use RelayRole as R;
-        assert_eq!(register_mode(R::Coordinator, None), Ok(M::MintCrew));
-        assert_eq!(register_mode(R::Coordinator, Some("c1")), Ok(M::JoinCrew));
-        assert_eq!(register_mode(R::Contributor, Some("c1")), Ok(M::JoinCrew));
+        assert_eq!(register_mode(R::Coordinator, None), M::Mint);
+        assert_eq!(register_mode(R::Coordinator, Some("c1")), M::Join);
+        assert_eq!(register_mode(R::Contributor, Some("c1")), M::Join);
         // #402 (queue cutover): a contributor without crew_id joins the
         // single active crew instead of being refused.
-        assert_eq!(register_mode(R::Contributor, None), Ok(M::JoinActiveCrew));
+        assert_eq!(register_mode(R::Contributor, None), M::JoinActive);
     }
 
     #[test]

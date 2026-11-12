@@ -153,11 +153,14 @@ test.describe('Relay — timeline + steps over the live stream', () => {
 
     // The full report lands as a timeline entry and moves the state — still
     // no refresh.
+    // The report names a branch, so approval holds the task for the merge
+    // below (a report with nothing to merge ends it done at once).
     await relayPost(`/api/relay/tasks/${task}/report`, holder.lane_token, {
       lane_id: holder.lane_id,
       phase: 'impl',
       round: 1,
       summary: { changed: 'Counter scaffolds; tests ring true' },
+      branch: 'lane/counter',
     });
     await expect(
       tauriPage

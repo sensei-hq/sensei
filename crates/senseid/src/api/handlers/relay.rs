@@ -571,22 +571,15 @@ pub(crate) async fn heartbeat(
 ) -> RelayResult {
     let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
     let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
-    let RelayHeartbeatOutput { expires_at, regranted, pause_ended } =
+    let RelayHeartbeatOutput { expires_at, regranted } =
         state.pg.relay_heartbeat(lane_id, chrono::Utc::now()).await.map_err(err)?;
     // A routine renewal changes nothing the screen shows; only a beat
-    // that brings the lane back to work is announced.
+    // that brings the lane back to work is announced. A beat never ends a
+    // limit pause (F03): the sweeper announces that at resumes_at.
     if regranted {
         emit_lane(
             &state,
             LaneChange::Resumed(LaneReason::LeaseRegranted),
-            &lane_id,
-            &session.crew_id,
-        );
-    }
-    if pause_ended {
-        emit_lane(
-            &state,
-            LaneChange::Resumed(LaneReason::LimitPauseEnded),
             &lane_id,
             &session.crew_id,
         );
@@ -1566,18 +1559,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn register_contributor_without_crew_is_422() {
+    async fn register_contributor_without_crew_joins_the_single_active_crew_or_is_409() {
+        // #402 (queue cutover): a contributor naming no crew joins the
+        // user's single active crew; with none to join it is a 409 of
+        // its own code, never a guess.
         let h = harness().await;
-        let (status, body) = call(
-            &h,
-            "POST",
-            "/api/relay/register",
-            Some(json!({"role": "contributor", "family": "claude-code"})),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-        assert_eq!(body["error"], "relay_invalid");
+        let body = json!({"role": "contributor", "family": "claude-code"});
+        let (status, out) = call(&h, "POST", "/api/relay/register", Some(body.clone()), None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{out}");
+        assert_eq!(out["error"], "relay_no_active_crew");
+        let coord = register_coordinator(&h).await;
+        let (status, out) = call(&h, "POST", "/api/relay/register", Some(body), None).await;
+        assert_eq!(status, StatusCode::OK, "{out}");
+        assert_eq!(out["crew_id"], coord.2);
     }
 
     #[tokio::test]
@@ -1869,6 +1863,9 @@ mod tests {
 
     // ── report / review / merge ──
 
+    /// A full report naming a branch: approval holds the task for the
+    /// merge (a report with nothing to merge ends it done at once — the
+    /// store's pin).
     fn report_body(lane_id: &str) -> Value {
         lane_body(
             lane_id,
@@ -1876,6 +1873,7 @@ mod tests {
                 "phase": "tests", "round": 1,
                 "summary": {"changed": "Wired it.", "look_at": "app/", "flags": null},
                 "files": [{"path": "app/a.ts", "added": 1, "removed": 0}],
+                "branch": "lane/l2",
             }),
         )
     }
@@ -1903,10 +1901,9 @@ mod tests {
         let coord = register_coordinator(&h).await;
         let (lane_id, token) = register_contributor(&h, &coord.2).await;
         let task_id = assigned_task(&h, &coord, &lane_id).await;
-        // Delivery marks started; the report moves to in_review and floats
-        // on the review queue (queue cutover: nobody is picked)…
-        let _ = call(&h, "GET", &format!("/api/relay/tasks?lane_id={lane_id}"), None, Some(&token))
-            .await;
+        // The holder's report is its first write (F01: it starts the task);
+        // the report moves to in_review and floats on the review queue
+        // (queue cutover: nobody is picked)…
         let (status, body) = call(
             &h,
             "POST",
@@ -2282,9 +2279,12 @@ mod tests {
         let (status, view) =
             call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
         assert_eq!(status, StatusCode::OK, "{view}");
-        assert_eq!(view["steps"][0]["key"], "scaffold");
-        assert_eq!(view["steps"][0]["title"], "Scaffold the crate");
-        assert_eq!(view["steps"][0]["state"], "open");
+        // Beside the starting step the helper posted (F01).
+        let steps = view["steps"].as_array().unwrap();
+        let step =
+            steps.iter().find(|s| s["key"] == "scaffold").unwrap_or_else(|| panic!("{view}"));
+        assert_eq!(step["title"], "Scaffold the crate");
+        assert_eq!(step["state"], "open");
     }
 
     #[tokio::test]
@@ -2399,22 +2399,10 @@ mod tests {
     async fn step_wrong_state_is_409() {
         let h = harness().await;
         let coord = register_coordinator(&h).await;
-        // Assigned: the work (and its steps) has not started.
-        let (holder, token) = register_contributor(&h, &coord.2).await;
-        let fresh = assigned_task(&h, &coord, &holder).await;
-        let (status, body) = post_step(
-            &h,
-            &holder,
-            &token,
-            &fresh,
-            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CONFLICT, "{body}");
-        assert_eq!(body["error"], "relay_conflict");
-        // In review: the turn is over, steps with it. (Cancelled needs no
-        // pin: cancel refuses a live holder while steps require one. Done
-        // shares this same state gate.)
+        // In review: the turn is over, steps with it. (An assigned task
+        // takes the holder's first step — it starts the work (F01), the
+        // store's pin. Cancelled needs no pin: cancel refuses a live holder
+        // while steps require one. Done shares this same state gate.)
         let (task_id, holder, token) = working_task(&h, &coord).await;
         let (status, _) = call(
             &h,
