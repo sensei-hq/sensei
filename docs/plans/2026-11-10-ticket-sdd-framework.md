@@ -145,11 +145,13 @@ tracker ticket it is linked to, set once and never overwritten. Branch: `feature
 - **Depends on:** #390 (Feature 1)
 - **Acceptance criteria:**
   - `is_code` no longer has a hard-coded `"openspec"` literal. It reads the framework dirs from the signature table,
-    and `.specify`, `.kiro` and `_bmad` / `.bmad-core` paths are now not code.
+    and `.specify`, `.kiro` and `_bmad` / `.bmad-core` paths are now not code. (`.kiro` as a whole is an agent
+    folder, like `.claude`: its hooks and settings are not code either.)
   - `doc_indexer` classifies `.kiro/specs/*/requirements.md` and `specs/NNN-*/spec.md` the way it already classifies
     `openspec/specs/`.
   - All existing `is_code` and `doc_indexer` tests stay green unchanged. New table-driven cases cover each framework.
-  - `grep -rn '"openspec' crates/senseid/src` finds only the signature table.
+  - `grep -rn '"openspec/' crates/senseid/src` outside test code finds only the signature table (corrected at review:
+    the framework's name `"openspec"` is also its enum string, and tests use it).
 - **Test scenarios:**
   ```gherkin
   Given an Edit of "/r/.kiro/specs/auth/tasks.ts"

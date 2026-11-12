@@ -171,9 +171,9 @@ UPDATE sensei.tracker_tasks t
 
 | Integration | Method | Notes |
 |---|---|---|
-| `sdlc::signals::is_code` | read `NOT_CODE_DIRS` from the framework signature table | today it hard-codes `openspec`; Spec Kit/Kiro/BMAD dirs join it |
+| `sdlc::signals::is_code` | `framework::in_framework_dir`: any signature `paths` folder at a segment boundary is not code; `.kiro` is also an agent folder beside `.claude`, `.sensei` | built (#392). The numbered `specs/NNN-*/` folder is **not** excluded: without a repo root it would also catch numbered test folders (`tests/specs/001-login/`). `DERIVE_VERSION` 2 re-derives old sessions (B9) |
 | `sdlc::signals::ticked` / `task_tick` | unchanged matching; signal may carry the session's framework | the escaped-task-defect metric can now be broken down by framework |
-| `indexer::doc_indexer` classification | consume the same table for spec/design paths | removes the OpenSpec-only path literals |
+| `indexer::doc_indexer` classification | `framework::in_spec_dir` / `in_requirement_dir` over the signatures' `spec_dirs`, `requirement_dirs` and numbered folder | built (#392). `specs/NNN-*/` files are `feature` (`design` when the name says so), `.kiro/specs/*/design.md` is `design`, as under `openspec/specs/` |
 | `tracker/writeback.rs` | none in v1 | D9 still defers the write-back field set; the column is write-back-capable |
 | Dōjō / app ticket view | read `tracker_tasks.sdd_framework` | display only; out of scope here |
 
