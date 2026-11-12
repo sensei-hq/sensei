@@ -5,8 +5,9 @@ description: >-
   with adversarial multi-model planning, one-stop sprint/run management from the Relay screen,
   and robust resolution of broker review findings (F01–F12).
 type: design
-status: draft
+status: implemented
 date: 2026-11-10
+implemented: 2026-11-12
 related:
   - lanes/merge/docs/prd/modules/03-delivery/21-relay/lanes.md
   - lanes/merge/docs/prd/modules/03-delivery/21-relay/lanes-data.md
@@ -21,6 +22,17 @@ related:
 > **Executive Summary:** This design transitions the Sensei Relay broker from a push-based, coordinator-bottlenecked workflow to a **resilient, self-service queue-driven execution engine**. The user manages the entire delivery lifecycle from a single Relay screen: registering assistant workers, grouping backlog items into a Sprint Run, auto-dispatching adversarial planning, and overseeing self-service execution. Workers autonomously claim ready tasks and peer reviews via strict First-Come-First-Served (FCFS) mechanics. Dependency DAGs support early claiming with hard-gating at report time. Concurrently, all twelve systemic defects identified in the Broker Deep Review (F01–F12)—including read-starts-work, NULL-reviewer wedges, quota erasure, and leak-guard gaps—are definitively resolved.
 
 ---
+
+## Deviations (implemented 2026-11-12)
+
+Built as planned in `docs/plan/2026-11-10-relay-autonomous-queue/` (phases 1–4 shipped on
+`lane/relay-autonomous-queue`; the daemon live, the MCP tools installed, the Relay screen's sprint band and form
+e2e-green). Where this document's claims about existing code were wrong, the plan's *Grounding corrections*
+section in its README rules, and each phase file records its "Executed" notes. The ones a reader of this document
+should know: the gate task carries no `deps` (its precondition is met at the mint); `claim_next` still offers a
+floating review to a lane holding a worker task; a limit pause ends only by the sweeper at `resumes_at` or by
+`limit_resume`; the person's `POST /relay/runs` names its crew from the screen; 13 planned-but-unassigned live
+tasks became `ready` at the converge.
 
 ## 1. Problem Statement & Motivation
 

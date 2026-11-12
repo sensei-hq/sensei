@@ -15,6 +15,35 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- **Relay autonomous queue.** A crew runs on a queue instead of hand-offs: lanes claim
+  ready tasks and floating reviews first-come-first-served (`POST /api/relay/tasks/claim_next`,
+  `/{id}/claim`, `/{id}/claim_review`, `/{id}/release`, `/{id}/checkpoint`, `GET /api/relay/queue`;
+  MCP `relay_claim_next` … `relay_get_queue`), a report floats for any non-author lane, a
+  claim-early task's report is gated until its dependencies are done
+  (409 `relay_upstream_deps_unmet`). The person creates a **sprint run** from the Relay
+  screen (`POST /relay/runs`): Task 0 plans it, a peer approves, the plan unpacks into
+  ready tasks, and the band shows the run's counts; "Needs a reviewer" lists floating
+  reviews and each lane shows the review it holds. A **deterministic merge gate** merges
+  what a peer approved (`git merge-tree` probe, verify in a throwaway worktree, `--no-ff`),
+  or sends it back with a `merge_conflict` / `build_failure` finding. `register` needs
+  only a family (role defaults to contributor, the one active crew is joined, a
+  `suggested_name` becomes the lane title); guidance v2 spells the loop out.
+- **Sweeper duties:** limit pauses end at `resumes_at` (never on a beat; `limit_resume`
+  ends one early), abandoned review claims are released after 60 s, dead lanes' wait
+  holds are evicted, a review floating 15 min nudges everyone, and a run completes itself.
+
+### Changed
+
+- **BREAKING** (relay schema): `relay.tasks.reviewer_lane_id` is gone (`review_claimed_by`
+  + `review_claimed_at`), `ready` is the pool default, `assigned_at` is nullable, and
+  three tables arrive (`relay.runs`, `relay.run_items`, `relay.lane_waiters`). `sensei
+  upgrade` converges it; planned-but-unassigned tasks become `ready`. The reviewer
+  re-pick and `assign`'s `reviewer_lane` are gone. Reading an envelope never starts a
+  task; the holder's first write does. `tasks/wait` and `tasks` refuse unknown query
+  keys and take `timeout_seconds`.
+
 ## [0.21.1] — 2026-10-27
 
 ### Added

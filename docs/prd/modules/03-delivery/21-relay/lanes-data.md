@@ -60,7 +60,17 @@ key, or work on those repositories would never appear:
   and validated by the daemon, and metrics read them through views.
 - **Nullable means "not reported" (D83).** A missing prop is absent, never 0. Totals say how many turns reported.
 
-## Tables (seven: daemon_user, crews, lanes, leases, items, tasks, actions; all but `daemon_user` with `user_id`)
+## Tables (ten: daemon_user, crews, lanes, leases, items, tasks, actions, runs, run_items, lane_waiters; all but `daemon_user` with `user_id`)
+
+### `relay.runs`, `relay.run_items`, `relay.lane_waiters` (queue cutover, 2026-11-12)
+- **`relay.runs`:** a sprint run — `user_id` · `id` · `crew_id` · `title` · `goal` · `state` (`relay.run_state`:
+  `planning` → `active` → `completed` | `cancelled`) · `config` jsonb (`base_checkout`, `base_branch`, `verify_cmd`,
+  `auto_merge`) · `created_at` · `started_at` (the unpack) · `completed_at`. Minting it dispatches Task 0; the
+  approved plan unpacks; the sweeper completes it when every task is done or cancelled.
+- **`relay.run_items`:** the backlog items a run groups, in pick order (`position`).
+- **`relay.lane_waiters`:** one row per lane holding `tasks/wait` open (`waiting_since`, `last_poll_at`); inserted on
+  the hold, deleted when it answers, evicted by the sweeper when the lane leaves or its lease lapses (F06).
+- **`relay.finding_classes`** gains the gate's two: `merge_conflict`, `build_failure`.
 
 ### `relay.daemon_user`: the machine-local daemon user (singleton)
 `singleton` (boolean PK, fixed true — exactly one row) · `user_id` (uuid v7, minted once) · `minted_at`.
@@ -100,14 +110,22 @@ and sprint from the tracker) · `state` (`'backlog','planned','closed'`) · `pos
 - The ticket button is the tracker task's key and URL.
 
 ### `relay.tasks`: what a lane works on
-`user_id` · `id` · `crew_id` · `item_id` null · `repo_key` (**required**) · `workspace_id` null · `lane_id` null (**one active task per lane**, partial unique) · `reviewer_lane_id`
-null (never the author's lane; checked) · `title` · `phase` (`'analysis','tests','impl','docs','mockup'`) · `state`
-(`'assigned','working','in_review','rework','approved','done','blocked','interrupted','cancelled'`; see *Stages*)
-· `round` · `owned_paths`, `acceptance`, `resources` text[] · `deps` uuid[] · `assigned_at`, `state_changed_at`,
-`completed_at` null · `steps` jsonb (flat checklist, F8: `[{key, title, state, reason, updated_at}]`, insertion order).
+`user_id` · `id` · `crew_id` · `run_id` null · `item_id` null · `repo_key` (**required**) · `workspace_id` null ·
+`lane_id` null (**one active worker task per lane** — `tasks_one_active_worker_per_lane` over
+`assigned|working|rework|blocked`; `in_review` floats) · `review_claimed_by` null + `review_claimed_at` (the lane
+holding the review claim, never the author's — `tasks_no_self_review_claim`; **one active review claim per lane**)
+· `title` · `phase` (`'analysis','tests','impl','docs','mockup','planning'`) · `state` (`'ready','assigned',
+'working','in_review','rework','approved','done','blocked','interrupted','cancelled'`; see *Stages*;
+`tasks_lane_coherence`: `ready` ⇒ no lane, laneless ⇒ `ready` | `cancelled` | broker) · `round` · `executor`
+(`relay.task_executor`: `agent` | `broker`) · `deterministic` jsonb (a broker task's spec, e.g. the gate's
+`{action, task_id, branch, base_checkout, base_branch, verify_cmd}`) · `owned_paths`, `acceptance`, `resources`
+text[] · `deps` uuid[] (a report is gated until every dep is done) · `checkpoint` jsonb (`current_step`, `notes`;
+kept across interrupt, re-offer and reregister) · `assigned_at` null, `state_changed_at`, `completed_at` null ·
+`steps` jsonb (flat checklist, F8: `[{key, title, state, reason, updated_at}]`, insertion order).
 - The ticket comes through `item_id → ticket_provider / ticket_key`.
 - The **brief is the `assigned` action's `body_md`**, frozen. A change is a `brief_updated` action.
-- A review is a stage of the task: the reviewer's queue is `reviewer_lane_id = me and state = 'in_review'`.
+- A review is a stage of the task: the reviewer's queue is `review_claimed_by = me and state = 'in_review'`; a
+  floating review is `in_review` with no claim.
 
 ### Waiting on a task (lanes.md §15, user 2026-11-06)
 Waiting is a record beside a task's state, not a seventh state: a task is `in_review` **and** waiting on a reviewer,
@@ -135,7 +153,10 @@ case with no task: a lane idle with nothing assigned, `task_id` null.)
 - **De-duplication:** a lane re-sending a status it already sent is a no-op — the broker drops it on
   `(lane, task, kind, round)`. "Standing by" is a `message` with `props.standing_by`, a history row like any other.
 
-**Stored or derived — for L0 and L4, not decided here.** §15 says the task *carries* the record; it does not say where it
+**As built (queue cutover, 2026-11-12):** no `waiting_*` column landed. The open hold is a `relay.lane_waiters` row;
+`review_unassigned` became the **floating review** (`relay.now` section `floating_review`, nudged to everyone after
+900 s by the sweeper); `merge_pending` is the broker's gate or the coordinator's merge; the other reasons stay derived
+from state and the last action. The earlier reasoning follows for the record. §15 says the task *carries* the record; it does not say where it
 lives, and no `waiting_*` column (nor the crew's threshold) exists in the DDL today. Stored on `relay.tasks`, the screen
 reads it without a join, but the row holds a second truth beside `state` / `state_changed_at`. Derived in `relay.now` from
 state and the last action, nothing new to keep in sync, but `no_work` is a lane fact and `resource` a lease fact, so the
@@ -162,7 +183,8 @@ review → the report it reviews) · `created_at`.
 | `answered` | an optional note | `option`, `surface` (`desktop` / `dojo` / `lane`; `lane` is the daemon's on a lane-sent answer and is never sent, Q12) |
 | `message` | the message | `to` = `{kind: 'coordinator' \| 'lane' \| 'everyone' \| 'person', lane_id?}` (a lane by its **uuid**; the screen shows its code; `person` is Q2's target, slice 2), `surface` (`desktop` / `dojo` / `lane`, same split), and for a nudge `nudge` (`true`) + `reason` + `waiting_min`, or `standing_by` (`true`) (§15) |
 | `delivered` / `read` | — | none; `reply_to` = the message (receipts, one per recipient) |
-| `merged` | the merge note | `commits[]`, `into`, `gates[]` |
+| `merged` | the merge note | `commits[]`, `into`, `gates[]` (the gate's own merge has no lane) |
+| `claimed` / `review_claimed` / `released` / `checkpointed` | — | `claimed`: `claim_type` (`task` / `review`), `deps_status`, `unmet_deps[]` · `released`: `kind` (`task` / `review`), `reason` · `checkpointed`: `current_step`, `notes` (queue cutover) |
 | `interrupted` / `reoffered` | — | `checkpoint`, `to_lane` |
 | `compacted` | — | `context_tokens_before`, `context_tokens_after` |
 | `handed_over` | the handoff note (or the move itself when no note was sent) | `from_lane`, `from_state` (the state word the task left), `to_lane` (lanes by uuid; the screen shows codes) |
@@ -172,18 +194,24 @@ review → the report it reviews) · `created_at`.
 - **Finding classes:** a lookup table `relay.finding_classes (code, label, added_by)`, seeded from the README checklist. The
   daemon rejects an unknown class in `props.findings`. The learning loop adds classes.
 
-## Stages of a task (user question, 2026-11-05)
-`assigned → working → in_review → (rework → in_review)* → approved → done`
-- **assigned:** handed to a lane. The brief is frozen.
+## Stages of a task (user question, 2026-11-05; `ready` added by the queue cutover, 2026-11-12)
+`ready → working → in_review → (rework → in_review)* → approved → done` (a claim lands `working`; the manual
+`assign` still goes through `assigned`)
+- **ready:** minted in the pool with no lane (`plan`, an unpacked plan, a re-offer, a release). The next live lane
+  claims it.
+- **assigned:** handed to a lane by the coordinator. The brief is frozen. Reads never start it: the holder's first
+  write (a step, a checkpoint, a report) does.
 - **working:** the lane has started. On `report`, it goes to in_review — unless the report is partial
   (`props.partial`), which records progress and keeps the task working with no reviewer picked.
 - A held task (`working` / `in_review` / `rework`) can be **handed over** mid-turn: the coordinator pulls it off its
   holder onto another lane, where it lands `assigned` with the round bumped and the brief frozen from the prior brief
   plus a handoff note. `interrupted` stays the sweeper's re-offer job.
-- **in_review:** a reviewer lane (never the author) holds it.
+- **in_review:** the report floats on the review queue (the author's lane is free); a non-author lane claims it
+  (`review_claimed_by`) and files the verdict; the sweeper releases a claim whose lane lapsed.
 - **rework:** changes were requested. The round increments, and the next report returns it to in_review.
-- **approved:** the review passed, waiting for the coordinator's merge with gates. This is its own stage because this week
-  "approved, not yet merged" was a real wait.
+- **approved:** the review passed. In a gated run with a branch, the broker's gate task merges it (`merged` row, no
+  lane) or sends it back to `rework` with a `merge_conflict` / `build_failure` finding; otherwise it waits for the
+  coordinator's merge with gates. Nothing to merge (no branch) ends it `done` at once.
 - **done:** merged, or completed with nothing to merge (a mockup, an analysis).
 - **Side states:**
   - **blocked**, on a decision or a dependency; it resumes where it was;
@@ -196,8 +224,12 @@ review → the report it reviews) · `created_at`.
 
 ## Derived reads (security-invoker views; the screen never adds up numbers itself)
 - `relay.now`: open `asked` actions for the person · the triage count by tracker and sprint · one row per lane with its
-  active task and lease · the waiting tasks, oldest first, with who each waits on and for how long (the **Waiting** stat's
-  filter, §15; this section lands with the waiting ruling) · today's completed tasks.
+  active task, lease, `suggested_name` and the review it holds (`reviewing`) · `sprint_summary` (one row per open run
+  with its tasks counted by state) · `floating_review` (one row per report waiting for a reviewer) · today's completed
+  tasks.
+- `relay.task_queue`: the claimable work, read-only (F01) — one row per `ready` or `in_review` task with
+  `claim_eligibility` (`review_floating` · `review_claimed` · `ready_unblocked` · `ready_claim_early`) and
+  `unmet_deps`.
 - `relay.task_history`: a task's actions, newest first, with props unpacked for the folds.
 - `relay.lane_metrics`: per family/version/model: rounds, first-pass approval, finding classes (unnested from
   `reviewed.props.findings`), tokens, time working vs waiting for review, how accurate claims were.

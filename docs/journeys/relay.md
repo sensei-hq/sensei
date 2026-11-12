@@ -18,3 +18,12 @@ The prior standalone "pair once + zero-knowledge relay transport" model is
 superseded: the transport is now the daemon's existing outbound Dōjō connection,
 reused for realtime. Only *filtered status* + gate prompts + replies cross —
 never code or transcripts.
+
+## Local crews — running a sprint from the Relay screen (2026-11-12)
+
+On the desktop, Relay is also the person's window on a **local crew**: register a coordinator and a few
+contributor sessions (each pastes one `relay_register` line; a contributor needs no role and no crew id), pick
+backlog items on the Queue tab, press **Create sprint**, and watch the sprint band fill as Task 0 plans, a peer
+approves, lanes claim and report, reviews float under "Needs a reviewer", and the gate merges. Nothing is handed
+out by hand: the person answers only what needs them. The loop in full:
+[`../prd/modules/03-delivery/21-relay/lanes.md`](../prd/modules/03-delivery/21-relay/lanes.md) §5–§7.
