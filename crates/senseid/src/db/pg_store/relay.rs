@@ -11291,6 +11291,145 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn now_serves_runs_floating_reviews_and_the_reviewing_lane() {
+        // Phase 4 reads the band and the review queue off Now: open runs
+        // with their counts, floating reviews by report time, and on each
+        // lane the review it holds and the name it offered. A completed
+        // run leaves the band.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = v7(0x1c);
+        fx_live_lane(&pg, c1, a3, "L3").await;
+        sqlx_core::query::query(
+            "update relay.lanes set suggested_name = 'worker-alpha' where id = $1",
+        )
+        .bind(a2)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let (planning, active, done_run) = (v7(0xd1), v7(0xd2), v7(0xd3));
+        fx_run(&pg, u1(), planning, c1, "planning").await;
+        fx_run(&pg, u1(), active, c1, "active").await;
+        fx_run(&pg, u1(), done_run, c1, "completed").await;
+        let (task0, ready, floating_a, floating_b) = (v7(0xe1), v7(0xe2), v7(0xe3), v7(0xe4));
+        fx_task(&pg, u1(), task0, c1, None, "ready", "planning", 1).await;
+        fx_task(&pg, u1(), ready, c1, None, "ready", "impl", 1).await;
+        fx_floating_review(&pg, c1, a2, floating_a).await;
+        fx_floating_review(&pg, c1, a3, floating_b).await;
+        for (task, run) in
+            [(task0, planning), (ready, active), (floating_a, active), (floating_b, active)]
+        {
+            sqlx_core::query::query("update relay.tasks set run_id = $1 where id = $2")
+                .bind(run)
+                .bind(task)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+        // floating_a reported first; A1 holds floating_b's review.
+        sqlx_core::query::query("update relay.tasks set state_changed_at = $1 where id = $2")
+            .bind(t0() - chrono::Duration::seconds(600))
+            .bind(floating_a)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let claimed = v7(0xe5);
+        fx_floating_review(&pg, c1, a3, claimed).await;
+        sqlx_core::query::query(
+            "update relay.tasks set review_claimed_by = $1, review_claimed_at = $2, run_id = $3
+             where id = $4",
+        )
+        .bind(a1)
+        .bind(t0())
+        .bind(active)
+        .bind(claimed)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let now = pg.relay_now(u1(), no_filter()).await.unwrap();
+        let runs = now["runs"].as_array().unwrap_or_else(|| panic!("{now}"));
+        let ids: Vec<&str> = runs.iter().map(|r| r["run_id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec![planning.to_string(), active.to_string()], "open runs, created order");
+        assert_eq!(runs[0]["state"], "planning");
+        assert_eq!(runs[0]["total_tasks"], 1);
+        assert_eq!(runs[1]["state"], "active");
+        assert_eq!(runs[1]["total_tasks"], 4);
+        assert_eq!(runs[1]["ready_tasks"], 1);
+        assert_eq!(runs[1]["in_review_tasks"], 3);
+        assert_eq!(runs[1]["floating_reviews"], 2);
+        assert_eq!(runs[1]["title"], "Sprint");
+        assert_eq!(runs[1]["crew_id"], c1.to_string());
+        let floating = now["floating_reviews"].as_array().unwrap_or_else(|| panic!("{now}"));
+        let ids: Vec<&str> = floating.iter().map(|f| f["task_id"].as_str().unwrap()).collect();
+        assert_eq!(
+            ids,
+            vec![floating_a.to_string(), floating_b.to_string()],
+            "oldest report first"
+        );
+        assert_eq!(floating[0]["author_lane_code"], "L2");
+        assert_eq!(floating[0]["run_id"], active.to_string());
+        assert_eq!(floating[0]["phase"], "tests");
+        assert!(floating[0]["reported_at"].is_string(), "{:?}", floating[0]);
+        let lanes = now["lanes"].as_array().unwrap();
+        let lane = |id: Uuid| lanes.iter().find(|l| l["id"] == id.to_string()).unwrap();
+        assert_eq!(lane(a1)["reviewing"]["id"], claimed.to_string());
+        assert_eq!(lane(a1)["reviewing"]["phase"], "tests");
+        assert_eq!(lane(a1)["reviewing"]["round"], 1);
+        assert!(lane(a1)["reviewing"]["claimed_at"].is_string());
+        assert_eq!(lane(a2)["reviewing"], serde_json::Value::Null);
+        assert_eq!(lane(a2)["suggested_name"], "worker-alpha");
+        assert_eq!(lane(a1)["suggested_name"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn task_view_serves_run_id_and_deps_status() {
+        // The task header names its run and classes its deps the way the
+        // queue does: early while a dep is open, satisfied once done.
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let run = v7(0xd1);
+        fx_run(&pg, u1(), run, c1, "active").await;
+        let (dep, t, loose) = (v7(0xe6), v7(0xe7), v7(0xe8));
+        fx_task(&pg, u1(), dep, c1, None, "ready", "impl", 1).await;
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "impl", 1).await;
+        fx_task(&pg, u1(), loose, c1, None, "ready", "tests", 1).await;
+        sqlx_core::query::query("update relay.tasks set run_id = $1, deps = $2 where id = $3")
+            .bind(run)
+            .bind(vec![dep])
+            .bind(t)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let v = pg.relay_task_view(u1(), c1, t).await.unwrap();
+        assert_eq!(v["task"]["run_id"], run.to_string(), "{}", v["task"]);
+        assert_eq!(v["task"]["deps_status"], "early_claim_gated");
+        assert_eq!(v["task"]["unmet_deps"], json!([dep.to_string()]));
+        sqlx_core::query::query("update relay.tasks set state = 'cancelled' where id = $1")
+            .bind(dep)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let v = pg.relay_task_view(u1(), c1, t).await.unwrap();
+        assert_eq!(v["task"]["deps_status"], "early_claim_gated", "cancelled is not done");
+        sqlx_core::query::query(
+            "update relay.tasks set state = 'done', lane_id = $1, completed_at = current_timestamp
+             where id = $2",
+        )
+        .bind(a2)
+        .bind(dep)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let v = pg.relay_task_view(u1(), c1, t).await.unwrap();
+        assert_eq!(v["task"]["deps_status"], "satisfied");
+        assert_eq!(v["task"]["unmet_deps"], json!([]));
+        let v = pg.relay_task_view(u1(), c1, loose).await.unwrap();
+        assert_eq!(v["task"]["run_id"], serde_json::Value::Null);
+        assert_eq!(v["task"]["deps_status"], "satisfied");
+        assert_eq!(v["task"]["unmet_deps"], json!([]));
+    }
+
+    #[tokio::test]
     async fn now_scopes_to_user_and_filter() {
         let pg = PgStore::test_store().await;
         let (c1, ..) = fx_now(&pg).await;
