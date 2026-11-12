@@ -20,6 +20,7 @@ use crate::relay::envelope::{
     EnvelopeAnswer, EnvelopeAssignment, EnvelopeBrief, EnvelopeMessage, EnvelopeReview,
     EnvelopeTicket, LaneEnvelope, ReviewDirection,
 };
+use crate::relay::plan::PlanSpec;
 use crate::relay::{
     Caller, DISK_FLOOR_GB, DepsStatus, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS,
     RESOURCE_LEASE_TTL_SECS, RegisterMode, RelayActionKind, RelayError, RelayFindingSeverity,
@@ -373,6 +374,39 @@ pub struct RelayCheckpointInput {
     pub notes: Option<String>,
     pub steps: Vec<RelayStepInput>,
 }
+
+/// `POST /relay/runs` (person): a sprint run over backlog items. The crew
+/// is the named one, else the user's single active crew. `config` carries
+/// the gate inputs (`base_checkout`, `base_branch`, `verify_cmd`,
+/// `auto_merge`) as the handler validated them.
+#[derive(Debug, Clone)]
+pub struct RelayCreateRunInput {
+    pub crew_id: Option<Uuid>,
+    pub title: String,
+    pub goal: String,
+    pub item_ids: Vec<Uuid>,
+    /// Else the crew's, else the first item's.
+    pub repo_key: Option<String>,
+    /// Else the crew's.
+    pub workspace_id: Option<Uuid>,
+    pub config: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct RelayCreateRunOutput {
+    pub run_id: Uuid,
+    /// Task 0: the planning task, ready in the pool.
+    pub planning_task_id: Uuid,
+    pub crew_id: Uuid,
+}
+
+/// The acceptance lines Task 0 is minted with: what the peer reviewer
+/// checks the plan against.
+pub const RELAY_TASK0_ACCEPTANCE: [&str; 3] = [
+    "report_md carries a ```json plan block: tasks[{key,title,phase,owned_paths,acceptance,deps}]",
+    "no cycles; every dep names a key; owned_paths disjoint across parallel tasks",
+    "every task sized to 1–3 turns",
+];
 
 /// Who a decision waits on: the person, or one lane (Q1: a uuid, never a code).
 #[derive(Debug, Clone)]
@@ -3110,6 +3144,48 @@ impl PgStore {
         .rows_affected()
             > 0;
         Ok(ended)
+    }
+
+    /// Mint a sprint run (person): the crew is the named one or the user's
+    /// single active crew; every item must be triage|backlog and turns
+    /// `planned`; `run_items` keeps the pick order; Task 0 (phase planning)
+    /// lands ready in the pool with the plan acceptance lines. One
+    /// transaction.
+    pub async fn relay_create_run(
+        &self,
+        user_id: Uuid,
+        input: RelayCreateRunInput,
+        now: DateTime<Utc>,
+    ) -> Result<RelayCreateRunOutput, RelayError> {
+        let _ = (user_id, input, now);
+        unimplemented!("task 2.5: create_run")
+    }
+
+    /// Unpack a validated plan into the queue, inside the caller's
+    /// transaction: one `ready` task per entry in topo order (deps mapped
+    /// key → uuid, repo_key the entry's or the run's), Task 0 → done, the
+    /// run → active. Returns the new task ids in insertion order.
+    pub(crate) async fn relay_unpack_plan(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        run_id: Uuid,
+        task0_id: Uuid,
+        spec: &PlanSpec,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Uuid>, RelayError> {
+        let _ = (tx, user_id, run_id, task0_id, spec, now);
+        unimplemented!("task 2.5: unpack_plan")
+    }
+
+    /// Complete every active run whose tasks are all done or cancelled (and
+    /// that has tasks at all), inside the caller's transaction — the
+    /// sweeper's call. Returns `(run_id, crew_id)` per completed run.
+    pub(crate) async fn relay_complete_runs(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<(Uuid, Uuid)>, RelayError> {
+        let _ = (tx, now);
+        unimplemented!("task 2.5: complete_runs")
     }
 
     /// Ask a decision and block its tasks — one transaction.
@@ -7443,6 +7519,378 @@ mod tests {
         assert!(matches!(err, RelayError::Gone(_)), "{err:?}");
         let err = pg.relay_limit_resume(v7(0x99)).await.unwrap_err();
         assert!(matches!(err, RelayError::NotFound(_)), "{err:?}");
+    }
+
+    // ── runs: create, Task 0 approve/reject, unpack, completion (queue cutover) ──
+
+    async fn fx_run(pg: &PgStore, user: Uuid, id: Uuid, crew: Uuid, state: &str) {
+        sqlx_core::query::query(
+            "insert into relay.runs (user_id, id, crew_id, title, goal, state, started_at) \
+             values ($1, $2, $3, 'Sprint', 'Ship', $4::relay.run_state, \
+                     case when $4 = 'active' then current_timestamp end)",
+        )
+        .bind(user)
+        .bind(id)
+        .bind(crew)
+        .bind(state)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+
+    fn run_input(crew_id: Option<Uuid>, item_ids: Vec<Uuid>) -> RelayCreateRunInput {
+        RelayCreateRunInput {
+            crew_id,
+            title: "Sprint 1".into(),
+            goal: "Ship the queue".into(),
+            item_ids,
+            repo_key: None,
+            workspace_id: None,
+            config: json!({"auto_merge": false}),
+        }
+    }
+
+    /// The design's §7.2 plan as a Task 0 report body.
+    fn plan_report(t2_deps: &[&str]) -> String {
+        let plan = json!({"tasks": [
+            {"key": "t1", "title": "Apply schema deltas", "phase": "impl",
+             "owned_paths": ["database/ddl/table/relay/runs.ddl"],
+             "acceptance": ["psql -f runs.ddl succeeds"], "deps": []},
+            {"key": "t2", "title": "Add claim handlers", "phase": "impl",
+             "owned_paths": ["crates/senseid/src/api/handlers/relay.rs"],
+             "acceptance": ["cargo check succeeds"], "deps": t2_deps}
+        ]});
+        format!("Plan:\n\n```json\n{plan}\n```\n")
+    }
+
+    fn task0_report(report_md: String) -> RelayReportInput {
+        RelayReportInput {
+            phase: RelayTaskPhase::Planning,
+            round: 1,
+            partial: false,
+            changed: "Planned the sprint.".into(),
+            look_at: None,
+            flags: None,
+            report_md: Some(report_md),
+            base: None,
+            branch: None,
+            commits: vec![],
+            files: vec![],
+            gates: vec![],
+            telemetry: json!({}),
+        }
+    }
+
+    /// A run minted on C1 from two backlog items, its Task 0 claimed by A2,
+    /// reported with `report_md`, and the review claimed by A1 — ready for
+    /// A1's verdict. Returns (run, task0).
+    async fn fx_task0_under_review(pg: &PgStore, c1: Uuid, a1: Uuid, a2: Uuid, report_md: String) -> (Uuid, Uuid) {
+        let (i1, i2) = (v7(0xc1), v7(0xc2));
+        fx_item(pg, u1(), i1, "backlog", Some("github.com/o/r"), Some(1)).await;
+        fx_item(pg, u1(), i2, "triage", Some("github.com/o/r"), None).await;
+        let out = pg.relay_create_run(u1(), run_input(Some(c1), vec![i1, i2]), t0()).await.unwrap();
+        pg.relay_claim_task(u1(), a2, out.planning_task_id, t0()).await.unwrap();
+        pg.relay_report_task(u1(), a2, out.planning_task_id, task0_report(report_md)).await.unwrap();
+        pg.relay_claim_review(u1(), a1, out.planning_task_id, t0()).await.unwrap();
+        (out.run_id, out.planning_task_id)
+    }
+
+    #[tokio::test]
+    async fn create_run_mints_task0_in_the_pool_and_plans_its_items() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, _, _, _) = fx_two_crews(&pg).await;
+        let (i1, i2) = (v7(0xc1), v7(0xc2));
+        fx_item(&pg, u1(), i1, "backlog", Some("github.com/o/r"), Some(1)).await;
+        fx_item(&pg, u1(), i2, "triage", None, None).await;
+        // No crew named: U1's single active crew is C1.
+        let out = pg.relay_create_run(u1(), run_input(None, vec![i1, i2]), t0()).await.unwrap();
+        assert_eq!(out.crew_id, c1);
+        let (state, title, goal, config, started): (String, String, String, serde_json::Value, Option<DateTime<Utc>>) =
+            sqlx_core::query_as::query_as(
+                "select state::text, title, goal, config, started_at from relay.runs where id = $1",
+            )
+            .bind(out.run_id)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!((state.as_str(), title.as_str(), goal.as_str()), ("planning", "Sprint 1", "Ship the queue"));
+        assert_eq!(config, json!({"auto_merge": false}));
+        assert_eq!(started, None);
+        // The items are on the run in pick order and planned.
+        let items: Vec<(Uuid, i32)> = sqlx_core::query_as::query_as(
+            "select item_id, position from relay.run_items where run_id = $1 order by position",
+        )
+        .bind(out.run_id)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(items, vec![(i1, 0), (i2, 1)]);
+        let planned: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.items where id in ($1, $2) and state = 'planned'",
+        )
+        .bind(i1)
+        .bind(i2)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(planned, 2);
+        // Task 0: planning, ready in the pool, on the run, repo from the
+        // first item (the crew names none), the plan acceptance lines.
+        let (phase, state, lane, run_id, title, repo, acceptance, deps): (
+            String,
+            String,
+            Option<Uuid>,
+            Option<Uuid>,
+            String,
+            String,
+            Vec<String>,
+            Vec<Uuid>,
+        ) = sqlx_core::query_as::query_as(
+            "select phase::text, state::text, lane_id, run_id, title, repo_key, acceptance, deps
+             from relay.tasks where id = $1",
+        )
+        .bind(out.planning_task_id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!((phase.as_str(), state.as_str(), lane, run_id), ("planning", "ready", None, Some(out.run_id)));
+        assert_eq!(title, "Plan: Sprint 1");
+        assert_eq!(repo, "github.com/o/r");
+        assert_eq!(acceptance.len(), 3);
+        assert!(acceptance[0].contains("```json"), "{acceptance:?}");
+        assert!(deps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_run_refuses_bad_crews_items_and_a_run_without_a_repo() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, _, _, _) = fx_two_crews(&pg).await;
+        // A user with no crew at all.
+        let err = pg.relay_create_run(uuid::Uuid::now_v7(), run_input(None, vec![]), t0()).await.unwrap_err();
+        assert_eq!(err, RelayError::NoActiveCrew);
+        // An unknown crew.
+        let err = pg.relay_create_run(u1(), run_input(Some(v7(0x99)), vec![]), t0()).await.unwrap_err();
+        assert!(matches!(err, RelayError::NotFound(_)), "{err:?}");
+        // A run needs a repository from somewhere: C1 has none, no items.
+        let err = pg.relay_create_run(u1(), run_input(Some(c1), vec![]), t0()).await.unwrap_err();
+        assert!(matches!(err, RelayError::Validation(_)), "{err:?}");
+        // The crew's repo carries a run with no items.
+        sqlx_core::query::query("update relay.crews set repo_key = 'github.com/o/r' where id = $1")
+            .bind(c1)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        pg.relay_create_run(u1(), run_input(Some(c1), vec![]), t0()).await.unwrap();
+        // A closed item, an unknown item: refused, nothing minted.
+        let closed = v7(0xc3);
+        fx_item(&pg, u1(), closed, "closed", Some("github.com/o/r"), None).await;
+        let err = pg.relay_create_run(u1(), run_input(Some(c1), vec![closed]), t0()).await.unwrap_err();
+        assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
+        let err = pg.relay_create_run(u1(), run_input(Some(c1), vec![v7(0xc9)]), t0()).await.unwrap_err();
+        assert!(matches!(err, RelayError::NotFound(_)), "{err:?}");
+        assert_eq!(count(&pg, "runs").await, 1);
+        // Two active crews and no crew named: ambiguous.
+        fx_crew(&pg, u1(), v7(0xc4)).await;
+        let err = pg.relay_create_run(u1(), run_input(None, vec![]), t0()).await.unwrap_err();
+        assert_eq!(err, RelayError::CrewAmbiguous);
+        // A closed crew refuses.
+        sqlx_core::query::query("update relay.crews set status = 'closed' where id = $1")
+            .bind(c1)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let err = pg.relay_create_run(u1(), run_input(Some(c1), vec![]), t0()).await.unwrap_err();
+        assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
+        // The title is a checked summary.
+        let mut long = run_input(Some(v7(0xc4)), vec![]);
+        long.repo_key = Some("github.com/o/r".into());
+        long.title = "x".repeat(601);
+        let err = pg.relay_create_run(u1(), long, t0()).await.unwrap_err();
+        assert!(matches!(err, RelayError::Validation(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn approving_task0_unpacks_the_plan_and_activates_the_run() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let (run, task0) = fx_task0_under_review(&pg, c1, a1, a2, plan_report(&["t1"])).await;
+        let out = pg.relay_submit_review(u1(), a1, task0, review_input()).await.unwrap();
+        assert_eq!(out.state, RelayTaskState::Done, "Task 0 unpacks straight to done");
+        let (state, completed): (String, Option<DateTime<Utc>>) = sqlx_core::query_as::query_as(
+            "select state::text, completed_at from relay.tasks where id = $1",
+        )
+        .bind(task0)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(state, "done");
+        assert!(completed.is_some());
+        let (run_state, started): (String, Option<DateTime<Utc>>) = sqlx_core::query_as::query_as(
+            "select state::text, started_at from relay.runs where id = $1",
+        )
+        .bind(run)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(run_state, "active");
+        assert!(started.is_some());
+        // Two ready tasks on the run, deps mapped to ids, the run's repo.
+        let tasks: Vec<(Uuid, String, String, Vec<Uuid>, String, Option<Uuid>)> =
+            sqlx_core::query_as::query_as(
+                "select id, title, state::text, deps, repo_key, lane_id from relay.tasks
+                 where run_id = $1 and phase <> 'planning' order by id",
+            )
+            .bind(run)
+            .fetch_all(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(tasks.len(), 2);
+        let t1 = tasks.iter().find(|t| t.1 == "Apply schema deltas").unwrap();
+        let t2 = tasks.iter().find(|t| t.1 == "Add claim handlers").unwrap();
+        assert_eq!((t1.2.as_str(), t1.4.as_str(), t1.5), ("ready", "github.com/o/r", None));
+        assert!(t1.3.is_empty());
+        assert_eq!(t2.3, vec![t1.0]);
+        // The pool now offers t1 first (unblocked), then t2 as an early claim.
+        match pg.relay_claim_next(u1(), a2, t0()).await.unwrap() {
+            RelayClaim::Task(t) => assert_eq!(t.task_id, t1.0),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rejecting_task0_sends_it_to_rework_with_the_critique() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let (run, task0) = fx_task0_under_review(&pg, c1, a1, a2, plan_report(&["t1"])).await;
+        let mut input = review_input();
+        input.verdict = ReviewVerdict::ChangesRequested;
+        input.findings = vec![RelayFindingInput {
+            severity: RelayFindingSeverity::High,
+            class: "unverified_claim".into(),
+            text: "t2's acceptance is not executable".into(),
+            file: None,
+            line: None,
+        }];
+        let out = pg.relay_submit_review(u1(), a1, task0, input).await.unwrap();
+        assert_eq!((out.state, out.round), (RelayTaskState::Rework, 2));
+        // The run stays planning with Task 0 alone; the critique is on record.
+        let (run_state, n_tasks): (String, i64) = sqlx_core::query_as::query_as(
+            "select r.state::text, (select count(*) from relay.tasks t where t.run_id = r.id)
+             from relay.runs r where r.id = $1",
+        )
+        .bind(run)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!((run_state.as_str(), n_tasks), ("planning", 1));
+        let findings: serde_json::Value = sqlx_core::query_scalar::query_scalar(
+            "select props->'findings' from relay.actions where kind = 'reviewed'",
+        )
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(findings[0]["class"], "unverified_claim");
+    }
+
+    #[tokio::test]
+    async fn approving_task0_with_an_invalid_plan_is_refused_and_leaves_the_review_open() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        // t2 depends on itself: a cycle.
+        let (run, task0) = fx_task0_under_review(&pg, c1, a1, a2, plan_report(&["t2"])).await;
+        let err = pg.relay_submit_review(u1(), a1, task0, review_input()).await.unwrap_err();
+        match err {
+            RelayError::PlanInvalid(msg) => assert!(msg.contains("t2"), "{msg}"),
+            other => panic!("{other:?}"),
+        }
+        // Nothing moved: still in review, the claim intact, no verdict row,
+        // the run still planning, no tasks unpacked.
+        let (state, claimed_by): (String, Option<Uuid>) = sqlx_core::query_as::query_as(
+            "select state::text, review_claimed_by from relay.tasks where id = $1",
+        )
+        .bind(task0)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!((state.as_str(), claimed_by), ("in_review", Some(a1)));
+        let reviewed: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where kind = 'reviewed'",
+        )
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(reviewed, 0);
+        let (run_state, n_tasks): (String, i64) = sqlx_core::query_as::query_as(
+            "select r.state::text, (select count(*) from relay.tasks t where t.run_id = r.id)
+             from relay.runs r where r.id = $1",
+        )
+        .bind(run)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!((run_state.as_str(), n_tasks), ("planning", 1));
+        // A report with no plan block at all is refused the same way.
+        let (_, task0b) = {
+            let (i3,) = (v7(0xc5),);
+            fx_item(&pg, u1(), i3, "backlog", Some("github.com/o/r"), None).await;
+            let out = pg.relay_create_run(u1(), run_input(Some(c1), vec![i3]), t0()).await.unwrap();
+            // A2 still holds Task 0 (working → in_review floats it): release the review claim on the first so A1 can claim this one.
+            pg.relay_release_task(u1(), a1, task0, None, t0()).await.unwrap();
+            pg.relay_claim_task(u1(), a2, out.planning_task_id, t0()).await.unwrap();
+            pg.relay_report_task(u1(), a2, out.planning_task_id, task0_report("I planned it in prose.".into())).await.unwrap();
+            pg.relay_claim_review(u1(), a1, out.planning_task_id, t0()).await.unwrap();
+            (out.run_id, out.planning_task_id)
+        };
+        let err = pg.relay_submit_review(u1(), a1, task0b, review_input()).await.unwrap_err();
+        assert!(matches!(err, RelayError::PlanInvalid(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn run_completes_when_every_task_is_done() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        // R1: both tasks finished (one done, one cancelled). R2: one still
+        // working. R3: active with no tasks at all. R4: planning.
+        let (r1, r2, r3, r4) = (v7(0xd1), v7(0xd2), v7(0xd3), v7(0xd4));
+        fx_run(&pg, u1(), r1, c1, "active").await;
+        fx_run(&pg, u1(), r2, c1, "active").await;
+        fx_run(&pg, u1(), r3, c1, "active").await;
+        fx_run(&pg, u1(), r4, c1, "planning").await;
+        for (n, run, lane, state) in [
+            (0xd5, r1, Some(a2), "done"),
+            (0xd6, r1, None, "cancelled"),
+            (0xd7, r2, Some(a2), "working"),
+            (0xd8, r2, None, "ready"),
+        ] {
+            let t = v7(n);
+            fx_task(&pg, u1(), t, c1, lane, state, "impl", 1).await;
+            sqlx_core::query::query("update relay.tasks set run_id = $1 where id = $2")
+                .bind(run)
+                .bind(t)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+        let mut tx = pg.pool().begin().await.unwrap();
+        let completed = PgStore::relay_complete_runs(&mut tx, t0()).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(completed, vec![(r1, c1)]);
+        let rows: Vec<(Uuid, String, Option<DateTime<Utc>>)> = sqlx_core::query_as::query_as(
+            "select id, state::text, completed_at from relay.runs where user_id = $1 order by id",
+        )
+        .bind(u1())
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        let by_id = |id: Uuid| rows.iter().find(|r| r.0 == id).unwrap();
+        assert_eq!((by_id(r1).1.as_str(), by_id(r1).2), ("completed", Some(t0())));
+        assert_eq!(by_id(r2).1, "active");
+        assert_eq!(by_id(r3).1, "active");
+        assert_eq!(by_id(r4).1, "planning");
+        // A second pass finds nothing new.
+        let mut tx = pg.pool().begin().await.unwrap();
+        assert!(PgStore::relay_complete_runs(&mut tx, t0()).await.unwrap().is_empty());
+        tx.commit().await.unwrap();
     }
 
     // ── submit_review ──

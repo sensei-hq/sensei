@@ -940,6 +940,10 @@ pub enum RelayError {
     NoActiveCrew,
     /// A register or run that named no crew when the user has several.
     CrewAmbiguous,
+    /// An approval of a Task 0 whose plan cannot unpack (no block, bad
+    /// shape, cycle…): the review is refused and the task stays in review
+    /// for a `changes_requested` instead. The message is `PlanError::message`.
+    PlanInvalid(String),
 }
 
 impl RelayError {
@@ -953,7 +957,8 @@ impl RelayError {
             RelayError::Conflict(_)
             | RelayError::DepsUnmet(_)
             | RelayError::NoActiveCrew
-            | RelayError::CrewAmbiguous => 409,
+            | RelayError::CrewAmbiguous
+            | RelayError::PlanInvalid(_) => 409,
             RelayError::Validation(_) => 422,
             RelayError::NotImplemented(_) => 501,
             RelayError::Internal(_) => 500,
@@ -976,6 +981,7 @@ impl RelayError {
             RelayError::DepsUnmet(_) => "relay_upstream_deps_unmet",
             RelayError::NoActiveCrew => "relay_no_active_crew",
             RelayError::CrewAmbiguous => "relay_crew_ambiguous",
+            RelayError::PlanInvalid(_) => "relay_plan_invalid",
         }
     }
 }
@@ -1840,6 +1846,8 @@ mod tests {
         assert_eq!(E::NoActiveCrew.code(), "relay_no_active_crew");
         assert_eq!(E::CrewAmbiguous.status(), 409);
         assert_eq!(E::CrewAmbiguous.code(), "relay_crew_ambiguous");
+        assert_eq!(E::PlanInvalid("x".into()).status(), 409);
+        assert_eq!(E::PlanInvalid("x".into()).code(), "relay_plan_invalid");
     }
 
     #[test]

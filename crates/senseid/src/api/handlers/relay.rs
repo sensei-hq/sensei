@@ -90,7 +90,8 @@ fn err(e: RelayError) -> (StatusCode, Json<serde_json::Value>) {
         | RelayError::Conflict(m)
         | RelayError::Validation(m)
         | RelayError::NotImplemented(m)
-        | RelayError::DepsUnmet(m) => m.clone(),
+        | RelayError::DepsUnmet(m)
+        | RelayError::PlanInvalid(m) => m.clone(),
         RelayError::SignInRequired => "this machine never signed into a dōjō".to_string(),
         RelayError::NoActiveCrew => {
             "no active crew to join: a coordinator mints one, or name crew_id".to_string()
