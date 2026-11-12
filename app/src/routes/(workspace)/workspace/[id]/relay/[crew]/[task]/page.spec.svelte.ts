@@ -578,7 +578,7 @@ describe('Relay · task r2 — the facts line (L2)', () => {
     const { c } = await open({ task: F.ok(view) });
     const facts = text(one(c, '[data-task-facts]'));
     expect(facts).toMatch(/claude-code|Claude Code/);
-    expect(facts).toContain(hhmm(view.task.assigned_at));
+    expect(facts).toContain(hhmm(view.task.assigned_at!));
     expect(facts).toContain(hhmm(view.task.completed_at!));
   });
 });

@@ -15,6 +15,9 @@
     addedByYou = false,
     ticket = null,
     onadd = null,
+    selectable = false,
+    selected = false,
+    ontoggle = null,
   }: {
     id: string;
     title: string;
@@ -25,6 +28,10 @@
     ticket?: RelayTicket | null;
     /** Given only in Triage: adds this row to the backlog. */
     onadd?: (() => Promise<string | null>) | null;
+    /** Backlog rows only (queue cutover): a checkbox picks the row for a sprint. */
+    selectable?: boolean;
+    selected?: boolean;
+    ontoggle?: (() => void) | null;
   } = $props();
 
   let busy = $state(false);
@@ -44,8 +51,17 @@
   }
 </script>
 
-<div class="border-t border-paper-edge py-2" data-queue-row={id}>
+<div class="border-t border-paper-edge py-2" data-queue-row={id} data-selected={selectable ? selected : undefined}>
  <div class="flex flex-wrap items-center gap-2" data-row-line="1">
+  {#if selectable}
+    <input
+      type="checkbox"
+      data-select
+      aria-label="Pick for a sprint: {title}"
+      checked={selected}
+      onchange={() => ontoggle?.()}
+    />
+  {/if}
   <span class="text-sm" data-queue-title>{title}</span>
   {#each pills as pill, i (pill + i)}
     <span class="text-xs rounded-sm bg-paper-soft px-2 py-0.5 text-ink-mute" data-tag>{pill}</span>

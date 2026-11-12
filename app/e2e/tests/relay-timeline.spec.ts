@@ -93,8 +93,8 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       phase: 'impl',
       brief: { summary: 'Ring up the e2e groceries' },
     });
-    // Delivery starts the task: the holder's envelope pull flips assigned →
-    // working (no start tool exists), which is when steps become postable.
+    // Reading never starts a task (queue cutover, F01): the envelope carries the
+    // assignment, and the holder's first write — the step below — starts it.
     const envelope = await relayGet<{ assignments: Array<{ task_id: string }> }>(
       `/api/relay/tasks?lane_id=${holder.lane_id}`,
       holder.lane_token,

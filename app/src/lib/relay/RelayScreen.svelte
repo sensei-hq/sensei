@@ -29,8 +29,11 @@
   import DecisionRow from './DecisionRow.svelte';
   import MessageRow from './MessageRow.svelte';
   import ComposeBand from './ComposeBand.svelte';
+  import CreateSprintForm from './CreateSprintForm.svelte';
+  import FloatingReviewRow from './FloatingReviewRow.svelte';
   import QueueRow from './QueueRow.svelte';
   import RoleMark from './RoleMark.svelte';
+  import SprintBand from './SprintBand.svelte';
 
   let {
     state,
@@ -110,8 +113,19 @@
   const framing = {
     label: 'What Relay is',
     title: 'Your crew of assistant sessions',
-    text: 'Relay is the hand-off: you assign a task, a lane works it, you read what came back and answer only what needs you.',
+    text: 'Relay is the queue: you pick backlog items into a sprint, lanes claim the work and review each other, the gate merges what a peer approved, and you answer only what needs you.',
   };
+
+  /** The backlog rows the person picked for a sprint, in backlog order. */
+  const selectedItems = $derived(
+    [...(state.queue?.backlog ?? [])]
+      .filter((item) => state.isSelected(item.item_id))
+      .sort((a, b) => a.position - b.position),
+  );
+
+  /** The gate's defaults: the base branch and verify command this repository uses. The
+   *  checkout is the person's to name — the daemon runs the gate on that path. */
+  const sprintDefaults = { base_branch: 'develop', base_checkout: '', verify_cmd: 'make test-fast' };
 
   /** The lanes divided by crew in the main window, flat in a workspace. */
   const grouped = $derived(
@@ -125,17 +139,13 @@
   const crewInfo = $derived<InfoSlot[] | null>(
     state.hasCrew
       ? [
-          {
-            label: 'What Relay is',
-            title: 'Your crew of assistant sessions',
-            text: 'Relay is the hand-off: you assign a task, a lane works it, you read what came back and answer only what needs you.',
-          },
+          framing,
           {
             label: 'How it works',
             steps: [
-              { kanji: '手', icon: KANJI_ICONS['手'], title: 'Assign', text: 'The coordinator puts the next task on a lane.' },
-              { kanji: '作', icon: KANJI_ICONS['作'], title: 'Work', text: 'The lane works, reports, and asks when it must.' },
-              { kanji: '見', icon: KANJI_ICONS['見'], title: 'Read', text: 'You read the summary and answer the open question.' },
+              { kanji: '手', icon: KANJI_ICONS['手'], title: 'Claim', text: 'A lane takes the next review or task from the queue; Task 0 plans a sprint and a peer approves the plan.' },
+              { kanji: '作', icon: KANJI_ICONS['作'], title: 'Work', text: 'The lane works, reports, and asks when it must; its report floats for a peer to review.' },
+              { kanji: '見', icon: KANJI_ICONS['見'], title: 'Read', text: 'The gate merges what a peer approved; you read the summary and answer the open question.' },
             ],
           },
           { label: 'Today', value: today?.value ?? '', text: today?.text ?? '' },
@@ -221,6 +231,16 @@
               },
             ]
           : []),
+        // Queue cutover: a selection on the queue tab opens the sprint form.
+        ...(state.hasCrew && state.tab === 'queue' && state.selectedCount > 0
+          ? [
+              {
+                id: 'create-sprint',
+                label: `Create sprint · ${state.selectedCount}`,
+                onclick: () => (state.creatingSprint = true),
+              },
+            ]
+          : []),
       ],
       // With no crew the info band is the whole screen and cannot be closed (§1b);
       // a failed read has no crew to frame, so it draws no info band at all.
@@ -286,6 +306,26 @@
         </section>
       {/if}
 
+      {#if state.now.floating_reviews.length > 0}
+        <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="reviews">
+          <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">
+            Needs a reviewer · {state.now.floating_reviews.length}
+          </h2>
+          {#each state.now.floating_reviews as review (review.task_id)}
+            <FloatingReviewRow {review} href={taskHref(base, review.crew_id, review.task_id)} />
+          {/each}
+        </section>
+      {/if}
+
+      {#if state.now.runs.length > 0}
+        <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="sprints">
+          <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Sprints · {state.now.runs.length}</h2>
+          {#each state.now.runs as run (run.run_id)}
+            <SprintBand {run} />
+          {/each}
+        </section>
+      {/if}
+
       <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="lanes">
         <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Lanes · {state.now.lanes.length}</h2>
         <!-- The workspace window draws one crew's lanes flat; the main window divides
@@ -319,8 +359,16 @@
                   {#if lane.task}
                     <a class="hover:underline" href={taskHref(base, lane.crew_id, lane.task.id)}>{lane.task.title}</a>
                     <span class="text-xs text-ink-faint"> · {since(lane.task.state_changed_at)}</span>
-                  {:else}
-                    Nothing assigned
+                  {:else if !lane.reviewing}
+                    Nothing claimed
+                  {/if}
+                  {#if lane.reviewing}
+                    <span data-reviewing={lane.reviewing.id}>
+                      {#if lane.task}<span class="text-xs text-ink-faint"> · </span>{/if}
+                      <span class="text-xs text-ink-mute">reviewing</span>
+                      <a class="hover:underline" href={taskHref(base, lane.crew_id, lane.reviewing.id)}>{lane.reviewing.title}</a>
+                      <span class="text-xs text-ink-faint"> · {since(lane.reviewing.claimed_at)}</span>
+                    </span>
                   {/if}
                 </div>
               </div>
@@ -360,6 +408,18 @@
           />
         </div>
       {:else if state.queue}
+        {#if state.creatingSprint}
+          <CreateSprintForm
+            selected={selectedItems}
+            defaults={sprintDefaults}
+            error={state.sprintError}
+            onsubmit={(draft) => state.createSprint(draft)}
+            oncancel={() => {
+              state.creatingSprint = false;
+              state.sprintError = null;
+            }}
+          />
+        {/if}
         <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="triage">
           <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Triage · {state.queue.triage.length}</h2>
           {#if state.addError}
@@ -390,6 +450,9 @@
               sprint={item.sprint}
               addedByYou={item.added_by_you}
               ticket={item.ticket}
+              selectable
+              selected={state.isSelected(item.item_id)}
+              ontoggle={() => state.toggleSelected(item.item_id)}
             />
           {/each}
         </section>

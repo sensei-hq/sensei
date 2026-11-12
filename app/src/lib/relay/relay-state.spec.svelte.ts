@@ -39,17 +39,18 @@ describe('RelayState · sprint selection', () => {
     expect(s.selectedCount).toBe(0);
   });
 
-  it("runs and floatingReviews derive from now in the daemon's order; empty without a read", () => {
+  it("runs and floatingReviews derive from now in the daemon's order; null without a read", () => {
     const s = new RelayState(reads(F.sprintNow()), F.fakeRelayApi(), {});
-    expect(s.runs.map((r) => r.run_id)).toEqual([F.OTHER_RUN_ID, F.RUN_ID]);
-    expect(s.floatingReviews.map((r) => r.task_id)).toEqual(['t-claim-handlers', 't-ddl-deltas']);
+    expect(s.runs?.map((r) => r.run_id)).toEqual([F.OTHER_RUN_ID, F.RUN_ID]);
+    expect(s.floatingReviews?.map((r) => r.task_id)).toEqual(['t-claim-handlers', 't-ddl-deltas']);
+    // D83: no read is not an empty band — the screen draws its failure notice instead.
     const bare = new RelayState(
       { now: null, nowError: null, queue: null, queueError: null },
       F.fakeRelayApi(),
       {},
     );
-    expect(bare.runs).toEqual([]);
-    expect(bare.floatingReviews).toEqual([]);
+    expect(bare.runs).toBeNull();
+    expect(bare.floatingReviews).toBeNull();
   });
 });
 

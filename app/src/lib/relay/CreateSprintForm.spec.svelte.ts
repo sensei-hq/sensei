@@ -17,9 +17,10 @@ afterEach(() => {
 });
 
 type Body = Omit<RelayCreateRun, 'item_ids' | 'crew_id'>;
+type Submit = (body: Body) => Promise<string | null>;
 
-function mount(over: Partial<{ error: string | null; onsubmit: (body: Body) => Promise<string | null> }> = {}) {
-  const onsubmit = over.onsubmit ?? vi.fn(async () => null);
+function mount(over: Partial<{ error: string | null; onsubmit: Submit }> = {}) {
+  const onsubmit = over.onsubmit ?? vi.fn<Submit>(async () => null);
   const oncancel = vi.fn();
   const m = mountComponent(CreateSprintForm, {
     selected: [F.backlogItem(), F.backlogItem({ item_id: 'b2', title: 'Two' })],
@@ -56,7 +57,7 @@ describe('CreateSprintForm', () => {
   });
 
   it('emits the body the daemon takes', async () => {
-    const onsubmit = vi.fn(async () => null);
+    const onsubmit = vi.fn<Submit>(async () => null);
     const { type, submit } = mount({ onsubmit });
     type('title', 'Sprint 15');
     type('goal', 'Run a sprint from the screen');
@@ -73,7 +74,7 @@ describe('CreateSprintForm', () => {
   });
 
   it('with auto-merge off the checkout is optional and an empty one goes as null', async () => {
-    const onsubmit = vi.fn(async () => null);
+    const onsubmit = vi.fn<Submit>(async () => null);
     const { type, submit, field } = mount({ onsubmit });
     type('title', 'Sprint 15');
     type('goal', 'Hold the merges');

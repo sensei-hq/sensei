@@ -138,7 +138,7 @@
           {task.lane?.model ?? 'model not reported'} ·
           {#if task.lane?.limit_scope}paused · {task.lane.limit_scope}
             {task.lane.limit_resumes_at ? `until ${hhmm(task.lane.limit_resumes_at)}` : 'resume unknown'} ·{/if}
-          {hhmm(task.assigned_at)} → {task.completed_at ? hhmm(task.completed_at) : 'now'} ·
+          {task.assigned_at ? hhmm(task.assigned_at) : 'unclaimed'} → {task.completed_at ? hhmm(task.completed_at) : 'now'} ·
           {roundsLabel(task.rounds)}
         </p>
 

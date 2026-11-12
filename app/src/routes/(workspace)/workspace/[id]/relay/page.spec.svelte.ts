@@ -26,6 +26,8 @@ const LOADER = './+page.js';
 
 const relay = vi.hoisted(() => ({ api: null as unknown }));
 vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api) }));
+// The socket is the route's, pinned in relay-crew-stream.spec — not here.
+vi.mock('$lib/relay/relay-crew-stream.js', () => ({ subscribeCrewStream: vi.fn(() => () => {}) }));
 
 const route = vi.hoisted(() => ({ id: 'w1' }));
 vi.mock('$app/state', () => ({
@@ -315,7 +317,8 @@ describe('Relay · Now — Lanes', () => {
     expect(text(one(lanes, '[data-lane-row="L3"] [data-state]'))).toBe('needs your answer');
     expect(text(one(lanes, '[data-lane-row="L2"] [data-state]'))).toBe('lease lost');
     const idle = need(one(lanes, '[data-lane-row="L5"]'), '[data-lane-row="L5"]');
-    expect(text(idle)).toContain('Nothing assigned');
+    // Queue cutover: work is claimed, never assigned.
+    expect(text(idle)).toContain('Nothing claimed');
     expect(text(one(idle, '[data-state]'))).toBe('idle');
   });
 

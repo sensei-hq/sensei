@@ -77,6 +77,8 @@ export function laneState(lane: RelayLane): string {
 /** A task state as a person reads it. */
 export function taskStateLabel(state: string): string {
   switch (state) {
+    // Queue cutover: minted unclaimed, on no lane.
+    case 'ready': return 'in the pool';
     case 'in_review': return 'in review';
     case 'assigned': return 'assigned';
     case 'working': return 'working';
