@@ -998,6 +998,36 @@ mod tests {
     use TaskEvent as E;
 
     #[test]
+    fn queue_vocabulary_serializes_as_db_labels() {
+        // The queue's vocabulary (phase 1 DDL): a run's lifecycle, who
+        // executes a task, Task 0's phase, the four hand-off kinds.
+        let word = |v: &dyn erased_word::Word| v.word();
+        assert_eq!(word(&RelayTaskPhase::Planning), "planning");
+        assert_eq!(word(&RelayRunState::Planning), "planning");
+        assert_eq!(word(&RelayRunState::Active), "active");
+        assert_eq!(word(&RelayRunState::Completed), "completed");
+        assert_eq!(word(&RelayRunState::Cancelled), "cancelled");
+        assert_eq!(word(&RelayExecutor::Agent), "agent");
+        assert_eq!(word(&RelayExecutor::Broker), "broker");
+        assert_eq!(word(&RelayActionKind::Claimed), "claimed");
+        assert_eq!(word(&RelayActionKind::ReviewClaimed), "review_claimed");
+        assert_eq!(word(&RelayActionKind::Released), "released");
+        assert_eq!(word(&RelayActionKind::Checkpointed), "checkpointed");
+        assert_eq!(word(&RelayTaskState::Ready), "ready");
+    }
+
+    mod erased_word {
+        pub trait Word {
+            fn word(&self) -> String;
+        }
+        impl<T: serde::Serialize> Word for T {
+            fn word(&self) -> String {
+                serde_json::to_value(self).unwrap().as_str().unwrap().to_owned()
+            }
+        }
+    }
+
+    #[test]
     fn transition_happy_path_with_rework_loop() {
         assert_eq!(transition(S::Assigned, E::Started), Ok(S::Working));
         assert_eq!(transition(S::Working, E::Reported), Ok(S::InReview));
@@ -1044,6 +1074,25 @@ mod tests {
         assert!(transition(S::Working, E::Reoffered).is_err());
         assert!(transition(S::Done, E::LeaseLost).is_err());
         assert!(transition(S::Interrupted, E::LeaseLost).is_err());
+    }
+
+    #[test]
+    fn transition_queue_events_claim_release_resume_unpack() {
+        // Queue cutover: a claim lands working (there is no start tool); a
+        // release returns a held task to the pool; reregister resumes
+        // interrupted work where it was; an approved Task 0 unpacks straight
+        // to done.
+        assert_eq!(transition(S::Ready, E::Claimed), Ok(S::Working));
+        assert!(transition(S::Working, E::Claimed).is_err());
+        assert!(transition(S::InReview, E::Claimed).is_err());
+        assert_eq!(transition(S::Assigned, E::Released), Ok(S::Ready));
+        assert_eq!(transition(S::Working, E::Released), Ok(S::Ready));
+        assert!(transition(S::InReview, E::Released).is_err());
+        assert!(transition(S::Rework, E::Released).is_err());
+        assert_eq!(transition(S::Interrupted, E::Resumed), Ok(S::Working));
+        assert!(transition(S::Working, E::Resumed).is_err());
+        assert_eq!(transition(S::Approved, E::Unpacked), Ok(S::Done));
+        assert!(transition(S::Working, E::Unpacked).is_err());
     }
 
     #[test]
@@ -1307,10 +1356,87 @@ mod tests {
     #[test]
     fn validate_props_empty_kinds_take_no_keys() {
         use RelayActionKind as K;
-        for k in [K::Started, K::Delivered, K::Read] {
+        for k in [K::Started, K::Delivered, K::Read, K::ReviewClaimed] {
             assert!(validate_props(k, &json!({})).is_ok(), "{k:?} takes {{}}");
             assert!(validate_props(k, &json!({"x": 1})).is_err(), "{k:?} rejects keys");
         }
+    }
+
+    #[test]
+    fn validate_props_queue_kinds() {
+        use RelayActionKind as K;
+        // claimed: claim_type is required and names task|review; the
+        // dependency status and the unmet list ride along on a task claim.
+        assert!(
+            validate_props(
+                K::Claimed,
+                &json!({"claim_type": "task", "deps_status": "early_claim_gated",
+                        "unmet_deps": ["01931560-9000-7000-8000-000000000015"]})
+            )
+            .is_ok()
+        );
+        assert!(validate_props(K::Claimed, &json!({"claim_type": "review"})).is_ok());
+        assert!(validate_props(K::Claimed, &json!({})).is_err());
+        assert!(validate_props(K::Claimed, &json!({"claim_type": "steal"})).is_err());
+        assert!(
+            validate_props(K::Claimed, &json!({"claim_type": "task", "deps_status": "maybe"}))
+                .is_err()
+        );
+        assert!(validate_props(K::Claimed, &json!({"claim_type": "task", "bogus": 1})).is_err());
+        // released: kind is required (task|review); the reason is the lane's.
+        assert!(
+            validate_props(K::Released, &json!({"kind": "task", "reason": "context full"})).is_ok()
+        );
+        assert!(validate_props(K::Released, &json!({"kind": "review"})).is_ok());
+        assert!(validate_props(K::Released, &json!({"reason": "x"})).is_err());
+        assert!(validate_props(K::Released, &json!({"kind": "lane"})).is_err());
+        // checkpointed: both keys optional, nothing else.
+        assert!(validate_props(K::Checkpointed, &json!({})).is_ok());
+        assert!(
+            validate_props(
+                K::Checkpointed,
+                &json!({"current_step": "clippy", "notes": "3 warnings left"})
+            )
+            .is_ok()
+        );
+        assert!(validate_props(K::Checkpointed, &json!({"files": []})).is_err());
+    }
+
+    #[test]
+    fn validate_props_telemetry_identity_f09() {
+        // F09: a report or a review may name the assistant that produced
+        // it — the three identity keys were a 422 before the queue cutover.
+        let who = json!({"family": "claude", "version": "2.1", "model": "claude-opus-5-5"});
+        assert!(validate_props(RelayActionKind::Reported, &who).is_ok());
+        let mut review = who.as_object().cloned().unwrap();
+        review.insert("verdict".into(), json!("approved"));
+        review.insert("findings".into(), json!([]));
+        assert!(validate_props(RelayActionKind::Reviewed, &serde_json::Value::Object(review)).is_ok());
+        // A gate finding carries the command output tail as `detail`.
+        assert!(
+            validate_props(
+                RelayActionKind::Reviewed,
+                &json!({"verdict": "changes_requested", "findings": [
+                    {"severity": "high", "class": "build_failure", "text": "cargo test failed",
+                     "detail": "error[E0308]: mismatched types"}]})
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_props_message_nudge_keys() {
+        // The sweeper's floating-review nudge is a message to everyone with
+        // its reason, the wait so far, and the task it is about.
+        assert!(
+            validate_props(
+                RelayActionKind::Message,
+                &json!({"to": {"kind": "everyone"}, "surface": "lane", "nudge": true,
+                        "reason": "review_floating", "waiting_min": 17,
+                        "task_id": "01931560-9000-7000-8000-000000000015"})
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1476,6 +1602,10 @@ mod tests {
     fn lease_math_boundaries_q7() {
         assert_eq!(LANE_LEASE_TTL_SECS, 300);
         assert_eq!(REOFFER_GRACE_SECS, 900);
+        // Queue cutover: a review claim survives its lane's lease by 60 s;
+        // a report floating 900 s nudges the crew.
+        assert_eq!(REVIEW_CLAIM_GRACE_SECS, 60);
+        assert_eq!(NUDGE_AFTER_SECS, 900);
         assert!(!lease_expired(1000, 999));
         assert!(lease_expired(1000, 1000));
         assert!(lease_expired(1000, 1001));
@@ -1569,6 +1699,14 @@ mod tests {
         assert_eq!(E::SignInRequired.code(), "relay_signin_required");
         assert_eq!(E::NotImplemented("x".into()).code(), "relay_not_implemented");
         assert_eq!(E::Internal("x".into()).code(), "relay_internal");
+        // Queue cutover: a gated report, and a register/run that cannot
+        // pick the crew — all 409s with their own code.
+        assert_eq!(E::DepsUnmet("x".into()).status(), 409);
+        assert_eq!(E::DepsUnmet("x".into()).code(), "relay_upstream_deps_unmet");
+        assert_eq!(E::NoActiveCrew.status(), 409);
+        assert_eq!(E::NoActiveCrew.code(), "relay_no_active_crew");
+        assert_eq!(E::CrewAmbiguous.status(), 409);
+        assert_eq!(E::CrewAmbiguous.code(), "relay_crew_ambiguous");
     }
 
     #[test]

@@ -97,6 +97,10 @@ Two deviations from the task text, decided at expansion: (1) `claim_review` (sto
 
 Pins: transition table rows above; props allowlists; guidance mentions every new route (a test that greps the constant for each path).
 
+**Steps (expanded 2026-11-12):** Guidance v2 moves to task 2.9 — it would describe routes (`claim_next`, `checkpoint`, `release`, `limit_resume`) that do not exist until then, and a register response must not name a route the daemon 404s. 2.2 stays the DB-free vocabulary: `Planning`, `Claimed`/`Released`/`Checkpointed` (`ReviewClaimed` landed in 2.1), `RelayRunState`, `RelayExecutor`, the four `TaskEvent`s and their rows, the three props allowlists + F09 keys + the nudge keys on `Message`, the three errors, the two constants. The `Message` nudge keys come here too (2.7 reads them). `(Ready, Claimed) → Working` and `(Interrupted, Reoffered) → Ready` (the latter shipped in 2.1).
+- [ ] **S1 (red):** `mod.rs` pins — `queue_vocabulary_serializes_as_db_labels`, `transition_queue_events_claim_release_resume_unpack`, `validate_props_queue_kinds`, `validate_props_telemetry_identity_f09`, `validate_props_message_nudge_keys`, the error and constant pins. `cargo test -p senseid relay::` → fails to compile (new symbols).
+- [ ] **S2 (green):** the enums, events, transition rows, props arms, errors (+ the handler's `err()` match), constants. `cargo test -p senseid relay`, clippy, fmt → green. Commit the pair.
+
 ## Task 2.3: Plan parse + DAG validation (`relay/plan.rs`, DB-free)
 
 ```rust
