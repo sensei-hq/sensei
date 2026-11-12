@@ -721,6 +721,10 @@ pub enum RegisterMode {
     /// Coordinator with `crew_id`, or contributor with `crew_id`: joins.
     /// "One coordinator per crew" is the store's check (part 2).
     JoinCrew,
+    /// Contributor without `crew_id` (#402, queue cutover): joins the
+    /// user's single active crew — none is `relay_no_active_crew`, more
+    /// than one `relay_crew_ambiguous` (the store's call).
+    JoinActiveCrew,
 }
 
 /// Coordinator without `crew_id` mints; a contributor without one is refused.
@@ -1712,14 +1716,15 @@ mod tests {
     }
 
     #[test]
-    fn register_mode_mint_join_refuse_q6() {
+    fn register_mode_mint_join_or_join_active_q6_402() {
         use RegisterMode as M;
         use RelayRole as R;
         assert_eq!(register_mode(R::Coordinator, None), Ok(M::MintCrew));
         assert_eq!(register_mode(R::Coordinator, Some("c1")), Ok(M::JoinCrew));
         assert_eq!(register_mode(R::Contributor, Some("c1")), Ok(M::JoinCrew));
-        let err = register_mode(R::Contributor, None).unwrap_err();
-        assert!(err.message.contains("crew_id"), "{}", err.message);
+        // #402 (queue cutover): a contributor without crew_id joins the
+        // single active crew instead of being refused.
+        assert_eq!(register_mode(R::Contributor, None), Ok(M::JoinActiveCrew));
     }
 
     #[test]

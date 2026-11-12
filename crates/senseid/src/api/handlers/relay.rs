@@ -491,6 +491,7 @@ pub(crate) async fn register(
                     .map(|w| parse_uuid(w, "workspace_id"))
                     .transpose()
                     .map_err(err)?,
+                suggested_name: None,
             },
             chrono::Utc::now(),
         )
@@ -2169,10 +2170,21 @@ mod tests {
         coord: &(String, String, String),
     ) -> (String, String, String) {
         // A held working task: returns (task_id, holder_lane, holder_token).
+        // F01 (queue cutover): reading the envelope starts nothing; the
+        // holder's first write — a step here — does.
         let (holder, token) = register_contributor(h, &coord.2).await;
         let task_id = assigned_task(h, coord, &holder).await;
         let _ =
             call(h, "GET", &format!("/api/relay/tasks?lane_id={holder}"), None, Some(&token)).await;
+        let (status, body) = call(
+            h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/steps"),
+            Some(lane_body(&holder, json!({"key": "start", "title": "Start", "state": "open"}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         (task_id, holder, token)
     }
 
@@ -3219,9 +3231,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn heartbeat_clears_pause_only_past_resume() {
-        // Beating before resumes_at keeps the pause (still on quota);
-        // beating after it resumes. Unknown resume clears on next beat.
+    async fn heartbeat_never_ends_a_pause() {
+        // F03 (queue cutover): a beat renews the lease and nothing else —
+        // before resumes_at, past it, and with no resume time at all. The
+        // sweeper ends a pause at resumes_at; the lane ends it early with
+        // limit_resume.
         let h = harness().await;
         let coord = register_coordinator(&h).await;
         let (lane_id, token) = register_contributor(&h, &coord.2).await;
@@ -3239,7 +3253,6 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let lane = now_lane(&h, &lane_id).await;
         assert_eq!(lane["limit_scope"], "daily", "{lane}");
-        // Past the resume time the same beat resumes.
         h.state
             .pg
             .relay_heartbeat(
@@ -3249,8 +3262,21 @@ mod tests {
             .await
             .unwrap();
         let lane = now_lane(&h, &lane_id).await;
-        assert!(lane["limit_scope"].is_null(), "{lane}");
-        assert!(lane["limit_resumes_at"].is_null(), "{lane}");
+        assert_eq!(lane["limit_scope"], "daily", "a beat past resumes_at: {lane}");
+        let (status, _) =
+            limit_pause(&h, &lane_id, &token, "other", serde_json::Value::Null, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let lane = now_lane(&h, &lane_id).await;
+        assert_eq!(lane["limit_scope"], "other", "an unknown resume: {lane}");
     }
 
     #[tokio::test]
@@ -4080,8 +4106,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn heartbeat_ending_a_pause_emits_lane_resumed() {
-        // Unknown resume time: the next beat ends the pause.
+    async fn heartbeat_on_a_paused_lane_emits_nothing() {
+        // F03 (queue cutover): a beat ends no pause, so it announces no
+        // resume — not even with an unknown resume time.
         let h = harness().await;
         let coord = register_coordinator(&h).await;
         let (lane_id, token) = register_contributor(&h, &coord.2).await;
@@ -4098,11 +4125,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let event = event_for(&mut rx, "lane", "resumed").await;
-        assert_eq!(
-            event,
-            lane_event_why("update", "resumed", &lane_id, &coord.2, "limit_pause_ended")
-        );
+        assert!(rx.try_recv().is_err(), "a beat on a paused lane emitted an event");
     }
 
     #[tokio::test]
