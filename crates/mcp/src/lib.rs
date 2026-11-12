@@ -515,6 +515,8 @@ pub fn daemon_request_for(
                 "goal",
                 "repo_key",
                 "workspace_id",
+                // Queue cutover: the name the assistant proposes for itself.
+                "suggested_name",
             ] {
                 if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
                     body.insert(k.into(), v.clone());
@@ -522,6 +524,49 @@ pub fn daemon_request_for(
             }
             // Register MINTS the token: no auth header.
             Some(DaemonRequest::post_json("/api/relay/register", Value::Object(body)))
+        }
+        // ── Queue cutover: the claim loop ──
+        "relay_claim_next" => {
+            let body = relay_lane_body(args);
+            Some(relay_authed(
+                DaemonRequest::post_json("/api/relay/tasks/claim_next", Value::Object(body)),
+                args,
+            ))
+        }
+        "relay_claim_task"
+        | "relay_claim_review"
+        | "relay_release_task"
+        | "relay_checkpoint_task" => {
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let (op, keys): (&str, &[&str]) = match tool {
+                "relay_claim_task" => ("claim", &[]),
+                "relay_claim_review" => ("claim_review", &[]),
+                "relay_release_task" => ("release", &["reason"]),
+                _ => ("checkpoint", &["current_step", "notes", "steps"]),
+            };
+            let mut body = relay_lane_body(args);
+            relay_forward(&mut body, args, keys);
+            Some(relay_authed(
+                DaemonRequest::post_json(
+                    format!("/api/relay/tasks/{}/{op}", path_segment(task_id)),
+                    Value::Object(body),
+                ),
+                args,
+            ))
+        }
+        "relay_limit_resume" => {
+            let body = relay_lane_body(args);
+            Some(relay_authed(
+                DaemonRequest::post_json("/api/relay/limit_resume", Value::Object(body)),
+                args,
+            ))
+        }
+        "relay_get_queue" => {
+            let lane_id = args["lane_id"].as_str().unwrap_or("");
+            Some(relay_authed(
+                DaemonRequest::get("/api/relay/queue").with_query("lane_id", lane_id),
+                args,
+            ))
         }
         "relay_heartbeat" | "relay_reregister" | "relay_unregister" => {
             let op = tool.strip_prefix("relay_").unwrap_or(tool);
@@ -768,11 +813,15 @@ pub fn build_relay_wait_request(
     lane_id: &str,
     lane_token: &str,
     timeout_ms: Option<u64>,
-    _timeout_seconds: Option<u64>,
+    timeout_seconds: Option<u64>,
 ) -> DaemonRequest {
     let mut req = DaemonRequest::get("/api/relay/tasks/wait").with_query("lane_id", lane_id);
     if let Some(ms) = timeout_ms {
         req = req.with_query("timeout_ms", ms.to_string());
+    }
+    // #404: seconds ride beside milliseconds; the daemon reads ms first.
+    if let Some(secs) = timeout_seconds {
+        req = req.with_query("timeout_seconds", secs.to_string());
     }
     req.headers.push(("authorization".into(), format!("Bearer {lane_token}")));
     req
@@ -1332,18 +1381,19 @@ pub fn handle_list_tools() -> Value {
             // Lane calls authenticate over the Authorization header (never the
             // query); `lane_token` never appears in a path, query or body.
             tool("relay_register",
-                "Register a relay lane: join a crew with its crew_id, or mint a crew as a coordinator (goal/repo_key/workspace_id ride the mint). Answers the lane token — every other lane call authenticates with it — plus lane_title, minted as `<code> · <family>` (bare code when family is empty), persisted on the lane and shown in census. The guidance it answers spells out the 600-char caps (messages, briefs, summaries, notes — 422 above) and how to work within them.",
+                "Register a relay lane. With no role and no crew_id you join the one active crew as a contributor (409 relay_no_active_crew / relay_crew_ambiguous when there is none or several — then name crew_id); a coordinator without crew_id mints a crew (goal/repo_key/workspace_id ride the mint). Answers the lane token — every other lane call authenticates with it — plus lane_title: your suggested_name when you offer one, else `<code> · <family>` (bare code when family is empty), persisted on the lane and shown in census. The guidance it answers (v2) spells out the claim loop and the 600-char caps (messages, briefs, summaries, notes — 422 above) and how to work within them.",
                 &[
-                    ("role", "string", "coordinator (mint or join) | contributor (join: crew_id required)"),
                     ("family", "string", "Lane family, e.g. claude-code"),
                 ],
                 &[
+                    ("role", "string", "coordinator | contributor (default contributor)"),
+                    ("suggested_name", "string", "The name you propose for yourself: becomes the lane title (the code stays the handle)"),
                     ("version", "string", "Lane version"),
                     ("model", "string", "Model the lane runs"),
                     ("capabilities", "array", "What the lane can do"),
                     ("repo", "string", "The lane's checkout"),
                     ("worktree", "string", "The lane's worktree"),
-                    ("crew_id", "string", "Crew to join (contributors must give it; coordinators mint without it)"),
+                    ("crew_id", "string", "Crew to join; omitted, the one active crew (coordinators mint without it)"),
                     ("goal", "string", "Crew goal (mint only)"),
                     ("repo_key", "string", "Crew repository, owner/repo#12 form (mint only)"),
                     ("workspace_id", "string", "Crew workspace uuid (mint only)"),
@@ -1370,23 +1420,83 @@ pub fn handle_list_tools() -> Value {
                 ],
                 &[]),
             tool("relay_get_tasks",
-                "Read the lane envelope: messages, answers, reviews (both directions), and the one assignment. Delivery marks the assignment started.",
+                "Read the lane envelope: messages, answers, the review you claimed, and the task you hold. Reading never starts a task: claim with relay_claim_next.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
                 ],
                 &[]),
             tool("relay_wait_for_task",
-                "Hold the envelope open until something lands (message, answer, review, assignment) or the hold elapses — then an empty envelope. Handled inline on a longer-timeout client.",
+                "Hold the envelope open until something addressed to you lands (message, answer, a review you claimed, the task you hold) or the hold elapses — then an empty envelope. Handled inline on a longer-timeout client. Unknown query keys are refused (400).",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
                 ],
                 &[
                     ("timeout_ms", "integer", "Hold length, clamped to 1..=50000 (default 25000)"),
+                    ("timeout_seconds", "integer", "Hold length in seconds, read when timeout_ms is absent (same clamp)"),
                 ]),
+            tool("relay_claim_next",
+                "Claim the next piece of work for this lane, atomically: a floating review first (never your own report), then a ready task whose dependencies are done, then a ready task you may start early (its report is gated until its dependencies are done). Answers claim_type review|task|none with the task's shape; a claimed task lands working on you.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                ],
+                &[]),
+            tool("relay_claim_task",
+                "Claim a named ready task from the crew's queue (409 when you already hold one or it is not ready).",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                ],
+                &[]),
+            tool("relay_claim_review",
+                "Claim a named floating review (never your own report; one review claim per lane). Answers the report to review.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                ],
+                &[]),
+            tool("relay_checkpoint_task",
+                "Save in-turn progress on the task you hold without moving it: current_step, notes, and checklist steps. The holder's first write starts an assigned task.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                ],
+                &[
+                    ("current_step", "string", "The ≤600-char step you are on"),
+                    ("notes", "string", "≤600-char notes for whoever resumes"),
+                    ("steps", "array", "[{key, title, state, reason?}] checklist steps (upsert by key)"),
+                ]),
+            tool("relay_release_task",
+                "Give a claim back: a held task returns to the pool (checkpoint kept); a claimed review floats again.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                    ("task_id", "string", "Task uuid"),
+                ],
+                &[
+                    ("reason", "string", "The ≤600-char reason, recorded on the release"),
+                ]),
+            tool("relay_limit_resume",
+                "End a quota pause early. Heartbeats never end it; the sweeper ends it at resumes_at. Answers resumed true|false.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                ],
+                &[]),
+            tool("relay_get_queue",
+                "Read the crew's claim queue (read-only): floating reviews, ready tasks, claim-early tasks with their unmet dependencies. Reading never claims.",
+                &[
+                    ("lane_id", "string", "The lane's uuid"),
+                    ("lane_token", "string", "The register-minted token"),
+                ],
+                &[]),
             tool("relay_report_task",
-                "Report a work or rework turn: moves the task to review (first report picks the reviewer, least-loaded live lane). partial:true records progress without moving.",
+                "Report a work or rework turn: a full report floats the task on the review queue and frees your lane (any other lane claims the review); 409 relay_upstream_deps_unmet while a dependency is not done. partial:true records progress without moving.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
@@ -1406,7 +1516,7 @@ pub fn handle_list_tools() -> Value {
                     ("telemetry", "object", "Turn telemetry (tokens_*, started/ended_at, subagents, …)"),
                 ]),
             tool("relay_submit_review",
-                "Review as the picked reviewer: approved holds the task for merge; changes_requested sends it back and bumps the round.",
+                "Review a report you claimed (relay_claim_next / relay_claim_review): approved hands the task to the broker's merge gate when it names a branch in a gated run (done at once with nothing to merge); changes_requested sends it back and bumps the round.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
