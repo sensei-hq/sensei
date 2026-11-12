@@ -1,8 +1,8 @@
 # Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue → develop)
 
-**Slice:** Relay autonomous queue — phases 1–5 COMPLETE on the branch, merged into develop with `--no-ff` and pushed
-(this commit is the last on the branch before the merge). The release cut (bump → PR to main → `make release`) is the
-user's call and has not been made. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/{README,2-daemon,3-mcp,4-app}.md`
+**Slice:** Relay autonomous queue — phases 1–5 COMPLETE, merged into develop `072ffec80`; `origin/main` merged back
+(`99038648a`, LICENSE), CHANGELOG dated (`f0d4e3f8c`), bumped to v0.22.0 (`8e60fd7c1`), release PR develop → main
+open (user, 2026-11-12: "merge then minor"). Merging the PR and `make release` on main remain the user's. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/{README,2-daemon,3-mcp,4-app}.md`
 (every step ticked, "Executed" notes per task).
 
 **Done:**
@@ -18,12 +18,13 @@ user's call and has not been made. Plan: `docs/plan/2026-11-10-relay-autonomous-
   invented a type), `ac4951b65` (#161 typed inputs), `2e5265d39` (ratchet 1,136 → 1,153, measured).
 - README risk "upgrade path on other machines" resolved: v0.21.1 ships no `relay` schema; the installer reconciles.
 
-**Remaining (release, user's call):** on develop, `git merge origin/main` (LICENSE, #370) → `make bump v=minor` → PR to
-main → `make release`; then verify the shipped artifact reproduces the smoke loop and the diagrams section.
+**Remaining (user's call):** fix develop's two pre-existing CI reds (bootstrap `sql_test_runner` on CI; `cargo audit`
+RUSTSEC-2026-0459) so the protected-branch PR goes green → merge the PR → `make release` on main → verify the shipped
+artifact reproduces `scripts/relay-queue-smoke.sh` and the diagrams section.
 
-**Next command:** in `lanes/merge` (develop): `git merge --no-edit origin/main && make bump v=minor`.
+**Next command:** `gh pr checks <release PR>`; when green and merged: `git checkout main && git pull && make release`.
 
-**Open questions (user):** cut the release now, or batch it with the diagrams fix queued in `docs/backlog.md`?
+**Open questions (user):** none — the release is in flight; the diagrams fix is queued behind it.
 
 **Known broken:** the diagrams section on a released (main) app against a develop daemon — main ⇄ develop discrepancy,
 queued in `docs/backlog.md` "Open — not yet filed". `sensei_test` (Rust template) is stamped for this DDL tree, which
