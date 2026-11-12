@@ -1,48 +1,30 @@
-# Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue, cut from develop @ 598045196)
+# Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue → develop)
 
-**Slice:** Relay autonomous queue — phases 2 (daemon), 3 (MCP) and 4 (app) COMPLETE; phase 5 (docs + issue triage)
-then the merge to develop next. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/{README,2-daemon,3-mcp,4-app}.md`
-(each task has ticked steps + "Executed" notes).
+**Slice:** Relay autonomous queue — phases 1–5 COMPLETE on the branch, merged into develop with `--no-ff` and pushed
+(this commit is the last on the branch before the merge). The release cut (bump → PR to main → `make release`) is the
+user's call and has not been made. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/{README,2-daemon,3-mcp,4-app}.md`
+(every step ticked, "Executed" notes per task).
 
 **Done:**
-- Phase 1 (DB additive) on develop @ `b9eb57ac2`; phase-1 checkpoint docs @ `598045196`.
-- 2.1 DDL cutover `75bb808c9`+`ddaf9be49`; 2.2 vocabulary/state machine/props/errors; 2.3 plan parse
-  (`relay/plan.rs`); 2.4 claims/release/checkpoint/limit_resume; 2.5 runs/Task 0/unpack/complete
-  (`df4fb2787`+`99cb93dfb`); 2.6 store cutover `d0db800bd`+`f1a50fa39` (deps gate, F01/F03/F04/F05/F08/F10,
-  nothing-to-merge → done, #402 join-active-crew, `RegisterMode::{Mint,Join,JoinActive}`); 2.7 sweeper
-  `d5f9c1952`+`220f216a0` (pause end at resumes_at, abandoned review claims after 60 s, waiter eviction, nudges per
-  900 s window, ready broker-task selection, `LIMIT_PAUSE_CLEAR`); 2.8 gate `b2aae4702`+`537a5b814`
-  (`relay/gate.rs` GateSpec/GateRunner/GitGateRunner over `agent_spawn::run_agent`, gate task minted on a branched
-  approval in a gated run, outcome write merged/rework/blocked + `retry|skip_gate`, ticker `pass`, twelve finding
-  classes seeded — `make test-template` rebuilt).
-- 2.9 routes `4d8bca384`+`bc583372f` (claim_next/claim/checkpoint/release/limit_resume, GET /api/relay/queue,
-  POST /relay/runs 201, register role default + suggested_name, strict wait queries + timeout_seconds, waiter row,
-  unpack + run.activated events, `relay_run(change, run_id, crew_id)`, guidance v2).
-- Proof at `bc583372f`: `cargo test -p senseid relay -- --test-threads=1` 371/371; mcp green; clippy `-D warnings` +
-  fmt clean; fabrication checker clean; `make test-fast` green.
+- Phases 1–4: DB `b9eb57ac2` on develop; daemon cutover live + `scripts/relay-queue-smoke.sh` PASSED; seven `relay_*`
+  MCP tools installed; app sprint band / create-sprint / floating reviews, `relay-sprint` e2e PASSED; service + app
+  installed.
+- 5.1 docs sync `616ebf188` (PRD, data model, architecture, journeys, features, design status, CHANGELOG).
+- 5.2 issues: #399 #400 #401 #402 #403 #404 #405 closed with comments; #415 narrowed + retitled; #398 #396 #393
+  noted; backlog row `42de5033e`.
+- 5.3 verification on the final tree: fmt + clippy (CI flags) clean; `make test` green end to end — crates, app unit
+  3418, dōjō unit 2400, svelte-check, plugin, SQL 100 files (after `scripts/deploy-dojo-db.sh` converged the stale
+  local Supabase). Branch-caused failures fixed red-first: `e4dc5f2d2`+`fa82e955b` (walk: blanket `impl<T> … for T`
+  invented a type), `ac4951b65` (#161 typed inputs), `2e5265d39` (ratchet 1,136 → 1,153, measured).
+- README risk "upgrade path on other machines" resolved: v0.21.1 ships no `relay` schema; the installer reconciles.
 
-- 2.11 `89db14674`+`b73869769` (now.runs / floating_reviews / lane reviewing + suggested_name; task header run_id /
-  deps_status / unmet_deps). 2.10: backup → `dbd reconcile --allow-destructive` (13 planned-unassigned live tasks
-  moved to `ready` first — the coherence check refused the alter) → `dbd import -n staging.finding_classes` →
-  `make install-service` → `scripts/relay-queue-smoke.sh` PASSED (both gate merges real, run completed).
+**Remaining (release, user's call):** on develop, `git merge origin/main` (LICENSE, #370) → `make bump v=minor` → PR to
+main → `make release`; then verify the shipped artifact reproduces the smoke loop and the diagrams section.
 
-- Phase 3 `c710a4e56`+`e55630a65`: seven `relay_*` queue tools, register `suggested_name` (role/crew_id optional),
-  wait `timeout_seconds`, doc edits, session-start hook text; `cargo test -p sensei-mcp` 100 + 5 green, hook tests
-  25/25; `make install-service` — the installed `sensei-mcp` lists the seven.
+**Next command:** in `lanes/merge` (develop): `git merge --no-edit origin/main && make bump v=minor`.
 
-- Phase 4 `1df058804` (red, `--no-verify`: the hook's app unit run refuses a red by design) + `b82fc174e`: sprint band,
-  create-sprint form, floating reviews, reviewing lanes, crew stream subscriber, timeline labels; `bun run check` 0
-  errors, vitest 273 files / 3418 tests, `relay-sprint` e2e PASSED on the e2e bundle (fresh `sensei_e2e` from this
-  branch's DDL via `SENSEI_DDL_DIR`); `make install-app` run after.
+**Open questions (user):** cut the release now, or batch it with the diagrams fix queued in `docs/backlog.md`?
 
-**Remaining:** phase 5 (README: docs/prd relay pages + data model + architecture + journeys synced with the shipped
-surface, `make check-doc-links`, issue triage with `gh`, backlog note), then merge `lane/relay-autonomous-queue` into
-develop green and push.
-
-**Next command:** in `lanes/relay-queue`: read `docs/plan/2026-11-10-relay-autonomous-queue/README.md` "Phase 5",
-edit the named docs, `make check-doc-links`.
-
-**Open questions (user):** none blocking. Deviations recorded per task in `2-daemon.md`.
-
-**Known broken:** none on the branch. `sensei_test` (Rust template) is stamped for THIS tree — rebuild with
-`make test-template` from whichever worktree runs the Rust suite next (#142). Live daemon DB NOT converged (2.10).
+**Known broken:** the diagrams section on a released (main) app against a develop daemon — main ⇄ develop discrepancy,
+queued in `docs/backlog.md` "Open — not yet filed". `sensei_test` (Rust template) is stamped for this DDL tree, which
+develop shares after the merge.

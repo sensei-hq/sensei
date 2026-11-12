@@ -70,6 +70,13 @@ The design's §1.2 findings were checked against the live code. The plan targets
 ## Risks to carry
 
 - **Upgrade path on other machines.** `sensei upgrade` deploys DDL with embedded dbd-core, which does not ALTER-add columns (memory: `dbd reconcile = incremental DDL`). Until the upgrade path runs a reconcile for `relay`, a machine upgrading from slice 1 keeps the old relay schema. Raise as its own item in phase 5 if not already tracked.
+  **Resolved in phase 5 (2026-11-12), no issue needed:** the premise was stale on both counts. `sensei upgrade` runs
+  `dbd reconcile` with `allow_destructive` and a pre-reconcile backup (`crates/bootstrap/src/database.rs`, the
+  four-phase deploy), so columns are ALTER-added and the cutover's drops converge; and v0.21.1 — the last tag on main —
+  ships no `relay` schema at all (only `dojo.relay_*`), so no released machine holds the pre-cutover shape. The one
+  hazard is a **developer** database that ran a pre-cutover develop build and holds laneless `assigned` tasks:
+  `tasks_lane_coherence` refuses the reconcile until they are moved to `ready` (task 2.10's converge note has the
+  `update`).
 - **The dōjō deploys the relay schema too** (`design.yaml` dojo scope includes `relay` and lists its enums explicitly). Phase 1 adds `relay.run_state` and `relay.task_executor` to that list so `dojo-prod` deploys cleanly. The dōjō app's relay reads (`dojo/src/lib/relay-*.ts`) are untouched by this plan; `review_claimed_by` reaches them only when the dōjō relay screen is next worked.
 - **Live crews during cutover.** The live DB holds 2 crews, 13 lanes, 23 tasks, 0 `in_review`. The cutover copies `reviewer_lane_id → review_claimed_by` for any `in_review` rows before dropping the column; with zero such rows today this is a no-op, but the step stays.
 
@@ -86,9 +93,15 @@ The design's §1.2 findings were checked against the live code. The plan targets
 - Modify: `docs/design/relay-autonomous-queue-and-planning.md` frontmatter `status: draft` → `status: implemented` plus a "Deviations" section pointing at this README's *Grounding corrections*
 - Modify: `CHANGELOG.md`
 
-- [ ] **Step 1:** Edit each file; every claim names the route or function it describes.
-- [ ] **Step 2:** `make check-doc-links` → PASS.
-- [ ] **Step 3:** Commit: `docs(relay): autonomous queue — PRD, data model, architecture, journeys synced with the shipped surface`.
+- [x] **Step 1:** Edit each file; every claim names the route or function it describes.
+- [x] **Step 2:** `make check-doc-links` → PASS.
+- [x] **Step 3:** Commit: `docs(relay): autonomous queue — PRD, data model, architecture, journeys synced with the shipped surface`.
+
+**Executed (2026-11-12):** `616ebf188`. lanes.md §3/§5/§6/§7/§12/§13/§15/§19 rewritten to the shipped routes; lanes-data.md
+gained the three tables, the `tasks` columns as shipped, the waiting ruling as built, `ready` in the stages, the
+`now` sections + `task_queue`, and the four new action kinds; architecture/journeys/features each gained a local-crews
+section; the design doc is `status: implemented` with a *Deviations* section; CHANGELOG *Unreleased* carries Added +
+a BREAKING relay-schema note. `check-doc-links`: no dead links.
 
 ### Task 5.2: Close the superseded issues
 
@@ -109,10 +122,29 @@ Run after phases 2–4 are installed and the smoke loop passed. Each closure com
 | #393 archive completed runs | **Stays open**; note that `relay.runs` now exists and is the archival unit. |
 | #389, #414, #378, #387, #382, #385, #386, #388, #380, #381, #383, #384, #379, #395, #312, #314, #299 | **Unaffected**; no comment. |
 
-- [ ] **Step 1:** For each *Superseded* / *Fixed* / *Already merged* row: `gh issue close <n> --comment "<comment>"`.
-- [ ] **Step 2:** For each *Narrowed* / *Stays open* row with a note: `gh issue comment <n> --body "<note>"`; retitle #415 with `gh issue edit 415 --title "Relay: /sensei:register slash command (register already answers the full lane loop)"`.
-- [ ] **Step 3:** Record the closures in `docs/backlog.md` under the relay entry.
+- [x] **Step 1:** For each *Superseded* / *Fixed* / *Already merged* row: `gh issue close <n> --comment "<comment>"`.
+- [x] **Step 2:** For each *Narrowed* / *Stays open* row with a note: `gh issue comment <n> --body "<note>"`; retitle #415 with `gh issue edit 415 --title "Relay: /sensei:register slash command (register already answers the full lane loop)"`.
+- [x] **Step 3:** Record the closures in `docs/backlog.md` under the relay entry.
+
+**Executed (2026-11-12):** #403 #401 #405 #402 #404 #400 #399 closed with the comments above plus the design/plan/commit-range
+citation; #415 #398 #396 #393 commented; #415 retitled. #400: `lane/400-limit-flow-guidance` (one unrun WIP commit
+`d1f878432`) never merged, so guidance v2 stands and the closure says the branch can be deleted. #399: `217a56643` is on
+develop. The backlog had no relay row (it is an index of open work, not a log), so one was added under *Open work by
+area* naming the closures and what stays open (`42de5033e`).
 
 ### Task 5.3: Release checklist
 
 Follow `~/.claude/CLAUDE.md` → *Release Checklist* (full suite green; clippy + fmt clean; CHANGELOG; docs/skills/agents/website synced; shipped artifact reproduces the smoke loop; merge to main, CI green). The `release` skill runs it.
+
+**Executed (2026-11-12), items 1–4 on the branch:** `cargo fmt --check` and `cargo clippy --workspace --all-targets --
+-D warnings` clean; `make test` green end to end. The first full run surfaced three failures, all this branch's, fixed
+red-first: the Rust walk minted a type from `impl<T: serde::Serialize> Word for T` in `relay::tests` (R4) — such a
+block is now unnameable, `e4dc5f2d2` + `fa82e955b`; the #161 typed-rows rule refused four queue store functions —
+`RelayClaimInput` / `RelayReleaseInput` / `RelayUnpackInput`, `ac4951b65`; the dangling-reference ratchet, raised
+1,136 → 1,153 with the measured note (+15 over 2 new identities, both derive-generated clones), `2e5265d39`. The SQL
+suite needed the stale local Supabase converged first (`scripts/deploy-dojo-db.sh`: reconcile + deploy; 100 files
+pass). CHANGELOG landed in 5.1. Skills/agents: only the session-start hook speaks of relay and phase 3 updated it;
+this repo has no `docs/guide`, `docs/llms` or website copies (the website is a sibling repo that shows no version).
+Items 5–6 (the shipped artifact reproduces `scripts/relay-queue-smoke.sh`; merge to main, CI green) belong to the
+release cut, which is the user's: `make bump` → PR → `make release`. Before the PR, merge `origin/main` back into
+develop — #370's LICENSE reached main by PR only.
