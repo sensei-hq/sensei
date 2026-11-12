@@ -14,6 +14,7 @@
 #![allow(dead_code)]
 
 pub mod envelope;
+pub mod plan;
 
 use serde::{Deserialize, Serialize};
 
