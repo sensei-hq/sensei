@@ -65,8 +65,8 @@ use crate::db::pg_store::relay::{
     RelayCreateRunInput, RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput,
     RelayHandoverInput, RelayHeartbeatOutput, RelayLaneSession, RelayLimitPauseInput,
     RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayPlanInput, RelayReadFilter,
-    RelayRegisterInput, RelayReportInput, RelayResourceRequest, RelayReviewInput, RelayStepInput,
-    RelayTicketInput, RelayTriageInput,
+    RelayRegisterInput, RelayReleaseInput, RelayReportInput, RelayResourceRequest,
+    RelayReviewInput, RelayStepInput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
@@ -463,7 +463,13 @@ pub(crate) async fn release(
     let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
     let out = state
         .pg
-        .relay_release_task(session.user_id, lane_id, task_id, body.reason, chrono::Utc::now())
+        .relay_release_task(RelayReleaseInput {
+            user_id: session.user_id,
+            lane_id,
+            task_id,
+            reason: body.reason,
+            now: chrono::Utc::now(),
+        })
         .await
         .map_err(err)?;
     emit_task(&state, "release", &task_id);
