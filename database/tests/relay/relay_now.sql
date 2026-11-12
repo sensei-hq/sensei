@@ -1,12 +1,17 @@
--- `relay.now` — the Now screen's grain: lanes with task + lease, open person
--- decisions, the manual triage count, today's completed tasks.
+-- `relay.now` — the Now screen's grain: lanes with task + lease + the review
+-- they hold, open person decisions, the manual triage count, today's
+-- completed tasks, open sprint runs counted by state, reports waiting for a
+-- reviewer.
 --
 -- WHAT BREAKS THIS TEST: a lane row missing (every lane reads exactly one, its
--- task/lease null when absent — never dropped); `needs_answer` true on an
--- answered or lane-directed ask, or false on an open person ask; a lane
--- showing its older lease; triage counting ticketed or backlog items; a
--- completed row for yesterday's or a working task; an `approved` task without
--- its fallback stamp; a section outside the four; a non-owner reading a row.
+-- task/lease/reviewing null when absent — never dropped); `needs_answer` true
+-- on an answered or lane-directed ask, or false on an open person ask; a lane
+-- showing its older lease; a lane not showing the review it claimed, or its
+-- suggested name; triage counting ticketed or backlog items; a completed row
+-- for yesterday's or a working task; an `approved` task without its fallback
+-- stamp; a completed run in sprint_summary, or a run's counts off by state; a
+-- claimed review in floating_review; a section outside the six; a non-owner
+-- reading a row.
 --
 -- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
 -- fixtures/relay_apply.ddl relay/relay_now.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_now.sql):
@@ -14,7 +19,7 @@
 -- with --apply the runner applies the DDL and the file skips its own apply.
 --
 -- NOTE (for L0): the sectioned shape (section + id + payload) is proposed —
--- one view, four grains, the daemon selects and shapes. Each section carries
+-- one view, six grains, the daemon selects and shapes. Each section carries
 -- the full grain (no per-row re-join by the daemon). `completed_today` falls
 -- back to `state_changed_at` when `completed_at` is null (approved tasks),
 -- over the UTC calendar day (deterministic, TZ-free). Tracker-side triage
@@ -55,6 +60,24 @@ insert into relay.lanes (user_id, id, crew_id, code, title, role, family, versio
   ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f919',
    '22222222-2222-7000-8000-00000000f909', 'L1', null, 'coordinator', 'claude-code', null, null,
    'github.com/sensei-hq/other', 'x');
+
+-- L5/L6: contributors on C1 with no lease (authors of the two reviews below);
+-- L5 registered under its own name.
+insert into relay.lanes (user_id, id, crew_id, code, family, token_hash, suggested_name) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f915',
+   '11111111-1111-7000-8000-00000000f901', 'L5', 'codex', 'x', 'worker-alpha'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f916',
+   '11111111-1111-7000-8000-00000000f901', 'L6', 'codex', 'x', null);
+
+-- R1: active on C1 (T1 + the three tasks below belong to it). R2: planning on
+-- C2, no tasks yet. R3: completed (out of sprint_summary).
+insert into relay.runs (user_id, id, crew_id, title, goal, state, started_at, completed_at) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f961',
+   '11111111-1111-7000-8000-00000000f901', 'Sprint 1', 'Ship it', 'active', now(), null),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f962',
+   '11111111-1111-7000-8000-00000000f902', 'Sprint 2', 'Plan it', 'planning', null, null),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f963',
+   '11111111-1111-7000-8000-00000000f901', 'Sprint 0', 'Done with', 'completed', now(), now());
 
 -- L1: an expired lease, then the live granted one (newest wins). L2/L4: none.
 -- L3: only an expired one (an expired newest still shows, honestly).
@@ -121,6 +144,23 @@ insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, workspace_id, 
    date_trunc('day', now()) - interval '1 second',
    date_trunc('day', now()) - interval '1 second');
 
+-- T13: ready in the pool. T14: in review, floating (author L5). T15: in
+-- review, claimed by L1 (author L6) — L1 works T1 and reviews T15 at once.
+update relay.tasks set run_id = '11111111-1111-7000-8000-00000000f961'
+ where id = '11111111-1111-7000-8000-00000000f931';
+insert into relay.tasks (user_id, id, crew_id, run_id, lane_id, review_claimed_by, review_claimed_at, repo_key, title, phase, state, round, state_changed_at) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f93c',
+   '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f961', null, null, null,
+   'github.com/sensei-hq/sensei', 'Ready one', 'impl', 'ready', 1, now()),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f93d',
+   '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f961',
+   '11111111-1111-7000-8000-00000000f915', null, null,
+   'github.com/sensei-hq/sensei', 'Floating review', 'tests', 'in_review', 2, '2026-11-05T17:30:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f93e',
+   '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f961',
+   '11111111-1111-7000-8000-00000000f916', '11111111-1111-7000-8000-00000000f911', '2026-11-05T17:40:00Z',
+   'github.com/sensei-hq/sensei', 'Claimed review', 'impl', 'in_review', 1, '2026-11-05T17:35:00Z');
+
 -- A1: open, asked of the person, blocking T1. A2: open, asked of a lane (out).
 -- A3: asked of the person, answered (out). A5: T3's merge. A6/A7: T8's asked
 -- then answered. A9: U2's open person ask.
@@ -185,9 +225,10 @@ declare
   v_ts timestamptz;
   v_sections text[];
 begin
-  -- Exactly the four sections, nothing else.
+  -- Exactly the six sections, nothing else.
   select array_agg(distinct section order by section) into v_sections from relay.now;
-  if v_sections is distinct from array['completed_today', 'lane', 'open_asked', 'triage_count'] then
+  if v_sections is distinct from
+      array['completed_today', 'floating_review', 'lane', 'open_asked', 'sprint_summary', 'triage_count'] then
     raise exception 'relay.now sections wrong, saw %.', v_sections;
   end if;
 
@@ -196,7 +237,8 @@ begin
   if v_json->>'code' is distinct from 'L1' or v_json->>'title' is distinct from 'Diagrams'
      or v_json->>'role' is distinct from 'coordinator'
      or v_json->>'family' is distinct from 'claude-code'
-     or v_json->>'version' is distinct from '2.1' or v_json->>'model' is distinct from 'claude-opus' then
+     or v_json->>'version' is distinct from '2.1' or v_json->>'model' is distinct from 'claude-opus'
+     or v_json->>'suggested_name' is not null then
     raise exception 'L1 lane payload wrong: %.', v_json;
   end if;
   if v_json->'task'->>'id' is distinct from '11111111-1111-7000-8000-00000000f931'
@@ -216,6 +258,26 @@ begin
   if v_json->'lease'->>'state' is distinct from 'granted'
      or (v_json->'lease'->>'expires_at')::timestamptz is distinct from '2026-11-05T18:00:00Z'::timestamptz then
     raise exception 'L1 lease payload wrong (the older expired lease must not win): %.', v_json->'lease';
+  end if;
+
+  -- L1 reviews T15 while working T1; L5 carries its suggested name and reads
+  -- no review; L6's own task is in review (slice 1: still its active task).
+  if v_json->'reviewing'->>'id' is distinct from '11111111-1111-7000-8000-00000000f93e'
+     or v_json->'reviewing'->>'title' is distinct from 'Claimed review'
+     or v_json->'reviewing'->>'phase' is distinct from 'impl'
+     or (v_json->'reviewing'->>'round')::int is distinct from 1
+     or (v_json->'reviewing'->>'claimed_at')::timestamptz is distinct from '2026-11-05T17:40:00Z'::timestamptz then
+    raise exception 'L1 reviewing payload wrong: %.', v_json->'reviewing';
+  end if;
+  select payload into v_json from relay.now where section = 'lane' and id = '11111111-1111-7000-8000-00000000f915';
+  if v_json->>'suggested_name' is distinct from 'worker-alpha' or v_json->'reviewing' is distinct from 'null'::jsonb
+     or v_json->'task'->>'id' is distinct from '11111111-1111-7000-8000-00000000f93d' then
+    raise exception 'L5 payload wrong: %.', v_json;
+  end if;
+  select payload into v_json from relay.now where section = 'lane' and id = '11111111-1111-7000-8000-00000000f916';
+  if v_json->'suggested_name' is distinct from 'null'::jsonb
+     or v_json->'task'->>'id' is distinct from '11111111-1111-7000-8000-00000000f93e' then
+    raise exception 'L6 payload wrong: %.', v_json;
   end if;
 
   -- L2: approved is not active (no task), and no lease row means null — the row
@@ -347,6 +409,60 @@ begin
     raise exception 'old/pre-midnight/working tasks must leave completed_today, saw %.', n;
   end if;
 
+  -- Sprint summary: R1 active with its four tasks counted by state; R2
+  -- planning with none; R3 completed is out.
+  select count(*) into n from relay.now where section = 'sprint_summary'
+   and user_id = 'a1111111-1111-4111-8111-111111111111';
+  if n <> 2 then
+    raise exception 'sprint_summary should hold R1 + R2, saw %.', n;
+  end if;
+  select payload into v_json from relay.now where section = 'sprint_summary' and id = '11111111-1111-7000-8000-00000000f961';
+  if v_json->>'title' is distinct from 'Sprint 1' or v_json->>'goal' is distinct from 'Ship it'
+     or v_json->>'state' is distinct from 'active'
+     or v_json->>'started_at' is null
+     or (v_json->>'total_tasks')::int is distinct from 4
+     or (v_json->>'ready_tasks')::int is distinct from 1
+     or (v_json->>'working_tasks')::int is distinct from 1
+     or (v_json->>'in_review_tasks')::int is distinct from 2
+     or (v_json->>'floating_reviews')::int is distinct from 1
+     or (v_json->>'approved_tasks')::int is distinct from 0
+     or (v_json->>'done_tasks')::int is distinct from 0
+     or (v_json->>'blocked_tasks')::int is distinct from 0
+     or (v_json->>'interrupted_tasks')::int is distinct from 0 then
+    raise exception 'R1 sprint_summary wrong: %.', v_json;
+  end if;
+  select payload into v_json from relay.now where section = 'sprint_summary' and id = '11111111-1111-7000-8000-00000000f962';
+  if v_json->>'state' is distinct from 'planning' or (v_json->>'total_tasks')::int is distinct from 0
+     or v_json->'started_at' is distinct from 'null'::jsonb then
+    raise exception 'R2 sprint_summary wrong: %.', v_json;
+  end if;
+  select crew_id::text into v_text from relay.now where section = 'sprint_summary' and id = '11111111-1111-7000-8000-00000000f962';
+  if v_text is distinct from '11111111-1111-7000-8000-00000000f902' then
+    raise exception 'R2 should carry crew C2, saw %.', v_text;
+  end if;
+
+  -- Floating reviews: T14 only (T15 is claimed), with its author.
+  select count(*) into n from relay.now where section = 'floating_review'
+   and user_id = 'a1111111-1111-4111-8111-111111111111';
+  if n <> 1 then
+    raise exception 'floating_review should hold T14 only, saw %.', n;
+  end if;
+  select payload into v_json from relay.now where section = 'floating_review' and id = '11111111-1111-7000-8000-00000000f93d';
+  if v_json->>'task_id' is distinct from '11111111-1111-7000-8000-00000000f93d'
+     or v_json->>'title' is distinct from 'Floating review' or v_json->>'author_lane_code' is distinct from 'L5'
+     or v_json->'author_lane_title' is distinct from 'null'::jsonb
+     or v_json->>'phase' is distinct from 'tests'
+     or v_json->>'repo_key' is distinct from 'github.com/sensei-hq/sensei'
+     or v_json->>'run_id' is distinct from '11111111-1111-7000-8000-00000000f961'
+     or (v_json->>'round')::int is distinct from 2
+     or (v_json->>'reported_at')::timestamptz is distinct from '2026-11-05T17:30:00Z'::timestamptz then
+    raise exception 'T14 floating_review payload wrong: %.', v_json;
+  end if;
+  select crew_id::text into v_text from relay.now where section = 'floating_review' and id = '11111111-1111-7000-8000-00000000f93d';
+  if v_text is distinct from '11111111-1111-7000-8000-00000000f901' then
+    raise exception 'the T14 row should carry crew C1, saw %.', v_text;
+  end if;
+
   -- Row identity rides alongside the payload (and the triage row is crew-agnostic).
   select count(*) into n from relay.now where section = 'lane'
     and id = '11111111-1111-7000-8000-00000000f911'
@@ -361,15 +477,17 @@ begin
     raise exception 'the triage row should be crew-agnostic.';
   end if;
 
-  -- The daemon owner sees all fourteen rows (5 lanes + 2 asks + 2 triage + 5 completed).
+  -- The daemon owner sees all nineteen rows (7 lanes + 2 asks + 2 triage +
+  -- 5 completed + 2 sprints + 1 floating review).
   select count(*) into n from relay.now
    where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
-  if n <> 14 then
-    raise exception 'the owner should see 14 now rows, saw %.', n;
+  if n <> 19 then
+    raise exception 'the owner should see 19 now rows, saw %.', n;
   end if;
 end $$;
 
--- U1 reads their eleven (4 lanes + asked + triage + 5 completed); U2 their three.
+-- U1 reads their sixteen (6 lanes + asked + triage + 5 completed + 2 sprints +
+-- 1 floating review); U2 their three.
 set local role authenticated;
 select set_config('request.jwt.claims',
   '{"sub":"a1111111-1111-4111-8111-111111111111","role":"authenticated"}', true);
@@ -378,8 +496,8 @@ declare
   n int;
 begin
   select count(*) into n from relay.now;
-  if n <> 11 then
-    raise exception 'U1 should read 11 now rows, saw %.', n;
+  if n <> 16 then
+    raise exception 'U1 should read 16 now rows, saw %.', n;
   end if;
   select count(*) into n from relay.now where section = 'completed_today';
   if n <> 5 then

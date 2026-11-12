@@ -2,8 +2,10 @@
 --
 -- WHAT BREAKS THIS TEST: the workspace gate returning (it must stay optional);
 -- `family` / `token_hash` / `status` turning nullable; a second coordinator
--- per crew; a duplicate code per crew; a lane on a missing crew; a non-v7 id;
--- a non-owner reading or writing a row.
+-- per crew; a departed coordinator still holding the slot (#405); `role`
+-- losing its contributor default; `suggested_name` not reading back (or not
+-- defaulting null); a duplicate code per crew; a lane on a missing crew; a
+-- non-v7 id; a non-owner reading or writing a row.
 --
 -- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
 -- fixtures/relay_apply.ddl relay/relay_crews_lanes.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_crews_lanes.sql):
@@ -172,6 +174,33 @@ begin
     raise exception 'a second coordinator on one crew was accepted.';
   exception when unique_violation then null;
   end;
+
+  -- A departed coordinator holds the slot no longer (#405): once L1 leaves,
+  -- a replacement registers; the history row stays.
+  update relay.lanes set unregistered_at = now() where id = '11111111-1111-7000-8000-00000000f311';
+  insert into relay.lanes (user_id, id, crew_id, code, role, family, repo, token_hash) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f32a',
+     '11111111-1111-7000-8000-00000000f301', 'L8', 'coordinator', 'codex',
+     'github.com/sensei-hq/sensei', 'x');
+  delete from relay.lanes where id = '11111111-1111-7000-8000-00000000f32a';
+  update relay.lanes set unregistered_at = null where id = '11111111-1111-7000-8000-00000000f311';
+
+  -- A register that names no role joins as a contributor; the assistant's
+  -- own name is kept beside the code, null when it offered none.
+  insert into relay.lanes (user_id, id, crew_id, code, family, token_hash, suggested_name) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f32b',
+     '11111111-1111-7000-8000-00000000f302', 'L9', 'codex', 'x', 'worker-alpha');
+  select count(*) into n from relay.lanes
+   where id = '11111111-1111-7000-8000-00000000f32b' and role = 'contributor' and suggested_name = 'worker-alpha';
+  if n <> 1 then
+    raise exception 'lanes.role must default to contributor and suggested_name must read back.';
+  end if;
+  select count(*) into n from relay.lanes
+   where id = '11111111-1111-7000-8000-00000000f322' and suggested_name is null;
+  if n <> 1 then
+    raise exception 'suggested_name must default null.';
+  end if;
+  delete from relay.lanes where id = '11111111-1111-7000-8000-00000000f32b';
 
   -- A lane on a missing crew fails the foreign key.
   begin

@@ -1,14 +1,16 @@
 set search_path to relay, extensions;
 
 -- A registered lane: one assistant session in a crew. Codes are unique per
--- crew only (L1 here is not L1 there); one coordinator per crew.
+-- crew only (L1 here is not L1 there); at most one registered coordinator per
+-- crew, and none required: the broker coordinates.
 create table if not exists relay.lanes (
   user_id         uuid            not null,
   id              uuid            not null,
   crew_id         uuid            not null,
   code            text            not null,
   title           text,
-  role            relay.lane_role not null,
+  suggested_name  text,
+  role            relay.lane_role not null default 'contributor',
   family          text            not null,
   version         text,
   model           text,
@@ -32,7 +34,7 @@ create table if not exists relay.lanes (
 );
 
 create unique index if not exists lanes_one_coordinator
-  on relay.lanes (user_id, crew_id) where role = 'coordinator';
+  on relay.lanes (user_id, crew_id) where role = 'coordinator' and unregistered_at is null;
 
 alter table relay.lanes enable row level security;
 
@@ -40,6 +42,8 @@ comment on table relay.lanes is
 'Registered lanes. Liveness is the lane''s lease, not a column.';
 comment on column relay.lanes.code is 'L1.., unique per crew. The person reads codes, never uuids.';
 comment on column relay.lanes.title is 'Set by the coordinator''s first assign; null until then.';
+comment on column relay.lanes.suggested_name is 'The name the assistant proposed at register (worker-alpha). Null when it offered none; the code stays the handle.';
+comment on column relay.lanes.role is 'contributor by default: the broker coordinates. A coordinator lane is optional and one per crew while registered.';
 comment on column relay.lanes.capabilities is 'What the lane declared at register. Empty, never unknown.';
 comment on column relay.lanes.repo is 'The lane''s checkout. Null when it has none yet (a coordinator minted without a repo).';
 comment on column relay.lanes.worktree is 'The broker-created worktree. Null until the broker makes it.';

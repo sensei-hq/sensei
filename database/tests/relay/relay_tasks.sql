@@ -3,8 +3,11 @@
 -- WHAT BREAKS THIS TEST: `repo_key` turning nullable (the headline rule —
 -- work on a workspace-less repository must still appear); a lane holding two
 -- active tasks (assigned/working/in_review/rework/blocked); a task reviewing
--- itself; a blocked task with no memory of where it was (or any other state
--- carrying one); a non-v7 id; a non-owner reading a row.
+-- itself; a lane claiming the review of its own task; a lane holding two
+-- review claims at once; a broker task with no deterministic spec; a task on
+-- a missing run; `ready` not a usable label; a blocked task with no memory of
+-- where it was (or any other state carrying one); a non-v7 id; a non-owner
+-- reading a row.
 --
 -- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
 -- fixtures/relay_apply.ddl relay/relay_tasks.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_tasks.sql):
@@ -293,6 +296,83 @@ begin
     raise exception 'a v4 task id was accepted.';
   exception when check_violation then null;
   end;
+
+  -- The queue's columns default: no run, no review claim, agent-run, no
+  -- deterministic spec, no checkpoint.
+  select count(*) into n from relay.tasks
+   where id = '11111111-1111-7000-8000-00000000f631'
+     and run_id is null and review_claimed_by is null and review_claimed_at is null
+     and executor = 'agent' and deterministic = '{}'::jsonb and checkpoint = '{}'::jsonb;
+  if n <> 1 then
+    raise exception 'tasks queue-column defaults wrong on T1.';
+  end if;
+
+  -- The author never claims its own review (the claim-side twin of the
+  -- reviewer rule).
+  begin
+    update relay.tasks set review_claimed_by = '11111111-1111-7000-8000-00000000f612'
+     where id = '11111111-1111-7000-8000-00000000f631';
+    raise exception 'a lane claiming the review of its own task was accepted.';
+  exception when check_violation then null;
+  end;
+
+  -- One active review claim per lane: a second in_review task claimed by L1
+  -- is refused while the first is in review.
+  insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state, review_claimed_by, review_claimed_at) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f671',
+     '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'Review one', 'impl', 'in_review',
+     '11111111-1111-7000-8000-00000000f611', now());
+  begin
+    insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state, review_claimed_by, review_claimed_at) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f672',
+       '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'Review two', 'impl', 'in_review',
+       '11111111-1111-7000-8000-00000000f611', now());
+    raise exception 'a lane holding two review claims was accepted.';
+  exception when unique_violation then null;
+  end;
+  delete from relay.tasks where id = '11111111-1111-7000-8000-00000000f671';
+
+  -- The executor is the enum; a broker task names its deterministic spec.
+  begin
+    insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state, executor) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f673',
+       '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'Robot', 'impl', 'assigned', 'robot');
+    raise exception 'an executor outside task_executor was accepted.';
+  exception when invalid_text_representation then null;
+  end;
+  begin
+    insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state, executor) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f674',
+       '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'Bare broker', 'impl', 'assigned', 'broker');
+    raise exception 'a broker task with no deterministic spec was accepted.';
+  exception when check_violation then null;
+  end;
+  insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state, executor, deterministic) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f675',
+     '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'Gate', 'impl', 'assigned', 'broker',
+     '{"action": "gate"}');
+  delete from relay.tasks where id = '11111111-1111-7000-8000-00000000f675';
+
+  -- A task on a missing run fails the foreign key.
+  begin
+    insert into relay.tasks (user_id, id, crew_id, run_id, repo_key, title, phase, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f676',
+       '11111111-1111-7000-8000-00000000f601', '11111111-1111-7000-8000-00000000f6ff',
+       'github.com/sensei-hq/sensei', 'Orphan of a run', 'impl', 'assigned');
+    raise exception 'a task on a missing run was accepted.';
+  exception when foreign_key_violation then null;
+  end;
+
+  -- `ready` is a usable label: an unclaimed pool task reads back.
+  insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f677',
+     '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'In the pool', 'impl', 'ready');
+  select count(*) into n from relay.tasks
+   where id = '11111111-1111-7000-8000-00000000f677' and state = 'ready' and lane_id is null;
+  if n <> 1 then
+    raise exception 'a ready task must read back with no lane.';
+  end if;
+  delete from relay.tasks where id = '11111111-1111-7000-8000-00000000f677';
 
   -- The daemon owner sees all twelve tasks (8 fixtures + 3 coexists + defaults).
   select count(*) into n from relay.tasks

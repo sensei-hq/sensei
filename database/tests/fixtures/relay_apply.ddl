@@ -19,10 +19,15 @@ create schema if not exists staging;
 \ir ../../ddl/enum/relay/task_state.ddl
 \ir ../../ddl/enum/relay/action_kind.ddl
 \ir ../../ddl/enum/relay/limit_scope.ddl
+\ir ../../ddl/enum/relay/run_state.ddl
+\ir ../../ddl/enum/relay/task_executor.ddl
 \ir ../../ddl/table/relay/crews.ddl
+\ir ../../ddl/table/relay/runs.ddl
 \ir ../../ddl/table/relay/lanes.ddl
+\ir ../../ddl/table/relay/lane_waiters.ddl
 \ir ../../ddl/table/relay/leases.ddl
 \ir ../../ddl/table/relay/items.ddl
+\ir ../../ddl/table/relay/run_items.ddl
 \ir ../../ddl/table/relay/tasks.ddl
 \ir ../../ddl/table/relay/actions.ddl
 \ir ../../ddl/table/relay/finding_classes.ddl
@@ -30,16 +35,21 @@ create schema if not exists staging;
 \ir ../../ddl/table/staging/finding_classes.ddl
 \ir ../../ddl/procedure/staging/import_finding_classes.ddl
 \ir ../../ddl/view/relay/now.ddl
+\ir ../../ddl/view/relay/task_queue.ddl
 \ir ../../ddl/view/relay/task_history.ddl
 \ir ../../policies/relay/crews.sql
 \ir ../../policies/relay/lanes.sql
 \ir ../../policies/relay/leases.sql
 \ir ../../policies/relay/items.sql
 \ir ../../policies/relay/tasks.sql
+\ir ../../policies/relay/runs.sql
+\ir ../../policies/relay/run_items.sql
+\ir ../../policies/relay/lane_waiters.sql
 \ir ../../policies/relay/actions.sql
 \ir ../../policies/relay/finding_classes.sql
 \ir ../../policies/relay/daemon_user.sql
 \ir ../../policies/relay/now.sql
 \ir ../../policies/relay/task_history.sql
+\ir ../../policies/relay/task_queue.sql
 \ir ../../apply/after/relay_api_grants.sql
 \endif
