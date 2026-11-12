@@ -8,11 +8,13 @@
 //! (`relay_gate_outcome`); this module never touches the database.
 
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::agent_spawn::{AgentCommand, AgentOutput, run_agent};
 
 /// The whole gate's wall-clock budget when `deterministic` names none.
 pub const GATE_DEFAULT_TIMEOUT_SECS: u64 = 900;
@@ -103,9 +105,217 @@ pub trait GateRunner: Send + Sync {
 pub struct GitGateRunner;
 
 impl GateRunner for GitGateRunner {
-    async fn run(&self, _input: &GateInput) -> GateOutcome {
-        unimplemented!("task 2.8: the git gate")
+    async fn run(&self, input: &GateInput) -> GateOutcome {
+        match git_gate(input).await {
+            Ok(outcome) => outcome,
+            Err(why) => GateOutcome::Error(why),
+        }
     }
+}
+
+/// How much of a command's output a verdict carries.
+const TAIL_CHARS: usize = 2000;
+/// Cleanup commands (worktree removal, merge abort) never spend the gate's
+/// budget: a spent budget still leaves the base clean.
+const CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The gate's one budget: every command takes what is left of it.
+struct Budget {
+    deadline: tokio::time::Instant,
+}
+
+impl Budget {
+    fn new(timeout: Duration) -> Self {
+        Self { deadline: tokio::time::Instant::now() + timeout }
+    }
+
+    fn remaining(&self, what: &str) -> Result<Duration, String> {
+        let left = self.deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return Err(format!("gate timed out before {what}"));
+        }
+        Ok(left)
+    }
+}
+
+/// The last `TAIL_CHARS` of what a command said, stderr after stdout.
+fn tail(out: &AgentOutput) -> String {
+    let text = format!("{}\n{}", out.stdout.trim_end(), out.stderr.trim_end());
+    let text = text.trim();
+    let start = text.len().saturating_sub(TAIL_CHARS);
+    let start = text.char_indices().map(|(i, _)| i).find(|i| *i >= start).unwrap_or(0);
+    text[start..].to_string()
+}
+
+/// Run `program args` in `dir` with `timeout`; a timeout is an error naming
+/// the command, a spawn failure too. The exit code is the caller's to read.
+async fn run_in(
+    program: &str,
+    args: &[&str],
+    dir: &Path,
+    timeout: Duration,
+) -> Result<AgentOutput, String> {
+    let shown = format!(
+        "{} {}",
+        Path::new(program).file_name().map_or(program, |n| n.to_str().unwrap_or(program)),
+        args.join(" ")
+    );
+    let cmd = AgentCommand::new(program, args.iter().map(|a| a.to_string()).collect(), timeout)
+        .with_cwd(dir);
+    let out = run_agent(&cmd).await.map_err(|e| format!("{shown}: {e:?}"))?;
+    if out.timed_out {
+        return Err(format!("gate timed out during `{shown}`"));
+    }
+    Ok(out)
+}
+
+/// `run_in` for a command that must succeed: its trimmed stdout, else the
+/// failure with the tail.
+async fn must(
+    program: &str,
+    args: &[&str],
+    dir: &Path,
+    timeout: Duration,
+) -> Result<String, String> {
+    let out = run_in(program, args, dir, timeout).await?;
+    match out.exit_code {
+        Some(0) => Ok(out.stdout.trim().to_string()),
+        code => Err(format!("`git {}` failed ({code:?}): {}", args.join(" "), tail(&out))),
+    }
+}
+
+async fn git_gate(input: &GateInput) -> Result<GateOutcome, String> {
+    let git = sensei_bootstrap::util::which_binary("git").ok_or("git not installed")?;
+    let budget = Budget::new(input.timeout);
+    let base = input.base_checkout.as_path();
+    if !base.is_dir() {
+        return Err(format!("base checkout {} is not a directory", base.display()));
+    }
+    // The base must be exactly what the run names, and untouched: the gate
+    // merges into it, so a stray edit or another branch is never merged over.
+    let status =
+        must(&git, &["status", "--porcelain"], base, budget.remaining("git status")?).await?;
+    if !status.is_empty() {
+        return Err(format!("base checkout {} is dirty", base.display()));
+    }
+    let head = must(
+        &git,
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+        base,
+        budget.remaining("git rev-parse")?,
+    )
+    .await?;
+    if head != input.base_branch {
+        return Err(format!("base checkout is on {head}, not {}", input.base_branch));
+    }
+    let branch_ref = format!("refs/heads/{}", input.branch);
+    let known = run_in(
+        &git,
+        &["rev-parse", "--verify", "--quiet", &branch_ref],
+        base,
+        budget.remaining("git rev-parse")?,
+    )
+    .await?;
+    if known.exit_code != Some(0) {
+        return Err(format!("branch {} not found in {}", input.branch, base.display()));
+    }
+    // A conflict is known before anything is touched (git ≥ 2.38).
+    let probe = run_in(
+        &git,
+        &["merge-tree", "--write-tree", &input.base_branch, &input.branch],
+        base,
+        budget.remaining("git merge-tree")?,
+    )
+    .await?;
+    match probe.exit_code {
+        Some(0) => {}
+        Some(1) => return Ok(GateOutcome::Conflict { detail: tail(&probe) }),
+        code => return Err(format!("`git merge-tree` failed ({code:?}): {}", tail(&probe))),
+    }
+    if let Some(verify_cmd) = input.verify_cmd.as_deref()
+        && let Some(failed) = verify_merged_tree(&git, input, verify_cmd, &budget).await?
+    {
+        return Ok(failed);
+    }
+    let merge = run_in(
+        &git,
+        &["merge", "--no-ff", "--no-edit", &input.branch],
+        base,
+        budget.remaining("git merge")?,
+    )
+    .await?;
+    if merge.exit_code != Some(0) {
+        // Leave the base as found: a half merge is worse than none.
+        let _ = run_in(&git, &["merge", "--abort"], base, CLEANUP_TIMEOUT).await;
+        return Err(format!("`git merge --no-ff {}` failed: {}", input.branch, tail(&merge)));
+    }
+    let sha = must(&git, &["rev-parse", "HEAD"], base, budget.remaining("git rev-parse")?).await?;
+    Ok(GateOutcome::Merged { sha })
+}
+
+/// Run the verify on the merged tree in a detached temporary worktree of the
+/// branch with the base merged in — the base checkout itself stays as it is.
+/// The worktree is removed whatever happens. `Ok(None)` is a pass.
+async fn verify_merged_tree(
+    git: &str,
+    input: &GateInput,
+    verify_cmd: &str,
+    budget: &Budget,
+) -> Result<Option<GateOutcome>, String> {
+    let base = input.base_checkout.as_path();
+    // A fresh path under the system temp dir: `git worktree add` creates
+    // it, the cleanup below removes it.
+    let worktree = std::env::temp_dir().join(format!("sensei-gate-{}", Uuid::now_v7().simple()));
+    let worktree_str = worktree.to_string_lossy().into_owned();
+    let verdict = async {
+        must(
+            git,
+            &["worktree", "add", "--detach", &worktree_str, &input.branch],
+            base,
+            budget.remaining("git worktree add")?,
+        )
+        .await?;
+        let merged = run_in(
+            git,
+            &["merge", "--no-edit", &input.base_branch],
+            &worktree,
+            budget.remaining("git merge (verify)")?,
+        )
+        .await?;
+        if merged.exit_code != Some(0) {
+            return Err(format!(
+                "merging {} into the verify worktree failed: {}",
+                input.base_branch,
+                tail(&merged)
+            ));
+        }
+        let sh = sensei_bootstrap::util::which_binary("sh").ok_or("sh not installed")?;
+        let out =
+            run_in(&sh, &["-c", verify_cmd], &worktree, budget.remaining("the verify")?).await?;
+        match out.exit_code {
+            Some(0) => Ok(None),
+            Some(exit) => Ok(Some(GateOutcome::VerifyFailed {
+                cmd: verify_cmd.to_string(),
+                exit,
+                tail: tail(&out),
+            })),
+            None => Err("the verify was killed before it exited".into()),
+        }
+    }
+    .await;
+    // Cleanup never spends the budget and never masks the verdict.
+    let removed =
+        run_in(git, &["worktree", "remove", "--force", &worktree_str], base, CLEANUP_TIMEOUT).await;
+    if let Err(why) = removed {
+        tracing::warn!(worktree = %worktree_str, %why, "relay gate: verify worktree not removed");
+    }
+    if worktree.exists()
+        && let Err(why) = std::fs::remove_dir_all(&worktree)
+    {
+        tracing::warn!(worktree = %worktree_str, %why, "relay gate: verify dir not removed");
+    }
+    let _ = run_in(git, &["worktree", "prune"], base, CLEANUP_TIMEOUT).await;
+    verdict
 }
 
 /// A gate that answers with a fixed outcome and remembers what it was asked.

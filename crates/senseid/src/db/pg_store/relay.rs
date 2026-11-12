@@ -2763,7 +2763,12 @@ impl PgStore {
                 .await
                 .map_err(db_err)?;
                 match branch {
-                    Some(Some(_)) => RelayTaskState::Approved,
+                    Some(Some(branch)) => {
+                        // A gated run merges it by the broker (2.8); else
+                        // the person merges by hand.
+                        Self::relay_mint_gate_task(&mut tx, user_id, task_id, &branch).await?;
+                        RelayTaskState::Approved
+                    }
                     _ => {
                         let done = transition(RelayTaskState::Approved, TaskEvent::Merged)
                             .map_err(|_| RelayError::Conflict("task cannot end".into()))?;
@@ -2789,10 +2794,132 @@ impl PgStore {
         Ok(RelayReviewOutput { state: next, round: new_round })
     }
 
+    /// Mint the broker gate task beside an approved task whose report names
+    /// `branch` (2.8): only in a run whose config names `base_checkout` and
+    /// `base_branch` and does not set `auto_merge: false`. No deps — the
+    /// precondition (approval) is met at the mint; `deterministic.task_id`
+    /// names the task. Returns the gate task's id, or none when the task
+    /// is the person's to merge by hand.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
+    async fn relay_mint_gate_task(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        task_id: Uuid,
+        branch: &str,
+    ) -> Result<Option<Uuid>, RelayError> {
+        let task: Option<(Uuid, Option<Uuid>, String, String, Option<Uuid>, String)> =
+            sqlx_core::query_as::query_as(
+                "select crew_id, run_id, title, repo_key, workspace_id, phase::text
+                 from relay.tasks where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(task_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db_err)?;
+        let Some((crew_id, Some(run_id), title, repo_key, workspace_id, phase)) = task else {
+            return Ok(None);
+        };
+        let config: Option<serde_json::Value> = sqlx_core::query_scalar::query_scalar(
+            "select config from relay.runs where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(run_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        let Some(config) = config else {
+            return Err(RelayError::Internal("a task's run is missing".into()));
+        };
+        if config.get("auto_merge").and_then(|v| v.as_bool()) == Some(false) {
+            return Ok(None);
+        }
+        let text = |key: &str| {
+            config.get(key).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty())
+        };
+        let (Some(base_checkout), Some(base_branch)) = (text("base_checkout"), text("base_branch"))
+        else {
+            return Ok(None);
+        };
+        let spec = GateSpec {
+            action: "gate".into(),
+            task_id,
+            branch: branch.to_owned(),
+            base_checkout: std::path::PathBuf::from(base_checkout),
+            base_branch: base_branch.to_owned(),
+            verify_cmd: text("verify_cmd").map(str::to_owned),
+            timeout_seconds: None,
+        };
+        let deterministic = serde_json::to_value(&spec)
+            .map_err(|e| RelayError::Internal(format!("gate spec: {e}")))?;
+        let gate_id = new_id();
+        sqlx_core::query::query(
+            "insert into relay.tasks
+               (user_id, id, crew_id, run_id, repo_key, workspace_id, title, phase, state,
+                round, executor, deterministic, state_changed_at)
+             values ($1, $2, $3, $4, $5, $6, $7, $8::relay.task_phase, 'ready'::relay.task_state,
+                     1, 'broker'::relay.task_executor, $9, current_timestamp)",
+        )
+        .bind(user_id)
+        .bind(gate_id)
+        .bind(crew_id)
+        .bind(run_id)
+        .bind(repo_key.as_str())
+        .bind(workspace_id)
+        .bind(format!("gate: {title}"))
+        .bind(phase.as_str())
+        .bind(deterministic)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        Ok(Some(gate_id))
+    }
+
+    /// A gate task's own end: done at `now`, whatever its verdict was.
+    async fn relay_end_gate_task(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        gate_task_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<(), RelayError> {
+        sqlx_core::query::query(
+            "update relay.tasks set state = 'done'::relay.task_state, completed_at = $1,
+                    state_changed_at = $1
+             where user_id = $2 and id = $3",
+        )
+        .bind(now)
+        .bind(user_id)
+        .bind(gate_task_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        Ok(())
+    }
+
     /// A ready gate task's owner and spec, for the runner (2.8). A task that
     /// is not a broker gate task, or is not `ready`, is not found.
-    pub async fn relay_gate_task(&self, _gate_task_id: Uuid) -> Result<RelayGateTask, RelayError> {
-        unimplemented!("task 2.8: the gate task read")
+    pub async fn relay_gate_task(&self, gate_task_id: Uuid) -> Result<RelayGateTask, RelayError> {
+        let row: Option<(Uuid, Uuid, String, String, serde_json::Value)> =
+            sqlx_core::query_as::query_as(
+                "select user_id, crew_id, executor::text, state::text, deterministic
+                 from relay.tasks where id = $1",
+            )
+            .bind(gate_task_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+        match row {
+            Some((user_id, crew_id, executor, state, deterministic))
+                if executor == "broker" && state == "ready" =>
+            {
+                let spec = GateSpec::parse(&deterministic)
+                    .map_err(|e| RelayError::Internal(format!("gate task {gate_task_id}: {e}")))?;
+                Ok(RelayGateTask { user_id, crew_id, spec })
+            }
+            _ => Err(RelayError::NotFound("gate task not found".into())),
+        }
     }
 
     /// Write a gate's outcome, one transaction (2.8): `Merged` ends the
@@ -2804,11 +2931,221 @@ impl PgStore {
     /// (`retry` | `skip_gate`) and leaves the agent task approved.
     pub async fn relay_gate_outcome(
         &self,
-        _gate_task_id: Uuid,
-        _outcome: &GateOutcome,
-        _now: DateTime<Utc>,
+        gate_task_id: Uuid,
+        outcome: &GateOutcome,
+        now: DateTime<Utc>,
     ) -> Result<RelayGateReport, RelayError> {
-        unimplemented!("task 2.8: the gate outcome write")
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let gate: Option<(Uuid, Uuid, String, String, serde_json::Value)> =
+            sqlx_core::query_as::query_as(
+                "select user_id, crew_id, executor::text, state::text, deterministic
+                 from relay.tasks where id = $1 for update",
+            )
+            .bind(gate_task_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let Some((user_id, crew_id, executor, gate_state, deterministic)) = gate else {
+            return Err(RelayError::NotFound("gate task not found".into()));
+        };
+        if executor != "broker" {
+            return Err(RelayError::NotFound("gate task not found".into()));
+        }
+        if gate_state != "ready" {
+            return Err(RelayError::Conflict(format!("gate task is {gate_state}, not ready")));
+        }
+        let spec = GateSpec::parse(&deterministic)
+            .map_err(|e| RelayError::Internal(format!("gate task {gate_task_id}: {e}")))?;
+        let task: Option<(String, i32, String, String)> = sqlx_core::query_as::query_as(
+            "select state::text, round, phase::text, title from relay.tasks
+             where user_id = $1 and id = $2 for update",
+        )
+        .bind(user_id)
+        .bind(spec.task_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let Some((task_state, round, phase, title)) = task else {
+            return Err(RelayError::Internal("gate task names a missing task".into()));
+        };
+        let cur = parse_state(&task_state)?;
+        if cur != RelayTaskState::Approved {
+            return Err(RelayError::Conflict(format!("gated task is {}, not approved", word(cur))));
+        }
+        let state = match outcome {
+            GateOutcome::Merged { sha } => {
+                let next = transition(cur, TaskEvent::Merged)
+                    .map_err(|_| RelayError::Conflict("task cannot merge".into()))?;
+                sqlx_core::query::query(
+                    "update relay.tasks set state = $1::relay.task_state, completed_at = $2,
+                            state_changed_at = $2
+                     where user_id = $3 and id = $4",
+                )
+                .bind(word(next))
+                .bind(now)
+                .bind(user_id)
+                .bind(spec.task_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                let gates = match spec.verify_cmd.as_deref() {
+                    Some(cmd) => serde_json::json!([{"cmd": cmd, "exit": 0}]),
+                    None => serde_json::json!([]),
+                };
+                let props = serde_json::json!({
+                    "commits": [sha],
+                    "into": spec.base_branch,
+                    "gates": gates,
+                });
+                validate_props(RelayActionKind::Merged, &props)
+                    .map_err(|e| RelayError::Internal(format!("merged props: {}", e.message)))?;
+                sqlx_core::query::query(
+                    "insert into relay.actions
+                       (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                        body_md, props, created_at)
+                     values ($1, $2, $3, $4, null, 'merged'::relay.action_kind, $5,
+                             $6::relay.task_phase, $7, $8, $9)",
+                )
+                .bind(user_id)
+                .bind(new_id())
+                .bind(crew_id)
+                .bind(spec.task_id)
+                .bind(round)
+                .bind(phase.as_str())
+                .bind(format!("Merged by the gate into {}.", spec.base_branch))
+                .bind(props)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                Self::relay_end_gate_task(&mut tx, user_id, gate_task_id, now).await?;
+                next
+            }
+            GateOutcome::Conflict { .. } | GateOutcome::VerifyFailed { .. } => {
+                let (class, text, detail) = match outcome {
+                    GateOutcome::Conflict { detail } => (
+                        "merge_conflict",
+                        format!(
+                            "{} does not merge clean into {}: a merge conflict",
+                            spec.branch, spec.base_branch
+                        ),
+                        detail.as_str(),
+                    ),
+                    GateOutcome::VerifyFailed { cmd, exit, tail } => (
+                        "build_failure",
+                        format!("`{cmd}` exited {exit} on the merged tree"),
+                        tail.as_str(),
+                    ),
+                    _ => unreachable!("matched above"),
+                };
+                let next = transition(cur, TaskEvent::GateFailed)
+                    .map_err(|_| RelayError::Conflict("task cannot rework".into()))?;
+                let new_round = round + 1;
+                sqlx_core::query::query(
+                    "update relay.tasks set state = $1::relay.task_state, round = $2,
+                            state_changed_at = $3
+                     where user_id = $4 and id = $5",
+                )
+                .bind(word(next))
+                .bind(new_round)
+                .bind(now)
+                .bind(user_id)
+                .bind(spec.task_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                let props = serde_json::json!({
+                    "verdict": word(ReviewVerdict::ChangesRequested),
+                    "findings": [{
+                        "severity": word(RelayFindingSeverity::High),
+                        "class": class,
+                        "text": text,
+                    }],
+                });
+                validate_props(RelayActionKind::Reviewed, &props).map_err(|e| {
+                    RelayError::Internal(format!("gate review props: {}", e.message))
+                })?;
+                let reply_to: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                    "select id from relay.actions
+                     where user_id = $1 and task_id = $2 and kind = 'reported'
+                     order by created_at desc, id desc limit 1",
+                )
+                .bind(user_id)
+                .bind(spec.task_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                sqlx_core::query::query(
+                    "insert into relay.actions
+                       (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                        body_md, props, reply_to, created_at)
+                     values ($1, $2, $3, $4, null, 'reviewed'::relay.action_kind, $5,
+                             $6::relay.task_phase, $7, $8, $9, $10)",
+                )
+                .bind(user_id)
+                .bind(new_id())
+                .bind(crew_id)
+                .bind(spec.task_id)
+                .bind(new_round)
+                .bind(phase.as_str())
+                .bind(detail)
+                .bind(props)
+                .bind(reply_to)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                Self::relay_end_gate_task(&mut tx, user_id, gate_task_id, now).await?;
+                next
+            }
+            GateOutcome::Error(why) => {
+                let blocked = transition(RelayTaskState::Ready, TaskEvent::Blocked)
+                    .map_err(|_| RelayError::Internal("gate task cannot block".into()))?;
+                sqlx_core::query::query(
+                    "update relay.tasks set state = $1::relay.task_state,
+                            blocked_from_state = 'ready'::relay.task_state, state_changed_at = $2
+                     where user_id = $3 and id = $4",
+                )
+                .bind(word(blocked))
+                .bind(now)
+                .bind(user_id)
+                .bind(gate_task_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                let props = serde_json::json!({
+                    "options": [
+                        {"id": GATE_RETRY_OPTION, "label": "Retry the gate"},
+                        {"id": GATE_SKIP_OPTION, "label": "Skip the gate and merge by hand"},
+                    ],
+                    "blocks": [gate_task_id.to_string()],
+                    "asked_of": "person",
+                });
+                validate_props(RelayActionKind::Asked, &props)
+                    .map_err(|e| RelayError::Internal(format!("gate ask props: {}", e.message)))?;
+                sqlx_core::query::query(
+                    "insert into relay.actions
+                       (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
+                        body_md, props, created_at)
+                     values ($1, $2, $3, $4, null, 'asked'::relay.action_kind, 1,
+                             $5::relay.task_phase, $6, $7, $8)",
+                )
+                .bind(user_id)
+                .bind(new_id())
+                .bind(crew_id)
+                .bind(gate_task_id)
+                .bind(phase.as_str())
+                .bind(format!("The merge gate for \"{title}\" could not run: {why}"))
+                .bind(props)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                cur
+            }
+        };
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayGateReport { task_id: spec.task_id, state })
     }
 
     /// The claim guard shared by `claim_next`, `claim` and `claim_review`:
@@ -4069,8 +4406,8 @@ impl PgStore {
         // (merged, cancelled, re-planned) is left alone — the answer still
         // records; the resume is best-effort per task (derived).
         for blocked_id in &ask_blocks {
-            let row: Option<(String, Option<String>)> = sqlx_core::query_as::query_as(
-                "select state::text, blocked_from_state::text from relay.tasks
+            let row: Option<(String, Option<String>, String)> = sqlx_core::query_as::query_as(
+                "select state::text, blocked_from_state::text, executor::text from relay.tasks
                  where user_id = $1 and id = $2",
             )
             .bind(user_id)
@@ -4078,10 +4415,29 @@ impl PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            let Some((state, blocked_from)) = row else {
+            let Some((state, blocked_from, executor)) = row else {
                 continue;
             };
             if state != "blocked" {
+                continue;
+            }
+            // The gate's ask (2.8): `skip_gate` cancels the broker task and
+            // leaves the gated task approved for a manual merge; `retry`
+            // resumes it to the pool like any other answer.
+            if executor == "broker" && input.option == GATE_SKIP_OPTION {
+                let cancelled = transition(RelayTaskState::Blocked, TaskEvent::Cancelled)
+                    .map_err(|_| RelayError::Internal("blocked task cannot cancel".into()))?;
+                sqlx_core::query::query(
+                    "update relay.tasks set state = $1::relay.task_state,
+                            blocked_from_state = null, state_changed_at = current_timestamp
+                     where user_id = $2 and id = $3",
+                )
+                .bind(word(cancelled))
+                .bind(user_id)
+                .bind(blocked_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
                 continue;
             }
             let from =

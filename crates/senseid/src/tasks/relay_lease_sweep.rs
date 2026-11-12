@@ -19,11 +19,12 @@ use crate::relay::RelayError;
 use crate::relay::gate::GateRunner;
 
 /// One pass at wall-clock now.
-pub async fn tick(
+pub async fn tick<G: GateRunner>(
     pg: Arc<PgStore>,
     event_tx: &broadcast::Sender<StateEvent>,
+    gate: &G,
 ) -> Result<(), String> {
-    match sweep_at(&pg, event_tx, chrono::Utc::now()).await {
+    match pass(&pg, event_tx, gate, chrono::Utc::now()).await {
         Ok(rep) => {
             let resumed_lanes = rep.resumed_lanes.len() as u64;
             let completed_runs = rep.completed_runs.len() as u64;
@@ -63,15 +64,32 @@ pub async fn tick(
 /// A full pass at a fed `now`: the sweep, then the gate for every gate
 /// task the sweep handed over (one per pass), each outcome written and
 /// announced as `relay_task("gate", <agent task>)`. The gate runs after
-/// the sweep's commit; a runner failure is the outcome's to record, never
-/// the pass's to fail on.
+/// the sweep's commit; a runner failure is the outcome's to record (the
+/// gate task blocks behind an ask), while a hand-over or write the store
+/// refuses is the pass's error — the ticker logs it, and the next pass
+/// selects the task again.
 pub async fn pass<G: GateRunner>(
     pg: &PgStore,
     event_tx: &broadcast::Sender<StateEvent>,
-    _gate: &G,
+    gate: &G,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<RelaySweepReport, RelayError> {
-    sweep_at(pg, event_tx, now).await
+    let report = sweep_at(pg, event_tx, now).await?;
+    for gate_task in &report.gate_tasks {
+        let handed = pg.relay_gate_task(*gate_task).await?;
+        let outcome = gate.run(&handed.spec.input()).await;
+        // The gate took its own time: its outcome is stamped when it landed.
+        let written = pg.relay_gate_outcome(*gate_task, &outcome, chrono::Utc::now()).await?;
+        tracing::info!(
+            %gate_task,
+            task = %written.task_id,
+            state = ?written.state,
+            outcome = ?outcome,
+            "relay_lease: gate ran",
+        );
+        let _ = event_tx.send(StateEvent::relay_task("gate", &written.task_id));
+    }
+    Ok(report)
 }
 
 /// One pass at a fed `now`, announcing what it changed on `event_tx`:
@@ -117,12 +135,17 @@ fn is_missing_schema(detail: &str) -> bool {
     detail.contains("does not exist") || detail.contains("undefined_table")
 }
 
-pub fn spawn(pg: Arc<PgStore>, event_tx: broadcast::Sender<StateEvent>) {
+pub fn spawn<G: GateRunner + 'static>(
+    pg: Arc<PgStore>,
+    event_tx: broadcast::Sender<StateEvent>,
+    gate: Arc<G>,
+) {
     tokio::spawn(async move {
         crate::tasks::ticker::run_scheduled(pg.clone(), "relay_lease", move || {
             let pg = pg.clone();
             let event_tx = event_tx.clone();
-            async move { tick(pg, &event_tx).await }
+            let gate = gate.clone();
+            async move { tick(pg, &event_tx, gate.as_ref()).await }
         })
         .await;
     });

@@ -277,6 +277,8 @@ pub fn transition(
         // Assigned blocks too (implied: Assigned is a valid resume target,
         // and the part-2 ask test pins an assigned task blocking).
         (S::Assigned, E::Blocked) => Ok(S::Blocked),
+        // A broker task whose gate cannot run blocks in the pool (2.8).
+        (S::Ready, E::Blocked) => Ok(S::Blocked),
         (S::Blocked, E::Unblocked { blocked_from })
             if !matches!(blocked_from, S::Blocked | S::Interrupted | S::Cancelled | S::Done) =>
         {
@@ -305,6 +307,8 @@ pub fn transition(
         (S::Assigned, E::Released) | (S::Working, E::Released) => Ok(S::Ready),
         (S::Interrupted, E::Resumed) => Ok(S::Working),
         (S::Approved, E::Unpacked) => Ok(S::Done),
+        // The merge gate refused the branch: rework, like a review would.
+        (S::Approved, E::GateFailed) => Ok(S::Rework),
         // F1: handover pulls from the three held states only (blocked and
         // interrupted keep their own exits; assigned/approved have nothing
         // to pull).
