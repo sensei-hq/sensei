@@ -1,8 +1,7 @@
 # Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue, cut from develop @ 598045196)
 
-**Slice:** Relay autonomous queue — phase 2 (daemon) COMPLETE and LIVE: tasks 2.1–2.9 + 2.11 shipped as red/green
-pairs, 2.10 converged the live DB, installed the service and the smoke PASSED. Phase 3 (MCP) red in progress. Plan:
-`docs/plan/2026-11-10-relay-autonomous-queue/{2-daemon,3-mcp}.md` (each task has ticked steps + "Executed" notes).
+**Slice:** Relay autonomous queue — phases 2 (daemon) and 3 (MCP) COMPLETE and LIVE; phase 4 (app) next. Plan:
+`docs/plan/2026-11-10-relay-autonomous-queue/{2-daemon,3-mcp,4-app}.md` (each task has ticked steps + "Executed" notes).
 
 **Done:**
 - Phase 1 (DB additive) on develop @ `b9eb57ac2`; phase-1 checkpoint docs @ `598045196`.
@@ -26,13 +25,17 @@ pairs, 2.10 converged the live DB, installed the service and the smoke PASSED. P
   moved to `ready` first — the coherence check refused the alter) → `dbd import -n staging.finding_classes` →
   `make install-service` → `scripts/relay-queue-smoke.sh` PASSED (both gate merges real, run completed).
 
-**Remaining:** phase 3 MCP (`crates/mcp/src/lib.rs`: seven tool arms + schemas + name lists, register forwards
-suggested_name, wait forwards timeout_seconds, doc edits; marketplace hook text names the no-role join), phase 4 app,
-phase 5 docs + issue triage; merge the lane branch to develop green.
+- Phase 3 `c710a4e56`+`e55630a65`: seven `relay_*` queue tools, register `suggested_name` (role/crew_id optional),
+  wait `timeout_seconds`, doc edits, session-start hook text; `cargo test -p sensei-mcp` 100 + 5 green, hook tests
+  25/25; `make install-service` — the installed `sensei-mcp` lists the seven.
 
-**Next command:** in `lanes/relay-queue`: finish the phase 3 red in `crates/mcp/src/lib.rs` (pins
-`relay_tool_list_names_the_queue_tools`, `claim_next_dispatch_posts_with_bearer_and_no_token_in_body`, …),
-`cargo test -p sensei-mcp`.
+**Remaining:** phase 4 app (`app/src/lib/relay-api.ts` types + `tryCreateRun`; `relay-state.svelte.ts` selection +
+`createSprint` + stream dispatch; `SprintBand`, `FloatingReviewRow`, `CreateSprintForm`; `RelayScreen` + `QueueRow`
+selectable; timeline labels; vitest + `bun run check`; e2e `relay-sprint`; `make install-app`), phase 5 docs + issue
+triage; merge the lane branch to develop green.
+
+**Next command:** in `lanes/relay-queue/app`: write the phase 4 reds (`relay-state.spec.svelte.ts`,
+`SprintBand.spec.svelte.ts`, `FloatingReviewRow.spec.svelte.ts`, `CreateSprintForm.spec.svelte.ts`), `bun run test:unit`.
 
 **Open questions (user):** none blocking. Deviations recorded per task in `2-daemon.md`.
 
