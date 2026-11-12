@@ -27,7 +27,7 @@
 ##
 ## Mirrored to their own GitHub repos (editable in-repo; each target clones and
 ## copies — these are not git subtrees despite the historical wording):
-##   marketplace/ → sensei-hq/marketplace    (make marketplace-push, run by bump)
+##   marketplace/ → sensei-hq/marketplace    (make marketplace-push, run by release; bump only stamps the version)
 ##   homebrew/    → sensei-hq/homebrew-tap   — TEMPLATES. Rendered and published
 ##                  by release.yml's `update-tap`, never by `bump`. `tap-push` is
 ##                  a manual escape hatch that refuses an unrendered template.
