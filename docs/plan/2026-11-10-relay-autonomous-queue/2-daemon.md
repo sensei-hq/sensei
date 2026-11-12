@@ -221,6 +221,10 @@ In order, one transaction, fed `now`:
 
 `RelaySweepReport` gains `released_reviews`, `resumed_lanes: Vec<(Uuid, Uuid)>`, `evicted_waiters`, `nudged`, `completed_runs: Vec<(Uuid, Uuid)>`, `gate_tasks: Vec<Uuid>`; `sweep_events` names each.
 
+**Steps (expanded 2026-11-12):** Decisions beyond the task text. (1) Step 9 selects and reports; it moves nothing — the gate (2.8) writes the outcome in its own transaction after the commit, so a daemon lost mid-gate leaves no stuck `working` broker task (the next pass re-selects, and the gate is idempotent). (2) A released review claim is a task change (`RelaySweptTask::ReviewReleased` → `relay_task("release", id)`); a resumed lane rides `expired_lanes`' shape as `resumed_lanes: (crew_id, lane_id)`. (3) The nudge's `body_md` is the daemon's own text (title + minutes waiting), `lane_id` null, `task_id` the review; `waiting_min` is whole minutes since `state_changed_at`. (4) `relay_unregister` leaves a review claim held by the leaving lane to the sweeper (step 5: unregistered ⇒ released), one path for both lapses.
+- [ ] **S1 (red):** report fields + `RelaySweptTask::ReviewReleased` as stubs (empty); store pins `sweep_ends_a_pause_at_resumes_at_not_before`, `sweep_releases_an_abandoned_review_claim_after_the_grace`, `sweep_evicts_waiters_of_dead_lanes`, `sweep_nudges_everyone_about_a_floating_review_once_per_window`, `sweep_reports_a_ready_broker_task_whose_deps_are_done_one_per_pass`; ticker pin `sweep_events_name_every_lane_task_and_run_change` grows the resumed lane and the released review. Red on the current sweeper.
+- [ ] **S2 (green):** steps 3, 5, 6, 7, 9 in `relay_sweep_leases` (fed `now`, one transaction), `sweep_events` + the tick's log line. Relay suite, clippy, fmt → green. Commit the pair.
+
 ## Task 2.8: Deterministic gate (`relay/gate.rs`)
 
 ```rust

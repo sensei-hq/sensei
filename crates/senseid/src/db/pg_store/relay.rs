@@ -517,11 +517,27 @@ pub struct RelaySweepReport {
     pub granted_from_queue: u64,
     /// Lanes whose lease expired this pass, as `(crew_id, lane_id)`.
     pub expired_lanes: Vec<(Uuid, Uuid)>,
+    /// Lanes whose limit pause ended this pass (at `limit_resumes_at`), as
+    /// `(crew_id, lane_id)` (F03: the sweeper ends a pause, never a beat).
+    pub resumed_lanes: Vec<(Uuid, Uuid)>,
+    /// Review claims released this pass: the reviewer's lease lapsed past
+    /// `REVIEW_CLAIM_GRACE_SECS` or the reviewer unregistered.
+    pub released_reviews: u64,
+    /// `tasks/wait` holds dropped this pass: the lane unregistered or its
+    /// lease lapsed (F06).
+    pub evicted_waiters: u64,
+    /// Floating reviews nudged to everyone this pass (one per task per
+    /// `NUDGE_AFTER_SECS` window).
+    pub nudged: u64,
     /// Every task this pass changed, and how, in pass order.
     pub task_changes: Vec<(Uuid, RelaySweptTask)>,
     /// Sprint runs this pass completed (every task done or cancelled), as
     /// `(run_id, crew_id)`.
     pub completed_runs: Vec<(Uuid, Uuid)>,
+    /// Ready broker tasks whose deps are all done, oldest first, at most
+    /// one per pass — the gate (2.8) runs them after the commit; the pass
+    /// itself moves nothing (a lost daemon leaves no stuck task).
+    pub gate_tasks: Vec<Uuid>,
 }
 
 /// What a sweeper pass did to one task.
@@ -531,6 +547,8 @@ pub enum RelaySweptTask {
     Interrupted,
     /// The grace passed: back in the pool for another lane.
     Reoffered,
+    /// Its review claim lapsed: floating again for another reviewer.
+    ReviewReleased,
 }
 
 /// `POST /api/relay/resources/request` (item 3): the lease input carries an
@@ -5312,8 +5330,13 @@ impl PgStore {
             expired_resource_leases,
             granted_from_queue,
             expired_lanes,
+            resumed_lanes: vec![],
+            released_reviews: 0,
+            evicted_waiters: 0,
+            nudged: 0,
             task_changes,
             completed_runs,
+            gate_tasks: vec![],
         })
     }
 
@@ -6772,6 +6795,33 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap()
+    }
+
+    async fn lane_is_paused(pg: &PgStore, lane: Uuid) -> bool {
+        sqlx_core::query_scalar::query_scalar::<_, bool>(
+            "select limit_paused_at is not null from relay.lanes where id = $1",
+        )
+        .bind(lane)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    /// Pause `lane` an hour before t0 with the given resume time.
+    async fn lane_pause(pg: &PgStore, lane: Uuid, resumes_at: Option<DateTime<Utc>>) {
+        pg.relay_report_limit_pause(
+            lane,
+            RelayLimitPauseInput { scope: RelayLimitScope::Daily, resumes_at, note: None },
+            t0() - chrono::Duration::seconds(3600),
+        )
+        .await
+        .unwrap();
+    }
+
+    /// A live contributor lane `id` with code `code` in `crew`.
+    async fn fx_live_lane(pg: &PgStore, crew: Uuid, id: Uuid, code: &str) {
+        fx_lane(pg, u1(), id, crew, code, "contributor", &format!("tok-{code}")).await;
+        fx_lease(pg, u1(), crew, id, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
     }
 
     // ── register ──
@@ -8709,15 +8759,7 @@ mod tests {
         // or the lane says so with limit_resume).
         let pg = PgStore::test_store().await;
         let (_, _, _, a2, _, _) = fx_two_crews(&pg).await;
-        async fn paused(pg: &PgStore, lane: Uuid) -> bool {
-            sqlx_core::query_scalar::query_scalar::<_, bool>(
-                "select limit_paused_at is not null from relay.lanes where id = $1",
-            )
-            .bind(lane)
-            .fetch_one(pg.pool())
-            .await
-            .unwrap()
-        }
+        let paused = lane_is_paused;
         pg.relay_report_limit_pause(
             a2,
             RelayLimitPauseInput { scope: RelayLimitScope::Daily, resumes_at: None, note: None },
@@ -9668,6 +9710,292 @@ mod tests {
         let rep = pg.relay_sweep_leases(t0()).await.unwrap();
         assert_eq!((rep.expired_leases, rep.interrupted_tasks, rep.reoffered_tasks), (0, 0, 0));
         assert_eq!(task_state(&pg, t).await, "working");
+    }
+
+    // ── queue cutover (2.7): the sweeper's queue duties ──
+
+    #[tokio::test]
+    async fn sweep_ends_a_pause_at_resumes_at_not_before() {
+        // F03: a limit pause ends at its resume time by the sweeper (a beat
+        // never ends one); an unknown resume waits for limit_resume.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = v7(0x1c);
+        fx_live_lane(&pg, c1, a3, "L3").await;
+        lane_pause(&pg, a1, Some(t0())).await;
+        lane_pause(&pg, a2, Some(t0() + chrono::Duration::seconds(1))).await;
+        lane_pause(&pg, a3, None).await;
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.resumed_lanes, vec![(c1, a1)]);
+        assert!(!lane_is_paused(&pg, a1).await);
+        assert!(lane_is_paused(&pg, a2).await, "not yet due");
+        assert!(lane_is_paused(&pg, a3).await, "unknown resume: only limit_resume ends it");
+        let cleared: (Option<String>, Option<DateTime<Utc>>, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "select limit_scope::text, limit_resumes_at, limit_note from relay.lanes
+                 where id = $1",
+            )
+            .bind(a1)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(cleared, (None, None, None), "the pause leaves no trace");
+        // A second pass announces nothing again.
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert!(rep.resumed_lanes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sweep_releases_an_abandoned_review_claim_after_the_grace() {
+        // A claim whose reviewer's lease lapsed REVIEW_CLAIM_GRACE_SECS ago,
+        // or whose reviewer unregistered, floats again with a `released
+        // {kind: review}` row on the reviewer's lane; a lapse inside the
+        // grace keeps the claim (a beat may still regrant).
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let (a3, a4, a5) = (v7(0x1c), v7(0x1d), v7(0x1e));
+        for (lane, code) in [(a3, "L3"), (a4, "L4"), (a5, "L5")] {
+            fx_live_lane(&pg, c1, lane, code).await;
+        }
+        let (lapsed, inside, left) = (v7(0xf1), v7(0xf2), v7(0xf3));
+        // Authors A2/A3/A4; reviewers A1 (lapsed 61 s), A5 (lapsed 59 s), A3
+        // (unregistered, lease live).
+        for (task, author, reviewer) in [(lapsed, a2, a1), (inside, a3, a5), (left, a4, a3)] {
+            fx_floating_review(&pg, c1, author, task).await;
+            sqlx_core::query::query(
+                "update relay.tasks set review_claimed_by = $1, review_claimed_at = $2
+                 where id = $3",
+            )
+            .bind(reviewer)
+            .bind(t0() - chrono::Duration::seconds(120))
+            .bind(task)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        for (lane, ago) in [(a1, 61), (a5, 59)] {
+            sqlx_core::query::query(
+                "update relay.leases set expires_at = $1 where lane_id = $2 and kind = 'lane'",
+            )
+            .bind(t0() - chrono::Duration::seconds(ago))
+            .bind(lane)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        sqlx_core::query::query("update relay.lanes set unregistered_at = $1 where id = $2")
+            .bind(t0() - chrono::Duration::seconds(1))
+            .bind(a3)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.released_reviews, 2);
+        let mut released: Vec<Uuid> = rep
+            .task_changes
+            .iter()
+            .filter(|(_, c)| *c == RelaySweptTask::ReviewReleased)
+            .map(|(id, _)| *id)
+            .collect();
+        released.sort();
+        assert_eq!(released, vec![lapsed, left]);
+        for (task, expect) in [(lapsed, None), (inside, Some(a5)), (left, None)] {
+            let (by, at): (Option<Uuid>, Option<DateTime<Utc>>) = sqlx_core::query_as::query_as(
+                "select review_claimed_by, review_claimed_at from relay.tasks where id = $1",
+            )
+            .bind(task)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(by, expect, "{task}");
+            assert_eq!(at.is_some(), expect.is_some(), "{task}");
+            assert_eq!(task_state(&pg, task).await, "in_review");
+        }
+        let rows: Vec<(Uuid, Option<Uuid>, serde_json::Value, DateTime<Utc>)> =
+            sqlx_core::query_as::query_as(
+                "select task_id, lane_id, props, created_at from relay.actions
+                 where kind = 'released' order by task_id",
+            )
+            .fetch_all(pg.pool())
+            .await
+            .unwrap();
+        let mut expect = vec![(lapsed, a1), (left, a3)];
+        expect.sort();
+        assert_eq!(rows.len(), 2);
+        for ((task, lane, props, at), (want_task, want_lane)) in rows.iter().zip(expect) {
+            assert_eq!(*task, want_task);
+            assert_eq!(*lane, Some(want_lane), "the lapsed reviewer is named");
+            assert_eq!(props["kind"], "review");
+            assert_eq!(props["reason"], "lease lapsed");
+            assert_eq!(*at, t0(), "stamped at the fed now");
+        }
+        // The pass is idempotent.
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.released_reviews, 0);
+    }
+
+    #[tokio::test]
+    async fn sweep_evicts_waiters_of_dead_lanes() {
+        // F06: a tasks/wait hold whose lane lease lapsed or whose lane
+        // unregistered is dropped; live holds stay.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = v7(0x1c);
+        fx_live_lane(&pg, c1, a3, "L3").await;
+        for lane in [a1, a2, a3] {
+            sqlx_core::query::query(
+                "insert into relay.lane_waiters (user_id, lane_id, crew_id) values ($1, $2, $3)",
+            )
+            .bind(u1())
+            .bind(lane)
+            .bind(c1)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = $1 where lane_id = $2 and kind = 'lane'",
+        )
+        .bind(t0() - chrono::Duration::seconds(1))
+        .bind(a2)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query("update relay.lanes set unregistered_at = $1 where id = $2")
+            .bind(t0() - chrono::Duration::seconds(1))
+            .bind(a3)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.evicted_waiters, 2);
+        let left: Vec<Uuid> =
+            sqlx_core::query_scalar::query_scalar("select lane_id from relay.lane_waiters")
+                .fetch_all(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(left, vec![a1]);
+    }
+
+    #[tokio::test]
+    async fn sweep_nudges_everyone_about_a_floating_review_once_per_window() {
+        // F07: a review floating past NUDGE_AFTER_SECS gets one message to
+        // everyone in its crew per window; a claimed or young review none.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let (old, young, claimed) = (v7(0xf4), v7(0xf5), v7(0xf6));
+        for task in [old, young, claimed] {
+            fx_floating_review(&pg, c1, a2, task).await;
+        }
+        sqlx_core::query::query("update relay.tasks set state_changed_at = $1 where id = any ($2)")
+            .bind(t0() - chrono::Duration::seconds(901))
+            .bind(vec![old, claimed])
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("update relay.tasks set state_changed_at = $1 where id = $2")
+            .bind(t0() - chrono::Duration::seconds(100))
+            .bind(young)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "update relay.tasks set review_claimed_by = $1, review_claimed_at = $2 where id = $3",
+        )
+        .bind(a1)
+        .bind(t0())
+        .bind(claimed)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.nudged, 1);
+        let rows: Vec<(Option<Uuid>, Option<Uuid>, Uuid, serde_json::Value, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "select task_id, lane_id, crew_id, props, body_md from relay.actions
+                 where kind = 'message'",
+            )
+            .fetch_all(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        let (task, lane, crew, props, body) = &rows[0];
+        assert_eq!(*task, Some(old));
+        assert_eq!(*lane, None, "the daemon speaks: no lane");
+        assert_eq!(*crew, c1);
+        assert_eq!(props["to"]["kind"], "everyone");
+        assert_eq!(props["surface"], "lane");
+        assert_eq!(props["nudge"], true);
+        assert_eq!(props["reason"], "review_floating");
+        assert_eq!(props["waiting_min"], 15);
+        assert_eq!(props["task_id"], old.to_string());
+        let body = body.as_deref().unwrap();
+        assert!(body.contains("15 min"), "{body}");
+        // Everyone in the crew reads it.
+        let env = pg.relay_envelope(u1(), a1).await.unwrap();
+        assert!(env.messages.iter().any(|m| m.task_id.as_deref() == Some(&old.to_string())));
+        // Inside the window: no second nudge. Past it: one more.
+        let rep = pg.relay_sweep_leases(t0() + chrono::Duration::seconds(60)).await.unwrap();
+        assert_eq!(rep.nudged, 0);
+        let rep = pg.relay_sweep_leases(t0() + chrono::Duration::seconds(901)).await.unwrap();
+        assert_eq!(rep.nudged, 1);
+        let n: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where kind = 'message' and task_id = $1",
+        )
+        .bind(old)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(n, 2);
+    }
+
+    #[tokio::test]
+    async fn sweep_reports_a_ready_broker_task_whose_deps_are_done_one_per_pass() {
+        // The broker's own queue: a ready broker task whose deps are all
+        // done is handed to the gate (2.8), oldest first, one per pass; a
+        // task with an open dep and an agent task never are. The pass
+        // itself moves nothing.
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let (done_dep, open_dep, g1, g2, gated, agent) =
+            (v7(0xf7), v7(0xf8), v7(0xf9), v7(0xfa), v7(0xfb), v7(0xfc));
+        fx_task(&pg, u1(), done_dep, c1, Some(a2), "done", "tests", 1).await;
+        fx_task(&pg, u1(), open_dep, c1, None, "ready", "tests", 1).await;
+        fx_task(&pg, u1(), agent, c1, None, "ready", "tests", 1).await;
+        for (task, deps, ago) in
+            [(g1, vec![done_dep], 200), (g2, vec![], 100), (gated, vec![open_dep], 300)]
+        {
+            fx_task(&pg, u1(), task, c1, None, "ready", "tests", 1).await;
+            sqlx_core::query::query(
+                "update relay.tasks set executor = 'broker', deterministic = '{\"action\": \"gate\"}',
+                        deps = $1, state_changed_at = $2
+                 where id = $3",
+            )
+            .bind(deps)
+            .bind(t0() - chrono::Duration::seconds(ago))
+            .bind(task)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.gate_tasks, vec![g1], "oldest ready broker task with its deps done");
+        assert_eq!(task_state(&pg, g1).await, "ready", "selection moves nothing");
+        // The gate ends g1 (2.8); the next pass hands over g2, then nothing.
+        sqlx_core::query::query("update relay.tasks set state = 'done' where id = $1")
+            .bind(g1)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.gate_tasks, vec![g2]);
+        sqlx_core::query::query("update relay.tasks set state = 'done' where id = $1")
+            .bind(g2)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert!(rep.gate_tasks.is_empty(), "{:?}", rep.gate_tasks);
     }
 
     // ── person reads ──

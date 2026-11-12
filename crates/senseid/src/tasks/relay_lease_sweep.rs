@@ -65,6 +65,7 @@ fn sweep_events(report: &RelaySweepReport) -> Vec<StateEvent> {
         let op = match change {
             RelaySweptTask::Interrupted => "interrupt",
             RelaySweptTask::Reoffered => "reoffer",
+            RelaySweptTask::ReviewReleased => unimplemented!("task 2.7: review release events"),
         };
         StateEvent::relay_task(op, task_id)
     });
@@ -96,8 +97,13 @@ mod tests {
 
     #[test]
     fn sweep_events_name_every_lane_task_and_run_change() {
-        let (crew, lane, run) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
-        let tasks: Vec<uuid::Uuid> = (0..2).map(|_| uuid::Uuid::now_v7()).collect();
+        let (crew, lane, resumed, run) = (
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+            uuid::Uuid::now_v7(),
+        );
+        let tasks: Vec<uuid::Uuid> = (0..3).map(|_| uuid::Uuid::now_v7()).collect();
         let report = RelaySweepReport {
             expired_leases: 1,
             interrupted_tasks: 1,
@@ -105,19 +111,22 @@ mod tests {
             expired_resource_leases: 0,
             granted_from_queue: 0,
             expired_lanes: vec![(crew, lane)],
+            resumed_lanes: vec![(crew, resumed)],
+            released_reviews: 1,
+            evicted_waiters: 0,
+            nudged: 0,
             task_changes: vec![
                 (tasks[0], RelaySweptTask::Interrupted),
                 (tasks[1], RelaySweptTask::Reoffered),
+                (tasks[2], RelaySweptTask::ReviewReleased),
             ],
             completed_runs: vec![(run, crew)],
+            gate_tasks: vec![],
         };
         let events: Vec<serde_json::Value> =
             sweep_events(&report).iter().map(|e| serde_json::to_value(e).unwrap()).collect();
-        assert_eq!(events.len(), 4);
-        assert_eq!(
-            events[3],
-            serde_json::to_value(StateEvent::relay_run(RunChange::Completed, &crew)).unwrap()
-        );
+        // Lanes (suspended, then resumed), tasks, runs — in pass order.
+        assert_eq!(events.len(), 6);
         assert_eq!(
             events[0],
             serde_json::to_value(StateEvent::relay_lane(
@@ -127,13 +136,26 @@ mod tests {
             ))
             .unwrap()
         );
+        assert_eq!(
+            events[1],
+            serde_json::to_value(StateEvent::relay_lane(
+                LaneChange::Resumed(LaneReason::LimitPauseEnded),
+                &resumed,
+                &crew
+            ))
+            .unwrap()
+        );
         for (event, (task, op)) in
-            events[1..3].iter().zip(tasks.iter().zip(["interrupt", "reoffer"]))
+            events[2..5].iter().zip(tasks.iter().zip(["interrupt", "reoffer", "release"]))
         {
             assert_eq!(event["entity"], "task");
             assert_eq!(event["data"]["op"], op);
             assert_eq!(event["data"]["task_id"], task.to_string());
         }
+        assert_eq!(
+            events[5],
+            serde_json::to_value(StateEvent::relay_run(RunChange::Completed, &crew)).unwrap()
+        );
     }
 
     #[test]
@@ -145,8 +167,13 @@ mod tests {
             expired_resource_leases: 0,
             granted_from_queue: 0,
             expired_lanes: vec![],
+            resumed_lanes: vec![],
+            released_reviews: 0,
+            evicted_waiters: 0,
+            nudged: 0,
             task_changes: vec![],
             completed_runs: vec![],
+            gate_tasks: vec![],
         };
         assert!(sweep_events(&report).is_empty());
     }
