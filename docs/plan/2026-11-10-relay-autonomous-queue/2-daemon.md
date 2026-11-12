@@ -119,6 +119,8 @@ pub fn topo_order(spec: &PlanSpec) -> Vec<usize>;
 ```
 Pins: the §7.2 example parses to two tasks with `t2.deps == ["t1"]`; a self-dep is a cycle; `deps: ["t9"]` is `UnknownDep`; two `t1` keys is `DuplicateKey`; no acceptance is `NoAcceptance`; a prose-only report is `NoJsonBlock`.
 
+**Executed 2026-11-12:** red `5877cf1e8` (pins + signature stubs) → green (bodies). Two additions beyond the task text: `PlanError::BadPhase` (a plan never nests a `planning` task) and `#[serde(deny_unknown_fields)]` on both structs (a planner's typo is an error naming the key, not a dropped field); `PlanError::message()` is the 409 line.
+
 ## Task 2.4: Store — claims, release, checkpoint, limit resume
 
 Signatures (all one transaction, `now` fed):
@@ -162,6 +164,10 @@ then `update … set lane_id = $3, state = 'working', assigned_at = $4, state_ch
 `relay_release_task`: holder of `assigned|working` → `ready`, `lane_id = null`, `state_changed_at = now`, `released {kind: task, reason}`; the `review_claimed_by` holder of an `in_review` task → claim cleared, `released {kind: review}`; anyone else 403.
 
 `relay_checkpoint_task`: holder only; state `working|rework`; `checkpoint = checkpoint || $input` (jsonb merge of `current_step`, `notes`, plus any caller keys); each `steps[]` entry goes through the existing `relay_post_step` path; action `checkpointed`.
+
+**Steps (expanded 2026-11-12):** `relay_claim_review` shipped in 2.1; this task adds the rest and the shared guard (`relay_require_claimable_lane`: lane exists → not unregistered → not limit-paused → live lease → crew open), which `claim_review` is refactored onto. `DepsStatus` and `ReleaseKind` live in `relay/mod.rs` (wire vocabulary). A task claim stamps `assigned_at`/`state_changed_at` at the fed `now` (the sweeper's precedent), not `current_timestamp`. `claim_next` still offers a floating review to a lane that holds a worker task (reviewing beside working is the point of floating reviews); only the pool is skipped for a busy lane.
+- [ ] **S1 (red):** store types (`RelayClaimedTask`, `RelayClaim`, `RelayReleaseOutput`, `RelayCheckpointInput`) + signature stubs + nine pins: `claim_next_prioritizes_floating_reviews_over_ready_tasks`, `claim_next_never_offers_an_author_its_own_review`, `claim_next_offers_unblocked_before_claim_early`, `claim_next_skips_locked_rows_under_two_concurrent_claims`, `claim_next_skips_the_pool_for_a_busy_lane_but_still_offers_a_review`, `claim_next_refuses_a_paused_dead_or_unregistered_lane`, `claim_task_takes_a_named_ready_task_and_refuses_busy_and_non_ready`, `release_returns_a_task_to_the_pool_and_a_review_to_the_float`, `checkpoint_merges_into_the_task_and_moves_nothing`, `limit_resume_clears_the_pause`. `cargo test -p senseid relay -- --test-threads=1` → those red on the stubs.
+- [ ] **S2 (green):** the guard, the claim write path shared by `claim_next`/`claim_task` (and the review path shared with `claim_review`), release, checkpoint, limit_resume. Relay suite, clippy, fmt → green. Commit the pair.
 
 ## Task 2.5: Store — runs, Task 0, unpack, completion
 

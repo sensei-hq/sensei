@@ -92,6 +92,25 @@ pub enum RelayExecutor {
     Broker,
 }
 
+/// `DepsStatus`: whether a claimed task's upstream dependencies are all
+/// done (`satisfied`) or the claim was taken early (`early_claim_gated`:
+/// work may start, the report is refused until every dep is done).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DepsStatus {
+    Satisfied,
+    EarlyClaimGated,
+}
+
+/// `ReleaseKind`: what a lane gave back — a task to the pool, or a review
+/// claim to the float (`released.props.kind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseKind {
+    Task,
+    Review,
+}
+
 /// A checklist step's state (F8): `open` advances to `done`, or to
 /// `skipped` with a reason. Done/skipped never reopen — a new turn
 /// posts a new key.
