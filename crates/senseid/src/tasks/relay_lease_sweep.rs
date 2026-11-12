@@ -1,9 +1,12 @@
-//! Relay lane-lease sweeper (slice 1, item 2): every pass expires lapsed
-//! lane leases, suspends their lanes' work, re-offers tasks past the grace
-//! back to the pool, and completes sprint runs whose every task is done.
-//! The `relay_lease` schedule owns the cadence (60 s seeded: the 300 s TTL
-//! over five); a missing relay schema (pre-convergence databases) warns,
-//! never fatals.
+//! Relay lane-lease sweeper (slice 1, item 2; queue cutover): every pass
+//! expires lapsed lane leases and suspends their lanes' work, ends limit
+//! pauses at their resume time, re-offers tasks past the grace back to the
+//! pool, releases abandoned review claims, evicts dead lanes' wait holds,
+//! nudges everyone about reviews floating too long, hands the oldest ready
+//! broker task to the gate, and completes sprint runs whose every task is
+//! done. The `relay_lease` schedule owns the cadence (60 s seeded: the
+//! 300 s TTL over five); a missing relay schema (pre-convergence databases)
+//! warns, never fatals.
 
 use std::sync::Arc;
 
@@ -21,14 +24,29 @@ pub async fn tick(
 ) -> Result<(), String> {
     match sweep_at(&pg, event_tx, chrono::Utc::now()).await {
         Ok(rep) => {
+            let resumed_lanes = rep.resumed_lanes.len() as u64;
             let completed_runs = rep.completed_runs.len() as u64;
-            if rep.expired_leases + rep.interrupted_tasks + rep.reoffered_tasks + completed_runs > 0
-            {
+            let gate_tasks = rep.gate_tasks.len() as u64;
+            let did = rep.expired_leases
+                + rep.interrupted_tasks
+                + rep.reoffered_tasks
+                + resumed_lanes
+                + rep.released_reviews
+                + rep.evicted_waiters
+                + rep.nudged
+                + completed_runs
+                + gate_tasks;
+            if did > 0 {
                 tracing::info!(
                     expired = rep.expired_leases,
                     interrupted = rep.interrupted_tasks,
                     reoffered = rep.reoffered_tasks,
+                    resumed_lanes,
+                    released_reviews = rep.released_reviews,
+                    evicted_waiters = rep.evicted_waiters,
+                    nudged = rep.nudged,
                     completed_runs,
+                    gate_tasks,
                     "relay_lease: swept",
                 );
             }
@@ -55,17 +73,21 @@ pub async fn sweep_at(
     Ok(report)
 }
 
-/// The events a pass's report stands for, in pass order: lanes first,
-/// then tasks, then the runs that completed.
+/// The events a pass's report stands for, in pass order: lanes first
+/// (suspended, then resumed), then tasks, then the runs that completed.
+/// A gate hand-over is announced by the gate's own outcome, not here.
 fn sweep_events(report: &RelaySweepReport) -> Vec<StateEvent> {
-    let lanes = report.expired_lanes.iter().map(|(crew_id, lane_id)| {
+    let suspended = report.expired_lanes.iter().map(|(crew_id, lane_id)| {
         StateEvent::relay_lane(LaneChange::Suspended(LaneReason::LeaseExpired), lane_id, crew_id)
+    });
+    let resumed = report.resumed_lanes.iter().map(|(crew_id, lane_id)| {
+        StateEvent::relay_lane(LaneChange::Resumed(LaneReason::LimitPauseEnded), lane_id, crew_id)
     });
     let tasks = report.task_changes.iter().map(|(task_id, change)| {
         let op = match change {
             RelaySweptTask::Interrupted => "interrupt",
             RelaySweptTask::Reoffered => "reoffer",
-            RelaySweptTask::ReviewReleased => unimplemented!("task 2.7: review release events"),
+            RelaySweptTask::ReviewReleased => "release",
         };
         StateEvent::relay_task(op, task_id)
     });
@@ -73,7 +95,7 @@ fn sweep_events(report: &RelaySweepReport) -> Vec<StateEvent> {
         .completed_runs
         .iter()
         .map(|(_, crew_id)| StateEvent::relay_run(RunChange::Completed, crew_id));
-    lanes.chain(tasks).chain(runs).collect()
+    suspended.chain(resumed).chain(tasks).chain(runs).collect()
 }
 
 fn is_missing_schema(detail: &str) -> bool {

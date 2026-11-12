@@ -22,13 +22,13 @@ use crate::relay::envelope::{
 };
 use crate::relay::plan::{PlanSpec, parse_plan, topo_order, validate_plan};
 use crate::relay::{
-    Caller, DISK_FLOOR_GB, DepsStatus, LANE_LEASE_TTL_SECS, REOFFER_GRACE_SECS,
-    RESOURCE_LEASE_TTL_SECS, RegisterMode, RelayActionKind, RelayError, RelayFindingSeverity,
-    RelayFloors, RelayGuidance, RelayItemKind, RelayLeaseState, RelayLimitScope, RelayRole,
-    RelayStepState, RelaySurface, RelayTaskPhase, RelayTaskState, RelayTicketProvider, ReleaseKind,
-    ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent, check_summary_len,
-    decide_resource_grant, guard_markdown, hash_lane_token, register_mode, relay_guidance_for,
-    resolve_surface, transition, validate_props,
+    Caller, DISK_FLOOR_GB, DepsStatus, LANE_LEASE_TTL_SECS, NUDGE_AFTER_SECS, REOFFER_GRACE_SECS,
+    RESOURCE_LEASE_TTL_SECS, REVIEW_CLAIM_GRACE_SECS, RegisterMode, RelayActionKind, RelayError,
+    RelayFindingSeverity, RelayFloors, RelayGuidance, RelayItemKind, RelayLeaseState,
+    RelayLimitScope, RelayRole, RelayStepState, RelaySurface, RelayTaskPhase, RelayTaskState,
+    RelayTicketProvider, ReleaseKind, ResourceGrant, ReviewVerdict, SWAP_FLOOR_GB, TaskEvent,
+    check_summary_len, decide_resource_grant, guard_markdown, hash_lane_token, register_mode,
+    relay_guidance_for, resolve_surface, transition, validate_props,
 };
 use serde_json::json;
 
@@ -903,6 +903,12 @@ fn swap_free_gb() -> Option<u64> {
 /// any of these is present and non-null (derived; the screen's
 /// `reported_turns of turns` is telemetry coverage, not work product —
 /// files/gates/commits don't count).
+/// The `set` clause that ends a limit pause: one shape for the sweeper (at
+/// `limit_resumes_at`), `limit_resume` (early) and `reregister` (no stale
+/// pause survives the round trip).
+const LIMIT_PAUSE_CLEAR: &str =
+    "limit_paused_at = null, limit_scope = null, limit_resumes_at = null, limit_note = null";
+
 const TELEMETRY_KEYS: &[&str] = &[
     "family",
     "version",
@@ -1377,11 +1383,9 @@ impl PgStore {
         Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
         // Resuming returns the lane to live duty: no stale limit pause
         // survives the round trip.
-        sqlx_core::query::query(
-            "update relay.lanes set unregistered_at = null, limit_paused_at = null,
-                    limit_scope = null, limit_resumes_at = null, limit_note = null
-             where id = $1",
-        )
+        sqlx_core::query::query(&format!(
+            "update relay.lanes set unregistered_at = null, {LIMIT_PAUSE_CLEAR} where id = $1"
+        ))
         .bind(lane_id)
         .execute(&mut *tx)
         .await
@@ -3447,11 +3451,9 @@ impl PgStore {
         if unregistered_at.is_some() {
             return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
         }
-        let ended = sqlx_core::query::query(
-            "update relay.lanes set limit_paused_at = null, limit_scope = null,
-                    limit_resumes_at = null, limit_note = null
-             where id = $1 and limit_paused_at is not null",
-        )
+        let ended = sqlx_core::query::query(&format!(
+            "update relay.lanes set {LIMIT_PAUSE_CLEAR} where id = $1 and limit_paused_at is not null"
+        ))
         .bind(lane_id)
         .execute(self.pool())
         .await
@@ -5086,10 +5088,17 @@ impl PgStore {
         Ok(LaneEnvelope { messages, answers, reviews, assignments })
     }
 
-    /// Expire lapsed lane leases (fed `now`): suspend their lanes — the
-    /// worker task → interrupted with its checkpoint (a floating review is
-    /// not the lane's to lose) — and re-offer tasks past the grace
-    /// (measured from the `interrupted` action) back to the pool.
+    /// One sweeper pass at a fed `now`, one transaction, in order: expire
+    /// lapsed lane leases and suspend their lanes' work (the worker task →
+    /// interrupted with its checkpoint; a floating review is not the lane's
+    /// to lose); suspend limit-paused lanes' work; end limit pauses at
+    /// their resume time (F03); re-offer tasks past the grace (measured
+    /// from the `interrupted` action) back to the pool; release review
+    /// claims whose reviewer lapsed past `REVIEW_CLAIM_GRACE_SECS` or
+    /// unregistered; evict dead lanes' `tasks/wait` holds (F06); nudge
+    /// everyone about reviews floating past `NUDGE_AFTER_SECS` (F07);
+    /// expire and cascade resource leases; hand the oldest ready broker
+    /// task with its deps done to the gate; complete sprint runs.
     pub async fn relay_sweep_leases(
         &self,
         now: DateTime<Utc>,
@@ -5231,6 +5240,18 @@ impl PgStore {
                 task_changes.push((task_id, RelaySweptTask::Interrupted));
             }
         }
+        // F03: a limit pause ends at its resume time here, never on a beat;
+        // an unknown resume ends only by limit_resume.
+        let resumed_lanes: Vec<(Uuid, Uuid)> = sqlx_core::query_as::query_as(&format!(
+            "update relay.lanes set {LIMIT_PAUSE_CLEAR}
+             where limit_paused_at is not null and limit_resumes_at is not null
+               and limit_resumes_at <= $1
+             returning crew_id, id"
+        ))
+        .bind(now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
         // Re-offer tasks past the grace, measured from the latest
         // `interrupted` action. Tasks without one are left alone (the grace
         // has nothing to measure from).
@@ -5285,6 +5306,115 @@ impl PgStore {
             reoffered_tasks += 1;
             task_changes.push((task_id, RelaySweptTask::Reoffered));
         }
+        // Review claims whose reviewer is gone — lease lapsed past the
+        // grace (a beat may still regrant inside it) or lane unregistered:
+        // the report floats again, the lapsed reviewer named on the row.
+        let claim_cutoff = now - Duration::seconds(REVIEW_CLAIM_GRACE_SECS as i64);
+        let abandoned: Vec<(Uuid, Uuid, Uuid, Uuid, i32, String)> = sqlx_core::query_as::query_as(
+            "update relay.tasks t set review_claimed_by = null, review_claimed_at = null
+             from relay.lanes l
+             where t.state = 'in_review' and t.review_claimed_by is not null
+               and l.user_id = t.user_id and l.id = t.review_claimed_by
+               and (l.unregistered_at is not null
+                    or not exists (
+                      select 1 from relay.leases s
+                      where s.lane_id = l.id and s.kind = 'lane' and s.expires_at > $1))
+             returning t.user_id, t.crew_id, t.id, l.id, t.round, t.phase::text",
+        )
+        .bind(claim_cutoff)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let released_reviews = abandoned.len() as u64;
+        for (user_id, crew_id, task_id, reviewer, round, phase) in abandoned {
+            sqlx_core::query::query(
+                "insert into relay.actions
+                   (user_id, id, crew_id, task_id, lane_id, kind, round, phase, props, created_at)
+                 values ($1, $2, $3, $4, $5, 'released'::relay.action_kind, $6,
+                         $7::relay.task_phase, $8, $9)",
+            )
+            .bind(user_id)
+            .bind(new_id())
+            .bind(crew_id)
+            .bind(task_id)
+            .bind(reviewer)
+            .bind(round)
+            .bind(phase.as_str())
+            .bind(serde_json::json!({"kind": word(ReleaseKind::Review), "reason": "lease lapsed"}))
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            task_changes.push((task_id, RelaySweptTask::ReviewReleased));
+        }
+        // F06: a tasks/wait hold belongs to a live lane — unregistered or
+        // lapsed, its row goes (the hold itself ends on its own timeout).
+        let evicted_waiters = sqlx_core::query::query(
+            "delete from relay.lane_waiters w
+             using relay.lanes l
+             where l.user_id = w.user_id and l.id = w.lane_id
+               and (l.unregistered_at is not null
+                    or not exists (
+                      select 1 from relay.leases s
+                      where s.lane_id = l.id and s.kind = 'lane' and s.expires_at > $1))",
+        )
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?
+        .rows_affected();
+        // F07: a review floating past the window gets one nudge to everyone
+        // in its crew per window — the newest nudge about it dates the next.
+        let nudge_cutoff = now - Duration::seconds(NUDGE_AFTER_SECS as i64);
+        let stale: Vec<(Uuid, Uuid, Uuid, String, DateTime<Utc>)> = sqlx_core::query_as::query_as(
+            "select t.user_id, t.crew_id, t.id, t.title, t.state_changed_at
+             from relay.tasks t
+             where t.state = 'in_review' and t.review_claimed_by is null
+               and t.state_changed_at <= $1
+               and not exists (
+                 select 1 from relay.actions a
+                 where a.user_id = t.user_id and a.task_id = t.id and a.kind = 'message'
+                   and a.props->>'nudge' = 'true' and a.props->>'task_id' = t.id::text
+                   and a.created_at > $1)
+             order by t.state_changed_at, t.id",
+        )
+        .bind(nudge_cutoff)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let nudged = stale.len() as u64;
+        for (user_id, crew_id, task_id, title, since) in stale {
+            let waiting_min = (now - since).num_minutes();
+            let props = serde_json::json!({
+                "to": {"kind": "everyone"},
+                "surface": word(RelaySurface::Lane),
+                "nudge": true,
+                "reason": "review_floating",
+                "waiting_min": waiting_min,
+                "task_id": task_id.to_string(),
+            });
+            // The daemon's own props: a shape error here is a bug, not input.
+            validate_props(RelayActionKind::Message, &props)
+                .map_err(|e| RelayError::Internal(format!("nudge props: {}", e.message)))?;
+            let body = format!(
+                "Review of \"{title}\" has been waiting {waiting_min} min; nobody has claimed it."
+            );
+            sqlx_core::query::query(
+                "insert into relay.actions
+                   (user_id, id, crew_id, task_id, lane_id, kind, body_md, props, created_at)
+                 values ($1, $2, $3, $4, null, 'message'::relay.action_kind, $5, $6, $7)",
+            )
+            .bind(user_id)
+            .bind(new_id())
+            .bind(crew_id)
+            .bind(task_id)
+            .bind(body.as_str())
+            .bind(props)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
         // Item 3: expire stale resource grants (the same `<=` comparison
         // as lane leases), then release grants held by lanes with no live
         // lease (the lane-death cascade, Q7 — a release, not an expiry).
@@ -5320,6 +5450,23 @@ impl PgStore {
                 granted_from_queue += 1;
             }
         }
+        // The broker's own queue: the oldest ready broker task whose deps
+        // are all done goes to the gate (2.8) after the commit, one per
+        // pass. Selection moves nothing — a daemon lost mid-gate leaves no
+        // stuck task, the next pass selects it again.
+        let gate_tasks: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select t.id from relay.tasks t
+             where t.executor = 'broker' and t.state = 'ready'
+               and not exists (
+                 select 1 from relay.tasks d
+                 where d.user_id = t.user_id and d.id = any (t.deps) and d.state <> 'done')
+             order by t.state_changed_at, t.id
+             for update of t skip locked
+             limit 1",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
         // Sprint runs complete themselves once every task is done.
         let completed_runs = Self::relay_complete_runs(&mut tx, now).await?;
         tx.commit().await.map_err(db_err)?;
@@ -5330,13 +5477,13 @@ impl PgStore {
             expired_resource_leases,
             granted_from_queue,
             expired_lanes,
-            resumed_lanes: vec![],
-            released_reviews: 0,
-            evicted_waiters: 0,
-            nudged: 0,
+            resumed_lanes,
+            released_reviews,
+            evicted_waiters,
+            nudged,
             task_changes,
             completed_runs,
-            gate_tasks: vec![],
+            gate_tasks,
         })
     }
 
@@ -9878,6 +10025,9 @@ mod tests {
     }
 
     #[tokio::test]
+    // Wide rows are inherent to the read: one round trip, destructured at
+    // the use site.
+    #[allow(clippy::type_complexity)]
     async fn sweep_nudges_everyone_about_a_floating_review_once_per_window() {
         // F07: a review floating past NUDGE_AFTER_SECS gets one message to
         // everyone in its crew per window; a claimed or young review none.
@@ -9934,9 +10084,25 @@ mod tests {
         // Everyone in the crew reads it.
         let env = pg.relay_envelope(u1(), a1).await.unwrap();
         assert!(env.messages.iter().any(|m| m.task_id.as_deref() == Some(&old.to_string())));
-        // Inside the window: no second nudge. Past it: one more.
+        // Inside the window: no second nudge. Past it: one more — with the
+        // young review re-floated by a fresh report and A1's lease kept
+        // live, so neither becomes stale or abandoned by then.
         let rep = pg.relay_sweep_leases(t0() + chrono::Duration::seconds(60)).await.unwrap();
         assert_eq!(rep.nudged, 0);
+        sqlx_core::query::query("update relay.tasks set state_changed_at = $1 where id = $2")
+            .bind(t0() + chrono::Duration::seconds(500))
+            .bind(young)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = $1 where lane_id = $2 and kind = 'lane'",
+        )
+        .bind(t0() + chrono::Duration::seconds(2000))
+        .bind(a1)
+        .execute(pg.pool())
+        .await
+        .unwrap();
         let rep = pg.relay_sweep_leases(t0() + chrono::Duration::seconds(901)).await.unwrap();
         assert_eq!(rep.nudged, 1);
         let n: i64 = sqlx_core::query_scalar::query_scalar(

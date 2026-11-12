@@ -194,7 +194,8 @@ pub enum LaneReason {
     LimitPause,
     /// A heartbeat granted a fresh lease after the old one lapsed.
     LeaseRegranted,
-    /// A heartbeat at or past the resume time ended a limit pause.
+    /// The sweeper ended a limit pause at its resume time (F03: a beat
+    /// never does).
     LimitPauseEnded,
 }
 
