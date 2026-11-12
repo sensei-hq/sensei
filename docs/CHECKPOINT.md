@@ -1,8 +1,8 @@
 # Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue, cut from develop @ 598045196)
 
-**Slice:** Relay autonomous queue — phase 2 (daemon). Tasks 2.1–2.8 SHIPPED as red/green pairs; task 2.9
-(handlers/routes/events/guidance v2) next. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/2-daemon.md` (each
-task has ticked steps + "Executed" deviations).
+**Slice:** Relay autonomous queue — phase 2 (daemon). Tasks 2.1–2.9 SHIPPED as red/green pairs; task 2.11 (now +
+task view serve the sprint surface — added, phase 4 reads it) next, then 2.10 converge/install/smoke. Plan:
+`docs/plan/2026-11-10-relay-autonomous-queue/2-daemon.md` (each task has ticked steps + "Executed" deviations).
 
 **Done:**
 - Phase 1 (DB additive) on develop @ `b9eb57ac2`; phase-1 checkpoint docs @ `598045196`.
@@ -15,18 +15,21 @@ task has ticked steps + "Executed" deviations).
   (`relay/gate.rs` GateSpec/GateRunner/GitGateRunner over `agent_spawn::run_agent`, gate task minted on a branched
   approval in a gated run, outcome write merged/rework/blocked + `retry|skip_gate`, ticker `pass`, twelve finding
   classes seeded — `make test-template` rebuilt).
-- Proof at `537a5b814`: `cargo test -p senseid relay -- --test-threads=1` 357/357; `database/tests/run.sh relay` 14/14;
-  clippy `-D warnings` + fmt clean; `make test-fast` green (the fabrication checker refused a log-and-continue arm in
-  the pass once; errors now propagate).
+- 2.9 routes `4d8bca384`+`bc583372f` (claim_next/claim/checkpoint/release/limit_resume, GET /api/relay/queue,
+  POST /relay/runs 201, register role default + suggested_name, strict wait queries + timeout_seconds, waiter row,
+  unpack + run.activated events, `relay_run(change, run_id, crew_id)`, guidance v2).
+- Proof at `bc583372f`: `cargo test -p senseid relay -- --test-threads=1` 371/371; mcp green; clippy `-D warnings` +
+  fmt clean; fabrication checker clean; `make test-fast` green.
 
-**Remaining:** 2.9 handlers/routes/events (claim_next, claim, checkpoint, release, limit_resume, GET /api/relay/queue,
-POST /relay/runs 201, RegisterBody role optional + suggested_name, WaitQuery/TasksQuery deny_unknown_fields +
-timeout_seconds, waiter row in wait_for_task, `relay_run(change, run_id, crew_id)` + Created/Activated, guidance v2),
-2.10 live converge (`dbd reconcile --allow-destructive`, `dbd import`) + `make install-service` + smoke; then phases 3–5.
+**Remaining:** 2.11 now/task-view sprint surface (`now.runs`, `now.floating_reviews`, lane `reviewing` +
+`suggested_name`; task header `run_id`/`deps_status`/`unmet_deps`), 2.10 live converge (`dbd reconcile
+--allow-destructive` — dry-run read: 3 tables, 2 enums, tasks/lanes alters, reviewer_lane_id drop, plus two unrelated
+`sensei.*` enum alters from develop drift; then `dbd import`) + `make crates && make install-service` +
+`scripts/relay-queue-smoke.sh` (drafted, untracked); then phases 3–5.
 
-**Next command:** in `lanes/relay-queue`: write the 2.9 reds in `crates/senseid/src/api/handlers/relay.rs` (handler
-pins), `crates/senseid/src/api/events.rs` (run event shape), `crates/senseid/src/relay/mod.rs` (guidance v2 pins),
-`cargo test -p senseid -- --test-threads=1 claim_next checkpoint release limit_resume queue create_run guidance`.
+**Next command:** in `lanes/relay-queue`: write the 2.11 reds in `crates/senseid/src/db/pg_store/relay.rs`
+(`now_serves_runs_floating_reviews_and_the_reviewing_lane`, `task_view_serves_run_id_and_deps_status`),
+`cargo test -p senseid -- --test-threads=1 now_serves task_view_serves`.
 
 **Open questions (user):** none blocking. Deviations recorded per task in `2-daemon.md`.
 
