@@ -89,6 +89,10 @@ pub struct Signature {
     pub paths: &'static [&'static str],
     /// A top-level directory whose children name features `^[0-9]+[a-z]?-`.
     pub numbered_dir: Option<&'static str>,
+    /// Folders of the framework's feature specs (the doc indexer's `feature`/`design`).
+    pub spec_dirs: &'static [&'static str],
+    /// Folders of the framework's requirement docs.
+    pub requirement_dirs: &'static [&'static str],
     /// A shell command whose command word is one of these.
     pub commands: &'static [&'static str],
     /// Directories whose presence in the repository marks the framework.
@@ -103,6 +107,8 @@ pub const SIGNATURES: &[Signature] = &[
         skills: &["openspec-"],
         paths: &["openspec/"],
         numbered_dir: None,
+        spec_dirs: &["openspec/specs/"],
+        requirement_dirs: &["openspec/product/"],
         commands: &["openspec"],
         markers: &["openspec"],
     },
@@ -112,6 +118,8 @@ pub const SIGNATURES: &[Signature] = &[
         skills: &["speckit-", "speckit."],
         paths: &[".specify/"],
         numbered_dir: Some("specs"),
+        spec_dirs: &[],
+        requirement_dirs: &[],
         commands: &["specify"],
         markers: &[".specify"],
     },
@@ -121,6 +129,8 @@ pub const SIGNATURES: &[Signature] = &[
         skills: &[],
         paths: &[".kiro/specs/"],
         numbered_dir: None,
+        spec_dirs: &[".kiro/specs/"],
+        requirement_dirs: &[],
         commands: &[],
         markers: &[".kiro/specs"],
     },
@@ -130,6 +140,8 @@ pub const SIGNATURES: &[Signature] = &[
         skills: &["bmad-"],
         paths: &["_bmad/", "_bmad-output/", ".bmad-core/"],
         numbered_dir: None,
+        spec_dirs: &[],
+        requirement_dirs: &[],
         commands: &[],
         markers: &["_bmad", ".bmad-core"],
     },
@@ -176,6 +188,31 @@ fn evidence(e: &SignalEvent, repo_root: Option<&str>) -> Option<SddFramework> {
         s.paths.iter().any(|p| rel.starts_with(p))
             || s.numbered_dir.is_some_and(|dir| numbered_feature(rel, dir))
     })
+}
+
+/// Whether `path` (absolute or repo-relative) lies under a framework's folder: one of
+/// its `paths`, at a segment boundary. Not code (spec S2, A4).
+pub fn in_framework_dir(path: &str) -> bool {
+    SIGNATURES.iter().flat_map(|s| s.paths).any(|p| under(path, p))
+}
+
+/// Whether the repo-relative `rel` is a framework's feature spec: under one of its
+/// `spec_dirs`, or in a numbered feature folder at the root (`specs/001-auth/`).
+pub fn in_spec_dir(rel: &str) -> bool {
+    SIGNATURES.iter().any(|s| {
+        s.spec_dirs.iter().any(|d| under(rel, d))
+            || s.numbered_dir.is_some_and(|dir| numbered_feature(rel, dir))
+    })
+}
+
+/// Whether the repo-relative `rel` is under a framework's requirement folder.
+pub fn in_requirement_dir(rel: &str) -> bool {
+    SIGNATURES.iter().flat_map(|s| s.requirement_dirs).any(|d| under(rel, d))
+}
+
+/// Whether `path` starts with the folder `dir` (ending `/`) or holds it after a `/`.
+fn under(path: &str, dir: &str) -> bool {
+    path.starts_with(dir) || path.match_indices(dir).any(|(i, _)| path.as_bytes()[i - 1] == b'/')
 }
 
 fn find(matches: impl Fn(&Signature) -> bool) -> Option<SddFramework> {
@@ -514,5 +551,42 @@ mod tests {
             decide(None, &StaticOutcome::Found(vec![]), failed_before),
             Detection::default()
         );
+    }
+
+    #[test]
+    fn framework_folders_come_from_the_table() {
+        for (path, inside) in [
+            ("/r/openspec/changes/x.ts", true),
+            ("openspec/specs/a/spec.md", true),
+            ("/r/.specify/memory/c.md", true),
+            ("/r/.kiro/specs/a/tasks.ts", true),
+            ("/r/_bmad/a.ts", true),
+            ("/r/_bmad-output/a.ts", true),
+            ("/r/.bmad-core/a.ts", true),
+            ("/r/.kiro/steering/a.md", false),
+            ("/r/specs/001-auth/spec.md", false),
+            ("/r/myopenspec/a.ts", false),
+            ("/r/src/openspec.ts", false),
+        ] {
+            assert_eq!(in_framework_dir(path), inside, "{path}");
+        }
+    }
+
+    #[test]
+    fn spec_and_requirement_folders_come_from_the_table() {
+        for (rel, spec) in [
+            ("openspec/specs/a/spec.md", true),
+            ("app/openspec/specs/a/spec.md", true),
+            (".kiro/specs/a/design.md", true),
+            ("specs/001-auth/spec.md", true),
+            ("specs/12b-x/plan.md", true),
+            ("specs/auth/spec.md", false),
+            ("openspec/changes/x/tasks.md", false),
+            ("docs/a.md", false),
+        ] {
+            assert_eq!(in_spec_dir(rel), spec, "{rel}");
+        }
+        assert!(in_requirement_dir("openspec/product/vision.md"));
+        assert!(!in_requirement_dir("openspec/specs/a/spec.md"));
     }
 }

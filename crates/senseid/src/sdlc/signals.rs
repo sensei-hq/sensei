@@ -21,7 +21,7 @@ pub const TEXT_TAIL_BYTES: i64 = 65_536;
 
 /// The derivation code's version, stored on every mark: a mark below it is derived
 /// again (blueprint B9). Bump it when a change must reach sessions already derived.
-pub const DERIVE_VERSION: i32 = 1;
+pub const DERIVE_VERSION: i32 = 2;
 
 /// The tools that write a file: a `PostToolUse` of one is a completed edit.
 pub const EDIT_TOOLS: &[&str] = &["Edit", "MultiEdit", "Write", "NotebookEdit"];
@@ -359,18 +359,20 @@ fn review_texts(events: &[SignalEvent]) -> std::collections::HashMap<i64, (Strin
     out
 }
 
-/// A code file (spec S2, A4): not a documentation type, and not under a spec or
-/// agent folder. A route under `docs/` or an RSpec file under `spec/` is code.
+/// A code file (spec S2, A4): not a documentation type, and not under an SDD
+/// framework's folder or an agent folder. A route under `docs/` or an RSpec file
+/// under `spec/` is code.
 fn is_code(path: &str) -> bool {
     const DOC_TYPES: &[&str] = &["md", "mdx", "rst", "adoc", "txt"];
-    const NOT_CODE_DIRS: &[&str] = &["openspec", ".sensei", ".claude"];
+    const AGENT_DIRS: &[&str] = &[".sensei", ".claude", ".kiro"];
     let ext = path
         .rsplit('/')
         .next()
         .and_then(|f| f.rsplit_once('.'))
         .map(|(_, x)| x.to_ascii_lowercase());
     !ext.is_some_and(|x| DOC_TYPES.contains(&x.as_str()))
-        && !path.split('/').any(|seg| NOT_CODE_DIRS.contains(&seg))
+        && !path.split('/').any(|seg| AGENT_DIRS.contains(&seg))
+        && !crate::sdlc::framework::in_framework_dir(path)
 }
 
 /// The tasks an edit of a `tasks.md` ticked: unchecked before, checked after.
@@ -688,6 +690,66 @@ mod tests {
             .collect();
         want.extend([20, 21]);
         assert_eq!(got, want);
+    }
+
+    /// #392: every framework's folder, from the one signature table, is not code; a
+    /// numbered test folder outside one is.
+    #[test]
+    fn framework_folders_are_not_code() {
+        for (path, code) in [
+            ("/r/openspec/changes/x/design.ts", false),
+            ("/r/.specify/scripts/create.sh", false),
+            ("/r/.kiro/specs/auth/tasks.ts", false),
+            ("/r/.kiro/settings/mcp.json", false),
+            ("/r/.kiro/hooks/lint.kiro.hook", false),
+            ("/r/_bmad/core/agent.ts", false),
+            ("/r/_bmad-output/stories/a.ts", false),
+            ("/r/.bmad-core/tasks/a.js", false),
+            ("/r/app/openspec/x.ts", false),
+            ("/r/tests/specs/001-login/login.spec.ts", true),
+            ("/r/src/kiro/specs/a.ts", true),
+            ("/r/src/openspec.ts", true),
+        ] {
+            assert_eq!(is_code(path), code, "{path}");
+        }
+    }
+
+    /// A change to what counts as code must reach sessions already derived, so it
+    /// bumps [`DERIVE_VERSION`] (B9). Version 2: SDD framework and `.kiro` folders (#392).
+    #[test]
+    fn the_code_rule_is_the_derive_version_s() {
+        let probes = [
+            "/r/openspec/a.ts",
+            "/r/.specify/a.sh",
+            "/r/.kiro/specs/a/b.ts",
+            "/r/.kiro/settings/mcp.json",
+            "/r/_bmad/a.ts",
+            "/r/_bmad-output/a.ts",
+            "/r/.bmad-core/a.js",
+            "/r/.claude/a.ts",
+            "/r/.sensei/a.ts",
+            "/r/specs/001-a/a.ts",
+            "/r/src/a.ts",
+        ];
+        let not_code: Vec<&str> = probes.into_iter().filter(|p| !is_code(p)).collect();
+        assert_eq!(
+            (DERIVE_VERSION, not_code),
+            (
+                2,
+                vec![
+                    "/r/openspec/a.ts",
+                    "/r/.specify/a.sh",
+                    "/r/.kiro/specs/a/b.ts",
+                    "/r/.kiro/settings/mcp.json",
+                    "/r/_bmad/a.ts",
+                    "/r/_bmad-output/a.ts",
+                    "/r/.bmad-core/a.js",
+                    "/r/.claude/a.ts",
+                    "/r/.sensei/a.ts",
+                ]
+            ),
+            "a change to is_code bumps DERIVE_VERSION and this record"
+        );
     }
 
     #[test]

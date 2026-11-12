@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::sdlc::framework;
 use crate::types::NodeKind;
 
 /// Frontmatter parsed from YAML between --- fences.
@@ -110,7 +111,7 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
     // Requirement docs
     if lower.contains("requirement")
         || lower.contains("/prd")
-        || lower.contains("openspec/product/")
+        || framework::in_requirement_dir(&lower)
     {
         return DocClassification {
             kind: NodeKind::Doc,
@@ -124,7 +125,7 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
         || lower.contains("architecture")
         || lower.contains("/adr/")
         || lower.contains("/plans/")
-        || lower.contains("openspec/specs/") && lower.contains("design")
+        || framework::in_spec_dir(&lower) && lower.contains("design")
     {
         return DocClassification {
             kind: NodeKind::Doc,
@@ -134,10 +135,7 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
     }
 
     // Feature specs
-    if lower.contains("/features/")
-        || lower.contains("/specs/")
-        || lower.contains("openspec/specs/")
-    {
+    if lower.contains("/features/") || lower.contains("/specs/") || framework::in_spec_dir(&lower) {
         return DocClassification {
             kind: NodeKind::Doc,
             doc_type: "feature".into(),
@@ -715,6 +713,26 @@ This is IMPORTANT: keep it.
         assert_eq!(classify_doc("docs/features/01-codebase.md", &fm).doc_type, "feature");
         assert_eq!(classify_doc("docs/superpowers/plans/2026-plan.md", &fm).doc_type, "design");
         assert_eq!(classify_doc("docs/roadmap/gaps.md", &fm).doc_type, "design");
+    }
+
+    /// #392: each framework's spec folder classifies as `openspec/specs/` does.
+    #[test]
+    fn framework_spec_folders_classify_like_openspec() {
+        let fm = DocFrontmatter::default();
+        for (path, want) in [
+            ("openspec/specs/auth/spec.md", "feature"),
+            ("specs/001-auth/spec.md", "feature"),
+            ("specs/002a-gaps/tasks.md", "feature"),
+            (".kiro/specs/auth/tasks.md", "feature"),
+            ("openspec/specs/auth/design.md", "design"),
+            ("specs/001-auth/design.md", "design"),
+            (".kiro/specs/auth/design.md", "design"),
+            (".kiro/specs/auth/requirements.md", "requirement"),
+            ("openspec/product/vision.md", "requirement"),
+        ] {
+            assert_eq!(classify_doc(path, &fm).doc_type, want, "{path}");
+        }
+        assert_ne!(classify_doc("specs/auth/notes.md", &fm).doc_type, "feature");
     }
 
     #[test]
