@@ -768,6 +768,7 @@ pub fn build_relay_wait_request(
     lane_id: &str,
     lane_token: &str,
     timeout_ms: Option<u64>,
+    _timeout_seconds: Option<u64>,
 ) -> DaemonRequest {
     let mut req = DaemonRequest::get("/api/relay/tasks/wait").with_query("lane_id", lane_id);
     if let Some(ms) = timeout_ms {
@@ -2046,6 +2047,14 @@ mod tests {
         // F8: step progress.
         "relay_post_step",
         "relay_limit_pause",
+        // Queue cutover: the claim loop.
+        "relay_claim_next",
+        "relay_claim_task",
+        "relay_claim_review",
+        "relay_checkpoint_task",
+        "relay_release_task",
+        "relay_limit_resume",
+        "relay_get_queue",
     ];
 
     fn tools() -> Vec<Value> {
@@ -3106,6 +3115,14 @@ mod tests {
         // F8: step progress.
         "relay_post_step",
         "relay_limit_pause",
+        // Queue cutover: the claim loop.
+        "relay_claim_next",
+        "relay_claim_task",
+        "relay_claim_review",
+        "relay_checkpoint_task",
+        "relay_release_task",
+        "relay_limit_resume",
+        "relay_get_queue",
     ];
 
     const LANE_ID: &str = "01938931-0000-7000-8000-000000000001";
@@ -3178,13 +3195,204 @@ mod tests {
     }
 
     #[test]
-    fn relay_register_requires_role_and_family() {
-        assert_eq!(missing_required("relay_register", &json!({})), vec!["role", "family"]);
-        // Q6 settled: crew_id rides along when given (contributors must give it — register_mode).
+    fn relay_register_requires_family_only() {
+        // Queue cutover (#402): role defaults to contributor and crew_id to
+        // the single active crew — only the family is required.
+        assert_eq!(missing_required("relay_register", &json!({})), vec!["family"]);
+        assert!(missing_required("relay_register", &json!({"family": "x"})).is_empty());
         assert!(
             missing_required("relay_register", &json!({"role": "contributor", "family": "x"}))
                 .is_empty()
         );
+    }
+
+    // ── Queue cutover (phase 3): the claim loop over MCP ──
+
+    #[test]
+    fn relay_tool_list_names_the_queue_tools() {
+        let ts = tools();
+        for tool in [
+            "relay_claim_next",
+            "relay_claim_task",
+            "relay_claim_review",
+            "relay_checkpoint_task",
+            "relay_release_task",
+            "relay_limit_resume",
+            "relay_get_queue",
+        ] {
+            let missing = missing_required(tool, &json!({}));
+            assert!(
+                missing.starts_with(&["lane_id".to_string(), "lane_token".to_string()]),
+                "{tool} is a lane call: {missing:?}"
+            );
+            assert!(
+                !tool_named(&ts, tool)["description"].as_str().unwrap_or("").is_empty(),
+                "{tool} says what it does"
+            );
+        }
+        for tool in [
+            "relay_claim_task",
+            "relay_claim_review",
+            "relay_checkpoint_task",
+            "relay_release_task",
+        ] {
+            assert_eq!(missing_required(tool, &lane_args(json!({}))), vec!["task_id"], "{tool}");
+        }
+        // A run is the person's to create: not a lane tool.
+        assert!(ts.iter().all(|t| t["name"] != "relay_create_run"));
+        let claim = tool_named(&ts, "relay_claim_next")["description"].as_str().unwrap();
+        assert!(claim.contains("review") && claim.contains("never your own"), "{claim}");
+        let checkpoint = tool_named(&ts, "relay_checkpoint_task");
+        for key in ["current_step", "notes", "steps"] {
+            assert!(
+                checkpoint["inputSchema"]["properties"][key].is_object(),
+                "checkpoint takes {key}"
+            );
+        }
+        let release = tool_named(&ts, "relay_release_task")["inputSchema"]["properties"]["reason"]
+            ["description"]
+            .as_str()
+            .unwrap();
+        assert!(release.contains("600"), "the release reason names the cap: {release}");
+        // The older tools say what the daemon now does.
+        let get_tasks = tool_named(&ts, "relay_get_tasks")["description"].as_str().unwrap();
+        assert!(
+            get_tasks.contains("never starts") && get_tasks.contains("relay_claim_next"),
+            "{get_tasks}"
+        );
+        let report = tool_named(&ts, "relay_report_task")["description"].as_str().unwrap();
+        assert!(
+            report.contains("relay_upstream_deps_unmet") && report.contains("floats"),
+            "{report}"
+        );
+        let review = tool_named(&ts, "relay_submit_review")["description"].as_str().unwrap();
+        assert!(review.contains("gate"), "{review}");
+        let register = tool_named(&ts, "relay_register");
+        assert!(register["inputSchema"]["properties"]["suggested_name"].is_object());
+        assert!(
+            register["inputSchema"]["properties"]["role"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("contributor"),
+            "role documents its default"
+        );
+        let wait = tool_named(&ts, "relay_wait_for_task");
+        assert!(wait["inputSchema"]["properties"]["timeout_seconds"].is_object());
+    }
+
+    #[test]
+    fn claim_next_dispatch_posts_with_bearer_and_no_token_in_body() {
+        let req =
+            daemon_request_for("relay_claim_next", &lane_args(json!({})), "/cwd", None).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/tasks/claim_next");
+        assert_eq!(req.body.as_ref().unwrap(), &json!({"lane_id": LANE_ID}));
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn claim_release_checkpoint_dispatch_name_the_task_and_forward_their_fields() {
+        let t = "01938931-0000-7000-8000-0000000000f9";
+        for (tool, op) in [("relay_claim_task", "claim"), ("relay_claim_review", "claim_review")] {
+            let req =
+                daemon_request_for(tool, &lane_args(json!({"task_id": t})), "/cwd", None).unwrap();
+            assert_eq!(req.method, HttpMethod::Post, "{tool}");
+            assert_eq!(req.path, format!("/api/relay/tasks/{t}/{op}"), "{tool}");
+            assert_eq!(req.body.as_ref().unwrap(), &json!({"lane_id": LANE_ID}), "{tool}");
+            assert_token_only_in_headers(&req, TOKEN);
+        }
+        let req = daemon_request_for(
+            "relay_checkpoint_task",
+            &lane_args(json!({
+                "task_id": t, "current_step": "clippy", "notes": "two left",
+                "steps": [{"key": "ddl", "title": "Apply", "state": "done"}],
+            })),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.path, format!("/api/relay/tasks/{t}/checkpoint"));
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["current_step"], "clippy");
+        assert_eq!(body["notes"], "two left");
+        assert_eq!(body["steps"][0]["key"], "ddl");
+        assert!(body.get("reason").is_none(), "absent stays absent");
+        assert_token_only_in_headers(&req, TOKEN);
+        let req = daemon_request_for(
+            "relay_release_task",
+            &lane_args(json!({"task_id": t, "reason": "Blocked on the schema."})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.path, format!("/api/relay/tasks/{t}/release"));
+        assert_eq!(
+            req.body.as_ref().unwrap(),
+            &json!({"lane_id": LANE_ID, "reason": "Blocked on the schema."})
+        );
+        let req = daemon_request_for(
+            "relay_release_task",
+            &lane_args(json!({"task_id": t})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.body.as_ref().unwrap(), &json!({"lane_id": LANE_ID}));
+    }
+
+    #[test]
+    fn limit_resume_and_get_queue_dispatch() {
+        let req =
+            daemon_request_for("relay_limit_resume", &lane_args(json!({})), "/cwd", None).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/relay/limit_resume");
+        assert_eq!(req.body.as_ref().unwrap(), &json!({"lane_id": LANE_ID}));
+        assert_token_only_in_headers(&req, TOKEN);
+        let req =
+            daemon_request_for("relay_get_queue", &lane_args(json!({})), "/cwd", None).unwrap();
+        assert_eq!(req.method, HttpMethod::Get);
+        assert_eq!(req.path, "/api/relay/queue");
+        assert!(req.query.contains(&("lane_id".to_string(), LANE_ID.to_string())));
+        assert!(req.body.is_none());
+        assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn register_dispatch_forwards_suggested_name_and_omits_role_when_absent() {
+        let req = daemon_request_for(
+            "relay_register",
+            &json!({"family": "claude-code", "suggested_name": "worker-alpha"}),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["suggested_name"], "worker-alpha");
+        assert!(
+            body.get("role").is_none(),
+            "absent stays absent: the daemon defaults to contributor"
+        );
+        assert!(
+            body.get("crew_id").is_none(),
+            "absent stays absent: the daemon joins the active crew"
+        );
+        assert!(req.headers.iter().all(|(k, _)| k != "authorization"), "register mints the token");
+    }
+
+    #[test]
+    fn wait_request_carries_timeout_seconds_when_given() {
+        let req = build_relay_wait_request(LANE_ID, TOKEN, None, Some(30));
+        assert!(
+            req.query.contains(&("timeout_seconds".to_string(), "30".to_string())),
+            "{:?}",
+            req.query
+        );
+        assert!(!req.query.iter().any(|(k, _)| k == "timeout_ms"));
+        // Both given: both ride; the daemon reads timeout_ms first.
+        let req = build_relay_wait_request(LANE_ID, TOKEN, Some(5_000), Some(30));
+        assert!(req.query.contains(&("timeout_ms".to_string(), "5000".to_string())));
+        assert!(req.query.contains(&("timeout_seconds".to_string(), "30".to_string())));
+        assert_token_only_in_headers(&req, TOKEN);
     }
 
     #[test]
@@ -3253,7 +3461,7 @@ mod tests {
 
     #[test]
     fn relay_wait_builder_shapes_hold_open() {
-        let req = build_relay_wait_request(LANE_ID, TOKEN, Some(5_000));
+        let req = build_relay_wait_request(LANE_ID, TOKEN, Some(5_000), None);
         assert_eq!(req.method, HttpMethod::Get);
         assert_eq!(req.path, "/api/relay/tasks/wait");
         assert!(req.query.contains(&("lane_id".to_string(), LANE_ID.to_string())));
@@ -3261,8 +3469,9 @@ mod tests {
         assert_token_only_in_headers(&req, TOKEN);
         // Omitted → the key is absent (never null-filled); the daemon
         // applies its default.
-        let req = build_relay_wait_request(LANE_ID, TOKEN, None);
+        let req = build_relay_wait_request(LANE_ID, TOKEN, None, None);
         assert!(!req.query.iter().any(|(k, _)| k == "timeout_ms"));
+        assert!(!req.query.iter().any(|(k, _)| k == "timeout_seconds"));
     }
 
     #[test]
