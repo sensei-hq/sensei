@@ -73,6 +73,17 @@ status — open or closed is GitHub's answer.
   (`tasks/schema_deploy.rs`), so a branch that adds tables leaves `dojo_sync` failing every tick (here: no
   `sensei.delivery_withdrawals`) until someone clears the key and restarts. Option: when `SENSEI_DDL_DIR` is set, key
   the deploy on the DDL tree's fingerprint (`scripts/test-template-fingerprint.sh` already computes one) as well as the version.
+- **Diagrams section broken by a main ⇄ develop discrepancy (user, 2026-11-12; queued behind the relay queue merge).**
+  main `031b89f5a` (v0.21.1 + the MIT LICENSE merge, #370) is 640 commits behind develop `d7168e0a4`, and the
+  diagrams screen was rewritten on develop into facets (`plan/diagrams-facets.md`): the `layers`, `neighbourhood` and
+  `structure` pages and their states are gone, `schema` + `er-graph` + the shell arrived, and
+  `crates/senseid/src/api/handlers/diagrams.rs` changed with them (46 files differ under `*diagram*`). A released app
+  (main's routes) against a develop daemon — or the reverse — sits on opposite sides of that rewrite. First checks:
+  which app and which daemon are installed (`sensei --version`, the .app's version), then the diagrams routes the
+  installed app calls against the handler the installed daemon serves. The next release carries develop's diagrams to
+  main; verify the diagrams section on the shipped artifact (release checklist step 5) before closing. Also: #370
+  reached main by PR only, so `LICENSE` is absent from develop — merge `origin/main` back into develop (the
+  `make release` step that normally does it did not run for #370) before the release PR.
 
 - **Forge tickets from unshared repositories travel with the board (DF2, 2026-11-09, deferred).** Matches Jira. Forge tickets
   carry their repository, so a later slice could send only tickets from the workspace's shared repositories.
