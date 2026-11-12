@@ -28,9 +28,12 @@ import { EventManager } from './events.js';
 
 export type RelayRole = 'coordinator' | 'contributor';
 
-export type RelayTaskPhase = 'analysis' | 'tests' | 'impl' | 'docs' | 'mockup';
+/** `planning` is a sprint run's Task 0 (queue cutover). */
+export type RelayTaskPhase = 'analysis' | 'tests' | 'impl' | 'docs' | 'mockup' | 'planning';
 
+/** `ready` is the pool: minted there, unclaimed, on no lane (queue cutover). */
 export type RelayTaskState =
+  | 'ready'
   | 'assigned'
   | 'working'
   | 'in_review'
@@ -64,7 +67,18 @@ export type RelayActionKind =
   | 'interrupted'
   | 'reoffered'
   | 'compacted'
-  | 'handed_over';
+  | 'handed_over'
+  // Queue cutover: a claim, a review claim, a release, an in-turn save.
+  | 'claimed'
+  | 'review_claimed'
+  | 'released'
+  | 'checkpointed';
+
+/** `relay.runs.state` (queue cutover): a sprint run's lifecycle. */
+export type RelayRunState = 'planning' | 'active' | 'completed' | 'cancelled';
+
+/** The queue's verdict on a claimed task's deps (queue cutover). */
+export type RelayDepsStatus = 'satisfied' | 'early_claim_gated';
 
 /** The tracker ticket an item references by its portable identity, resolved on this side. */
 export interface RelayTicket {
@@ -132,6 +146,53 @@ export interface RelayLane {
   /** The lane's own words on the pause (audit; shown nowhere yet). */
   limit_note: string | null;
   task: RelayLaneTask | null;
+  /** The name the assistant proposed for itself (queue cutover); null when it offered none. */
+  suggested_name: string | null;
+  /** The review this lane holds (`review_claimed_by`), beside its own task; null when none. */
+  reviewing: RelayLaneReview | null;
+}
+
+/** The review a lane holds (`relay.now` lane payload `reviewing`). */
+export interface RelayLaneReview {
+  id: string;
+  title: string;
+  phase: RelayTaskPhase;
+  round: number;
+  claimed_at: string;
+}
+
+/** One row of `relay.now`'s `sprint_summary`: an open run with its tasks counted by state. */
+export interface RelayRunSummary {
+  run_id: string;
+  crew_id: string;
+  title: string;
+  goal: string;
+  state: RelayRunState;
+  created_at: string;
+  started_at: string | null;
+  total_tasks: number;
+  ready_tasks: number;
+  working_tasks: number;
+  in_review_tasks: number;
+  floating_reviews: number;
+  approved_tasks: number;
+  done_tasks: number;
+  blocked_tasks: number;
+  interrupted_tasks: number;
+}
+
+/** One row of `relay.now`'s `floating_review`: a report waiting for a reviewer. */
+export interface RelayFloatingReview {
+  task_id: string;
+  crew_id: string;
+  run_id: string | null;
+  title: string;
+  phase: RelayTaskPhase;
+  round: number;
+  repo_key: string;
+  author_lane_code: string;
+  author_lane_title: string | null;
+  reported_at: string;
 }
 
 export interface RelayDecisionOption {
@@ -216,6 +277,10 @@ export interface RelayNow {
   crews: RelayCrew[];
   facets: RelayFacets;
   lanes: RelayLane[];
+  /** Open sprint runs in created order (queue cutover): the band above the lanes. */
+  runs: RelayRunSummary[];
+  /** Reports waiting for a reviewer, oldest first (queue cutover). */
+  floating_reviews: RelayFloatingReview[];
   decisions: RelayDecision[];
   person_messages: RelayPersonMessage[];
   triage: RelayTriageSource[];
@@ -292,7 +357,14 @@ export interface RelayTaskHeader {
   round: number;
   ticket: RelayTicket | null;
   lane: RelayTaskLane | null;
-  assigned_at: string;
+  /** The sprint run it belongs to; null outside a run (queue cutover). */
+  run_id: string | null;
+  /** How the queue classes its deps right now; the report is gated while early. */
+  deps_status: RelayDepsStatus;
+  /** The deps not done yet, in id order; empty when satisfied. */
+  unmet_deps: string[];
+  /** Null while the task waits in the pool (queue cutover). */
+  assigned_at: string | null;
   completed_at: string | null;
   /** F8: every transition stamps it; the timeline stamps derived rows from it. */
   state_changed_at: string;
@@ -431,6 +503,11 @@ export interface RelayActionProps {
   compacted: { context_tokens_before?: number | null; context_tokens_after?: number | null };
   /** F1: uuids read as codes via the crew's lanes; `from_state` is the state word the task left. */
   handed_over: { from_lane: string; from_state: RelayTaskState; to_lane: string };
+  // Queue cutover (the daemon's `validate_props` allowlists).
+  claimed: { claim_type: 'task' | 'review'; deps_status?: RelayDepsStatus; unmet_deps?: string[] };
+  review_claimed: Record<string, never>;
+  released: { kind: 'task' | 'review'; reason?: string | null };
+  checkpointed: { current_step?: string | null; notes?: string | null };
 }
 
 interface RelayActionBase {
@@ -510,6 +587,34 @@ export type RelayAddToBacklog =
   | { item_id: string }
   | { ticket_provider: RelayTicketProvider; ticket_key: string };
 
+/** The gate's knobs on a run (`relay.runs.config`); an unknown knob is a 422. */
+export interface RelayRunConfig {
+  base_checkout: string | null;
+  base_branch: string | null;
+  verify_cmd: string | null;
+  auto_merge: boolean;
+}
+
+/** `POST /relay/runs` (queue cutover): a sprint run over backlog items. `crew_id`
+ *  null = the one active crew (a 409 names the refusal when there are none or several). */
+export interface RelayCreateRun {
+  crew_id: string | null;
+  title: string;
+  goal: string;
+  item_ids: string[];
+  repo_key: string | null;
+  workspace_id: string | null;
+  config: RelayRunConfig;
+}
+
+/** The daemon's 201: the run, its Task 0 waiting in the pool, and the crew. */
+export interface RelayCreatedRun {
+  run_id: string;
+  planning_task_id: string;
+  crew_id: string;
+  status: RelayRunState;
+}
+
 // ─── The client ─────────────────────────────────────────────────────────────
 
 export interface RelayApi {
@@ -520,6 +625,8 @@ export interface RelayApi {
   trySendMessage(body: RelaySendMessage): Promise<ApiResult<{ message_id: string }>>;
   tryAnswerDecision(body: RelayAnswer): Promise<ApiResult<{ action_id: string }>>;
   tryAddToBacklog(body: RelayAddToBacklog): Promise<ApiResult<{ item_id: string }>>;
+  /** Mint a sprint run (queue cutover); the daemon's refusal text says why not. */
+  tryCreateRun(body: RelayCreateRun): Promise<ApiResult<RelayCreatedRun>>;
 }
 
 /** What the screens build once from the daemon's port. */
@@ -567,6 +674,7 @@ export const relayApi: RelayApiFactory = (port) => {
     trySendMessage: (body) => call<{ message_id: string }>('POST', '/relay/messages', body),
     tryAnswerDecision: (body) => call<{ action_id: string }>('POST', '/relay/answers', body),
     tryAddToBacklog: (body) => call<{ item_id: string }>('POST', '/relay/backlog', body),
+    tryCreateRun: (body) => call<RelayCreatedRun>('POST', '/relay/runs', body),
   };
 };
 
@@ -580,7 +688,16 @@ export const relayApi: RelayApiFactory = (port) => {
 export interface RelayStreamEvent {
   action: 'add' | 'update' | 'remove' | 'set';
   entity: string;
-  data: { op?: string; task_id?: string; step?: RelayTaskStep };
+  /** Run events carry `run_id` + `crew_id`; lane events `lane_id` + `crew_id` (queue cutover). */
+  data: {
+    op?: string;
+    task_id?: string;
+    step?: RelayTaskStep;
+    run_id?: string;
+    crew_id?: string;
+    lane_id?: string;
+    reason?: string;
+  };
 }
 
 /** Shape-check one socket payload; throws (the manager skips it). */

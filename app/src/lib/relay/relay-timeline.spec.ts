@@ -220,6 +220,18 @@ describe('buildTimeline', () => {
     expect(rows.map((r) => r.title)).toEqual(['Assigned']);
   });
 
+  it('the queue cutover kinds read as claims, releases and checkpoints', () => {
+    const rows = buildTimeline(
+      view([
+        { ...base('checkpointed'), kind: 'checkpointed', props: { current_step: 'clippy' } } as unknown as RelayAction,
+        { ...base('released'), kind: 'released', props: { kind: 'task', reason: 'Blocked.' } } as unknown as RelayAction,
+        { ...base('review_claimed'), kind: 'review_claimed', props: {} } as unknown as RelayAction,
+        { ...base('claimed'), kind: 'claimed', props: { claim_type: 'task', deps_status: 'satisfied' } } as unknown as RelayAction,
+      ]),
+    );
+    expect(rows.map((r) => r.title)).toEqual(['Claimed', 'Review claimed', 'Released', 'Checkpoint']);
+  });
+
   it('an unknown kind renders honestly, never silently', () => {
     const rows = buildTimeline(view([{ ...base('teleported'), kind: 'teleported', props: {} } as unknown as RelayAction]));
     expect(rows[0].title).toBe('Unknown event (teleported)');
