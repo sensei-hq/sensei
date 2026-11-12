@@ -11,6 +11,8 @@
 //! are refused so a planner's typo is a clear error, not a silently dropped
 //! field.
 
+use std::collections::{HashMap, HashSet};
+
 use serde::Deserialize;
 
 use crate::relay::RelayTaskPhase;
@@ -82,7 +84,9 @@ impl PlanError {
             PlanError::Cycle(keys) => format!("the deps loop: {}", keys.join(" -> ")),
             PlanError::EmptyTitle(key) => format!("task {key} has no title"),
             PlanError::NoAcceptance(key) => format!("task {key} has no acceptance line"),
-            PlanError::BadPhase(key) => format!("task {key} is in the planning phase; a plan never nests a plan"),
+            PlanError::BadPhase(key) => {
+                format!("task {key} is in the planning phase; a plan never nests a plan")
+            }
         }
     }
 }
@@ -90,23 +94,109 @@ impl PlanError {
 /// The plan in `report_md`: the last fenced ```json block wins; a body
 /// with no fence is parsed whole. Parsing only — see [`validate_plan`].
 pub fn parse_plan(report_md: &str) -> Result<PlanSpec, PlanError> {
-    let _ = report_md;
-    unimplemented!("task 2.3: parse_plan")
+    let text = match last_json_block(report_md) {
+        Some(block) => block,
+        None => {
+            let whole = report_md.trim();
+            if !whole.starts_with('{') {
+                return Err(PlanError::NoJsonBlock);
+            }
+            whole
+        }
+    };
+    serde_json::from_str::<PlanSpec>(text).map_err(|e| PlanError::Json(e.to_string()))
+}
+
+/// The body of the last fenced ```json block: from the line after the
+/// opener to the next fence. An unterminated fence is no block.
+fn last_json_block(md: &str) -> Option<&str> {
+    let mut found = None;
+    let mut from = 0;
+    while let Some(rel) = md[from..].find("```json") {
+        let open = from + rel;
+        let Some(nl) = md[open..].find('\n') else { break };
+        let body_start = open + nl + 1;
+        let Some(close) = md[body_start..].find("```") else { break };
+        let body_end = body_start + close;
+        found = Some(md[body_start..body_end].trim());
+        from = body_end + 3;
+    }
+    found
 }
 
 /// Keys unique, deps resolve, no cycles, every task titled with at least
 /// one acceptance line, no task in the planning phase.
 pub fn validate_plan(spec: &PlanSpec) -> Result<(), PlanError> {
-    let _ = spec;
-    unimplemented!("task 2.3: validate_plan")
+    if spec.tasks.is_empty() {
+        return Err(PlanError::Empty);
+    }
+    let mut keys: HashSet<&str> = HashSet::with_capacity(spec.tasks.len());
+    for task in &spec.tasks {
+        if !keys.insert(task.key.as_str()) {
+            return Err(PlanError::DuplicateKey(task.key.clone()));
+        }
+    }
+    for task in &spec.tasks {
+        if task.title.trim().is_empty() {
+            return Err(PlanError::EmptyTitle(task.key.clone()));
+        }
+        if task.acceptance.iter().all(|line| line.trim().is_empty()) {
+            return Err(PlanError::NoAcceptance(task.key.clone()));
+        }
+        if task.phase == RelayTaskPhase::Planning {
+            return Err(PlanError::BadPhase(task.key.clone()));
+        }
+        for dep in &task.deps {
+            if !keys.contains(dep.as_str()) {
+                return Err(PlanError::UnknownDep { task: task.key.clone(), dep: dep.clone() });
+            }
+        }
+    }
+    // Kahn: whatever the peel cannot reach sits on a loop.
+    let placed: HashSet<usize> = topo_order(spec).into_iter().collect();
+    if placed.len() < spec.tasks.len() {
+        let on_loop = spec
+            .tasks
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !placed.contains(i))
+            .map(|(_, task)| task.key.clone())
+            .collect();
+        return Err(PlanError::Cycle(on_loop));
+    }
+    Ok(())
 }
 
 /// Indices into `spec.tasks` in an insertion order that puts every dep
 /// before its dependants, stable by plan order among the ready. Call on a
-/// validated plan (a cycle would leave tasks out).
+/// validated plan (a cycle would leave tasks out; an unknown dep is
+/// ignored here — [`validate_plan`] is where it fails).
 pub fn topo_order(spec: &PlanSpec) -> Vec<usize> {
-    let _ = spec;
-    unimplemented!("task 2.3: topo_order")
+    let n = spec.tasks.len();
+    let index: HashMap<&str, usize> =
+        spec.tasks.iter().enumerate().map(|(i, task)| (task.key.as_str(), i)).collect();
+    let mut indegree = vec![0usize; n];
+    let mut dependants: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, task) in spec.tasks.iter().enumerate() {
+        for dep in &task.deps {
+            if let Some(&j) = index.get(dep.as_str()) {
+                indegree[i] += 1;
+                dependants[j].push(i);
+            }
+        }
+    }
+    let mut placed = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    // Each pass takes the first ready task in plan order: stable, and a
+    // loop simply never becomes ready.
+    while let Some(i) = (0..n).find(|&i| !placed[i] && indegree[i] == 0) {
+        placed[i] = true;
+        order.push(i);
+        for &k in &dependants[i] {
+            indegree[k] -= 1;
+        }
+    }
+    order
 }
 
 #[cfg(test)]
@@ -259,7 +349,8 @@ Sized to one turn each."#;
             tasks: vec![task("t2", &["t1"]), task("b", &[]), task("t1", &[]), task("d", &["b"])],
         };
         assert_eq!(validate_plan(&spec), Ok(()));
-        let order: Vec<&str> = topo_order(&spec).into_iter().map(|i| spec.tasks[i].key.as_str()).collect();
+        let order: Vec<&str> =
+            topo_order(&spec).into_iter().map(|i| spec.tasks[i].key.as_str()).collect();
         assert_eq!(order, vec!["b", "t1", "t2", "d"]);
     }
 
@@ -267,9 +358,7 @@ Sized to one turn each."#;
     fn messages_name_the_task_for_the_reviewer() {
         assert!(PlanError::DuplicateKey("t1".into()).message().contains("t1"));
         assert!(
-            PlanError::UnknownDep { task: "t2".into(), dep: "t9".into() }
-                .message()
-                .contains("t9")
+            PlanError::UnknownDep { task: "t2".into(), dep: "t9".into() }.message().contains("t9")
         );
         assert!(PlanError::Cycle(vec!["a".into(), "b".into()]).message().contains("a -> b"));
         assert!(PlanError::NoJsonBlock.message().contains("json"));
