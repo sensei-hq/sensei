@@ -100,8 +100,13 @@ jobs:
       # It lives in this workflow because this is where the app's CI already
       # installs its dependencies, not because it has anything to do with
       # coverage.
+      # The app's theme pin (app/src/lib/rokkit-defaults.spec.ts) imports
+      # ../dojo/rokkit.config.js — one theme, imported, not copied — so svelte-check
+      # resolves the dōjō's @rokkit/unocss too: install both workspaces first.
       - name: app typecheck
-        run: cd app && bun install --frozen-lockfile && bun run check
+        run: |
+          (cd dojo && bun install --frozen-lockfile)
+          cd app && bun install --frozen-lockfile && bun run check
 
       - name: app coverage
         continue-on-error: true
