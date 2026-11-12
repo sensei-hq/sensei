@@ -47,7 +47,7 @@
 
 **Files:** the five enum files above, `database/tests/relay/relay_enums.sql`.
 
-- [ ] **Step 1: Write the failing pins.** In `relay_enums.sql`: header says "eleven vocabularies"; `n <> 11`; `task_phase` pin becomes `array['analysis', 'tests', 'impl', 'docs', 'mockup', 'planning']`; `task_state` pin appends `'ready'`; `action_kind` pin appends `'claimed', 'review_claimed', 'released', 'checkpointed'`; add two blocks:
+- [x] **Step 1: Write the failing pins.** In `relay_enums.sql`: header says "eleven vocabularies"; `n <> 11`; `task_phase` pin becomes `array['analysis', 'tests', 'impl', 'docs', 'mockup', 'planning']`; `task_state` pin appends `'ready'`; `action_kind` pin appends `'claimed', 'review_claimed', 'released', 'checkpointed'`; add two blocks:
 
 ```sql
   select array_agg(e.enumlabel order by e.enumsortorder) into v_labels
@@ -67,9 +67,9 @@
   end if;
 ```
 
-- [ ] **Step 2: Run it red.** `cd database/tests && ./run.sh relay/relay_enums.sql` → FAIL `relay must hold exactly 11 enums, saw 9`.
+- [x] **Step 2: Run it red.** `cd database/tests && ./run.sh relay/relay_enums.sql` → FAIL `relay must hold exactly 11 enums, saw 9`.
 
-- [ ] **Step 3: Write the DDL.**
+- [x] **Step 3: Write the DDL.**
 
 `database/ddl/enum/relay/task_state.ddl`:
 ```sql
@@ -182,7 +182,7 @@ comment on type relay.task_executor is
 'agent = claimed by a lane; broker = the daemon runs it from tasks.deterministic, never a lane.';
 ```
 
-- [ ] **Step 4: Register the new enums** in `database/tests/fixtures/relay_apply.ddl` after `limit_scope.ddl`:
+- [x] **Step 4: Register the new enums** in `database/tests/fixtures/relay_apply.ddl` after `limit_scope.ddl`:
 ```
 \ir ../../ddl/enum/relay/run_state.ddl
 \ir ../../ddl/enum/relay/task_executor.ddl
@@ -193,7 +193,7 @@ and in `database/design.yaml` under the dojo scope `includes:` after `- relay.ac
       - relay.task_executor
 ```
 
-- [ ] **Step 5: Run it green.** `./run.sh relay/relay_enums.sql` → `ok`.
+- [x] **Step 5: Run it green.** `./run.sh relay/relay_enums.sql` → `ok`.
 
 ---
 
@@ -201,7 +201,7 @@ and in `database/design.yaml` under the dojo scope `includes:` after `- relay.ac
 
 **Files:** the three table files, three policy files, `relay_apply.ddl`, `relay_runs.sql`, `relay_lane_waiters.sql`, `relay_schema.sql`.
 
-- [ ] **Step 1: Write the failing pins.**
+- [x] **Step 1: Write the failing pins.**
 
 `database/tests/relay/relay_runs.sql`:
 ```sql
@@ -538,9 +538,9 @@ rollback;
 
 RLS on 11 (`n <> 11`, message "all 11"); policies `n < 11`; the four grant blocks list ten tables (add `('runs'), ('run_items'), ('lane_waiters')`; messages "all 10"); the views pin: `relname in ('now', 'task_history', 'task_queue')`, `n <> 3`.
 
-- [ ] **Step 2: Run them red.** `./run.sh relay/relay_runs.sql` → FAIL `relation "relay.runs" does not exist`; same for waiters; schema → `relay must hold 11 tables, saw 8`.
+- [x] **Step 2: Run them red.** `./run.sh relay/relay_runs.sql` → FAIL `relation "relay.runs" does not exist`; same for waiters; schema → `relay must hold 11 tables, saw 8`.
 
-- [ ] **Step 3: Write the DDL.**
+- [x] **Step 3: Write the DDL.**
 
 `database/ddl/table/relay/runs.ddl`:
 ```sql
@@ -648,7 +648,7 @@ grant select on relay.runs to authenticated;
 
 `relay_apply.ddl` ordering: `runs.ddl` after `crews.ddl` and before `tasks.ddl`; `run_items.ddl` after `items.ddl`; `lane_waiters.ddl` after `lanes.ddl`; the three policy files after `policies/relay/tasks.sql`.
 
-- [ ] **Step 4: Run them green.** `./run.sh relay/relay_runs.sql relay/relay_lane_waiters.sql` → `ok`; `relay_schema.sql` still red on the views pin until Task 1.4.
+- [x] **Step 4: Run them green.** `./run.sh relay/relay_runs.sql relay/relay_lane_waiters.sql` → `ok`; `relay_schema.sql` still red on the views pin until Task 1.4.
 
 ---
 
@@ -656,7 +656,7 @@ grant select on relay.runs to authenticated;
 
 **Files:** `tasks.ddl`, `lanes.ddl`, `relay_tasks.sql`, `relay_crews_lanes.sql`.
 
-- [ ] **Step 1: Write the failing pins.**
+- [x] **Step 1: Write the failing pins.**
 
 Append to the main `do $$` block of `relay_tasks.sql`, before the "owner sees twelve" count:
 ```sql
@@ -770,9 +770,9 @@ Append to `relay_crews_lanes.sql` after the "second coordinator refused" block (
 ```
 Header: add "a departed coordinator still holding the slot; `role` losing its contributor default".
 
-- [ ] **Step 2: Run them red.** `./run.sh relay/relay_tasks.sql relay/relay_crews_lanes.sql` → FAIL `column "run_id" of relation "tasks" does not exist` / `a second coordinator ... was accepted` (unique_violation surfaces as the uncaught error).
+- [x] **Step 2: Run them red.** `./run.sh relay/relay_tasks.sql relay/relay_crews_lanes.sql` → FAIL `column "run_id" of relation "tasks" does not exist` / `a second coordinator ... was accepted` (unique_violation surfaces as the uncaught error).
 
-- [ ] **Step 3: Write the DDL.**
+- [x] **Step 3: Write the DDL.**
 
 `database/ddl/table/relay/tasks.ddl` (whole file):
 ```sql
@@ -874,7 +874,7 @@ comment on column relay.lanes.suggested_name is 'The name the assistant proposed
 comment on column relay.lanes.role is 'contributor by default: the broker coordinates. A coordinator lane is optional and one per crew while registered.';
 ```
 
-- [ ] **Step 4: Run them green.** `./run.sh relay/relay_tasks.sql relay/relay_crews_lanes.sql` → `ok`.
+- [x] **Step 4: Run them green.** `./run.sh relay/relay_tasks.sql relay/relay_crews_lanes.sql` → `ok`.
 
 ---
 
@@ -882,7 +882,7 @@ comment on column relay.lanes.role is 'contributor by default: the broker coordi
 
 **Files:** `view/relay/task_queue.ddl`, `view/relay/now.ddl`, `policies/relay/task_queue.sql`, `relay_apply.ddl`, `relay_task_queue.sql`, `relay_now.sql`, `relay_schema.sql`.
 
-- [ ] **Step 1: Write the failing pins.**
+- [x] **Step 1: Write the failing pins.**
 
 `database/tests/relay/relay_task_queue.sql`:
 ```sql
@@ -1142,9 +1142,9 @@ Assertions: the sections pin becomes `array['completed_today', 'floating_review'
 ```
 Check the rest of the file for lane-count or per-user row counts that the two new lanes and three tasks shift (the `completed_today` count is unaffected: none of the new tasks is approved/done); update any such pin and the header's "WHAT BREAKS" line ("a section outside the six").
 
-- [ ] **Step 2: Run them red.** `./run.sh relay/relay_task_queue.sql relay/relay_now.sql` → FAIL `relation "relay.task_queue" does not exist` / `relay.now sections wrong`.
+- [x] **Step 2: Run them red.** `./run.sh relay/relay_task_queue.sql relay/relay_now.sql` → FAIL `relation "relay.task_queue" does not exist` / `relay.now sections wrong`.
 
-- [ ] **Step 3: Write the DDL.**
+- [x] **Step 3: Write the DDL.**
 
 `database/ddl/view/relay/task_queue.ddl`:
 ```sql
@@ -1249,7 +1249,7 @@ and the view comment names all six sections.
 
 `relay_apply.ddl`: `\ir ../../ddl/view/relay/task_queue.ddl` after `now.ddl`; `\ir ../../policies/relay/task_queue.sql` after `task_history.sql`.
 
-- [ ] **Step 4: Run them green.** `./run.sh relay/relay_task_queue.sql relay/relay_now.sql relay/relay_schema.sql` → `ok` ×3.
+- [x] **Step 4: Run them green.** `./run.sh relay/relay_task_queue.sql relay/relay_now.sql relay/relay_schema.sql` → `ok` ×3.
 
 ---
 
@@ -1257,7 +1257,7 @@ and the view comment names all six sections.
 
 **Files:** Create `database/tests/relay/relay_tasks_cutover.sql.pending` (run.sh only picks `*.sql`, so it does not run until phase 2 renames it).
 
-- [ ] **Step 1: Write it.**
+- [x] **Step 1: Write it.**
 ```sql
 -- `relay.tasks` after the queue cutover (phase 2 task 2.1) — the destructive
 -- half of the autonomous-queue schema. Pending until the daemon switches:
@@ -1362,18 +1362,29 @@ end $$;
 rollback;
 ```
 
-- [ ] **Step 2:** `./run.sh relay` → the file is not listed (pending). `psql "$(./lib/sensei-target.sh; sensei_lane_db_url)" -f relay/relay_tasks_cutover.sql.pending` → FAIL `tasks.reviewer_lane_id must be dropped at the cutover` (proves it is a real red).
+- [x] **Step 2:** `./run.sh relay` → the file is not listed (pending). `psql "$(./lib/sensei-target.sh; sensei_lane_db_url)" -f relay/relay_tasks_cutover.sql.pending` → FAIL `tasks.reviewer_lane_id must be dropped at the cutover` (proves it is a real red).
 
 ---
 
 ## Task 1.6: Converge the test databases, prove the daemon unaffected, commit
 
-- [ ] **Step 1: Fresh lane DB + the whole relay suite.** `dropdb --if-exists -h localhost sensei_test_develop` (run.sh derives the name from the branch); `cd database/tests && ./run.sh relay` → every file `ok`, including the unchanged `relay_actions`, `relay_leases`, `relay_items`, `relay_finding_classes`, `relay_task_history`.
-- [ ] **Step 2: Lint gates.** `make check-ddl-grants check-ddl-comments check-no-now-relay check-sql-in-layer` → PASS. `cd database && dbd inspect` → no errors.
-- [ ] **Step 3: Preview the live delta.** `cd database && dbd reconcile --dry-run -d postgresql://localhost:5432/sensei_test` → the plan lists only CREATEs and ADD COLUMN/ADD VALUE/ADD CONSTRAINT; no DROP. If it lists an index it cannot alter (`lanes_one_coordinator`), note it: that index is recreated by `make test-template` (fresh) and by the cutover's manual step on the live DB.
-- [ ] **Step 4: Rebuild the Rust template.** `make test-template` → `sensei_test template: … MB`.
-- [ ] **Step 5: The daemon relay suite on the new schema.** `cargo test -p senseid relay -- --test-threads=1` (memory: serial; a killed run leaves stale `activity.runs` — `DELETE FROM activity.runs` on `sensei_test` if a scheduler test hangs) → all green. Also `cargo test -p senseid --lib relay_lease_sweep`.
-- [ ] **Step 6: Pre-commit gate.** `make test-fast` → PASS.
-- [ ] **Step 7: Commit, one concern.** `git add database/ddl database/policies database/tests database/design.yaml && git diff --cached --stat` (only those paths) → `git commit -m "feat(relay): additive queue schema — runs, run_items, lane_waiters, review claims, broker tasks, task_queue view, now sections (autonomous queue phase 1)"`.
-- [ ] **Step 8: Checkpoint.** `/sensei:checkpoint "relay-autonomous-queue: phase 1 DB additive committed; next: phase 2 task 2.1 cutover"` and mirror into `docs/CHECKPOINT.md` (slice; done/remaining; next command `see docs/plan/2026-11-10-relay-autonomous-queue/2-daemon.md task 2.1`; open questions; known-broken none).
-- [ ] **Step 9: Do NOT converge the live daemon DB yet.** The running daemon does not use the new columns; the live reconcile is phase 2 task 2.10, run together with the daemon install.
+- [x] **Step 1: Fresh lane DB + the whole relay suite.** `dropdb --if-exists -h localhost sensei_test_develop` (run.sh derives the name from the branch); `cd database/tests && ./run.sh relay` → every file `ok`, including the unchanged `relay_actions`, `relay_leases`, `relay_items`, `relay_finding_classes`, `relay_task_history`.
+- [x] **Step 2: Lint gates.** `make check-ddl-grants check-ddl-comments check-no-now-relay check-sql-in-layer` → PASS. `cd database && dbd inspect` → no errors.
+- [x] **Step 3: Preview the live delta.** `cd database && dbd reconcile --dry-run -d postgresql://localhost:5432/sensei_test` → the plan lists only CREATEs and ADD COLUMN/ADD VALUE/ADD CONSTRAINT; no DROP. If it lists an index it cannot alter (`lanes_one_coordinator`), note it: that index is recreated by `make test-template` (fresh) and by the cutover's manual step on the live DB.
+- [x] **Step 4: Rebuild the Rust template.** `make test-template` → `sensei_test template: … MB`.
+- [x] **Step 5: The daemon relay suite on the new schema.** `cargo test -p senseid relay -- --test-threads=1` (memory: serial; a killed run leaves stale `activity.runs` — `DELETE FROM activity.runs` on `sensei_test` if a scheduler test hangs) → all green. Also `cargo test -p senseid --lib relay_lease_sweep`.
+- [x] **Step 6: Pre-commit gate.** `make test-fast` → PASS.
+- [x] **Step 7: Commit, one concern.** `git add database/ddl database/policies database/tests database/design.yaml && git diff --cached --stat` (only those paths) → `git commit -m "feat(relay): additive queue schema — runs, run_items, lane_waiters, review claims, broker tasks, task_queue view, now sections (autonomous queue phase 1)"`.
+- [x] **Step 8: Checkpoint.** `/sensei:checkpoint "relay-autonomous-queue: phase 1 DB additive committed; next: phase 2 task 2.1 cutover"` and mirror into `docs/CHECKPOINT.md` (slice; done/remaining; next command `see docs/plan/2026-11-10-relay-autonomous-queue/2-daemon.md task 2.1`; open questions; known-broken none).
+- [x] **Step 9: Do NOT converge the live daemon DB yet.** The running daemon does not use the new columns; the live reconcile is phase 2 task 2.10, run together with the daemon install.
+
+---
+
+## Executed 2026-11-12 (`b9eb57ac2` on develop) — deviations from the steps above
+
+- `run.sh` takes a scope directory, not a file: single files ran as `psql <lane-db-url> -X -q -v ON_ERROR_STOP=1 -f relay/<file>.sql`. The red/green loop used a scratch database with no `relay` schema (`createdb sensei_test_rq1`, then `apply/before/roles.sql` and `create schema extensions`) so the fixture self-applies the current tree on every run; the fresh `sensei_test_develop` mint (`dbd deploy`) was the final proof.
+- `relay_task_queue.sql`: Q7 (working) sits on its own lane L3. The slice-1 `tasks_one_active_per_lane` still counts `in_review`, so Q4 and Q7 could not share L1 before the cutover.
+- `task_queue.ddl` `unmet_deps` is `array(select … order by d.id)`, not `coalesce(array_agg …)`: `check-no-fabrication` rule S1 flags `coalesce` in SQL, and the array constructor is honest-empty without it.
+- `relay_lane_waiters.sql` stayed red through Task 1.2 on `lanes.role` NOT NULL (its fixture omits `role`) and went green with Task 1.3's contributor default.
+- `dbd diff -v` plans `DROP INDEX … lanes_one_coordinator` + `CREATE` for the predicate change: dbd 0.27.9 does converge it, under `--allow-destructive`.
+- The `now` lane payload also carries `round` inside `reviewing`, and the `now` pins check `author_lane_title`, `started_at`, the four zero counts and the crew id of the floating row, beyond what the step text listed.

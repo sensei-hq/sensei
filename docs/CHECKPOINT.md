@@ -1,25 +1,29 @@
-# Checkpoint — 2026-11-10 (lanes/merge on develop)
+# Checkpoint — 2026-11-12 (lanes/merge on develop)
 
-**Slice:** Relay autonomous queue & adversarial planning — plan written, implementation not started.
-Design: `docs/design/relay-autonomous-queue-and-planning.md`. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/`
-(README = estimate + grounding corrections + issue triage; `1-db.md` step-level; `2-daemon.md`, `3-mcp.md`,
-`4-app.md` task-level).
+**Slice:** Relay autonomous queue & adversarial planning — phase 1 (DB additive) SHIPPED; phase 2 (daemon) next.
+Design: `docs/design/relay-autonomous-queue-and-planning.md`. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/`.
 
 **Done:**
-- Design grounded against develop @ 58b66e9fa: F03 narrower than stated (heartbeat clears a pause only when
-  `resumes_at` is null/past); F01 lives in `relay_envelope`; F04 real for `report_md`; F12 already holds; F09 is the
-  props allowlist; F10 is `grant_next_waiter`.
-- Phase order fixed: DB additive (green on the slice-1 daemon) → daemon incl. DDL cutover → MCP → app → docs/issues.
-- Estimate: 9.5–14 days sequential without §10.1–10.3 host health/janitor/shared build; 12.5–18 with.
+- Phase 1 committed on develop @ `b9eb57ac2`: `run_state` + `task_executor` enums, six appended labels (`ready`,
+  `planning`, `claimed`/`review_claimed`/`released`/`checkpointed`); `relay.runs`/`run_items`/`lane_waiters`;
+  `tasks` gains `run_id`, `review_claimed_by/_at`, `executor`, `deterministic`, `checkpoint` + three indexes + two
+  checks; `lanes` gains `suggested_name`, `role default 'contributor'`, the #405 partial index; `relay.task_queue`
+  view; `relay.now` sections `sprint_summary` + `floating_review` and lane `suggested_name`/`reviewing`; owner-read
+  policies; dōjō scope lists the two enums.
+- Proof: 13/13 relay SQL files on a fresh `sensei_test_develop` (dbd deploy) and on a no-relay scratch DB; the four
+  DDL lint gates + `dbd inspect` clean; `make test-template` rebuilt + stamped; `cargo test -p senseid relay`
+  296/296; `make test-fast` green (one `check-no-fabrication` S1 hit fixed by `array(subquery)`).
+- Cutover reds committed as `database/tests/relay/relay_tasks_cutover.sql.pending` (proved red by direct psql).
+- Reconcile preview: all additive except the `lanes_one_coordinator` predicate — dbd plans DROP+CREATE, so the
+  live converge at 2.10 needs `--allow-destructive`.
 
-**Remaining:** every phase. Phase 1 is executable as written (DDL + SQL pins + `make test-template` + daemon suite
-green + one commit); the live daemon DB is NOT converged until phase 2 task 2.10.
+**Remaining:** phase 2 (daemon incl. DDL cutover, tasks 2.1–2.10), phase 3 (MCP), phase 4 (app), phase 5
+(docs, issue triage, release).
 
-**Next command:** open `docs/plan/2026-11-10-relay-autonomous-queue/1-db.md` and run Task 1.1 step 1
-(`cd database/tests && ./run.sh relay/relay_enums.sql` after editing the pins — expect red).
+**Next command:** `git worktree add ../relay-queue -b lane/relay-autonomous-queue develop`, then open
+`docs/plan/2026-11-10-relay-autonomous-queue/2-daemon.md` task 2.1 — first red is renaming
+`relay_tasks_cutover.sql.pending` → `.sql`.
 
-**Open questions (user):** none blocking. Deviations from the draft design are listed in the plan README
-(`task_queue` view name, enums for run state/executor, `released` action kind, labels appended, claim lands `working`,
-Task 0 claimable by any lane, auto-merge as a broker task, #405 fix folded into phase 1).
+**Open questions (user):** none blocking. Execution deviations are recorded at the end of `1-db.md`.
 
-**Known broken:** none on develop.
+**Known broken:** none. The live daemon DB is NOT converged — by design, until phase 2 task 2.10.
