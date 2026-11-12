@@ -1498,27 +1498,6 @@ mod tests {
     }
 
     #[test]
-    fn pick_reviewer_least_loaded_not_author_q14() {
-        let author = uuid(LANE_A);
-        let coord = uuid(LANE_B);
-        // Least-loaded other live lane wins…
-        let live = vec![(uuid(LANE_B), 2), (uuid(LANE_C), 0)];
-        assert_eq!(pick_reviewer(&live, &author, &coord), Some(uuid(LANE_C)));
-        // …even when the author is the least loaded — never the author.
-        let live = vec![(author, 0), (uuid(LANE_C), 5)];
-        assert_eq!(pick_reviewer(&live, &author, &coord), Some(uuid(LANE_C)));
-        // Ties break on the smallest lane id, deterministically.
-        let live = vec![(uuid(LANE_C), 1), (uuid(LANE_B), 1)];
-        assert_eq!(pick_reviewer(&live, &author, &coord), Some(uuid(LANE_B)));
-        // No other live lane → the coordinator…
-        assert_eq!(pick_reviewer(&[(author, 0)], &author, &coord), Some(coord));
-        assert_eq!(pick_reviewer(&[], &author, &coord), Some(coord));
-        // …unless the coordinator is the author: then no pick.
-        assert_eq!(pick_reviewer(&[(author, 0)], &author, &author), None);
-        assert_eq!(pick_reviewer(&[], &author, &author), None);
-    }
-
-    #[test]
     fn validate_props_message_to_kinds_q1_q2() {
         use RelayActionKind as K;
         let msg = |to: serde_json::Value| json!({"to": to, "surface": "lane"});

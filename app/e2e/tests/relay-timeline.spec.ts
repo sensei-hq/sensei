@@ -92,7 +92,6 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       title: TITLE,
       phase: 'impl',
       brief: { summary: 'Ring up the e2e groceries' },
-      reviewer_lane: reviewer.lane_id,
     });
     // Delivery starts the task: the holder's envelope pull flips assigned →
     // working (no start tool exists), which is when steps become postable.
@@ -183,7 +182,11 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       tauriPage.locator('[data-timeline] [data-timeline-detail]'),
     ).toBeVisible();
 
-    // Review + merge close the lifecycle on the same unmoved screen.
+    // The report floats on the review queue; the reviewer claims it, then
+    // review + merge close the lifecycle on the same unmoved screen.
+    await relayPost(`/api/relay/tasks/${task}/claim_review`, reviewer.lane_token, {
+      lane_id: reviewer.lane_id,
+    });
     await relayPost(`/api/relay/tasks/${task}/review`, reviewer.lane_token, {
       lane_id: reviewer.lane_id,
       verdict: 'approved',

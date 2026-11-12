@@ -1847,13 +1847,31 @@ mod tests {
         )
     }
 
+    /// Claim a floating review as `lane`.
+    async fn claim_review(
+        h: &Harness,
+        task_id: &str,
+        lane_id: &str,
+        token: &str,
+    ) -> (StatusCode, Value) {
+        call(
+            h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/claim_review"),
+            Some(lane_body(lane_id, json!({}))),
+            Some(token),
+        )
+        .await
+    }
+
     #[tokio::test]
-    async fn report_then_review_then_merge_flow() {
+    async fn report_then_claim_then_review_then_merge_flow() {
         let h = harness().await;
         let coord = register_coordinator(&h).await;
         let (lane_id, token) = register_contributor(&h, &coord.2).await;
         let task_id = assigned_task(&h, &coord, &lane_id).await;
-        // Delivery marks started; the report moves to in_review…
+        // Delivery marks started; the report moves to in_review and floats
+        // on the review queue (queue cutover: nobody is picked)…
         let _ = call(&h, "GET", &format!("/api/relay/tasks?lane_id={lane_id}"), None, Some(&token))
             .await;
         let (status, body) = call(
@@ -1866,7 +1884,16 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["state"], "in_review");
-        // …the coordinator (picked reviewer on a two-lane crew) approves…
+        assert!(body.get("reviewer_lane_id").is_none(), "nothing is picked: {body}");
+        // …the coordinator claims the review and reads the report…
+        let (status, body) = claim_review(&h, &task_id, &coord.0, &coord.1).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["task_id"], task_id);
+        assert_eq!(body["round"], 1);
+        assert_eq!(body["phase"], "tests");
+        assert!(body["author_lane_code"].is_string(), "{body}");
+        assert_eq!(body["summary"], "Wired it.");
+        // …approves…
         let (status, body) = call(
             &h,
             "POST",
@@ -1967,7 +1994,62 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["state"], "in_review");
         assert_eq!(body["round"], 1);
-        assert!(!body["reviewer_lane_id"].is_null(), "{body}");
+        // Queue cutover: the review floats; the response names no reviewer.
+        assert!(body.get("reviewer_lane_id").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn claim_review_refuses_author_second_claim_and_paused_lane() {
+        // Queue cutover: a floating review is claimed by any live, unpaused,
+        // non-author lane — once. The author is refused (422), a second
+        // claimant finds it taken (409), a limit-paused lane cannot claim
+        // (409).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (holder, token) = register_contributor(&h, &coord.2).await;
+        let (other, other_token) = register_contributor(&h, &coord.2).await;
+        let (paused, paused_token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &holder).await;
+        let _ = call(&h, "GET", &format!("/api/relay/tasks?lane_id={holder}"), None, Some(&token))
+            .await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&holder)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // The author never reviews its own task.
+        let (status, body) = claim_review(&h, &task_id, &holder, &token).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "relay_invalid");
+        // A paused lane sits out.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/limit_pause",
+            Some(lane_body(&paused, json!({"scope": "daily"}))),
+            Some(&paused_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = claim_review(&h, &task_id, &paused, &paused_token).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        // The first live claimant takes it; the next finds it taken.
+        let (status, body) = claim_review(&h, &task_id, &other, &other_token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = claim_review(&h, &task_id, &coord.0, &coord.1).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        // The claim is visible on the task view as the reviewer.
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["reviewer"]["id"], other, "{view}");
+        assert!(view["task"]["reviewer"]["code"].is_string(), "{view}");
     }
 
     // ── Fix gate F9: register guidance ──
@@ -2506,12 +2588,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handover_to_reviewer_lane_is_409() {
-        // A task never reviews itself: the picked reviewer cannot take
-        // over the task.
+    async fn handover_to_claimed_reviewer_is_409() {
+        // A task never reviews itself: the lane holding the review claim
+        // cannot take over the task.
         let h = harness().await;
         let coord = register_coordinator(&h).await;
         let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (reviewer, reviewer_token) = register_contributor(&h, &coord.2).await;
         let (status, body) = call(
             &h,
             "POST",
@@ -2521,7 +2604,8 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        let reviewer = body["reviewer_lane_id"].as_str().unwrap().to_string();
+        let (status, body) = claim_review(&h, &task_id, &reviewer, &reviewer_token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         let (status, body) = handover(&h, &coord, &task_id, &reviewer).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(body["error"], "relay_conflict");
@@ -2594,8 +2678,8 @@ mod tests {
                 .await;
         let (status, body) = handover(&h, &coord, &working, &holder_c).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
-        // Approved: the work is done; merge it. Own two-lane crew so the
-        // coordinator is the picked reviewer, deterministically.
+        // Approved: the work is done; merge it. Own two-lane crew; the
+        // coordinator claims the floating review and approves.
         let coord_b = register_coordinator(&h).await;
         let (worker_b, token_wb) = register_contributor(&h, &coord_b.2).await;
         let approved = assigned_task(&h, &coord_b, &worker_b).await;
@@ -2611,6 +2695,8 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        let (status, body) = claim_review(&h, &approved, &coord_b.0, &coord_b.1).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         let (status, body) = call(
             &h,
             "POST",
@@ -3323,7 +3409,8 @@ mod tests {
         assert_eq!(t["crew_id"], coord.2);
         assert_eq!(t["title"], "T");
         assert_eq!(t["phase"], "tests");
-        assert_eq!(t["state"], "assigned");
+        // Queue cutover: a planned task waits in the pool as `ready`.
+        assert_eq!(t["state"], "ready");
         assert_eq!(t["round"], 1);
         assert_eq!(t["repo_key"], "github.com/o/r");
     }

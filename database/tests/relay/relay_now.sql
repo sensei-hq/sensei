@@ -95,7 +95,7 @@ insert into relay.leases (user_id, id, crew_id, lane_id, kind, state, expires_at
 -- T1: active on L1, blocked by an open person ask. T2: approved today (the
 -- stamp is state_changed_at — completed_at stays null). T3: done today with a
 -- merge. T4: done today, nothing to merge. T5: done two days ago (out). T6:
--- unassigned working (out of completed, on no lane). T8: asked then answered.
+-- ready in the pool (out of completed, on no lane). T8: asked then answered.
 insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, workspace_id, title, phase, state, round, state_changed_at, completed_at) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f931',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f911',
@@ -115,7 +115,7 @@ insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, workspace_id, 
    now() - interval '2 days', now() - interval '2 days'),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f936',
    '11111111-1111-7000-8000-00000000f901', null,
-   'github.com/sensei-hq/sensei', null, 'Unassigned working', 'tests', 'working', 1, now(), null),
+   'github.com/sensei-hq/sensei', null, 'Pool one', 'tests', 'ready', 1, now(), null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f937',
    '11111111-1111-7000-8000-00000000f902', '11111111-1111-7000-8000-00000000f913',
    'github.com/sensei-hq/sensei', null, 'Spare working', 'tests', 'working', 1, now(), null),
@@ -261,7 +261,8 @@ begin
   end if;
 
   -- L1 reviews T15 while working T1; L5 carries its suggested name and reads
-  -- no review; L6's own task is in review (slice 1: still its active task).
+  -- no review; L5's and L6's own reports float on the review queue, which
+  -- frees their lanes (no `task` — in_review holds no lane).
   if v_json->'reviewing'->>'id' is distinct from '11111111-1111-7000-8000-00000000f93e'
      or v_json->'reviewing'->>'title' is distinct from 'Claimed review'
      or v_json->'reviewing'->>'phase' is distinct from 'impl'
@@ -271,12 +272,12 @@ begin
   end if;
   select payload into v_json from relay.now where section = 'lane' and id = '11111111-1111-7000-8000-00000000f915';
   if v_json->>'suggested_name' is distinct from 'worker-alpha' or v_json->'reviewing' is distinct from 'null'::jsonb
-     or v_json->'task'->>'id' is distinct from '11111111-1111-7000-8000-00000000f93d' then
+     or v_json->'task' is distinct from 'null'::jsonb then
     raise exception 'L5 payload wrong: %.', v_json;
   end if;
   select payload into v_json from relay.now where section = 'lane' and id = '11111111-1111-7000-8000-00000000f916';
   if v_json->'suggested_name' is distinct from 'null'::jsonb
-     or v_json->'task'->>'id' is distinct from '11111111-1111-7000-8000-00000000f93e' then
+     or v_json->'task' is distinct from 'null'::jsonb then
     raise exception 'L6 payload wrong: %.', v_json;
   end if;
 

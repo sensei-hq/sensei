@@ -5791,7 +5791,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plan_from_backlog_item_mints_unassigned_task() {
+    async fn plan_from_backlog_item_mints_a_ready_task() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
         let item = v7(0x51);
@@ -5811,10 +5811,11 @@ mod tests {
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        // The task joins the caller lane's crew (items aren't crew-scoped).
+        // The task joins the caller lane's crew (items aren't crew-scoped)
+        // and lands in the pool: ready, no lane.
         assert_eq!(crew, c1);
         assert_eq!(lane, None);
-        assert_eq!(state, "assigned");
+        assert_eq!(state, "ready");
         assert_eq!(round, 1);
         assert_eq!(title, "Item");
         assert_eq!(repo, "github.com/o/r");
@@ -5887,7 +5888,7 @@ mod tests {
         input.title = Some("Manual".into());
         input.repo_key = Some("github.com/o/r".into());
         let out = pg.relay_plan_item(u1(), a1, input).await.unwrap();
-        assert_eq!(task_state(&pg, out.task_id).await, "assigned");
+        assert_eq!(task_state(&pg, out.task_id).await, "ready");
     }
 
     #[tokio::test]
@@ -5942,7 +5943,7 @@ mod tests {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0x71);
-        fx_task(&pg, u1(), t, c1, None, "assigned", "tests", 1).await;
+        fx_task(&pg, u1(), t, c1, None, "ready", "tests", 1).await;
         let mut input = assign_input(a2);
         input.lane_title = Some("Diagrams".into());
         let out = pg.relay_assign_task(u1(), a1, t, input).await.unwrap();
@@ -5985,7 +5986,7 @@ mod tests {
         assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
         // …unknown lanes and tasks are not found…
         let free = v7(0x73);
-        fx_task(&pg, u1(), free, c1, None, "assigned", "tests", 1).await;
+        fx_task(&pg, u1(), free, c1, None, "ready", "tests", 1).await;
         let err = pg.relay_assign_task(u1(), a1, free, assign_input(v7(0x99))).await.unwrap_err();
         assert!(matches!(err, RelayError::NotFound(_)), "{err:?}");
         let err = pg.relay_assign_task(u1(), a1, v7(0x98), assign_input(a2)).await.unwrap_err();
@@ -5993,8 +5994,9 @@ mod tests {
         // …a contributor can't assign…
         let err = pg.relay_assign_task(u1(), a2, free, assign_input(a2)).await.unwrap_err();
         assert!(matches!(err, RelayError::Forbidden(_)), "{err:?}");
-        // …and a terminal task stays terminal.
-        sqlx_core::query::query("update relay.tasks set state = 'done' where id = $1")
+        // …and a terminal task stays terminal (cancelled: the one terminal
+        // state a pool task can reach without a lane).
+        sqlx_core::query::query("update relay.tasks set state = 'cancelled' where id = $1")
             .bind(free)
             .execute(pg.pool())
             .await
@@ -6021,7 +6023,7 @@ mod tests {
             .await
             .unwrap();
         let t = v7(0x76);
-        fx_task(&pg, u1(), t, c1, None, "assigned", "tests", 1).await;
+        fx_task(&pg, u1(), t, c1, None, "ready", "tests", 1).await;
         let err = pg.relay_assign_task(u1(), a1, t, assign_input(a2)).await.unwrap_err();
         assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
         let lane: Option<Uuid> =
@@ -6041,9 +6043,32 @@ mod tests {
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
         pg.relay_unregister(a2).await.unwrap();
         let t = v7(0x77);
-        fx_task(&pg, u1(), t, c1, None, "assigned", "tests", 1).await;
+        fx_task(&pg, u1(), t, c1, None, "ready", "tests", 1).await;
         let err = pg.relay_assign_task(u1(), a1, t, assign_input(a2)).await.unwrap_err();
         assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn assign_accepts_a_ready_task_and_stamps_assigned_at() {
+        // Queue cutover: plan mints `ready` (the pool); the coordinator's
+        // assign takes a pool task onto a lane (ready → assigned) and stamps
+        // assigned_at, which is null until then.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0x78);
+        fx_task(&pg, u1(), t, c1, None, "ready", "tests", 1).await;
+        let out = pg.relay_assign_task(u1(), a1, t, assign_input(a2)).await.unwrap();
+        assert_eq!((out.task_id, out.round, out.state), (t, 1, RelayTaskState::Assigned));
+        let (lane, assigned_at): (Option<Uuid>, Option<DateTime<Utc>>) =
+            sqlx_core::query_as::query_as(
+                "select lane_id, assigned_at from relay.tasks where id = $1",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(lane, Some(a2));
+        assert!(assigned_at.is_some(), "assign stamps assigned_at");
     }
 
     #[tokio::test]
@@ -6053,7 +6078,7 @@ mod tests {
         let first = v7(0x74);
         fx_task(&pg, u1(), first, c1, Some(a2), "working", "tests", 1).await;
         let second = v7(0x75);
-        fx_task(&pg, u1(), second, c1, None, "assigned", "tests", 1).await;
+        fx_task(&pg, u1(), second, c1, None, "ready", "tests", 1).await;
         // One active task per lane: the DB unique surfaces as 409, never 500.
         let err = pg.relay_assign_task(u1(), a1, second, assign_input(a2)).await.unwrap_err();
         assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
@@ -6067,34 +6092,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn assign_explicit_reviewer_honored_self_review_refused() {
-        // ("merge" as a phase string is refused at the handler — 422 on the
-        // wire value (Q3); the store's phase is already typed.)
-        let pg = PgStore::test_store().await;
-        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
-        let t = v7(0x76);
-        fx_task(&pg, u1(), t, c1, None, "assigned", "tests", 1).await;
-        // The reviewer is never the assignee (Q14).
-        let mut input = assign_input(a2);
-        input.reviewer_lane = Some(a2);
-        let err = pg.relay_assign_task(u1(), a1, t, input).await.unwrap_err();
-        assert!(matches!(err, RelayError::Validation(_)), "{err:?}");
-        let mut input = assign_input(a2);
-        input.phase = RelayTaskPhase::Impl;
-        input.reviewer_lane = Some(a1);
-        let out = pg.relay_assign_task(u1(), a1, t, input).await.unwrap();
-        assert_eq!(out.state, RelayTaskState::Assigned);
-        let reviewer: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
-            "select reviewer_lane_id from relay.tasks where id = $1",
-        )
-        .bind(t)
-        .fetch_one(pg.pool())
-        .await
-        .unwrap();
-        assert_eq!(reviewer, Some(a1));
-    }
-
-    #[tokio::test]
     async fn assign_approved_new_phase_advances_q11() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
@@ -6103,20 +6100,19 @@ mod tests {
         // Same phase: nothing to advance.
         let err = pg.relay_assign_task(u1(), a1, t, assign_input(a2)).await.unwrap_err();
         assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
-        // Next phase: back to working, new round, reviewer cleared.
+        // Next phase: back to working, new round.
         let mut input = assign_input(a2);
         input.phase = RelayTaskPhase::Impl;
         let out = pg.relay_assign_task(u1(), a1, t, input).await.unwrap();
         assert_eq!(out.state, RelayTaskState::Working);
         assert_eq!(out.round, 3);
-        let (round, reviewer): (i32, Option<Uuid>) = sqlx_core::query_as::query_as(
-            "select round, reviewer_lane_id from relay.tasks where id = $1",
-        )
-        .bind(t)
-        .fetch_one(pg.pool())
-        .await
-        .unwrap();
-        assert_eq!((round, reviewer), (3, None));
+        let round: i32 =
+            sqlx_core::query_scalar::query_scalar("select round from relay.tasks where id = $1")
+                .bind(t)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(round, 3);
     }
 
     // ── report_task ──
@@ -6140,69 +6136,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn report_moves_to_in_review_picks_least_loaded_q14() {
+    async fn report_moves_to_in_review_and_floats() {
         let pg = PgStore::test_store().await;
-        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
-        // N2: A1 reads last by code, so the least-loaded pick cannot
-        // coincide with first-by-code (a code-sorted wrong impl dies here).
-        sqlx_core::query::query("update relay.lanes set code = 'L9' where id = $1")
-            .bind(a1)
-            .execute(pg.pool())
-            .await
-            .unwrap();
-        // A third lane, busier than the coordinator: the pick must go the
-        // other way (aggregate direction — a max would pick wrong). Its two
-        // open reviews sit on two other lanes (one active task per lane);
-        // the fourth holds one review but its lease lapsed, so it is not a
-        // candidate at all.
-        let (a3, a4) = (v7(0x14), v7(0x15));
-        fx_lane(&pg, u1(), a3, c1, "L3", "contributor", "tok-a3").await;
-        fx_lease(&pg, u1(), c1, a3, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
-        fx_lane(&pg, u1(), a4, c1, "L4", "contributor", "tok-a4").await;
-        fx_lease(&pg, u1(), c1, a4, "expired", Some(t0() - chrono::Duration::seconds(1))).await;
-        // F1 (phase-B r2): the pick path reads liveness against DB
-        // `current_timestamp`, but every fixture lease above expires at the
-        // fixed t0+300 — dead in any working-hours run, so the pick fell
-        // through to the coordinator fallback and the load axis never
-        // engaged. Revive the same-crew lanes under the DB's own clock (the
-        // same clock the pick query reads — no skew possible). The only
-        // exclusions left are the two this test names: A2 by author id, A4
-        // by lapsed state (clock-independent); B1 stays dead (another crew).
-        sqlx_core::query::query(
-            "update relay.leases set state = 'granted',
-                    expires_at = current_timestamp + interval '300 seconds'
-             where kind = 'lane' and lane_id in ($1, $2, $3)",
-        )
-        .bind(a1)
-        .bind(a2)
-        .bind(a3)
-        .execute(pg.pool())
-        .await
-        .unwrap();
-        for (n, holder) in [(0x81, a1), (0x82, a4)] {
-            let t = v7(n);
-            fx_task(&pg, u1(), t, c1, Some(holder), "in_review", "tests", 1).await;
-            sqlx_core::query::query("update relay.tasks set reviewer_lane_id = $1 where id = $2")
-                .bind(a3)
-                .bind(t)
-                .execute(pg.pool())
-                .await
-                .unwrap();
-        }
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0x83);
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
         let out = pg.relay_report_task(u1(), a2, t, report_input()).await.unwrap();
-        assert_eq!(out.state, RelayTaskState::InReview);
-        // A1 (0 open reviews) beats A3 (2); the author is never picked.
-        assert_eq!(out.reviewer_lane_id, Some(a1));
-        let reviewer: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
-            "select reviewer_lane_id from relay.tasks where id = $1",
+        assert_eq!((out.state, out.round), (RelayTaskState::InReview, 1));
+        // Queue cutover: nobody is picked — the review floats until a
+        // lane claims it.
+        let claimed_by: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select review_claimed_by from relay.tasks where id = $1",
         )
         .bind(t)
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(reviewer, Some(a1));
+        assert_eq!(claimed_by, None);
         // The reported action: body is the summary, look_at rides props.
         let (body, props): (Option<String>, serde_json::Value) = sqlx_core::query_as::query_as(
             "select body_md, props from relay.actions where kind = 'reported'",
@@ -6215,40 +6165,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn report_keeps_picked_reviewer_on_later_reports() {
+    async fn report_floats_the_review_and_clears_the_claim() {
+        // Queue cutover: a full report moves the task to in_review with NO
+        // reviewer named — the review floats on the queue for any non-author
+        // lane to claim. A claim left over from the previous round (the
+        // reviewer who sent it back) is cleared: the new round floats fresh.
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
-        let t = v7(0x84);
+        let t = v7(0x88);
         fx_task(&pg, u1(), t, c1, Some(a2), "rework", "tests", 2).await;
-        sqlx_core::query::query("update relay.tasks set reviewer_lane_id = $1 where id = $2")
-            .bind(a1)
-            .bind(t)
-            .execute(pg.pool())
-            .await
-            .unwrap();
+        sqlx_core::query::query(
+            "update relay.tasks set review_claimed_by = $1, review_claimed_at = $2 where id = $3",
+        )
+        .bind(a1)
+        .bind(t0())
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
         let mut input = report_input();
         input.round = 2;
         let out = pg.relay_report_task(u1(), a2, t, input).await.unwrap();
-        assert_eq!(
-            (out.state, out.round, out.reviewer_lane_id),
-            (RelayTaskState::InReview, 2, Some(a1))
-        );
-    }
-
-    #[tokio::test]
-    async fn report_solo_coordinator_author_has_no_reviewer() {
-        let pg = PgStore::test_store().await;
-        let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
-        // A2's lease lapses: the only live lane is the author-coordinator.
-        sqlx_core::query::query("update relay.leases set state = 'expired' where lane_id = $1")
-            .bind(v7(0x12))
-            .execute(pg.pool())
+        assert_eq!((out.state, out.round), (RelayTaskState::InReview, 2));
+        let (claimed_by, claimed_at): (Option<Uuid>, Option<DateTime<Utc>>) =
+            sqlx_core::query_as::query_as(
+                "select review_claimed_by, review_claimed_at from relay.tasks where id = $1",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
             .await
             .unwrap();
-        let t = v7(0x85);
-        fx_task(&pg, u1(), t, c1, Some(a1), "working", "tests", 1).await;
-        let out = pg.relay_report_task(u1(), a1, t, report_input()).await.unwrap();
-        assert_eq!(out.reviewer_lane_id, None);
+        assert_eq!((claimed_by, claimed_at), (None, None), "the report floats");
     }
 
     #[tokio::test]
@@ -6365,7 +6312,7 @@ mod tests {
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0x8b);
         fx_task(&pg, u1(), t, c1, Some(a2), "in_review", "tests", 1).await;
-        sqlx_core::query::query("update relay.tasks set reviewer_lane_id = $1 where id = $2")
+        sqlx_core::query::query("update relay.tasks set review_claimed_by = $1 where id = $2")
             .bind(a1)
             .bind(t)
             .execute(pg.pool())
@@ -6411,7 +6358,7 @@ mod tests {
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0x8c);
         fx_task(&pg, u1(), t, c1, Some(a2), "in_review", "tests", 1).await;
-        sqlx_core::query::query("update relay.tasks set reviewer_lane_id = $1 where id = $2")
+        sqlx_core::query::query("update relay.tasks set review_claimed_by = $1 where id = $2")
             .bind(a1)
             .bind(t)
             .execute(pg.pool())
@@ -6438,18 +6385,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn review_requires_the_claim() {
+        // Queue cutover: the lane holding the review claim reviews; the
+        // author and a lane that never claimed are refused, however live.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = v7(0x18);
+        fx_lane(&pg, u1(), a3, c1, "L3", "contributor", "tok-a3").await;
+        fx_lease(&pg, u1(), c1, a3, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
+        let t = v7(0x8e);
+        fx_task(&pg, u1(), t, c1, Some(a2), "in_review", "tests", 1).await;
+        sqlx_core::query::query(
+            "update relay.tasks set review_claimed_by = $1, review_claimed_at = $2 where id = $3",
+        )
+        .bind(a1)
+        .bind(t0())
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        for caller in [a2, a3] {
+            let err = pg.relay_submit_review(u1(), caller, t, review_input()).await.unwrap_err();
+            assert!(matches!(err, RelayError::Forbidden(_)), "{err:?}");
+        }
+        let out = pg.relay_submit_review(u1(), a1, t, review_input()).await.unwrap();
+        assert_eq!(out.state, RelayTaskState::Approved);
+        // The verdict ends the claim.
+        let claimed_by: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select review_claimed_by from relay.tasks where id = $1",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(claimed_by, None);
+    }
+
+    #[tokio::test]
     async fn review_refuses_strangers_bad_states_unknown_classes() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0x8d);
         fx_task(&pg, u1(), t, c1, Some(a2), "in_review", "tests", 1).await;
-        sqlx_core::query::query("update relay.tasks set reviewer_lane_id = $1 where id = $2")
+        sqlx_core::query::query("update relay.tasks set review_claimed_by = $1 where id = $2")
             .bind(a1)
             .bind(t)
             .execute(pg.pool())
             .await
             .unwrap();
-        // Not the picked reviewer — not even the author.
+        // Not the claimant — not even the author.
         for caller in [a2, v7(0x99)] {
             let err = pg.relay_submit_review(u1(), caller, t, review_input()).await.unwrap_err();
             assert!(matches!(err, RelayError::Forbidden(_) | RelayError::NotFound(_)), "{err:?}");
@@ -6934,15 +6918,18 @@ mod tests {
     async fn envelope_reviews_both_directions_q15rec() {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
-        // To PERFORM: A2 reviews A1's task…
+        // To PERFORM: A2 claimed the review of A1's task…
         let theirs = v7(0xd2);
         fx_task(&pg, u1(), theirs, c1, Some(a1), "in_review", "tests", 1).await;
-        sqlx_core::query::query("update relay.tasks set reviewer_lane_id = $1 where id = $2")
-            .bind(a2)
-            .bind(theirs)
-            .execute(pg.pool())
-            .await
-            .unwrap();
+        sqlx_core::query::query(
+            "update relay.tasks set review_claimed_by = $1, review_claimed_at = $2 where id = $3",
+        )
+        .bind(a2)
+        .bind(t0())
+        .bind(theirs)
+        .execute(pg.pool())
+        .await
+        .unwrap();
         // …to ANSWER: A2's own task went rework on A1's review.
         let mine = v7(0xd3);
         fx_task(&pg, u1(), mine, c1, Some(a2), "rework", "tests", 2).await;

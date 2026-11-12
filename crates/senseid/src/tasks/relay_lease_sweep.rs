@@ -124,7 +124,7 @@ mod tests {
             .unwrap()
         );
         for (event, (task, op)) in
-            events[1..].iter().zip(tasks.iter().zip(["interrupt", "reoffer", "repick"]))
+            events[1..].iter().zip(tasks.iter().zip(["interrupt", "reoffer"]))
         {
             assert_eq!(event["entity"], "task");
             assert_eq!(event["data"]["op"], op);
