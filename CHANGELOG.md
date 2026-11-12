@@ -15,6 +15,8 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-11-12
+
 ### Added
 
 - **Relay autonomous queue.** A crew runs on a queue instead of hand-offs: lanes claim
