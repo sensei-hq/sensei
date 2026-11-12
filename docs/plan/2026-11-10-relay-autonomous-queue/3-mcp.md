@@ -10,6 +10,8 @@
 
 ## Task 3.1: Dispatch arms
 
+- [x] Done (`c710a4e56` red → green commit): the four task tools forward per op (claims nothing, release `reason`, checkpoint `current_step|notes|steps`); `relay_register` forwards `suggested_name`; `build_relay_wait_request` takes `timeout_seconds` beside `timeout_ms` (both ride when both are given; the daemon reads ms first).
+
 ```rust
 "relay_claim_next" => {
     let body = relay_lane_body(args);
@@ -36,6 +38,8 @@
 
 ## Task 3.2: Schemas
 
+- [x] Done: seven entries after `relay_wait_for_task`; `relay_register` requires `family` only (`role` optional, default contributor; `crew_id` optional, the one active crew; `suggested_name`); `relay_get_tasks`, `relay_wait_for_task`, `relay_report_task`, `relay_submit_review` say what the daemon now does; `relay_assign_task` had already dropped `reviewer_lane` in 2.1.
+
 Seven `tool(...)` entries after `relay_wait_for_task`:
 - `relay_claim_next` — "Claim the next piece of work for this lane, atomically: a floating review first (never your own report), then a ready task whose dependencies are done, then a ready task you may start early (its report is gated until its dependencies are done). Answers claim_type review|task|none." Required: `lane_id`, `lane_token`.
 - `relay_claim_task` — a named ready task. Required: `lane_id`, `lane_token`, `task_id`.
@@ -48,6 +52,8 @@ Seven `tool(...)` entries after `relay_wait_for_task`:
 Doc edits on existing tools: `relay_register` (role optional; `crew_id` optional — joins the one active crew; `suggested_name`); `relay_get_tasks` ("Read the lane envelope … Reading never starts a task: claim with relay_claim_next"); `relay_report_task` ("… a full report floats the task on the review queue and frees the lane; 409 relay_upstream_deps_unmet while a dependency is not done"); `relay_submit_review` ("Review a report you claimed … approval hands the task to the broker's merge gate"); `relay_assign_task` drops `reviewer_lane`; `relay_wait_for_task` names `timeout_seconds`.
 
 ## Task 3.3: Name lists, docs, install
+
+- [x] Both name lists carry the seven; `cargo test -p sensei-mcp` 100 unit + 5 integration green; clippy clean. The only doc surface that enumerated the register flow was the marketplace `session-start` hook (its contributor line now joins without a role and names the claim loop; `test-hooks.sh` pins it, 25/25) — no `SKILL.md` lists relay tools. `make install-service` + a tools/list check follow.
 
 - Add the seven names to `RELAY_TOOLS` and the ordered list; run `cargo test -p sensei-mcp` → green.
 - `make install-service`; verify with `claude mcp` (or `sensei-mcp --list-tools` if present) that the seven appear.

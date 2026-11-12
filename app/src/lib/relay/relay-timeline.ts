@@ -52,6 +52,15 @@ function titleFor(action: RelayAction, lanes: RelayLaneRef[]): string | null {
       return 'Compacted';
     case 'handed_over':
       return `Handed over ${codeOf(lanes, action.props.from_lane)} → ${codeOf(lanes, action.props.to_lane)}`;
+    // Queue cutover: the lane's own moves on the queue.
+    case 'claimed':
+      return 'Claimed';
+    case 'review_claimed':
+      return 'Review claimed';
+    case 'released':
+      return 'Released';
+    case 'checkpointed':
+      return 'Checkpoint';
     case 'delivered':
     case 'read':
       // Receipts fold into their message (History's precedent), never rows.

@@ -491,6 +491,7 @@ fn handle_call_tool(
                 args["lane_id"].as_str().unwrap_or(""),
                 args["lane_token"].as_str().unwrap_or(""),
                 args["timeout_ms"].as_u64(),
+                args["timeout_seconds"].as_u64(),
             );
             let wait_client = reqwest::blocking::Client::builder()
                 .timeout(std::time::Duration::from_secs(60))

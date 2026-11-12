@@ -9,13 +9,19 @@ import type { ApiResult, ApiError } from '$lib/api.js';
 import { failureReason } from '$lib/api.js';
 import type {
   RelayApi,
+  RelayCreateRun,
   RelayDecision,
   RelayFilter,
+  RelayFloatingReview,
   RelayNow,
   RelayQueue,
+  RelayRunSummary,
   RelaySendMessage,
   RelayTriageItem,
 } from '$lib/relay-api.js';
+
+/** What the create-sprint form fills in; the state adds the selection and the crew. */
+export type RelaySprintDraft = Omit<RelayCreateRun, 'item_ids' | 'crew_id'>;
 
 /** What the loader hands the page: the two reads, or why each could not be read. */
 export interface RelayReads {
@@ -43,8 +49,18 @@ export class RelayState {
   /** Why the last add to the backlog was refused (the row stays where it was). */
   addError = $state<string | null>(null);
 
+  // ── Sprints (queue cutover) ──
+  /** Backlog item ids picked for a sprint (the queue tab's checkboxes). Reassigned
+   *  on every change: a Set is not proxied, a fresh one is what the screen sees. */
+  selected = $state<Set<string>>(new Set());
+  /** The create-sprint form is open. */
+  creatingSprint = $state(false);
+  /** Why the last sprint was refused (the selection and the form stay as they were). */
+  sprintError = $state<string | null>(null);
+
   #nowInFlight: Promise<void> | null = null;
   #queueInFlight: Promise<void> | null = null;
+  #createInFlight: Promise<string | null> | null = null;
 
   constructor(reads: RelayReads, api: RelayApi, filter: RelayFilter) {
     this.api = api;
@@ -67,6 +83,72 @@ export class RelayState {
 
   openQueue(): void {
     this.tab = 'queue';
+  }
+
+  /** Open sprint runs, in the order the daemon created them (the band); null while
+   *  there is no read (D83: a failed read is not an empty band). */
+  get runs(): RelayRunSummary[] | null {
+    return this.now ? this.now.runs : null;
+  }
+
+  /** Reports waiting for a reviewer, oldest first; null while there is no read. */
+  get floatingReviews(): RelayFloatingReview[] | null {
+    return this.now ? this.now.floating_reviews : null;
+  }
+
+  get selectedCount(): number {
+    return this.selected.size;
+  }
+
+  isSelected(itemId: string): boolean {
+    return this.selected.has(itemId);
+  }
+
+  toggleSelected(itemId: string): void {
+    const next = new Set(this.selected);
+    if (next.has(itemId)) next.delete(itemId);
+    else next.add(itemId);
+    this.selected = next;
+  }
+
+  clearSelection(): void {
+    this.selected = new Set();
+  }
+
+  /** Mint a sprint over the selection: the run's id, or null when refused (the reason
+   *  in `sprintError`, the selection kept). One write per press; on success the daemon's
+   *  rows are read back (the run, Task 0, the planned items) and the selection clears. */
+  async createSprint(draft: RelaySprintDraft): Promise<string | null> {
+    if (this.#createInFlight) return this.#createInFlight;
+    this.#createInFlight = this.#createSprint(draft);
+    return this.#createInFlight;
+  }
+
+  async #createSprint(draft: RelaySprintDraft): Promise<string | null> {
+    this.sprintError = null;
+    try {
+      const item_ids = [...this.selected];
+      if (item_ids.length === 0) {
+        this.sprintError = 'Pick at least one backlog item for the sprint.';
+        return null;
+      }
+      // The screen's crew, named: the daemon never has to pick among several.
+      const answer = await this.api.tryCreateRun({
+        ...draft,
+        item_ids,
+        crew_id: this.crew?.id ?? null,
+      });
+      if (!answer.ok) {
+        this.sprintError = failureReason(answer.error);
+        return null;
+      }
+      this.clearSelection();
+      this.creatingSprint = false;
+      await Promise.all([this.reReadNow(), this.reReadQueue()]);
+      return answer.data.run_id;
+    } finally {
+      this.#createInFlight = null;
+    }
   }
 
   /** The queue's count for its tab: both halves, so it never claims an empty queue. */

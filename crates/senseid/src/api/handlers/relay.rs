@@ -61,16 +61,18 @@ use crate::api::events::{LaneChange, LaneReason, RunChange, StateEvent};
 use crate::api::state::AppState;
 use crate::db::pg_store::relay::{
     RelayAnswerInput, RelayAnswerOutput, RelayAskInput, RelayAskedOf, RelayAssignInput,
-    RelayCaller, RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput,
+    RelayCaller, RelayCheckpointInput, RelayClaim, RelayClaimedReview, RelayClaimedTask,
+    RelayCreateRunInput, RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput,
     RelayHandoverInput, RelayHeartbeatOutput, RelayLaneSession, RelayLimitPauseInput,
     RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayPlanInput, RelayReadFilter,
-    RelayRegisterInput, RelayReportInput, RelayResourceRequest, RelayReviewInput, RelayStepInput,
-    RelayTicketInput, RelayTriageInput,
+    RelayRegisterInput, RelayReleaseInput, RelayReportInput, RelayResourceRequest,
+    RelayReviewInput, RelayStepInput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
-    RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole, RelayStepState,
-    RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
+    DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole,
+    RelayStepState, RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict,
+    clamp_wait_timeout,
 };
 
 type RelayResult = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>;
@@ -89,8 +91,14 @@ fn err(e: RelayError) -> (StatusCode, Json<serde_json::Value>) {
         | RelayError::Gone(m)
         | RelayError::Conflict(m)
         | RelayError::Validation(m)
-        | RelayError::NotImplemented(m) => m.clone(),
+        | RelayError::NotImplemented(m)
+        | RelayError::DepsUnmet(m)
+        | RelayError::PlanInvalid(m) => m.clone(),
         RelayError::SignInRequired => "this machine never signed into a dōjō".to_string(),
+        RelayError::NoActiveCrew => {
+            "no active crew to join: a coordinator mints one, or name crew_id".to_string()
+        }
+        RelayError::CrewAmbiguous => "more than one active crew: name crew_id".to_string(),
     };
     (status, Json(serde_json::json!({ "error": e.code(), "message": message })))
 }
@@ -152,7 +160,10 @@ fn emit_lane(state: &AppState, change: LaneChange, lane_id: &Uuid, crew_id: &Uui
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct RegisterBody {
-    role: String,
+    /// Absent means contributor (#402).
+    role: Option<String>,
+    /// The name the assistant proposes for itself: the lane's title.
+    suggested_name: Option<String>,
     family: String,
     version: Option<String>,
     model: Option<String>,
@@ -185,15 +196,82 @@ pub(crate) struct ResourceBody {
     resource: String,
 }
 
+/// F11/#404: a misspelt or stray query key is refused (400), never ignored.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TasksQuery {
     lane_id: String,
 }
 
+/// F11/#404: strict keys; the hold is `timeout_ms`, or `timeout_seconds`
+/// when `timeout_ms` is absent — the same clamp either way.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WaitQuery {
     lane_id: String,
     timeout_ms: Option<u64>,
+    timeout_seconds: Option<u64>,
+}
+
+impl WaitQuery {
+    fn hold_ms(&self) -> Option<u64> {
+        self.timeout_ms.or(self.timeout_seconds.map(|s| s.saturating_mul(1000)))
+    }
+}
+
+/// `POST /api/relay/tasks/{id}/checkpoint` (F07): an in-turn save by the
+/// holder.
+#[derive(Debug, Deserialize)]
+pub(crate) struct CheckpointBody {
+    lane_id: String,
+    current_step: Option<String>,
+    notes: Option<String>,
+    #[serde(default)]
+    steps: Vec<CheckpointStepBody>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CheckpointStepBody {
+    key: String,
+    title: String,
+    state: String,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// `POST /api/relay/tasks/{id}/release`: a claim given back.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ReleaseBody {
+    lane_id: String,
+    reason: Option<String>,
+}
+
+/// `POST /relay/runs` (person): a sprint run over backlog items.
+#[derive(Debug, Deserialize)]
+pub(crate) struct CreateRunBody {
+    crew_id: Option<String>,
+    title: String,
+    goal: String,
+    #[serde(default)]
+    item_ids: Vec<String>,
+    repo_key: Option<String>,
+    workspace_id: Option<String>,
+    config: Option<RunConfigBody>,
+}
+
+/// The gate's knobs (F11: an unknown knob is a caller bug, not a silent
+/// default).
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RunConfigBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_checkout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verify_cmd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_merge: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -238,8 +316,278 @@ pub(crate) struct AssignBody {
     deps: Vec<String>,
     #[serde(default)]
     resources: Vec<String>,
-    reviewer_lane: Option<String>,
     lane_title: Option<String>,
+}
+
+/// `POST /api/relay/tasks/{id}/claim_review` (queue cutover).
+#[derive(Debug, Deserialize)]
+pub(crate) struct ClaimReviewBody {
+    lane_id: String,
+}
+
+// ─── Queue cutover (2.9): the claim loop ───
+
+/// What a lane may do on a claim-early task until its deps are done.
+const EARLY_CLAIM_GUIDANCE: &str = "An upstream task is not done yet. You may scaffold \
+interfaces and write tests against them, but your full report is refused \
+(relay_upstream_deps_unmet) until every dependency is done.";
+
+/// The §6.3 `task` shape for a claimed task.
+fn claimed_task_json(task: &RelayClaimedTask) -> serde_json::Value {
+    let mut out = serde_json::json!({
+        "id": task.task_id.to_string(),
+        "run_id": task.run_id.map(|id| id.to_string()),
+        "title": task.title,
+        "phase": serde_json::to_value(task.phase).unwrap_or(serde_json::Value::Null),
+        "round": task.round,
+        "repo_key": task.repo_key,
+        "deps_status": serde_json::to_value(task.deps_status).unwrap_or(serde_json::Value::Null),
+        "unmet_deps": task.unmet_deps.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+        "owned_paths": task.owned_paths,
+        "acceptance": task.acceptance,
+        "checkpoint": task.checkpoint,
+    });
+    if task.deps_status == DepsStatus::EarlyClaimGated {
+        out["guidance"] = serde_json::Value::String(EARLY_CLAIM_GUIDANCE.into());
+    }
+    out
+}
+
+/// The §6.3 `task` shape for a claimed review (the `claim_review` route's
+/// own answer is the same shape, flat).
+fn claimed_review_json(review: &RelayClaimedReview) -> serde_json::Value {
+    serde_json::json!({
+        "id": review.task_id.to_string(),
+        "title": review.title,
+        "author_lane_code": review.author_lane_code,
+        "phase": serde_json::to_value(review.phase).unwrap_or(serde_json::Value::Null),
+        "round": review.round,
+        "summary": review.summary,
+        "report_md": review.report_md,
+        "branch": review.branch,
+        "files": review.files,
+    })
+}
+
+pub(crate) async fn claim_next(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LaneBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let claim = state
+        .pg
+        .relay_claim_next(session.user_id, lane_id, chrono::Utc::now())
+        .await
+        .map_err(err)?;
+    let (claim_type, task) = match &claim {
+        RelayClaim::Review(review) => {
+            emit_task(&state, "claim_review", &review.task_id);
+            ("review", claimed_review_json(review))
+        }
+        RelayClaim::Task(task) => {
+            emit_task(&state, "claim", &task.task_id);
+            ("task", claimed_task_json(task))
+        }
+        RelayClaim::None => ("none", serde_json::Value::Null),
+    };
+    ok(serde_json::json!({ "claim_type": claim_type, "task": task }))
+}
+
+pub(crate) async fn claim_task(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<LaneBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let task = state
+        .pg
+        .relay_claim_task(session.user_id, lane_id, task_id, chrono::Utc::now())
+        .await
+        .map_err(err)?;
+    emit_task(&state, "claim", &task_id);
+    ok(serde_json::json!({ "claim_type": "task", "task": claimed_task_json(&task) }))
+}
+
+pub(crate) async fn checkpoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<CheckpointBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let steps = body
+        .steps
+        .into_iter()
+        .map(|s| -> Result<RelayStepInput, RelayError> {
+            Ok(RelayStepInput {
+                key: s.key,
+                title: s.title,
+                state: parse_word::<RelayStepState>(&s.state, "steps[].state")?,
+                reason: s.reason,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    let checkpointed_at = state
+        .pg
+        .relay_checkpoint_task(
+            session.user_id,
+            lane_id,
+            task_id,
+            RelayCheckpointInput { current_step: body.current_step, notes: body.notes, steps },
+        )
+        .await
+        .map_err(err)?;
+    emit_task(&state, "checkpoint", &task_id);
+    ok(serde_json::json!({
+        "task_id": task_id.to_string(),
+        "checkpointed_at": iso(checkpointed_at),
+    }))
+}
+
+pub(crate) async fn release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<ReleaseBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let out = state
+        .pg
+        .relay_release_task(RelayReleaseInput {
+            user_id: session.user_id,
+            lane_id,
+            task_id,
+            reason: body.reason,
+            now: chrono::Utc::now(),
+        })
+        .await
+        .map_err(err)?;
+    emit_task(&state, "release", &task_id);
+    ok(serde_json::json!({
+        "task_id": out.task_id.to_string(),
+        "kind": serde_json::to_value(out.kind).unwrap_or(serde_json::Value::Null),
+        "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+    }))
+}
+
+pub(crate) async fn limit_resume(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LaneBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let resumed = state.pg.relay_limit_resume(lane_id).await.map_err(err)?;
+    // Only a pause that ended is announced; a no-op stays quiet.
+    if resumed {
+        emit_lane(
+            &state,
+            LaneChange::Resumed(LaneReason::LimitPauseEnded),
+            &lane_id,
+            &session.crew_id,
+        );
+    }
+    ok(serde_json::json!({ "resumed": resumed }))
+}
+
+/// `GET /api/relay/queue?lane_id=`: the crew's claimable work, read-only.
+pub(crate) async fn lane_queue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TasksQuery>,
+) -> RelayResult {
+    let session = auth_lane(&state, &query.lane_id, &headers).await.map_err(err)?;
+    let queue = state.pg.relay_lane_queue(session.user_id, session.crew_id).await.map_err(err)?;
+    let entries: Vec<serde_json::Value> = queue
+        .iter()
+        .map(|q| {
+            serde_json::json!({
+                "task_id": q.task_id.to_string(),
+                "run_id": q.run_id.map(|id| id.to_string()),
+                "title": q.title,
+                "phase": serde_json::to_value(q.phase).unwrap_or(serde_json::Value::Null),
+                "state": serde_json::to_value(q.state).unwrap_or(serde_json::Value::Null),
+                "round": q.round,
+                "repo_key": q.repo_key,
+                "owned_paths": q.owned_paths,
+                "acceptance": q.acceptance,
+                "author_lane_id": q.author_lane_id.map(|id| id.to_string()),
+                "review_claimed_by": q.review_claimed_by.map(|id| id.to_string()),
+                "claim_eligibility": q.claim_eligibility,
+                "unmet_deps": q.unmet_deps.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                "state_changed_at": iso(q.state_changed_at),
+            })
+        })
+        .collect();
+    ok(serde_json::json!({ "queue": entries }))
+}
+
+/// `POST /relay/runs` (person): 201 with the run, Task 0, and the crew.
+pub(crate) async fn create_run(
+    State(state): State<AppState>,
+    Json(body): Json<CreateRunBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let item_ids = body
+        .item_ids
+        .iter()
+        .map(|id| parse_uuid(id, "item_ids[]"))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    let config = match body.config {
+        Some(config) => serde_json::to_value(config)
+            .map_err(|e| err(RelayError::Internal(format!("run config: {e}"))))?,
+        None => serde_json::json!({}),
+    };
+    let out = state
+        .pg
+        .relay_create_run(
+            user_id,
+            RelayCreateRunInput {
+                crew_id: body
+                    .crew_id
+                    .as_deref()
+                    .map(|c| parse_uuid(c, "crew_id"))
+                    .transpose()
+                    .map_err(err)?,
+                title: body.title,
+                goal: body.goal,
+                item_ids,
+                repo_key: body.repo_key,
+                workspace_id: body
+                    .workspace_id
+                    .as_deref()
+                    .map(|w| parse_uuid(w, "workspace_id"))
+                    .transpose()
+                    .map_err(err)?,
+                config,
+            },
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(err)?;
+    let _ =
+        state.event_tx.send(StateEvent::relay_run(RunChange::Created, &out.run_id, &out.crew_id));
+    emit_task(&state, "plan", &out.planning_task_id);
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "run_id": out.run_id.to_string(),
+            "planning_task_id": out.planning_task_id.to_string(),
+            "crew_id": out.crew_id.to_string(),
+            "status": "planning",
+        })),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -459,7 +807,10 @@ pub(crate) async fn register(
         .relay_register(
             user_id,
             RelayRegisterInput {
-                role: parse_word::<RelayRole>(&body.role, "role").map_err(err)?,
+                role: match body.role.as_deref() {
+                    Some(role) => parse_word::<RelayRole>(role, "role").map_err(err)?,
+                    None => RelayRole::Contributor,
+                },
                 family: body.family,
                 version: body.version,
                 model: body.model,
@@ -480,6 +831,7 @@ pub(crate) async fn register(
                     .map(|w| parse_uuid(w, "workspace_id"))
                     .transpose()
                     .map_err(err)?,
+                suggested_name: body.suggested_name,
             },
             chrono::Utc::now(),
         )
@@ -559,22 +911,15 @@ pub(crate) async fn heartbeat(
 ) -> RelayResult {
     let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
     let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
-    let RelayHeartbeatOutput { expires_at, regranted, pause_ended } =
+    let RelayHeartbeatOutput { expires_at, regranted } =
         state.pg.relay_heartbeat(lane_id, chrono::Utc::now()).await.map_err(err)?;
     // A routine renewal changes nothing the screen shows; only a beat
-    // that brings the lane back to work is announced.
+    // that brings the lane back to work is announced. A beat never ends a
+    // limit pause (F03): the sweeper announces that at resumes_at.
     if regranted {
         emit_lane(
             &state,
             LaneChange::Resumed(LaneReason::LeaseRegranted),
-            &lane_id,
-            &session.crew_id,
-        );
-    }
-    if pause_ended {
-        emit_lane(
-            &state,
-            LaneChange::Resumed(LaneReason::LimitPauseEnded),
             &lane_id,
             &session.crew_id,
         );
@@ -684,8 +1029,27 @@ pub(crate) async fn wait_for_task(
 ) -> EnvelopeResult {
     let session = auth_lane(&state, &query.lane_id, &headers).await.map_err(err)?;
     let lane_id = parse_uuid(&query.lane_id, "lane_id").map_err(err)?;
-    let hold = clamp_wait_timeout(query.timeout_ms);
+    let hold = clamp_wait_timeout(query.hold_ms());
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(hold);
+    // F06: the hold is a waiter row for its duration — opened before the
+    // first read, released on every exit path (the sweeper nudges by it
+    // and evicts dead lanes' rows).
+    state.pg.relay_waiter_hold(session.user_id, lane_id, session.crew_id).await.map_err(err)?;
+    let held = wait_held(&state, &session, lane_id, deadline).await;
+    let released = state.pg.relay_waiter_release(session.user_id, lane_id).await.map_err(err);
+    let envelope = held?;
+    released?;
+    Ok(Json(envelope))
+}
+
+/// The hold itself: re-read on every relay event until the envelope has
+/// something or the deadline passes.
+async fn wait_held(
+    state: &AppState,
+    session: &RelayLaneSession,
+    lane_id: Uuid,
+    deadline: std::time::Instant,
+) -> Result<LaneEnvelope, (StatusCode, Json<serde_json::Value>)> {
     // Subscribe before the first read: an event between the read and the
     // subscribe would otherwise sleep through the hold.
     let mut rx = state.event_tx.subscribe();
@@ -696,11 +1060,11 @@ pub(crate) async fn wait_for_task(
             && envelope.reviews.is_empty()
             && envelope.assignments.is_empty())
         {
-            return Ok(Json(envelope));
+            return Ok(envelope);
         }
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
-            return Ok(Json(empty_envelope()));
+            return Ok(empty_envelope());
         }
         // Any event (or lag, or a closed sender) re-checks; only the
         // deadline returns empty. Spurious wakes are a re-read, never wrong.
@@ -789,12 +1153,6 @@ pub(crate) async fn assign(
                 owned_paths: body.owned_paths,
                 deps,
                 resources: body.resources,
-                reviewer_lane: body
-                    .reviewer_lane
-                    .as_deref()
-                    .map(|r| parse_uuid(r, "reviewer_lane"))
-                    .transpose()
-                    .map_err(err)?,
                 lane_title: body.lane_title,
                 now: chrono::Utc::now(),
             },
@@ -858,7 +1216,34 @@ pub(crate) async fn report(
     ok(serde_json::json!({
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
         "round": out.round,
-        "reviewer_lane_id": out.reviewer_lane_id.map(|id| id.to_string()),
+    }))
+}
+
+pub(crate) async fn claim_review(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<ClaimReviewBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let out = state
+        .pg
+        .relay_claim_review(session.user_id, caller, task_id, chrono::Utc::now())
+        .await
+        .map_err(err)?;
+    emit_task(&state, "claim_review", &task_id);
+    ok(serde_json::json!({
+        "task_id": out.task_id.to_string(),
+        "title": out.title,
+        "phase": serde_json::to_value(out.phase).unwrap_or(serde_json::Value::Null),
+        "round": out.round,
+        "author_lane_code": out.author_lane_code,
+        "summary": out.summary,
+        "report_md": out.report_md,
+        "branch": out.branch,
+        "files": out.files,
     }))
 }
 
@@ -906,6 +1291,16 @@ pub(crate) async fn review(
         .await
         .map_err(err)?;
     emit_task(&state, "review", &task_id);
+    // An approved Task 0 unpacked its plan: the queue grew and the run is
+    // active — both announced beside the review itself.
+    if let Some(run_id) = out.run_activated {
+        emit_task(&state, "unpack", &task_id);
+        let _ = state.event_tx.send(StateEvent::relay_run(
+            RunChange::Activated,
+            &run_id,
+            &session.crew_id,
+        ));
+    }
     ok(serde_json::json!({
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
         "round": out.round,
@@ -1156,7 +1551,12 @@ pub(crate) async fn close_crew(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_close_crew(session.user_id, caller, crew_id).await.map_err(err)?;
-    let _ = state.event_tx.send(StateEvent::relay_run(RunChange::Completed, &out.crew_id));
+    // A crew's lifecycle event: the crew id stands as the run id (§3k).
+    let _ = state.event_tx.send(StateEvent::relay_run(
+        RunChange::Completed,
+        &out.crew_id,
+        &out.crew_id,
+    ));
     ok(serde_json::json!({
         "crew_id": out.crew_id.to_string(),
         "status": out.status,
@@ -1533,18 +1933,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn register_contributor_without_crew_is_422() {
+    async fn register_contributor_without_crew_joins_the_single_active_crew_or_is_409() {
+        // #402 (queue cutover): a contributor naming no crew joins the
+        // user's single active crew; with none to join it is a 409 of
+        // its own code, never a guess.
         let h = harness().await;
-        let (status, body) = call(
-            &h,
-            "POST",
-            "/api/relay/register",
-            Some(json!({"role": "contributor", "family": "claude-code"})),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-        assert_eq!(body["error"], "relay_invalid");
+        let body = json!({"role": "contributor", "family": "claude-code"});
+        let (status, out) = call(&h, "POST", "/api/relay/register", Some(body.clone()), None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{out}");
+        assert_eq!(out["error"], "relay_no_active_crew");
+        let coord = register_coordinator(&h).await;
+        let (status, out) = call(&h, "POST", "/api/relay/register", Some(body), None).await;
+        assert_eq!(status, StatusCode::OK, "{out}");
+        assert_eq!(out["crew_id"], coord.2);
     }
 
     #[tokio::test]
@@ -1836,6 +2237,9 @@ mod tests {
 
     // ── report / review / merge ──
 
+    /// A full report naming a branch: approval holds the task for the
+    /// merge (a report with nothing to merge ends it done at once — the
+    /// store's pin).
     fn report_body(lane_id: &str) -> Value {
         lane_body(
             lane_id,
@@ -1843,19 +2247,37 @@ mod tests {
                 "phase": "tests", "round": 1,
                 "summary": {"changed": "Wired it.", "look_at": "app/", "flags": null},
                 "files": [{"path": "app/a.ts", "added": 1, "removed": 0}],
+                "branch": "lane/l2",
             }),
         )
     }
 
+    /// Claim a floating review as `lane`.
+    async fn claim_review(
+        h: &Harness,
+        task_id: &str,
+        lane_id: &str,
+        token: &str,
+    ) -> (StatusCode, Value) {
+        call(
+            h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/claim_review"),
+            Some(lane_body(lane_id, json!({}))),
+            Some(token),
+        )
+        .await
+    }
+
     #[tokio::test]
-    async fn report_then_review_then_merge_flow() {
+    async fn report_then_claim_then_review_then_merge_flow() {
         let h = harness().await;
         let coord = register_coordinator(&h).await;
         let (lane_id, token) = register_contributor(&h, &coord.2).await;
         let task_id = assigned_task(&h, &coord, &lane_id).await;
-        // Delivery marks started; the report moves to in_review…
-        let _ = call(&h, "GET", &format!("/api/relay/tasks?lane_id={lane_id}"), None, Some(&token))
-            .await;
+        // The holder's report is its first write (F01: it starts the task);
+        // the report moves to in_review and floats on the review queue
+        // (queue cutover: nobody is picked)…
         let (status, body) = call(
             &h,
             "POST",
@@ -1866,7 +2288,16 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["state"], "in_review");
-        // …the coordinator (picked reviewer on a two-lane crew) approves…
+        assert!(body.get("reviewer_lane_id").is_none(), "nothing is picked: {body}");
+        // …the coordinator claims the review and reads the report…
+        let (status, body) = claim_review(&h, &task_id, &coord.0, &coord.1).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["task_id"], task_id);
+        assert_eq!(body["round"], 1);
+        assert_eq!(body["phase"], "tests");
+        assert!(body["author_lane_code"].is_string(), "{body}");
+        assert_eq!(body["summary"], "Wired it.");
+        // …approves…
         let (status, body) = call(
             &h,
             "POST",
@@ -1967,7 +2398,62 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["state"], "in_review");
         assert_eq!(body["round"], 1);
-        assert!(!body["reviewer_lane_id"].is_null(), "{body}");
+        // Queue cutover: the review floats; the response names no reviewer.
+        assert!(body.get("reviewer_lane_id").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn claim_review_refuses_author_second_claim_and_paused_lane() {
+        // Queue cutover: a floating review is claimed by any live, unpaused,
+        // non-author lane — once. The author is refused (422), a second
+        // claimant finds it taken (409), a limit-paused lane cannot claim
+        // (409).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (holder, token) = register_contributor(&h, &coord.2).await;
+        let (other, other_token) = register_contributor(&h, &coord.2).await;
+        let (paused, paused_token) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &holder).await;
+        let _ = call(&h, "GET", &format!("/api/relay/tasks?lane_id={holder}"), None, Some(&token))
+            .await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&holder)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // The author never reviews its own task.
+        let (status, body) = claim_review(&h, &task_id, &holder, &token).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "relay_invalid");
+        // A paused lane sits out.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/limit_pause",
+            Some(lane_body(&paused, json!({"scope": "daily"}))),
+            Some(&paused_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = claim_review(&h, &task_id, &paused, &paused_token).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        // The first live claimant takes it; the next finds it taken.
+        let (status, body) = claim_review(&h, &task_id, &other, &other_token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = claim_review(&h, &task_id, &coord.0, &coord.1).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_conflict");
+        // The claim is visible on the task view as the reviewer.
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["reviewer"]["id"], other, "{view}");
+        assert!(view["task"]["reviewer"]["code"].is_string(), "{view}");
     }
 
     // ── Fix gate F9: register guidance ──
@@ -1988,11 +2474,561 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let guidance = &body["guidance"];
-        assert_eq!(guidance["version"], "1", "{body}");
+        assert_eq!(guidance["version"], "2", "{body}");
         let generic = guidance["generic"].as_str().unwrap();
-        for line in ["300", "heartbeat", "tasks/wait", "report", "transcript"] {
+        for line in ["300", "heartbeat", "tasks/wait", "report", "transcript", "claim_next"] {
             assert!(generic.contains(line), "generic lacks {line:?}: {generic}");
         }
+    }
+
+    // ── queue cutover (2.9): the claim loop over HTTP ──
+
+    /// Plan a task into the pool (coordinator) and return its id.
+    async fn pool_task(h: &Harness, coord: &(String, String, String), title: &str) -> String {
+        let (status, body) = call(
+            h,
+            "POST",
+            "/api/relay/tasks/plan",
+            Some(lane_body(
+                &coord.0,
+                json!({"title": title, "phase": "tests", "repo_key": "github.com/o/r"}),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["task_id"].as_str().unwrap().to_string()
+    }
+
+    async fn claim_next(h: &Harness, lane_id: &str, token: &str) -> (StatusCode, Value) {
+        call(
+            h,
+            "POST",
+            "/api/relay/tasks/claim_next",
+            Some(lane_body(lane_id, json!({}))),
+            Some(token),
+        )
+        .await
+    }
+
+    async fn claim_task(
+        h: &Harness,
+        task_id: &str,
+        lane_id: &str,
+        token: &str,
+    ) -> (StatusCode, Value) {
+        call(
+            h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/claim"),
+            Some(lane_body(lane_id, json!({}))),
+            Some(token),
+        )
+        .await
+    }
+
+    /// A triage item (person) for a run.
+    async fn triage_item(h: &Harness) -> String {
+        let (status, body) = call(
+            h,
+            "POST",
+            "/relay/triage",
+            Some(json!({"title": "Gap", "kind": "gap", "tags": []})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["item_id"].as_str().unwrap().to_string()
+    }
+
+    fn task_op(event: &crate::api::events::StateEvent) -> (String, String, String) {
+        (
+            event.entity.clone(),
+            event.data["op"].as_str().unwrap_or("").to_string(),
+            event.data["task_id"].as_str().unwrap_or("").to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn claim_next_answers_review_then_task_then_none_with_the_design_shape() {
+        // §6.3: a ready task comes back as the task shape, a floating review
+        // as the review shape, nothing as `none`; each claim is announced.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (a, token_a) = register_contributor(&h, &coord.2).await;
+        let (b, token_b) = register_contributor(&h, &coord.2).await;
+        let task_id = pool_task(&h, &coord, "Wire it").await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = claim_next(&h, &a, &token_a).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["claim_type"], "task");
+        let task = &body["task"];
+        assert_eq!(task["id"], task_id);
+        assert_eq!(task["title"], "Wire it");
+        assert_eq!(task["phase"], "tests");
+        assert_eq!(task["round"], 1);
+        assert_eq!(task["deps_status"], "satisfied");
+        assert_eq!(task["unmet_deps"], json!([]));
+        assert!(task["owned_paths"].is_array() && task["acceptance"].is_array(), "{task}");
+        assert_eq!(
+            task_op(&next_event(&mut rx).await),
+            ("task".into(), "claim".into(), task_id.clone())
+        );
+        // A reports: the review floats; B takes it as the review shape.
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&a)),
+            Some(&token_a),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = claim_next(&h, &b, &token_b).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["claim_type"], "review");
+        let review = &body["task"];
+        assert_eq!(review["id"], task_id);
+        assert_eq!(review["title"], "Wire it");
+        assert!(review["author_lane_code"].is_string(), "{review}");
+        assert_eq!(review["phase"], "tests");
+        assert_eq!(review["round"], 1);
+        assert_eq!(review["summary"], "Wired it.");
+        assert_eq!(review["branch"], "lane/l2");
+        // B holds the review and nothing else is claimable: none.
+        let (status, body) = claim_next(&h, &b, &token_b).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["claim_type"], "none");
+        assert!(body["task"].is_null(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn claim_task_by_id_and_release_back_to_the_pool() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (a, token_a) = register_contributor(&h, &coord.2).await;
+        let (b, token_b) = register_contributor(&h, &coord.2).await;
+        let first = pool_task(&h, &coord, "First").await;
+        let second = pool_task(&h, &coord, "Second").await;
+        let (status, body) = claim_task(&h, &second, &a, &token_a).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["claim_type"], "task");
+        assert_eq!(body["task"]["id"], second);
+        assert_eq!(body["task"]["deps_status"], "satisfied");
+        // A busy lane takes no second task.
+        let (status, body) = claim_task(&h, &first, &a, &token_a).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        // Release: back to the pool, the reason on the row, announced; B
+        // takes it.
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{second}/release"),
+            Some(lane_body(&a, json!({"reason": "Blocked on the schema."}))),
+            Some(&token_a),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["task_id"], second);
+        assert_eq!(body["kind"], "task");
+        assert_eq!(body["state"], "ready");
+        assert_eq!(
+            task_op(&next_event(&mut rx).await),
+            ("task".into(), "release".into(), second.clone())
+        );
+        let (status, body) = claim_task(&h, &second, &b, &token_b).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{second}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        let kinds: Vec<&str> =
+            view["history"].as_array().unwrap().iter().filter_map(|a| a["kind"].as_str()).collect();
+        assert!(kinds.contains(&"claimed") && kinds.contains(&"released"), "{kinds:?}");
+    }
+
+    #[tokio::test]
+    async fn checkpoint_saves_in_turn_progress_and_answers_checkpointed_at() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let save = json!({
+            "current_step": "running clippy",
+            "notes": "Three warnings left.",
+            "steps": [
+                {"key": "ddl", "title": "Apply the schema", "state": "done"},
+                {"key": "clippy", "title": "Run clippy", "state": "open"},
+            ],
+        });
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/checkpoint"),
+            Some(lane_body(&holder, save.clone())),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["task_id"], task_id);
+        assert!(body["checkpointed_at"].is_string(), "{body}");
+        assert_eq!(
+            task_op(&next_event(&mut rx).await),
+            ("task".into(), "checkpoint".into(), task_id.clone())
+        );
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        let steps = view["steps"].as_array().unwrap();
+        assert!(steps.iter().any(|s| s["key"] == "ddl" && s["state"] == "done"), "{view}");
+        assert!(steps.iter().any(|s| s["key"] == "clippy" && s["state"] == "open"), "{view}");
+        // Only the holder saves.
+        let (other, other_token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/checkpoint"),
+            Some(lane_body(&other, save)),
+            Some(&other_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+
+    #[tokio::test]
+    async fn limit_resume_ends_a_pause_early_and_emits_resumed() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/limit_pause",
+            Some(lane_body(&lane, json!({"scope": "daily"}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/limit_resume",
+            Some(lane_body(&lane, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["resumed"], true);
+        let event = next_event(&mut rx).await;
+        assert_eq!(event.entity, "lane");
+        assert_eq!(event.data["op"], "resumed");
+        assert_eq!(event.data["reason"], "limit_pause_ended");
+        assert_eq!(event.data["lane_id"], lane);
+        // Not paused: nothing to end, nothing announced.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/limit_resume",
+            Some(lane_body(&lane, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["resumed"], false);
+        let quiet = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
+        assert!(quiet.is_err(), "no second event: {quiet:?}");
+    }
+
+    #[tokio::test]
+    async fn queue_lists_the_crews_claimable_work_read_only() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (a, token_a) = register_contributor(&h, &coord.2).await;
+        let t1 = pool_task(&h, &coord, "One").await;
+        let t2 = pool_task(&h, &coord, "Two").await;
+        // A works and reports t1: a floating review beside a ready task.
+        let (status, body) = claim_task(&h, &t1, &a, &token_a).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{t1}/report"),
+            Some(report_body(&a)),
+            Some(&token_a),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) =
+            call(&h, "GET", &format!("/api/relay/queue?lane_id={a}"), None, Some(&token_a)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let queue = body["queue"].as_array().unwrap();
+        assert_eq!(queue.len(), 2, "{queue:?}");
+        let review = queue.iter().find(|q| q["task_id"] == t1).unwrap();
+        assert_eq!(review["claim_eligibility"], "review_floating");
+        assert_eq!(review["state"], "in_review");
+        assert_eq!(review["author_lane_id"], a);
+        let ready = queue.iter().find(|q| q["task_id"] == t2).unwrap();
+        assert_eq!(ready["claim_eligibility"], "ready_unblocked");
+        assert_eq!(ready["unmet_deps"], json!([]));
+        assert_eq!(ready["title"], "Two");
+        assert_eq!(ready["phase"], "tests");
+        // Reading claimed nothing: A (its own report is not its to review)
+        // takes t2 as a task.
+        let (status, body) = claim_next(&h, &a, &token_a).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["claim_type"], "task");
+        assert_eq!(body["task"]["id"], t2);
+        // Another crew's lane sees its own, empty queue.
+        let other = register_coordinator(&h).await;
+        let (status, body) =
+            call(&h, "GET", &format!("/api/relay/queue?lane_id={}", other.0), None, Some(&other.1))
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["queue"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn create_run_is_201_with_task0_and_emits_run_created() {
+        let h = harness().await;
+        let item_id = triage_item(&h).await;
+        let run_body = json!({
+            "title": "Sprint 1", "goal": "Ship the queue", "item_ids": [item_id],
+            "repo_key": "github.com/o/r", "config": {"auto_merge": false},
+        });
+        // No active crew: nothing to run in.
+        let (status, body) = call(&h, "POST", "/relay/runs", Some(run_body.clone()), None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "relay_no_active_crew");
+        let coord = register_coordinator(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(&h, "POST", "/relay/runs", Some(run_body), None).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["status"], "planning");
+        assert_eq!(body["crew_id"], coord.2);
+        let run_id = body["run_id"].as_str().unwrap().to_string();
+        let task0 = body["planning_task_id"].as_str().unwrap().to_string();
+        assert_ne!(run_id, task0);
+        let event = next_event(&mut rx).await;
+        assert_eq!(event.entity, "run");
+        assert_eq!(event.data["op"], "created");
+        assert_eq!(event.data["run_id"], run_id);
+        assert_eq!(event.data["crew_id"], coord.2);
+        // Task 0 waits in the pool for a claim.
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = claim_next(&h, &lane, &token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["claim_type"], "task");
+        assert_eq!(body["task"]["id"], task0);
+        assert_eq!(body["task"]["phase"], "planning");
+        // An unknown config knob is a caller bug (F11).
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/runs",
+            Some(json!({"title": "S", "goal": "G", "item_ids": [], "config": {"bogus": 1}})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+
+    #[tokio::test]
+    async fn approving_task0_emits_unpack_and_run_activated() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (a, token_a) = register_contributor(&h, &coord.2).await;
+        let (b, token_b) = register_contributor(&h, &coord.2).await;
+        let item_id = triage_item(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/runs",
+            Some(json!({
+                "title": "Sprint 1", "goal": "Ship", "item_ids": [item_id],
+                "repo_key": "github.com/o/r", "config": {"auto_merge": false},
+            })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let run_id = body["run_id"].as_str().unwrap().to_string();
+        let task0 = body["planning_task_id"].as_str().unwrap().to_string();
+        let (status, body) = claim_next(&h, &a, &token_a).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["task"]["id"], task0);
+        let plan = json!({"tasks": [
+            {"key": "t1", "title": "Apply schema deltas", "phase": "impl",
+             "owned_paths": ["database/ddl/table/relay/runs.ddl"],
+             "acceptance": ["psql -f runs.ddl succeeds"], "deps": []},
+            {"key": "t2", "title": "Add claim handlers", "phase": "impl",
+             "owned_paths": ["crates/senseid/src/api/handlers/relay.rs"],
+             "acceptance": ["cargo check succeeds"], "deps": ["t1"]},
+        ]});
+        let report = lane_body(
+            &a,
+            json!({
+                "phase": "planning", "round": 1,
+                "summary": {"changed": "Planned the sprint."},
+                "report_md": format!("Plan:\n\n```json\n{plan}\n```\n"),
+            }),
+        );
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task0}/report"),
+            Some(report),
+            Some(&token_a),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = claim_review(&h, &task0, &b, &token_b).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task0}/review"),
+            Some(lane_body(&b, json!({"verdict": "approved", "summary": "Sound."}))),
+            Some(&token_b),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "done");
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            let event = next_event(&mut rx).await;
+            seen.push((event.entity.clone(), event.data.clone()));
+        }
+        assert!(
+            seen.iter().any(|(entity, data)| entity == "task"
+                && data["op"] == "unpack"
+                && data["task_id"] == task0),
+            "{seen:?}"
+        );
+        assert!(
+            seen.iter().any(|(entity, data)| entity == "run"
+                && data["op"] == "activated"
+                && data["run_id"] == run_id
+                && data["crew_id"] == coord.2),
+            "{seen:?}"
+        );
+        let (status, body) =
+            call(&h, "GET", &format!("/api/relay/queue?lane_id={a}"), None, Some(&token_a)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["queue"].as_array().unwrap().len(), 2, "{body}");
+    }
+
+    #[tokio::test]
+    async fn register_defaults_role_to_contributor_and_keeps_suggested_name() {
+        // #402: no role means contributor; no crew_id joins the single
+        // active crew; the suggested name is the lane's title.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"family": "claude-code", "suggested_name": "worker-alpha"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["crew_id"], coord.2);
+        assert_eq!(body["lane_title"], "worker-alpha");
+        // A contributor: planning is the coordinator's.
+        let lane = body["lane_id"].as_str().unwrap().to_string();
+        let token = body["lane_token"].as_str().unwrap().to_string();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/tasks/plan",
+            Some(lane_body(&lane, json!({"title": "T", "phase": "tests"}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+
+    #[tokio::test]
+    async fn wait_query_refuses_unknown_keys_and_takes_timeout_seconds() {
+        // F11/#404: a misspelt query key is refused, never ignored; the
+        // hold takes seconds as well as milliseconds.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let (status, _) = call(
+            &h,
+            "GET",
+            &format!("/api/relay/tasks/wait?lane_id={lane}&timeout_ms=10&bogus=1"),
+            None,
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) = call(
+            &h,
+            "GET",
+            &format!("/api/relay/tasks?lane_id={lane}&bogus=1"),
+            None,
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let start = std::time::Instant::now();
+        let (status, body) = call(
+            &h,
+            "GET",
+            &format!("/api/relay/tasks/wait?lane_id={lane}&timeout_seconds=1"),
+            None,
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "timeout_seconds bounds the hold: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_for_task_holds_a_waiter_row_while_waiting_and_drops_it_after() {
+        // F06: the hold is a row in relay.lane_waiters for its duration.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let app = h.app.clone();
+        let (lane2, token2) = (lane.clone(), token.clone());
+        let waiting = tokio::spawn(async move {
+            let req = Request::builder()
+                .method("GET")
+                .uri(format!("/api/relay/tasks/wait?lane_id={lane2}&timeout_ms=1500"))
+                .header("host", "127.0.0.1:7744")
+                .header("authorization", format!("Bearer {token2}"))
+                .body(Body::empty())
+                .unwrap();
+            app.oneshot(req).await.unwrap().status()
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let lane_uuid = uuid::Uuid::parse_str(&lane).unwrap();
+        let held: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.lane_waiters where lane_id = $1",
+        )
+        .bind(lane_uuid)
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(held, 1, "the hold is a waiter row");
+        assert_eq!(waiting.await.unwrap(), StatusCode::OK);
+        let held: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.lane_waiters where lane_id = $1",
+        )
+        .bind(lane_uuid)
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(held, 0, "the row goes with the hold");
     }
 
     #[tokio::test]
@@ -2055,10 +3091,21 @@ mod tests {
         coord: &(String, String, String),
     ) -> (String, String, String) {
         // A held working task: returns (task_id, holder_lane, holder_token).
+        // F01 (queue cutover): reading the envelope starts nothing; the
+        // holder's first write — a step here — does.
         let (holder, token) = register_contributor(h, &coord.2).await;
         let task_id = assigned_task(h, coord, &holder).await;
         let _ =
             call(h, "GET", &format!("/api/relay/tasks?lane_id={holder}"), None, Some(&token)).await;
+        let (status, body) = call(
+            h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/steps"),
+            Some(lane_body(&holder, json!({"key": "start", "title": "Start", "state": "open"}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         (task_id, holder, token)
     }
 
@@ -2156,9 +3203,12 @@ mod tests {
         let (status, view) =
             call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
         assert_eq!(status, StatusCode::OK, "{view}");
-        assert_eq!(view["steps"][0]["key"], "scaffold");
-        assert_eq!(view["steps"][0]["title"], "Scaffold the crate");
-        assert_eq!(view["steps"][0]["state"], "open");
+        // Beside the starting step the helper posted (F01).
+        let steps = view["steps"].as_array().unwrap();
+        let step =
+            steps.iter().find(|s| s["key"] == "scaffold").unwrap_or_else(|| panic!("{view}"));
+        assert_eq!(step["title"], "Scaffold the crate");
+        assert_eq!(step["state"], "open");
     }
 
     #[tokio::test]
@@ -2273,22 +3323,10 @@ mod tests {
     async fn step_wrong_state_is_409() {
         let h = harness().await;
         let coord = register_coordinator(&h).await;
-        // Assigned: the work (and its steps) has not started.
-        let (holder, token) = register_contributor(&h, &coord.2).await;
-        let fresh = assigned_task(&h, &coord, &holder).await;
-        let (status, body) = post_step(
-            &h,
-            &holder,
-            &token,
-            &fresh,
-            json!({"key": "scaffold", "title": "Scaffold the crate", "state": "open"}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CONFLICT, "{body}");
-        assert_eq!(body["error"], "relay_conflict");
-        // In review: the turn is over, steps with it. (Cancelled needs no
-        // pin: cancel refuses a live holder while steps require one. Done
-        // shares this same state gate.)
+        // In review: the turn is over, steps with it. (An assigned task
+        // takes the holder's first step — it starts the work (F01), the
+        // store's pin. Cancelled needs no pin: cancel refuses a live holder
+        // while steps require one. Done shares this same state gate.)
         let (task_id, holder, token) = working_task(&h, &coord).await;
         let (status, _) = call(
             &h,
@@ -2506,12 +3544,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handover_to_reviewer_lane_is_409() {
-        // A task never reviews itself: the picked reviewer cannot take
-        // over the task.
+    async fn handover_to_claimed_reviewer_is_409() {
+        // A task never reviews itself: the lane holding the review claim
+        // cannot take over the task.
         let h = harness().await;
         let coord = register_coordinator(&h).await;
         let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (reviewer, reviewer_token) = register_contributor(&h, &coord.2).await;
         let (status, body) = call(
             &h,
             "POST",
@@ -2521,7 +3560,8 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        let reviewer = body["reviewer_lane_id"].as_str().unwrap().to_string();
+        let (status, body) = claim_review(&h, &task_id, &reviewer, &reviewer_token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         let (status, body) = handover(&h, &coord, &task_id, &reviewer).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(body["error"], "relay_conflict");
@@ -2594,8 +3634,8 @@ mod tests {
                 .await;
         let (status, body) = handover(&h, &coord, &working, &holder_c).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
-        // Approved: the work is done; merge it. Own two-lane crew so the
-        // coordinator is the picked reviewer, deterministically.
+        // Approved: the work is done; merge it. Own two-lane crew; the
+        // coordinator claims the floating review and approves.
         let coord_b = register_coordinator(&h).await;
         let (worker_b, token_wb) = register_contributor(&h, &coord_b.2).await;
         let approved = assigned_task(&h, &coord_b, &worker_b).await;
@@ -2611,6 +3651,8 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        let (status, body) = claim_review(&h, &approved, &coord_b.0, &coord_b.1).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         let (status, body) = call(
             &h,
             "POST",
@@ -3101,9 +4143,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn heartbeat_clears_pause_only_past_resume() {
-        // Beating before resumes_at keeps the pause (still on quota);
-        // beating after it resumes. Unknown resume clears on next beat.
+    async fn heartbeat_never_ends_a_pause() {
+        // F03 (queue cutover): a beat renews the lease and nothing else —
+        // before resumes_at, past it, and with no resume time at all. The
+        // sweeper ends a pause at resumes_at; the lane ends it early with
+        // limit_resume.
         let h = harness().await;
         let coord = register_coordinator(&h).await;
         let (lane_id, token) = register_contributor(&h, &coord.2).await;
@@ -3121,7 +4165,6 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let lane = now_lane(&h, &lane_id).await;
         assert_eq!(lane["limit_scope"], "daily", "{lane}");
-        // Past the resume time the same beat resumes.
         h.state
             .pg
             .relay_heartbeat(
@@ -3131,8 +4174,21 @@ mod tests {
             .await
             .unwrap();
         let lane = now_lane(&h, &lane_id).await;
-        assert!(lane["limit_scope"].is_null(), "{lane}");
-        assert!(lane["limit_resumes_at"].is_null(), "{lane}");
+        assert_eq!(lane["limit_scope"], "daily", "a beat past resumes_at: {lane}");
+        let (status, _) =
+            limit_pause(&h, &lane_id, &token, "other", serde_json::Value::Null, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(lane_body(&lane_id, json!({}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let lane = now_lane(&h, &lane_id).await;
+        assert_eq!(lane["limit_scope"], "other", "an unknown resume: {lane}");
     }
 
     #[tokio::test]
@@ -3323,7 +4379,8 @@ mod tests {
         assert_eq!(t["crew_id"], coord.2);
         assert_eq!(t["title"], "T");
         assert_eq!(t["phase"], "tests");
-        assert_eq!(t["state"], "assigned");
+        // Queue cutover: a planned task waits in the pool as `ready`.
+        assert_eq!(t["state"], "ready");
         assert_eq!(t["round"], 1);
         assert_eq!(t["repo_key"], "github.com/o/r");
     }
@@ -3961,8 +5018,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn heartbeat_ending_a_pause_emits_lane_resumed() {
-        // Unknown resume time: the next beat ends the pause.
+    async fn heartbeat_on_a_paused_lane_emits_nothing() {
+        // F03 (queue cutover): a beat ends no pause, so it announces no
+        // resume — not even with an unknown resume time.
         let h = harness().await;
         let coord = register_coordinator(&h).await;
         let (lane_id, token) = register_contributor(&h, &coord.2).await;
@@ -3979,11 +5037,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let event = event_for(&mut rx, "lane", "resumed").await;
-        assert_eq!(
-            event,
-            lane_event_why("update", "resumed", &lane_id, &coord.2, "limit_pause_ended")
-        );
+        assert!(rx.try_recv().is_err(), "a beat on a paused lane emitted an event");
     }
 
     #[tokio::test]

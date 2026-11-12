@@ -15,11 +15,13 @@ import type {
   RelayCompletedTask,
   RelayCrew,
   RelayDecision,
+  RelayFloatingReview,
   RelayLane,
   RelayNow,
   RelayPersonMessage,
   RelayQueue,
   RelayRunDetails,
+  RelayRunSummary,
   RelayTaskView,
   RelayTriageItem,
 } from '$lib/relay-api.js';
@@ -70,6 +72,8 @@ export function lane(over: Partial<RelayLane> = {}): RelayLane {
     limit_scope: null,
     limit_resumes_at: null,
     limit_note: null,
+    suggested_name: null,
+    reviewing: null,
     task: {
       id: 't-structure',
       title: 'Structure view on the shell',
@@ -150,6 +154,89 @@ export function completed(over: Partial<RelayCompletedTask> = {}): RelayComplete
   };
 }
 
+export const RUN_ID = '019a5e2c-4b1d-7c00-8d2e-00000000ab10';
+export const OTHER_RUN_ID = '019a5e2c-4b1d-7c00-8d2e-00000000ab11';
+
+/** An open sprint run as `relay.now`'s `sprint_summary` counts it (queue cutover). */
+export function sprint(over: Partial<RelayRunSummary> = {}): RelayRunSummary {
+  return {
+    run_id: RUN_ID,
+    crew_id: CREW_ID,
+    title: 'Sprint 14: Broker hardening',
+    goal: 'Resolve the high-severity broker findings',
+    state: 'active',
+    created_at: minutesAgo(90),
+    started_at: minutesAgo(60),
+    total_tasks: 6,
+    ready_tasks: 2,
+    working_tasks: 1,
+    in_review_tasks: 1,
+    floating_reviews: 1,
+    approved_tasks: 0,
+    done_tasks: 2,
+    blocked_tasks: 0,
+    interrupted_tasks: 0,
+    ...over,
+  };
+}
+
+/** A report waiting for a reviewer, as `relay.now`'s `floating_review` row (queue cutover). */
+export function floatingReview(over: Partial<RelayFloatingReview> = {}): RelayFloatingReview {
+  return {
+    task_id: 't-claim-handlers',
+    crew_id: CREW_ID,
+    run_id: RUN_ID,
+    title: 'Add claim handlers',
+    phase: 'impl',
+    round: 1,
+    repo_key: REPO,
+    author_lane_code: 'L1',
+    author_lane_title: 'Diagrams',
+    reported_at: minutesAgo(17),
+    ...over,
+  };
+}
+
+/** Two runs (one planning, one active) and two floating reviews from different lanes, so a
+ *  screen that reads only the first fails. */
+export const sprintNow = (): RelayNow =>
+  now({
+    runs: [
+      sprint({
+        run_id: OTHER_RUN_ID,
+        title: 'Sprint 15: Queue screen',
+        goal: 'Run a sprint from the Relay screen',
+        state: 'planning',
+        created_at: minutesAgo(5),
+        started_at: null,
+        total_tasks: 1,
+        ready_tasks: 1,
+        working_tasks: 0,
+        in_review_tasks: 0,
+        floating_reviews: 0,
+        done_tasks: 0,
+      }),
+      sprint(),
+    ],
+    floating_reviews: [
+      floatingReview(),
+      floatingReview({
+        task_id: 't-ddl-deltas',
+        title: 'Apply schema deltas',
+        author_lane_code: 'L3',
+        author_lane_title: null,
+        reported_at: minutesAgo(3),
+      }),
+    ],
+    lanes: [
+      coordinatorLane({
+        reviewing: { id: 't-review-er', title: 'ER sidebar on the shell', phase: 'impl', round: 1, claimed_at: minutesAgo(24) },
+        task: null,
+      }),
+      lane({ suggested_name: 'worker-alpha' }),
+    ],
+  });
+
 export function crew(over: Partial<RelayCrew> = {}): RelayCrew {
   return {
     id: CREW_ID,
@@ -168,6 +255,8 @@ export function now(over: Partial<RelayNow> = {}): RelayNow {
     crews: [crew()],
     facets: { repos: [REPO], workspaces: [{ id: 'w1', name: 'Sensei' }] },
     lanes: [coordinatorLane(), lane()],
+    runs: [],
+    floating_reviews: [],
     decisions: [],
     person_messages: [],
     // Agrees with queue().triage: one Jira sprint-47 task, one manual item (r2 L6).
@@ -552,6 +641,9 @@ export function taskView(over: Partial<RelayTaskView> = {}): RelayTaskView {
       round: 2,
       ticket: { provider: 'jira', key: 'SEN-52', url: 'https://acme.atlassian.net/browse/SEN-52' },
       lane: { id: LANE.L1, code: 'L1', title: 'Diagrams', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5', limit_scope: null, limit_resumes_at: null, limit_note: null },
+      run_id: null,
+      deps_status: 'satisfied',
+      unmet_deps: [],
       assigned_at: minutesAgo(240),
       completed_at: minutesAgo(10),
       state_changed_at: minutesAgo(10),
@@ -586,6 +678,9 @@ export function fakeRelayApi(): FakeRelayApi {
     trySendMessage: vi.fn(async () => ok({ message_id: 'msg-1' })),
     tryAnswerDecision: vi.fn(async () => ok({ action_id: 'act-answer' })),
     tryAddToBacklog: vi.fn(async () => ok({ item_id: 'item-new' })),
+    tryCreateRun: vi.fn(async () =>
+      ok({ run_id: RUN_ID, planning_task_id: 't-plan', crew_id: CREW_ID, status: 'planning' as const }),
+    ),
   } as FakeRelayApi;
 }
 

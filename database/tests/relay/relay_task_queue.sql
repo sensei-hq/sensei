@@ -11,9 +11,8 @@
 -- the file applies its own DDL in-txn (see below) and rolls back.
 -- with --apply the runner applies the DDL and the file skips its own apply.
 --
--- NOTE: Q7 (working) sits on its own lane L3, not beside Q4 on L1 — until the
--- phase-2 cutover `in_review` still holds the lane, so one lane cannot carry
--- both. The queue reads the same either way.
+-- NOTE: Q7 (working) sits beside Q4 (in review) on L1 — in_review frees the
+-- lane, so a lane that reported works the next task while its report floats.
 
 begin;
 
@@ -29,15 +28,13 @@ insert into relay.lanes (user_id, id, crew_id, code, family, token_hash) values
    '11111111-1111-7000-8000-00000000fc01', 'L1', 'claude-code', 'x'),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fc12',
    '11111111-1111-7000-8000-00000000fc01', 'L2', 'codex', 'x'),
-  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fc13',
-   '11111111-1111-7000-8000-00000000fc01', 'L3', 'codex', 'x'),
   ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000fc19',
    '22222222-2222-7000-8000-00000000fc02', 'L1', 'claude-code', 'x');
 
 -- Q5: done (out, and a satisfied dependency). Q1: ready, no deps. Q2: ready,
 -- waits on Q1 (unmet). Q3: ready, waits on Q5 (met). Q4: in review, floating
--- (author L1). Q6: in review, claimed by L1 (author L2). Q7: working on L3
--- (out). Q9: U2's ready task.
+-- (author L1). Q6: in review, claimed by L1 (author L2). Q7: working on L1
+-- beside Q4 (out). Q9: U2's ready task.
 insert into relay.tasks (user_id, id, crew_id, lane_id, review_claimed_by, review_claimed_at, repo_key, title, phase, state, deps, state_changed_at) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fc25',
    '11111111-1111-7000-8000-00000000fc01', '11111111-1111-7000-8000-00000000fc12', null, null,
@@ -61,7 +58,7 @@ insert into relay.tasks (user_id, id, crew_id, lane_id, review_claimed_by, revie
    '11111111-1111-7000-8000-00000000fc11', '2026-11-10T10:06:00Z',
    'github.com/sensei-hq/sensei', 'Claimed', 'impl', 'in_review', '{}', '2026-11-10T10:05:00Z'),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000fc27',
-   '11111111-1111-7000-8000-00000000fc01', '11111111-1111-7000-8000-00000000fc13', null, null,
+   '11111111-1111-7000-8000-00000000fc01', '11111111-1111-7000-8000-00000000fc11', null, null,
    'github.com/sensei-hq/sensei', 'Working', 'impl', 'working', '{}', '2026-11-10T10:07:00Z'),
   ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000fc29',
    '22222222-2222-7000-8000-00000000fc02', null, null, null,

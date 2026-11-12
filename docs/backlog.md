@@ -40,6 +40,7 @@ week; `—` means no lane holds it yet. Per-module status and its evidence:
 | Trackers / sprints | ~40% | Jira, GitLab and GitHub Projects (daemon, D91, D92), boards per level (D40), sprints, Tickets screen | ADO adapter, dōjō-owned connections (D49, behind #310); tracker-ownership conflict; epics unread | L7 |
 | Teams / viewers | ~70% | roles, teams, invites, viewers, lead view | no viewer shell (D68); leads have no menu of their own; A4 writable workspaces | L4 |
 | Billing / plans | ~15% | `billing_accounts`, `seats`, `ScrBilling` | no provider, no subscription table; D46 entitlement is WP8; price to be announced (D75) | L4 (screen), L1 (WP8) |
+| Relay — local crews (2026-11-12) | ~80% | lanes, leases, the autonomous queue (FCFS claims, floating reviews, claim-early, checkpoints), sprint runs + Task 0, the deterministic merge gate, Relay screen sprint band — `plan/2026-11-10-relay-autonomous-queue/` (#399 #400 #401 #402 #403 #404 #405 closed by it; #415 narrowed to the slash command) | #398 close with dead-lease lanes; #396 crew management; #393 archive runs; #415 `/sensei:register`; host health / janitor / shared build (design §10.1–10.3) unbuilt; the dōjō-plane relay unverified (#314) | `lane/relay-autonomous-queue` → develop |
 
 ## Issues this week's plan depends on
 
@@ -72,6 +73,17 @@ status — open or closed is GitHub's answer.
   (`tasks/schema_deploy.rs`), so a branch that adds tables leaves `dojo_sync` failing every tick (here: no
   `sensei.delivery_withdrawals`) until someone clears the key and restarts. Option: when `SENSEI_DDL_DIR` is set, key
   the deploy on the DDL tree's fingerprint (`scripts/test-template-fingerprint.sh` already computes one) as well as the version.
+- **Diagrams section broken by a main ⇄ develop discrepancy (user, 2026-11-12; queued behind the relay queue merge).**
+  main `031b89f5a` (v0.21.1 + the MIT LICENSE merge, #370) is 640 commits behind develop `d7168e0a4`, and the
+  diagrams screen was rewritten on develop into facets (`plan/diagrams-facets.md`): the `layers`, `neighbourhood` and
+  `structure` pages and their states are gone, `schema` + `er-graph` + the shell arrived, and
+  `crates/senseid/src/api/handlers/diagrams.rs` changed with them (46 files differ under `*diagram*`). A released app
+  (main's routes) against a develop daemon — or the reverse — sits on opposite sides of that rewrite. First checks:
+  which app and which daemon are installed (`sensei --version`, the .app's version), then the diagrams routes the
+  installed app calls against the handler the installed daemon serves. The next release carries develop's diagrams to
+  main; verify the diagrams section on the shipped artifact (release checklist step 5) before closing. Also: #370
+  reached main by PR only, so `LICENSE` is absent from develop — merge `origin/main` back into develop (the
+  `make release` step that normally does it did not run for #370) before the release PR.
 
 - **Forge tickets from unshared repositories travel with the board (DF2, 2026-11-09, deferred).** Matches Jira. Forge tickets
   carry their repository, so a later slice could send only tickets from the workspace's shared repositories.

@@ -19,6 +19,8 @@ const LOADER = './+page.js';
 
 const relay = vi.hoisted(() => ({ api: null as unknown }));
 vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api) }));
+// The socket is the route's, pinned in relay-crew-stream.spec — not here.
+vi.mock('$lib/relay/relay-crew-stream.js', () => ({ subscribeCrewStream: vi.fn(() => () => {}) }));
 
 const route = vi.hoisted(() => ({ search: '' }));
 vi.mock('$app/state', () => ({

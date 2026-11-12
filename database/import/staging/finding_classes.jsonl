@@ -8,3 +8,5 @@
 {"code": "flaky_time", "label": "Wall-clock or string-time compare"}
 {"code": "skipped_live", "label": "Live test skipped"}
 {"code": "unverified_claim", "label": "Claim without evidence"}
+{"code": "merge_conflict", "label": "Merge conflict"}
+{"code": "build_failure", "label": "Build or verify failure"}

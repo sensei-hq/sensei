@@ -156,7 +156,7 @@ output=$(run_hook "session-start" "$SESSION_PAYLOAD")
 assert_json "onboarding: coordinator paste line mints the crew" "$output" \
   "import sys,json; c=json.load(sys.stdin)['additional_context']; assert 'relay_register(role=\"coordinator\")' in c and 'mints the crew' in c"
 assert_json "onboarding: contributor paste line joins with the crew_id" "$output" \
-  "import sys,json; c=json.load(sys.stdin)['additional_context']; assert 'relay_register(role=\"contributor\"' in c and 'crew_id' in c"
+  "import sys,json; c=json.load(sys.stdin)['additional_context']; assert 'relay_register(family=' in c and 'crew_id' in c and 'relay_claim_next' in c"
 assert_json "onboarding: sensei relay CLI hint" "$output" \
   "import sys,json; c=json.load(sys.stdin)['additional_context']; assert 'sensei relay' in c"
 

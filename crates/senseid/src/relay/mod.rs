@@ -14,6 +14,8 @@
 #![allow(dead_code)]
 
 pub mod envelope;
+pub mod gate;
+pub mod plan;
 
 use serde::{Deserialize, Serialize};
 
@@ -49,9 +51,13 @@ pub enum RelayTaskPhase {
     Impl,
     Docs,
     Mockup,
+    /// A sprint run's Task 0: the decomposition a peer reviews before
+    /// anything unpacks into the queue.
+    Planning,
 }
 
-/// `RelayTaskState`.
+/// `RelayTaskState`. `Ready` is the pool (queue cutover): minted there,
+/// unclaimed, on no lane; a claim or an assign takes it onto a lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelayTaskState {
@@ -64,6 +70,46 @@ pub enum RelayTaskState {
     Blocked,
     Interrupted,
     Cancelled,
+    Ready,
+}
+
+/// `RelayRunState`: where a sprint run stands — Task 0 under way, the plan
+/// unpacked and tasks flowing, every task done, or stopped by the person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayRunState {
+    Planning,
+    Active,
+    Completed,
+    Cancelled,
+}
+
+/// `RelayExecutor`: who runs a task — a lane (a cognitive turn) or the
+/// broker itself (a deterministic machine operation from `tasks.deterministic`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayExecutor {
+    Agent,
+    Broker,
+}
+
+/// `DepsStatus`: whether a claimed task's upstream dependencies are all
+/// done (`satisfied`) or the claim was taken early (`early_claim_gated`:
+/// work may start, the report is refused until every dep is done).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DepsStatus {
+    Satisfied,
+    EarlyClaimGated,
+}
+
+/// `ReleaseKind`: what a lane gave back — a task to the pool, or a review
+/// claim to the float (`released.props.kind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseKind {
+    Task,
+    Review,
 }
 
 /// A checklist step's state (F8): `open` advances to `done`, or to
@@ -127,6 +173,14 @@ pub enum RelayActionKind {
     Reoffered,
     Compacted,
     HandedOver,
+    /// A lane took a task from the pool (queue cutover).
+    Claimed,
+    /// A lane took a floating review (queue cutover).
+    ReviewClaimed,
+    /// A lane gave a claim back: the task to the pool, the review to the float.
+    Released,
+    /// The holder saved an in-turn checkpoint.
+    Checkpointed,
 }
 
 /// `reviewed.props.verdict`.
@@ -183,6 +237,18 @@ pub enum TaskEvent {
     /// A limit-paused lane's held task suspends for re-offer elsewhere.
     /// Same target as `LeaseLost`, distinct cause: the lease may be live.
     LimitPaused,
+    /// A lane took the task from the pool (queue cutover): it lands
+    /// `working` at once — there is no start tool.
+    Claimed,
+    /// The holder gave the task back to the pool.
+    Released,
+    /// The lane re-registered: its interrupted task resumes where it was.
+    Resumed,
+    /// An approved Task 0's plan unpacked into the queue: Task 0 is done.
+    Unpacked,
+    /// The merge gate refused an approved task's branch (a conflict or a
+    /// failed verify): back to rework, a new round.
+    GateFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +277,8 @@ pub fn transition(
         // Assigned blocks too (implied: Assigned is a valid resume target,
         // and the part-2 ask test pins an assigned task blocking).
         (S::Assigned, E::Blocked) => Ok(S::Blocked),
+        // A broker task whose gate cannot run blocks in the pool (2.8).
+        (S::Ready, E::Blocked) => Ok(S::Blocked),
         (S::Blocked, E::Unblocked { blocked_from })
             if !matches!(blocked_from, S::Blocked | S::Interrupted | S::Cancelled | S::Done) =>
         {
@@ -231,7 +299,16 @@ pub fn transition(
         | (S::InReview, E::LimitPaused)
         | (S::Rework, E::LimitPaused)
         | (S::Blocked, E::LimitPaused) => Ok(S::Interrupted),
-        (S::Interrupted, E::Reoffered) => Ok(S::Assigned),
+        // Queue cutover: a re-offer returns the task to the pool; a claim
+        // lands working; a release gives a held task back; reregister
+        // resumes interrupted work; an approved Task 0 unpacks to done.
+        (S::Interrupted, E::Reoffered) => Ok(S::Ready),
+        (S::Ready, E::Claimed) => Ok(S::Working),
+        (S::Assigned, E::Released) | (S::Working, E::Released) => Ok(S::Ready),
+        (S::Interrupted, E::Resumed) => Ok(S::Working),
+        (S::Approved, E::Unpacked) => Ok(S::Done),
+        // The merge gate refused the branch: rework, like a review would.
+        (S::Approved, E::GateFailed) => Ok(S::Rework),
         // F1: handover pulls from the three held states only (blocked and
         // interrupted keep their own exits; assigned/approved have nothing
         // to pull).
@@ -420,6 +497,10 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
                 "waiting_secs",
                 "started_at",
                 "ended_at",
+                // F09: the assistant that produced the turn.
+                "family",
+                "version",
+                "model",
             ];
             allow(REPORTED_KEYS)?;
             if let Some(v) = present("partial")
@@ -471,6 +552,10 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
                 "waiting_secs",
                 "started_at",
                 "ended_at",
+                // F09: the assistant that produced the turn.
+                "family",
+                "version",
+                "model",
             ];
             allow(REVIEWED_KEYS)?;
             match present("verdict").and_then(|v| v.as_str()) {
@@ -525,9 +610,50 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
             Ok(())
         }
         K::Message => {
-            allow(&["to", "surface"])?;
+            // The sweeper's floating-review nudge rides the message shape:
+            // a flag, its reason, the wait so far, the task it is about.
+            allow(&["to", "surface", "nudge", "reason", "waiting_min", "task_id"])?;
             check_to_shape(present("to").ok_or_else(|| missing("to"))?)?;
             check_surface(present("surface").ok_or_else(|| missing("surface"))?)?;
+            if let Some(v) = present("nudge")
+                && v.as_bool().is_none()
+            {
+                return Err(props_err("nudge must be a bool".into()));
+            }
+            if let Some(v) = present("task_id")
+                && v.as_str().is_none_or(|s| !is_uuid_str(s))
+            {
+                return Err(props_err("task_id must be a uuid".into()));
+            }
+            Ok(())
+        }
+        K::Claimed => {
+            allow(&["claim_type", "deps_status", "unmet_deps"])?;
+            match present("claim_type").and_then(|v| v.as_str()) {
+                Some("task") | Some("review") => {}
+                _ => return Err(props_err("claim_type must be task|review".into())),
+            }
+            if let Some(v) = present("deps_status")
+                && !matches!(v.as_str(), Some("satisfied") | Some("early_claim_gated"))
+            {
+                return Err(props_err("deps_status must be satisfied|early_claim_gated".into()));
+            }
+            if let Some(v) = present("unmet_deps")
+                && !v.is_array()
+            {
+                return Err(props_err("unmet_deps must be an array".into()));
+            }
+            Ok(())
+        }
+        K::Released => {
+            allow(&["kind", "reason"])?;
+            match present("kind").and_then(|v| v.as_str()) {
+                Some("task") | Some("review") => Ok(()),
+                _ => Err(props_err("kind must be task|review".into())),
+            }
+        }
+        K::Checkpointed => {
+            allow(&["current_step", "notes"])?;
             Ok(())
         }
         K::Merged => {
@@ -573,7 +699,7 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
             }
             Ok(())
         }
-        K::Started | K::Delivered | K::Read => {
+        K::Started | K::Delivered | K::Read | K::ReviewClaimed => {
             allow(&[])?;
             Ok(())
         }
@@ -599,25 +725,23 @@ pub fn parse_lane_ref(s: &str) -> Result<uuid::Uuid, uuid::Error> {
 pub enum RegisterMode {
     /// Coordinator without `crew_id`: mints the crew (optional goal,
     /// repo_key, workspace_id ride along; the paste line carries the id out).
-    MintCrew,
+    Mint,
     /// Coordinator with `crew_id`, or contributor with `crew_id`: joins.
     /// "One coordinator per crew" is the store's check (part 2).
-    JoinCrew,
+    Join,
+    /// Contributor without `crew_id` (#402, queue cutover): joins the
+    /// user's single active crew — none is `relay_no_active_crew`, more
+    /// than one `relay_crew_ambiguous` (the store's call).
+    JoinActive,
 }
 
-/// Coordinator without `crew_id` mints; a contributor without one is refused.
-pub fn register_mode(
-    role: RelayRole,
-    crew_id: Option<&str>,
-) -> Result<RegisterMode, ValidationError> {
+/// Coordinator without `crew_id` mints; a contributor without one joins the
+/// single active crew (#402); either with one joins it.
+pub fn register_mode(role: RelayRole, crew_id: Option<&str>) -> RegisterMode {
     match (role, crew_id) {
-        (RelayRole::Coordinator, None) => Ok(RegisterMode::MintCrew),
-        (RelayRole::Coordinator, Some(_)) | (RelayRole::Contributor, Some(_)) => {
-            Ok(RegisterMode::JoinCrew)
-        }
-        (RelayRole::Contributor, None) => Err(ValidationError {
-            message: "contributors register with crew_id; only a coordinator mints".into(),
-        }),
+        (RelayRole::Coordinator, None) => RegisterMode::Mint,
+        (RelayRole::Coordinator, Some(_)) | (RelayRole::Contributor, Some(_)) => RegisterMode::Join,
+        (RelayRole::Contributor, None) => RegisterMode::JoinActive,
     }
 }
 
@@ -656,6 +780,11 @@ pub fn resolve_surface(
 pub const LANE_LEASE_TTL_SECS: u64 = 300;
 /// An interrupted task waits 900 s for its lane, then is re-offered.
 pub const REOFFER_GRACE_SECS: u64 = 900;
+/// A review claim outlives its lane's lease by 60 s; then the sweeper
+/// releases it back to the float (queue cutover).
+pub const REVIEW_CLAIM_GRACE_SECS: u64 = 60;
+/// A report floating unclaimed this long nudges the crew, once per window.
+pub const NUDGE_AFTER_SECS: u64 = 900;
 
 /// True once `now` reaches the lease's end. Clocks are fed in (tests never
 /// read wall time).
@@ -672,7 +801,7 @@ pub fn reoffer_due(interrupted_at_unix: i64, now_unix: i64) -> bool {
 
 /// Guidance schema version. Bump when the generic contract's meaning
 /// changes (new routes, new TTLs); prose-only clarifications keep it.
-pub const RELAY_GUIDANCE_VERSION: &str = "1";
+pub const RELAY_GUIDANCE_VERSION: &str = "2";
 
 /// The self-sufficient join-time contract: a lane that reads nothing but
 /// endpoint.md plus this text can join, beat, poll, work, and report.
@@ -686,23 +815,41 @@ with header Authorization: Bearer <lane_token>. Beat every 60s from a loop \
 you own. A lapsed lease suspends the lane; your held task is marked \
 interrupted (checkpoint kept) and re-offered to a live lane after a 900s \
 grace. No other call renews the lease.\n\
-- Poll: GET /api/relay/tasks?lane_id=<you> (MCP: relay_get_tasks) lists your \
-queue. GET /api/relay/tasks/wait?lane_id=<you>&timeout_ms= (MCP: \
-relay_wait_for_task) holds the connection up to 50s (default 25s) for the \
-next assignment or re-offer. Prefer wait over spinning.\n\
-- Flow: the coordinator plans and assigns; you work, then report with POST \
-/api/relay/tasks/{id}/report (MCP: relay_report_task). A partial report \
-({\"partial\": true}) records progress and keeps the task working; a full \
-report moves it to in_review and names a reviewer, whose approval lets the \
-coordinator merge. Only the coordinator merges; only the named reviewer \
-approves.\n\
+- Poll: GET /api/relay/tasks?lane_id=<you> (MCP: relay_get_tasks) reads your \
+envelope (messages, answers, the review you claimed, the task you hold). \
+GET /api/relay/tasks/wait?lane_id=<you>&timeout_ms= (or timeout_seconds=; \
+MCP: relay_wait_for_task) holds the connection up to 50s (default 25s) for \
+the next thing addressed to you. Prefer wait over spinning. GET \
+/api/relay/queue?lane_id=<you> (MCP: relay_get_queue) reads the crew's \
+claimable work. Reading never starts a task.\n\
+- Flow: work is claimed, never handed out, and a read never starts it. POST \
+/api/relay/tasks/claim_next \
+{\"lane_id\": \"<you>\"} (MCP: relay_claim_next) takes the next piece \
+atomically: a floating review first (never your own report), then a ready \
+task whose dependencies are done, then one you may start early (its report \
+is gated until they are). POST /api/relay/tasks/{id}/claim takes a named \
+task; POST /api/relay/tasks/{id}/claim_review a named review. A claim lands \
+the task working on you; save in-turn progress with POST \
+/api/relay/tasks/{id}/checkpoint (current_step, notes, steps) and give a \
+claim back with POST /api/relay/tasks/{id}/release. Report with POST \
+/api/relay/tasks/{id}/report (MCP: relay_report_task): a partial report \
+({\"partial\": true}) keeps the task working; a full report floats it on the \
+review queue and frees your lane (409 relay_upstream_deps_unmet while a \
+dependency is not done). Review what you claimed with POST \
+/api/relay/tasks/{id}/review; an approval with a branch hands the task to \
+the broker's merge gate, which merges or reworks it; with nothing to merge \
+it is done. Only the lane holding the review claim approves.\n\
+- Pause: POST /api/relay/limit_pause when a quota is hit; a beat never ends \
+the pause — the sweeper ends it at resumes_at, or you end it early with POST \
+/api/relay/limit_resume {\"lane_id\": \"<you>\"} (MCP: relay_limit_resume).\n\
 - Caps: every short text field is at most 600 characters; longer text is \
-rejected with 422 (`text too long: 765 > 600`). Capped: message text, an \
-assign brief summary, a report summary (changed), a review summary, a decision \
-question, an answer note, merge/handover/pause notes, a step title and reason. \
-Split a long message into numbered parts (1/2, 2/2); keep a brief slim and put \
-the detail in the docs files it names; a full report rides report_md, which is \
-not capped.\n\
+rejected with 422 (`text too long: 765 > 600`). Capped: message text, a \
+plan brief summary, a report summary (changed), a review summary, a decision \
+question, an answer note, a checkpoint's current_step and notes, a release \
+reason, merge/handover/pause notes, a step title and reason. Split a long \
+message into numbered parts (1/2, 2/2); keep a brief slim and put the detail \
+in the docs files it names; a full report rides report_md, which is not \
+capped.\n\
 - Resume: after a restart or context clear, POST /api/relay/reregister (MCP: \
 relay_reregister) with your lane_id resumes the same lane and returns the \
 task checkpoint. POST /api/relay/unregister releases the lane cleanly when \
@@ -719,13 +866,13 @@ sensei-mcp with SENSEI_DAEMON_URL pointing at the broker and call the relay_* \
 tools (relay_register mints the token and is the one call that needs no auth \
 header). Keep the 60s heartbeat loop in a shell you own; if the session dies, \
 reregister from a fresh shell with the saved lane_id and the checkpoint \
-restores. No known quirks at guidance v1 — report yours to the coordinator.";
+restores. No known quirks at guidance v2 — report yours to the coordinator.";
 
 pub const RELAY_GUIDANCE_CLAUDE: &str = "claude lanes (claude-code included): the same \
 MCP stdio shape — sensei-mcp plus SENSEI_DAEMON_URL, relay_* tools. Claude \
 sessions clear context often, so save lane_id and lane_token outside the \
 session (the coordinator paste line) and reregister to resume with the \
-checkpoint. No known quirks at guidance v1 — report yours to the coordinator.";
+checkpoint. No known quirks at guidance v2 — report yours to the coordinator.";
 
 pub const RELAY_GUIDANCE_OPENCODE: &str = "opencode lanes: raw HTTP is the reliable \
 path — curl the broker routes with -H \"Authorization: Bearer $LANE_TOKEN\" \
@@ -733,13 +880,13 @@ path — curl the broker routes with -H \"Authorization: Bearer $LANE_TOKEN\" \
 every 60s from a background loop and pick work up via tasks/wait (timeout_ms \
 up to 50000) instead of spinning tasks. If your harness has an MCP bridge, \
 the relay_* tools mirror the HTTP routes one-to-one. No known quirks at \
-guidance v1 — report yours to the coordinator.";
+guidance v2 — report yours to the coordinator.";
 
 pub const RELAY_GUIDANCE_FREEBUFF: &str = "freebuff lanes: raw HTTP like opencode — \
 curl plus the Bearer header, a 60s heartbeat loop, tasks/wait for pickup. \
 Wakeups are yours to schedule: without a beat the 300s lease lapses and the \
 held task re-offers after the grace, so prefer an external loop or cron over \
-in-session timers. No known quirks at guidance v1 — report yours to the \
+in-session timers. No known quirks at guidance v2 — report yours to the \
 coordinator.";
 
 /// The register-time guidance block: versioned generic contract plus the
@@ -776,29 +923,6 @@ fn guidance_family_key(value: &str) -> Option<&'static str> {
     })
 }
 
-// ─── Reviewer pick (Q14, settled) ───
-
-/// Pick the reviewer at first report: the least-loaded live lane that isn't
-/// the author (ties break on the smallest lane id, deterministically), else
-/// the coordinator — unless the coordinator is the author, when there is no
-/// pick. `live` is (lane id, open review count) for the crew's live lanes;
-/// liveness itself is the store's read (part 2).
-pub fn pick_reviewer(
-    live: &[(uuid::Uuid, u64)],
-    author: &uuid::Uuid,
-    coordinator: &uuid::Uuid,
-) -> Option<uuid::Uuid> {
-    // Least-loaded other lane, ties to the smallest id; else the
-    // coordinator unless it is the author (Q14 settled — the fallback is
-    // unconditional; a dead fallback reviewer is the sweeper's Q17 case).
-    let mut others: Vec<&(uuid::Uuid, u64)> = live.iter().filter(|(id, _)| id != author).collect();
-    others.sort_by_key(|o| (o.1, o.0));
-    if let Some((id, _)) = others.first() {
-        return Some(*id);
-    }
-    if coordinator != author { Some(*coordinator) } else { None }
-}
-
 // ─── Store errors (part 2: every op fails closed with a code) ───
 
 /// What a relay store op rejects with. Each variant maps to one HTTP status
@@ -830,6 +954,17 @@ pub enum RelayError {
     NotImplemented(String),
     /// The database (or the machine) failed under a valid request.
     Internal(String),
+    /// A report on a claim-early task whose upstream dependencies are not
+    /// done yet (queue cutover): the message names them.
+    DepsUnmet(String),
+    /// A register or run that named no crew when the user has no active one.
+    NoActiveCrew,
+    /// A register or run that named no crew when the user has several.
+    CrewAmbiguous,
+    /// An approval of a Task 0 whose plan cannot unpack (no block, bad
+    /// shape, cycle…): the review is refused and the task stays in review
+    /// for a `changes_requested` instead. The message is `PlanError::message`.
+    PlanInvalid(String),
 }
 
 impl RelayError {
@@ -840,7 +975,11 @@ impl RelayError {
             RelayError::Forbidden(_) => 403,
             RelayError::NotFound(_) => 404,
             RelayError::Gone(_) => 410,
-            RelayError::Conflict(_) => 409,
+            RelayError::Conflict(_)
+            | RelayError::DepsUnmet(_)
+            | RelayError::NoActiveCrew
+            | RelayError::CrewAmbiguous
+            | RelayError::PlanInvalid(_) => 409,
             RelayError::Validation(_) => 422,
             RelayError::NotImplemented(_) => 501,
             RelayError::Internal(_) => 500,
@@ -860,6 +999,10 @@ impl RelayError {
             RelayError::SignInRequired => "relay_signin_required",
             RelayError::NotImplemented(_) => "relay_not_implemented",
             RelayError::Internal(_) => "relay_internal",
+            RelayError::DepsUnmet(_) => "relay_upstream_deps_unmet",
+            RelayError::NoActiveCrew => "relay_no_active_crew",
+            RelayError::CrewAmbiguous => "relay_crew_ambiguous",
+            RelayError::PlanInvalid(_) => "relay_plan_invalid",
         }
     }
 }
@@ -1013,6 +1156,36 @@ mod tests {
     use TaskEvent as E;
 
     #[test]
+    fn queue_vocabulary_serializes_as_db_labels() {
+        // The queue's vocabulary (phase 1 DDL): a run's lifecycle, who
+        // executes a task, Task 0's phase, the four hand-off kinds.
+        let word = |v: &dyn erased_word::Word| v.word();
+        assert_eq!(word(&RelayTaskPhase::Planning), "planning");
+        assert_eq!(word(&RelayRunState::Planning), "planning");
+        assert_eq!(word(&RelayRunState::Active), "active");
+        assert_eq!(word(&RelayRunState::Completed), "completed");
+        assert_eq!(word(&RelayRunState::Cancelled), "cancelled");
+        assert_eq!(word(&RelayExecutor::Agent), "agent");
+        assert_eq!(word(&RelayExecutor::Broker), "broker");
+        assert_eq!(word(&RelayActionKind::Claimed), "claimed");
+        assert_eq!(word(&RelayActionKind::ReviewClaimed), "review_claimed");
+        assert_eq!(word(&RelayActionKind::Released), "released");
+        assert_eq!(word(&RelayActionKind::Checkpointed), "checkpointed");
+        assert_eq!(word(&RelayTaskState::Ready), "ready");
+    }
+
+    mod erased_word {
+        pub trait Word {
+            fn word(&self) -> String;
+        }
+        impl<T: serde::Serialize> Word for T {
+            fn word(&self) -> String {
+                serde_json::to_value(self).unwrap().as_str().unwrap().to_owned()
+            }
+        }
+    }
+
+    #[test]
     fn transition_happy_path_with_rework_loop() {
         assert_eq!(transition(S::Assigned, E::Started), Ok(S::Working));
         assert_eq!(transition(S::Working, E::Reported), Ok(S::InReview));
@@ -1053,10 +1226,40 @@ mod tests {
         assert_eq!(transition(S::Rework, E::LimitPaused), Ok(S::Interrupted));
         assert!(transition(S::Done, E::LimitPaused).is_err());
         assert!(transition(S::Interrupted, E::LimitPaused).is_err());
-        assert_eq!(transition(S::Interrupted, E::Reoffered), Ok(S::Assigned));
+        assert_eq!(transition(S::Interrupted, E::Reoffered), Ok(S::Ready));
+        assert_eq!(transition(S::Ready, E::Cancelled), Ok(S::Cancelled));
+        assert!(transition(S::Ready, E::Reported).is_err());
         assert!(transition(S::Working, E::Reoffered).is_err());
         assert!(transition(S::Done, E::LeaseLost).is_err());
         assert!(transition(S::Interrupted, E::LeaseLost).is_err());
+    }
+
+    #[test]
+    fn transition_queue_events_claim_release_resume_unpack() {
+        // Queue cutover: a claim lands working (there is no start tool); a
+        // release returns a held task to the pool; reregister resumes
+        // interrupted work where it was; an approved Task 0 unpacks straight
+        // to done.
+        assert_eq!(transition(S::Ready, E::Claimed), Ok(S::Working));
+        assert!(transition(S::Working, E::Claimed).is_err());
+        assert!(transition(S::InReview, E::Claimed).is_err());
+        assert_eq!(transition(S::Assigned, E::Released), Ok(S::Ready));
+        assert_eq!(transition(S::Working, E::Released), Ok(S::Ready));
+        assert!(transition(S::InReview, E::Released).is_err());
+        assert!(transition(S::Rework, E::Released).is_err());
+        assert_eq!(transition(S::Interrupted, E::Resumed), Ok(S::Working));
+        assert!(transition(S::Working, E::Resumed).is_err());
+        assert_eq!(transition(S::Approved, E::Unpacked), Ok(S::Done));
+        assert!(transition(S::Working, E::Unpacked).is_err());
+        // The gate refuses an approved branch: rework, like a review would.
+        assert_eq!(transition(S::Approved, E::GateFailed), Ok(S::Rework));
+        for s in [S::Ready, S::Working, S::InReview, S::Rework, S::Done] {
+            assert!(transition(s, E::GateFailed).is_err(), "{s:?} has no gate");
+        }
+        // A gate that cannot run blocks its broker task in the pool behind
+        // an ask; the answer resumes it there.
+        assert_eq!(transition(S::Ready, E::Blocked), Ok(S::Blocked));
+        assert_eq!(transition(S::Blocked, E::Unblocked { blocked_from: S::Ready }), Ok(S::Ready));
     }
 
     #[test]
@@ -1121,7 +1324,7 @@ mod tests {
     #[test]
     fn guidance_selects_exact_family() {
         let g = relay_guidance_for("muse", None);
-        assert_eq!(g.version, "1");
+        assert_eq!(g.version, "2");
         assert!(!g.generic.is_empty());
         assert!(g.family_notes.unwrap().starts_with("muse lanes"));
     }
@@ -1181,10 +1384,35 @@ mod tests {
             [("codex", None), ("", None), ("", Some("")), ("cowork", Some("gpt-x"))]
         {
             let g = relay_guidance_for(family, model);
-            assert_eq!(g.version, "1");
+            assert_eq!(g.version, "2");
             assert!(!g.generic.is_empty());
             assert_eq!(g.family_notes, None, "{family:?}/{model:?}");
         }
+    }
+
+    /// Queue cutover: a lane learns the claim loop at register — reads
+    /// never start work, a claim does; a report floats; a review is
+    /// claimed; the broker's gate merges; a pause ends by the sweeper or
+    /// `limit_resume`; checkpoint and release are the in-turn tools.
+    #[test]
+    fn guidance_v2_names_the_queue_loop() {
+        let g = relay_guidance_for("", None);
+        assert_eq!(g.version, "2");
+        let flow = g
+            .generic
+            .lines()
+            .find(|l| l.starts_with("- Flow:"))
+            .expect("generic guidance carries a '- Flow:' bullet");
+        for word in ["claim_next", "claim_review", "checkpoint", "release", "gate", "never starts"]
+        {
+            assert!(flow.contains(word), "the flow bullet lacks {word:?}: {flow}");
+        }
+        assert!(
+            g.generic.contains("limit_resume"),
+            "the generic block names how a pause ends: {}",
+            g.generic
+        );
+        assert!(!g.generic.contains("assigns"), "the coordinator no longer assigns: {}", g.generic);
     }
 
     #[test]
@@ -1320,10 +1548,89 @@ mod tests {
     #[test]
     fn validate_props_empty_kinds_take_no_keys() {
         use RelayActionKind as K;
-        for k in [K::Started, K::Delivered, K::Read] {
+        for k in [K::Started, K::Delivered, K::Read, K::ReviewClaimed] {
             assert!(validate_props(k, &json!({})).is_ok(), "{k:?} takes {{}}");
             assert!(validate_props(k, &json!({"x": 1})).is_err(), "{k:?} rejects keys");
         }
+    }
+
+    #[test]
+    fn validate_props_queue_kinds() {
+        use RelayActionKind as K;
+        // claimed: claim_type is required and names task|review; the
+        // dependency status and the unmet list ride along on a task claim.
+        assert!(
+            validate_props(
+                K::Claimed,
+                &json!({"claim_type": "task", "deps_status": "early_claim_gated",
+                        "unmet_deps": ["01931560-9000-7000-8000-000000000015"]})
+            )
+            .is_ok()
+        );
+        assert!(validate_props(K::Claimed, &json!({"claim_type": "review"})).is_ok());
+        assert!(validate_props(K::Claimed, &json!({})).is_err());
+        assert!(validate_props(K::Claimed, &json!({"claim_type": "steal"})).is_err());
+        assert!(
+            validate_props(K::Claimed, &json!({"claim_type": "task", "deps_status": "maybe"}))
+                .is_err()
+        );
+        assert!(validate_props(K::Claimed, &json!({"claim_type": "task", "bogus": 1})).is_err());
+        // released: kind is required (task|review); the reason is the lane's.
+        assert!(
+            validate_props(K::Released, &json!({"kind": "task", "reason": "context full"})).is_ok()
+        );
+        assert!(validate_props(K::Released, &json!({"kind": "review"})).is_ok());
+        assert!(validate_props(K::Released, &json!({"reason": "x"})).is_err());
+        assert!(validate_props(K::Released, &json!({"kind": "lane"})).is_err());
+        // checkpointed: both keys optional, nothing else.
+        assert!(validate_props(K::Checkpointed, &json!({})).is_ok());
+        assert!(
+            validate_props(
+                K::Checkpointed,
+                &json!({"current_step": "clippy", "notes": "3 warnings left"})
+            )
+            .is_ok()
+        );
+        assert!(validate_props(K::Checkpointed, &json!({"files": []})).is_err());
+    }
+
+    #[test]
+    fn validate_props_telemetry_identity_f09() {
+        // F09: a report or a review may name the assistant that produced
+        // it — the three identity keys were a 422 before the queue cutover.
+        let who = json!({"family": "claude", "version": "2.1", "model": "claude-opus-5-5"});
+        assert!(validate_props(RelayActionKind::Reported, &who).is_ok());
+        let mut review = who.as_object().cloned().unwrap();
+        review.insert("verdict".into(), json!("approved"));
+        review.insert("findings".into(), json!([]));
+        assert!(
+            validate_props(RelayActionKind::Reviewed, &serde_json::Value::Object(review)).is_ok()
+        );
+        // A gate finding carries the command output tail as `detail`.
+        assert!(
+            validate_props(
+                RelayActionKind::Reviewed,
+                &json!({"verdict": "changes_requested", "findings": [
+                    {"severity": "high", "class": "build_failure", "text": "cargo test failed",
+                     "detail": "error[E0308]: mismatched types"}]})
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_props_message_nudge_keys() {
+        // The sweeper's floating-review nudge is a message to everyone with
+        // its reason, the wait so far, and the task it is about.
+        assert!(
+            validate_props(
+                RelayActionKind::Message,
+                &json!({"to": {"kind": "everyone"}, "surface": "lane", "nudge": true,
+                        "reason": "review_floating", "waiting_min": 17,
+                        "task_id": "01931560-9000-7000-8000-000000000015"})
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1460,14 +1767,15 @@ mod tests {
     }
 
     #[test]
-    fn register_mode_mint_join_refuse_q6() {
+    fn register_mode_mint_join_or_join_active_q6_402() {
         use RegisterMode as M;
         use RelayRole as R;
-        assert_eq!(register_mode(R::Coordinator, None), Ok(M::MintCrew));
-        assert_eq!(register_mode(R::Coordinator, Some("c1")), Ok(M::JoinCrew));
-        assert_eq!(register_mode(R::Contributor, Some("c1")), Ok(M::JoinCrew));
-        let err = register_mode(R::Contributor, None).unwrap_err();
-        assert!(err.message.contains("crew_id"), "{}", err.message);
+        assert_eq!(register_mode(R::Coordinator, None), M::Mint);
+        assert_eq!(register_mode(R::Coordinator, Some("c1")), M::Join);
+        assert_eq!(register_mode(R::Contributor, Some("c1")), M::Join);
+        // #402 (queue cutover): a contributor without crew_id joins the
+        // single active crew instead of being refused.
+        assert_eq!(register_mode(R::Contributor, None), M::JoinActive);
     }
 
     #[test]
@@ -1489,33 +1797,16 @@ mod tests {
     fn lease_math_boundaries_q7() {
         assert_eq!(LANE_LEASE_TTL_SECS, 300);
         assert_eq!(REOFFER_GRACE_SECS, 900);
+        // Queue cutover: a review claim survives its lane's lease by 60 s;
+        // a report floating 900 s nudges the crew.
+        assert_eq!(REVIEW_CLAIM_GRACE_SECS, 60);
+        assert_eq!(NUDGE_AFTER_SECS, 900);
         assert!(!lease_expired(1000, 999));
         assert!(lease_expired(1000, 1000));
         assert!(lease_expired(1000, 1001));
         assert!(!reoffer_due(1000, 1899));
         assert!(reoffer_due(1000, 1900));
         assert!(reoffer_due(1000, 1901));
-    }
-
-    #[test]
-    fn pick_reviewer_least_loaded_not_author_q14() {
-        let author = uuid(LANE_A);
-        let coord = uuid(LANE_B);
-        // Least-loaded other live lane wins…
-        let live = vec![(uuid(LANE_B), 2), (uuid(LANE_C), 0)];
-        assert_eq!(pick_reviewer(&live, &author, &coord), Some(uuid(LANE_C)));
-        // …even when the author is the least loaded — never the author.
-        let live = vec![(author, 0), (uuid(LANE_C), 5)];
-        assert_eq!(pick_reviewer(&live, &author, &coord), Some(uuid(LANE_C)));
-        // Ties break on the smallest lane id, deterministically.
-        let live = vec![(uuid(LANE_C), 1), (uuid(LANE_B), 1)];
-        assert_eq!(pick_reviewer(&live, &author, &coord), Some(uuid(LANE_B)));
-        // No other live lane → the coordinator…
-        assert_eq!(pick_reviewer(&[(author, 0)], &author, &coord), Some(coord));
-        assert_eq!(pick_reviewer(&[], &author, &coord), Some(coord));
-        // …unless the coordinator is the author: then no pick.
-        assert_eq!(pick_reviewer(&[(author, 0)], &author, &author), None);
-        assert_eq!(pick_reviewer(&[], &author, &author), None);
     }
 
     #[test]
@@ -1603,6 +1894,16 @@ mod tests {
         assert_eq!(E::SignInRequired.code(), "relay_signin_required");
         assert_eq!(E::NotImplemented("x".into()).code(), "relay_not_implemented");
         assert_eq!(E::Internal("x".into()).code(), "relay_internal");
+        // Queue cutover: a gated report, and a register/run that cannot
+        // pick the crew — all 409s with their own code.
+        assert_eq!(E::DepsUnmet("x".into()).status(), 409);
+        assert_eq!(E::DepsUnmet("x".into()).code(), "relay_upstream_deps_unmet");
+        assert_eq!(E::NoActiveCrew.status(), 409);
+        assert_eq!(E::NoActiveCrew.code(), "relay_no_active_crew");
+        assert_eq!(E::CrewAmbiguous.status(), 409);
+        assert_eq!(E::CrewAmbiguous.code(), "relay_crew_ambiguous");
+        assert_eq!(E::PlanInvalid("x".into()).status(), 409);
+        assert_eq!(E::PlanInvalid("x".into()).code(), "relay_plan_invalid");
     }
 
     #[test]

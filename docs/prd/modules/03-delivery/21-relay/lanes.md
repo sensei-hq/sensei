@@ -30,9 +30,15 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
 
 ## 3. Roles
 
-- **Coordinator** (one per crew). Analyses and plans, runs the depth gate, assigns tasks, reviews (or assigns
-  reviews), merges, and manages resources. It never implements a task it also reviews.
-- **Contributor.** Implements tasks and may review tasks it didn't author.
+- **Coordinator** (at most one per crew, optional since the queue cutover of 2026-11-12). Mints the crew
+  (`POST /api/relay/register` with `role: coordinator` and no `crew_id`), plans items into the pool
+  (`POST /api/relay/tasks/plan`), may still `assign`, `cancel`, `handover` and `merge` by hand, and manages
+  resources. It never reviews a task it authored. A crew of contributors alone runs on the queue: a sprint run
+  (`POST /relay/runs`) plans itself through Task 0.
+- **Contributor** (the default role: `register` without `role` is a contributor, and without `crew_id` it joins the
+  one active crew — 409 `relay_no_active_crew` / `relay_crew_ambiguous` otherwise). Claims ready tasks and floating
+  reviews from the crew's queue (`POST /api/relay/tasks/claim_next`), works, checkpoints, reports, and reviews what
+  it did not author.
 - **Reviewer (spawned).** A coordinator may hand a review to a subagent it spawns. The review is still filed
   under the coordinator's lane, with the subagent recorded.
 - **Person.** Opens sessions, answers **decisions**, approves outward or destructive actions, and watches.
@@ -79,7 +85,15 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
 5. **Two phases per task**, as this week proved:
    - **tests** (red, disabled, each failing for its own reason) → **review** → **impl** → **review** → **merge**.
    - Each step is its own task with a dependency on the one before.
-6. **Assign.** The task goes to a live lane whose capabilities fit, so work stays even across lanes.
+6. **Queue it** (queue cutover, 2026-11-12). A planned task waits `ready` in the pool with no lane; the next live
+   lane takes it with `claim_next` (`relay_claim_task` for a named one). A **sprint run** does steps 1–5 for the
+   person: `POST /relay/runs` groups backlog items under a goal and mints **Task 0** (phase `planning`, ready in the
+   pool); the lane that claims it writes the plan as a ```json block in `report_md` (`tasks[{key, title, phase,
+   owned_paths, acceptance, deps}]`), a peer claims the review, and the approval **unpacks** the plan into ready
+   tasks in topological order (`relay_unpack_plan`) and turns the run `active`; a plan that cannot unpack is refused
+   (409 `relay_plan_invalid`) and the review stays open for a `changes_requested`. The run completes itself when
+   every task is done or cancelled (the sweeper's pass, `run.completed`).
+7. **Assign** (the manual path, coordinator only). The task goes to a live lane whose capabilities fit, so work stays even across lanes.
    Live means holding a granted, unexpired lease: assigning onto a dead lease is refused (409),
    because nothing would ever recover the task — the sweep only interrupts leases it sees expire,
    and cancel refuses while the holder is still registered while re-assign refuses a held task.
@@ -89,18 +103,25 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
 
 ## 6. The task queue
 
-- **States:**
-  - `backlog` → `ready` (passed the depth gate) → `assigned` → `in_progress` → `reported` → `in_review`;
-  - then either `changes_requested`, which loops back to `in_progress`, or `approved` → `merged` / `done`;
-  - plus `blocked` (on a decision or a dependency) and `interrupted` (lease lost).
-- **`get_tasks(lane_token)`** returns the lane's queue in priority order:
-  1. a **review result** on the lane's own work;
-  2. a **review to perform**;
-  3. a **decision answer** it was waiting for;
-  4. new work.
-- "Wait for confirmation": a lane with a task in review gets `waiting` with what it is waiting on. It may take
-  an independent next task only if the coordinator marked one as safe to start.
-- **Claiming is atomic.** Two sessions can't take the same lane or task.
+- **States** (`relay.task_state`): `ready` (the pool: minted, unclaimed, on no lane) → `working` (a claim lands
+  working at once — there is no start tool; an `assigned` task starts on its holder's first write, F01) →
+  `in_review` (the report **floats** on the review queue and frees the lane) → `rework` → `in_review` … →
+  `approved` → `done`; plus `blocked`, `interrupted` (lease lost; re-offered to the pool as `ready` after the grace)
+  and `cancelled`. `tasks_lane_coherence` keeps the shape honest: `ready` has no lane, a laneless task is `ready`,
+  `cancelled` or the broker's.
+- **FCFS claims** (`POST /api/relay/tasks/claim_next`, MCP `relay_claim_next`; one transaction, `for update skip
+  locked`): a **floating review** first (never the lane's own report), then a ready task whose dependencies are
+  done, then a ready task the lane may **claim early** (`deps_status: early_claim_gated`, `unmet_deps` listed) — its
+  full report is refused with 409 `relay_upstream_deps_unmet` until every dependency is done. A named task or
+  review goes through `/{id}/claim` and `/{id}/claim_review`; `/{id}/release` gives a claim back (a task returns to
+  the pool with its checkpoint, a review floats again). A lane holds one worker task
+  (`tasks_one_active_worker_per_lane`) and one review claim (`tasks_one_active_review_per_lane`) at a time, and
+  reviews beside its own work.
+- **Reading never starts work.** `GET /api/relay/tasks` / `tasks/wait` answer the envelope (messages, answers, the
+  review you claimed, the task you hold); `GET /api/relay/queue` reads the crew's claimable work off
+  `relay.task_queue` (`review_floating` · `review_claimed` · `ready_unblocked` · `ready_claim_early`).
+- **In-turn saves.** `POST /api/relay/tasks/{id}/checkpoint` merges `current_step`, `notes` and checklist `steps`
+  into the task without moving it; the checkpoint survives interrupt, re-offer and reregister (`resumed`).
 - **Path ownership.** A task lists its paths. The report's diff is checked against them, and a write outside
   them is a finding, not a silent merge. A **grant** is a coordinator action recorded on the task.
 
@@ -123,14 +144,18 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
   - mutation probes run, plus who reviewed and with which model.
 
   Rulings are separate events, so they're never lost in an appended file.
-- **Reviewer pick and re-pick.** `assign_task` may name a `reviewer_lane`; the name is recorded as
-  the task's reviewer. The first `report_task` keeps a named reviewer as-is; with none named, the
-  broker picks the least-loaded live lane that is not the author (ties to the smallest id, else the
-  coordinator unless it is the author). Leases die after the pick: the lease sweep (60 s cadence)
-  re-picks dead reviewers over the live lanes and clears the slot when nobody is live (Q17-REC).
-  The re-pick is silent — no history row names it and the task view shows no reviewer — so the
-  coordinator learns the reviewer from the report response, and after a re-pick only from the filed
-  review itself (round-1 R3 healed L3→L4→L5 unheard and merged as "approved by L4" while L5 filed it).
+- **The review floats; the gate merges** (queue cutover). A full report clears any previous claim and floats the
+  task on the review queue; the lane holding the claim (`review_claimed_by`) is the only one that may file the
+  verdict, and the sweeper releases a claim whose lane lease lapsed 60 s ago or whose lane left
+  (`released {kind: review, reason: "lease lapsed"}`). An approval whose latest report names a `branch`, in a run
+  whose config names `base_checkout` and `base_branch` (and does not set `auto_merge: false`), mints a **broker gate
+  task** (`executor: broker`, `deterministic: {action: gate, …}`): the sweeper hands it to `GitGateRunner`, which
+  refuses a dirty or wrong-branch base, probes with `git merge-tree --write-tree`, runs `verify_cmd` in a throwaway
+  worktree with the base merged in, then merges `--no-ff`. Merged → the task is `done` with a `merged` row; a
+  conflict or a failed verify → `rework` with one high finding of class `merge_conflict` / `build_failure` (the
+  tail in the review's `body_md`); the gate's own failure blocks the gate task behind an ask (`retry` |
+  `skip_gate`). With nothing to merge (no branch) an approval ends the task `done` at once; outside a gated run it
+  stays `approved` for the coordinator's `merge`.
 - **Decisions** (`ask_decision` / `answer_decision`): options, a recommendation, and who answered. A person
   answers on the desktop app or the dōjō (mobile relay).
 
@@ -186,18 +211,27 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
 - **Resources strip:** current lease, queue, disk and swap.
 - **Assistant onboarding:** one line to paste into any session: "register with sensei as contributor".
 
-## 12. MCP surface (sketch)
+## 12. MCP surface (`sensei-mcp`, `relay_*`)
 
-`register` · `heartbeat` · `reregister` · `unregister` · `get_tasks` · `claim_task` · `checkpoint_task` ·
-`report_task` · `get_reviews` · `submit_review` · `ask_decision` · `answer_decision` · `request_resource` ·
-`release_resource` · `plan_item` (coordinator) · `assign_task` (coordinator) · `merge_task` (coordinator) ·
-`handover_task` (coordinator, F1: pull a held task off its lane mid-turn).
+`relay_register` (role and crew_id optional; `suggested_name`) · `relay_heartbeat` · `relay_reregister` ·
+`relay_unregister` · `relay_get_tasks` · `relay_wait_for_task` (`timeout_ms` or `timeout_seconds`) ·
+`relay_get_queue` · `relay_claim_next` · `relay_claim_task` · `relay_claim_review` · `relay_checkpoint_task` ·
+`relay_release_task` · `relay_report_task` · `relay_submit_review` · `relay_ask_decision` ·
+`relay_answer_decision` · `relay_send_message` · `relay_limit_pause` · `relay_limit_resume` ·
+`relay_request_resource` · `relay_release_resource` · `relay_plan_item`, `relay_assign_task`,
+`relay_merge_task`, `relay_cancel_task`, `relay_handover_task`, `relay_close_crew` (coordinator) ·
+`relay_post_step`. A sprint run is the person's (`POST /relay/runs`), not a lane tool. The guidance `register`
+answers (v2) spells the loop out.
 The existing `start_run` / `register_plan` / `update_task_status` / `report_run_outcome` /
 `run_status` / `pause_run` are reused where they already fit, and not cloned.
 
 ## 13. Gaps and open questions
 
-1. **Pull, with a bounded long-poll (user, 2026-11-05).** Not every assistant gives MCP a push hook, so lanes pull.
+1. **Pull, with a bounded long-poll (user, 2026-11-05) — built.** `GET /api/relay/tasks/wait` holds up to 50 s
+   (`timeout_ms`, or `timeout_seconds` when it is absent; unknown query keys are refused, F11) and answers at once
+   on any relay event; the hold is a row in `relay.lane_waiters` for its duration (the sweeper nudges by
+   `waiting_since` and evicts dead lanes' rows, F06). The rest of the note is the reasoning that led there.
+   Not every assistant gives MCP a push hook, so lanes pull.
    `wait_for_task(lane_token, timeout_s)` centralises the polling loop. The daemon holds the call open on its
    internal event bus and answers **at once** when work arrives (returning the work), or answers "nothing yet, call
    again" when `timeout_s` runs out. MCP tool calls are request/response, and clients time out a long call, by
@@ -246,12 +280,11 @@ row, and must make waiting visible.
   `verdict_unread` → the author's lane; `decision` → the person; `resource` → the broker. (From the approved
   addendum-2 mockup, gap 17.)
 - **"Waiting" is a stat on the Relay screen** (ShellStat). Clicking it filters to the waiting tasks, oldest first.
-- **Nudge.** The person, or the broker after a threshold (default 15 min, per crew), nudges the party being waited on:
-  - the coordinator, for an unassigned report or an unmerged approval;
-  - a lane, for an unread verdict.
-
-  A nudge is a `message` action with `props.nudge = true`, delivered on the lane's next `wait_for_task`. The
-  coordinator's queue lists unreviewed reports **before** new assignments.
+- **Nudge (as built, F07).** A review floating past 900 s with nobody claiming it gets one `message` to
+  everyone in its crew per window — `props: {nudge: true, reason: review_floating, waiting_min, task_id}`, no lane
+  (the daemon speaks) — on the sweeper's pass, delivered on every lane's next `wait_for_task` / `get_tasks`. There
+  is no party to wait on any more: any non-author lane claims the review (`claim_next` offers it first). The person
+  may still message the crew at any time.
 - **Why (observed 2026-11-05/06):** four reports sat without a reviewer for 30 min to 3 h, because the coordinator
   scanned by time instead of matching reports to reviews. Two lanes idled on verdicts that had already been filed. One
   lane got a stale review of a round it had already replaced. Each was a lost hand-off that a row and a clock would have
@@ -312,8 +345,10 @@ time; null when unknown), and an optional note (MCP `relay_limit_pause`). Re-pau
 
 The pause is recorded on the lane and is **distinct from lease expiry**: the lease may stay live (the heartbeat
 loop is not quota work) while the lane cannot work. The sweep suspends a paused lane's held task for re-offer
-elsewhere on the normal grace **without** expiring the lane or counting it failed. The lane resumes by beating
-at or past `resumes_at` (unknown resume: any beat resumes); leaving and resuming clears any stale pause.
+elsewhere on the normal grace **without** expiring the lane or counting it failed. A beat **never** ends the pause
+(F03, queue cutover): the sweeper ends it at `resumes_at` (`lane.resumed` with reason `limit_pause_ended`), the lane
+ends it early with `POST /api/relay/limit_resume` (MCP `relay_limit_resume`; an unknown resume time ends only this
+way), and leaving and resuming clears any stale pause.
 
 The screen reads a paused lane as paused-with-resume-time, never "lease lost": the lanes list shows the scope
 plus `until HH:MM` (or `resume unknown`), and the task view's facts line carries the same. A dead lease still

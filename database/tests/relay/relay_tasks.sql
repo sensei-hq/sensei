@@ -2,22 +2,26 @@
 --
 -- WHAT BREAKS THIS TEST: `repo_key` turning nullable (the headline rule —
 -- work on a workspace-less repository must still appear); a lane holding two
--- active tasks (assigned/working/in_review/rework/blocked); a task reviewing
--- itself; a lane claiming the review of its own task; a lane holding two
--- review claims at once; a broker task with no deterministic spec; a task on
--- a missing run; `ready` not a usable label; a blocked task with no memory of
--- where it was (or any other state carrying one); a non-v7 id; a non-owner
--- reading a row.
+-- worker tasks (assigned/working/rework/blocked), or `in_review` holding the
+-- lane again; a lane claiming the review of its own task; a lane holding two
+-- review claims at once; a claim on a missing lane; a broker task with no
+-- deterministic spec; a task on a missing run; `state` not defaulting to
+-- `ready`, a laned task defaulting into the pool, or `assigned_at` stamped
+-- before a claim; a laneless `cancelled` refused; a blocked task with no
+-- memory of where it was (or any other state carrying one); a non-v7 id; a
+-- non-owner reading a row.
 --
 -- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
 -- fixtures/relay_apply.ddl relay/relay_tasks.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_tasks.sql):
 -- the file applies its own DDL in-txn (see below) and rolls back.
 -- with --apply the runner applies the DDL and the file skips its own apply.
 --
--- NOTE (for L0): "active" is assigned/working/in_review/rework/blocked —
--- approved, done, cancelled and interrupted release the lane. `state`
--- defaults to assigned, `round` to 1, the four lists to {}.
--- `blocked_from_state` is ruled (Q5): set on block, cleared on resume.
+-- NOTE (for L0): the lane-holding set is assigned/working/rework/blocked —
+-- in_review floats on the review queue and frees the lane (queue cutover);
+-- approved, done, cancelled and interrupted release it too. `state` defaults
+-- to ready (the pool), `round` to 1, the four lists to {}; `assigned_at` is
+-- null until a claim or an assign. `blocked_from_state` is ruled (Q5): set
+-- on block, cleared on resume.
 
 begin;
 
@@ -50,44 +54,44 @@ insert into relay.items (user_id, id, title, kind, state) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f621',
    'Diagrams header on ScreenShell', 'feature', 'backlog');
 
--- T1: the full row (working on L2, reviewed by L1, no workspace — the repo
--- carries it). T2/T3: approved + done on L1 (terminal states share a lane).
--- T4: cancelled on L2 beside working T1. T5/T6: unassigned working pair (a null
--- lane holds any number). T9: blocked on L3 with its memory. T7: U2's.
+-- T1: the full row (working on L2, no workspace — the repo carries it).
+-- T2/T3: approved + done on L1 (terminal states share a lane). T4: cancelled
+-- on L2 beside working T1. T5/T6: the ready pool pair (the pool holds any
+-- number). T9: blocked on L3 with its memory. T7: U2's.
 insert into relay.tasks
-  (user_id, id, crew_id, item_id, repo_key, workspace_id, lane_id, reviewer_lane_id,
+  (user_id, id, crew_id, item_id, repo_key, workspace_id, lane_id,
    title, phase, state, round, owned_paths, acceptance, resources, deps, blocked_from_state) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f631',
    '11111111-1111-7000-8000-00000000f601', '11111111-1111-7000-8000-00000000f621',
    'github.com/sensei-hq/sensei', null, '11111111-1111-7000-8000-00000000f612',
-   '11111111-1111-7000-8000-00000000f611', 'Diagrams header on ScreenShell', 'tests', 'working', 1,
+   'Diagrams header on ScreenShell', 'tests', 'working', 1,
    '{app/src/lib/diagrams/**}', '{"header matches the shell"}', '{rust-build}',
    '{11111111-1111-7000-8000-00000000f634}', null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f632',
    '11111111-1111-7000-8000-00000000f601', null, 'github.com/sensei-hq/sensei', null,
-   '11111111-1111-7000-8000-00000000f611', null, 'Approved one', 'impl', 'approved', 2,
+   '11111111-1111-7000-8000-00000000f611', 'Approved one', 'impl', 'approved', 2,
    '{}', '{}', '{}', '{}', null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f633',
    '11111111-1111-7000-8000-00000000f601', null, 'github.com/sensei-hq/sensei', null,
-   '11111111-1111-7000-8000-00000000f611', null, 'Done one', 'impl', 'done', 1,
+   '11111111-1111-7000-8000-00000000f611', 'Done one', 'impl', 'done', 1,
    '{}', '{}', '{}', '{}', null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f634',
    '11111111-1111-7000-8000-00000000f601', null, 'github.com/sensei-hq/sensei', null,
-   '11111111-1111-7000-8000-00000000f612', null, 'Cancelled one', 'tests', 'cancelled', 1,
+   '11111111-1111-7000-8000-00000000f612', 'Cancelled one', 'tests', 'cancelled', 1,
    '{}', '{}', '{}', '{}', null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f635',
    '11111111-1111-7000-8000-00000000f602', null, 'github.com/sensei-hq/sensei', null,
-   null, null, 'Unassigned one', 'tests', 'working', 1, '{}', '{}', '{}', '{}', null),
+   null, 'Pool one', 'tests', 'ready', 1, '{}', '{}', '{}', '{}', null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f636',
    '11111111-1111-7000-8000-00000000f602', null, 'github.com/sensei-hq/sensei', null,
-   null, null, 'Unassigned two', 'tests', 'working', 1, '{}', '{}', '{}', '{}', null),
+   null, 'Pool two', 'tests', 'ready', 1, '{}', '{}', '{}', '{}', null),
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f639',
    '11111111-1111-7000-8000-00000000f602', null, 'github.com/sensei-hq/sensei', null,
-   '11111111-1111-7000-8000-00000000f613', null, 'Blocked one', 'tests', 'blocked', 1,
+   '11111111-1111-7000-8000-00000000f613', 'Blocked one', 'tests', 'blocked', 1,
    '{}', '{}', '{}', '{}', 'working'),
   ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f637',
    '22222222-2222-7000-8000-00000000f603', null, 'github.com/sensei-hq/other', null,
-   '22222222-2222-7000-8000-00000000f614', null, 'Their task', 'tests', 'working', 1,
+   '22222222-2222-7000-8000-00000000f614', 'Their task', 'tests', 'working', 1,
    '{}', '{}', '{}', '{}', null);
 
 do $$
@@ -112,7 +116,7 @@ begin
   exception when not_null_violation then null;
   end;
 
-  -- Title and phase are required; the workspace, item, lane and reviewer may wait.
+  -- Title and phase are required; the workspace, item, lane and claim may wait.
   begin
     insert into relay.tasks (user_id, id, crew_id, repo_key, phase, state) values
       ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f652',
@@ -128,7 +132,7 @@ begin
   exception when not_null_violation then null;
   end;
 
-  -- One active task per lane: a second working, assigned or blocked is refused.
+  -- One worker task per lane: a second working, assigned or blocked is refused.
   begin
     insert into relay.tasks (user_id, id, crew_id, repo_key, lane_id, title, phase, state) values
       ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f654',
@@ -155,14 +159,6 @@ begin
   end;
   begin
     insert into relay.tasks (user_id, id, crew_id, repo_key, lane_id, title, phase, state) values
-      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f665',
-       '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei',
-       '11111111-1111-7000-8000-00000000f612', 'In review beside working', 'tests', 'in_review');
-    raise exception 'an in_review task beside a working one on one lane was accepted.';
-  exception when unique_violation then null;
-  end;
-  begin
-    insert into relay.tasks (user_id, id, crew_id, repo_key, lane_id, title, phase, state) values
       ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f666',
        '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei',
        '11111111-1111-7000-8000-00000000f612', 'Rework beside working', 'tests', 'rework');
@@ -170,7 +166,15 @@ begin
   exception when unique_violation then null;
   end;
 
-  -- ... while approved, done and interrupted share the lane (cancelled T4 does).
+  -- ... while in_review frees the lane (the report floats on the review
+  -- queue: L2 reports one task and works the next) ...
+  insert into relay.tasks (user_id, id, crew_id, repo_key, lane_id, title, phase, state) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f665',
+     '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei',
+     '11111111-1111-7000-8000-00000000f612', 'In review beside working', 'tests', 'in_review');
+  delete from relay.tasks where id = '11111111-1111-7000-8000-00000000f665';
+
+  -- ... and approved, done and interrupted share the lane (cancelled T4 does).
   insert into relay.tasks (user_id, id, crew_id, repo_key, lane_id, title, phase, state) values
     ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f641',
      '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei',
@@ -182,22 +186,11 @@ begin
      '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei',
      '11111111-1111-7000-8000-00000000f612', 'Interrupted beside working', 'impl', 'interrupted');
 
-  -- A task never reviews itself (probed on free lane L5: only the CHECK can fire).
-  begin
-    insert into relay.tasks (user_id, id, crew_id, repo_key, lane_id, reviewer_lane_id, title, phase, state) values
-      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f657',
-       '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei',
-       '11111111-1111-7000-8000-00000000f615', '11111111-1111-7000-8000-00000000f615',
-       'Self review', 'tests', 'working');
-    raise exception 'a task reviewing itself was accepted.';
-  exception when check_violation then null;
-  end;
-
-  -- Bad crew / item / lane / reviewer fail the foreign keys.
+  -- Bad crew / item / lane / claim fail the foreign keys.
   begin
     insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state) values
       ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f658',
-       '11111111-1111-7000-8000-00000000f699', 'github.com/sensei-hq/sensei', 'No crew', 'tests', 'assigned');
+       '11111111-1111-7000-8000-00000000f699', 'github.com/sensei-hq/sensei', 'No crew', 'tests', 'ready');
     raise exception 'a task on a missing crew was accepted.';
   exception when foreign_key_violation then null;
   end;
@@ -205,7 +198,7 @@ begin
     insert into relay.tasks (user_id, id, crew_id, item_id, repo_key, title, phase, state) values
       ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f659',
        '11111111-1111-7000-8000-00000000f601', '11111111-1111-7000-8000-00000000f699',
-       'github.com/sensei-hq/sensei', 'No item', 'tests', 'assigned');
+       'github.com/sensei-hq/sensei', 'No item', 'tests', 'ready');
     raise exception 'a task on a missing item was accepted.';
   exception when foreign_key_violation then null;
   end;
@@ -218,11 +211,12 @@ begin
   exception when foreign_key_violation then null;
   end;
   begin
-    insert into relay.tasks (user_id, id, crew_id, reviewer_lane_id, repo_key, title, phase, state) values
+    insert into relay.tasks (user_id, id, crew_id, lane_id, review_claimed_by, repo_key, title, phase, state) values
       ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f661',
-       '11111111-1111-7000-8000-00000000f601', '11111111-1111-7000-8000-00000000f699',
-       'github.com/sensei-hq/sensei', 'No reviewer', 'tests', 'assigned');
-    raise exception 'a task with a missing reviewer was accepted.';
+       '11111111-1111-7000-8000-00000000f601', '11111111-1111-7000-8000-00000000f615',
+       '11111111-1111-7000-8000-00000000f699',
+       'github.com/sensei-hq/sensei', 'No claimant', 'tests', 'in_review');
+    raise exception 'a task claimed by a missing lane was accepted.';
   exception when foreign_key_violation then null;
   end;
 
@@ -236,23 +230,46 @@ begin
   exception when foreign_key_violation then null;
   end;
 
-  -- Defaults: state assigned, round 1, the four lists empty (on L1, whose
-  -- approved + done prove the terminal states release the lane).
-  insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, title, phase) values
+  -- Defaults: a task minted with no state lands in the pool — ready, no
+  -- lane, round 1, the four lists empty, assigned_at null until a claim.
+  insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase) values
     ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f644',
-     '11111111-1111-7000-8000-00000000f601', '11111111-1111-7000-8000-00000000f611',
-     'github.com/sensei-hq/sensei', 'Defaults', 'tests');
+     '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'Defaults', 'tests');
   select state::text, round into v_state, v_int from relay.tasks
    where id = '11111111-1111-7000-8000-00000000f644';
-  if v_state is distinct from 'assigned' or v_int is distinct from 1 then
-    raise exception 'state/round should default to assigned/1, saw %/%.', v_state, v_int;
+  if v_state is distinct from 'ready' or v_int is distinct from 1 then
+    raise exception 'state/round should default to ready/1, saw %/%.', v_state, v_int;
   end if;
   select count(*) into n from relay.tasks
    where id = '11111111-1111-7000-8000-00000000f644'
+     and lane_id is null and assigned_at is null
      and owned_paths = '{}' and acceptance = '{}' and resources = '{}' and deps = '{}';
   if n <> 1 then
-    raise exception 'owned_paths/acceptance/resources/deps should default to {}.';
+    raise exception 'defaults: no lane, no assigned_at, owned_paths/acceptance/resources/deps = {}.';
   end if;
+
+  -- Ready ⟺ no lane: a laned task cannot default into the pool, a worker
+  -- state cannot float without a lane, and a laneless cancelled is fine
+  -- (a pool task the person cancelled before anyone claimed it).
+  begin
+    insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, title, phase) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f645',
+       '11111111-1111-7000-8000-00000000f601', '11111111-1111-7000-8000-00000000f615',
+       'github.com/sensei-hq/sensei', 'Laned default', 'tests');
+    raise exception 'a laned task defaulting to ready was accepted.';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f646',
+       '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'Laneless rework', 'tests', 'rework');
+    raise exception 'a laneless rework task was accepted.';
+  exception when check_violation then null;
+  end;
+  insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f647',
+     '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'Cancelled in the pool', 'tests', 'cancelled');
+  delete from relay.tasks where id = '11111111-1111-7000-8000-00000000f647';
 
   -- The round counts from 1.
   begin
@@ -317,15 +334,18 @@ begin
   end;
 
   -- One active review claim per lane: a second in_review task claimed by L1
-  -- is refused while the first is in review.
-  insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state, review_claimed_by, review_claimed_at) values
+  -- is refused while the first is in review (both authored by L5 — two
+  -- floating reports on one lane are fine, two claims on one reviewer not).
+  insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, title, phase, state, review_claimed_by, review_claimed_at) values
     ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f671',
-     '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'Review one', 'impl', 'in_review',
+     '11111111-1111-7000-8000-00000000f601', '11111111-1111-7000-8000-00000000f615',
+     'github.com/sensei-hq/sensei', 'Review one', 'impl', 'in_review',
      '11111111-1111-7000-8000-00000000f611', now());
   begin
-    insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state, review_claimed_by, review_claimed_at) values
+    insert into relay.tasks (user_id, id, crew_id, lane_id, repo_key, title, phase, state, review_claimed_by, review_claimed_at) values
       ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f672',
-       '11111111-1111-7000-8000-00000000f601', 'github.com/sensei-hq/sensei', 'Review two', 'impl', 'in_review',
+       '11111111-1111-7000-8000-00000000f601', '11111111-1111-7000-8000-00000000f615',
+       'github.com/sensei-hq/sensei', 'Review two', 'impl', 'in_review',
        '11111111-1111-7000-8000-00000000f611', now());
     raise exception 'a lane holding two review claims was accepted.';
   exception when unique_violation then null;
@@ -358,7 +378,7 @@ begin
     insert into relay.tasks (user_id, id, crew_id, run_id, repo_key, title, phase, state) values
       ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f676',
        '11111111-1111-7000-8000-00000000f601', '11111111-1111-7000-8000-00000000f6ff',
-       'github.com/sensei-hq/sensei', 'Orphan of a run', 'impl', 'assigned');
+       'github.com/sensei-hq/sensei', 'Orphan of a run', 'impl', 'ready');
     raise exception 'a task on a missing run was accepted.';
   exception when foreign_key_violation then null;
   end;

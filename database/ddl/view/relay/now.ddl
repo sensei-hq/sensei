@@ -43,7 +43,7 @@ left join lateral (
    order by ll.id desc limit 1
 ) ls on true
 left join relay.tasks t on t.user_id = l.user_id and t.lane_id = l.id
-  and t.state in ('assigned', 'working', 'in_review', 'rework', 'blocked')
+  and t.state in ('assigned', 'working', 'rework', 'blocked')
 left join relay.tasks tr on tr.user_id = l.user_id and tr.review_claimed_by = l.id
   and tr.state = 'in_review'
 union all

@@ -92,10 +92,9 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       title: TITLE,
       phase: 'impl',
       brief: { summary: 'Ring up the e2e groceries' },
-      reviewer_lane: reviewer.lane_id,
     });
-    // Delivery starts the task: the holder's envelope pull flips assigned →
-    // working (no start tool exists), which is when steps become postable.
+    // Reading never starts a task (queue cutover, F01): the envelope carries the
+    // assignment, and the holder's first write — the step below — starts it.
     const envelope = await relayGet<{ assignments: Array<{ task_id: string }> }>(
       `/api/relay/tasks?lane_id=${holder.lane_id}`,
       holder.lane_token,
@@ -154,11 +153,14 @@ test.describe('Relay — timeline + steps over the live stream', () => {
 
     // The full report lands as a timeline entry and moves the state — still
     // no refresh.
+    // The report names a branch, so approval holds the task for the merge
+    // below (a report with nothing to merge ends it done at once).
     await relayPost(`/api/relay/tasks/${task}/report`, holder.lane_token, {
       lane_id: holder.lane_id,
       phase: 'impl',
       round: 1,
       summary: { changed: 'Counter scaffolds; tests ring true' },
+      branch: 'lane/counter',
     });
     await expect(
       tauriPage
@@ -183,7 +185,11 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       tauriPage.locator('[data-timeline] [data-timeline-detail]'),
     ).toBeVisible();
 
-    // Review + merge close the lifecycle on the same unmoved screen.
+    // The report floats on the review queue; the reviewer claims it, then
+    // review + merge close the lifecycle on the same unmoved screen.
+    await relayPost(`/api/relay/tasks/${task}/claim_review`, reviewer.lane_token, {
+      lane_id: reviewer.lane_id,
+    });
     await relayPost(`/api/relay/tasks/${task}/review`, reviewer.lane_token, {
       lane_id: reviewer.lane_id,
       verdict: 'approved',

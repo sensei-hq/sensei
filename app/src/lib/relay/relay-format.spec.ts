@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { crewRepoLabel, crewSizeContext, currentStepKey } from './relay-format.js';
+import { crewRepoLabel, crewSizeContext, currentStepKey, taskStateLabel } from './relay-format.js';
 import type { ApiError } from '$lib/api.js';
 import type { RelayLane, RelayTaskStep } from '$lib/relay-api.js';
 import * as F from '$lib/test-stubs/relay-fixtures.js';
@@ -51,6 +51,13 @@ describe('crewRepoLabel', () => {
     const a = crewRepoLabel({ id: '019a5e2c-4b1d-7c00-8d2e-00000000c7f3', repo_key: null });
     const b = crewRepoLabel({ id: '019a5e2c-4b1d-7c00-8d2e-00000000b10c', repo_key: null });
     expect(a).not.toBe(b);
+  });
+});
+
+describe('taskStateLabel', () => {
+  it('a ready task reads as in the pool (queue cutover)', () => {
+    expect(taskStateLabel('ready')).toBe('in the pool');
+    expect(taskStateLabel('in_review')).toBe('in review');
   });
 });
 
