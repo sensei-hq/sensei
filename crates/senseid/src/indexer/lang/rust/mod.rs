@@ -1888,18 +1888,32 @@ pub fn free(w: &Widget) -> u32 { w.width }
     }
 
     /// True for a declaration whose enclosing `impl` is on a type with no name
-    /// — a tuple, a slice, a unit. There is no type segment to build a member
+    /// — a tuple, a slice, a unit, or the header's own type parameter
+    /// (`impl<T: Tr> Word for T`). There is no type segment to build a member
     /// identity from, so no such declaration is nameable. Stated here in
     /// tree-sitter terms rather than by asking the walk.
-    fn inside_an_unnameable_impl(node: tree_sitter::Node<'_>) -> bool {
+    fn inside_an_unnameable_impl(node: tree_sitter::Node<'_>, text: &str) -> bool {
         let mut current = node.parent();
         while let Some(n) = current {
             if n.kind() == "impl_item" {
-                return !n.child_by_field_name("type").is_some_and(|t| {
-                    matches!(
-                        t.kind(),
-                        "type_identifier" | "scoped_type_identifier" | "generic_type"
-                    )
+                let Some(t) = n.child_by_field_name("type") else {
+                    return true;
+                };
+                if !matches!(
+                    t.kind(),
+                    "type_identifier" | "scoped_type_identifier" | "generic_type"
+                ) {
+                    return true;
+                }
+                // The header's `type` spelled exactly like one of its own
+                // `type_parameters` names: a blanket impl over that parameter.
+                return n.child_by_field_name("type_parameters").is_some_and(|params| {
+                    let mut cursor = params.walk();
+                    params.named_children(&mut cursor).any(|p| {
+                        p.kind() == "type_parameter"
+                            && p.child_by_field_name("name")
+                                .is_some_and(|name| text[name.byte_range()] == text[t.byte_range()])
+                    })
                 });
             }
             current = n.parent();
@@ -1912,7 +1926,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
         let mut count = 0;
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
-            if !inside_an_attribute(node) && !inside_an_unnameable_impl(node) {
+            if !inside_an_attribute(node) && !inside_an_unnameable_impl(node, text_of) {
                 // AN ANONYMOUS DECLARATION IS NOT ONE. `const _: () = ..`
                 // binds no name, so there is nothing for a use site to reach
                 // and the walk mints no symbol. Stated here from the GRAMMAR —
@@ -2201,7 +2215,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
                     _ => true,
                 };
                 if let Some(declaration) =
-                    gated.filter(|n| splittable && !inside_an_unnameable_impl(**n))
+                    gated.filter(|n| splittable && !inside_an_unnameable_impl(**n, text))
                     && let Some(named) = declaration.child_by_field_name("name")
                 {
                     callables.insert((node.id(), text[named.byte_range()].to_string()));
