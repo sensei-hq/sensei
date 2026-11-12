@@ -20,6 +20,7 @@ use crate::relay::envelope::{
     EnvelopeAnswer, EnvelopeAssignment, EnvelopeBrief, EnvelopeMessage, EnvelopeReview,
     EnvelopeTicket, LaneEnvelope, ReviewDirection,
 };
+use crate::relay::gate::{GateOutcome, GateSpec};
 use crate::relay::plan::{PlanSpec, parse_plan, topo_order, validate_plan};
 use crate::relay::{
     Caller, DISK_FLOOR_GB, DepsStatus, LANE_LEASE_TTL_SECS, NUDGE_AFTER_SECS, REOFFER_GRACE_SECS,
@@ -315,6 +316,27 @@ pub struct RelayReviewOutput {
     pub state: RelayTaskState,
     pub round: i32,
 }
+
+/// A gate task as the sweeper hands it to the runner (2.8): whose it is and
+/// what to gate.
+#[derive(Debug, Clone)]
+pub struct RelayGateTask {
+    pub user_id: Uuid,
+    pub crew_id: Uuid,
+    pub spec: GateSpec,
+}
+
+/// What a gate's outcome did to the approved task it gated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayGateReport {
+    /// The agent task (not the broker task).
+    pub task_id: Uuid,
+    pub state: RelayTaskState,
+}
+
+/// The gate's `asked` options when it cannot run at all.
+pub const GATE_RETRY_OPTION: &str = "retry";
+pub const GATE_SKIP_OPTION: &str = "skip_gate";
 
 /// `POST /api/relay/tasks/{id}/claim_review` (queue cutover): what the
 /// reviewer needs to start, taken from the latest full report.
@@ -2765,6 +2787,28 @@ impl PgStore {
         };
         tx.commit().await.map_err(db_err)?;
         Ok(RelayReviewOutput { state: next, round: new_round })
+    }
+
+    /// A ready gate task's owner and spec, for the runner (2.8). A task that
+    /// is not a broker gate task, or is not `ready`, is not found.
+    pub async fn relay_gate_task(&self, _gate_task_id: Uuid) -> Result<RelayGateTask, RelayError> {
+        unimplemented!("task 2.8: the gate task read")
+    }
+
+    /// Write a gate's outcome, one transaction (2.8): `Merged` ends the
+    /// agent task done with a `merged` row (no lane) and the gate task done;
+    /// `Conflict`/`VerifyFailed` rework the agent task (round + 1) with a
+    /// `reviewed` row (no lane; one high finding of class `merge_conflict`
+    /// or `build_failure`, the tail in `body_md`) and end the gate task
+    /// done; `Error` blocks the gate task behind an `asked` to the person
+    /// (`retry` | `skip_gate`) and leaves the agent task approved.
+    pub async fn relay_gate_outcome(
+        &self,
+        _gate_task_id: Uuid,
+        _outcome: &GateOutcome,
+        _now: DateTime<Utc>,
+    ) -> Result<RelayGateReport, RelayError> {
+        unimplemented!("task 2.8: the gate outcome write")
     }
 
     /// The claim guard shared by `claim_next`, `claim` and `claim_review`:
@@ -10162,6 +10206,366 @@ mod tests {
             .unwrap();
         let rep = pg.relay_sweep_leases(t0()).await.unwrap();
         assert!(rep.gate_tasks.is_empty(), "{:?}", rep.gate_tasks);
+    }
+
+    // ── queue cutover (2.8): the deterministic gate ──
+
+    fn gate_config() -> serde_json::Value {
+        json!({"base_checkout": "/tmp/base", "base_branch": "develop", "verify_cmd": "make test-fast"})
+    }
+
+    async fn fx_run_config(pg: &PgStore, run: Uuid, config: serde_json::Value) {
+        sqlx_core::query::query("update relay.runs set config = $1 where id = $2")
+            .bind(config)
+            .bind(run)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// An in-review task by `author` in `run` (none: no run) whose latest
+    /// report names `lane/x`, with the review claimed by `reviewer`.
+    async fn fx_branched_review(
+        pg: &PgStore,
+        crew: Uuid,
+        author: Uuid,
+        reviewer: Uuid,
+        task: Uuid,
+        run: Option<Uuid>,
+    ) {
+        fx_task(pg, u1(), task, crew, Some(author), "in_review", "impl", 1).await;
+        sqlx_core::query::query(
+            "update relay.tasks set run_id = $1, review_claimed_by = $2, review_claimed_at = $3
+             where id = $4",
+        )
+        .bind(run)
+        .bind(reviewer)
+        .bind(t0())
+        .bind(task)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        fx_action(
+            pg,
+            u1(),
+            crew,
+            ActionFx {
+                task: Some(task),
+                lane: Some(author),
+                kind: "reported",
+                round: Some(1),
+                phase: Some("impl"),
+                props: json!({"branch": "lane/x"}),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+
+    /// An approved agent task `task` on `lane` and its ready gate task
+    /// `gate`, as approval mints it. Returns the gate spec.
+    async fn fx_gate(pg: &PgStore, crew: Uuid, lane: Uuid, task: Uuid, gate: Uuid) -> GateSpec {
+        fx_task(pg, u1(), task, crew, Some(lane), "approved", "impl", 1).await;
+        let spec = json!({
+            "action": "gate", "task_id": task.to_string(), "branch": "lane/x",
+            "base_checkout": "/tmp/base", "base_branch": "develop", "verify_cmd": "make test-fast",
+        });
+        sqlx_core::query::query(
+            "insert into relay.tasks
+               (user_id, id, crew_id, repo_key, title, phase, state, round, executor, deterministic)
+             values ($1, $2, $3, 'github.com/o/r', 'gate: T', 'impl'::relay.task_phase,
+                     'ready'::relay.task_state, 1, 'broker'::relay.task_executor, $4)",
+        )
+        .bind(u1())
+        .bind(gate)
+        .bind(crew)
+        .bind(&spec)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        GateSpec::parse(&spec).unwrap()
+    }
+
+    async fn state_round_completed(pg: &PgStore, id: Uuid) -> (String, i32, Option<DateTime<Utc>>) {
+        sqlx_core::query_as::query_as(
+            "select state::text, round, completed_at from relay.tasks where id = $1",
+        )
+        .bind(id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    /// The one action of `kind` about `task`: (lane_id, round, props, body_md).
+    async fn action_about(
+        pg: &PgStore,
+        task: Uuid,
+        kind: &str,
+    ) -> (Option<Uuid>, Option<i32>, serde_json::Value, Option<String>) {
+        sqlx_core::query_as::query_as(
+            "select lane_id, round, props, body_md from relay.actions
+             where task_id = $1 and kind = $2::relay.action_kind
+             order by created_at desc, id desc limit 1",
+        )
+        .bind(task)
+        .bind(kind)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    #[allow(clippy::type_complexity)]
+    async fn approving_a_branched_task_in_a_gated_run_mints_the_gate_task() {
+        // An approval whose report names a branch, in a run whose config
+        // names the base: the task holds approved and a ready broker gate
+        // task is minted beside it — no deps (its precondition is met), the
+        // spec from the report and the config — which the sweeper hands over.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let (run, t) = (v7(0xd1), v7(0xe1));
+        fx_run(&pg, u1(), run, c1, "active").await;
+        fx_run_config(&pg, run, gate_config()).await;
+        fx_branched_review(&pg, c1, a2, a1, t, Some(run)).await;
+        let out = pg.relay_submit_review(u1(), a1, t, review_input()).await.unwrap();
+        assert_eq!(out.state, RelayTaskState::Approved);
+        let gates: Vec<(Uuid, String, serde_json::Value, Vec<Uuid>, Option<Uuid>, String, String)> =
+            sqlx_core::query_as::query_as(
+                "select id, state::text, deterministic, deps, run_id, title, repo_key
+                 from relay.tasks where executor = 'broker'",
+            )
+            .fetch_all(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(gates.len(), 1, "{gates:?}");
+        let (gate_id, state, det, deps, run_id, title, repo) = &gates[0];
+        assert_eq!(state, "ready");
+        assert!(deps.is_empty(), "the precondition is met at the mint");
+        assert_eq!(*run_id, Some(run));
+        assert_eq!(title, "gate: T");
+        assert_eq!(repo, "github.com/o/r");
+        let spec = GateSpec::parse(det).unwrap();
+        assert_eq!(spec.task_id, t);
+        assert_eq!(spec.branch, "lane/x");
+        assert_eq!(spec.base_checkout, std::path::PathBuf::from("/tmp/base"));
+        assert_eq!(spec.base_branch, "develop");
+        assert_eq!(spec.verify_cmd.as_deref(), Some("make test-fast"));
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.gate_tasks, vec![*gate_id]);
+        let handed = pg.relay_gate_task(*gate_id).await.unwrap();
+        assert_eq!((handed.user_id, handed.crew_id, handed.spec), (u1(), c1, spec));
+    }
+
+    #[tokio::test]
+    async fn approval_mints_no_gate_without_a_run_config_or_with_auto_merge_off() {
+        // No run; a run with no gate config; a run with auto_merge false:
+        // the task stays approved for a manual merge, no broker task.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let (bare, off) = (v7(0xd2), v7(0xd3));
+        fx_run(&pg, u1(), bare, c1, "active").await;
+        fx_run(&pg, u1(), off, c1, "active").await;
+        let mut config = gate_config();
+        config["auto_merge"] = json!(false);
+        fx_run_config(&pg, off, config).await;
+        for (n, run) in [(0xe2, None), (0xe3, Some(bare)), (0xe4, Some(off))] {
+            let t = v7(n);
+            fx_branched_review(&pg, c1, a2, a1, t, run).await;
+            let out = pg.relay_submit_review(u1(), a1, t, review_input()).await.unwrap();
+            assert_eq!(out.state, RelayTaskState::Approved, "{t}");
+        }
+        let brokers: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.tasks where executor = 'broker'",
+        )
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(brokers, 0);
+    }
+
+    #[tokio::test]
+    async fn gate_merged_ends_the_task_done_with_a_merged_row() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let (t, g) = (v7(0xe5), v7(0xe6));
+        fx_gate(&pg, c1, a2, t, g).await;
+        let merged = GateOutcome::Merged { sha: "abc123".into() };
+        let rep = pg.relay_gate_outcome(g, &merged, t0()).await.unwrap();
+        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Done });
+        for id in [t, g] {
+            let (state, _, completed) = state_round_completed(&pg, id).await;
+            assert_eq!(state, "done", "{id}");
+            assert_eq!(completed, Some(t0()), "{id}");
+        }
+        let (lane, round, props, body) = action_about(&pg, t, "merged").await;
+        assert_eq!(lane, None, "the gate merges: no lane");
+        assert_eq!(round, Some(1));
+        assert_eq!(props["commits"], json!(["abc123"]));
+        assert_eq!(props["into"], "develop");
+        assert_eq!(props["gates"], json!([{"cmd": "make test-fast", "exit": 0}]));
+        assert!(body.unwrap().contains("gate"));
+        // A gate task that already ended takes no second outcome.
+        let err = pg.relay_gate_outcome(g, &merged, t0()).await.unwrap_err();
+        assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn gate_conflict_reworks_with_a_merge_conflict_finding() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let (t, g) = (v7(0xe7), v7(0xe8));
+        fx_gate(&pg, c1, a2, t, g).await;
+        let conflict = GateOutcome::Conflict { detail: "CONFLICT (content): README".into() };
+        let rep = pg.relay_gate_outcome(g, &conflict, t0()).await.unwrap();
+        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Rework });
+        let (state, round, _) = state_round_completed(&pg, t).await;
+        assert_eq!((state.as_str(), round), ("rework", 2));
+        assert_eq!(task_state(&pg, g).await, "done");
+        let (lane, round, props, body) = action_about(&pg, t, "reviewed").await;
+        assert_eq!(lane, None);
+        assert_eq!(round, Some(2));
+        assert_eq!(props["verdict"], "changes_requested");
+        let findings = props["findings"].as_array().unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0]["severity"], "high");
+        assert_eq!(findings[0]["class"], "merge_conflict");
+        assert!(findings[0]["text"].as_str().unwrap().contains("conflict"), "{findings:?}");
+        assert!(body.unwrap().contains("CONFLICT (content): README"));
+    }
+
+    #[tokio::test]
+    async fn gate_verify_failure_reworks_with_a_build_failure_finding() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let (t, g) = (v7(0xe9), v7(0xea));
+        fx_gate(&pg, c1, a2, t, g).await;
+        let failed = GateOutcome::VerifyFailed {
+            cmd: "make test-fast".into(),
+            exit: 3,
+            tail: "boom".into(),
+        };
+        let rep = pg.relay_gate_outcome(g, &failed, t0()).await.unwrap();
+        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Rework });
+        let (state, round, _) = state_round_completed(&pg, t).await;
+        assert_eq!((state.as_str(), round), ("rework", 2));
+        assert_eq!(task_state(&pg, g).await, "done");
+        let (lane, _, props, body) = action_about(&pg, t, "reviewed").await;
+        assert_eq!(lane, None);
+        let finding = &props["findings"][0];
+        assert_eq!(finding["class"], "build_failure");
+        let text = finding["text"].as_str().unwrap();
+        assert!(text.contains("make test-fast") && text.contains('3'), "{text}");
+        assert!(body.unwrap().contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn gate_error_blocks_the_gate_task_and_asks_the_person() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let (t, g) = (v7(0xeb), v7(0xec));
+        fx_gate(&pg, c1, a2, t, g).await;
+        let error = GateOutcome::Error("git not installed".into());
+        let rep = pg.relay_gate_outcome(g, &error, t0()).await.unwrap();
+        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Approved });
+        assert_eq!(task_state(&pg, t).await, "approved");
+        let (state, from): (String, Option<String>) = sqlx_core::query_as::query_as(
+            "select state::text, blocked_from_state::text from relay.tasks where id = $1",
+        )
+        .bind(g)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!((state.as_str(), from.as_deref()), ("blocked", Some("ready")));
+        let (lane, _, props, body) = action_about(&pg, g, "asked").await;
+        assert_eq!(lane, None);
+        assert_eq!(props["asked_of"], "person");
+        let ids: Vec<&str> = props["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec![GATE_RETRY_OPTION, GATE_SKIP_OPTION]);
+        assert_eq!(props["blocks"], json!([g.to_string()]));
+        assert!(body.unwrap().contains("git not installed"));
+        // Blocked, it is neither handed over nor readable as a gate task.
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert!(rep.gate_tasks.is_empty());
+        let err = pg.relay_gate_task(g).await.unwrap_err();
+        assert!(matches!(err, RelayError::NotFound(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn answering_retry_reoffers_and_skip_gate_cancels_the_gate_task() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let (t, g) = (v7(0xed), v7(0xee));
+        fx_gate(&pg, c1, a2, t, g).await;
+        let error = GateOutcome::Error("git not installed".into());
+        let person = RelayCaller::Person { surface: RelaySurface::Desktop };
+        async fn decision(pg: &PgStore, gate: Uuid) -> Uuid {
+            sqlx_core::query_scalar::query_scalar(
+                "select id from relay.actions where kind = 'asked' and task_id = $1
+                 order by created_at desc, id desc limit 1",
+            )
+            .bind(gate)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap()
+        }
+        // retry: the gate task is ready again and handed over on the next pass.
+        pg.relay_gate_outcome(g, &error, t0()).await.unwrap();
+        let answer = RelayAnswerInput { option: GATE_RETRY_OPTION.into(), note: None };
+        pg.relay_answer_decision(u1(), person.clone(), decision(&pg, g).await, answer)
+            .await
+            .unwrap();
+        assert_eq!(task_state(&pg, g).await, "ready");
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.gate_tasks, vec![g]);
+        // skip_gate: the gate task is cancelled; the task stays approved for
+        // a manual merge.
+        pg.relay_gate_outcome(g, &error, t0()).await.unwrap();
+        let answer = RelayAnswerInput { option: GATE_SKIP_OPTION.into(), note: None };
+        pg.relay_answer_decision(u1(), person, decision(&pg, g).await, answer).await.unwrap();
+        assert_eq!(task_state(&pg, g).await, "cancelled");
+        assert_eq!(task_state(&pg, t).await, "approved");
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert!(rep.gate_tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pass_runs_the_handed_over_gate_and_announces_it() {
+        // The ticker's pass: sweep, then the gate for what the sweep handed
+        // over, the outcome written and the agent task announced.
+        use crate::relay::gate::FakeGateRunner;
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let (t, g) = (v7(0xef), v7(0xf0));
+        fx_gate(&pg, c1, a2, t, g).await;
+        let (tx, mut rx) = tokio::sync::broadcast::channel(32);
+        let fake = FakeGateRunner::new(GateOutcome::Merged { sha: "abc".into() });
+        let rep = crate::tasks::relay_lease_sweep::pass(&pg, &tx, &fake, t0()).await.unwrap();
+        assert_eq!(rep.gate_tasks, vec![g]);
+        let seen = fake.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1);
+        assert_eq!((seen[0].branch.as_str(), seen[0].base_branch.as_str()), ("lane/x", "develop"));
+        assert_eq!(task_state(&pg, t).await, "done");
+        assert_eq!(task_state(&pg, g).await, "done");
+        let mut ops = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            let v = serde_json::to_value(&event).unwrap();
+            if v["entity"] == "task" {
+                ops.push((v["data"]["op"].to_string(), v["data"]["task_id"].to_string()));
+            }
+        }
+        assert!(
+            ops.contains(&(json!("gate").to_string(), json!(t.to_string()).to_string())),
+            "{ops:?}"
+        );
+        // Nothing left to gate: the runner is not asked.
+        let rep = crate::tasks::relay_lease_sweep::pass(&pg, &tx, &fake, t0()).await.unwrap();
+        assert!(rep.gate_tasks.is_empty());
+        assert_eq!(fake.seen.lock().unwrap().len(), 1);
     }
 
     // ── person reads ──

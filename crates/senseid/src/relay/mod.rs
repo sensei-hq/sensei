@@ -14,6 +14,7 @@
 #![allow(dead_code)]
 
 pub mod envelope;
+pub mod gate;
 pub mod plan;
 
 use serde::{Deserialize, Serialize};
@@ -245,6 +246,9 @@ pub enum TaskEvent {
     Resumed,
     /// An approved Task 0's plan unpacked into the queue: Task 0 is done.
     Unpacked,
+    /// The merge gate refused an approved task's branch (a conflict or a
+    /// failed verify): back to rework, a new round.
+    GateFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1228,6 +1232,15 @@ mod tests {
         assert!(transition(S::Working, E::Resumed).is_err());
         assert_eq!(transition(S::Approved, E::Unpacked), Ok(S::Done));
         assert!(transition(S::Working, E::Unpacked).is_err());
+        // The gate refuses an approved branch: rework, like a review would.
+        assert_eq!(transition(S::Approved, E::GateFailed), Ok(S::Rework));
+        for s in [S::Ready, S::Working, S::InReview, S::Rework, S::Done] {
+            assert!(transition(s, E::GateFailed).is_err(), "{s:?} has no gate");
+        }
+        // A gate that cannot run blocks its broker task in the pool behind
+        // an ask; the answer resumes it there.
+        assert_eq!(transition(S::Ready, E::Blocked), Ok(S::Blocked));
+        assert_eq!(transition(S::Blocked, E::Unblocked { blocked_from: S::Ready }), Ok(S::Ready));
     }
 
     #[test]

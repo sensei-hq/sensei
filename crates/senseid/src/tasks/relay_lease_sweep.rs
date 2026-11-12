@@ -16,6 +16,7 @@ use crate::api::events::{LaneChange, LaneReason, RunChange, StateEvent};
 use crate::db::pg_store::PgStore;
 use crate::db::pg_store::relay::{RelaySweepReport, RelaySweptTask};
 use crate::relay::RelayError;
+use crate::relay::gate::GateRunner;
 
 /// One pass at wall-clock now.
 pub async fn tick(
@@ -57,6 +58,20 @@ pub async fn tick(
         }
         Err(other) => Err(format!("relay_lease: sweep failed: {other:?}")),
     }
+}
+
+/// A full pass at a fed `now`: the sweep, then the gate for every gate
+/// task the sweep handed over (one per pass), each outcome written and
+/// announced as `relay_task("gate", <agent task>)`. The gate runs after
+/// the sweep's commit; a runner failure is the outcome's to record, never
+/// the pass's to fail on.
+pub async fn pass<G: GateRunner>(
+    pg: &PgStore,
+    event_tx: &broadcast::Sender<StateEvent>,
+    _gate: &G,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<RelaySweepReport, RelayError> {
+    sweep_at(pg, event_tx, now).await
 }
 
 /// One pass at a fed `now`, announcing what it changed on `event_tx`:
