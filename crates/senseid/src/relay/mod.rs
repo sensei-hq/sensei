@@ -801,7 +801,7 @@ pub fn reoffer_due(interrupted_at_unix: i64, now_unix: i64) -> bool {
 
 /// Guidance schema version. Bump when the generic contract's meaning
 /// changes (new routes, new TTLs); prose-only clarifications keep it.
-pub const RELAY_GUIDANCE_VERSION: &str = "1";
+pub const RELAY_GUIDANCE_VERSION: &str = "2";
 
 /// The self-sufficient join-time contract: a lane that reads nothing but
 /// endpoint.md plus this text can join, beat, poll, work, and report.
@@ -815,26 +815,41 @@ with header Authorization: Bearer <lane_token>. Beat every 60s from a loop \
 you own. A lapsed lease suspends the lane; your held task is marked \
 interrupted (checkpoint kept) and re-offered to a live lane after a 900s \
 grace. No other call renews the lease.\n\
-- Poll: GET /api/relay/tasks?lane_id=<you> (MCP: relay_get_tasks) lists your \
-queue. GET /api/relay/tasks/wait?lane_id=<you>&timeout_ms= (MCP: \
-relay_wait_for_task) holds the connection up to 50s (default 25s) for the \
-next assignment or re-offer. Prefer wait over spinning.\n\
-- Flow: the coordinator plans (the task waits ready in the pool) and assigns; \
-you work, then report with POST /api/relay/tasks/{id}/report (MCP: \
-relay_report_task). A partial report ({\"partial\": true}) records progress \
-and keeps the task working; a full report moves it to in_review and floats it \
-on the review queue: a live lane other than the author claims it with POST \
-/api/relay/tasks/{id}/claim_review {\"lane_id\": \"<you>\"}, reviews it with \
-POST /api/relay/tasks/{id}/review, and its approval lets the coordinator \
-merge. Only the coordinator merges; only the lane holding the review claim \
-approves.\n\
+- Poll: GET /api/relay/tasks?lane_id=<you> (MCP: relay_get_tasks) reads your \
+envelope (messages, answers, the review you claimed, the task you hold). \
+GET /api/relay/tasks/wait?lane_id=<you>&timeout_ms= (or timeout_seconds=; \
+MCP: relay_wait_for_task) holds the connection up to 50s (default 25s) for \
+the next thing addressed to you. Prefer wait over spinning. GET \
+/api/relay/queue?lane_id=<you> (MCP: relay_get_queue) reads the crew's \
+claimable work. Reading never starts a task.\n\
+- Flow: work is claimed, never handed out, and a read never starts it. POST \
+/api/relay/tasks/claim_next \
+{\"lane_id\": \"<you>\"} (MCP: relay_claim_next) takes the next piece \
+atomically: a floating review first (never your own report), then a ready \
+task whose dependencies are done, then one you may start early (its report \
+is gated until they are). POST /api/relay/tasks/{id}/claim takes a named \
+task; POST /api/relay/tasks/{id}/claim_review a named review. A claim lands \
+the task working on you; save in-turn progress with POST \
+/api/relay/tasks/{id}/checkpoint (current_step, notes, steps) and give a \
+claim back with POST /api/relay/tasks/{id}/release. Report with POST \
+/api/relay/tasks/{id}/report (MCP: relay_report_task): a partial report \
+({\"partial\": true}) keeps the task working; a full report floats it on the \
+review queue and frees your lane (409 relay_upstream_deps_unmet while a \
+dependency is not done). Review what you claimed with POST \
+/api/relay/tasks/{id}/review; an approval with a branch hands the task to \
+the broker's merge gate, which merges or reworks it; with nothing to merge \
+it is done. Only the lane holding the review claim approves.\n\
+- Pause: POST /api/relay/limit_pause when a quota is hit; a beat never ends \
+the pause — the sweeper ends it at resumes_at, or you end it early with POST \
+/api/relay/limit_resume {\"lane_id\": \"<you>\"} (MCP: relay_limit_resume).\n\
 - Caps: every short text field is at most 600 characters; longer text is \
-rejected with 422 (`text too long: 765 > 600`). Capped: message text, an \
-assign brief summary, a report summary (changed), a review summary, a decision \
-question, an answer note, merge/handover/pause notes, a step title and reason. \
-Split a long message into numbered parts (1/2, 2/2); keep a brief slim and put \
-the detail in the docs files it names; a full report rides report_md, which is \
-not capped.\n\
+rejected with 422 (`text too long: 765 > 600`). Capped: message text, a \
+plan brief summary, a report summary (changed), a review summary, a decision \
+question, an answer note, a checkpoint's current_step and notes, a release \
+reason, merge/handover/pause notes, a step title and reason. Split a long \
+message into numbered parts (1/2, 2/2); keep a brief slim and put the detail \
+in the docs files it names; a full report rides report_md, which is not \
+capped.\n\
 - Resume: after a restart or context clear, POST /api/relay/reregister (MCP: \
 relay_reregister) with your lane_id resumes the same lane and returns the \
 task checkpoint. POST /api/relay/unregister releases the lane cleanly when \
@@ -851,13 +866,13 @@ sensei-mcp with SENSEI_DAEMON_URL pointing at the broker and call the relay_* \
 tools (relay_register mints the token and is the one call that needs no auth \
 header). Keep the 60s heartbeat loop in a shell you own; if the session dies, \
 reregister from a fresh shell with the saved lane_id and the checkpoint \
-restores. No known quirks at guidance v1 — report yours to the coordinator.";
+restores. No known quirks at guidance v2 — report yours to the coordinator.";
 
 pub const RELAY_GUIDANCE_CLAUDE: &str = "claude lanes (claude-code included): the same \
 MCP stdio shape — sensei-mcp plus SENSEI_DAEMON_URL, relay_* tools. Claude \
 sessions clear context often, so save lane_id and lane_token outside the \
 session (the coordinator paste line) and reregister to resume with the \
-checkpoint. No known quirks at guidance v1 — report yours to the coordinator.";
+checkpoint. No known quirks at guidance v2 — report yours to the coordinator.";
 
 pub const RELAY_GUIDANCE_OPENCODE: &str = "opencode lanes: raw HTTP is the reliable \
 path — curl the broker routes with -H \"Authorization: Bearer $LANE_TOKEN\" \
@@ -865,13 +880,13 @@ path — curl the broker routes with -H \"Authorization: Bearer $LANE_TOKEN\" \
 every 60s from a background loop and pick work up via tasks/wait (timeout_ms \
 up to 50000) instead of spinning tasks. If your harness has an MCP bridge, \
 the relay_* tools mirror the HTTP routes one-to-one. No known quirks at \
-guidance v1 — report yours to the coordinator.";
+guidance v2 — report yours to the coordinator.";
 
 pub const RELAY_GUIDANCE_FREEBUFF: &str = "freebuff lanes: raw HTTP like opencode — \
 curl plus the Bearer header, a 60s heartbeat loop, tasks/wait for pickup. \
 Wakeups are yours to schedule: without a beat the 300s lease lapses and the \
 held task re-offers after the grace, so prefer an external loop or cron over \
-in-session timers. No known quirks at guidance v1 — report yours to the \
+in-session timers. No known quirks at guidance v2 — report yours to the \
 coordinator.";
 
 /// The register-time guidance block: versioned generic contract plus the

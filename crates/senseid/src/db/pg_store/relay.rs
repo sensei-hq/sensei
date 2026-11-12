@@ -2750,6 +2750,7 @@ impl PgStore {
         .map_err(db_err)?;
         // An approved plan unpacks here, in the same transaction: Task 0
         // ends done and the run turns active.
+        let mut run_activated = None;
         let next = match plan {
             Some(spec) => {
                 let run_id: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
@@ -2769,6 +2770,7 @@ impl PgStore {
                         .await
                         .map_err(db_err)?;
                 Self::relay_unpack_plan(&mut tx, user_id, run_id, task_id, &spec, now).await?;
+                run_activated = Some(run_id);
                 RelayTaskState::Done
             }
             // Nothing to merge (the latest full report names no branch — a
@@ -2815,39 +2817,125 @@ impl PgStore {
             None => next,
         };
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayReviewOutput { state: next, round: new_round, run_activated: None })
+        Ok(RelayReviewOutput { state: next, round: new_round, run_activated })
     }
 
     /// The crew's claim queue (2.9): `relay.task_queue` for `crew_id`,
     /// floating reviews first, then the ready pool oldest first. A read
     /// never claims.
+    // Wide rows are inherent to the read: one round trip, destructured at
+    // the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_lane_queue(
         &self,
-        _user_id: Uuid,
-        _crew_id: Uuid,
+        user_id: Uuid,
+        crew_id: Uuid,
     ) -> Result<Vec<RelayQueueEntry>, RelayError> {
-        unimplemented!("task 2.9: the lane queue read")
+        let rows: Vec<(
+            Uuid,
+            Option<Uuid>,
+            String,
+            String,
+            String,
+            i32,
+            String,
+            Vec<String>,
+            Vec<String>,
+            Option<Uuid>,
+            Option<Uuid>,
+            String,
+            Vec<Uuid>,
+            DateTime<Utc>,
+        )> = sqlx_core::query_as::query_as(
+            "select task_id, run_id, title, phase::text, state::text, round, repo_key,
+                    owned_paths, acceptance, author_lane_id, review_claimed_by,
+                    claim_eligibility, unmet_deps, state_changed_at
+             from relay.task_queue
+             where user_id = $1 and crew_id = $2
+             order by (state = 'in_review') desc, state_changed_at, task_id",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        rows.into_iter()
+            .map(
+                |(
+                    task_id,
+                    run_id,
+                    title,
+                    phase,
+                    state,
+                    round,
+                    repo_key,
+                    owned_paths,
+                    acceptance,
+                    author_lane_id,
+                    review_claimed_by,
+                    claim_eligibility,
+                    unmet_deps,
+                    state_changed_at,
+                )| {
+                    Ok(RelayQueueEntry {
+                        task_id,
+                        run_id,
+                        title,
+                        phase: parse_phase(&phase)?,
+                        state: parse_state(&state)?,
+                        round,
+                        repo_key,
+                        owned_paths,
+                        acceptance,
+                        author_lane_id,
+                        review_claimed_by,
+                        claim_eligibility,
+                        unmet_deps,
+                        state_changed_at,
+                    })
+                },
+            )
+            .collect()
     }
 
     /// A `tasks/wait` hold opened (F06): one row per lane, `waiting_since`
     /// kept across consecutive empty holds, `last_poll_at` stamped now.
     pub async fn relay_waiter_hold(
         &self,
-        _user_id: Uuid,
-        _lane_id: Uuid,
-        _crew_id: Uuid,
+        user_id: Uuid,
+        lane_id: Uuid,
+        crew_id: Uuid,
     ) -> Result<(), RelayError> {
-        unimplemented!("task 2.9: the waiter hold")
+        sqlx_core::query::query(
+            "insert into relay.lane_waiters (user_id, lane_id, crew_id)
+             values ($1, $2, $3)
+             on conflict (user_id, lane_id) do update set last_poll_at = current_timestamp",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .bind(crew_id)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(())
     }
 
     /// The hold ended (answered, timed out, or failed): the row goes.
     /// Idempotent.
     pub async fn relay_waiter_release(
         &self,
-        _user_id: Uuid,
-        _lane_id: Uuid,
+        user_id: Uuid,
+        lane_id: Uuid,
     ) -> Result<(), RelayError> {
-        unimplemented!("task 2.9: the waiter release")
+        sqlx_core::query::query(
+            "delete from relay.lane_waiters where user_id = $1 and lane_id = $2",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(())
     }
 
     /// Mint the broker gate task beside an approved task whose report names

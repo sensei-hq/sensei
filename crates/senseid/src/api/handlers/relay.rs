@@ -61,7 +61,8 @@ use crate::api::events::{LaneChange, LaneReason, RunChange, StateEvent};
 use crate::api::state::AppState;
 use crate::db::pg_store::relay::{
     RelayAnswerInput, RelayAnswerOutput, RelayAskInput, RelayAskedOf, RelayAssignInput,
-    RelayCaller, RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput,
+    RelayCaller, RelayCheckpointInput, RelayClaim, RelayClaimedReview, RelayClaimedTask,
+    RelayCreateRunInput, RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput,
     RelayHandoverInput, RelayHeartbeatOutput, RelayLaneSession, RelayLimitPauseInput,
     RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayPlanInput, RelayReadFilter,
     RelayRegisterInput, RelayReportInput, RelayResourceRequest, RelayReviewInput, RelayStepInput,
@@ -69,8 +70,9 @@ use crate::db::pg_store::relay::{
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
-    RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole, RelayStepState,
-    RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict, clamp_wait_timeout,
+    DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole,
+    RelayStepState, RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict,
+    clamp_wait_timeout,
 };
 
 type RelayResult = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>;
@@ -158,7 +160,10 @@ fn emit_lane(state: &AppState, change: LaneChange, lane_id: &Uuid, crew_id: &Uui
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct RegisterBody {
-    role: String,
+    /// Absent means contributor (#402).
+    role: Option<String>,
+    /// The name the assistant proposes for itself: the lane's title.
+    suggested_name: Option<String>,
     family: String,
     version: Option<String>,
     model: Option<String>,
@@ -191,15 +196,82 @@ pub(crate) struct ResourceBody {
     resource: String,
 }
 
+/// F11/#404: a misspelt or stray query key is refused (400), never ignored.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TasksQuery {
     lane_id: String,
 }
 
+/// F11/#404: strict keys; the hold is `timeout_ms`, or `timeout_seconds`
+/// when `timeout_ms` is absent — the same clamp either way.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WaitQuery {
     lane_id: String,
     timeout_ms: Option<u64>,
+    timeout_seconds: Option<u64>,
+}
+
+impl WaitQuery {
+    fn hold_ms(&self) -> Option<u64> {
+        self.timeout_ms.or(self.timeout_seconds.map(|s| s.saturating_mul(1000)))
+    }
+}
+
+/// `POST /api/relay/tasks/{id}/checkpoint` (F07): an in-turn save by the
+/// holder.
+#[derive(Debug, Deserialize)]
+pub(crate) struct CheckpointBody {
+    lane_id: String,
+    current_step: Option<String>,
+    notes: Option<String>,
+    #[serde(default)]
+    steps: Vec<CheckpointStepBody>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CheckpointStepBody {
+    key: String,
+    title: String,
+    state: String,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// `POST /api/relay/tasks/{id}/release`: a claim given back.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ReleaseBody {
+    lane_id: String,
+    reason: Option<String>,
+}
+
+/// `POST /relay/runs` (person): a sprint run over backlog items.
+#[derive(Debug, Deserialize)]
+pub(crate) struct CreateRunBody {
+    crew_id: Option<String>,
+    title: String,
+    goal: String,
+    #[serde(default)]
+    item_ids: Vec<String>,
+    repo_key: Option<String>,
+    workspace_id: Option<String>,
+    config: Option<RunConfigBody>,
+}
+
+/// The gate's knobs (F11: an unknown knob is a caller bug, not a silent
+/// default).
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RunConfigBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_checkout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verify_cmd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_merge: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -253,64 +325,263 @@ pub(crate) struct ClaimReviewBody {
     lane_id: String,
 }
 
-// ─── Queue cutover (2.9): stubs the pins drive ───
+// ─── Queue cutover (2.9): the claim loop ───
+
+/// What a lane may do on a claim-early task until its deps are done.
+const EARLY_CLAIM_GUIDANCE: &str = "An upstream task is not done yet. You may scaffold \
+interfaces and write tests against them, but your full report is refused \
+(relay_upstream_deps_unmet) until every dependency is done.";
+
+/// The §6.3 `task` shape for a claimed task.
+fn claimed_task_json(task: &RelayClaimedTask) -> serde_json::Value {
+    let mut out = serde_json::json!({
+        "id": task.task_id.to_string(),
+        "run_id": task.run_id.map(|id| id.to_string()),
+        "title": task.title,
+        "phase": serde_json::to_value(task.phase).unwrap_or(serde_json::Value::Null),
+        "round": task.round,
+        "repo_key": task.repo_key,
+        "deps_status": serde_json::to_value(task.deps_status).unwrap_or(serde_json::Value::Null),
+        "unmet_deps": task.unmet_deps.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+        "owned_paths": task.owned_paths,
+        "acceptance": task.acceptance,
+        "checkpoint": task.checkpoint,
+    });
+    if task.deps_status == DepsStatus::EarlyClaimGated {
+        out["guidance"] = serde_json::Value::String(EARLY_CLAIM_GUIDANCE.into());
+    }
+    out
+}
+
+/// The §6.3 `task` shape for a claimed review (the `claim_review` route's
+/// own answer is the same shape, flat).
+fn claimed_review_json(review: &RelayClaimedReview) -> serde_json::Value {
+    serde_json::json!({
+        "id": review.task_id.to_string(),
+        "title": review.title,
+        "author_lane_code": review.author_lane_code,
+        "phase": serde_json::to_value(review.phase).unwrap_or(serde_json::Value::Null),
+        "round": review.round,
+        "summary": review.summary,
+        "report_md": review.report_md,
+        "branch": review.branch,
+        "files": review.files,
+    })
+}
 
 pub(crate) async fn claim_next(
-    State(_state): State<AppState>,
-    _headers: HeaderMap,
-    Json(_body): Json<serde_json::Value>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LaneBody>,
 ) -> RelayResult {
-    Err(err(RelayError::NotImplemented("task 2.9: claim_next".into())))
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let claim = state
+        .pg
+        .relay_claim_next(session.user_id, lane_id, chrono::Utc::now())
+        .await
+        .map_err(err)?;
+    let (claim_type, task) = match &claim {
+        RelayClaim::Review(review) => {
+            emit_task(&state, "claim_review", &review.task_id);
+            ("review", claimed_review_json(review))
+        }
+        RelayClaim::Task(task) => {
+            emit_task(&state, "claim", &task.task_id);
+            ("task", claimed_task_json(task))
+        }
+        RelayClaim::None => ("none", serde_json::Value::Null),
+    };
+    ok(serde_json::json!({ "claim_type": claim_type, "task": task }))
 }
 
 pub(crate) async fn claim_task(
-    State(_state): State<AppState>,
-    _headers: HeaderMap,
-    Path(_task_id): Path<String>,
-    Json(_body): Json<serde_json::Value>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<LaneBody>,
 ) -> RelayResult {
-    Err(err(RelayError::NotImplemented("task 2.9: claim".into())))
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let task = state
+        .pg
+        .relay_claim_task(session.user_id, lane_id, task_id, chrono::Utc::now())
+        .await
+        .map_err(err)?;
+    emit_task(&state, "claim", &task_id);
+    ok(serde_json::json!({ "claim_type": "task", "task": claimed_task_json(&task) }))
 }
 
 pub(crate) async fn checkpoint(
-    State(_state): State<AppState>,
-    _headers: HeaderMap,
-    Path(_task_id): Path<String>,
-    Json(_body): Json<serde_json::Value>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<CheckpointBody>,
 ) -> RelayResult {
-    Err(err(RelayError::NotImplemented("task 2.9: checkpoint".into())))
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let steps = body
+        .steps
+        .into_iter()
+        .map(|s| -> Result<RelayStepInput, RelayError> {
+            Ok(RelayStepInput {
+                key: s.key,
+                title: s.title,
+                state: parse_word::<RelayStepState>(&s.state, "steps[].state")?,
+                reason: s.reason,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    let checkpointed_at = state
+        .pg
+        .relay_checkpoint_task(
+            session.user_id,
+            lane_id,
+            task_id,
+            RelayCheckpointInput { current_step: body.current_step, notes: body.notes, steps },
+        )
+        .await
+        .map_err(err)?;
+    emit_task(&state, "checkpoint", &task_id);
+    ok(serde_json::json!({
+        "task_id": task_id.to_string(),
+        "checkpointed_at": iso(checkpointed_at),
+    }))
 }
 
 pub(crate) async fn release(
-    State(_state): State<AppState>,
-    _headers: HeaderMap,
-    Path(_task_id): Path<String>,
-    Json(_body): Json<serde_json::Value>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<ReleaseBody>,
 ) -> RelayResult {
-    Err(err(RelayError::NotImplemented("task 2.9: release".into())))
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let out = state
+        .pg
+        .relay_release_task(session.user_id, lane_id, task_id, body.reason, chrono::Utc::now())
+        .await
+        .map_err(err)?;
+    emit_task(&state, "release", &task_id);
+    ok(serde_json::json!({
+        "task_id": out.task_id.to_string(),
+        "kind": serde_json::to_value(out.kind).unwrap_or(serde_json::Value::Null),
+        "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+    }))
 }
 
 pub(crate) async fn limit_resume(
-    State(_state): State<AppState>,
-    _headers: HeaderMap,
-    Json(_body): Json<serde_json::Value>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LaneBody>,
 ) -> RelayResult {
-    Err(err(RelayError::NotImplemented("task 2.9: limit_resume".into())))
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let resumed = state.pg.relay_limit_resume(lane_id).await.map_err(err)?;
+    // Only a pause that ended is announced; a no-op stays quiet.
+    if resumed {
+        emit_lane(
+            &state,
+            LaneChange::Resumed(LaneReason::LimitPauseEnded),
+            &lane_id,
+            &session.crew_id,
+        );
+    }
+    ok(serde_json::json!({ "resumed": resumed }))
 }
 
+/// `GET /api/relay/queue?lane_id=`: the crew's claimable work, read-only.
 pub(crate) async fn lane_queue(
-    State(_state): State<AppState>,
-    _headers: HeaderMap,
-    Query(_query): Query<TasksQuery>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TasksQuery>,
 ) -> RelayResult {
-    Err(err(RelayError::NotImplemented("task 2.9: queue".into())))
+    let session = auth_lane(&state, &query.lane_id, &headers).await.map_err(err)?;
+    let queue = state.pg.relay_lane_queue(session.user_id, session.crew_id).await.map_err(err)?;
+    let entries: Vec<serde_json::Value> = queue
+        .iter()
+        .map(|q| {
+            serde_json::json!({
+                "task_id": q.task_id.to_string(),
+                "run_id": q.run_id.map(|id| id.to_string()),
+                "title": q.title,
+                "phase": serde_json::to_value(q.phase).unwrap_or(serde_json::Value::Null),
+                "state": serde_json::to_value(q.state).unwrap_or(serde_json::Value::Null),
+                "round": q.round,
+                "repo_key": q.repo_key,
+                "owned_paths": q.owned_paths,
+                "acceptance": q.acceptance,
+                "author_lane_id": q.author_lane_id.map(|id| id.to_string()),
+                "review_claimed_by": q.review_claimed_by.map(|id| id.to_string()),
+                "claim_eligibility": q.claim_eligibility,
+                "unmet_deps": q.unmet_deps.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                "state_changed_at": iso(q.state_changed_at),
+            })
+        })
+        .collect();
+    ok(serde_json::json!({ "queue": entries }))
 }
 
+/// `POST /relay/runs` (person): 201 with the run, Task 0, and the crew.
 pub(crate) async fn create_run(
-    State(_state): State<AppState>,
-    Json(_body): Json<serde_json::Value>,
-) -> RelayResult {
-    Err(err(RelayError::NotImplemented("task 2.9: runs".into())))
+    State(state): State<AppState>,
+    Json(body): Json<CreateRunBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let item_ids = body
+        .item_ids
+        .iter()
+        .map(|id| parse_uuid(id, "item_ids[]"))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    let config = match body.config {
+        Some(config) => serde_json::to_value(config)
+            .map_err(|e| err(RelayError::Internal(format!("run config: {e}"))))?,
+        None => serde_json::json!({}),
+    };
+    let out = state
+        .pg
+        .relay_create_run(
+            user_id,
+            RelayCreateRunInput {
+                crew_id: body
+                    .crew_id
+                    .as_deref()
+                    .map(|c| parse_uuid(c, "crew_id"))
+                    .transpose()
+                    .map_err(err)?,
+                title: body.title,
+                goal: body.goal,
+                item_ids,
+                repo_key: body.repo_key,
+                workspace_id: body
+                    .workspace_id
+                    .as_deref()
+                    .map(|w| parse_uuid(w, "workspace_id"))
+                    .transpose()
+                    .map_err(err)?,
+                config,
+            },
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(err)?;
+    let _ =
+        state.event_tx.send(StateEvent::relay_run(RunChange::Created, &out.run_id, &out.crew_id));
+    emit_task(&state, "plan", &out.planning_task_id);
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "run_id": out.run_id.to_string(),
+            "planning_task_id": out.planning_task_id.to_string(),
+            "crew_id": out.crew_id.to_string(),
+            "status": "planning",
+        })),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -530,7 +801,10 @@ pub(crate) async fn register(
         .relay_register(
             user_id,
             RelayRegisterInput {
-                role: parse_word::<RelayRole>(&body.role, "role").map_err(err)?,
+                role: match body.role.as_deref() {
+                    Some(role) => parse_word::<RelayRole>(role, "role").map_err(err)?,
+                    None => RelayRole::Contributor,
+                },
                 family: body.family,
                 version: body.version,
                 model: body.model,
@@ -551,7 +825,7 @@ pub(crate) async fn register(
                     .map(|w| parse_uuid(w, "workspace_id"))
                     .transpose()
                     .map_err(err)?,
-                suggested_name: None,
+                suggested_name: body.suggested_name,
             },
             chrono::Utc::now(),
         )
@@ -749,8 +1023,27 @@ pub(crate) async fn wait_for_task(
 ) -> EnvelopeResult {
     let session = auth_lane(&state, &query.lane_id, &headers).await.map_err(err)?;
     let lane_id = parse_uuid(&query.lane_id, "lane_id").map_err(err)?;
-    let hold = clamp_wait_timeout(query.timeout_ms);
+    let hold = clamp_wait_timeout(query.hold_ms());
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(hold);
+    // F06: the hold is a waiter row for its duration — opened before the
+    // first read, released on every exit path (the sweeper nudges by it
+    // and evicts dead lanes' rows).
+    state.pg.relay_waiter_hold(session.user_id, lane_id, session.crew_id).await.map_err(err)?;
+    let held = wait_held(&state, &session, lane_id, deadline).await;
+    let released = state.pg.relay_waiter_release(session.user_id, lane_id).await.map_err(err);
+    let envelope = held?;
+    released?;
+    Ok(Json(envelope))
+}
+
+/// The hold itself: re-read on every relay event until the envelope has
+/// something or the deadline passes.
+async fn wait_held(
+    state: &AppState,
+    session: &RelayLaneSession,
+    lane_id: Uuid,
+    deadline: std::time::Instant,
+) -> Result<LaneEnvelope, (StatusCode, Json<serde_json::Value>)> {
     // Subscribe before the first read: an event between the read and the
     // subscribe would otherwise sleep through the hold.
     let mut rx = state.event_tx.subscribe();
@@ -761,11 +1054,11 @@ pub(crate) async fn wait_for_task(
             && envelope.reviews.is_empty()
             && envelope.assignments.is_empty())
         {
-            return Ok(Json(envelope));
+            return Ok(envelope);
         }
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
-            return Ok(Json(empty_envelope()));
+            return Ok(empty_envelope());
         }
         // Any event (or lag, or a closed sender) re-checks; only the
         // deadline returns empty. Spurious wakes are a re-read, never wrong.
@@ -992,6 +1285,16 @@ pub(crate) async fn review(
         .await
         .map_err(err)?;
     emit_task(&state, "review", &task_id);
+    // An approved Task 0 unpacked its plan: the queue grew and the run is
+    // active — both announced beside the review itself.
+    if let Some(run_id) = out.run_activated {
+        emit_task(&state, "unpack", &task_id);
+        let _ = state.event_tx.send(StateEvent::relay_run(
+            RunChange::Activated,
+            &run_id,
+            &session.crew_id,
+        ));
+    }
     ok(serde_json::json!({
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
         "round": out.round,
@@ -2485,7 +2788,7 @@ mod tests {
         let item_id = triage_item(&h).await;
         let run_body = json!({
             "title": "Sprint 1", "goal": "Ship the queue", "item_ids": [item_id],
-            "config": {"auto_merge": false},
+            "repo_key": "github.com/o/r", "config": {"auto_merge": false},
         });
         // No active crew: nothing to run in.
         let (status, body) = call(&h, "POST", "/relay/runs", Some(run_body.clone()), None).await;
@@ -2537,7 +2840,7 @@ mod tests {
             "/relay/runs",
             Some(json!({
                 "title": "Sprint 1", "goal": "Ship", "item_ids": [item_id],
-                "config": {"auto_merge": false},
+                "repo_key": "github.com/o/r", "config": {"auto_merge": false},
             })),
             None,
         )

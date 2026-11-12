@@ -327,9 +327,8 @@ impl StateEvent {
     /// run and its crew.
     pub fn relay_run(change: RunChange, run_id: &uuid::Uuid, crew_id: &uuid::Uuid) -> Self {
         let (action, op) = match change {
-            RunChange::Created | RunChange::Activated => {
-                unimplemented!("task 2.9: sprint run events")
-            }
+            RunChange::Created => (Action::Add, "created"),
+            RunChange::Activated => (Action::Update, "activated"),
             RunChange::Completed => (Action::Update, "completed"),
             RunChange::Archived => (Action::Update, "archived"),
             RunChange::Deleted => (Action::Remove, "deleted"),
