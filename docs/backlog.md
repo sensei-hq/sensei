@@ -84,6 +84,14 @@ status — open or closed is GitHub's answer.
   main; verify the diagrams section on the shipped artifact (release checklist step 5) before closing. Also: #370
   reached main by PR only, so `LICENSE` is absent from develop — merge `origin/main` back into develop (the
   `make release` step that normally does it did not run for #370) before the release PR.
+- **develop CI red before the relay merge (the three Rust runs on `38d9b8663`, `58b66e9fa`, `d7168e0a4`; queued
+  2026-11-12).** Two independent causes, both blocking the release's "CI green": (1) `Rust / test`, step "Test the
+  rest of the workspace" (`cargo test --workspace --exclude senseid`): `crates/bootstrap/tests/sql_test_runner.rs:76`
+  `with_no_scope_every_database_is_asked_for` fails on CI and passes locally (`make test`, 2026-11-12) — environment-
+  bound (which databases the no-scope `run.sh` asks for vs what the runner has); log: run 42933662278. (2) `Rust /
+  lint`, `cargo audit`: RUSTSEC-2026-0459 on `libsqlite3-sys` 0.30.1 (CVE-2026-119375, medium 6.8; fix ≥ 0.39.0 — a
+  transitive dependency, `cargo tree -i libsqlite3-sys` names the path), plus unmaintained warnings (`number_prefix`,
+  `paste`). The merge commit `072ffec80` inherits both.
 
 - **Forge tickets from unshared repositories travel with the board (DF2, 2026-11-09, deferred).** Matches Jira. Forge tickets
   carry their repository, so a later slice could send only tickets from the workspace's shared repositories.
