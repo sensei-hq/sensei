@@ -1,7 +1,8 @@
 # Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue, cut from develop @ 598045196)
 
-**Slice:** Relay autonomous queue — phases 2 (daemon) and 3 (MCP) COMPLETE and LIVE; phase 4 (app) next. Plan:
-`docs/plan/2026-11-10-relay-autonomous-queue/{2-daemon,3-mcp,4-app}.md` (each task has ticked steps + "Executed" notes).
+**Slice:** Relay autonomous queue — phases 2 (daemon), 3 (MCP) and 4 (app) COMPLETE; phase 5 (docs + issue triage)
+then the merge to develop next. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/{README,2-daemon,3-mcp,4-app}.md`
+(each task has ticked steps + "Executed" notes).
 
 **Done:**
 - Phase 1 (DB additive) on develop @ `b9eb57ac2`; phase-1 checkpoint docs @ `598045196`.
@@ -29,13 +30,17 @@
   wait `timeout_seconds`, doc edits, session-start hook text; `cargo test -p sensei-mcp` 100 + 5 green, hook tests
   25/25; `make install-service` — the installed `sensei-mcp` lists the seven.
 
-**Remaining:** phase 4 app (`app/src/lib/relay-api.ts` types + `tryCreateRun`; `relay-state.svelte.ts` selection +
-`createSprint` + stream dispatch; `SprintBand`, `FloatingReviewRow`, `CreateSprintForm`; `RelayScreen` + `QueueRow`
-selectable; timeline labels; vitest + `bun run check`; e2e `relay-sprint`; `make install-app`), phase 5 docs + issue
-triage; merge the lane branch to develop green.
+- Phase 4 `1df058804` (red, `--no-verify`: the hook's app unit run refuses a red by design) + `b82fc174e`: sprint band,
+  create-sprint form, floating reviews, reviewing lanes, crew stream subscriber, timeline labels; `bun run check` 0
+  errors, vitest 273 files / 3418 tests, `relay-sprint` e2e PASSED on the e2e bundle (fresh `sensei_e2e` from this
+  branch's DDL via `SENSEI_DDL_DIR`); `make install-app` run after.
 
-**Next command:** in `lanes/relay-queue/app`: write the phase 4 reds (`relay-state.spec.svelte.ts`,
-`SprintBand.spec.svelte.ts`, `FloatingReviewRow.spec.svelte.ts`, `CreateSprintForm.spec.svelte.ts`), `bun run test:unit`.
+**Remaining:** phase 5 (README: docs/prd relay pages + data model + architecture + journeys synced with the shipped
+surface, `make check-doc-links`, issue triage with `gh`, backlog note), then merge `lane/relay-autonomous-queue` into
+develop green and push.
+
+**Next command:** in `lanes/relay-queue`: read `docs/plan/2026-11-10-relay-autonomous-queue/README.md` "Phase 5",
+edit the named docs, `make check-doc-links`.
 
 **Open questions (user):** none blocking. Deviations recorded per task in `2-daemon.md`.
 
