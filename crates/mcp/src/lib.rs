@@ -643,7 +643,6 @@ pub fn daemon_request_for(
                     "owned_paths",
                     "deps",
                     "resources",
-                    "reviewer_lane",
                     "lane_title",
                 ],
             );
@@ -1488,7 +1487,6 @@ pub fn handle_list_tools() -> Value {
                     ("owned_paths", "array", "Owned path globs"),
                     ("deps", "array", "Task uuids this one waits on"),
                     ("resources", "array", "Named resources (item 3 leases them)"),
-                    ("reviewer_lane", "string", "Explicit reviewer (else the broker picks at first report)"),
                     ("lane_title", "string", "Sets the assignee's objective"),
                 ]),
             tool("relay_merge_task",

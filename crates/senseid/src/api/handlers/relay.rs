@@ -238,8 +238,13 @@ pub(crate) struct AssignBody {
     deps: Vec<String>,
     #[serde(default)]
     resources: Vec<String>,
-    reviewer_lane: Option<String>,
     lane_title: Option<String>,
+}
+
+/// `POST /api/relay/tasks/{id}/claim_review` (queue cutover).
+#[derive(Debug, Deserialize)]
+pub(crate) struct ClaimReviewBody {
+    lane_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -789,12 +794,6 @@ pub(crate) async fn assign(
                 owned_paths: body.owned_paths,
                 deps,
                 resources: body.resources,
-                reviewer_lane: body
-                    .reviewer_lane
-                    .as_deref()
-                    .map(|r| parse_uuid(r, "reviewer_lane"))
-                    .transpose()
-                    .map_err(err)?,
                 lane_title: body.lane_title,
                 now: chrono::Utc::now(),
             },
@@ -858,7 +857,34 @@ pub(crate) async fn report(
     ok(serde_json::json!({
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
         "round": out.round,
-        "reviewer_lane_id": out.reviewer_lane_id.map(|id| id.to_string()),
+    }))
+}
+
+pub(crate) async fn claim_review(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(body): Json<ClaimReviewBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
+    let out = state
+        .pg
+        .relay_claim_review(session.user_id, caller, task_id, chrono::Utc::now())
+        .await
+        .map_err(err)?;
+    emit_task(&state, "claim_review", &task_id);
+    ok(serde_json::json!({
+        "task_id": out.task_id.to_string(),
+        "title": out.title,
+        "phase": serde_json::to_value(out.phase).unwrap_or(serde_json::Value::Null),
+        "round": out.round,
+        "author_lane_code": out.author_lane_code,
+        "summary": out.summary,
+        "report_md": out.report_md,
+        "branch": out.branch,
+        "files": out.files,
     }))
 }
 

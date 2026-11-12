@@ -51,7 +51,8 @@ pub enum RelayTaskPhase {
     Mockup,
 }
 
-/// `RelayTaskState`.
+/// `RelayTaskState`. `Ready` is the pool (queue cutover): minted there,
+/// unclaimed, on no lane; a claim or an assign takes it onto a lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelayTaskState {
@@ -64,6 +65,7 @@ pub enum RelayTaskState {
     Blocked,
     Interrupted,
     Cancelled,
+    Ready,
 }
 
 /// A checklist step's state (F8): `open` advances to `done`, or to
@@ -127,6 +129,8 @@ pub enum RelayActionKind {
     Reoffered,
     Compacted,
     HandedOver,
+    /// A lane took a floating review (queue cutover).
+    ReviewClaimed,
 }
 
 /// `reviewed.props.verdict`.
@@ -231,7 +235,8 @@ pub fn transition(
         | (S::InReview, E::LimitPaused)
         | (S::Rework, E::LimitPaused)
         | (S::Blocked, E::LimitPaused) => Ok(S::Interrupted),
-        (S::Interrupted, E::Reoffered) => Ok(S::Assigned),
+        // Queue cutover: a re-offer returns the task to the pool.
+        (S::Interrupted, E::Reoffered) => Ok(S::Ready),
         // F1: handover pulls from the three held states only (blocked and
         // interrupted keep their own exits; assigned/approved have nothing
         // to pull).
@@ -573,7 +578,7 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
             }
             Ok(())
         }
-        K::Started | K::Delivered | K::Read => {
+        K::Started | K::Delivered | K::Read | K::ReviewClaimed => {
             allow(&[])?;
             Ok(())
         }
@@ -690,11 +695,14 @@ grace. No other call renews the lease.\n\
 queue. GET /api/relay/tasks/wait?lane_id=<you>&timeout_ms= (MCP: \
 relay_wait_for_task) holds the connection up to 50s (default 25s) for the \
 next assignment or re-offer. Prefer wait over spinning.\n\
-- Flow: the coordinator plans and assigns; you work, then report with POST \
-/api/relay/tasks/{id}/report (MCP: relay_report_task). A partial report \
-({\"partial\": true}) records progress and keeps the task working; a full \
-report moves it to in_review and names a reviewer, whose approval lets the \
-coordinator merge. Only the coordinator merges; only the named reviewer \
+- Flow: the coordinator plans (the task waits ready in the pool) and assigns; \
+you work, then report with POST /api/relay/tasks/{id}/report (MCP: \
+relay_report_task). A partial report ({\"partial\": true}) records progress \
+and keeps the task working; a full report moves it to in_review and floats it \
+on the review queue: a live lane other than the author claims it with POST \
+/api/relay/tasks/{id}/claim_review {\"lane_id\": \"<you>\"}, reviews it with \
+POST /api/relay/tasks/{id}/review, and its approval lets the coordinator \
+merge. Only the coordinator merges; only the lane holding the review claim \
 approves.\n\
 - Caps: every short text field is at most 600 characters; longer text is \
 rejected with 422 (`text too long: 765 > 600`). Capped: message text, an \
@@ -774,29 +782,6 @@ fn guidance_family_key(value: &str) -> Option<&'static str> {
         let key: &str = key;
         normalized == key || normalized.starts_with(key)
     })
-}
-
-// ─── Reviewer pick (Q14, settled) ───
-
-/// Pick the reviewer at first report: the least-loaded live lane that isn't
-/// the author (ties break on the smallest lane id, deterministically), else
-/// the coordinator — unless the coordinator is the author, when there is no
-/// pick. `live` is (lane id, open review count) for the crew's live lanes;
-/// liveness itself is the store's read (part 2).
-pub fn pick_reviewer(
-    live: &[(uuid::Uuid, u64)],
-    author: &uuid::Uuid,
-    coordinator: &uuid::Uuid,
-) -> Option<uuid::Uuid> {
-    // Least-loaded other lane, ties to the smallest id; else the
-    // coordinator unless it is the author (Q14 settled — the fallback is
-    // unconditional; a dead fallback reviewer is the sweeper's Q17 case).
-    let mut others: Vec<&(uuid::Uuid, u64)> = live.iter().filter(|(id, _)| id != author).collect();
-    others.sort_by_key(|o| (o.1, o.0));
-    if let Some((id, _)) = others.first() {
-        return Some(*id);
-    }
-    if coordinator != author { Some(*coordinator) } else { None }
 }
 
 // ─── Store errors (part 2: every op fails closed with a code) ───
@@ -1053,7 +1038,9 @@ mod tests {
         assert_eq!(transition(S::Rework, E::LimitPaused), Ok(S::Interrupted));
         assert!(transition(S::Done, E::LimitPaused).is_err());
         assert!(transition(S::Interrupted, E::LimitPaused).is_err());
-        assert_eq!(transition(S::Interrupted, E::Reoffered), Ok(S::Assigned));
+        assert_eq!(transition(S::Interrupted, E::Reoffered), Ok(S::Ready));
+        assert_eq!(transition(S::Ready, E::Cancelled), Ok(S::Cancelled));
+        assert!(transition(S::Ready, E::Reported).is_err());
         assert!(transition(S::Working, E::Reoffered).is_err());
         assert!(transition(S::Done, E::LeaseLost).is_err());
         assert!(transition(S::Interrupted, E::LeaseLost).is_err());

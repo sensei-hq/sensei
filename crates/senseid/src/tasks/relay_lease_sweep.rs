@@ -1,7 +1,7 @@
 //! Relay lane-lease sweeper (slice 1, item 2): every pass expires lapsed
-//! lane leases, suspends their lanes' work, re-offers tasks past the grace,
-//! and re-picks dead reviewers (Q17). The `relay_lease` schedule owns the
-//! cadence (60 s seeded: the 300 s TTL over five); a missing relay schema
+//! lane leases, suspends their lanes' work, and re-offers tasks past the
+//! grace back to the pool. The `relay_lease` schedule owns the cadence
+//! (60 s seeded: the 300 s TTL over five); a missing relay schema
 //! (pre-convergence databases) warns, never fatals.
 
 use std::sync::Arc;
@@ -20,17 +20,11 @@ pub async fn tick(
 ) -> Result<(), String> {
     match sweep_at(&pg, event_tx, chrono::Utc::now()).await {
         Ok(rep) => {
-            if rep.expired_leases
-                + rep.interrupted_tasks
-                + rep.reoffered_tasks
-                + rep.repicked_reviewers
-                > 0
-            {
+            if rep.expired_leases + rep.interrupted_tasks + rep.reoffered_tasks > 0 {
                 tracing::info!(
                     expired = rep.expired_leases,
                     interrupted = rep.interrupted_tasks,
                     reoffered = rep.reoffered_tasks,
-                    repicked = rep.repicked_reviewers,
                     "relay_lease: swept",
                 );
             }
@@ -67,7 +61,6 @@ fn sweep_events(report: &RelaySweepReport) -> Vec<StateEvent> {
         let op = match change {
             RelaySweptTask::Interrupted => "interrupt",
             RelaySweptTask::Reoffered => "reoffer",
-            RelaySweptTask::ReviewerRepicked => "repick",
         };
         StateEvent::relay_task(op, task_id)
     });
@@ -96,24 +89,22 @@ mod tests {
     #[test]
     fn sweep_events_name_every_lane_and_task_change() {
         let (crew, lane) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
-        let tasks: Vec<uuid::Uuid> = (0..3).map(|_| uuid::Uuid::now_v7()).collect();
+        let tasks: Vec<uuid::Uuid> = (0..2).map(|_| uuid::Uuid::now_v7()).collect();
         let report = RelaySweepReport {
             expired_leases: 1,
             interrupted_tasks: 1,
             reoffered_tasks: 1,
-            repicked_reviewers: 1,
             expired_resource_leases: 0,
             granted_from_queue: 0,
             expired_lanes: vec![(crew, lane)],
             task_changes: vec![
                 (tasks[0], RelaySweptTask::Interrupted),
                 (tasks[1], RelaySweptTask::Reoffered),
-                (tasks[2], RelaySweptTask::ReviewerRepicked),
             ],
         };
         let events: Vec<serde_json::Value> =
             sweep_events(&report).iter().map(|e| serde_json::to_value(e).unwrap()).collect();
-        assert_eq!(events.len(), 4);
+        assert_eq!(events.len(), 3);
         assert_eq!(
             events[0],
             serde_json::to_value(StateEvent::relay_lane(
@@ -138,7 +129,6 @@ mod tests {
             expired_leases: 0,
             interrupted_tasks: 0,
             reoffered_tasks: 0,
-            repicked_reviewers: 0,
             expired_resource_leases: 0,
             granted_from_queue: 0,
             expired_lanes: vec![],

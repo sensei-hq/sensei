@@ -105,6 +105,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/relay/tasks/plan", post(relay::plan))
         .route("/api/relay/tasks/{id}/assign", post(relay::assign))
         .route("/api/relay/tasks/{id}/report", post(relay::report))
+        .route("/api/relay/tasks/{id}/claim_review", post(relay::claim_review))
         .route("/api/relay/tasks/{id}/review", post(relay::review))
         .route("/api/relay/tasks/{id}/merge", post(relay::merge))
         .route("/api/relay/tasks/{id}/cancel", post(relay::cancel))
