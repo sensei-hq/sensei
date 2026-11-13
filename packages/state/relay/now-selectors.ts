@@ -35,6 +35,9 @@ export interface RelayLaneRowView {
   when: { text: string; over: boolean };
   /** The task's view; null when the lane has no task (no link, no chevron). */
   href: string | null;
+  /** What the holder reported of its progress (#418): "2 of 5 steps done · <current step>", the
+   *  counts or the step alone; null when it reported neither — never "0 of 0". */
+  progress: { text: string; done: number; total: number } | null;
 }
 
 /** The lanes of one crew, under its repository in the main window. */
@@ -105,6 +108,15 @@ const WAITING: Record<string, string> = {
   approved: 'approved, not merged',
 };
 
+/** The holder's reported progress on its task, worded from what it reported and nothing else. */
+function progressOf(task: RelayLane['task']): RelayLaneRowView['progress'] {
+  if (!task) return null;
+  const { current_step: step, steps_done: done, steps_total: total } = task;
+  const counts = total > 0 ? `${done} of ${total} steps done` : null;
+  const text = [counts, step].filter(Boolean).join(' · ');
+  return text ? { text, done, total } : null;
+}
+
 function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayLaneRowView {
   const base = {
     id: lane.id,
@@ -112,6 +124,7 @@ function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayLaneRow
     role: lane.role,
     name: lane.title ?? lane.code,
     who: `${codename(lane)} · ${assistantLabel(lane.family, lane.version)}`,
+    progress: progressOf(lane.task),
   };
   const task = lane.task;
   const taskHref = task ? o.href(lane.crew_id, task.id) : null;

@@ -20,7 +20,8 @@ const lane = (
   when: string,
   over = false,
   href: string | null = `/relay/c/${code}`,
-): RelayLaneRowView => ({ id: code, code, role, name, who, task, state, when: { text: when, over }, href });
+  progress: RelayLaneRowView['progress'] = null,
+): RelayLaneRowView => ({ id: code, code, role, name, who, task, state, when: { text: when, over }, href, progress });
 
 /** The mockup's seven lanes, in its order. */
 export const mockupLanes = (): RelayLaneGroupView[] => [
@@ -48,6 +49,21 @@ export const mainWindowLanes = (): RelayLaneGroupView[] => [
     rows: [
       lane('L8', 'coordinator', 'Scratch planning', 'L8 · Codex', 'Nothing assigned', { label: 'idle', tone: 'neutral' }, '', false, null),
       lane('L9', 'contributor', 'Scratch parser', 'L9 · Claude Code 2.1', 'Prototype the scratch parser (impl r1)', { label: 'working', tone: 'accent' }, '12 min'),
+    ],
+  },
+];
+
+/** Step progress (#418) — not in the r1 mockup: what each holder reported, from both
+ *  counts and the step down to the step alone; the last row reported nothing. */
+export const progressLanes = (): RelayLaneGroupView[] => [
+  {
+    id: 'crew',
+    label: null,
+    rows: [
+      lane('L1', 'contributor', 'Diagrams', 'cobalt-lyra · Claude Code 2.1', 'Structure view on the shell (tests r1)', { label: 'working', tone: 'accent' }, '38 min', false, '/relay/c/L1', { text: '2 of 5 steps done · Writing the failing specs', done: 2, total: 5 }),
+      lane('L3', 'contributor', 'Activity logs', 'jade-altair · Muse', 'Activity logs (impl r2)', { label: 'working', tone: 'accent' }, '12 min', false, '/relay/c/L3', { text: '5 of 5 steps done', done: 5, total: 5 }),
+      lane('L5', 'contributor', 'Docs pages', 'coral-spica · Freebuff 1.4', 'Libraries page (docs r4)', { label: 'working', tone: 'accent' }, '4 min', false, '/relay/c/L5', { text: 'Reading the brief', done: 0, total: 0 }),
+      lane('L9', 'contributor', 'Scratch parser', 'L9 · Claude Code 2.1', 'Prototype the scratch parser (impl r1)', { label: 'working', tone: 'accent' }, '1 min'),
     ],
   },
 ];

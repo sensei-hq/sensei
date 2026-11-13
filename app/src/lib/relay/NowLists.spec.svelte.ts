@@ -33,6 +33,7 @@ const working = (over: Partial<RelayLaneRowView> = {}): RelayLaneRowView => ({
   task: 'Structure view on the shell (tests r1)',
   state: { label: 'working', tone: 'accent' },
   when: { text: '38 min', over: false },
+  progress: null,
   href: '/relay/c/t-structure',
   ...over,
 });
