@@ -59,7 +59,7 @@
       <section data-gallery={item.id} class="flex flex-col gap-2">
         <h2 class="m-0 flex flex-wrap items-baseline gap-x-3 text-sm font-medium">
           <span class="font-mono">{item.id}</span>
-          <span class="text-ink-mute font-normal">{item.note}</span>
+          <span class="text-ink-mute font-normal" data-gallery-note>{item.note}</span>
         </h2>
         <!-- The sample box is what the capture shoots: the component on the page's
              paper, at the width under review (390px phone, the row's width wide). -->

@@ -25,7 +25,7 @@ const slug = (id: string) => id.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g,
 
 test('every gallery fixture is captured across the matrix', async ({ page }) => {
   mkdirSync(OUT, { recursive: true });
-  const manifest: Record<string, Record<string, string>> = {};
+  const manifest: Record<string, { note: string; shots: Record<string, string> }> = {};
   for (const v of variants) {
     const name = `${v.width}-${v.theme}-${v.glyph}`;
     await page.setViewportSize({ width: v.width === 'phone' ? 430 : 1440, height: 1000 });
@@ -38,12 +38,13 @@ test('every gallery fixture is captured across the matrix', async ({ page }) => 
     for (let i = 0; i < n; i += 1) {
       const section = sections.nth(i);
       const id = (await section.getAttribute('data-gallery')) ?? `fixture-${i}`;
+      const note = (await section.locator('[data-gallery-note]').textContent())?.trim() ?? '';
       const dir = resolve(OUT, slug(id));
       mkdirSync(dir, { recursive: true });
       await section.scrollIntoViewIfNeeded();
       const file = resolve(dir, `${name}.png`);
       await section.locator('[data-gallery-sample]').screenshot({ path: file, animations: 'disabled' });
-      (manifest[id] ??= {})[name] = file;
+      (manifest[id] ??= { note, shots: {} }).shots[name] = file;
     }
   }
   writeFileSync(resolve(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2));
