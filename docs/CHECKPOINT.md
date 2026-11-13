@@ -13,24 +13,16 @@
 
 - LaneRow step progress (not in the mockup): selector `3ca277909`, component `9193b3fe2`, bench `008575ac0`
   (`bench-r8`; sheet artifact 3869a0ea v10). Approved by the user on desktop and phone (2026-11-13).
-- #419 slice 1 nudge: red `544a62ef7`, green `88016e584` — `POST /relay/messages` takes `nudge`+`reason`
-  (+`waiting_min`), `NUDGE_REASONS` held by the props check, history shows the nudge. Relay tests 386/386.
-- #419 slice 2 codenames: red `2cafda34b`, green `ebe37a476` — register mints `colour-star` (unique per crew),
-  served by register, now, task view `task.lane`/`lanes[]`; TS types gain it. Relay 392/392, app relay 846/846.
-- #419 slice 3 live lanes: red `45892a03c` → green `41dbad77a` (relay.now drops unregistered lanes + closed crews,
-  lane `presence`); state red `65a6facaa` → green `550a8600e` (`isNotResponding` reads it everywhere). Relay 394/394,
-  app 3603/3603, state 86/86. Live DDL NOT yet applied; install batched to the end of #419.
-- #419 slice 4 run lifecycle: red `8ef273e72` → green `5f73e0800` (draft/start/cancel, `run_state` draft, runs.crew_id
-  nullable + repo_key/workspace_id; smoke draft→start PASS on a scratch broker,
-  `coord/reports/relay-screen/daemon-419/`); state red `d507ce3da` → green `547148d6c`. Relay 399/399, app 3604/3604.
-- #419 slice 5 run list/detail: red `31b872091` → green `64e8307dc` (`relay.run_list` view, `GET /relay/runs`,
-  `GET /relay/runs/{id}`; archive schema + daily purge NOT built). Relay 401/401. Client methods wait for the screen.
+- #419 slices 1–6 green, each red-first (commits in `git log`): nudge · codenames · live lanes + presence (daemon +
+  state) · run draft/start/cancel (daemon + state; smoke draft→start PASS, `coord/reports/relay-screen/daemon-419/`) ·
+  run list/detail (`relay.run_list`; archive schema + daily purge NOT built) · person crew close (`8bf6ed91c`).
+  Relay 403/403, app 3604/3604. Live DDL NOT applied; install batched to the end of #419.
 
-**Remaining (in order):** #419 slices 6–8 (person crew close · item delete/patch + ticketed backlog · catalogue) → #426 run-journey e2e. Gaps outside
+**Remaining (in order):** #419 slices 7–8 (item delete/patch + ticketed backlog · catalogue) → #426 run-journey e2e. Gaps outside
 #418: `task.waiting`; person-message read ladder. Lane is NOT merged to develop (user's call).
 
-**Next command:** #419 slice 6 — red tests: a person route closes a crew (`POST /relay/crews/{id}/close`), its
-lanes leave Now on the stream. DB tests: `TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_screen`
+**Next command:** #419 slice 7 — red tests: `DELETE /relay/items/{id}`, `PATCH /relay/items/{id}` (position,
+title), ticketed `POST /relay/backlog` (replace the 501); each emits item events. DB tests: `TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_screen`
 (rebuild with the scratchpad `lane-template.sh` after DDL changes; other lanes restamp `sensei_test`).
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
