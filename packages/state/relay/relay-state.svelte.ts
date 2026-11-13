@@ -281,6 +281,8 @@ export class RelayState {
     if (typeof crew === 'string' && this.#summary && !this.#summary.crews.some((c) => c.id === crew)) {
       void this.reReadNow();
     }
+    // A run's items move with it (planned, unpacked) and no item event says so yet.
+    if (entity === 'run') void this.reReadQueue();
   }
 
   /** Subscribe to the source's stream; returns the teardown (call on destroy). Each open
