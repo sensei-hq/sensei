@@ -13,7 +13,8 @@ export function subscribeTaskStream(
   state: RelayTaskState,
   taskId: string,
 ): () => void {
-  const stream = relayStream(port);
+  // One task's screen hears only its crew (#418); the Now screen spans every crew.
+  const stream = relayStream(port, state.crewId);
   // Broadcast has no replay: the first open is the initial connect, later
   // opens are reconnects and re-read. (WebKit may delay `open` until the
   // first message — the covering re-read below makes that harmless.)

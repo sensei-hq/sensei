@@ -82,6 +82,10 @@ export const relayClient = (base: string): RelayApi => {
 
 // ─── Stream (F8; the dojo seam) ─────────────────────────────────────────────
 
-/** The relay socket at `base`. */
-export const relayEvents = (base: string): EventManager<RelayStreamEvent> =>
-  new EventManager<RelayStreamEvent>(`${base}/api/relay/events`, parseRelayStreamEvent);
+/** The relay socket at `base`; with `crewId`, narrowed to that crew (#418) — events naming
+ *  another crew never arrive, task and relay ops (which name none) still do. */
+export const relayEvents = (base: string, crewId?: string): EventManager<RelayStreamEvent> =>
+  new EventManager<RelayStreamEvent>(
+    `${base}/api/relay/events${crewId ? `?crew_id=${encodeURIComponent(crewId)}` : ''}`,
+    parseRelayStreamEvent,
+  );

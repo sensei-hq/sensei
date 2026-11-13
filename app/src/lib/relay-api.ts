@@ -39,4 +39,5 @@ export type RelayApiFactory = (port: number) => RelayApi;
 export const relayApi: RelayApiFactory = (port) => relayClient(apiBase(port));
 
 /** The relay socket, owned by the route that subscribes (never by shared state). */
-export const relayStream = (port: number): EventManager<RelayStreamEvent> => relayEvents(apiBase(port));
+export const relayStream = (port: number, crewId?: string): EventManager<RelayStreamEvent> =>
+  relayEvents(apiBase(port), crewId);

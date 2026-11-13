@@ -38,7 +38,8 @@ verification standard `coord/briefs/relay-component-verification.md`, the queue 
 - **Actions.** The person can do four things: answer a decision, send a message, add a manual item to the backlog,
   create a sprint. No nudge, no crew create/close, no run start/cancel, no item close/reorder, no triage-item creation
   from the UI (the route exists), and a ticketed add-to-backlog is refused with 501.
-- **Stream.** `/api/relay/events` is one unfiltered broadcast of `{action, entity, data}` where `data` carries ids only
+- **Stream.** `/api/relay/events` is one broadcast of `{action, entity, data}` (since #418, `?crew_id=` drops events
+  naming another crew; the task route uses it, the Now screen spans every crew) where `data` carries ids only
   (`{op, task_id}`, `{op, lane_id, crew_id}`, `{op, run_id, crew_id}`). The crew stream ignores `action` and every
   payload and re-reads all of Now on any lane/task/relay event; `step` is ignored on the crew screen; triage/backlog
   writes emit nothing. A checkpoint carrying `steps[]` emits a `task` event, never a `step` event.
