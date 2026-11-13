@@ -59,3 +59,13 @@ export {
   ticketLabel,
   todayLine,
 } from './relay/format.js';
+export {
+  assistantLabel,
+  toCompletedRows,
+  toLaneGroups,
+  type NowRowOptions,
+  type RelayCompletedRowView,
+  type RelayLaneGroupView,
+  type RelayLaneRowView,
+  type RelayTone,
+} from './relay/now-selectors.js';
