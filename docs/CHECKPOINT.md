@@ -5,20 +5,21 @@
 `docs/design/2026-11-12-relay-screen-rebuild.md`; issues #418–#429 (#429 = the rig).
 
 **Done:**
-- #429 rig: `app/e2e/mockup/render.mjs` (mockup per state, crops), `/gallery` (DEV-only, `src/lib/relay/gallery.ts`
-  catalogue), `bun run gallery:capture` + `gallery:sheet [--embed]` (matrix + review sheet), boot-gate exemption
-  red/green (`edc310174` → `42b509508`), sheet as a review page (`cad344c42`). Bench r0 (today's 10 components, 21
-  fixtures): `coord/reports/relay-screen/bench-r0/index.html`; published page for the user's review.
+- #429 rig: mockup renderer, `/gallery` (DEV-only), `gallery:capture` + `gallery:sheet [--embed]`. Bench r0.
+- #420 part 1: `RelayShell` + `relay-shell.ts` selector on the bench (`8a67b5c9f`); ShellScreen h-full/pinned in
+  `packages/ui`; scoped toolbar partial `relay-toolbar.css`.
+- #420 part 2: both relay pages on RelayShell; `toShellInput` counts stats from the read (red `47806b5ef`, green
+  `afd37d1d0`, pushed). Bench r1: `coord/reports/relay-screen/bench-r1/`; review sheet republished (artifact
+  3869a0ea, version 3).
 
-**Remaining (in order):** #420 Relay on the shell (ShellScreen height fix in `packages/ui`, toolbar view icon buttons
-with badges, stats band, schema filters, info band in four states — each through the bench first) → #421 state
-package → #422 Now → #423 Queue → #424 Crew → #425 Task → #426 the e2e run. Daemon #418/#419 can run in parallel.
+**Remaining (in order):** #420 schema filters via `@rokkit/forms` (FilterSchema ↔ URL narrowing) and the four-state
+e2e pins (harvest `relay-conformance.spec.ts` + `app/e2e/lib/psql.ts` from `lane/relay-screen-conformance`), then
+close #380 #383 #384 #385 #388 #394, supersede #386 → #421 state package → #422 Now → #423 Queue → #424 Crew →
+#425 Task → #426 e2e run. Daemon #418/#419 in parallel.
 
-**Next command:** in `lanes/relay-screen/app`: write the red spec for `src/lib/relay/relay-shell.ts` (state →
-ShellScreen props: toolbar views + badges, stats, info slots, footer, context) and a `RelayShell` bench fixture, then
-`bun run gallery:capture && bun run gallery:sheet --embed`.
+**Next command:** in `lanes/relay-screen/app`: `git show lane/relay-screen-conformance --stat` to harvest the
+conformance spec, then write the red spec for the schema filter band.
 
-**Open questions (user):** feedback on bench r0 (the published page) — which deltas matter first.
+**Open questions (user):** feedback on the bench sheet (r1) — which deltas matter first.
 
-**Known broken:** none on the lane. The gallery's QueueRow/DecisionRow look differs from the mockup by design today —
-that is the work.
+**Known broken:** none on the lane. The phone bench frame is fixed-height, so the stats band sits below its crop.
