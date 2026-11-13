@@ -28,5 +28,7 @@
   "LaneList/mockup": { "state": { "view": "now", "load": "loaded" }, "crop": "section[aria-label=\"Lanes\"]" },
   "CompletedList/mockup": { "state": { "view": "now", "load": "loaded" }, "crop": "section[aria-label=\"Completed today\"]" },
   "NeedsYou/mockup": { "state": { "view": "now", "load": "loaded", "pending": true }, "crop": "section[aria-label=\"Needs you\"]" },
-  "WaitList/waiting": { "state": { "view": "now", "load": "loaded", "filter": "waiting" }, "crop": "section[aria-label^=\"Waiting\"] ul" }
+  "WaitList/waiting": { "state": { "view": "now", "load": "loaded", "filter": "waiting" }, "crop": "section[aria-label^=\"Waiting\"] ul" },
+  "QueueSection/triage": { "state": { "view": "queue", "load": "loaded" }, "crop": "section[aria-label=\"Triage\"]" },
+  "QueueSection/backlog": { "state": { "view": "queue", "load": "loaded" }, "crop": "section[aria-label=\"Backlog\"]" }
 }

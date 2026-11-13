@@ -139,6 +139,8 @@ export const KANJI_ICONS = {
   '待': 'i-solar-hourglass-bold-duotone',
   // 選 (choose): Relay's triage line — items to choose for the backlog (#422).
   '選': 'i-solar-checklist-minimalistic-bold-duotone',
+  // 列 (a row, in order): Relay's backlog (#423).
+  '列': 'i-solar-list-bold-duotone',
   // The dōjō's marks (#133 D2).
   '令': 'i-solar-flag-bold-duotone',
   '件': 'i-solar-clipboard-bold-duotone',

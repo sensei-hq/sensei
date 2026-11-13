@@ -16,6 +16,8 @@ import FloatingReviewRow from './FloatingReviewRow.svelte';
 import MessageRow from './MessageRow.svelte';
 import Pill from './Pill.svelte';
 import QueueRow from './QueueRow.svelte';
+import QueueSection from './QueueSection.svelte';
+import { mockupBacklog, mockupTriage } from './queue.fixtures.js';
 import RelayChecklist from './RelayChecklist.svelte';
 import RoleMark from './RoleMark.svelte';
 import SprintBand from './SprintBand.svelte';
@@ -111,31 +113,23 @@ export const GALLERY: GalleryEntry[] = [
     size: 30,
   }),
 
-  entry('QueueRow/triage-ticket', 'a triage item from a sprint, with its ticket and the add button', QueueRow, {
-    id: 'i1',
-    title: 'Sync shows "synced" for a refused repository',
-    kind: 'bug',
-    tags: ['sprint 47', 'sensei'],
-    sprint: '47',
-    ticket: { provider: 'jira', key: 'SEN-58', url: 'https://example.atlassian.net/browse/SEN-58' },
+  entry('QueueRow/triage-ticket', 'a triage item from a sprint, with its ticket and the add button', QueueRow, { row: mockupTriage()[0], onadd: accepted }),
+  entry('QueueRow/triage-manual', 'an item the person added, no ticket', QueueRow, { row: mockupTriage()[2], onadd: accepted }),
+  entry('QueueRow/backlog', 'a backlog row: no add button, selectable for a run', QueueRow, { row: mockupBacklog()[1], selected: false, ontoggle: () => {} }),
+  entry('QueueSection/triage', 'Triage: the mockup’s three rows', QueueSection, {
+    id: 'triage',
+    label: 'Triage',
+    kanji: '選',
+    description: 'From your active sprints in Jira, Azure DevOps and GitHub, and open items you add.',
+    rows: mockupTriage(),
     onadd: accepted,
   }),
-  entry('QueueRow/triage-manual', 'an item the person added, no ticket', QueueRow, {
-    id: 'i3',
-    title: 'The pre-commit hook does not run the dōjō tests',
-    kind: 'finding',
-    tags: ['dōjō'],
-    addedByYou: true,
-    onadd: accepted,
-  }),
-  entry('QueueRow/backlog', 'a backlog row: no add button, selectable for a run', QueueRow, {
-    id: 'b1',
-    title: 'Repositories tab · org repositories read',
-    kind: 'feature',
-    tags: ['sprint 47', 'dōjō', 'D46'],
-    ticket: { provider: 'jira', key: 'SEN-61', url: 'https://example.atlassian.net/browse/SEN-61' },
-    selectable: true,
-    selected: false,
+  entry('QueueSection/backlog', 'Backlog: the mockup’s four rows, in order', QueueSection, {
+    id: 'backlog',
+    label: 'Backlog',
+    kanji: '列',
+    description: 'Your tasks, in order. The crew’s coordinator takes the top one next and puts it on a lane.',
+    rows: mockupBacklog(),
     ontoggle: () => {},
   }),
 
