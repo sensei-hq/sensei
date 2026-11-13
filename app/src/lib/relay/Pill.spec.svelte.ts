@@ -21,13 +21,22 @@ type PillProps = ComponentProps<typeof Pill>;
 function mount(props: PillProps) {
   const m = mountComponent(Pill, props);
   cleanup.push(m.destroy);
-  const root = m.container.querySelector('[data-pill]') as HTMLElement;
+  const root = m.container.querySelector('[data-relay-pill]') as HTMLElement;
   return { ...m, root };
 }
 
 const html = (props: PillProps) => mount(props).root.outerHTML;
 
 describe('Pill', () => {
+  // rokkit's theme styles its own pill through `[data-pill]` (14px, a paper-mute fill)
+  // at a specificity our tone and size utilities cannot beat: the relay pill must not
+  // carry that hook, or every tone draws as the theme's neutral pill (#422 bench).
+  it('carries its own hook, never rokkit’s data-pill', () => {
+    const { container, root } = mount({ label: 'lease lost', tone: 'danger' });
+    expect(root).not.toBeNull();
+    expect(container.querySelector('[data-pill]')).toBeNull();
+  });
+
   it('renders its label with the tone hooks', () => {
     const { root } = mount({ label: 'sprint 47', tone: 'accent' });
     expect(root.textContent).toBe('sprint 47');
