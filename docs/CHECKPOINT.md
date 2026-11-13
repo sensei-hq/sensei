@@ -9,25 +9,15 @@
 - #420 shell + filters + footer; #421 `@sensei/state` + both pages cut over; #422 Now; #423 Queue (+add-to-triage
   form, not in mockup); #424 Crew; #425 Task view (#380/#381/#388 fixed; relay hooks no longer collide with rokkit).
   Each benched vs mockup (`coord/reports/relay-screen/bench-r1..r7`), relay e2e 8/8 against the real daemon.
-- #418 slice 1/4: `GET /api/relay/events?crew_id=` drops events naming another crew (crew-less task/relay ops pass;
-  bad id 400) (`0f11b8feb`); the task route opens its crew's stream (`d72406159`). senseid relay 376/376.
+- #418 DONE on the lane (comment on the issue lists each commit): crew filter, checkpoint step events, Now lane
+  step counters, lane/run/task rows, `decision`/`message`/`item` entities; the app applies rows in place and reads
+  nothing back after its writes (`863742b5d`). Live check on a scratch broker: `coord/reports/relay-screen/daemon-418/`.
 
-- #418 slice 2/4: a checkpoint's `steps[]` arrive as step events, then the task event (`8280d0422`).
+**Remaining (in order):** LaneRow step progress (current step, n of m) benched vs mockup → #419 (draft/start/cancel
+run, nudge, catalogue) → #426 run-journey e2e. Gaps outside #418: `task.waiting`; person-message read ladder.
 
-- #418 slice 3/4: `relay.now` lane tasks carry current_step/steps_done/steps_total (`2d34546f1`).
-- #418 slice 4a: lane events carry the lane's Now row (`b15ba05da`; `relay/rows.rs`, `relay_lane_row`); the app
-  restates re-added rows, strips op/reason/lane_id, reads Now for an unseen crew (`5dba05a34`).
-
-- #418 4b: run events carry the band row (`e6e2535d7`); app re-reads the queue on a run row (`cbdea17fe`).
-- #418 4c: `decision` entity — person ask adds its Needs-you row, answer removes by id, gate ask too (`df0306482`,
-  `08de0f413`). No-fabrication hook: one reviewed R3 allow row (rows.rs, logged fallback to the task re-read).
-
-**Remaining (in order):** #418 4d `message` entity → 4e `item` entity (triage/backlog/sprint writes emit) → 4f task
-rows → 4g app stops re-reading after writes → LaneRow step progress on the bench → #419 → #426. Live check needs
-the new daemon installed (Keychain #283 caveat).
-
-**Next command:** red test: a lane's message to the person arrives as a `message` add with its Needs-you row
-(`crates/senseid/src/api/handlers/relay.rs`; `cargo test --bin senseid relay -- --test-threads=1`).
+**Next command:** relay e2e needs this branch's daemon (the app no longer reads back after writes; v0.22.0 sends no
+item events) — `make install-debug` revokes the Keychain grant (#283): user's call. Meanwhile: LaneRow progress.
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
 phone header height; merge #417 + `make release`; `font-display` no-op elsewhere in the app.
