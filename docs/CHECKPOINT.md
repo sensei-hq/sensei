@@ -12,11 +12,16 @@
   daemon (`3e6e74e52`). Covers #383 #384 #385 #394 (commented; close on merge). Evidence:
   `coord/reports/relay-screen/{bench-r1,bench-r2,e2e-r1}/`. Review sheet republished (artifact 3869a0ea v4).
 
-**Remaining (in order):** #421 `@sensei/state` → #422 Now (incl. #386 lanes table) → #423 Queue → #424 Crew →
-#425 Task (incl. #388, verify #380) → #426 e2e run. Daemon #418/#419 in parallel.
+- #421 first cut: `packages/state` (`@sensei/state`) — base class, EventManager, results, relay types/client/fixtures,
+  six entity states + composite RelayState over a RelaySource (SSE source; realtime seam + canned double), `toStats`,
+  RelayTaskState; both relay pages cut over (`f193776e4`), old state/crew-stream retired. Relay e2e 8/8 incl.
+  live-stream no-refresh specs. View row selectors land with #422–#425.
 
-**Next command:** read #421 (`gh issue view 421`) and the design note's `@sensei/state` plan (§3), then write the
-red spec for the shared relay state package.
+**Remaining (in order):** #422 Now (incl. #386 lanes table) → #423 Queue → #424 Crew → #425 Task (incl. #388,
+verify #380) → #426 e2e run. Daemon #418/#419 in parallel (row-carrying events; #421's apply is ready for them).
+
+**Next command:** read #422 (`gh issue view 422`) and the mockup's Now view; build LaneRow/CompletedRow/WaitRow/
+SectionHeading + their selectors on the bench (gallery fixture + capture vs mockup) before integrating.
 
 **Open questions (user):** feedback on the bench sheet (r2). Retire `lane/relay-screen-conformance`? (its r2/r3
 commits live only there). Header height: with the info band open, the header bands push the body below the fold
