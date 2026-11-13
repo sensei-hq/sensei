@@ -390,10 +390,23 @@ impl StateEvent {
         }
     }
 
+    /// A queue row changed (#418): `Add` brings its row, `Remove` names the
+    /// id the screen keys it by. `stage` is the half it is in (or left).
+    pub fn relay_item(added: bool, op: &str, stage: &str, id: &str) -> Self {
+        Self {
+            action: if added { Action::Add } else { Action::Remove },
+            entity: "item".into(),
+            data: serde_json::json!({ "op": op, "id": id, "stage": stage }),
+        }
+    }
+
     /// The relay family's entities, the only ones `/api/relay/events`
     /// forwards (workspace/folder/activity ride the scan socket).
     pub fn is_relay_family(entity: &str) -> bool {
-        matches!(entity, "relay" | "task" | "step" | "lane" | "run" | "decision" | "message")
+        matches!(
+            entity,
+            "relay" | "task" | "step" | "lane" | "run" | "decision" | "message" | "item"
+        )
     }
 
     /// Whether a stream narrowed to `crew` carries this event: no filter
@@ -599,7 +612,7 @@ mod tests {
     fn relay_family_forwards_lane_and_run() {
         // `/api/relay/events` forwards only the relay family: the new
         // entities must ride it, the scan entities must not.
-        for entity in ["relay", "task", "step", "lane", "run", "decision", "message"] {
+        for entity in ["relay", "task", "step", "lane", "run", "decision", "message", "item"] {
             assert!(StateEvent::is_relay_family(entity), "{entity}");
         }
         for entity in ["workspace", "folder", "activity", "assistant"] {

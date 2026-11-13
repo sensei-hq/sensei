@@ -69,7 +69,9 @@ use crate::db::pg_store::relay::{
     RelayReviewInput, RelayStepInput, RelayStepOutput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
-use crate::relay::rows::{decision_asked, message_sent, with_lane_row, with_run_row};
+use crate::relay::rows::{
+    decision_asked, item_added, item_leaving, message_sent, with_lane_row, with_run_row,
+};
 use crate::relay::{
     DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole,
     RelayStepState, RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict,
@@ -576,6 +578,11 @@ pub(crate) async fn create_run(
         .map(|id| parse_uuid(id, "item_ids[]"))
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
+    // Read before the write: each remove names the id the screen holds.
+    let mut leaving = Vec::with_capacity(item_ids.len());
+    for item_id in &item_ids {
+        leaving.extend(item_leaving(&state.pg, item_id, "planned").await);
+    }
     let config = match body.config {
         Some(config) => serde_json::to_value(config)
             .map_err(|e| err(RelayError::Internal(format!("run config: {e}"))))?,
@@ -609,6 +616,10 @@ pub(crate) async fn create_run(
         .await
         .map_err(err)?;
     emit_run(&state, RunChange::Created, &out.run_id, &out.crew_id).await;
+    // The picked items leave the queue (#418).
+    for event in leaving {
+        let _ = state.event_tx.send(event);
+    }
     emit_task(&state, "plan", &out.planning_task_id);
     Ok((
         StatusCode::CREATED,
@@ -1717,6 +1728,10 @@ pub(crate) async fn triage(
         )
         .await
         .map_err(err)?;
+    // The queue gains the row (#418).
+    if let Some(event) = item_added(&state.pg, &id, "triaged").await {
+        let _ = state.event_tx.send(event);
+    }
     ok(serde_json::json!({ "item_id": id.to_string() }))
 }
 
@@ -1728,15 +1743,23 @@ pub(crate) async fn backlog(
     let surface = RelaySurface::Desktop;
     match (body.item_id, body.ticket_provider, body.ticket_key) {
         (Some(item_id), None, None) => {
+            let item_id = parse_uuid(&item_id, "item_id").map_err(err)?;
+            // Read before the write: the remove names the id the screen holds.
+            let leaving = item_leaving(&state.pg, &item_id, "backlogged").await;
             let id = state
                 .pg
                 .relay_backlog_add(
                     user_id,
                     RelayCaller::Person { surface },
-                    parse_uuid(&item_id, "item_id").map_err(err)?,
+                    item_id,
                 )
                 .await
                 .map_err(err)?;
+            // Out of triage, into the backlog with its row (#418).
+            let added = item_added(&state.pg, &id, "backlogged").await;
+            for event in leaving.into_iter().chain(added) {
+                let _ = state.event_tx.send(event);
+            }
             ok(serde_json::json!({ "item_id": id.to_string() }))
         }
         (None, Some(_), Some(_)) => Err(err(RelayError::NotImplemented(

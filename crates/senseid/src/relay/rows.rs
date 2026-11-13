@@ -71,3 +71,32 @@ pub async fn message_sent(pg: &PgStore, message_id: &Uuid, crew_id: &Uuid) -> Op
         }
     }
 }
+
+/// The item's queue row as an `add` (#418); `None` when it is not in the
+/// queue or could not be read (logged) — the screen's own read covers it.
+pub async fn item_added(pg: &PgStore, item_id: &Uuid, op: &str) -> Option<StateEvent> {
+    match pg.relay_item_row(*item_id).await {
+        Ok(Some((stage, id, row))) => {
+            Some(StateEvent::relay_item(true, op, stage.word(), &id).with_row(row))
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!(item_id = %item_id, error = ?e, "relay stream: item row unread; no item event");
+            None
+        }
+    }
+}
+
+/// The `remove` for an item about to leave where it stands, read before the
+/// write so it names the id the screen holds (a ticketed triage row is keyed
+/// by its ticket). `None` when it is not in the queue or could not be read.
+pub async fn item_leaving(pg: &PgStore, item_id: &Uuid, op: &str) -> Option<StateEvent> {
+    match pg.relay_item_row(*item_id).await {
+        Ok(Some((stage, id, _))) => Some(StateEvent::relay_item(false, op, stage.word(), &id)),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!(item_id = %item_id, error = ?e, "relay stream: item row unread; no item event");
+            None
+        }
+    }
+}

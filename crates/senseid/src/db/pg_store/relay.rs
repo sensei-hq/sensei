@@ -1250,6 +1250,101 @@ fn now_person_message_json(
     })
 }
 
+/// The columns one queue row is shaped from (`relay.items`).
+type QueueItemCols = (
+    Uuid,
+    Option<String>,
+    Option<Uuid>,
+    String,
+    String,
+    Option<Vec<String>>,
+    Option<Uuid>,
+    Option<String>,
+    Option<String>,
+    Option<i32>,
+);
+
+/// Where a queue row stands: the two halves of `/relay/queue`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueStage {
+    Triage,
+    Backlog,
+}
+
+impl QueueStage {
+    pub fn word(self) -> &'static str {
+        match self {
+            QueueStage::Triage => "triage",
+            QueueStage::Backlog => "backlog",
+        }
+    }
+}
+
+/// One queue row as `/relay/queue` shows it, and the id the screen keys it
+/// by. A triage row has exactly one identity — a manual item by its id, a
+/// ticketed one by its ticket (`provider:key`, slice 2's tracker rows have
+/// no item at all); a backlog row is always an item.
+fn queue_item_json(
+    stage: QueueStage,
+    (id, repo_key, workspace_id, kind, title, tags, added_by, provider, key, position): QueueItemCols,
+) -> Result<(String, serde_json::Value), RelayError> {
+    let ticket = match (&provider, &key) {
+        (Some(provider), Some(key)) => Some(serde_json::json!({
+            "provider": word(parse_provider(provider)?),
+            "key": key,
+            "url": serde_json::Value::Null,
+        })),
+        _ => None,
+    };
+    let kind = word(parse_item_kind(&kind)?);
+    let workspace_id = workspace_id.map(|id| id.to_string());
+    let tags = tags.unwrap_or_default();
+    Ok(match stage {
+        QueueStage::Triage => {
+            let (item_id, screen_id) = match &ticket {
+                Some(t) => (
+                    serde_json::Value::Null,
+                    format!(
+                        "{}:{}",
+                        t["provider"].as_str().unwrap_or_default(),
+                        key.unwrap_or_default()
+                    ),
+                ),
+                None => (serde_json::json!(id.to_string()), id.to_string()),
+            };
+            (
+                screen_id,
+                serde_json::json!({
+                    "repo_key": repo_key,
+                    "workspace_id": workspace_id,
+                    "kind": kind,
+                    "title": title,
+                    "tags": tags,
+                    "sprint": serde_json::Value::Null,
+                    "added_by_you": added_by.is_none(),
+                    "item_id": item_id,
+                    "ticket": ticket.unwrap_or(serde_json::Value::Null),
+                }),
+            )
+        }
+        QueueStage::Backlog => (
+            id.to_string(),
+            serde_json::json!({
+                "item_id": id.to_string(),
+                "repo_key": repo_key,
+                "workspace_id": workspace_id,
+                "kind": kind,
+                "title": title,
+                "tags": tags,
+                "sprint": serde_json::Value::Null,
+                "ticket": ticket.unwrap_or(serde_json::Value::Null),
+                "added_by_you": added_by.is_none(),
+                "position": position.unwrap_or(i32::MAX),
+            }),
+        ),
+    })
+}
+
 /// One open run as the sprint band shows it: the `relay.now`
 /// `sprint_summary` payload with its crew. `relay_now` lists them;
 /// `relay_run_row` reads one for the stream (#418).
@@ -6287,6 +6382,61 @@ impl PgStore {
         Ok(row.map(|(id, crew_id, payload)| now_person_message_json(&id, &crew_id, &payload)))
     }
 
+    /// One item's queue row for the stream (#418): where it stands, the id
+    /// the screen keys it by, and the row; `None` once it left the queue
+    /// (planned, done) or never was.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
+    pub async fn relay_item_row(
+        &self,
+        item_id: Uuid,
+    ) -> Result<Option<(QueueStage, String, serde_json::Value)>, RelayError> {
+        let row: Option<(
+            String,
+            Uuid,
+            Option<String>,
+            Option<Uuid>,
+            String,
+            String,
+            Option<Vec<String>>,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+        )> = sqlx_core::query_as::query_as(
+            "select state::text, id, repo_key, workspace_id, kind::text, title, tags, added_by,
+                        ticket_provider, ticket_key, position
+                 from relay.items where id = $1 and state in ('triage', 'backlog')",
+        )
+        .bind(item_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((
+            state,
+            id,
+            repo_key,
+            workspace_id,
+            kind,
+            title,
+            tags,
+            added_by,
+            provider,
+            key,
+            position,
+        )) = row
+        else {
+            return Ok(None);
+        };
+        let stage = if state == "triage" { QueueStage::Triage } else { QueueStage::Backlog };
+        let position = if stage == QueueStage::Triage { None } else { position };
+        let cols =
+            (id, repo_key, workspace_id, kind, title, tags, added_by, provider, key, position);
+        let (screen_id, row) = queue_item_json(stage, cols)?;
+        Ok(Some((stage, screen_id, row)))
+    }
+
     /// One open run's band row, for the stream (#418); `None` once the run
     /// left the band (completed, archived, deleted) or was never there.
     pub async fn relay_run_row(
@@ -6706,19 +6856,9 @@ impl PgStore {
         filter: RelayReadFilter,
     ) -> Result<serde_json::Value, RelayError> {
         // Items are crew-global: the filter narrows their own columns.
-        let triage: Vec<(
-            Uuid,
-            Option<String>,
-            Option<Uuid>,
-            String,
-            String,
-            Option<Vec<String>>,
-            Option<Uuid>,
-            Option<String>,
-            Option<String>,
-        )> = sqlx_core::query_as::query_as(
+        let triage: Vec<QueueItemCols> = sqlx_core::query_as::query_as(
             "select id, repo_key, workspace_id, kind::text, title, tags, added_by,
-                    ticket_provider, ticket_key
+                    ticket_provider, ticket_key, null::int as position
              from relay.items
              where user_id = $1 and state = 'triage'
                and ($2::text is null or repo_key = $2)
@@ -6731,46 +6871,11 @@ impl PgStore {
         .fetch_all(self.pool())
         .await
         .map_err(db_err)?;
-        let mut triage_json = Vec::with_capacity(triage.len());
-        for (id, repo_key, workspace_id, kind, title, tags, added_by, provider, key) in triage {
-            // Exactly one identity: manual items by id, ticketed rows by
-            // ticket (slice 2's tracker pull shows ticketed rows with no
-            // item at all; a ticketed ITEM reads by its ticket too).
-            let (item_id, ticket) = match (provider, key) {
-                (Some(provider), Some(key)) => (
-                    serde_json::Value::Null,
-                    serde_json::json!({
-                        "provider": word(parse_provider(&provider)?),
-                        "key": key,
-                        "url": serde_json::Value::Null,
-                    }),
-                ),
-                _ => (serde_json::json!(id.to_string()), serde_json::Value::Null),
-            };
-            triage_json.push(serde_json::json!({
-                "repo_key": repo_key,
-                "workspace_id": workspace_id.map(|id| id.to_string()),
-                "kind": word(parse_item_kind(&kind)?),
-                "title": title,
-                "tags": tags.unwrap_or_default(),
-                "sprint": serde_json::Value::Null,
-                "added_by_you": added_by.is_none(),
-                "item_id": item_id,
-                "ticket": ticket,
-            }));
-        }
-        let backlog: Vec<(
-            Uuid,
-            Option<String>,
-            Option<Uuid>,
-            String,
-            String,
-            Option<Vec<String>>,
-            Option<Uuid>,
-            Option<String>,
-            Option<String>,
-            Option<i32>,
-        )> = sqlx_core::query_as::query_as(
+        let triage_json = triage
+            .into_iter()
+            .map(|cols| queue_item_json(QueueStage::Triage, cols).map(|(_, row)| row))
+            .collect::<Result<Vec<_>, _>>()?;
+        let backlog: Vec<QueueItemCols> = sqlx_core::query_as::query_as(
             "select id, repo_key, workspace_id, kind::text, title, tags, added_by,
                     ticket_provider, ticket_key, position
              from relay.items
@@ -6785,31 +6890,10 @@ impl PgStore {
         .fetch_all(self.pool())
         .await
         .map_err(db_err)?;
-        let mut backlog_json = Vec::with_capacity(backlog.len());
-        for (id, repo_key, workspace_id, kind, title, tags, added_by, provider, key, position) in
-            backlog
-        {
-            let ticket = match (provider, key) {
-                (Some(provider), Some(key)) => serde_json::json!({
-                    "provider": word(parse_provider(&provider)?),
-                    "key": key,
-                    "url": serde_json::Value::Null,
-                }),
-                _ => serde_json::Value::Null,
-            };
-            backlog_json.push(serde_json::json!({
-                "item_id": id.to_string(),
-                "repo_key": repo_key,
-                "workspace_id": workspace_id.map(|id| id.to_string()),
-                "kind": word(parse_item_kind(&kind)?),
-                "title": title,
-                "tags": tags.unwrap_or_default(),
-                "sprint": serde_json::Value::Null,
-                "ticket": ticket,
-                "added_by_you": added_by.is_none(),
-                "position": position.unwrap_or(i32::MAX),
-            }));
-        }
+        let backlog_json = backlog
+            .into_iter()
+            .map(|cols| queue_item_json(QueueStage::Backlog, cols).map(|(_, row)| row))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(serde_json::json!({"triage": triage_json, "backlog": backlog_json}))
     }
 
