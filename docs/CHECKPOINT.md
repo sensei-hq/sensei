@@ -23,14 +23,15 @@
 - #419 slice 4 run lifecycle: red `8ef273e72` → green `5f73e0800` (draft/start/cancel, `run_state` draft, runs.crew_id
   nullable + repo_key/workspace_id; smoke draft→start PASS on a scratch broker,
   `coord/reports/relay-screen/daemon-419/`); state red `d507ce3da` → green `547148d6c`. Relay 399/399, app 3604/3604.
+- #419 slice 5 run list/detail: red `31b872091` → green `64e8307dc` (`relay.run_list` view, `GET /relay/runs`,
+  `GET /relay/runs/{id}`; archive schema + daily purge NOT built). Relay 401/401. Client methods wait for the screen.
 
-**Remaining (in order):** #419 slices 5–8 (run list/detail · person crew close · item delete/patch + ticketed backlog · catalogue) → #426 run-journey e2e. Gaps outside
+**Remaining (in order):** #419 slices 6–8 (person crew close · item delete/patch + ticketed backlog · catalogue) → #426 run-journey e2e. Gaps outside
 #418: `task.waiting`; person-message read ladder. Lane is NOT merged to develop (user's call).
 
-**Next command:** #419 slice 5 — red tests: `GET /relay/runs` (active + archived with `delete_after`) and
-`GET /relay/runs/{id}` (tasks by state with lane, step counters; members). DB tests:
-`TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_screen`; rebuild it with the scratchpad
-`lane-template.sh` after DDL changes (other lanes restamp `sensei_test`).
+**Next command:** #419 slice 6 — red tests: a person route closes a crew (`POST /relay/crews/{id}/close`), its
+lanes leave Now on the stream. DB tests: `TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_screen`
+(rebuild with the scratchpad `lane-template.sh` after DDL changes; other lanes restamp `sensei_test`).
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
 phone header height; merge #417 + `make release`; `font-display` no-op elsewhere in the app.
