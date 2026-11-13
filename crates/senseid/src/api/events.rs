@@ -319,7 +319,23 @@ impl StateEvent {
         if let Some(reason) = reason {
             data["reason"] = serde_json::to_value(reason).unwrap();
         }
+        // A removal names the row by its id: the screen drops it in place (#418).
+        if matches!(action, Action::Remove) {
+            data["id"] = serde_json::Value::String(lane_id.to_string());
+        }
         Self { action, entity: "lane".into(), data }
+    }
+
+    /// The event with its entity's row (#418): the row's fields join the
+    /// data, never replacing what the event already says (`op`, `reason`).
+    /// A row that is not an object adds nothing.
+    pub fn with_row(mut self, row: serde_json::Value) -> Self {
+        if let (Some(data), serde_json::Value::Object(row)) = (self.data.as_object_mut(), row) {
+            for (key, value) in row {
+                data.entry(key).or_insert(value);
+            }
+        }
+        self
     }
 
     /// A run reached a lifecycle point (CONTRACT §3k). Creation adds it;
@@ -510,6 +526,9 @@ mod tests {
             });
             if let Some(reason) = reason {
                 data["reason"] = serde_json::json!(reason);
+            }
+            if action == "remove" {
+                data["id"] = serde_json::json!(lane.to_string());
             }
             assert_eq!(
                 json,

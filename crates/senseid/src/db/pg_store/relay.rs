@@ -1189,6 +1189,42 @@ fn next_code(codes: &[String]) -> Option<String> {
 
 // ─── The store ───
 
+/// One lane as the Now screen shows it: the `relay.now` lane payload,
+/// shaped. `relay_now` lists them; `relay_lane_row` reads one for the
+/// stream (#418), so the event and the read never disagree.
+fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serde_json::Value {
+    let lease_state = payload
+        .get("lease")
+        .and_then(|l| l.get("state"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("queued");
+    let lease_expires_at = payload
+        .get("lease")
+        .and_then(|l| l.get("expires_at"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::json!({
+        "id": id.to_string(),
+        "crew_id": crew_id.to_string(),
+        "code": payload.get("code"),
+        "title": payload.get("title"),
+        "role": payload.get("role"),
+        "family": payload.get("family"),
+        "version": payload.get("version"),
+        "model": payload.get("model"),
+        "lease_state": lease_state,
+        "lease_expires_at": lease_expires_at,
+        "limit_scope": payload.get("limit_scope"),
+        "limit_resumes_at": payload.get("limit_resumes_at"),
+        "limit_note": payload.get("limit_note"),
+        "task": payload.get("task"),
+        // Queue cutover: the name the assistant offered and the
+        // review the lane holds (both the view's keys).
+        "suggested_name": payload.get("suggested_name"),
+        "reviewing": payload.get("reviewing"),
+    })
+}
+
 impl PgStore {
     /// Mint-or-join a lane (Q6). Mints the crew, the lane (next free code),
     /// its lease (granted, `now` + 300 s) and the lane token (returned raw
@@ -6123,6 +6159,43 @@ impl PgStore {
         .map_err(db_err)
     }
 
+    /// A transaction in the Mac's zone, so timestamps the views render read
+    /// as the screen's day. Fail-closed: without the zone the day is undefined.
+    async fn begin_local_zone(
+        &self,
+    ) -> Result<sqlx_core::transaction::Transaction<'static, sqlx_postgres::Postgres>, RelayError>
+    {
+        let tz = crate::relay::system_timezone().map_err(RelayError::Internal)?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // `system_timezone` allows `[A-Za-z0-9_/+-]` only, so the name cannot
+        // break out of the quotes (`SET` takes no binds).
+        sqlx_core::query::query(&format!("SET LOCAL TIME ZONE '{tz}'"))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        Ok(tx)
+    }
+
+    /// One lane's Now row, for the stream (#418); `None` when the lane is
+    /// not there. Keyed by the lane alone: the relay socket is this
+    /// machine's, like every relay event on it.
+    pub async fn relay_lane_row(
+        &self,
+        lane_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, RelayError> {
+        let mut tx = self.begin_local_zone().await?;
+        let row: Option<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.id, v.crew_id, v.payload from relay.now v
+             where v.section = 'lane' and v.id = $1",
+        )
+        .bind(lane_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(row.map(|(id, crew_id, payload)| now_lane_json(&id, &crew_id, &payload)))
+    }
+
     /// `RelayNow`, exactly per `relay-api.ts` — crews, facets, lanes,
     /// decisions, triage, today's completions, today counts, resources.
     // Wide rows are inherent to the reads: one round trip per shape,
@@ -6136,15 +6209,7 @@ impl PgStore {
         // The completed window is the session-local day, and this is the one
         // relay read with a day window — so the transaction sets the Mac zone
         // locally (the pool stays UTC for metrics; L0 ruling 2026-11-06).
-        // Fail-closed: without the zone the window is undefined.
-        let tz = crate::relay::system_timezone().map_err(RelayError::Internal)?;
-        let mut tx = self.pool().begin().await.map_err(db_err)?;
-        // `system_timezone` allows `[A-Za-z0-9_/+-]` only, so the name cannot
-        // break out of the quotes (`SET` takes no binds).
-        sqlx_core::query::query(&format!("SET LOCAL TIME ZONE '{tz}'"))
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+        let mut tx = self.begin_local_zone().await?;
         // The filter selects crews; lanes/decisions/completed/today follow
         // theirs. Facets stay global (the band's choices, not its result).
         let crews: Vec<(
@@ -6221,38 +6286,7 @@ impl PgStore {
         });
         let lanes_json: Vec<serde_json::Value> = lanes
             .iter()
-            .map(|(id, crew_id, payload)| {
-                let lease_state = payload
-                    .get("lease")
-                    .and_then(|l| l.get("state"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("queued");
-                let lease_expires_at = payload
-                    .get("lease")
-                    .and_then(|l| l.get("expires_at"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                serde_json::json!({
-                    "id": id.to_string(),
-                    "crew_id": crew_id.to_string(),
-                    "code": payload.get("code"),
-                    "title": payload.get("title"),
-                    "role": payload.get("role"),
-                    "family": payload.get("family"),
-                    "version": payload.get("version"),
-                    "model": payload.get("model"),
-                    "lease_state": lease_state,
-                    "lease_expires_at": lease_expires_at,
-                    "limit_scope": payload.get("limit_scope"),
-                    "limit_resumes_at": payload.get("limit_resumes_at"),
-                    "limit_note": payload.get("limit_note"),
-                    "task": payload.get("task"),
-                    // Queue cutover: the name the assistant offered and the
-                    // review the lane holds (both the view's keys).
-                    "suggested_name": payload.get("suggested_name"),
-                    "reviewing": payload.get("reviewing"),
-                })
-            })
+            .map(|(id, crew_id, payload)| now_lane_json(id, crew_id, payload))
             .collect();
         // The sprint band: one row per open run with its counts, in the
         // order the person created them (the view's `sprint_summary`).

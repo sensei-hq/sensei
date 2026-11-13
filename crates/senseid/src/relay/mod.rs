@@ -16,6 +16,7 @@
 pub mod envelope;
 pub mod gate;
 pub mod plan;
+pub mod rows;
 
 use serde::{Deserialize, Serialize};
 

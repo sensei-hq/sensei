@@ -69,6 +69,7 @@ use crate::db::pg_store::relay::{
     RelayReviewInput, RelayStepInput, RelayStepOutput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
+use crate::relay::rows::with_lane_row;
 use crate::relay::{
     DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole,
     RelayStepState, RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict,
@@ -168,8 +169,12 @@ fn emit_step(state: &AppState, task_id: &Uuid, out: &RelayStepOutput) {
 }
 
 /// A lane's crew membership changed: the Lanes section follows.
-fn emit_lane(state: &AppState, change: LaneChange, lane_id: &Uuid, crew_id: &Uuid) {
-    let _ = state.event_tx.send(StateEvent::relay_lane(change, lane_id, crew_id));
+/// The event carries the lane's Now row (#418); a removal carries its id.
+async fn emit_lane(state: &AppState, change: LaneChange, lane_id: &Uuid, crew_id: &Uuid) {
+    let removed = matches!(change, LaneChange::Unregistered);
+    let event = StateEvent::relay_lane(change, lane_id, crew_id);
+    let event = if removed { event } else { with_lane_row(&state.pg, event, lane_id).await };
+    let _ = state.event_tx.send(event);
 }
 
 // ─── Wire bodies ───
@@ -514,7 +519,8 @@ pub(crate) async fn limit_resume(
             LaneChange::Resumed(LaneReason::LimitPauseEnded),
             &lane_id,
             &session.crew_id,
-        );
+        )
+        .await;
     }
     ok(serde_json::json!({ "resumed": resumed }))
 }
@@ -856,7 +862,7 @@ pub(crate) async fn register(
         )
         .await
         .map_err(err)?;
-    emit_lane(&state, LaneChange::Registered, &out.lane_id, &out.crew_id);
+    emit_lane(&state, LaneChange::Registered, &out.lane_id, &out.crew_id).await;
     ok(serde_json::json!({
         "lane_token": out.lane_token,
         "lane_id": out.lane_id.to_string(),
@@ -941,7 +947,8 @@ pub(crate) async fn heartbeat(
             LaneChange::Resumed(LaneReason::LeaseRegranted),
             &lane_id,
             &session.crew_id,
-        );
+        )
+        .await;
     }
     ok(serde_json::json!({ "expires_at": iso(expires_at) }))
 }
@@ -962,7 +969,7 @@ pub(crate) async fn reregister(
         .relay_reregister(parse_uuid(&body.lane_id, "lane_id").map_err(err)?, chrono::Utc::now())
         .await
         .map_err(err)?;
-    emit_lane(&state, LaneChange::Reregistered, &out.lane_id, &out.crew_id);
+    emit_lane(&state, LaneChange::Reregistered, &out.lane_id, &out.crew_id).await;
     ok(serde_json::json!({
         "lane_id": out.lane_id.to_string(),
         "crew_id": out.crew_id.to_string(),
@@ -980,7 +987,7 @@ pub(crate) async fn unregister(
     let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let out = state.pg.relay_unregister(lane_id).await.map_err(err)?;
     emit(&state, "unregister");
-    emit_lane(&state, LaneChange::Unregistered, &lane_id, &session.crew_id);
+    emit_lane(&state, LaneChange::Unregistered, &lane_id, &session.crew_id).await;
     if let Some(task_id) = out.interrupted {
         emit_task(&state, "interrupt", &task_id);
     }
@@ -1017,7 +1024,8 @@ pub(crate) async fn limit_pause(
         )
         .await
         .map_err(err)?;
-    emit_lane(&state, LaneChange::Suspended(LaneReason::LimitPause), &lane_id, &session.crew_id);
+    emit_lane(&state, LaneChange::Suspended(LaneReason::LimitPause), &lane_id, &session.crew_id)
+        .await;
     ok(serde_json::json!({
         "scope": out.scope,
         "resumes_at": out.resumes_at.map(iso),

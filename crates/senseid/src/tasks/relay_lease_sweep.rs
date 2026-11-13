@@ -17,6 +17,7 @@ use crate::db::pg_store::PgStore;
 use crate::db::pg_store::relay::{RelaySweepReport, RelaySweptTask};
 use crate::relay::RelayError;
 use crate::relay::gate::GateRunner;
+use crate::relay::rows::with_lane_row;
 
 /// One pass at wall-clock now.
 pub async fn tick<G: GateRunner>(
@@ -101,6 +102,13 @@ pub async fn sweep_at(
 ) -> Result<RelaySweepReport, RelayError> {
     let report = pg.relay_sweep_leases(now).await?;
     for event in sweep_events(&report) {
+        // A lane event carries the lane's Now row (#418).
+        let lane =
+            event.data.get("lane_id").and_then(|v| v.as_str()).and_then(|id| id.parse().ok());
+        let event = match (event.entity.as_str(), lane) {
+            ("lane", Some(lane_id)) => with_lane_row(pg, event, &lane_id).await,
+            _ => event,
+        };
         let _ = event_tx.send(event);
     }
     Ok(report)
