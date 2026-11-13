@@ -526,8 +526,10 @@ describe('Relay · Queue', () => {
     const [ticketed, manual] = triageRows(c);
 
     expect(text(ticketed)).toContain('Sync shows "synced" for a refused repository');
-    const tags = all(ticketed, '[data-tag]').map(text);
+    // The kind first, as a toned pill, then the tags (#423).
+    const tags = all(ticketed, '[data-queue-pills] > *').map(text);
     expect(tags[0]).toBe('bug');
+    expect(one(ticketed, '[data-queue-pills] [data-relay-pill]')?.getAttribute('data-tone')).toBe('danger');
     expect(tags).toContain('sprint 47');
     const ticket = need(one(ticketed, 'a[data-ticket]'), 'a[data-ticket]');
     expect(ticket.getAttribute('href')).toBe('https://acme.atlassian.net/browse/SEN-58');
@@ -536,7 +538,7 @@ describe('Relay · Queue', () => {
       'Add to backlog: Sync shows "synced" for a refused repository',
     );
 
-    expect(all(manual, '[data-tag]').map(text)).toContain('added by you');
+    expect(all(manual, '[data-queue-pills] > *').map(text)).toContain('added by you');
     expect(one(manual, 'a[data-ticket]')).toBeNull();
     expect(one(manual, '[data-add-to-backlog]')).not.toBeNull();
   });
@@ -1005,18 +1007,19 @@ describe('Relay — rows at phone width', () => {
     expect(text(one(row, '[data-part="when"]'))).toBe('38 min');
   });
 
-  it('a queue row keeps its buttons beside the title; the ticket button can drop the provider', async () => {
+  it('a queue row: the title over its pills, the ticket pill and + beside it; on a phone the ticket drops its provider (#423)', async () => {
     const { c } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
     const [row] = triageRows(c);
-    const line1 = need(one(row, '[data-row-line="1"]'), '[data-row-line="1"]');
-    expect(one(line1, '[data-queue-title]')).not.toBeNull();
-    expect(one(line1, 'a[data-ticket]')).not.toBeNull();
-    expect(one(line1, '[data-add-to-backlog]')).not.toBeNull();
+    expect(one(row, '[data-queue-title]')).not.toBeNull();
+    expect(one(row, '[data-queue-pills]')).not.toBeNull();
+    expect(one(row, 'a[data-ticket]')).not.toBeNull();
+    expect(one(row, '[data-add-to-backlog]')).not.toBeNull();
     const provider = need(one(row, '[data-ticket-provider]'), '[data-ticket-provider]');
     expect(text(provider)).toBe('Jira');
-    expect(provider.className).toMatch(/(^|\s)(max-sm:hidden|hidden sm:inline(-flex)?)(\s|$)/);
+    expect(provider.className).toMatch(/(^|\s)hidden md:inline(\s|$)/);
+    expect(text(one(row, '[data-ticket-key]'))).toBe('SEN-58');
   });
 });
 
