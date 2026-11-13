@@ -119,6 +119,14 @@ describe('Relay · task — the header', () => {
     expect(one(c, '[data-screen="relay"]')).not.toBeNull();
   });
 
+  // #380: the shell fills its container only when nothing wraps it; a bare wrapper
+  // div grows with the content and the window clips it, so the page cannot scroll.
+  it('the e2e anchor is the shell itself, with no wrapper: the body scrolls (#380)', async () => {
+    const { c } = await open();
+    const anchor = need(one(c, '[data-screen="relay"]'), 'the relay anchor');
+    expect(anchor.hasAttribute('data-screen-shell'), 'the anchor is the shell').toBe(true);
+  });
+
   it('back to Relay, the title, its state, and the ticket button (provider + key, external)', async () => {
     const { c } = await open({ workspace: 'w2' });
     expect(one(c, 'a[data-back]')?.getAttribute('href')).toBe('/workspace/w2/relay');

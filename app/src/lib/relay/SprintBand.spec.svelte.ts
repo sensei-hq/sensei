@@ -39,7 +39,7 @@ describe('SprintBand', () => {
 
   it('progress is done over total', () => {
     const { root } = mount({ run: F.sprint() });
-    const progress = root.querySelector('[data-progress]') as HTMLElement;
+    const progress = root.querySelector('[data-relay-progress]') as HTMLElement;
     expect(progress.dataset.done).toBe('2');
     expect(progress.dataset.total).toBe('6');
     expect(progress.dataset.fraction).toBe('0.33');
@@ -52,7 +52,7 @@ describe('SprintBand', () => {
     });
     const state = root.querySelector('[data-state]') as HTMLElement;
     expect(state.textContent?.trim()).toBe('planning · Task 0 in the queue');
-    expect((root.querySelector('[data-progress]') as HTMLElement).dataset.fraction).toBe('0');
+    expect((root.querySelector('[data-relay-progress]') as HTMLElement).dataset.fraction).toBe('0');
   });
 
   it('zero tasks reads planning, never a division', () => {
@@ -60,7 +60,7 @@ describe('SprintBand', () => {
       run: F.sprint({ state: 'planning', total_tasks: 0, ready_tasks: 0, working_tasks: 0, in_review_tasks: 0, floating_reviews: 0, done_tasks: 0, started_at: null }),
     });
     expect((root.querySelector('[data-state]') as HTMLElement).textContent?.trim()).toBe('planning');
-    expect((root.querySelector('[data-progress]') as HTMLElement).dataset.fraction).toBe('0');
+    expect((root.querySelector('[data-relay-progress]') as HTMLElement).dataset.fraction).toBe('0');
   });
 
   it('a blocked count shows when it is not zero', () => {
