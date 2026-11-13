@@ -33,3 +33,11 @@ export {
   type RelayChannelStatus,
   type RelayRealtimeTransport,
 } from './relay/sources/realtime.js';
+export {
+  toStats,
+  firstPassLine,
+  isIdle,
+  isWorking,
+  minutesSince,
+  type RelayStats,
+} from './relay/relay-selectors.js';

@@ -2,15 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { toStats } from '@sensei/state';
 import { toShellInput, type ShellSource } from './relay-shell-input.js';
 import { WAIT_THRESHOLD_MIN } from './relay-shell.js';
-import {
-  coordinatorLane,
-  decision,
-  floatingReview,
-  lane,
-  minutesAgo,
-  now,
-  sprint,
-} from '$lib/test-stubs/relay-fixtures.js';
+import { now, sprint } from '$lib/test-stubs/relay-fixtures.js';
 
 // From what the screen holds (the read, its state, the person's view) to the
 // shell's input (relay-shell.ts). Pure: the stats are counted from the read
