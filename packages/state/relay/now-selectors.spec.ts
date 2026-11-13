@@ -31,7 +31,19 @@ describe('toLaneGroups · a lane row (CONTRACT §1c-2)', () => {
       state: { label: 'working', tone: 'accent' },
       when: { text: '38 min', over: false },
       href: `/relay/${F.CREW_ID}/t-structure`,
+      progress: { text: '2 of 5 steps done · Writing the failing specs', done: 2, total: 5 },
     });
+  });
+
+  it('step progress says only what the holder reported (#418): counts, the step, both, or nothing', () => {
+    const at = (current_step: string | null, steps_done: number, steps_total: number) =>
+      one(F.lane({ task: { ...F.lane().task!, current_step, steps_done, steps_total } })).progress;
+    expect(at('Writing the failing specs', 2, 5)).toEqual({ text: '2 of 5 steps done · Writing the failing specs', done: 2, total: 5 });
+    expect(at(null, 5, 5)).toEqual({ text: '5 of 5 steps done', done: 5, total: 5 });
+    expect(at('Reading the brief', 0, 0)).toEqual({ text: 'Reading the brief', done: 0, total: 0 });
+    // Nothing reported is no line — never "0 of 0".
+    expect(at(null, 0, 0)).toBeNull();
+    expect(one(F.lane({ task: null })).progress).toBeNull();
   });
 
   it('no codename yet: the lane code stands in, never an invented name (#395)', () => {
