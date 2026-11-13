@@ -871,22 +871,46 @@ describe('Relay — a navigation replaces what is shown', () => {
   });
 });
 
+describe('Relay — the Crew view with a crew (#424)', () => {
+  it('the run card over the members by role, then Add a member for contributors', async () => {
+    const { c } = await open({ now: F.ok(F.now({ runs: [F.sprint()], lanes: [F.coordinatorLane(), F.lane()] })) });
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await tick();
+    const crew = need(section(c, 'crew'), 'the crew section');
+    const card = need(one(crew, '[data-run-card]'), 'the run card');
+    expect(text(one(card, '[data-run-title]'))).toContain(`Run ${F.RUN_ID.slice(-4)}`);
+    expect(all(card, '[data-member]').map((m) => m.getAttribute('data-member'))).toEqual(['L0', 'L1']);
+    const add = need(one(crew, '[data-add-member]'), 'Add a member');
+    expect(text(one(add, '[data-add-member-title]'))).toBe('Add a member');
+    expect(text(one(add, '[data-paste-text]'))).toBe('register with sensei as contributor');
+  });
+
+  it('a member’s Message opens the compose band', async () => {
+    const { c } = await open({ now: F.ok(F.now({ runs: [F.sprint()] })) });
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await tick();
+    need(one(c, '[data-member="L1"] [data-member-message]'), 'Message on L1').click();
+    await tick();
+    expect(one(c, '[data-compose]')).not.toBeNull();
+  });
+});
+
 describe('Relay — no crew yet', () => {
-  it('the info band frames it ("No crew yet", what to do); the Crew view is the landing with the two paste lines and "Listening · 0 of 2 to start"', async () => {
+  it('the info band frames it ("No crew yet", what to do); the Crew view is the landing: set up the crew, step 1 of 2 (#424)', async () => {
     const { c } = await open({ now: F.ok(F.noCrew()) });
     const info = need(one(c, '[data-screen-info]'), '[data-screen-info]');
-    expect(info).not.toBeNull();
     expect(text(info)).toContain('No crew yet');
     expect(text(info)).toContain('Set it up below');
-    // CONTRACT §1b/§1h (r1): the setup moved from the band to the Crew view, which is
-    // the landing while there is no run; the Crew button is the pressed one.
+    // CONTRACT §1b/§1h (r1): the setup is the Crew view, the landing while there is no
+    // run; the Crew button is the pressed one.
     expect(isActive(tab(c, 'Crew'))).toBe(true);
     const crew = need(section(c, 'crew'), 'the crew section');
-    expect(all(crew, '[data-paste-line]').map((l) => text(one(l, '[data-paste-text]')))).toEqual([
-      'register with sensei as coordinator',
-      'register with sensei as contributor',
-    ]);
-    expect(text(crew)).toContain('Listening · 0 of 2 to start');
+    const add = need(one(crew, '[data-add-member]'), 'the set-up card');
+    expect(text(one(add, '[data-add-member-title]'))).toBe('Start a run: set up your crew');
+    expect(text(one(add, '[data-command-step]'))).toBe('Step 1 of 2.');
+    expect(all(add, '[data-paste-line]').map((l) => text(one(l, '[data-paste-text]')))).toEqual(['register with sensei as coordinator']);
+    expect(text(one(add, '[data-listening]'))).toBe('Listening · 0 of 2 to start a run');
+    expect(one(crew, '[data-run-card]')).toBeNull();
 
     expect(section(c, 'needs-you')).toBeNull();
     expect(section(c, 'lanes')).toBeNull();
@@ -895,14 +919,14 @@ describe('Relay — no crew yet', () => {
     expect(toolbarButton(c, 'Message the crew')).toBeNull();
   });
 
-  it('Copy puts its line on the clipboard', async () => {
+  it('choosing Contributor shows its line; Copy puts the shown line on the clipboard', async () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     const { c } = await open({ now: F.ok(F.noCrew()) });
-    const lines = all(c, '[data-paste-line]');
-    expect(lines, 'the two paste lines').toHaveLength(2);
-    const [, contributor] = lines;
-    need(one(contributor, '[data-paste-copy]'), '[data-paste-copy]').click();
+    need(one(c, '[data-role-option="contributor"]'), 'Contributor').click();
+    await tick();
+    expect(text(one(c, '[data-paste-line] [data-paste-text]'))).toBe('register with sensei as contributor');
+    need(one(c, '[data-paste-copy]'), '[data-paste-copy]').click();
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('register with sensei as contributor'));
   });
 

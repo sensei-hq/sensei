@@ -281,7 +281,8 @@ test.describe('Relay — every state keeps the shell whole', () => {
     expect(d.info).toContain(FRAMING);
     expect(d.info).toContain('No crew yet');
     expect(d.stats, 'no stats band without a crew').toBeNull();
-    expect(d.pasteLines).toBe(2);
+    // The set-up card shows one line at a time: the coordinator first (#424).
+    expect(d.pasteLines).toBe(1);
     expect(d.notice).toBeNull();
     expect(d.lanes).toBe(0);
   });
