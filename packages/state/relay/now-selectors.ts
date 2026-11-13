@@ -105,7 +105,8 @@ function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayLaneRow
     return { ...base, task: taskLine, state: { label: 'lease lost', tone: 'danger' }, when: { text: when, over: false }, href: taskHref };
   }
   if (lane.limit_scope) {
-    const when = lane.limit_resumes_at ? `until ${hhmm(lane.limit_resumes_at)}` : 'resume not reported';
+    // Which quota, and when it resumes (the limit-exhaustion wording).
+    const when = `${lane.limit_scope} · ${lane.limit_resumes_at ? `until ${hhmm(lane.limit_resumes_at)}` : 'resume unknown'}`;
     return { ...base, task: taskLine, state: { label: 'paused', tone: 'warning' }, when: { text: when, over: false }, href: taskHref };
   }
   if (!task) {

@@ -15,25 +15,19 @@
   import { failureReason } from '$lib/api.js';
   import { useGlyphMode } from '$lib/glyphs';
   import type { RelayState } from '@sensei/state';
-  import { toRelayShell, type RelayNarrowKey } from './relay-shell.js';
+  import { toCompletedRows, toLaneGroups, type NowRowOptions } from '@sensei/state';
+  import { WAIT_THRESHOLD_MIN, toRelayShell, type RelayNarrowKey } from './relay-shell.js';
   import { toShellInput } from './relay-shell-input.js';
-  import {
-    crewGroups,
-    crewRepoLabel,
-    hhmm,
-    laneState,
-    providerLabel,
-    since,
-    taskHref,
-  } from './relay-format.js';
+  import { providerLabel, taskHref } from './relay-format.js';
   import DecisionRow from './DecisionRow.svelte';
   import MessageRow from './MessageRow.svelte';
   import ComposeBand from './ComposeBand.svelte';
   import CreateSprintForm from './CreateSprintForm.svelte';
   import FloatingReviewRow from './FloatingReviewRow.svelte';
   import QueueRow from './QueueRow.svelte';
+  import LaneList from './LaneList.svelte';
+  import CompletedList from './CompletedList.svelte';
   import RelayShell from './RelayShell.svelte';
-  import RoleMark from './RoleMark.svelte';
   import SprintBand from './SprintBand.svelte';
 
   let {
@@ -123,14 +117,17 @@
    *  checkout is the person's to name — the daemon runs the gate on that path. */
   const sprintDefaults = { base_branch: 'develop', base_checkout: '', verify_cmd: 'make test-fast' };
 
-  /** The lanes divided by crew in the main window, flat in a workspace. */
-  const grouped = $derived(
-    filtered && state.now
-      ? crewGroups(state.now.crews, state.now.lanes)
-      : state.now
-        ? state.now.crews.slice(0, 1).map((crew) => ({ crew, lanes: state.now!.lanes }))
-        : [],
-  );
+  // Now's lists, from the @sensei/state selectors (#422): the main window divides the
+  // lanes by crew, because a lane code is unique per crew only (§1c); a workspace
+  // draws its crew flat.
+  const rowOptions = $derived<NowRowOptions>({
+    at: Date.now(),
+    threshold: WAIT_THRESHOLD_MIN,
+    href: (crewId, taskId) => taskHref(base, crewId, taskId),
+    byCrew: filtered,
+  });
+  const laneGroups = $derived(toLaneGroups(state.now, rowOptions));
+  const completedRows = $derived(toCompletedRows(state.now, rowOptions));
 
   /** The two lines a session pastes to register (CONTRACT §1h, until #424's AddMember). */
   const pasteLines = ['register with sensei as coordinator', 'register with sensei as contributor'];
@@ -245,71 +242,14 @@
       </section>
     {/if}
 
-    <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="lanes">
-      <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Lanes · {state.now.lanes.length}</h2>
-      <!-- The workspace window draws one crew's lanes flat; the main window divides
-           them by crew, because a lane code is unique per crew only (§1c). -->
-      {#each grouped as group (group.crew.id)}
-        <div data-crew-group={group.crew.id}>
-          <p class="text-xs text-ink-faint m-0" data-crew-heading>{crewRepoLabel(group.crew)}</p>
-          {#each group.lanes as lane (lane.id)}
-            {@const lost = laneState(lane)}
-            <div class="border-t border-paper-edge py-2" data-lane-row={lane.code}>
-              <div class="flex items-center gap-2" data-row-line="1">
-                <RoleMark role={lane.role} />
-                <span class="font-medium text-sm">{lane.title ?? lane.code}</span>
-                <span class="text-xs text-ink-mute">{lane.code}</span>
-                <span class="text-xs text-ink-faint">
-                  {lane.family}{lane.version ? ` ${lane.version}` : ''} · {lane.model ?? 'model not reported'}
-                </span>
-                <span class="ml-auto text-xs rounded-sm px-2 py-1 bg-paper-soft text-ink-soft" data-state>{lost}</span>
-                {#if lost === 'lease lost' && lane.lease_expires_at}
-                  <span class="text-xs text-warning">at {hhmm(lane.lease_expires_at)}</span>
-                {/if}
-                {#if lost === 'paused'}
-                  <span class="text-xs text-warning"
-                    >{lane.limit_scope} · {lane.limit_resumes_at
-                      ? `until ${hhmm(lane.limit_resumes_at)}`
-                      : 'resume unknown'}</span
-                  >
-                {/if}
-              </div>
-              <div class="text-sm text-ink-soft" data-row-line="2">
-                {#if lane.task}
-                  <a class="hover:underline" href={taskHref(base, lane.crew_id, lane.task.id)}>{lane.task.title}</a>
-                  <span class="text-xs text-ink-faint"> · {since(lane.task.state_changed_at)}</span>
-                {:else if !lane.reviewing}
-                  Nothing claimed
-                {/if}
-                {#if lane.reviewing}
-                  <span data-reviewing={lane.reviewing.id}>
-                    {#if lane.task}<span class="text-xs text-ink-faint"> · </span>{/if}
-                    <span class="text-xs text-ink-mute">reviewing</span>
-                    <a class="hover:underline" href={taskHref(base, lane.crew_id, lane.reviewing.id)}>{lane.reviewing.title}</a>
-                    <span class="text-xs text-ink-faint"> · {since(lane.reviewing.claimed_at)}</span>
-                  </span>
-                {/if}
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/each}
-    </section>
+    <div class="p-4 pb-0">
+      <LaneList groups={laneGroups} />
+    </div>
 
-    {#if state.now.completed_today.length > 0}
-      <section class="flex flex-col gap-2 p-4" data-relay-section="completed">
-        <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">
-          Completed today · {state.now.completed_today.length}
-        </h2>
-        {#each state.now.completed_today as row (row.task_id)}
-          <div class="flex items-center gap-2 text-sm" data-completed-row>
-            <span class="text-xs text-ink-faint tabular-nums">{hhmm(row.completed_at)}</span>
-            <a class="hover:underline" href={taskHref(base, row.crew_id, row.task_id)}>{row.title}</a>
-            <span class="text-xs text-ink-mute">{row.lane_title ?? row.lane_code}</span>
-            <span class="ml-auto text-xs rounded-sm px-2 py-1 bg-paper-soft text-ink-soft" data-state>{row.outcome}</span>
-          </div>
-        {/each}
-      </section>
+    {#if completedRows.length > 0}
+      <div class="p-4">
+        <CompletedList rows={completedRows} />
+      </div>
     {/if}
   {:else if state.now && shell.view === 'queue'}
     {#if state.readingQueue}
