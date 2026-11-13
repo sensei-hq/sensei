@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { toStats } from '@sensei/state';
 import { toShellInput, type ShellSource } from './relay-shell-input.js';
 import { WAIT_THRESHOLD_MIN } from './relay-shell.js';
 import {
@@ -89,46 +90,9 @@ describe('toShellInput · counts and today', () => {
   });
 });
 
-describe('toShellInput · the four stats, counted from the read', () => {
-  const busy = () =>
-    now({
-      // the coordinator's task is in review (its report floats) — not working;
-      // L1 works; L3 lost its lease; L4 is idle with nothing claimed.
-      lanes: [
-        coordinatorLane(),
-        lane(),
-        lane({ id: 'l3', code: 'L3', title: 'Billing', lease_state: 'expired', task: null }),
-        lane({ id: 'l4', code: 'L4', title: 'Sync hardening', task: null }),
-      ],
-      floating_reviews: [
-        floatingReview({ reported_at: minutesAgo(26) }),
-        floatingReview({ task_id: 't-libs', title: 'Libraries page', reported_at: minutesAgo(52) }),
-      ],
-      decisions: [decision()],
-    });
-
-  it('Working counts lanes on a task or holding a review', () => {
-    expect(toShellInput(source({ now: busy() })).stats?.working).toBe(1);
-    const reviewing = now({ lanes: [lane({ task: null, reviewing: { id: 'r1', title: 'Notice polish', phase: 'impl', round: 1, claimed_at: minutesAgo(3) } })] });
-    expect(toShellInput(source({ now: reviewing })).stats?.working).toBe(1);
-  });
-
-  it('Waiting counts floating reviews and idle lanes, oldest by the oldest floating report', () => {
-    expect(toShellInput(source({ now: busy() })).stats?.waiting).toEqual({ count: 3, oldestMin: 52 });
-    expect(toShellInput(source()).stats?.waiting).toEqual({ count: 0, oldestMin: null });
-  });
-
-  it('Blocked counts open decisions and lanes whose lease is lost', () => {
-    expect(toShellInput(source({ now: busy() })).stats?.blocked).toBe(2);
-  });
-
-  it('Completed today is the list, with the first-pass line', () => {
-    expect(toShellInput(source()).stats).toMatchObject({ done: 2, firstPass: '1 of 5 first-pass' });
-    const quiet = now({ today: { completed: 0, reviewed: null, first_pass_approved: null }, completed_today: [] });
-    expect(toShellInput(source({ now: quiet })).stats).toMatchObject({ done: 0, firstPass: 'first pass not reported' });
-  });
-
-  it('no read, no stats', () => {
+describe('toShellInput · the stats', () => {
+  it('are the read counted by the relay selectors (@sensei/state toStats); no read, no stats', () => {
+    expect(toShellInput(source()).stats).toEqual(toStats(now(), Date.now()));
     expect(toShellInput(source({ now: null, reading: true })).stats).toBeNull();
   });
 });
