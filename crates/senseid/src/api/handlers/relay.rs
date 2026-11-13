@@ -2879,6 +2879,23 @@ mod tests {
         assert_eq!(body["queue"], json!([]));
     }
 
+    /// #418: a run event carries the run's band row exactly as `/relay/now`
+    /// shows it, named by `id` so the screen applies it in place.
+    async fn assert_carries_run_row(h: &Harness, data: &Value, run_id: &str) {
+        let (status, now) = call(h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        let row = now["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["run_id"] == run_id)
+            .unwrap_or_else(|| panic!("run {run_id} not in the band: {now}"));
+        for (key, value) in row.as_object().unwrap() {
+            assert_eq!(&data[key], value, "{key} in {data}");
+        }
+        assert_eq!(data["id"], run_id, "{data}");
+    }
+
     #[tokio::test]
     async fn create_run_is_201_with_task0_and_emits_run_created() {
         let h = harness().await;
@@ -2905,6 +2922,7 @@ mod tests {
         assert_eq!(event.data["op"], "created");
         assert_eq!(event.data["run_id"], run_id);
         assert_eq!(event.data["crew_id"], coord.2);
+        assert_carries_run_row(&h, &event.data, &run_id).await;
         // Task 0 waits in the pool for a claim.
         let (lane, token) = register_contributor(&h, &coord.2).await;
         let (status, body) = claim_next(&h, &lane, &token).await;
@@ -2997,13 +3015,14 @@ mod tests {
                 && data["task_id"] == task0),
             "{seen:?}"
         );
-        assert!(
-            seen.iter().any(|(entity, data)| entity == "run"
-                && data["op"] == "activated"
-                && data["run_id"] == run_id
-                && data["crew_id"] == coord.2),
-            "{seen:?}"
-        );
+        let activated = seen
+            .iter()
+            .find(|(entity, data)| entity == "run" && data["op"] == "activated")
+            .map(|(_, data)| data.clone())
+            .unwrap_or_else(|| panic!("no run/activated: {seen:?}"));
+        assert_eq!(activated["run_id"], run_id);
+        assert_eq!(activated["crew_id"], coord.2);
+        assert_carries_run_row(&h, &activated, &run_id).await;
         let (status, body) =
             call(&h, "GET", &format!("/api/relay/queue?lane_id={a}"), None, Some(&token_a)).await;
         assert_eq!(status, StatusCode::OK, "{body}");
