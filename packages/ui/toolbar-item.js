@@ -39,6 +39,17 @@ export function toolbarBadgeClass() {
 }
 
 /**
+ * The same badge drawn by the button's `::after` from its `data-count`, for a
+ * toolbar that renders the button itself (rokkit's shell toolbar: the item's
+ * attrs land on the button, nothing else can). Literal, like the class above,
+ * so UnoCSS finds every `after:` utility in the source.
+ * @returns {string}
+ */
+export function toolbarBadgeAfterClass() {
+  return 'after:content-[attr(data-count)] after:absolute after:-top-1.5 after:-right-1.5 after:min-w-4 after:h-4 after:px-1 after:rounded-full after:bg-ink after:text-paper after:text-[10px] after:leading-4 after:text-center after:tabular-nums after:font-sans';
+}
+
+/**
  * The accessible name and title: "Queue · 7" when it carries a count.
  * @param {string} label
  * @param {number} [count]

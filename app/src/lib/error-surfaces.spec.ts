@@ -28,6 +28,7 @@ const ALLOWED: Record<string, { count: number; why: string }> = {
   'routes/(observatory)/instruments/+page.svelte': { count: 1, why: "a 'warn' insight's tone" },
   'routes/(observatory)/learnings/MemoryDetail.svelte': { count: 2, why: 'the challenged/dismissed status chip tones' },
   'routes/(preferences)/settings/dojo/DojoRepos.svelte': { count: 1, why: "a failing repository's status dot" },
+  'lib/relay/RelayShell.svelte': { count: 1, why: "the footer's resource status dot tone map (swap below its floor), not an error message" },
   'routes/(workspace)/workspace/[id]/metrics/MetricSettingsPanel.svelte': { count: 5, why: 'new on develop in L1\'s metrics path; L1 moves it onto Notice (reported to L0), not migrated from L4' },
 };
 

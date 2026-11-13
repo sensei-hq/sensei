@@ -1,0 +1,54 @@
+/*
+ * The relay header's icon buttons (COMPONENTS.md §2 ToolbarItem): 36×36, radius
+ * 8, a 1px edge; pressed is the mute surface on the strong edge; a pressed view
+ * tints its icon accent, a pressed toggle keeps ink.
+ *
+ * Sensei-owned override, scoped to this screen's toolbar only (user ruling,
+ * 2026-11-09): rokkit's zen-sumi toolbar styles its items as text-tone bare
+ * buttons and colours the icon itself, at a specificity the utility classes
+ * on the item cannot beat. Once the look is settled here it goes upstream to
+ * rokkit as a toolbar item variant and this file goes away. Tokens only — the
+ * theme's own variables, never a literal colour.
+ */
+
+/* The theme underlines a top toolbar with a hairline; the header's own border is the rule here. */
+[data-screen='relay'] [data-screen-tools] [data-toolbar] {
+  border: 0;
+  gap: 6px;
+}
+
+[data-screen='relay'] [data-screen-tools] [data-toolbar-item] {
+  box-sizing: border-box;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--paper-edge);
+  background-color: var(--paper);
+  color: var(--ink);
+}
+
+[data-screen='relay'] [data-screen-tools] [data-toolbar-item]:hover:not(:disabled):not([data-disabled='true']) {
+  background-color: var(--paper-mute);
+  color: var(--ink);
+}
+
+[data-screen='relay'] [data-screen-tools] [data-toolbar-item][data-active='true'],
+[data-screen='relay'] [data-screen-tools] [data-toolbar-item][data-active='true']:hover:not(:disabled) {
+  background-color: var(--paper-mute);
+  border-color: var(--paper-edge-strong);
+  color: var(--ink);
+}
+
+/* A pressed view is a place: its icon goes accent. A pressed toggle is a switch: ink. */
+[data-screen='relay'] [data-screen-tools] [data-toolbar-item][data-relay-view][data-active='true'] {
+  color: var(--accent);
+}
+
+[data-screen='relay'] [data-screen-tools] [data-toolbar-item] [data-toolbar-icon],
+[data-screen='relay'] [data-screen-tools] [data-toolbar-item]:hover:not(:disabled) [data-toolbar-icon],
+[data-screen='relay'] [data-screen-tools] [data-toolbar-item]:focus-visible:not(:disabled) [data-toolbar-icon],
+[data-screen='relay'] [data-screen-tools] [data-toolbar-item][data-active='true'] [data-toolbar-icon] {
+  color: inherit;
+  font-size: 18px;
+}

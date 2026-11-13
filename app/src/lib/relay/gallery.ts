@@ -6,8 +6,11 @@
 // component here has no reads of its own — so an entry is a component and the
 // props it takes, nothing else.
 
-import type { Component } from 'svelte';
+import { createRawSnippet, type Component } from 'svelte';
 import { decision, floatingReview, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
+import { toRelayShell } from './relay-shell.js';
+import { SHELL_FIXTURES } from './relay-shell.fixtures.js';
+import RelayShell from './RelayShell.svelte';
 import DecisionRow from './DecisionRow.svelte';
 import FloatingReviewRow from './FloatingReviewRow.svelte';
 import MessageRow from './MessageRow.svelte';
@@ -26,20 +29,37 @@ export interface GalleryEntry {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   component: Component<any>;
   props: Record<string, unknown>;
+  /** A fixed sample height, for a component that fills its container (the shell). */
+  frame?: { height: number };
 }
 
-const entry = (id: string, note: string, component: GalleryEntry['component'], props: Record<string, unknown>): GalleryEntry => ({
-  id,
-  note,
-  component,
-  props,
-});
+const entry = (
+  id: string,
+  note: string,
+  component: GalleryEntry['component'],
+  props: Record<string, unknown>,
+  frame?: GalleryEntry['frame'],
+): GalleryEntry => ({ id, note, component, props, frame });
 
 /** The gallery never answers a decision or adds to a backlog: a fixture's
  *  callbacks resolve to "no refusal" so the component can be exercised. */
 const accepted = async () => null;
+/** A shell fixture's actions go nowhere: the bench shows one state at a time. */
+const still = { view: () => {}, compose: () => {}, filter: () => {} };
+/** A stand-in body, so the shell's own regions are what the picture shows. */
+const body = createRawSnippet(() => ({
+  render: () => '<div class="p-5 text-sm text-ink-mute">the view’s body goes here</div>',
+}));
+const band = createRawSnippet(() => ({
+  render: () =>
+    '<div class="border-b border-paper-edge bg-paper-soft px-5 py-3 text-sm text-ink-mute">Message the crew · the compose band (its own fixture)</div>',
+}));
 
 export const GALLERY: GalleryEntry[] = [
+  ...SHELL_FIXTURES.map((f) =>
+    entry(`RelayShell/${f.name}`, f.note, RelayShell, { shell: toRelayShell(f.input(), still), viewId: `gallery.relay.${f.name}`, children: body, compose: band }, { height: 560 }),
+  ),
+
   entry('Pill/neutral', 'a state pill, neutral tone', Pill, { label: 'idle', tone: 'neutral' }),
   entry('Pill/accent', 'working', Pill, { label: 'reviewing', tone: 'accent' }),
   entry('Pill/warning', 'a wait past the threshold', Pill, { label: 'approved, not merged', tone: 'warning' }),

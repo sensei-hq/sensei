@@ -29,6 +29,8 @@ export const KANJI_ICONS = {
   '刻': 'i-solar-clock-circle-bold-duotone',
   '技': 'i-solar-medal-ribbon-bold-duotone',
   '問': 'i-solar-magnifer-bold-duotone',
+  // History: a task's turns, newest first (Relay's info band).
+  '史': 'i-solar-history-bold-duotone',
   '警': 'i-solar-danger-triangle-bold-duotone',
   '眠': 'i-solar-moon-sleep-bold-duotone',
   '組': 'i-solar-folder-open-bold-duotone',

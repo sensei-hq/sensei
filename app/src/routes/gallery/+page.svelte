@@ -65,9 +65,13 @@
              paper, at the width under review (390px phone, the row's width wide). -->
         <div
           data-gallery-sample
-          class="rounded-xl border border-paper-edge bg-paper p-3"
+          class="rounded-xl border border-paper-edge bg-paper"
+          class:p-3={!item.frame}
+          class:overflow-hidden={Boolean(item.frame)}
           class:w-[390px]={data.width === 'phone'}
-          class:max-w-[1100px]={data.width === 'wide'}
+          class:max-w-[1100px]={data.width === 'wide' && !item.frame}
+          class:max-w-[1400px]={data.width === 'wide' && Boolean(item.frame)}
+          style:height={item.frame ? `${item.frame.height}px` : undefined}
         >
           <item.component {...item.props} />
         </div>

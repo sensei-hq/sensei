@@ -113,11 +113,14 @@ describe('toRelayShell · view, context, info band', () => {
     expect(toRelayShell(dojoLoaded(), actions()).context).toBe('from your desktop · run 7f3a');
   });
 
-  it('loaded with a run: framing, the three steps, and Today with the count', () => {
+  it('loaded with a run: framing, the three steps (one line each, no eyebrow), and Today with the count', () => {
     const info = toRelayShell(loadedNow(), actions()).info;
-    expect(info.map((c) => c.label)).toEqual(['Relay', 'How to read it', 'Today']);
+    expect(info.map((c) => c.label)).toEqual(['Relay', '', 'Today']);
     expect(info[0].title).toBe('Your crew of assistant sessions');
     expect(info[1].steps?.map((s) => s.kanji)).toEqual(['問', '手', '史']);
+    // The mockup's step is a mark and one regular line: the line is the text, there is no title.
+    expect(info[1].steps?.map((s) => s.title)).toEqual(['', '', '']);
+    expect(info[1].steps?.[2].text).toBe('Click any task for its history.');
     expect(info[2].value).toBe(5);
     expect(info[2].text).toContain('1 of 5 passed review first time');
   });
@@ -125,14 +128,15 @@ describe('toRelayShell · view, context, info band', () => {
   it('while reading or after a failure the band stays whole and Today reads "not reported"', () => {
     for (const input of [loading(), error()]) {
       const info = toRelayShell(input, actions()).info;
-      expect(info.map((c) => c.label)).toEqual(['Relay', 'How to read it', 'Today']);
+      expect(info.map((c) => c.label)).toEqual(['Relay', '', 'Today']);
       expect(info[2].value).toBe('not reported');
     }
   });
 
-  it('with no run the band is the framing and what to do, and it is pinned open', () => {
+  it('with no run the band is the framing and what to do (a display title, no eyebrow), pinned open', () => {
     const shell = toRelayShell(noRun(), actions());
-    expect(shell.info.map((c) => c.label)).toEqual(['Relay', 'No crew yet']);
+    expect(shell.info.map((c) => c.label)).toEqual(['Relay', '']);
+    expect(shell.info[1].title).toBe('No crew yet');
     expect(shell.info[1].text).toMatch(/Set it up below/);
     expect(shell.pinned).toEqual(['info']);
     expect(toRelayShell(loadedNow(), actions()).pinned).toEqual([]);

@@ -10,7 +10,7 @@
   // way on mount. With no store provided the screen is in memory alone, and
   // nothing is written anywhere.
 
-  import { ScreenShell, type FilterState, type PanelState, type ScreenShellProps } from '@rokkit/app';
+  import { ScreenShell, type FilterState, type PanelId, type PanelState, type ScreenShellProps } from '@rokkit/app';
   import Notice from './Notice.svelte';
   import { useGlyphMode } from './glyph-mode.js';
   import { useViewStates } from './view-states.js';
@@ -27,13 +27,23 @@
     // mode itself; it passes what it read here, so the title bar and the rows
     // cannot disagree. Absent, the mode comes from the context as usual.
     glyphs: modeGiven,
+    // Bands the screen holds open whatever the store remembers — Relay's info
+    // band while there is no run is the whole screen (CONTRACT §1b). A pinned
+    // band is drawn open, never written as open.
+    pinned = [],
+    class: className,
     ...rest
-  }: ShellProps & { viewId: string; glyphs?: 'kanji' | 'icon' } = $props();
+  }: ShellProps & { viewId: string; glyphs?: 'kanji' | 'icon'; pinned?: PanelId[] } = $props();
 
   const store = useViewStates();
   const mode = useGlyphMode();
   // Sensei's mode is `kanji | icon`; rokkit draws kanji as `text`.
   const shellGlyphs = $derived((modeGiven ?? mode()) === 'icon' ? 'icon' : 'text');
+
+  // The shell fills whatever holds it, and its body is the one scroller
+  // (contract §1): rokkit's root is `height: 100%`, which against an
+  // auto-height wrapper grows and gets clipped — the way Relay lost its scroll.
+  const shellClass = $derived(['h-full', 'min-h-0', className].filter(Boolean).join(' '));
 
   // The shell's panels follow the store. They are the wrapper's own state so a
   // refused save can put them back: rokkit flips its copy before we hear of it.
@@ -42,13 +52,22 @@
     const stored = store?.get(viewId);
     if (stored !== undefined) panels = stored;
   });
+  const shownPanels = $derived<PanelState>(
+    pinned.length ? { ...panels, ...Object.fromEntries(pinned.map((id) => [id, true])) } : panels,
+  );
 
   let saveError = $state<string | null>(null);
   const readError = $derived(store?.error?.() ?? null);
   const failure = $derived(saveError ?? readError);
 
-  async function keep(next: PanelState) {
+  async function keep(shown: PanelState) {
     const before = store?.get(viewId) ?? {};
+    // A pinned band is drawn open, not chosen open: keep what was remembered for it.
+    const next: PanelState = { ...shown };
+    for (const id of pinned) {
+      if (id in panels) next[id] = panels[id];
+      else delete next[id];
+    }
     panels = next;
     if (!store) return;
     try {
@@ -64,7 +83,7 @@
 <!-- `sidebar`, `info`, `stats`, `filters`, `footer`, `toolbar` and the rest pass
      through untouched; the body is this screen's children, with the one Notice
      a refused save needs. -->
-<ScreenShell {...rest} {viewId} glyphs={shellGlyphs} {panels} onpanels={keep} bind:filter>
+<ScreenShell {...rest} {viewId} class={shellClass} glyphs={shellGlyphs} panels={shownPanels} onpanels={keep} bind:filter>
   {#if failure}
     <div class="px-4 pt-4" data-screen-views-notice>
       <Notice tone="fault" size="inline" title={failure} />

@@ -13,6 +13,7 @@ export { default as ToolbarItem } from './ToolbarItem.svelte';
 export {
   toolbarItemClass,
   toolbarIconClass,
+  toolbarBadgeAfterClass,
   toolbarBadgeClass,
   toolbarLabel,
 } from './toolbar-item.js';
