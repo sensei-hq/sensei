@@ -16,8 +16,9 @@
 **Remaining (in order):** LaneRow step progress (current step, n of m) benched vs mockup → #419 (draft/start/cancel
 run, nudge, catalogue) → #426 run-journey e2e. Gaps outside #418: `task.waiting`; person-message read ladder.
 
-**Next command:** relay e2e needs this branch's daemon (the app no longer reads back after writes; v0.22.0 sends no
-item events) — `make install-debug` revokes the Keychain grant (#283): user's call. Meanwhile: LaneRow progress.
+**Next command:** LaneRow step progress: render the mockup's lane rows, bench the row with current_step/steps,
+then compose. The installed daemon is this branch's (`make install-debug`, 2026-11-13); relay e2e 8/8 against it;
+live `relay.now` view applied (`dbd apply -n relay.now`).
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
 phone header height; merge #417 + `make release`; `font-display` no-op elsewhere in the app.
