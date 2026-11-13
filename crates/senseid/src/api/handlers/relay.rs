@@ -1527,18 +1527,32 @@ pub(crate) async fn post_step(
 /// view), step events carry the step itself (applied without re-reading),
 /// op-only relay events cover the rest (unregister interrupts). Same
 /// BroadcastStream-over-`event_tx` shape as the scan socket.
+///
+/// `?crew_id=` narrows the stream to one crew (#418): an event naming
+/// another crew is dropped; one naming no crew (a task or relay op) still
+/// arrives, and the screen re-reads its own crew's view on it. A malformed
+/// id is a 400 from the query extractor.
 pub(crate) async fn relay_events_sse(
     State(state): State<AppState>,
+    Query(filter): Query<RelayEventsFilter>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     let rx = state.event_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
-        Ok(event) if StateEvent::is_relay_family(&event.entity) => {
+    let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
+        Ok(event)
+            if StateEvent::is_relay_family(&event.entity)
+                && event.admits_crew(filter.crew_id.as_ref()) =>
+        {
             let data = serde_json::to_string(&event).unwrap_or_default();
             Some(Ok(Event::default().data(data)))
         }
         _ => None,
     });
     Sse::new(stream)
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RelayEventsFilter {
+    crew_id: Option<Uuid>,
 }
 
 pub(crate) async fn close_crew(
@@ -3538,8 +3552,14 @@ mod tests {
         let resp = h.app.clone().oneshot(req).await.unwrap();
         let lane = uuid::Uuid::now_v7();
         use crate::api::events::{LaneChange, StateEvent};
-        h.state.event_tx.send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_b)).unwrap();
-        h.state.event_tx.send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_a)).unwrap();
+        h.state
+            .event_tx
+            .send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_b))
+            .unwrap();
+        h.state
+            .event_tx
+            .send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_a))
+            .unwrap();
         let frames = sse_frames(resp, 2).await;
         assert_eq!(frames[0]["data"]["crew_id"], crew_b.to_string());
         assert_eq!(frames[1]["data"]["crew_id"], crew_a.to_string());

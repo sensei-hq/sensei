@@ -349,6 +349,16 @@ impl StateEvent {
     pub fn is_relay_family(entity: &str) -> bool {
         matches!(entity, "relay" | "task" | "step" | "lane" | "run")
     }
+
+    /// Whether a stream narrowed to `crew` carries this event: no filter
+    /// carries all; otherwise an event naming another crew is dropped, and
+    /// one naming no crew passes.
+    pub fn admits_crew(&self, crew: Option<&uuid::Uuid>) -> bool {
+        match (crew, self.data.get("crew_id").and_then(|v| v.as_str())) {
+            (Some(want), Some(named)) => named == want.to_string(),
+            _ => true,
+        }
+    }
 }
 
 impl ActivityEvent {
