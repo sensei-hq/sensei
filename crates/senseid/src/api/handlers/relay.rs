@@ -69,7 +69,7 @@ use crate::db::pg_store::relay::{
     RelayReviewInput, RelayStepInput, RelayStepOutput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
-use crate::relay::rows::{decision_asked, with_lane_row, with_run_row};
+use crate::relay::rows::{decision_asked, message_sent, with_lane_row, with_run_row};
 use crate::relay::{
     DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole,
     RelayStepState, RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict,
@@ -1423,18 +1423,25 @@ pub(crate) async fn lane_message(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let task_id =
         body.task_id.as_deref().map(|t| parse_uuid(t, "task_id")).transpose().map_err(err)?;
+    let to = message_to(&body.to).map_err(err)?;
     let out = state
         .pg
         .relay_send_message(
             session.user_id,
             RelayCaller::Lane { lane_id: caller },
-            RelayMessageInput { to: message_to(&body.to).map_err(err)?, task_id, text: body.text },
+            RelayMessageInput { to: to.clone(), task_id, text: body.text },
         )
         .await
         .map_err(err)?;
     match task_id {
         Some(task_id) => emit_task(&state, "message", &task_id),
         None => emit(&state, "message"),
+    }
+    // To the person: Needs you gains the row (#418).
+    if matches!(to, RelayMessageTo::Person)
+        && let Some(event) = message_sent(&state.pg, &out.message_id, &session.crew_id).await
+    {
+        let _ = state.event_tx.send(event);
     }
     ok(serde_json::json!({ "message_id": out.message_id.to_string() }))
 }

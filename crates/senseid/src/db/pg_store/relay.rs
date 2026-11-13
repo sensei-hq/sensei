@@ -1227,6 +1227,29 @@ fn now_decision_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> 
     })
 }
 
+/// One crew → person message as Needs you shows it: the `relay.now`
+/// `person_message` payload, shaped. `relay_now` lists them;
+/// `relay_person_message_row` reads one for the stream (#418).
+fn now_person_message_json(
+    id: &Uuid,
+    crew_id: &Uuid,
+    payload: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id.to_string(),
+        "crew_id": crew_id.to_string(),
+        "task_id": payload.get("task_id"),
+        "task_title": payload.get("task_title"),
+        "from_lane_code": payload.get("from_lane_code"),
+        "text": payload
+            .get("text")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .unwrap_or(serde_json::Value::String(String::new())),
+        "sent_at": payload.get("sent_at"),
+    })
+}
+
 /// One open run as the sprint band shows it: the `relay.now`
 /// `sprint_summary` payload with its crew. `relay_now` lists them;
 /// `relay_run_row` reads one for the stream (#418).
@@ -6244,6 +6267,26 @@ impl PgStore {
         Ok(row.map(|(id, crew_id, payload)| now_decision_json(&id, &crew_id, &payload)))
     }
 
+    /// One unread crew → person message's Needs-you row, for the stream
+    /// (#418); `None` when it is read or was not to the person. Reading it
+    /// here writes no receipt: only the person's own Now read does.
+    pub async fn relay_person_message_row(
+        &self,
+        message_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, RelayError> {
+        let mut tx = self.begin_local_zone().await?;
+        let row: Option<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.id, v.crew_id, v.payload from relay.now v
+             where v.section = 'person_message' and v.id = $1",
+        )
+        .bind(message_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(row.map(|(id, crew_id, payload)| now_person_message_json(&id, &crew_id, &payload)))
+    }
+
     /// One open run's band row, for the stream (#418); `None` once the run
     /// left the band (completed, archived, deleted) or was never there.
     pub async fn relay_run_row(
@@ -6439,19 +6482,7 @@ impl PgStore {
         .map_err(db_err)?;
         let mut person_json = Vec::with_capacity(person_rows.len());
         for (id, crew_id, payload) in &person_rows {
-            person_json.push(serde_json::json!({
-                "id": id.to_string(),
-                "crew_id": crew_id.to_string(),
-                "task_id": payload.get("task_id"),
-                "task_title": payload.get("task_title"),
-                "from_lane_code": payload.get("from_lane_code"),
-                "text": payload
-                    .get("text")
-                    .filter(|v| !v.is_null())
-                    .cloned()
-                    .unwrap_or(serde_json::Value::String(String::new())),
-                "sent_at": payload.get("sent_at"),
-            }));
+            person_json.push(now_person_message_json(id, crew_id, payload));
             let kinds: Vec<String> = sqlx_core::query_scalar::query_scalar(
                 "select kind::text from relay.actions
                  where user_id = $1 and lane_id is null and reply_to = $2

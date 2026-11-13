@@ -57,3 +57,17 @@ pub async fn decision_asked(
         }
     }
 }
+
+/// The message event for a crew → person message: its Needs-you row; `None`
+/// when it is not Needs you's or could not be read (logged) — the task or
+/// relay event beside it re-reads.
+pub async fn message_sent(pg: &PgStore, message_id: &Uuid, crew_id: &Uuid) -> Option<StateEvent> {
+    match pg.relay_person_message_row(*message_id).await {
+        Ok(Some(row)) => Some(StateEvent::relay_message(message_id, crew_id).with_row(row)),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!(message_id = %message_id, error = ?e, "relay stream: message row unread; no message event");
+            None
+        }
+    }
+}
