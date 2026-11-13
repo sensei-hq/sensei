@@ -43,6 +43,7 @@ import {
   mockupNeedsYou,
   mockupWaits,
   needsYouUnassigned,
+  progressLanes,
 } from './now-lists.fixtures.js';
 
 export interface GalleryEntry {
@@ -84,6 +85,7 @@ export const GALLERY: GalleryEntry[] = [
   entry('LaneList/mockup', 'the mockup’s seven lanes: working, waits past the threshold, lease lost, a question, idle', LaneList, { groups: mockupLanes() }),
   entry('LaneList/main-window', 'the main window: a card per crew under its repository', LaneList, { groups: mainWindowLanes() }),
   entry('LaneList/edges', 'a quota pause, and an objective and task that need the ellipsis', LaneList, { groups: edgeLanes() }),
+  entry('LaneList/progress', 'NOT IN THE MOCKUP (#418): step progress under the task — counts and step, counts only, step only, nothing reported', LaneList, { groups: progressLanes() }),
   entry('NeedsYou/mockup', 'a decision, three long waits, the triage line', NeedsYou, {
     view: mockupNeedsYou(),
     href: (crew: string, task: string) => `/relay/${crew}/${task}`,
