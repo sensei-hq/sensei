@@ -105,6 +105,10 @@ export function toTaskView(view: RelayTaskView, o: { back: { label: string; href
   const span =
     start && end ? ` · ${duration((new Date(end).getTime() - new Date(start).getTime()) / 1000)}` : '';
   const time = start ? `${hhmm(start)} → ${end ? hhmm(end) : 'now'}${span}` : 'unclaimed';
+  // A holder paused on a limit: which quota, and until when (the limit-exhaustion wording).
+  const paused = lane?.limit_scope
+    ? ` · paused · ${lane.limit_scope} · ${lane.limit_resumes_at ? `until ${hhmm(lane.limit_resumes_at)}` : 'resume unknown'}`
+    : '';
   return {
     header: {
       back: o.back,
@@ -112,7 +116,7 @@ export function toTaskView(view: RelayTaskView, o: { back: { label: string; href
       state: { label: taskStateLabel(t.state), tone: STATE_TONE[t.state] ?? 'neutral' },
       ticket: t.ticket ? { provider: providerLabel(t.ticket.provider), key: t.ticket.key, url: t.ticket.url ?? null } : null,
       facts: [
-        { k: 'Lane', v: lane ? `${lane.title ?? lane.code} · ${lane.code}` : 'in the pool' },
+        { k: 'Lane', v: lane ? `${lane.title ?? lane.code} · ${lane.code}${paused}` : 'in the pool' },
         { k: 'Assistant', v: lane ? `${assistantLabel(lane.family, lane.version)} · ${lane.model ?? 'model not reported'}` : 'not reported' },
         { k: 'Time', v: time },
         { k: 'Rounds', v: roundsLabel(t.rounds) || 'none yet' },

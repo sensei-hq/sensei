@@ -9,10 +9,11 @@
   import { Loading, Notice, ShellScreen } from '@sensei/ui';
   import { KANJI_ICONS } from '$lib/glyph-vocabulary';
   import { useGlyphMode } from '$lib/glyphs';
-  import type { RelayRunDetails, RelayTaskView } from '$lib/relay-api.js';
-  import type { RelayTaskState } from '@sensei/state';
-  import { hhmm, providerLabel, roundsLabel, taskStateLabel } from './relay-format.js';
+  import { toTaskView, type RelayTaskState } from '@sensei/state';
   import DecisionRow from './DecisionRow.svelte';
+  import HandoffCard from './HandoffCard.svelte';
+  import RunDetails from './RunDetails.svelte';
+  import TaskHeader from './TaskHeader.svelte';
   import HistoryEntry from './HistoryEntry.svelte';
   import RelayChecklist from './RelayChecklist.svelte';
   import RelayTimeline from './RelayTimeline.svelte';
@@ -33,32 +34,8 @@
   const view = $derived(state.view);
   const task = $derived(view?.task ?? null);
 
-  const num = (n: number | null | undefined) => (n == null ? 'not reported' : new Intl.NumberFormat('en').format(n));
-  const secs = (s: number | null | undefined) =>
-    s == null ? 'not reported' : s < 60 ? `${s} s` : `${Math.round(s / 60)} min`;
-
-  /** Run details, in the contract's order (§1e.3). */
-  const runRows = $derived.by(() => {
-    const r: RelayRunDetails | undefined = view?.run;
-    if (!r) return [];
-    return [
-      { key: 'repository', label: 'Repository', value: r.repository ?? 'not reported' },
-      { key: 'branch', label: 'Branch', value: r.branch ?? 'not reported' },
-      { key: 'commits', label: 'Commits', value: r.commits?.join(', ') ?? 'not reported' },
-      { key: 'model', label: 'Model', value: r.model ?? 'not reported' },
-      { key: 'tokens_in', label: 'Tokens in', value: num(r.tokens_in) },
-      { key: 'tokens_out', label: 'Tokens out', value: num(r.tokens_out) },
-      { key: 'tokens_cache', label: 'Tokens cached', value: num(r.tokens_cache) },
-      { key: 'context_tokens', label: 'Peak context', value: num(r.context_tokens) },
-      { key: 'compactions', label: 'Compactions', value: num(r.compactions) },
-      { key: 'peak_memory_mb', label: 'Peak memory', value: r.peak_memory_mb == null ? 'not reported' : `${r.peak_memory_mb} MB` },
-      { key: 'subagents', label: 'Subagents', value: num(r.subagents) },
-      { key: 'working_secs', label: 'Working', value: secs(r.working_secs) },
-      { key: 'waiting_secs', label: 'Waiting for review', value: secs(r.waiting_secs) },
-      { key: 'files_changed', label: 'Files changed', value: `${num(r.files_changed)} · ${num(r.files_outside_owned)} outside owned paths` },
-      { key: 'gates_run', label: 'Gates run', value: num(r.gates_run) },
-    ];
-  });
+  // The header, Run details and Handed off, from the @sensei/state selector (#425).
+  const parts = $derived(view ? toTaskView(view, { back: { label: 'Relay', href: backHref } }) : null);
 
   /** A message's receipts, folded by the message they reply to (§1e.6, F5). */
   const receipts = $derived.by(() => {
@@ -84,11 +61,12 @@
     {context}
     search={false}
   >
-    {#snippet footer()}
-      <a class="text-xs underline" data-back href={backHref}>← Relay</a>
-    {/snippet}
-
     <div class="flex flex-col gap-3 p-4">
+      {#if !parts || state.reading || state.notFound || state.error}
+        <!-- No task drawn (reading, not found, a failed read): the header's back link is
+             not there, so the way back is. -->
+        <a data-back href={backHref} class="w-fit text-sm text-accent no-underline hover:underline"><span aria-hidden="true">‹&nbsp;</span>Relay</a>
+      {/if}
       {#if state.reading}
         <Loading />
       {:else if state.notFound}
@@ -113,53 +91,13 @@
           primary={{ label: 'Retry', name: 'retry', onclick: () => void state.retry() }}
         />
       {:else if task && view}
-        <header class="flex flex-wrap items-center gap-2">
-          <h2 class="text-lg font-medium m-0" data-task-title>{task.title}</h2>
-          <span class="text-xs rounded-sm bg-paper-soft px-2 py-0.5 text-ink-soft" data-task-state>
-            {taskStateLabel(task.state)}
-          </span>
-          {#if task.ticket}
-            <a
-              class="ml-auto inline-flex items-center gap-1 text-xs underline"
-              data-ticket
-              href={task.ticket.url ?? undefined}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <span class="hidden sm:inline" data-ticket-provider>{providerLabel(task.ticket.provider)}</span>
-              {task.ticket.key}
-            </a>
-          {/if}
-        </header>
-
-        <p class="text-xs text-ink-mute m-0" data-task-facts>
-          {task.lane ? `${task.lane.title ?? task.lane.code} · ${task.lane.code}` : 'No lane'} ·
-          {task.lane?.family ?? 'member not reported'}{task.lane?.version ? ` ${task.lane.version}` : ''} ·
-          {task.lane?.model ?? 'model not reported'} ·
-          {#if task.lane?.limit_scope}paused · {task.lane.limit_scope}
-            {task.lane.limit_resumes_at ? `until ${hhmm(task.lane.limit_resumes_at)}` : 'resume unknown'} ·{/if}
-          {task.assigned_at ? hhmm(task.assigned_at) : 'unclaimed'} → {task.completed_at ? hhmm(task.completed_at) : 'now'} ·
-          {roundsLabel(task.rounds)}
-        </p>
+        <TaskHeader header={parts!.header} />
 
         <RelayChecklist steps={view.steps} />
 
         <RelayTimeline {view} />
 
-        <details class="rounded-sm border border-paper-edge p-3" data-run-details>
-          <summary class="text-sm cursor-pointer">Run details</summary>
-          <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-ink-soft">
-            {#each runRows as row (row.key)}
-              <span class="flex justify-between gap-3" data-run-detail={row.key}>
-                <span class="text-ink-mute">{row.label}</span>
-                <span>{row.value}</span>
-              </span>
-            {/each}
-          </div>
-          <p class="text-xs text-ink-faint mt-2 m-0">
-            Totals over the task's turns · {view.run.reported_turns} of {view.run.turns} reported
-          </p>
-        </details>
+        <RunDetails run={parts!.run} />
 
         {#if view.decision}
           <DecisionRow
@@ -169,16 +107,8 @@
           />
         {/if}
 
-        {#if view.handoff}
-          <section class="rounded-sm border border-paper-edge p-3 flex flex-col gap-2" data-handoff>
-            <h3 class="text-xs uppercase tracking-wide text-ink-mute m-0">Handed off</h3>
-            <p class="text-sm text-ink-soft m-0">{view.handoff.body_md}</p>
-            <div class="flex flex-col gap-1">
-              {#each view.handoff.docs as doc (doc)}
-                <code class="text-xs w-fit" data-handoff-doc>{doc}</code>
-              {/each}
-            </div>
-          </section>
+        {#if parts?.handoff}
+          <HandoffCard handoff={parts.handoff} />
         {/if}
 
         <section class="flex flex-col gap-2" data-relay-section="history">
