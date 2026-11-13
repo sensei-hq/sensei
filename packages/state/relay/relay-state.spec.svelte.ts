@@ -346,6 +346,20 @@ describe('RelayState · the sprint selection and createSprint', () => {
     expect(s.sprintError).toBeNull();
   });
 
+  it('starts the run in the same step when the screen has a crew; with none it drafts (#419)', async () => {
+    const { source } = fakeSource();
+    const withCrew = new RelayState(source, {}, reads());
+    withCrew.toggleSelected('item-a');
+    await withCrew.createSprint(sprintBody());
+    expect((source.createRun.mock.calls[0][0] as RelayCreateRun).start).toBe(true);
+    const bare = fakeSource();
+    const noCrew = new RelayState(bare.source, {}, reads(F.now({ crews: [], lanes: [] })));
+    noCrew.toggleSelected('item-a');
+    await noCrew.createSprint(sprintBody());
+    const body = bare.source.createRun.mock.calls[0][0] as RelayCreateRun;
+    expect([body.start, body.crew_id]).toEqual([false, null]);
+  });
+
   it('keeps the selection and says why on a refusal; an empty selection makes no call', async () => {
     const { source } = fakeSource({ createRun: vi.fn(async () => F.fail(409, 'more than one active crew: name crew_id')) });
     const s = new RelayState(source, {}, reads());
