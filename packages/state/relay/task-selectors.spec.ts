@@ -39,6 +39,18 @@ describe('toTaskView · the header', () => {
     expect(v.header.facts[2].v).toMatch(/^unclaimed/);
   });
 
+  it('a holder paused on a limit: the Lane fact says which quota and until when (or that it is unknown)', () => {
+    const resumes = '2026-11-12T14:00:00Z';
+    const lane = { ...F.taskView().task.lane!, limit_scope: 'weekly' as const, limit_resumes_at: resumes };
+    expect(toTaskView(F.taskView({ task: { ...F.taskView().task, lane } }), opts).header.facts[0].v).toBe(
+      `Diagrams · L1 · paused · weekly · until ${hhmm(resumes)}`,
+    );
+    const unknown = { ...lane, limit_scope: 'daily' as const, limit_resumes_at: null };
+    expect(toTaskView(F.taskView({ task: { ...F.taskView().task, lane: unknown } }), opts).header.facts[0].v).toBe(
+      'Diagrams · L1 · paused · daily · resume unknown',
+    );
+  });
+
   it('the ticket: provider, key and link', () => {
     const view = F.taskView({ task: { ...F.taskView().task, ticket: { provider: 'jira', key: 'SEN-52', url: 'https://x/SEN-52' } } });
     expect(toTaskView(view, opts).header.ticket).toEqual({ provider: 'Jira', key: 'SEN-52', url: 'https://x/SEN-52' });

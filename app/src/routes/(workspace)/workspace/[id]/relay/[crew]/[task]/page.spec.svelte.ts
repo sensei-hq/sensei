@@ -180,13 +180,14 @@ describe('Relay · task — Run details', () => {
   it('a number nobody reported reads "not reported"; a reported zero reads 0', async () => {
     const { c } = await open();
     const detail = (key: string) => text(one(c, `[data-run-detail="${key}"]`));
-    // tokens_cache and peak_memory_mb are null in the fixture; compactions is 0.
-    expect(detail('tokens_cache')).toContain('not reported');
-    expect(detail('tokens_cache')).not.toMatch(/\b0\b/);
-    expect(detail('peak_memory_mb')).toContain('not reported');
-    expect(detail('compactions')).toMatch(/\b0\b/);
-    expect(detail('compactions')).not.toContain('not reported');
-    expect(detail('repository')).toContain('sensei-hq/sensei');
+    // Tokens cached and peak memory are null in the fixture; compactions is 0 (#425: rows
+    // are keyed by their label).
+    expect(detail('Tokens cached')).toContain('not reported');
+    expect(detail('Tokens cached')).not.toMatch(/\b0\b/);
+    expect(detail('Peak memory')).toContain('not reported');
+    expect(detail('Compactions')).toMatch(/\b0\b/);
+    expect(detail('Compactions')).not.toContain('not reported');
+    expect(detail('Repository')).toContain('sensei-hq/sensei');
   });
 
   it('the totals say how many turns reported', async () => {
