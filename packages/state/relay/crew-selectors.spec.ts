@@ -85,6 +85,16 @@ describe('toMemberGroups · presence (CONTRACT §1h)', () => {
     expect(gone.alert).toBe(`No answer since ${hhmm(lost)} · lease lost.`);
   });
 
+  it('presence is the daemon’s (#419): a lease past its end, not yet swept, reads not responding', () => {
+    const lost = F.minutesAgo(2);
+    const [m] = toMemberGroups(
+      F.now({ lanes: [F.lane({ lease_state: 'granted', lease_expires_at: lost, presence: 'not_responding' } as never)] }),
+      AT,
+    )[0].members;
+    expect(m.status).toBe('not_responding');
+    expect(m.alert).toBe(`No answer since ${hhmm(lost)} · lease lost.`);
+  });
+
   it('a model the session did not report reads so; no codename yet, the code stands in', () => {
     const [m] = toMemberGroups(F.now({ lanes: [F.lane({ model: null })] }), AT)[0].members;
     expect(m.model).toBe('model not reported');

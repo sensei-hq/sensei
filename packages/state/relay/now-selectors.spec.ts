@@ -108,6 +108,12 @@ describe('toLaneGroups · a lane row (CONTRACT §1c-2)', () => {
     expect(row.href).toBe(`/relay/${F.CREW_ID}/t-structure`);
   });
 
+  it('lease lost is the daemon’s presence (#419): a granted lease past its end reads lost too', () => {
+    const lost = F.minutesAgo(3);
+    const row = one(F.lane({ lease_state: 'granted', lease_expires_at: lost, presence: 'not_responding' } as never));
+    expect(row.state).toEqual({ label: 'lease lost', tone: 'danger' });
+  });
+
   it('paused on a limit: which quota, and until when it resumes or that that is unknown (the limit-exhaustion wording)', () => {
     const resumes = F.minutesAgo(-30);
     expect(one(F.lane({ limit_scope: 'daily', limit_resumes_at: resumes })).state).toEqual({ label: 'paused', tone: 'warning' });

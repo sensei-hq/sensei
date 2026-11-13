@@ -38,6 +38,12 @@ describe('toStats · the four stats, counted from the read', () => {
     expect(toStats(busy(), Date.now())?.blocked).toBe(2);
   });
 
+  it('a lane the daemon calls not responding is blocked, not working or waiting (#419)', () => {
+    const silent = now({ lanes: [lane({ presence: 'not_responding' } as never), lane({ id: 'l2', code: 'L2', task: null, presence: 'not_responding' } as never)] });
+    const stats = toStats(silent, Date.now());
+    expect([stats?.working, stats?.waiting.count, stats?.blocked]).toEqual([0, 0, 2]);
+  });
+
   it('Completed today is the list, with the first-pass line', () => {
     expect(toStats(now(), Date.now())).toMatchObject({ done: 2, firstPass: '1 of 5 first-pass' });
     const quiet = now({ today: { completed: 0, reviewed: null, first_pass_approved: null }, completed_today: [] });
