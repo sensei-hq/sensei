@@ -64,8 +64,8 @@ use crate::db::pg_store::relay::{
     RelayCaller, RelayCheckpointInput, RelayClaim, RelayClaimedReview, RelayClaimedTask,
     RelayCreateRunInput, RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput,
     RelayHandoverInput, RelayHeartbeatOutput, RelayLaneSession, RelayLimitPauseInput,
-    RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayPlanInput, RelayReadFilter,
-    RelayRegisterInput, RelayReleaseInput, RelayReportInput, RelayResourceRequest,
+    RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayNudge, RelayPlanInput,
+    RelayReadFilter, RelayRegisterInput, RelayReleaseInput, RelayReportInput, RelayResourceRequest,
     RelayReviewInput, RelayStepInput, RelayStepOutput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
@@ -748,6 +748,36 @@ pub(crate) struct PersonMessageBody {
     task_id: Option<String>,
     text: String,
     surface: String,
+    /// A nudge (#419; lanes.md §15): `nudge: true` with its `reason`, and
+    /// optionally the wait so far.
+    #[serde(default)]
+    nudge: bool,
+    reason: Option<String>,
+    waiting_min: Option<i64>,
+}
+
+/// The body's nudge. A reason or a wait without `nudge: true` is refused,
+/// not dropped; the reason's vocabulary is the props check's.
+fn person_nudge_of(body: &PersonMessageBody) -> Result<Option<RelayNudge>, RelayError> {
+    let waiting_min = body
+        .waiting_min
+        .map(|m| {
+            u64::try_from(m).map_err(|_| {
+                RelayError::Validation("waiting_min must be a whole number ≥ 0".into())
+            })
+        })
+        .transpose()?;
+    if !body.nudge {
+        if body.reason.is_some() || waiting_min.is_some() {
+            return Err(RelayError::Validation("reason and waiting_min need nudge: true".into()));
+        }
+        return Ok(None);
+    }
+    let reason = body
+        .reason
+        .clone()
+        .ok_or_else(|| RelayError::Validation("a nudge needs a reason".into()))?;
+    Ok(Some(RelayNudge { reason, waiting_min }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1443,7 +1473,7 @@ pub(crate) async fn lane_message(
         .relay_send_message(
             session.user_id,
             RelayCaller::Lane { lane_id: caller },
-            RelayMessageInput { to: to.clone(), task_id, text: body.text },
+            RelayMessageInput { to: to.clone(), task_id, text: body.text, nudge: None },
         )
         .await
         .map_err(err)?;
@@ -1664,12 +1694,18 @@ pub(crate) async fn person_message(
     let surface = parse_word::<RelaySurface>(&body.surface, "surface").map_err(err)?;
     let task_id =
         body.task_id.as_deref().map(|t| parse_uuid(t, "task_id")).transpose().map_err(err)?;
+    let nudge = person_nudge_of(&body).map_err(err)?;
     let out = state
         .pg
         .relay_send_message(
             user_id,
             RelayCaller::Person { surface },
-            RelayMessageInput { to: message_to(&body.to).map_err(err)?, task_id, text: body.text },
+            RelayMessageInput {
+                to: message_to(&body.to).map_err(err)?,
+                task_id,
+                nudge,
+                text: body.text,
+            },
         )
         .await
         .map_err(err)?;
@@ -4444,7 +4480,8 @@ mod tests {
             ),
         ] {
             let (status, out) = person_nudge(&h, body).await;
-            assert_eq!(status, StatusCode::BAD_REQUEST, "{case}: {out}");
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{case}: {out}");
+            assert_eq!(out["error"], "relay_invalid", "{case}: {out}");
         }
         // The wait so far is optional: the person may nudge at any time.
         let (status, out) =

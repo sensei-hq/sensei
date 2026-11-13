@@ -285,6 +285,10 @@ row, and must make waiting visible.
   (the daemon speaks) — on the sweeper's pass, delivered on every lane's next `wait_for_task` / `get_tasks`. There
   is no party to wait on any more: any non-author lane claims the review (`claim_next` offers it first). The person
   may still message the crew at any time.
+- **The person's nudge (as built, #419).** `POST /relay/messages` with `nudge: true`, a `reason` (`review_unassigned`
+  · `verdict_unread` · `merge_pending` · `no_work` · `decision` · `resource` · `review_floating`) and optionally
+  `waiting_min` writes the message with those props. A reason or a wait without `nudge: true` is refused (422), and so
+  is a nudge to the person. The task's history shows the flag, the reason and the wait on the message row.
 - **Why (observed 2026-11-05/06):** four reports sat without a reviewer for 30 min to 3 h, because the coordinator
   scanned by time instead of matching reports to reviews. Two lanes idled on verdicts that had already been filed. One
   lane got a stale review of a round it had already replaced. Each was a lost hand-off that a row and a clock would have

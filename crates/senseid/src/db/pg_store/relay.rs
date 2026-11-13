@@ -578,6 +578,16 @@ pub struct RelayMessageInput {
     pub to: RelayMessageTo,
     pub task_id: Option<Uuid>,
     pub text: String,
+    /// A nudge (lanes.md §15): why, and how long the wait has run.
+    pub nudge: Option<RelayNudge>,
+}
+
+/// The person's nudge on a message (#419; CONTRACT §3f-bis).
+#[derive(Debug, Clone)]
+pub struct RelayNudge {
+    /// One of `relay::NUDGE_REASONS`; the props check holds it.
+    pub reason: String,
+    pub waiting_min: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1128,7 +1138,16 @@ fn history_props(kind: &str, props: &serde_json::Value) -> serde_json::Value {
             })
         }
         "answered" => serde_json::json!({ "option": get("option"), "surface": get("surface") }),
-        "message" => serde_json::json!({ "to": get("to"), "surface": get("surface") }),
+        "message" => {
+            let mut out = serde_json::json!({ "to": get("to"), "surface": get("surface") });
+            // A nudge shows as one in the history ("Nudge · to … · from you").
+            for key in ["nudge", "reason", "waiting_min"] {
+                if let Some(v) = props.get(key) {
+                    out[key] = v.clone();
+                }
+            }
+            out
+        }
         "merged" => {
             let gates = arr("gates")
                 .iter()
@@ -4969,7 +4988,20 @@ impl PgStore {
                 oldest.ok_or_else(|| RelayError::NotFound("no crew".into()))?
             }
         };
-        let props = serde_json::json!({"to": to, "surface": word(surface)});
+        let mut props = serde_json::json!({"to": to, "surface": word(surface)});
+        if let Some(nudge) = &input.nudge {
+            // A nudge goes to the party being waited on — never the person.
+            if matches!(input.to, RelayMessageTo::Person) {
+                return Err(RelayError::Validation(
+                    "a nudge goes to a lane, not the person".into(),
+                ));
+            }
+            props["nudge"] = serde_json::json!(true);
+            props["reason"] = serde_json::json!(nudge.reason);
+            if let Some(min) = nudge.waiting_min {
+                props["waiting_min"] = serde_json::json!(min);
+            }
+        }
         validate_props(RelayActionKind::Message, &props)
             .map_err(|e| RelayError::Validation(e.message))?;
         let message_id = new_id();
@@ -9755,6 +9787,7 @@ mod tests {
                     to: RelayMessageTo::Everyone,
                     task_id: None,
                     text: text.into(),
+                    nudge: None,
                 },
             )
             .await
@@ -9779,6 +9812,7 @@ mod tests {
                     to: RelayMessageTo::Lane { lane_id: a4 },
                     task_id: None,
                     text: "psst".into(),
+                    nudge: None,
                 },
             )
             .await
@@ -10248,6 +10282,7 @@ mod tests {
                     to: RelayMessageTo::Lane { lane_id: a2 },
                     task_id: None,
                     text: "Hi".into(),
+                    nudge: None,
                 },
             )
             .await
@@ -10281,6 +10316,7 @@ mod tests {
                     to: RelayMessageTo::Coordinator,
                     task_id: None,
                     text: "Ack".into(),
+                    nudge: None,
                 },
             )
             .await
@@ -10302,6 +10338,7 @@ mod tests {
                     to: RelayMessageTo::Coordinator,
                     task_id: None,
                     text: "x".into(),
+                    nudge: None,
                 },
             )
             .await;
@@ -10317,8 +10354,12 @@ mod tests {
         let pg = PgStore::test_store().await;
         let (_, _, _, a2, _, _) = fx_two_crews(&pg).await;
         let caller = || RelayCaller::Lane { lane_id: a2 };
-        let msg =
-            |text: String| RelayMessageInput { to: RelayMessageTo::Everyone, task_id: None, text };
+        let msg = |text: String| RelayMessageInput {
+            to: RelayMessageTo::Everyone,
+            task_id: None,
+            text,
+            nudge: None,
+        };
         let err = pg.relay_send_message(u1(), caller(), msg("x".repeat(601))).await.unwrap_err();
         assert!(matches!(err, RelayError::Validation(_)), "{err:?}");
         let err = pg

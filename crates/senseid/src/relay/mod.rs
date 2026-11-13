@@ -616,10 +616,29 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
             allow(&["to", "surface", "nudge", "reason", "waiting_min", "task_id"])?;
             check_to_shape(present("to").ok_or_else(|| missing("to"))?)?;
             check_surface(present("surface").ok_or_else(|| missing("surface"))?)?;
-            if let Some(v) = present("nudge")
-                && v.as_bool().is_none()
-            {
-                return Err(props_err("nudge must be a bool".into()));
+            let nudge = match present("nudge") {
+                Some(v) => v.as_bool().ok_or_else(|| props_err("nudge must be a bool".into()))?,
+                None => false,
+            };
+            // A nudge names why; the reason and the wait belong to a nudge only.
+            match (nudge, present("reason")) {
+                (true, None) => return Err(missing("reason")),
+                (true, Some(v)) if !v.as_str().is_some_and(|r| NUDGE_REASONS.contains(&r)) => {
+                    return Err(props_err(format!(
+                        "reason must be one of {}",
+                        NUDGE_REASONS.join("|")
+                    )));
+                }
+                (false, Some(_)) => return Err(props_err("reason needs nudge: true".into())),
+                _ => {}
+            }
+            if let Some(v) = present("waiting_min") {
+                if !nudge {
+                    return Err(props_err("waiting_min needs nudge: true".into()));
+                }
+                if v.as_u64().is_none() {
+                    return Err(props_err("waiting_min must be a whole number ≥ 0".into()));
+                }
             }
             if let Some(v) = present("task_id")
                 && v.as_str().is_none_or(|s| !is_uuid_str(s))
@@ -786,6 +805,17 @@ pub const REOFFER_GRACE_SECS: u64 = 900;
 pub const REVIEW_CLAIM_GRACE_SECS: u64 = 60;
 /// A report floating unclaimed this long nudges the crew, once per window.
 pub const NUDGE_AFTER_SECS: u64 = 900;
+/// Why a nudge was sent: the waiting reasons (lanes-data.md §15; CONTRACT
+/// §3f-bis) and the sweeper's floating review (F07).
+pub const NUDGE_REASONS: &[&str] = &[
+    "review_unassigned",
+    "verdict_unread",
+    "merge_pending",
+    "no_work",
+    "decision",
+    "resource",
+    "review_floating",
+];
 
 /// True once `now` reaches the lease's end. Clocks are fed in (tests never
 /// read wall time).
