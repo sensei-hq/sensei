@@ -27,11 +27,14 @@
 - #423: `toQueueRows`, QueueRow/QueueSection conformed + benched (bench-r5) and composed (`218d8eab9`); tints mix in
   OKLab (`46ab65816`); add an open item to triage end to end (`eea645d67`, form not in mockup — Design). e2e 9/9.
 
-**Remaining (in order):** → #424 Crew → #425 Task (incl. #388,
+- #424: crew selectors, RunCard/MemberCard/AddMember benched (bench-r6) and composed (`fab34a809`); e2e 9/9. Daemon
+  gaps: past runs, catalogue, heartbeat, host, run draft/start/cancel.
+
+**Remaining (in order):** → #425 Task (incl. #388,
 verify #380) → #426 e2e run. Daemon #418/#419 in parallel (row-carrying events; #421's apply is ready for them).
 
-**Next command:** `gh issue view 424` (Crew), render the mockup's Crew view (`--state '{"view":"crew","load":"loaded"}'`
-and `'{"view":"crew","load":"empty"}'`), then RunCard/MemberCard/AddMember on the bench.
+**Next command:** `gh issue view 425` (Task), render the mockup's Task view (`--state '{"view":"task","from":"now","load":"loaded"}'`),
+then TaskHeader/RunDetails/HandoffCard on the bench (fix [data-timeline]/[data-progress] hooks; #388 radius; verify #380 scroll).
 
 **Open questions (user):** feedback on the bench sheet (r2). Retire `lane/relay-screen-conformance`? (its r2/r3
 commits live only there). Header height: with the info band open, the header bands push the body below the fold
