@@ -11272,6 +11272,39 @@ mod tests {
         assert_eq!(fake.seen.lock().unwrap().len(), 1);
     }
 
+    #[tokio::test]
+    async fn a_gate_that_cannot_run_puts_its_ask_on_the_stream() {
+        // #418: the gate's ask to the person is a decision like any other:
+        // Needs you gains its row from the stream.
+        use crate::relay::gate::FakeGateRunner;
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let (t, g) = (v7(0xf1), v7(0xf2));
+        fx_gate(&pg, c1, a2, t, g).await;
+        let (tx, mut rx) = tokio::sync::broadcast::channel(32);
+        let fake = FakeGateRunner::new(GateOutcome::Error("git not installed".into()));
+        crate::tasks::relay_lease_sweep::pass(&pg, &tx, &fake, t0()).await.unwrap();
+        let asked: Uuid = sqlx_core::query_scalar::query_scalar(
+            "select id from relay.actions where kind = 'asked' and task_id = $1",
+        )
+        .bind(g)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        let mut decisions = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            let v = serde_json::to_value(&event).unwrap();
+            if v["entity"] == "decision" {
+                decisions.push(v);
+            }
+        }
+        assert_eq!(decisions.len(), 1, "{decisions:?}");
+        assert_eq!(decisions[0]["action"], "add");
+        assert_eq!(decisions[0]["data"]["id"], asked.to_string());
+        assert_eq!(decisions[0]["data"]["crew_id"], c1.to_string());
+        assert_eq!(decisions[0]["data"]["options"][0]["id"], GATE_RETRY_OPTION);
+    }
+
     // ── queue cutover (2.9): the lane queue read, waiters, run activation ──
 
     #[tokio::test]
