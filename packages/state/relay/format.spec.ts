@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { crewRepoLabel, crewSizeContext, currentStepKey, taskStateLabel } from './relay-format.js';
-import type { ApiError } from '$lib/api.js';
-import type { RelayLane, RelayTaskStep } from '$lib/relay-api.js';
-import * as F from '$lib/test-stubs/relay-fixtures.js';
+import { crewRepoLabel, crewSizeContext, currentStepKey, taskStateLabel } from './format.js';
+import type { ApiError } from '../result.js';
+import type { RelayLane, RelayTaskStep } from './types.js';
+import * as F from './fixtures.js';
 
 describe('crewSizeContext', () => {
   // #394: the main window's context line reads the crew's size — the assistant
