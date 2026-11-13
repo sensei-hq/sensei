@@ -12,12 +12,14 @@
 - #418 slice 1/4: `GET /api/relay/events?crew_id=` drops events naming another crew (crew-less task/relay ops pass;
   bad id 400) (`0f11b8feb`); the task route opens its crew's stream (`d72406159`). senseid relay 376/376.
 
-**Remaining (in order):** #418 slice 2 (checkpoint `steps[]` emits `step` events) → 3 (`/relay/now` lanes gain
-current_step/steps_done/steps_total, DDL view) → 4 (lane/task/run events carry rows; item/decision/message entities;
-triage/backlog writes emit) → #419 (draft/start/cancel run, nudge, catalogue) → #426 run-journey e2e.
+- #418 slice 2/4: a checkpoint's `steps[]` arrive as step events, then the task event (`8280d0422`).
 
-**Next command:** red test in `crates/senseid/src/api/handlers/relay.rs` tests: a checkpoint with `steps[]` emits one
-`step` event per step (`cargo test --bin senseid relay -- --test-threads=1`).
+**Remaining (in order):** #418 slice 3 (`/relay/now` lanes gain current_step/steps_done/steps_total) → 4 (lane/task/run
+events carry rows; item/decision/message entities; triage/backlog writes emit) → #419 (draft/start/cancel run, nudge,
+catalogue) → #426 run-journey e2e.
+
+**Next command:** red test for slice 3 in `crates/senseid/src/api/handlers/relay.rs` (`cargo test --bin senseid relay
+-- --test-threads=1`).
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
 phone header height; merge #417 + `make release`; `font-display` no-op elsewhere in the app.
