@@ -2695,7 +2695,7 @@ mod tests {
         assert_eq!(into, item_event("add", "backlogged", "backlog", &item, Some(row)));
         let run = json!({
             "title": "Sprint 1", "goal": "Ship", "item_ids": [item],
-            "repo_key": "github.com/o/r", "config": {"auto_merge": false},
+            "repo_key": "github.com/o/r", "config": {"auto_merge": false}, "start": true,
         });
         let (status, body) = call(&h, "POST", "/relay/runs", Some(run), None).await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
@@ -3031,7 +3031,7 @@ mod tests {
         let item_id = triage_item(&h).await;
         let run_body = json!({
             "title": "Sprint 1", "goal": "Ship the queue", "item_ids": [item_id],
-            "repo_key": "github.com/o/r", "config": {"auto_merge": false},
+            "repo_key": "github.com/o/r", "config": {"auto_merge": false}, "start": true,
         });
         // No active crew: nothing to run in.
         let (status, body) = call(&h, "POST", "/relay/runs", Some(run_body.clone()), None).await;
@@ -3071,6 +3071,193 @@ mod tests {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     }
 
+    // ── #419: draft → start → cancel (design 2026-11-12 §2d; the run journey) ──
+
+    async fn draft_run(h: &Harness, item_id: &str) -> String {
+        let (status, body) = call(
+            h,
+            "POST",
+            "/relay/runs",
+            Some(json!({"title": "Sprint 1", "goal": "Ship", "item_ids": [item_id],
+                        "repo_key": "github.com/o/r"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["status"], "draft", "{body}");
+        body["run_id"].as_str().unwrap().to_string()
+    }
+
+    async fn run_verb(h: &Harness, run_id: &str, verb: &str) -> (StatusCode, Value) {
+        call(h, "POST", &format!("/relay/runs/{run_id}/{verb}"), Some(json!({})), None).await
+    }
+
+    async fn item_state(h: &Harness, item_id: &str) -> String {
+        sqlx_core::query_scalar::query_scalar(
+            "select state::text from relay.items where id = $1::uuid",
+        )
+        .bind(item_id)
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_run_is_drafted_with_its_items_and_no_crew_or_task0() {
+        // The journey's first step: no crew yet, so the run waits as a draft.
+        let h = harness().await;
+        let item = triage_item(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/runs",
+            Some(json!({"title": "Sprint 1", "goal": "Ship", "item_ids": [item],
+                        "repo_key": "github.com/o/r"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["status"], "draft");
+        assert_eq!(body["crew_id"], Value::Null);
+        assert_eq!(body["planning_task_id"], Value::Null);
+        let run_id = body["run_id"].as_str().unwrap().to_string();
+        let tasks: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.tasks where run_id = $1::uuid",
+        )
+        .bind(&run_id)
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(tasks, 0, "a draft mints no Task 0");
+        // Its items are taken for it: they leave the queue.
+        assert_eq!(item_state(&h, &item).await, "planned");
+        let event = event_for_entity(&mut rx, "run").await;
+        assert_eq!(event.data["op"], "drafted", "{:?}", event.data);
+        assert_eq!(event.data["run_id"], run_id.as_str());
+        assert_eq!(event.data["crew_id"], Value::Null);
+        // Not on Now's band until it starts.
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(now["runs"].as_array().unwrap().iter().all(|r| r["run_id"] != run_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn start_binds_the_active_crew_and_mints_task0() {
+        let h = harness().await;
+        let item = triage_item(&h).await;
+        let run_id = draft_run(&h, &item).await;
+        let coord = register_coordinator(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) =
+            call(&h, "POST", &format!("/relay/runs/{run_id}/start"), Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["run_id"], run_id.as_str());
+        assert_eq!(body["status"], "planning");
+        assert_eq!(body["crew_id"], coord.2);
+        let task0 = body["planning_task_id"].as_str().unwrap().to_string();
+        let event = event_for_entity(&mut rx, "run").await;
+        assert_eq!(event.data["op"], "started", "{:?}", event.data);
+        assert_carries_run_row(&h, &event.data, &run_id).await;
+        // Task 0 waits in the pool, under the run's repository.
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = claim_next(&h, &lane, &token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["task"]["id"], task0);
+        assert_eq!(body["task"]["phase"], "planning");
+        assert_eq!(body["task"]["repo_key"], "github.com/o/r", "{body}");
+        // Started once: a second start is refused.
+        let (status, body) =
+            call(&h, "POST", &format!("/relay/runs/{run_id}/start"), Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    }
+
+    #[tokio::test]
+    async fn start_needs_a_crew_with_a_live_lane() {
+        let h = harness().await;
+        let item = triage_item(&h).await;
+        let run_id = draft_run(&h, &item).await;
+        // No crew at all.
+        let (status, body) = run_verb(&h, &run_id, "start").await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        // A crew whose only lane stopped answering.
+        let coord = register_coordinator(&h).await;
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = current_timestamp - interval '1 minute'
+             where lane_id = $1::uuid and kind = 'lane'",
+        )
+        .bind(&coord.0)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (status, body) = run_verb(&h, &run_id, "start").await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["message"].as_str().unwrap().contains("live lane"), "{body}");
+        // Still a draft; unknown runs are not found.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/runs/01931560-9000-7000-8000-000000000099/start",
+            Some(json!({})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_draft_gives_its_items_back_to_the_backlog() {
+        let h = harness().await;
+        let item = triage_item(&h).await;
+        let run_id = draft_run(&h, &item).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) =
+            call(&h, "POST", &format!("/relay/runs/{run_id}/cancel"), Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "cancelled");
+        assert_eq!(item_state(&h, &item).await, "backlog");
+        let event = event_for_entity(&mut rx, "run").await;
+        assert_eq!(event.data["op"], "cancelled", "{:?}", event.data);
+        // The item is back on the backlog list, with its row.
+        let back = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        let row = queue_row(&h, "backlog", &item).await;
+        assert_eq!(back, item_event("add", "backlogged", "backlog", &item, Some(row)));
+        // Cancelled is final.
+        for verb in ["cancel", "start"] {
+            let (status, body) =
+                call(&h, "POST", &format!("/relay/runs/{run_id}/{verb}"), Some(json!({})), None)
+                    .await;
+            assert_eq!(status, StatusCode::CONFLICT, "{verb}: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_started_run_cancels_its_open_tasks() {
+        // The person may stop a run at any time, a lane on its task or not.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let item = triage_item(&h).await;
+        let run_id = draft_run(&h, &item).await;
+        let (status, body) =
+            call(&h, "POST", &format!("/relay/runs/{run_id}/start"), Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let task0 = body["planning_task_id"].as_str().unwrap().to_string();
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let (status, _) = claim_next(&h, &lane, &token).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) =
+            call(&h, "POST", &format!("/relay/runs/{run_id}/cancel"), Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task0}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "cancelled", "{view}");
+        assert_eq!(item_state(&h, &item).await, "backlog");
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(now["runs"].as_array().unwrap().iter().all(|r| r["run_id"] != run_id.as_str()));
+        // The lane is free again: its lane row holds no task.
+        assert_eq!(now_lane(&h, &lane).await["task"], Value::Null);
+    }
+
     #[tokio::test]
     async fn approving_task0_emits_unpack_and_run_activated() {
         let h = harness().await;
@@ -3084,7 +3271,7 @@ mod tests {
             "/relay/runs",
             Some(json!({
                 "title": "Sprint 1", "goal": "Ship", "item_ids": [item_id],
-                "repo_key": "github.com/o/r", "config": {"auto_merge": false},
+                "repo_key": "github.com/o/r", "config": {"auto_merge": false}, "start": true,
             })),
             None,
         )
