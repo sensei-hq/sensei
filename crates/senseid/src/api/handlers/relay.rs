@@ -3475,6 +3475,89 @@ mod tests {
         assert!(content_type.starts_with("text/event-stream"), "{content_type}");
     }
 
+    /// The SSE frames' data, read off a stream until `n` arrive.
+    async fn sse_frames(resp: axum::response::Response, n: usize) -> Vec<Value> {
+        use tokio_stream::StreamExt;
+        let mut stream = resp.into_body().into_data_stream();
+        let mut buf = String::new();
+        let mut out = Vec::new();
+        while out.len() < n {
+            let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                .await
+                .expect("a frame arrives")
+                .expect("stream open")
+                .unwrap();
+            buf.push_str(std::str::from_utf8(&chunk).unwrap());
+            while let Some(end) = buf.find("\n\n") {
+                let frame: String = buf.drain(..end + 2).collect();
+                if let Some(data) = frame.lines().find_map(|l| l.strip_prefix("data:")) {
+                    out.push(serde_json::from_str(data.trim()).unwrap());
+                }
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn relay_events_crew_filter_drops_other_crews() {
+        // #418: `?crew_id=` narrows the stream to one crew. An event naming
+        // another crew never arrives; one naming no crew (a task op) does —
+        // the screen re-reads its own crew's view on it.
+        let h = harness().await;
+        let (crew_a, crew_b) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("/api/relay/events?crew_id={crew_a}"))
+            .header("host", "127.0.0.1:7744")
+            .body(Body::empty())
+            .unwrap();
+        let resp = h.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let lane = uuid::Uuid::now_v7();
+        let tx = &h.state.event_tx;
+        use crate::api::events::{LaneChange, StateEvent};
+        tx.send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_b)).unwrap();
+        tx.send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_a)).unwrap();
+        tx.send(StateEvent::relay_task("report", &lane)).unwrap();
+        let frames = sse_frames(resp, 2).await;
+        assert_eq!(frames[0]["entity"], "lane");
+        assert_eq!(frames[0]["data"]["crew_id"], crew_a.to_string());
+        assert_eq!(frames[1]["entity"], "task");
+    }
+
+    #[tokio::test]
+    async fn relay_events_without_crew_filter_carry_every_crew() {
+        let h = harness().await;
+        let (crew_a, crew_b) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/relay/events")
+            .header("host", "127.0.0.1:7744")
+            .body(Body::empty())
+            .unwrap();
+        let resp = h.app.clone().oneshot(req).await.unwrap();
+        let lane = uuid::Uuid::now_v7();
+        use crate::api::events::{LaneChange, StateEvent};
+        h.state.event_tx.send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_b)).unwrap();
+        h.state.event_tx.send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_a)).unwrap();
+        let frames = sse_frames(resp, 2).await;
+        assert_eq!(frames[0]["data"]["crew_id"], crew_b.to_string());
+        assert_eq!(frames[1]["data"]["crew_id"], crew_a.to_string());
+    }
+
+    #[tokio::test]
+    async fn relay_events_bad_crew_id_is_400() {
+        let h = harness().await;
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/relay/events?crew_id=nope")
+            .header("host", "127.0.0.1:7744")
+            .body(Body::empty())
+            .unwrap();
+        let resp = h.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
     #[tokio::test]
     async fn step_reason_only_on_skipped() {
         let h = harness().await;
