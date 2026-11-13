@@ -168,13 +168,13 @@ describe('RelayState · apply: an event with its row changes that row alone', ()
     expect(s.now?.runs[0].run_id).toBe(run.run_id);
   });
 
-  it('a run row reads the queue again — its items moved — but not Now (#418)', async () => {
+  it('a run row changes the band alone: its items ride their own events (#418)', async () => {
     const now = F.sprintNow();
     const { source } = fakeSource();
     const s = new RelayState(source, {}, reads(now));
     s.apply({ action: 'update', entity: 'run', data: { id: now.runs[0].run_id, op: 'activated' } as never });
     await settle();
-    expect(source.readQueue).toHaveBeenCalledTimes(1);
+    expect(source.readQueue).not.toHaveBeenCalled();
     expect(source.readNow).not.toHaveBeenCalled();
   });
 });
@@ -287,14 +287,16 @@ describe('RelayState · the person’s writes', () => {
     expect(source.send).toHaveBeenCalledWith(body);
   });
 
-  it('adding to the backlog re-reads the queue: the daemon emits nothing for it yet (#418)', async () => {
+  it('adding to the backlog is confirmed by its item events: no read of its own (#418)', async () => {
     const { source } = fakeSource();
     const queue = F.queue();
     const s = new RelayState(source, {}, reads(F.now(), queue));
     const item = queue.triage[0];
     expect(await s.addToBacklog(item)).toBeNull();
     expect(source.addToBacklog).toHaveBeenCalledTimes(1);
-    expect(source.readQueue).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(source.readQueue).not.toHaveBeenCalled();
+    expect(source.readNow).not.toHaveBeenCalled();
   });
 });
 
@@ -321,7 +323,7 @@ describe('RelayState · the sprint selection and createSprint', () => {
     expect(s.selectedCount).toBe(0);
   });
 
-  it('is single-flight, names the crew, reads Now and the queue back, and clears the selection', async () => {
+  it('is single-flight, names the crew, reads nothing back (its events confirm it), and clears the selection', async () => {
     const d = F.deferred<ApiResult<RelayCreatedRun>>();
     const { source } = fakeSource({ createRun: vi.fn(() => d.promise) });
     const s = new RelayState(source, {}, reads());
@@ -336,8 +338,10 @@ describe('RelayState · the sprint selection and createSprint', () => {
     d.resolve(F.ok({ run_id: F.RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' }));
     expect(await first).toBe(F.RUN_ID);
     expect(await second).toBe(F.RUN_ID);
-    // The run's own event re-reads Now; nothing tells the queue its items were planned (#418).
-    expect(source.readQueue).toHaveBeenCalled();
+    // The run's row and its items' removals confirm it (#418).
+    await settle();
+    expect(source.readQueue).not.toHaveBeenCalled();
+    expect(source.readNow).not.toHaveBeenCalled();
     expect(s.selectedCount).toBe(0);
     expect(s.sprintError).toBeNull();
   });
@@ -357,12 +361,13 @@ describe('RelayState · the sprint selection and createSprint', () => {
 describe('RelayState · an open item the person adds to triage (#423)', () => {
   const draft = { title: 'Hook skips the dōjō tests', kind: 'finding' as const, tags: ['dōjō'], repo_key: null, workspace_id: 'w1' };
 
-  it('goes to the source; the queue is read again (the daemon emits nothing for it yet, #418)', async () => {
+  it('goes to the source; its item event confirms it — no read of its own (#418)', async () => {
     const { source } = fakeSource({ addTriage: vi.fn(async () => F.ok({ item_id: 'item-9' })) });
     const s = new RelayState(source, { workspace_id: 'w1' }, reads());
     expect(await s.addTriage(draft)).toBeNull();
     expect(source.addTriage).toHaveBeenCalledWith(draft);
-    expect(source.readQueue).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(source.readQueue).not.toHaveBeenCalled();
     expect(s.triageError).toBeNull();
   });
 
