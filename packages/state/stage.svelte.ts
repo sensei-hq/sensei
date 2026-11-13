@@ -3,7 +3,7 @@
  * Every method handles both single item and array.
  */
 
-import type { StateEvent } from './types.js';
+import type { StateEvent } from './events.js';
 
 export class ReactiveStageContext<T extends { id: string }> {
   items = $state<T[]>([]);

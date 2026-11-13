@@ -15,11 +15,7 @@ export interface Stage {
   source?: EventManager<any>;
 }
 
-export interface StateEvent<T extends { id: string }> {
-  action: 'add' | 'update' | 'remove' | 'set';
-  entity: string;
-  data: T | T[];
-}
+export type { StateEvent } from '@sensei/state';
 
 // ─── Scan ──────────────────────────────────────────────────────────────────────
 
