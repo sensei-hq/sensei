@@ -186,7 +186,7 @@ crates/senseid/src/tasks/version_rescan.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) =
 crates/senseid/src/tasks/watchdog_scheduler.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/transcript/claude.rs	R1	.ok()	PARSE-DEFAULT	.ok() — clock skew	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/transcript/claude.rs	R2	.ok()?	GENUINE-EMPTY	.ok() — file mtime absent	audit 2026-11-03 App. C	2026-11-03
-crates/senseid/src/transcript/claude.rs	R5	serde_json::from_str(line).ok().map(|v| (n, v))	PARSE-DEFAULT	.ok() — per-line parse, tolerated	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/claude.rs	R5	.ok()	PARSE-DEFAULT	.ok() — per-line parse, tolerated (reflowed 2026-11-13: regenerated-line filter joined the chain)	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/transcript/copilot_cli.rs	R2	.ok()?	GENUINE-EMPTY	.ok() — file mtime absent	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/transcript/copilot_cli.rs	R6	if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed)	PARSE-DEFAULT	if let Ok( — scan lines for model	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/transcript/cursor.rs	R2	.ok()?	GENUINE-EMPTY	.ok() — file mtime absent	audit 2026-11-03 App. C	2026-11-03

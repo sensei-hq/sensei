@@ -1301,3 +1301,165 @@ async fn workspace_hotspots_count_recent_file_edits_and_reedits() {
         .collect();
     assert_eq!(files, vec![("src/a.rs", 3, 1)], "{rows:?}");
 }
+
+// ── Transcript export: full rows for lossy rebuild ────────────────
+
+async fn seed_export_turns(s: &PgStore, sess: &str) {
+    let mk = |idx: i32, user: &str, asst: &str| crate::transcript::TranscriptTurn {
+        turn_index: idx,
+        user_text: Some(user.into()),
+        assistant_text: asst.into(),
+        started_at: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + idx as i64),
+        attrs: serde_json::json!({ "uuid": format!("u{idx}"), "cwd": "/r" }),
+        ..Default::default()
+    };
+    let mut t1 = mk(1, "do it", "done\ndouble");
+    t1.facts.tokens_in = Some(100);
+    t1.facts.stop_reason = Some("end_turn".into());
+    s.upsert_transcript_turns(
+        &crate::db::pg_store::TranscriptSource {
+            source: "claude_code",
+            session_id: sess,
+            family: "claude",
+            provider: None,
+            model: Some("claude-opus-4-8"),
+        },
+        &[t1, mk(2, "again", "ok")],
+    )
+    .await
+    .unwrap();
+}
+
+async fn clear_export_turns(s: &PgStore, sess: &str) {
+    sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+        .bind(sess)
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
+#[tokio::test]
+async fn export_bundle_returns_full_turns_with_attrs_facts_and_model() {
+    let s = pg_store().await;
+    let sess = format!("_test-export-{}", uuid::Uuid::new_v4());
+    seed_export_turns(&s, &sess).await;
+
+    let got = s.get_transcript_export(&sess).await.unwrap();
+    clear_export_turns(&s, &sess).await;
+
+    let b = got.expect("seeded session exports");
+    assert_eq!(b.source, "claude_code");
+    assert_eq!(b.model.as_deref(), Some("claude-opus-4-8"));
+    assert_eq!(b.turns.len(), 2);
+    assert_eq!(b.turns[0].attrs["uuid"], "u1");
+    assert_eq!(b.turns[0].facts.tokens_in, Some(100));
+    assert_eq!(b.turns[0].facts.stop_reason.as_deref(), Some("end_turn"));
+    assert_eq!(b.turns[1].turn_index, 2);
+}
+
+#[tokio::test]
+async fn export_bundle_is_none_without_kept_turns() {
+    let s = pg_store().await;
+    let sess = format!("_test-export-empty-{}", uuid::Uuid::new_v4());
+
+    assert!(s.get_transcript_export(&sess).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn missing_lists_gone_paths_with_turns_not_present_or_keyed() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let gone = format!("/nonexistent/sensei-test-{uniq}.jsonl");
+    let sess_gone = format!("_test-missing-gone-{uniq}");
+    let sess_here = format!("_test-missing-here-{uniq}");
+    // Present: this repo's own manifest — exists on every machine running the suite.
+    let here = format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
+    for (sess, path) in [(&sess_gone, gone.as_str()), (&sess_here, here.as_str())] {
+        seed_export_turns(&s, sess).await;
+        s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+            source: "claude_code",
+            file_path: path,
+            session_id: Some(sess),
+            mtime_ns: 1,
+            turns: 2,
+        })
+        .await
+        .unwrap();
+    }
+    // A zed thread id is a key, not a path — never "missing".
+    let sess_zed = format!("_test-missing-zed-{uniq}");
+    seed_export_turns(&s, &sess_zed).await;
+    s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+        source: "zed",
+        file_path: "0272abd7-abf8-4586-be6c-926ad8f2b30f",
+        session_id: Some(&sess_zed),
+        mtime_ns: 1,
+        turns: 2,
+    })
+    .await
+    .unwrap();
+
+    let missing = s.missing_transcript_files().await.unwrap();
+    for sess in [&sess_gone, &sess_here, &sess_zed] {
+        clear_export_turns(&s, sess).await;
+        sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE session_id = $1")
+            .bind(sess)
+            .execute(s.pool())
+            .await
+            .ok();
+    }
+
+    let ids: Vec<&str> = missing.iter().map(|m| m.session_id.as_str()).collect();
+    assert!(ids.contains(&sess_gone.as_str()), "gone path listed: {ids:?}");
+    assert!(!ids.contains(&sess_here.as_str()), "present path not listed: {ids:?}");
+    assert!(!ids.contains(&sess_zed.as_str()), "thread keys are not paths: {ids:?}");
+    let row = missing.iter().find(|m| m.session_id == sess_gone).unwrap();
+    assert_eq!(row.turns, 2);
+    assert_eq!(row.file_path, gone);
+}
+
+#[tokio::test]
+async fn file_state_distinguishes_missing_present_and_unknown() {
+    use crate::db::pg_store::transcript::TranscriptFileState;
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let gone = format!("/nonexistent/sensei-test-{uniq}.jsonl");
+    let dir = tempfile::tempdir().unwrap();
+    let here = dir.path().join("here.jsonl");
+    std::fs::write(&here, "{}\n").unwrap();
+    for (sess, path) in [
+        (format!("_test-fs-gone-{uniq}"), gone.as_str()),
+        (format!("_test-fs-here-{uniq}"), here.to_str().unwrap()),
+    ] {
+        s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+            source: "claude_code",
+            file_path: path,
+            session_id: Some(&sess),
+            mtime_ns: 1,
+            turns: 1,
+        })
+        .await
+        .unwrap();
+    }
+
+    assert!(matches!(
+        s.transcript_file_state(&format!("_test-fs-gone-{uniq}")).await.unwrap(),
+        TranscriptFileState::Missing { .. }
+    ));
+    assert!(matches!(
+        s.transcript_file_state(&format!("_test-fs-here-{uniq}")).await.unwrap(),
+        TranscriptFileState::Present { .. }
+    ));
+    assert!(matches!(
+        s.transcript_file_state(&format!("_test-fs-nobody-{uniq}")).await.unwrap(),
+        TranscriptFileState::Unknown
+    ));
+
+    for sess in [format!("_test-fs-gone-{uniq}"), format!("_test-fs-here-{uniq}")] {
+        sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE session_id = $1")
+            .bind(&sess)
+            .execute(s.pool())
+            .await
+            .ok();
+    }
+}
