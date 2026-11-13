@@ -22,6 +22,7 @@ export function relaySseSource(api: RelayApi, stream: () => RelayEventStream): R
     answer: (body) => api.tryAnswerDecision(body),
     send: (body) => api.trySendMessage(body),
     addToBacklog: (body) => api.tryAddToBacklog(body),
+    addTriage: (body) => api.tryAddTriage(body),
     createRun: (body) => api.tryCreateRun(body),
     events(on, onOpen) {
       const socket = stream();

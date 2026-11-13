@@ -8,6 +8,7 @@ import type { ApiResult } from '../../result.js';
 import type { RelaySource } from '../relay-state.svelte.js';
 import type {
   RelayAddToBacklog,
+  RelayAddTriage,
   RelayAnswer,
   RelayCreateRun,
   RelayCreatedRun,
@@ -28,6 +29,7 @@ export interface RelayRealtimeTransport {
   answer(body: RelayAnswer): Promise<ApiResult<{ action_id: string }>>;
   send(body: RelaySendMessage): Promise<ApiResult<{ message_id: string }>>;
   addToBacklog(body: RelayAddToBacklog): Promise<ApiResult<{ item_id: string }>>;
+  addTriage(body: RelayAddTriage): Promise<ApiResult<{ item_id: string }>>;
   createRun(body: RelayCreateRun): Promise<ApiResult<RelayCreatedRun>>;
   /** Subscribe to the channel: each change as a StateEvent, and each status change. Returns the teardown. */
   subscribe(on: (event: RelayStreamEvent) => void, onStatus: (status: RelayChannelStatus) => void): () => void;
@@ -41,6 +43,7 @@ export function relayRealtimeSource(transport: RelayRealtimeTransport): RelaySou
     answer: (body) => transport.answer(body),
     send: (body) => transport.send(body),
     addToBacklog: (body) => transport.addToBacklog(body),
+    addTriage: (body) => transport.addTriage(body),
     createRun: (body) => transport.createRun(body),
     events(on, onOpen) {
       return transport.subscribe(on, (status) => {
@@ -55,6 +58,7 @@ export type CannedWrite =
   | { kind: 'answer'; body: RelayAnswer }
   | { kind: 'send'; body: RelaySendMessage }
   | { kind: 'backlog'; body: RelayAddToBacklog }
+  | { kind: 'triage'; body: RelayAddTriage }
   | { kind: 'run'; body: RelayCreateRun };
 
 /** A transport for specs and the bench: canned reads, recorded writes, and a channel the test drives. */
@@ -71,6 +75,7 @@ export function cannedRealtime(reads: { now: RelayNow | null; queue: RelayQueue 
     answer: async (body: RelayAnswer) => (writes.push({ kind: 'answer', body }), ok({ action_id: `canned-${writes.length}` })),
     send: async (body: RelaySendMessage) => (writes.push({ kind: 'send', body }), ok({ message_id: `canned-${writes.length}` })),
     addToBacklog: async (body: RelayAddToBacklog) => (writes.push({ kind: 'backlog', body }), ok({ item_id: `canned-${writes.length}` })),
+    addTriage: async (body: RelayAddTriage) => (writes.push({ kind: 'triage', body }), ok({ item_id: `canned-${writes.length}` })),
     createRun: async (body: RelayCreateRun): Promise<ApiResult<RelayCreatedRun>> => {
       writes.push({ kind: 'run', body });
       return { ok: false, error: { status: 501, message: 'the canned transport mints no runs' } };

@@ -574,6 +574,16 @@ export type RelayAddToBacklog =
   | { item_id: string }
   | { ticket_provider: RelayTicketProvider; ticket_key: string };
 
+/** An open item the person adds to triage (CONTRACT §1d, §3h; `POST /relay/triage`). */
+export interface RelayAddTriage {
+  title: string;
+  kind: RelayItemKind;
+  tags: string[];
+  /** A manual item may not name a repository yet. */
+  repo_key: string | null;
+  workspace_id: string | null;
+}
+
 /** The gate's knobs on a run (`relay.runs.config`); an unknown knob is a 422. */
 export interface RelayRunConfig {
   base_checkout: string | null;

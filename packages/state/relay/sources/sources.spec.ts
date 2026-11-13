@@ -17,6 +17,7 @@ function fakeApi(): RelayApi & Record<string, ReturnType<typeof vi.fn>> {
     trySendMessage: vi.fn(async () => F.ok({ message_id: 'm' })),
     tryAnswerDecision: vi.fn(async () => F.ok({ action_id: 'a' })),
     tryAddToBacklog: vi.fn(async () => F.ok({ item_id: 'i' })),
+    tryAddTriage: vi.fn(async () => F.ok({ item_id: 't' })),
     tryCreateRun: vi.fn(async () => F.ok({ run_id: F.RUN_ID, planning_task_id: 't', crew_id: F.CREW_ID, status: 'planning' as const })),
   } as never;
 }

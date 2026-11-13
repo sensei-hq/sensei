@@ -588,6 +588,7 @@ describe('Relay · Queue', () => {
     const title = need(one(form, 'input[data-add-item-title]'), 'the title') as HTMLInputElement;
     title.value = 'Hook skips the dōjō tests';
     title.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
     need(one(form, '[data-add-item-submit]'), 'Add').click();
     await vi.waitFor(() => expect(text(section(c, 'triage'))).toContain('Hook skips the dōjō tests'));
     expect(api.tryAddTriage).toHaveBeenCalledWith({ title: 'Hook skips the dōjō tests', kind: 'issue', tags: [], repo_key: null, workspace_id: 'w1' });

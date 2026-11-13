@@ -18,6 +18,7 @@ export function fakeRelayApi(): FakeRelayApi {
     trySendMessage: vi.fn(async () => ok({ message_id: 'msg-1' })),
     tryAnswerDecision: vi.fn(async () => ok({ action_id: 'act-answer' })),
     tryAddToBacklog: vi.fn(async () => ok({ item_id: 'item-new' })),
+    tryAddTriage: vi.fn(async () => ok({ item_id: 'item-added' })),
     tryCreateRun: vi.fn(async () =>
       ok({ run_id: RUN_ID, planning_task_id: 't-plan', crew_id: CREW_ID, status: 'planning' as const }),
     ),

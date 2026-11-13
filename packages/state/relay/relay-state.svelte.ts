@@ -15,6 +15,7 @@
 import { failureReason, type ApiError, type ApiResult } from '../result.js';
 import type {
   RelayAddToBacklog,
+  RelayAddTriage,
   RelayAnswer,
   RelayCreateRun,
   RelayCreatedRun,
@@ -50,6 +51,7 @@ export interface RelaySource {
   answer(body: RelayAnswer): Promise<ApiResult<{ action_id: string }>>;
   send(body: RelaySendMessage): Promise<ApiResult<{ message_id: string }>>;
   addToBacklog(body: RelayAddToBacklog): Promise<ApiResult<{ item_id: string }>>;
+  addTriage(body: RelayAddTriage): Promise<ApiResult<{ item_id: string }>>;
   createRun(body: RelayCreateRun): Promise<ApiResult<RelayCreatedRun>>;
   /** Subscribe to the stream: every event, and every open — the first and each
    *  reconnect (a broadcast has no replay). Returns the teardown. */
@@ -117,6 +119,8 @@ export class RelayState {
   composing = $state(false);
   /** Why the last add to the backlog was refused (the row stays where it was). */
   addError = $state<string | null>(null);
+  /** Why the last open item the person added was refused (what they typed stays). */
+  triageError = $state<string | null>(null);
   /** Backlog item ids picked for a sprint. Reassigned on every change: a Set is not proxied. */
   selected = $state<Set<string>>(new Set());
   creatingSprint = $state(false);
@@ -366,6 +370,19 @@ export class RelayState {
     if (!answer.ok) {
       this.addError = failureReason(answer.error);
       return this.addError;
+    }
+    await this.reReadQueue();
+    return null;
+  }
+
+  /** Add an open item to triage. The daemon emits nothing for it yet (#418), so the
+   *  queue is read again; a refusal is the reason, in `triageError`. */
+  async addTriage(body: RelayAddTriage): Promise<string | null> {
+    this.triageError = null;
+    const answer = await this.source.addTriage(body);
+    if (!answer.ok) {
+      this.triageError = failureReason(answer.error);
+      return this.triageError;
     }
     await this.reReadQueue();
     return null;

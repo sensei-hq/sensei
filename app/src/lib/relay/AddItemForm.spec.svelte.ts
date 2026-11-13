@@ -19,18 +19,20 @@ function mount(onsubmit = vi.fn(async () => null as string | null)) {
   return { c: m.container, onsubmit };
 }
 
-const type = (el: HTMLInputElement | HTMLSelectElement, value: string) => {
+/** Type into a field; the DOM (the Add button's disabled) follows on the next tick. */
+const type = async (el: HTMLInputElement | HTMLSelectElement, value: string) => {
   el.value = value;
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
+  await tick();
 };
 
 describe('AddItemForm', () => {
   it('a title and its kind go out together; the field clears once it is added', async () => {
     const { c, onsubmit } = mount();
     const title = c.querySelector('input[data-add-item-title]') as HTMLInputElement;
-    type(title, 'Hook skips the dōjō tests');
-    type(c.querySelector('select[data-add-item-kind]') as HTMLSelectElement, 'finding');
+    await type(title, 'Hook skips the dōjō tests');
+    await type(c.querySelector('select[data-add-item-kind]') as HTMLSelectElement, 'finding');
     (c.querySelector('[data-add-item-submit]') as HTMLButtonElement).click();
     await vi.waitFor(() => expect(onsubmit).toHaveBeenCalledWith({ title: 'Hook skips the dōjō tests', kind: 'finding' }));
     await tick();
@@ -46,7 +48,7 @@ describe('AddItemForm', () => {
   it('a refusal says why and keeps what was typed', async () => {
     const { c } = mount(vi.fn(async () => 'title is too long'));
     const title = c.querySelector('input[data-add-item-title]') as HTMLInputElement;
-    type(title, 'x'.repeat(10));
+    await type(title, 'x'.repeat(10));
     (c.querySelector('[data-add-item-submit]') as HTMLButtonElement).click();
     await vi.waitFor(() => expect(c.querySelector('[data-add-item-error]')?.textContent).toContain('title is too long'));
     expect(title.value).toBe('x'.repeat(10));

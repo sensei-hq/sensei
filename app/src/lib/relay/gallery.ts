@@ -17,6 +17,7 @@ import MessageRow from './MessageRow.svelte';
 import Pill from './Pill.svelte';
 import QueueRow from './QueueRow.svelte';
 import QueueSection from './QueueSection.svelte';
+import AddItemForm from './AddItemForm.svelte';
 import { mockupBacklog, mockupTriage } from './queue.fixtures.js';
 import RelayChecklist from './RelayChecklist.svelte';
 import RoleMark from './RoleMark.svelte';
@@ -124,6 +125,7 @@ export const GALLERY: GalleryEntry[] = [
     rows: mockupTriage(),
     onadd: accepted,
   }),
+  entry('AddItemForm/empty', 'add an open item to triage — not in the r1 mockup: the smallest form the contract needs, for Design', AddItemForm, { onsubmit: accepted }),
   entry('QueueSection/backlog', 'Backlog: the mockup’s four rows, in order', QueueSection, {
     id: 'backlog',
     label: 'Backlog',

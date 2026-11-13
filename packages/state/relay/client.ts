@@ -6,6 +6,7 @@ import type { ApiResult } from '../result.js';
 import {
   parseRelayStreamEvent,
   type RelayAddToBacklog,
+  type RelayAddTriage,
   type RelayAnswer,
   type RelayCreateRun,
   type RelayCreatedRun,
@@ -27,6 +28,8 @@ export interface RelayApi {
   trySendMessage(body: RelaySendMessage): Promise<ApiResult<{ message_id: string }>>;
   tryAnswerDecision(body: RelayAnswer): Promise<ApiResult<{ action_id: string }>>;
   tryAddToBacklog(body: RelayAddToBacklog): Promise<ApiResult<{ item_id: string }>>;
+  /** An open item the person adds to triage. */
+  tryAddTriage(body: RelayAddTriage): Promise<ApiResult<{ item_id: string }>>;
   /** Mint a sprint run (queue cutover); the daemon's refusal text says why not. */
   tryCreateRun(body: RelayCreateRun): Promise<ApiResult<RelayCreatedRun>>;
 }
@@ -72,6 +75,7 @@ export const relayClient = (base: string): RelayApi => {
     trySendMessage: (body) => call<{ message_id: string }>('POST', '/relay/messages', body),
     tryAnswerDecision: (body) => call<{ action_id: string }>('POST', '/relay/answers', body),
     tryAddToBacklog: (body) => call<{ item_id: string }>('POST', '/relay/backlog', body),
+    tryAddTriage: (body) => call<{ item_id: string }>('POST', '/relay/triage', body),
     tryCreateRun: (body) => call<RelayCreatedRun>('POST', '/relay/runs', body),
   };
 };

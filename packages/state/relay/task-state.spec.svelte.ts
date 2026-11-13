@@ -14,6 +14,7 @@ const fakeApi = () =>
     trySendMessage: vi.fn(async () => F.ok({ message_id: 'msg-1' })),
     tryAnswerDecision: vi.fn(async () => F.ok({ action_id: 'act-answer' })),
     tryAddToBacklog: vi.fn(async () => F.ok({ item_id: 'item-new' })),
+    tryAddTriage: vi.fn(async () => F.ok({ item_id: 'item-added' })),
     tryCreateRun: vi.fn(async () => F.ok({ run_id: F.RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' as const })),
   }) as unknown as { [K in keyof RelayApi]: ReturnType<typeof vi.fn> & RelayApi[K] };
 

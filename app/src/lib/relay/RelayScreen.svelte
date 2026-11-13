@@ -23,6 +23,7 @@
   import CreateSprintForm from './CreateSprintForm.svelte';
   import FloatingReviewRow from './FloatingReviewRow.svelte';
   import QueueSection from './QueueSection.svelte';
+  import AddItemForm from './AddItemForm.svelte';
   import LaneList from './LaneList.svelte';
   import CompletedList from './CompletedList.svelte';
   import NeedsYou from './NeedsYou.svelte';
@@ -301,6 +302,15 @@
           {#if state.addError}
             <Notice size="inline" tone="fault" title={state.addError} data-add-error />
           {/if}
+          <AddItemForm
+            onsubmit={(draft) =>
+              state.addTriage({
+                ...draft,
+                tags: [],
+                repo_key: state.filter.repo_key ?? null,
+                workspace_id: state.filter.workspace_id ?? null,
+              })}
+          />
         </QueueSection>
         <QueueSection
           id="backlog"
