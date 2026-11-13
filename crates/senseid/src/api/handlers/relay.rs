@@ -2587,6 +2587,59 @@ mod tests {
         body["item_id"].as_str().unwrap().to_string()
     }
 
+    /// A queue row exactly as `/relay/queue` shows it, in `stage`, found by
+    /// its item id.
+    async fn queue_row(h: &Harness, stage: &str, item_id: &str) -> Value {
+        let (status, queue) = call(h, "GET", "/relay/queue", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{queue}");
+        queue[stage]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["item_id"] == item_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{item_id} not in {stage}: {queue}"))
+    }
+
+    fn item_event(action: &str, op: &str, stage: &str, id: &str, row: Option<Value>) -> Value {
+        let mut data = row.unwrap_or_else(|| json!({}));
+        data["op"] = json!(op);
+        data["id"] = json!(id);
+        data["stage"] = json!(stage);
+        json!({"action": action, "entity": "item", "data": data})
+    }
+
+    #[tokio::test]
+    async fn queue_writes_ride_the_stream_as_item_rows() {
+        // #418: each queue write is confirmed by the item events it causes —
+        // the row added to triage; moved to the backlog (out of triage, into
+        // the backlog with its row); taken into a sprint (out of the queue).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let item = triage_item(&h).await;
+        let added = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        let row = queue_row(&h, "triage", &item).await;
+        assert_eq!(added, item_event("add", "triaged", "triage", &item, Some(row)));
+        let (status, body) =
+            call(&h, "POST", "/relay/backlog", Some(json!({"item_id": item})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let out = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        let into = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        assert_eq!(out, item_event("remove", "backlogged", "triage", &item, None));
+        let row = queue_row(&h, "backlog", &item).await;
+        assert_eq!(into, item_event("add", "backlogged", "backlog", &item, Some(row)));
+        let run = json!({
+            "title": "Sprint 1", "goal": "Ship", "item_ids": [item],
+            "repo_key": "github.com/o/r", "config": {"auto_merge": false},
+        });
+        let (status, body) = call(&h, "POST", "/relay/runs", Some(run), None).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["crew_id"], coord.2);
+        let planned = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        assert_eq!(planned, item_event("remove", "planned", "backlog", &item, None));
+    }
+
     fn task_op(event: &crate::api::events::StateEvent) -> (String, String, String) {
         (
             event.entity.clone(),
