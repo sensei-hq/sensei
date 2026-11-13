@@ -96,11 +96,11 @@ describe('toLaneGroups · a lane row (CONTRACT §1c-2)', () => {
     expect(row.href).toBe(`/relay/${F.CREW_ID}/t-structure`);
   });
 
-  it('paused on a limit: until when it resumes, or that it is not known', () => {
+  it('paused on a limit: which quota, and until when it resumes or that that is unknown (the limit-exhaustion wording)', () => {
     const resumes = F.minutesAgo(-30);
     expect(one(F.lane({ limit_scope: 'daily', limit_resumes_at: resumes })).state).toEqual({ label: 'paused', tone: 'warning' });
-    expect(one(F.lane({ limit_scope: 'daily', limit_resumes_at: resumes })).when.text).toBe(`until ${hhmm(resumes)}`);
-    expect(one(F.lane({ limit_scope: 'weekly', limit_resumes_at: null })).when.text).toBe('resume not reported');
+    expect(one(F.lane({ limit_scope: 'daily', limit_resumes_at: resumes })).when.text).toBe(`daily · until ${hhmm(resumes)}`);
+    expect(one(F.lane({ limit_scope: 'weekly', limit_resumes_at: null })).when.text).toBe('weekly · resume unknown');
   });
 });
 

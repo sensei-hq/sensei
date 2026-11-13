@@ -940,18 +940,15 @@ describe('Relay — the footer resource line', () => {
 // ─── Phone width (CONTRACT §1f), where jsdom can tell ───────────────────────
 
 describe('Relay — rows at phone width', () => {
-  it('a lane row: mark, lane and state on line 1; the task and its time on line 2', async () => {
+  it('a lane row is the mockup’s parts in order: mark, name, task, state, time, chevron (#422)', async () => {
     const { c } = await open();
     const row = need(one(c, '[data-lane-row="L1"]'), '[data-lane-row="L1"]');
-    const line1 = need(one(row, '[data-row-line="1"]'), '[data-row-line="1"]');
-    const line2 = need(one(row, '[data-row-line="2"]'), '[data-row-line="2"]');
-    expect(line1).not.toBeNull();
-    expect(line2).not.toBeNull();
-    expect(one(line1, '[data-lane-role]')).not.toBeNull();
-    expect(text(line1)).toContain('Diagrams');
-    expect(one(line1, '[data-state]')).not.toBeNull();
-    expect(text(line2)).toContain('Structure view on the shell');
-    expect(text(line2)).toContain('38 min');
+    const link = need(one(row, 'a'), 'the row’s link');
+    expect([...link.children].map((el) => el.getAttribute('data-part'))).toEqual(['mark', 'name', 'task', 'state', 'when', 'chevron']);
+    expect(one(row, '[data-part="mark"] [data-lane-role]')).not.toBeNull();
+    expect(text(one(row, '[data-part="name"]'))).toContain('Diagrams');
+    expect(text(one(row, '[data-part="task"]'))).toContain('Structure view on the shell');
+    expect(text(one(row, '[data-part="when"]'))).toBe('38 min');
   });
 
   it('a queue row keeps its buttons beside the title; the ticket button can drop the provider', async () => {
@@ -1092,8 +1089,8 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
         }),
       ),
     });
-    expect(text(one(c, '[data-lane-row="L4"] [data-state]'))).toBe('blocked');
-    expect(text(one(c, '[data-lane-row="L3"] [data-state]'))).toBe('needs your answer');
+    expect(text(one(c, '[data-lane-row="L4"] [data-part="state"]'))).toBe('blocked');
+    expect(text(one(c, '[data-lane-row="L3"] [data-part="state"]'))).toBe('needs your answer');
   });
 
   it('the lane lease drives "lease lost", with the time it expired; a task interrupted under a live lease reads "interrupted"', async () => {
@@ -1109,9 +1106,9 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
       ),
     });
     const lost = need(one(c, '[data-lane-row="L2"]'), 'the L2 row');
-    expect(text(one(lost, '[data-state]'))).toBe('lease lost');
+    expect(text(one(lost, '[data-part="state"]'))).toBe('lease lost');
     expect(text(lost)).toContain(`at ${hhmm(expired)}`);
-    expect(text(one(c, '[data-lane-row="L5"] [data-state]'))).toBe('interrupted');
+    expect(text(one(c, '[data-lane-row="L5"] [data-part="state"]'))).toBe('interrupted');
   });
 
   it('a limit-paused lane reads "paused" with scope and resume time — never "lease lost" on a live lease', async () => {
@@ -1127,11 +1124,11 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
       ),
     });
     const paused = need(one(c, '[data-lane-row="L2"]'), 'the L2 row');
-    expect(text(one(paused, '[data-state]'))).toBe('paused');
+    expect(text(one(paused, '[data-part="state"]'))).toBe('paused');
     expect(text(paused)).toContain('weekly');
     expect(text(paused)).toContain(`until ${hhmm(resumes)}`);
     const unknown = need(one(c, '[data-lane-row="L5"]'), 'the L5 row');
-    expect(text(one(unknown, '[data-state]'))).toBe('paused');
+    expect(text(one(unknown, '[data-part="state"]'))).toBe('paused');
     expect(text(unknown)).toContain('resume unknown');
   });
 });
@@ -1152,7 +1149,7 @@ describe('Relay r2 — Completed today rows (L1)', () => {
     const rows = all(need(section(c, 'completed'), 'the completed section'), '[data-completed-row]');
     expect(rows).toHaveLength(2);
     expect(text(rows[0]).startsWith(hhmm(at))).toBe(true);
-    expect(text(one(rows[1], '[data-state]'))).toBe('done');
+    expect(text(one(rows[1], '[data-part="outcome"]'))).toBe('done');
   });
 });
 
