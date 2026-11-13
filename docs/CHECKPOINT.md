@@ -14,13 +14,16 @@
   nothing back after its writes (`863742b5d`). Live check on a scratch broker: `coord/reports/relay-screen/daemon-418/`.
 
 - LaneRow step progress (not in the mockup): selector `3ca277909`, component `9193b3fe2`, bench `008575ac0`
-  (`bench-r8`; sheet artifact 3869a0ea v10). Awaiting the user's call on the design.
+  (`bench-r8`; sheet artifact 3869a0ea v10). Approved by the user on desktop and phone (2026-11-13).
+- #419 slice 1 nudge: red `544a62ef7`, green `88016e584` — `POST /relay/messages` takes `nudge`+`reason`
+  (+`waiting_min`), `NUDGE_REASONS` held by the props check, history shows the nudge. Relay tests 386/386.
 
-**Remaining (in order):** #419 (draft/start/cancel run, nudge, catalogue) → #426 run-journey e2e. Gaps outside
+**Remaining (in order):** #419 slices 2–8 (codename minting · now live lanes + presence · run draft/start/cancel ·
+run list/detail · person crew close · item delete/patch + ticketed backlog · catalogue) → #426 run-journey e2e. Gaps outside
 #418: `task.waiting`; person-message read ladder. Lane is NOT merged to develop (user's call).
 
-**Next command:** #419 — red tests for `POST /relay/runs/{id}/start|cancel` and the nudge route in
-`crates/senseid/src/api/handlers/relay.rs`. Installed: daemon = this lane; /Applications app = v0.21.1 (diagrams skew,
+**Next command:** #419 slice 2 — red test: register mints `suggested_name` when absent (colour-star, unique per
+crew) in `crates/senseid/src/api/handlers/relay.rs`. Installed: daemon = this lane; /Applications app = v0.21.1 (diagrams skew,
 backlog item) — `make install-app` from this lane would match them.
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
