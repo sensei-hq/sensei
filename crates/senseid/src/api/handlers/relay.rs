@@ -66,7 +66,8 @@ use crate::db::pg_store::relay::{
     RelayHandoverInput, RelayHeartbeatOutput, RelayLaneSession, RelayLimitPauseInput,
     RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayNudge, RelayPlanInput,
     RelayReadFilter, RelayRegisterInput, RelayReleaseInput, RelayReportInput, RelayResourceRequest,
-    RelayReviewInput, RelayStepInput, RelayStepOutput, RelayTicketInput, RelayTriageInput,
+    RelayReviewInput, RelayStartedRun, RelayStepInput, RelayStepOutput, RelayTicketInput,
+    RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::rows::{
@@ -290,6 +291,16 @@ pub(crate) struct CreateRunBody {
     repo_key: Option<String>,
     workspace_id: Option<String>,
     config: Option<RunConfigBody>,
+    /// Start it in the same step (#419); else the run is a draft.
+    #[serde(default)]
+    start: bool,
+}
+
+/// `POST /relay/runs/{id}/start` (#419): the crew, when the person names one.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StartRunBody {
+    crew_id: Option<String>,
 }
 
 /// The gate's knobs (F11: an unknown knob is a caller bug, not a silent
@@ -596,6 +607,7 @@ pub(crate) async fn create_run(
         .relay_create_run(
             user_id,
             RelayCreateRunInput {
+                start: body.start,
                 crew_id: body
                     .crew_id
                     .as_deref()
@@ -618,21 +630,86 @@ pub(crate) async fn create_run(
         )
         .await
         .map_err(err)?;
-    emit_run(&state, RunChange::Created, &out.run_id, &out.crew_id).await;
+    let Some(started) = out.started else {
+        // A draft: no crew, so every stream hears of it (#419).
+        let _ =
+            state.event_tx.send(StateEvent::relay_run_crewless(RunChange::Drafted, &out.run_id));
+        for event in leaving {
+            let _ = state.event_tx.send(event);
+        }
+        return Ok((
+            StatusCode::CREATED,
+            Json(serde_json::json!({
+                "run_id": out.run_id.to_string(),
+                "planning_task_id": null,
+                "crew_id": null,
+                "status": "draft",
+            })),
+        ));
+    };
+    emit_run(&state, RunChange::Created, &out.run_id, &started.crew_id).await;
     // The picked items leave the queue (#418).
     for event in leaving {
         let _ = state.event_tx.send(event);
     }
-    emit_task(&state, "plan", &out.planning_task_id).await;
-    Ok((
-        StatusCode::CREATED,
-        Json(serde_json::json!({
-            "run_id": out.run_id.to_string(),
-            "planning_task_id": out.planning_task_id.to_string(),
-            "crew_id": out.crew_id.to_string(),
-            "status": "planning",
-        })),
-    ))
+    emit_task(&state, "plan", &started.planning_task_id).await;
+    Ok((StatusCode::CREATED, Json(started_json(&started))))
+}
+
+fn started_json(started: &RelayStartedRun) -> serde_json::Value {
+    serde_json::json!({
+        "run_id": started.run_id.to_string(),
+        "planning_task_id": started.planning_task_id.to_string(),
+        "crew_id": started.crew_id.to_string(),
+        "status": "planning",
+    })
+}
+
+/// `POST /relay/runs/{id}/start` (#419): the draft binds the crew (≥ 1 live
+/// lane) and Task 0 joins the pool.
+pub(crate) async fn start_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    body: Option<Json<StartRunBody>>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let run_id = parse_uuid(&run_id, "run_id").map_err(err)?;
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let crew_id =
+        body.crew_id.as_deref().map(|c| parse_uuid(c, "crew_id")).transpose().map_err(err)?;
+    let started = state
+        .pg
+        .relay_start_run(user_id, run_id, crew_id, chrono::Utc::now())
+        .await
+        .map_err(err)?;
+    emit_run(&state, RunChange::Started, &run_id, &started.crew_id).await;
+    emit_task(&state, "plan", &started.planning_task_id).await;
+    ok(started_json(&started))
+}
+
+/// `POST /relay/runs/{id}/cancel` (#419): the person stops the run; its open
+/// tasks are cancelled and its planned items go back to the backlog.
+pub(crate) async fn cancel_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let run_id = parse_uuid(&run_id, "run_id").map_err(err)?;
+    let out = state.pg.relay_cancel_run(user_id, run_id).await.map_err(err)?;
+    let event = match &out.crew_id {
+        Some(crew_id) => StateEvent::relay_run(RunChange::Cancelled, &run_id, crew_id),
+        None => StateEvent::relay_run_crewless(RunChange::Cancelled, &run_id),
+    };
+    let _ = state.event_tx.send(event);
+    for task_id in &out.cancelled_tasks {
+        emit_task(&state, "cancel", task_id).await;
+    }
+    for item_id in &out.returned_items {
+        if let Some(event) = item_added(&state.pg, item_id, "backlogged").await {
+            let _ = state.event_tx.send(event);
+        }
+    }
+    ok(serde_json::json!({ "run_id": run_id.to_string(), "status": "cancelled" }))
 }
 
 #[derive(Debug, Deserialize)]

@@ -206,6 +206,12 @@ pub enum LaneReason {
 pub enum RunChange {
     /// `POST /relay/runs` minted it (Task 0 waits in the pool).
     Created,
+    /// `POST /relay/runs` drafted it: items, no crew, no Task 0 (#419).
+    Drafted,
+    /// `POST /relay/runs/{id}/start`: the draft bound its crew (#419).
+    Started,
+    /// `POST /relay/runs/{id}/cancel`: the person stopped it (#419).
+    Cancelled,
     /// Task 0's plan unpacked: the run is active.
     Activated,
     Completed,
@@ -344,20 +350,32 @@ impl StateEvent {
     pub fn relay_run(change: RunChange, run_id: &uuid::Uuid, crew_id: &uuid::Uuid) -> Self {
         let (action, op) = match change {
             RunChange::Created => (Action::Add, "created"),
+            RunChange::Drafted => (Action::Add, "drafted"),
+            RunChange::Started => (Action::Add, "started"),
+            RunChange::Cancelled => (Action::Remove, "cancelled"),
             RunChange::Activated => (Action::Update, "activated"),
             RunChange::Completed => (Action::Update, "completed"),
             RunChange::Archived => (Action::Update, "archived"),
             RunChange::Deleted => (Action::Remove, "deleted"),
         };
-        Self {
-            action,
-            entity: "run".into(),
-            data: serde_json::json!({
-                "op": op,
-                "run_id": run_id.to_string(),
-                "crew_id": crew_id.to_string(),
-            }),
+        let mut data = serde_json::json!({
+            "op": op,
+            "run_id": run_id.to_string(),
+            "crew_id": crew_id.to_string(),
+        });
+        // A removal carries the id the screen holds (#418/#419).
+        if matches!(action, Action::Remove) {
+            data["id"] = serde_json::json!(run_id.to_string());
         }
+        Self { action, entity: "run".into(), data }
+    }
+
+    /// A run with no crew (a draft, or a cancelled draft): `crew_id` is
+    /// null, so every stream sees it (#419).
+    pub fn relay_run_crewless(change: RunChange, run_id: &uuid::Uuid) -> Self {
+        let mut event = Self::relay_run(change, run_id, &uuid::Uuid::nil());
+        event.data["crew_id"] = serde_json::Value::Null;
+        event
     }
 
     /// A decision asked of the person (`Add`, then its Needs-you row joins
@@ -584,28 +602,36 @@ mod tests {
     #[test]
     fn relay_run_contract_shape_per_change() {
         // CONTRACT §3k: run.created / activated / completed / archived /
-        // deleted. A sprint run (queue cutover) names its own id beside its
-        // crew's; a crew-lifecycle event passes the crew id as both.
+        // deleted, and #419's drafted / started / cancelled. A sprint run
+        // names its own id beside its crew's; a crew-lifecycle event passes
+        // the crew id as both; a removal also names the id the screen holds.
         let (run, crew) = ids();
         let cases = [
             (RunChange::Created, "add", "created"),
+            (RunChange::Drafted, "add", "drafted"),
+            (RunChange::Started, "add", "started"),
             (RunChange::Activated, "update", "activated"),
             (RunChange::Completed, "update", "completed"),
             (RunChange::Archived, "update", "archived"),
+            (RunChange::Cancelled, "remove", "cancelled"),
             (RunChange::Deleted, "remove", "deleted"),
         ];
         for (change, action, op) in cases {
             let json = serde_json::to_value(StateEvent::relay_run(change, &run, &crew)).unwrap();
+            let mut data = serde_json::json!({"op": op, "run_id": run.to_string(), "crew_id": crew.to_string()});
+            if action == "remove" {
+                data["id"] = serde_json::json!(run.to_string());
+            }
             assert_eq!(
                 json,
-                serde_json::json!({
-                    "action": action,
-                    "entity": "run",
-                    "data": {"op": op, "run_id": run.to_string(), "crew_id": crew.to_string()},
-                }),
+                serde_json::json!({"action": action, "entity": "run", "data": data}),
                 "{change:?}"
             );
         }
+        // A draft has no crew: crew_id is null, so every stream admits it.
+        let draft = StateEvent::relay_run_crewless(RunChange::Drafted, &run);
+        assert_eq!(draft.data["crew_id"], serde_json::Value::Null);
+        assert!(draft.admits_crew(Some(&crew)));
     }
 
     #[test]

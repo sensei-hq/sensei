@@ -111,6 +111,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/relay/limit_resume", post(relay::limit_resume))
         .route("/api/relay/queue", get(relay::lane_queue))
         .route("/relay/runs", post(relay::create_run))
+        .route("/relay/runs/{run_id}/start", post(relay::start_run))
+        .route("/relay/runs/{run_id}/cancel", post(relay::cancel_run))
         .route("/api/relay/tasks/{id}/assign", post(relay::assign))
         .route("/api/relay/tasks/{id}/report", post(relay::report))
         .route("/api/relay/tasks/{id}/claim_review", post(relay::claim_review))
