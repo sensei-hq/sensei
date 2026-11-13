@@ -47,6 +47,12 @@ const wired = () => {
 };
 
 describe('subscribeTaskStream', () => {
+  it('opens the stream narrowed to the task’s crew (#418)', () => {
+    const { stop, socket } = wired();
+    expect(socket.url).toBe('http://127.0.0.1:7744/api/relay/events?crew_id=crew-1');
+    stop();
+  });
+
   it('applies step events for its task, ignoring others', () => {
     const { state, stop, socket } = wired();
     const apply = vi.spyOn(state, 'applyStep');
