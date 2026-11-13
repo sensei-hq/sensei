@@ -373,36 +373,29 @@ describe('Relay · Now — Needs you', () => {
 
 // ─── Now · Lanes ────────────────────────────────────────────────────────────
 
-describe('Relay · Now — Lanes', () => {
+describe('Relay · Now — Lanes (#422: LaneList from the selectors)', () => {
   const crew = F.fiveLaneCrew;
+  const state = (c: HTMLElement, code: string) => text(one(c, `[data-lane-row="${code}"] [data-part="state"]`));
 
-  it('one row per lane: its objective, member, the one task, its state and the time on it', async () => {
+  it('one card, one row per lane: objective over codename · assistant, the one task, its state, the time on it', async () => {
     const { c } = await open({ now: F.ok(crew()) });
     const lanes = need(section(c, 'lanes'), 'the lanes section');
-    expect(lanes).not.toBeNull();
-    expect(text(lanes)).toContain('Lanes · 5');
-    expect(all(lanes, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual([
-      'L0',
-      'L1',
-      'L3',
-      'L2',
-      'L5',
-    ]);
+    expect(text(one(lanes, '[data-section-heading]'))).toBe('Lanes · 5');
+    const card = need(one(lanes, 'ul[data-lanes-card]'), 'the lanes card');
+    expect(all(card, ':scope > li[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L0', 'L1', 'L3', 'L2', 'L5']);
 
     const l1 = need(one(lanes, '[data-lane-row="L1"]'), '[data-lane-row="L1"]');
-    expect(text(l1)).toContain('Diagrams');
-    expect(text(l1)).toContain('L1');
-    expect(text(l1)).toContain('2.1');
-    expect(text(l1)).toContain('Structure view on the shell');
-    expect(text(one(l1, '[data-state]'))).toBe('working');
-    expect(text(l1)).toContain('38 min');
+    // No codename yet (#395): the code stands in, beside the assistant.
+    expect(text(one(l1, '[data-part="name"]'))).toBe('Diagrams L1 · Claude Code 2.1');
+    expect(text(one(l1, '[data-part="task"]'))).toBe('Structure view on the shell (tests r1)');
+    expect(state(c, 'L1')).toBe('working');
+    expect(text(one(l1, '[data-part="when"]'))).toBe('38 min');
 
-    expect(text(one(lanes, '[data-lane-row="L3"] [data-state]'))).toBe('needs your answer');
-    expect(text(one(lanes, '[data-lane-row="L2"] [data-state]'))).toBe('lease lost');
+    expect(state(c, 'L3')).toBe('needs your answer');
+    expect(state(c, 'L2')).toBe('lease lost');
     const idle = need(one(lanes, '[data-lane-row="L5"]'), '[data-lane-row="L5"]');
-    // Queue cutover: work is claimed, never assigned.
-    expect(text(idle)).toContain('Nothing claimed');
-    expect(text(one(idle, '[data-state]'))).toBe('idle');
+    expect(text(one(idle, '[data-part="task"]'))).toBe('Nothing assigned');
+    expect(state(c, 'L5')).toBe('idle');
   });
 
   it('the role mark: 指 for the coordinator, 手 for a contributor', async () => {
@@ -411,37 +404,40 @@ describe('Relay · Now — Lanes', () => {
     expect(text(one(c, '[data-lane-row="L1"] [data-lane-role]'))).toBe('手');
   });
 
-  it('a model the lane did not report reads "model not reported", never blank', async () => {
+  it('an assistant that reported no version reads its family alone, never blank', async () => {
     const { c } = await open({
-      now: F.ok(F.now({ lanes: [F.lane({ code: 'L3', family: 'muse', version: null, model: null })] })),
+      now: F.ok(F.now({ lanes: [F.lane({ code: 'L3', family: 'cursor', version: null, model: null })] })),
     });
     const row = need(one(c, '[data-lane-row="L3"]'), '[data-lane-row="L3"]');
-    expect(text(row)).toContain('model not reported');
+    expect(text(one(row, '[data-part="name"]'))).toBe('Diagrams L3 · Cursor');
     expect(text(row)).not.toMatch(/null|undefined/);
   });
 
-  it('a lane on a task opens the task view; an idle lane opens nothing', async () => {
+  it('a lane on a task is one link to the task view; an idle lane opens nothing', async () => {
     const { c } = await open({ now: F.ok(crew()) });
-    expect(one(c, `[data-lane-row="L1"] a[href="/workspace/w1/relay/${F.CREW_ID}/t-structure"]`)).not.toBeNull();
+    const l1 = all(c, '[data-lane-row="L1"] a');
+    expect(l1).toHaveLength(1);
+    expect(l1[0].getAttribute('href')).toBe(`/workspace/w1/relay/${F.CREW_ID}/t-structure`);
     expect(one(c, '[data-lane-row="L5"] a')).toBeNull();
   });
 });
 
 // ─── Now · Completed today ──────────────────────────────────────────────────
 
-describe('Relay · Now — Completed today', () => {
-  it('one row each: title, lane, merged or approved, and it opens the task', async () => {
+describe('Relay · Now — Completed today (#422: CompletedList from the selectors)', () => {
+  it('one row each: time, title, objective · codename, merged or approved — one link to the task', async () => {
     const { c } = await open();
     const done = need(section(c, 'completed'), 'the completed section');
-    expect(done).not.toBeNull();
-    expect(text(done)).toContain('Completed today · 2');
+    expect(text(one(done, '[data-section-heading]'))).toBe('Completed today · 2');
     const rows = all(done, '[data-completed-row]');
     expect(rows).toHaveLength(2);
-    expect(text(rows[0])).toContain('Diagrams header on ScreenShell');
-    expect(text(rows[0])).toContain('Diagrams');
-    expect(text(one(rows[0], '[data-state]'))).toBe('merged');
-    expect(text(one(rows[1], '[data-state]'))).toBe('approved');
-    expect(one(rows[0], `a[href="/workspace/w1/relay/${F.CREW_ID}/t-header"]`)).not.toBeNull();
+    expect(text(one(rows[0], '[data-part="title"]'))).toBe('Diagrams header on ScreenShell');
+    expect(text(one(rows[0], '[data-part="lane"]'))).toBe('Diagrams · L1');
+    expect(text(one(rows[0], '[data-part="outcome"]'))).toBe('merged');
+    expect(text(one(rows[1], '[data-part="outcome"]'))).toBe('approved');
+    const links = all(rows[0], 'a');
+    expect(links).toHaveLength(1);
+    expect(links[0].getAttribute('href')).toBe(`/workspace/w1/relay/${F.CREW_ID}/t-header`);
   });
 });
 
