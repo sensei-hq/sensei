@@ -22,7 +22,13 @@ function mount<P extends Record<string, unknown>>(component: unknown, props: P) 
   cleanup.push(m.destroy);
   return m.container;
 }
-const text = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+/** What a person reads: the text, without the decorative marks (aria-hidden). */
+function text(el: Element | null | undefined): string {
+  if (!el) return '';
+  const copy = el.cloneNode(true) as Element;
+  copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+  return (copy.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
 
 const wait = (over: Partial<RelayWaitRowView> = {}): RelayWaitRowView => ({
   id: 't-er',

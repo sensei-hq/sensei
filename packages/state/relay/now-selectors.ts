@@ -10,6 +10,7 @@ import type {
   RelayDecision,
   RelayLane,
   RelayNow,
+  RelayPersonMessage,
   RelayQueue,
   RelayRole,
   RelayTicketProvider,
@@ -222,6 +223,8 @@ export interface RelayNeedsYouView {
   triage: { count: number; from: string } | null;
   /** Tasks no lane has taken (the coordinator's to place): read-only. */
   unassigned: { count: number; from: string } | null;
+  /** The lanes' messages to the person. */
+  messages: RelayPersonMessage[];
 }
 
 /** Why a task waits, and whether it waits on the coordinator or its own lane (§3f-bis). */
@@ -305,7 +308,8 @@ export function toNeedsYou(now: RelayNow | null, queue: RelayQueue | null, o: No
     : null;
   const unassignedCount = now.triage.reduce((n, t) => n + t.count, 0);
   const unassigned = unassignedCount ? { count: unassignedCount, from: fromLine(now.triage) } : null;
-  const count = now.decisions.length + (stale ? 1 : 0) + (triage ? 1 : 0) + (unassigned ? 1 : 0);
+  const count =
+    now.decisions.length + now.person_messages.length + (stale ? 1 : 0) + (triage ? 1 : 0) + (unassigned ? 1 : 0);
   if (count === 0) return null;
-  return { count, decisions: now.decisions, stale, triage, unassigned };
+  return { count, decisions: now.decisions, stale, triage, unassigned, messages: now.person_messages };
 }

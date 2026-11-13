@@ -1,7 +1,14 @@
 // The Now view's lists as the r1 mockup draws them (Relay.dc.html `NOW`, `DONE`):
 // the bench renders these beside the artboard, so the rows are the mockup's own.
 // Row data, the shape the @sensei/state selectors produce.
-import type { RelayCompletedRowView, RelayLaneGroupView, RelayLaneRowView } from '@sensei/state';
+import type {
+  RelayCompletedRowView,
+  RelayLaneGroupView,
+  RelayLaneRowView,
+  RelayNeedsYouView,
+  RelayWaitRowView,
+} from '@sensei/state';
+import { decision, personMessage } from '$lib/test-stubs/relay-fixtures.js';
 
 const lane = (
   code: string,
@@ -82,3 +89,51 @@ export const mockupCompleted = (): RelayCompletedRowView[] => [
   done('x5', '07:55', 'Libraries page', 'Docs pages · coral-spica', 'merged'),
   done('x6', '06:55', 'Pack-rule pull', 'Activity logs · jade-altair', 'merged'),
 ];
+
+// ─── Needs you and Waiting (the mockup's `WAITS`, its decision, its triage line) ─────
+
+const waitRow = (
+  id: string,
+  minutes: number | null,
+  task: string,
+  why: string,
+  nudge: string,
+  href: string | null = `/relay/c/${id}`,
+): RelayWaitRowView => ({
+  id,
+  minutes,
+  minutesText: minutes == null ? '' : `${minutes} min`,
+  over: minutes != null && minutes >= 15,
+  task,
+  why,
+  href,
+  nudge: { label: nudge, canNudge: false },
+});
+
+/** The mockup's waits, oldest first: three past the threshold, then the idle lane. */
+export const mockupWaits = (): RelayWaitRowView[] => [
+  waitRow('w1', 52, 'ER sidebar on the shell (impl r1)', 'ER diagrams · approved, not merged · waiting on the coordinator', 'Nudge the coordinator'),
+  waitRow('w2', 41, 'Libraries page (docs r4)', 'Docs pages · verdict filed, not picked up · waiting on Docs pages (coral-spica)', 'Nudge coral-spica'),
+  waitRow('d1', 26, 'Structure view on the shell (tests r1)', 'Diagrams · report has no reviewer · waiting on the coordinator', 'Nudge the coordinator'),
+  waitRow('L6', null, 'Nothing assigned', 'Sync hardening · lane idle, nothing assigned · waiting on the coordinator', 'Nudge the coordinator', null),
+];
+
+/** Needs you as the mockup draws it with a decision pending. */
+export const mockupNeedsYou = (): RelayNeedsYouView => ({
+  count: 3,
+  decisions: [decision()],
+  stale: { title: '3 tasks have waited 15 min or more — oldest first', rows: mockupWaits().slice(0, 3) },
+  triage: { count: 3, from: 'From Jira sprint 47, GitHub milestone 11, and an open item' },
+  unassigned: null,
+  messages: [],
+});
+
+/** The tasks no lane has taken, beside a message from a lane. */
+export const needsYouUnassigned = (): RelayNeedsYouView => ({
+  count: 2,
+  decisions: [],
+  stale: null,
+  triage: null,
+  unassigned: { count: 4, from: 'From GitHub milestone 11 and an open item' },
+  messages: [personMessage()],
+});

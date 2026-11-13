@@ -137,6 +137,8 @@ export const KANJI_ICONS = {
   // this; 待 normal — nothing is wrong, it resolves itself (as impact's 待 pending).
   '止': 'i-solar-forbidden-circle-bold-duotone',
   '待': 'i-solar-hourglass-bold-duotone',
+  // 選 (choose): Relay's triage line — items to choose for the backlog (#422).
+  '選': 'i-solar-checklist-minimalistic-bold-duotone',
   // The dōjō's marks (#133 D2).
   '令': 'i-solar-flag-bold-duotone',
   '件': 'i-solar-clipboard-bold-duotone',

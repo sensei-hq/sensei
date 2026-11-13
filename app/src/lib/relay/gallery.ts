@@ -22,7 +22,17 @@ import SprintBand from './SprintBand.svelte';
 import Tag from './Tag.svelte';
 import LaneList from './LaneList.svelte';
 import CompletedList from './CompletedList.svelte';
-import { edgeLanes, mainWindowLanes, mockupCompleted, mockupLanes } from './now-lists.fixtures.js';
+import NeedsYou from './NeedsYou.svelte';
+import WaitList from './WaitList.svelte';
+import {
+  edgeLanes,
+  mainWindowLanes,
+  mockupCompleted,
+  mockupLanes,
+  mockupNeedsYou,
+  mockupWaits,
+  needsYouUnassigned,
+} from './now-lists.fixtures.js';
 
 export interface GalleryEntry {
   /** `Component/fixture`, stable: the capture's folder and the mockup map's key. */
@@ -63,6 +73,19 @@ export const GALLERY: GalleryEntry[] = [
   entry('LaneList/mockup', 'the mockup’s seven lanes: working, waits past the threshold, lease lost, a question, idle', LaneList, { groups: mockupLanes() }),
   entry('LaneList/main-window', 'the main window: a card per crew under its repository', LaneList, { groups: mainWindowLanes() }),
   entry('LaneList/edges', 'a quota pause, and an objective and task that need the ellipsis', LaneList, { groups: edgeLanes() }),
+  entry('NeedsYou/mockup', 'a decision, three long waits, the triage line', NeedsYou, {
+    view: mockupNeedsYou(),
+    href: (crew: string, task: string) => `/relay/${crew}/${task}`,
+    onanswer: accepted,
+    onopenqueue: () => {},
+  }),
+  entry('NeedsYou/unassigned', 'tasks no lane has taken (read-only), and a lane’s message', NeedsYou, {
+    view: needsYouUnassigned(),
+    href: (crew: string, task: string) => `/relay/${crew}/${task}`,
+    onanswer: accepted,
+    onopenqueue: () => {},
+  }),
+  entry('WaitList/waiting', 'Waiting’s filter: every wait, oldest first, the idle lane with no time', WaitList, { rows: mockupWaits() }),
   entry('CompletedList/mockup', 'the mockup’s five completed tasks, merged and approved', CompletedList, { rows: mockupCompleted() }),
   ...SHELL_FIXTURES.map((f) =>
     entry(`RelayShell/${f.name}`, f.note, RelayShell, { shell: toRelayShell(f.input(), still), viewId: `gallery.relay.${f.name}`, children: body, compose: band }, { height: 560, phoneHeight: 1500 }),

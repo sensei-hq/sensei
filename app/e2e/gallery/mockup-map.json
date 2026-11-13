@@ -26,5 +26,7 @@
   "FloatingReviewRow": { "state": { "view": "now", "load": "loaded" }, "crop": "section[aria-label=\"Lanes\"] li:nth-child(3)" },
   "SprintBand": { "state": { "view": "crew", "load": "loaded" }, "crop": "section[aria-label=\"Run 7f3a\"] > div > div:first-child" },
   "LaneList/mockup": { "state": { "view": "now", "load": "loaded" }, "crop": "section[aria-label=\"Lanes\"]" },
-  "CompletedList/mockup": { "state": { "view": "now", "load": "loaded" }, "crop": "section[aria-label=\"Completed today\"]" }
+  "CompletedList/mockup": { "state": { "view": "now", "load": "loaded" }, "crop": "section[aria-label=\"Completed today\"]" },
+  "NeedsYou/mockup": { "state": { "view": "now", "load": "loaded", "pending": true }, "crop": "section[aria-label=\"Needs you\"]" },
+  "WaitList/waiting": { "state": { "view": "now", "load": "loaded", "filter": "waiting" }, "crop": "section[aria-label^=\"Waiting\"] ul" }
 }

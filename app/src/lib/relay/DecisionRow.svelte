@@ -1,7 +1,8 @@
 <script lang="ts">
-  // One open decision (CONTRACT §1c, §3e): the question, what it is blocking, its
-  // options with this decision's own recommendation marked, and Answer. The answer
-  // is one write per press; a refusal says why and leaves the row where it was.
+  // One open decision, as the mockup's card (COMPONENTS §3b DecisionCard; CONTRACT
+  // §1c-1, §3e): the question, what it blocks with a link to that task, its options
+  // with this decision's own recommendation marked, and Answer. One write per press;
+  // a refusal says why and leaves the card where it was.
   import { untrack } from 'svelte';
   import { Notice } from '@sensei/ui';
   import type { RelayDecision } from '$lib/relay-api.js';
@@ -17,7 +18,7 @@
     onanswer: (option: string) => Promise<string | null>;
   } = $props();
 
-  // The row's own choice, seeded once from the decision it was drawn for.
+  // The card's own choice, seeded once from the decision it was drawn for.
   let chosen = $state(untrack(() => decision.recommended ?? decision.options[0]?.id ?? ''));
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -32,40 +33,47 @@
   }
 </script>
 
-<article class="rounded-sm border border-paper-edge bg-paper-soft p-3 flex flex-col gap-2" data-decision>
-  <p class="text-sm font-medium m-0">{decision.question}</p>
-  {#if decision.context}<p class="text-xs text-ink-mute m-0">{decision.context}</p>{/if}
-
-  <div class="flex flex-wrap gap-2">
+<article
+  data-decision
+  class="flex flex-col gap-2 p-3.5 rounded-xl border border-solid border-warning bg-[color-mix(in_oklch,var(--warning)_8%,var(--paper))]"
+>
+  <strong data-decision-question class="text-base font-semibold">{decision.question}</strong>
+  <span class="text-sm text-ink-soft">
+    {#if decision.context}{decision.context}{/if}
+    {#if href}<a class="text-accent no-underline hover:underline" {href}>Open the task ›</a>{/if}
+  </span>
+  <div class="flex flex-wrap items-center gap-1.5">
     {#each decision.options as option (option.id)}
+      {@const recommended = decision.recommended === option.id}
       <button
         type="button"
-        class="rounded-sm border px-2 py-1 text-xs"
-        class:border-accent={chosen === option.id}
-        class:text-ink={chosen === option.id}
-        class:border-paper-edge={chosen !== option.id}
-        class:text-ink-mute={chosen !== option.id}
         data-option={option.id}
-        data-recommended={decision.recommended === option.id ? '' : undefined}
+        data-recommended={recommended ? '' : undefined}
         aria-pressed={chosen === option.id}
         onclick={() => (chosen = option.id)}
+        class={[
+          'inline-flex items-center gap-1.5 min-h-[34px] px-3 rounded-lg border border-solid bg-paper text-sm text-ink cursor-pointer',
+          recommended ? 'border-accent' : 'border-paper-edge',
+        ]}
       >
-        {option.label}{#if decision.recommended === option.id} · recommended{/if}
+        <span
+          aria-hidden="true"
+          class={[
+            'inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-solid',
+            chosen === option.id ? 'border-accent' : 'border-paper-edge-strong',
+          ]}
+        >{#if chosen === option.id}<span class="w-2 h-2 rounded-full bg-accent"></span>{/if}</span>
+        <span>{option.label}</span>
+        {#if recommended}<span class="text-xs text-accent">recommended</span>{/if}
       </button>
     {/each}
-  </div>
-
-  <div class="flex items-center gap-3">
-    {#if href}<a class="text-xs underline" href={href}>{decision.task_title ?? 'Its task'}</a>{/if}
     <button
       type="button"
-      class="ml-auto rounded-sm bg-accent px-2 py-1 text-xs text-on-accent disabled:opacity-60"
       data-decision-answer
       disabled={busy || !chosen}
       onclick={() => void send()}
-    >
-      Answer
-    </button>
+      class="min-h-[34px] px-3.5 rounded-lg border-0 bg-ink text-paper text-sm cursor-pointer disabled:opacity-60"
+    >Answer</button>
   </div>
   {#if error}<Notice size="inline" tone="fault" title={error} data-decision-error />{/if}
 </article>
