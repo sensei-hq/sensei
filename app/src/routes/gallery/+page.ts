@@ -6,8 +6,11 @@ import type { PageLoad } from './$types.js';
 // matrix (e2e/gallery). A production build answers 404 and never bundles the
 // catalogue — the import sits behind the build-time DEV constant.
 export const load: PageLoad = async ({ url }) => {
-  if (!import.meta.env.DEV) error(404, 'the gallery is a development page');
-  const { GALLERY } = await import('$lib/relay/gallery.js');
+  // A constant condition on the import itself: a production build drops the
+  // catalogue chunk entirely, not only the route's answer.
+  const catalogue = import.meta.env.DEV ? await import('$lib/relay/gallery.js') : null;
+  if (!catalogue) error(404, 'the gallery is a development page');
+  const { GALLERY } = catalogue;
   const pick = (key: string, allowed: readonly string[], dflt: string) => {
     const v = url.searchParams.get(key);
     return v && allowed.includes(v) ? v : dflt;

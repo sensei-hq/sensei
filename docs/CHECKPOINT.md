@@ -1,31 +1,24 @@
-# Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue → develop)
+# Checkpoint — 2026-11-12 (lanes/relay-screen on lane/relay-screen-rebuild, from develop @ d19c71807)
 
-**Slice:** Relay autonomous queue — phases 1–5 COMPLETE, merged into develop `072ffec80`; `origin/main` merged back
-(`99038648a`, LICENSE), CHANGELOG dated (`f0d4e3f8c`), bumped to v0.22.0 (`8e60fd7c1`), release PR develop → main
-open (user, 2026-11-12: "merge then minor"). Merging the PR and `make release` on main remain the user's. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/{README,2-daemon,3-mcp,4-app}.md`
-(every step ticked, "Executed" notes per task).
+**Slice:** Relay screen rebuild to mockup r1 — one issue at a time, each component verified against the mockup
+(desktop + phone × light/dark × kanji/icon) on the bench before integration (user, 2026-11-12). Design:
+`docs/design/2026-11-12-relay-screen-rebuild.md`; issues #418–#429 (#429 = the rig).
 
 **Done:**
-- Phases 1–4: DB `b9eb57ac2` on develop; daemon cutover live + `scripts/relay-queue-smoke.sh` PASSED; seven `relay_*`
-  MCP tools installed; app sprint band / create-sprint / floating reviews, `relay-sprint` e2e PASSED; service + app
-  installed.
-- 5.1 docs sync `616ebf188` (PRD, data model, architecture, journeys, features, design status, CHANGELOG).
-- 5.2 issues: #399 #400 #401 #402 #403 #404 #405 closed with comments; #415 narrowed + retitled; #398 #396 #393
-  noted; backlog row `42de5033e`.
-- 5.3 verification on the final tree: fmt + clippy (CI flags) clean; `make test` green end to end — crates, app unit
-  3418, dōjō unit 2400, svelte-check, plugin, SQL 100 files (after `scripts/deploy-dojo-db.sh` converged the stale
-  local Supabase). Branch-caused failures fixed red-first: `e4dc5f2d2`+`fa82e955b` (walk: blanket `impl<T> … for T`
-  invented a type), `ac4951b65` (#161 typed inputs), `2e5265d39` (ratchet 1,136 → 1,153, measured).
-- README risk "upgrade path on other machines" resolved: v0.21.1 ships no `relay` schema; the installer reconciles.
+- #429 rig: `app/e2e/mockup/render.mjs` (mockup per state, crops), `/gallery` (DEV-only, `src/lib/relay/gallery.ts`
+  catalogue), `bun run gallery:capture` + `gallery:sheet [--embed]` (matrix + review sheet), boot-gate exemption
+  red/green (`edc310174` → `42b509508`), sheet as a review page (`cad344c42`). Bench r0 (today's 10 components, 21
+  fixtures): `coord/reports/relay-screen/bench-r0/index.html`; published page for the user's review.
 
-**Remaining (user's call):** fix develop's two pre-existing CI reds (bootstrap `sql_test_runner` on CI; `cargo audit`
-RUSTSEC-2026-0459) so the protected-branch PR goes green → merge the PR → `make release` on main → verify the shipped
-artifact reproduces `scripts/relay-queue-smoke.sh` and the diagrams section.
+**Remaining (in order):** #420 Relay on the shell (ShellScreen height fix in `packages/ui`, toolbar view icon buttons
+with badges, stats band, schema filters, info band in four states — each through the bench first) → #421 state
+package → #422 Now → #423 Queue → #424 Crew → #425 Task → #426 the e2e run. Daemon #418/#419 can run in parallel.
 
-**Next command:** `gh pr checks <release PR>`; when green and merged: `git checkout main && git pull && make release`.
+**Next command:** in `lanes/relay-screen/app`: write the red spec for `src/lib/relay/relay-shell.ts` (state →
+ShellScreen props: toolbar views + badges, stats, info slots, footer, context) and a `RelayShell` bench fixture, then
+`bun run gallery:capture && bun run gallery:sheet --embed`.
 
-**Open questions (user):** none — the release is in flight; the diagrams fix is queued behind it.
+**Open questions (user):** feedback on bench r0 (the published page) — which deltas matter first.
 
-**Known broken:** the diagrams section on a released (main) app against a develop daemon — main ⇄ develop discrepancy,
-queued in `docs/backlog.md` "Open — not yet filed". `sensei_test` (Rust template) is stamped for this DDL tree, which
-develop shares after the merge.
+**Known broken:** none on the lane. The gallery's QueueRow/DecisionRow look differs from the mockup by design today —
+that is the work.
