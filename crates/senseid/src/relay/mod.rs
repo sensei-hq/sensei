@@ -817,6 +817,48 @@ pub const NUDGE_REASONS: &[&str] = &[
     "review_floating",
 ];
 
+/// The codename's first word: a colour (lanes.md §16; the mockup's
+/// `cobalt-lyra`).
+pub const CODENAME_COLOURS: &[&str] = &[
+    "amber", "azure", "beige", "cobalt", "coral", "crimson", "ember", "gold", "indigo", "iris",
+    "ivory", "jade", "lilac", "ochre", "olive", "pearl", "plum", "rose", "ruby", "sage", "sand",
+    "slate", "teal", "umber",
+];
+/// The codename's second word: a star.
+pub const CODENAME_STARS: &[&str] = &[
+    "acrux",
+    "altair",
+    "antares",
+    "aster",
+    "bellatrix",
+    "capella",
+    "castor",
+    "deneb",
+    "elnath",
+    "hadar",
+    "izar",
+    "lyra",
+    "markab",
+    "mira",
+    "mizar",
+    "naos",
+    "pollux",
+    "procyon",
+    "rigel",
+    "sirius",
+    "spica",
+    "vega",
+    "wezen",
+    "zosma",
+];
+
+/// A lane's codename (#419; lanes.md §16): `colour-star`, the first one
+/// not in `taken`, starting where `seed` points so crews don't all open on
+/// the same name. `None` once every pair is taken.
+pub fn mint_codename(_seed: u64, _taken: &[String]) -> Option<String> {
+    None
+}
+
 /// True once `now` reaches the lease's end. Clocks are fed in (tests never
 /// read wall time).
 pub fn lease_expired(expires_at_unix: i64, now_unix: i64) -> bool {
@@ -1662,6 +1704,44 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    fn is_codename(name: &str) -> bool {
+        name.split_once('-').is_some_and(|(colour, star)| {
+            CODENAME_COLOURS.contains(&colour) && CODENAME_STARS.contains(&star)
+        })
+    }
+
+    #[test]
+    fn mint_codename_is_a_colour_and_a_star() {
+        for seed in [0, 1, 7, 575, 576, u64::MAX] {
+            let name = mint_codename(seed, &[]).unwrap();
+            assert!(is_codename(&name), "{seed}: {name}");
+        }
+        // The seed picks where to start: a crew does not always open on one name.
+        assert_ne!(mint_codename(0, &[]), mint_codename(1, &[]));
+        assert_eq!(mint_codename(42, &[]), mint_codename(42, &[]));
+    }
+
+    #[test]
+    fn mint_codename_skips_names_the_crew_has() {
+        let first = mint_codename(9, &[]).unwrap();
+        let second = mint_codename(9, std::slice::from_ref(&first)).unwrap();
+        assert_ne!(first, second);
+        assert!(is_codename(&second), "{second}");
+    }
+
+    #[test]
+    fn mint_codename_is_none_once_every_pair_is_taken() {
+        let all: Vec<String> = CODENAME_COLOURS
+            .iter()
+            .flat_map(|c| CODENAME_STARS.iter().map(move |s| format!("{c}-{s}")))
+            .collect();
+        assert_eq!(mint_codename(3, &all), None);
+        // One left: it is the one.
+        let last = all[100].clone();
+        let rest: Vec<String> = all.iter().filter(|n| **n != last).cloned().collect();
+        assert_eq!(mint_codename(3, &rest), Some(last));
     }
 
     #[test]

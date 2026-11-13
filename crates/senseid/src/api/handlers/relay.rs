@@ -3188,6 +3188,90 @@ mod tests {
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     }
 
+    // ── #419: codenames (lanes.md §16; CONTRACT §1h) ──
+
+    fn assert_codename(name: &Value) {
+        let name = name.as_str().unwrap_or_else(|| panic!("a codename: {name}"));
+        let (colour, star) = name.split_once('-').unwrap_or_else(|| panic!("colour-star: {name}"));
+        assert!(crate::relay::CODENAME_COLOURS.contains(&colour), "{name}");
+        assert!(crate::relay::CODENAME_STARS.contains(&star), "{name}");
+    }
+
+    #[tokio::test]
+    async fn register_mints_a_codename_when_the_lane_offers_none() {
+        // The broker names every lane; two lanes of a crew never share one.
+        // The title is unchanged: the codename is the "who", not the title.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let mut names = Vec::new();
+        for _ in 0..3 {
+            let (status, body) = call(
+                &h,
+                "POST",
+                "/api/relay/register",
+                Some(json!({"family": "claude-code", "crew_id": coord.2})),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_codename(&body["suggested_name"]);
+            assert!(body["lane_title"].as_str().unwrap().ends_with(" · claude-code"), "{body}");
+            names.push(body["suggested_name"].as_str().unwrap().to_string());
+        }
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let coordinator = now["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["id"] == coord.0.as_str())
+            .unwrap_or_else(|| panic!("coordinator in now: {now}"));
+        assert_codename(&coordinator["suggested_name"]);
+        names.push(coordinator["suggested_name"].as_str().unwrap().to_string());
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "{names:?}");
+    }
+
+    #[tokio::test]
+    async fn an_offered_name_is_kept_and_answered_back() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"family": "muse", "crew_id": coord.2, "suggested_name": "Gold Antares"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["suggested_name"], "Gold Antares");
+    }
+
+    #[tokio::test]
+    async fn the_task_view_names_its_lanes_by_codename() {
+        // task.lane and lanes[] carry the codename, as the now rows do.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, _) = working_task(&h, &coord).await;
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let name_in_now = |id: &str| {
+            now["lanes"].as_array().unwrap().iter().find(|l| l["id"] == id).unwrap()
+                ["suggested_name"]
+                .clone()
+        };
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_codename(&view["task"]["lane"]["suggested_name"]);
+        assert_eq!(view["task"]["lane"]["suggested_name"], name_in_now(&holder), "{view}");
+        for lane in view["lanes"].as_array().unwrap() {
+            assert_codename(&lane["suggested_name"]);
+            assert_eq!(lane["suggested_name"], name_in_now(lane["id"].as_str().unwrap()));
+        }
+    }
+
     #[tokio::test]
     async fn wait_query_refuses_unknown_keys_and_takes_timeout_seconds() {
         // F11/#404: a misspelt query key is refused, never ignored; the
