@@ -1,7 +1,7 @@
 // The daemon's relay source (#421; design 2026-11-12 §2b): the relay client for reads
 // and writes, and the relay socket (`/api/relay/events`) for the stream. A broadcast
-// has no replay, so the socket's first open is the connect and each later open a
-// reconnect, which re-reads (the state decides what).
+// has no replay, so every open is reported — the first and each reconnect — and the
+// state reads on it: nothing before the socket opened is missed.
 
 import type { RelayApi } from '../client.js';
 import type { RelaySource } from '../relay-state.svelte.js';
@@ -23,13 +23,9 @@ export function relaySseSource(api: RelayApi, stream: () => RelayEventStream): R
     send: (body) => api.trySendMessage(body),
     addToBacklog: (body) => api.tryAddToBacklog(body),
     createRun: (body) => api.tryCreateRun(body),
-    events(on, onReconnect) {
+    events(on, onOpen) {
       const socket = stream();
-      let opened = false;
-      socket.onopen = () => {
-        if (opened) onReconnect();
-        opened = true;
-      };
+      socket.onopen = () => onOpen();
       const unsubscribe = socket.subscribe(on);
       return () => {
         unsubscribe();

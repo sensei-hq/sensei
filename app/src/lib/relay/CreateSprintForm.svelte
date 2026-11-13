@@ -6,7 +6,7 @@
   import { untrack } from 'svelte';
   import { Notice } from '@sensei/ui';
   import type { RelayBacklogItem } from '$lib/relay-api.js';
-  import type { RelaySprintDraft } from './relay-state.svelte.js';
+  import type { RelaySprintDraft } from '@sensei/state';
 
   let {
     selected,

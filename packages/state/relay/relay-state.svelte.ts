@@ -51,9 +51,9 @@ export interface RelaySource {
   send(body: RelaySendMessage): Promise<ApiResult<{ message_id: string }>>;
   addToBacklog(body: RelayAddToBacklog): Promise<ApiResult<{ item_id: string }>>;
   createRun(body: RelayCreateRun): Promise<ApiResult<RelayCreatedRun>>;
-  /** Subscribe to the stream: every event, and each reconnect after the first open
-   *  (a broadcast has no replay). Returns the teardown. */
-  events(on: (event: RelayStreamEvent) => void, onReconnect: () => void): () => void;
+  /** Subscribe to the stream: every event, and every open — the first and each
+   *  reconnect (a broadcast has no replay). Returns the teardown. */
+  events(on: (event: RelayStreamEvent) => void, onOpen: () => void): () => void;
 }
 
 /** What a loader hands the page: the two reads, or why each could not be read. */
@@ -255,30 +255,31 @@ export class RelayState {
     target.apply({ action, entity, data: row });
   }
 
-  /** Subscribe to the source's stream; returns the teardown (call on destroy). */
+  /** Subscribe to the source's stream; returns the teardown (call on destroy). Each open
+   *  of the stream reads Now and the queue: the loader's read predates the first open,
+   *  and a broadcast replays nothing missed while it was down. */
   connect(): () => void {
-    const stop = this.source.events(
+    return this.source.events(
       (event) => this.apply(event),
       () => {
         void this.reReadNow();
         void this.reReadQueue();
       },
     );
-    // The read the loader made predates the socket: one read covers the gap.
-    void this.reReadNow();
-    return stop;
   }
 
   // ── Reads ──
 
+  /** The person's Retry: one read per press, and a press while one is in flight shares
+   *  it — nothing changed between the presses, so no catch-up read follows. */
   async retryNow(): Promise<void> {
     this.reading = true;
-    await this.reReadNow();
+    await (this.#nowInFlight ?? this.reReadNow());
   }
 
   async retryQueue(): Promise<void> {
     this.readingQueue = true;
-    await this.reReadQueue();
+    await (this.#queueInFlight ?? this.reReadQueue());
   }
 
   /** Read Now again. One read at a time: a call while one is in flight shares it and

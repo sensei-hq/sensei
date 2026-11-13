@@ -33,7 +33,7 @@ export interface RelayRealtimeTransport {
   subscribe(on: (event: RelayStreamEvent) => void, onStatus: (status: RelayChannelStatus) => void): () => void;
 }
 
-/** A RelaySource over the dōjō's transport. A channel subscribed again after it dropped is a reconnect. */
+/** A RelaySource over the dōjō's transport. Each SUBSCRIBED — the first, and again after a drop — is an open. */
 export function relayRealtimeSource(transport: RelayRealtimeTransport): RelaySource {
   return {
     readNow: (filter) => transport.readNow(filter),
@@ -42,12 +42,9 @@ export function relayRealtimeSource(transport: RelayRealtimeTransport): RelaySou
     send: (body) => transport.send(body),
     addToBacklog: (body) => transport.addToBacklog(body),
     createRun: (body) => transport.createRun(body),
-    events(on, onReconnect) {
-      let subscribed = false;
+    events(on, onOpen) {
       return transport.subscribe(on, (status) => {
-        if (status !== 'SUBSCRIBED') return;
-        if (subscribed) onReconnect();
-        subscribed = true;
+        if (status === 'SUBSCRIBED') onOpen();
       });
     },
   };

@@ -14,7 +14,7 @@
   import { Loading, Notice } from '@sensei/ui';
   import { failureReason } from '$lib/api.js';
   import { useGlyphMode } from '$lib/glyphs';
-  import type { RelayState } from './relay-state.svelte.js';
+  import type { RelayState } from '@sensei/state';
   import { toRelayShell, type RelayNarrowKey } from './relay-shell.js';
   import { toShellInput } from './relay-shell-input.js';
   import {
