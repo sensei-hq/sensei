@@ -2686,6 +2686,17 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["task_id"], task_id);
         assert!(body["checkpointed_at"].is_string(), "{body}");
+        // #418: each step lands as a step event carrying the stored step, so the
+        // screen applies it without re-reading; then the task notification.
+        for (key, state) in [("ddl", "done"), ("clippy", "open")] {
+            let step = next_event(&mut rx).await;
+            assert_eq!(step.entity, "step", "{:?}", step.data);
+            assert_eq!(serde_json::to_value(&step.action).unwrap(), "add");
+            assert_eq!(step.data["task_id"], task_id);
+            assert_eq!(step.data["step"]["key"], key);
+            assert_eq!(step.data["step"]["state"], state);
+            assert!(step.data["step"]["updated_at"].is_string(), "{:?}", step.data);
+        }
         assert_eq!(
             task_op(&next_event(&mut rx).await),
             ("task".into(), "checkpoint".into(), task_id.clone())
