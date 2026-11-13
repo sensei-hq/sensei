@@ -24,11 +24,14 @@
   (bench-r4) and composed; stat filters drive Now (`34dced24c`); relay e2e 8/8 (`44cd5b730`). #422 done but for daemon
   gaps (#419 nudge, #395 codenames, run grouping).
 
-**Remaining (in order):** → #423 Queue → #424 Crew → #425 Task (incl. #388,
+- #423: `toQueueRows`, QueueRow/QueueSection conformed + benched (bench-r5) and composed (`218d8eab9`); tints mix in
+  OKLab (`46ab65816`); add an open item to triage end to end (`eea645d67`, form not in mockup — Design). e2e 9/9.
+
+**Remaining (in order):** → #424 Crew → #425 Task (incl. #388,
 verify #380) → #426 e2e run. Daemon #418/#419 in parallel (row-carrying events; #421's apply is ready for them).
 
-**Next command:** `gh issue view 423` (Queue), render the mockup's Queue (`--state '{"view":"queue","load":"loaded"}'`),
-then conform QueueRow on the bench (fix its bare `[data-select]` hook first).
+**Next command:** `gh issue view 424` (Crew), render the mockup's Crew view (`--state '{"view":"crew","load":"loaded"}'`
+and `'{"view":"crew","load":"empty"}'`), then RunCard/MemberCard/AddMember on the bench.
 
 **Open questions (user):** feedback on the bench sheet (r2). Retire `lane/relay-screen-conformance`? (its r2/r3
 commits live only there). Header height: with the info band open, the header bands push the body below the fold
