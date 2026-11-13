@@ -119,6 +119,36 @@ describe('RelayState · apply: an event with its row changes that row alone', ()
     expect(s.now?.lanes.map((l) => l.id)).not.toContain('l-new');
   });
 
+  it('a lane the daemon adds again (a re-register) restates the row held, with no read (#418)', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    const lane = s.lanes.items[0];
+    s.apply({ action: 'add', entity: 'lane', data: { ...lane, title: 'Back again' } as never });
+    await settle();
+    expect(s.lanes.items.filter((l) => l.id === lane.id)).toHaveLength(1);
+    expect(s.lanes.get(lane.id)?.title).toBe('Back again');
+    expect(source.readNow).not.toHaveBeenCalled();
+  });
+
+  it('the event’s own keys stay out of the row: op, reason and lane_id are not lane fields (#418)', () => {
+    const s = new RelayState(fakeSource().source, {}, reads());
+    const lane = s.lanes.items[0];
+    s.apply({
+      action: 'update',
+      entity: 'lane',
+      data: { ...lane, lease_state: 'expired', op: 'suspended', reason: 'lease_expired', lane_id: lane.id } as never,
+    });
+    expect(s.now?.lanes[0]).toEqual({ ...lane, lease_state: 'expired' });
+  });
+
+  it('a lane in a crew the screen has not read re-reads Now: a coordinator mints its crew (#418)', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    s.apply({ action: 'add', entity: 'lane', data: F.lane({ id: 'l-coord', crew_id: 'crew-new', code: 'L0' }) as never });
+    await settle();
+    expect(source.readNow).toHaveBeenCalledTimes(1);
+  });
+
   it('a decision answered (removed) leaves Needs you; a message added joins it', () => {
     const now = F.now({ decisions: [F.decision()], person_messages: [] });
     const s = new RelayState(fakeSource().source, {}, reads(now));
