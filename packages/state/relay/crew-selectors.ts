@@ -124,7 +124,10 @@ export function toAddMember(now: RelayNow | null, picked: RelayRole): RelayAddMe
   const hasRun = (now?.runs ?? []).some((r) => r.state === 'planning' || r.state === 'active');
   const setup = !hasRun && lanes.length < 2;
   const role: RelayRole = hasCoordinator ? 'contributor' : picked;
-  const line = `register with sensei as ${role}`;
+  // The crew named (#419), so the line works with several crews open; with no crew
+  // the coordinator's register mints one.
+  const crewId = now?.crews[0]?.id ?? null;
+  const line = crewId ? `register with sensei as ${role} in crew ${crewId}` : `register with sensei as ${role}`;
   const command = {
     step: setup ? (role === 'coordinator' ? 'Step 1 of 2.' : 'Step 2 of 2.') : '',
     text: line,

@@ -882,7 +882,8 @@ describe('Relay — the Crew view with a crew (#424)', () => {
     expect(all(card, '[data-member]').map((m) => m.getAttribute('data-member'))).toEqual(['L0', 'L1']);
     const add = need(one(crew, '[data-add-member]'), 'Add a member');
     expect(text(one(add, '[data-add-member-title]'))).toBe('Add a member');
-    expect(text(one(add, '[data-paste-text]'))).toBe('register with sensei as contributor');
+    // #419: the line names the crew, so it works with several crews open.
+    expect(text(one(add, '[data-paste-text]'))).toBe(`register with sensei as contributor in crew ${F.CREW_ID}`);
   });
 
   it('a member’s Message opens the compose band', async () => {
