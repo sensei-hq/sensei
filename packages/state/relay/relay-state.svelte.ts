@@ -67,7 +67,7 @@ export interface RelayReads {
 }
 
 /** What the create-sprint form fills in; the state adds the selection and the crew. */
-export type RelaySprintDraft = Omit<RelayCreateRun, 'item_ids' | 'crew_id'>;
+export type RelaySprintDraft = Omit<RelayCreateRun, 'item_ids' | 'crew_id' | 'start'>;
 
 /** The parts of `relay.now` that are the read's summary, not entity rows. */
 interface NowSummary {
@@ -452,8 +452,10 @@ export class RelayState {
       this.sprintError = 'Pick at least one backlog item for the sprint.';
       return null;
     }
-    // The screen's crew, named: the daemon never has to pick among several.
-    const answer = await this.source.createRun({ ...draft, item_ids, crew_id: this.crew?.id ?? null });
+    // The screen's crew, named: the daemon never has to pick among several. With a crew
+    // the run starts in the same step; without one it waits as a draft (#419).
+    const crew_id = this.crew?.id ?? null;
+    const answer = await this.source.createRun({ ...draft, item_ids, crew_id, start: crew_id !== null });
     if (!answer.ok) {
       this.sprintError = failureReason(answer.error);
       return null;

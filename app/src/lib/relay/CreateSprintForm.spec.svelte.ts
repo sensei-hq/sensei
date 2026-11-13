@@ -4,7 +4,7 @@ import { flushSync } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
 import CreateSprintForm from './CreateSprintForm.svelte';
 import * as F from '$lib/test-stubs/relay-fixtures.js';
-import type { RelayCreateRun } from '$lib/relay-api.js';
+import type { RelaySprintDraft } from '@sensei/state';
 
 // Queue cutover (phase 4): the form the queue tab opens over a selection.
 // Submit stays off until a title, a goal and (with auto-merge on) a base
@@ -16,7 +16,7 @@ afterEach(() => {
   cleanup = [];
 });
 
-type Body = Omit<RelayCreateRun, 'item_ids' | 'crew_id'>;
+type Body = RelaySprintDraft;
 type Submit = (body: Body) => Promise<string | null>;
 
 function mount(over: Partial<{ error: string | null; onsubmit: Submit }> = {}) {

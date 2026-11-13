@@ -62,7 +62,8 @@ export type RelayActionKind =
   | 'checkpointed';
 
 /** `relay.runs.state` (queue cutover): a sprint run's lifecycle. */
-export type RelayRunState = 'planning' | 'active' | 'completed' | 'cancelled';
+/** `draft`: items, no crew, no Task 0 until started (#419). */
+export type RelayRunState = 'draft' | 'planning' | 'active' | 'completed' | 'cancelled';
 
 /** The queue's verdict on a claimed task's deps (queue cutover). */
 export type RelayDepsStatus = 'satisfied' | 'early_claim_gated';
@@ -606,10 +607,12 @@ export interface RelayRunConfig {
   auto_merge: boolean;
 }
 
-/** `POST /relay/runs` (queue cutover): a sprint run over backlog items. `crew_id`
- *  null = the one active crew (a 409 names the refusal when there are none or several). */
+/** `POST /relay/runs` (queue cutover; #419): a sprint run over backlog items, drafted
+ *  unless `start` — then it starts on `crew_id` (null = the one active crew; a 409 names
+ *  the refusal when there are none, several, or no live lane). */
 export interface RelayCreateRun {
   crew_id: string | null;
+  start: boolean;
   title: string;
   goal: string;
   item_ids: string[];
@@ -618,11 +621,12 @@ export interface RelayCreateRun {
   config: RelayRunConfig;
 }
 
-/** The daemon's 201: the run, its Task 0 waiting in the pool, and the crew. */
+/** The daemon's 201: the run, and once started its Task 0 waiting in the pool and the
+ *  crew; a draft has neither. */
 export interface RelayCreatedRun {
   run_id: string;
-  planning_task_id: string;
-  crew_id: string;
+  planning_task_id: string | null;
+  crew_id: string | null;
   status: RelayRunState;
 }
 
