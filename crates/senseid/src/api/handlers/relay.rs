@@ -4244,6 +4244,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_lane_message_to_the_person_rides_the_stream_as_its_row() {
+        // #418: Needs you gains the message from the stream, its row exactly
+        // as /relay/now shows it. A message to a lane is not Needs you's.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        send_lane_message(
+            &h,
+            &holder,
+            &token,
+            Some(&task_id),
+            json!({"kind": "person"}),
+            "Look here",
+        )
+        .await;
+        let sent = serde_json::to_value(event_for_entity(&mut rx, "message").await).unwrap();
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let mut row = now["person_messages"][0].clone();
+        assert_eq!(row["text"], "Look here", "{now}");
+        row["op"] = json!("sent");
+        assert_eq!(sent, json!({"action": "add", "entity": "message", "data": row}));
+        send_lane_message(&h, &holder, &token, None, json!({"kind": "coordinator"}), "ack").await;
+        while let Ok(event) = rx.try_recv() {
+            assert_ne!(event.entity, "message", "{:?}", event.data);
+        }
+    }
+
+    #[tokio::test]
     async fn now_serves_person_messages_newest_first() {
         // Q2-2(a): to.person messages from a lane surface in the person
         // feed newest-first with lane code, text, and task link.
