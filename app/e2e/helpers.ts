@@ -414,6 +414,8 @@ export async function clickAndExpectNav(
  *   e2e build is signed with a stable identity by `make app-e2e-build`; with
  *   the `sensei-dev` certificate the grant then survives rebuilds).
  * - `unpainted`: the frame and docked devtools paint, the page area does not.
+ * - `unavailable`: the capture itself failed — no window on screen (a locked or
+ *   sleeping display).
  *
  * Either way the file is removed — a blank PNG left behind reads as evidence —
  * and the cause is logged. The test does not fail on it: its DOM assertions
@@ -422,8 +424,15 @@ export async function clickAndExpectNav(
 export async function shot(
   tauriPage: { screenshot: (o: { path: string }) => Promise<unknown> },
   path: string,
-): Promise<'ok' | 'blank' | 'unpainted'> {
-  await tauriPage.screenshot({ path });
+): Promise<'ok' | 'blank' | 'unpainted' | 'unavailable'> {
+  try {
+    await tauriPage.screenshot({ path });
+  } catch (e) {
+    // No window on screen to capture (a locked or sleeping display): the picture is for a
+    // person, the DOM assertions are the evidence — say so, never fail the test on it.
+    console.warn(`[shot] ${path}: no capture — ${e instanceof Error ? e.message : String(e)} (#284)`);
+    return 'unavailable';
+  }
   const png = readFileSync(path);
   const result = isUniformPng(png) ? 'blank' : isUniformPng(png, PAGE_BAND) ? 'unpainted' : 'ok';
   if (result !== 'ok') {
