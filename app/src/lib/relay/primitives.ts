@@ -127,3 +127,15 @@ export function roleMarkClass(role: RelayRole, status: RoleStatus, size: 24 | 30
     title: ROLE_LABEL[role],
   };
 }
+
+// ── Now rows (§3b) ───────────────────────────────────────────────────────────
+
+/** A lane or completed row (mockup `laneRow`): full width, wraps on a phone, pad 10/14, gap 4×12. */
+export const NOW_ROW =
+  'w-full flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 px-3.5 text-ink no-underline text-left';
+
+/** The card a Now list's rows sit in: 1px edge, radius 12, paper; rows split by a mute hairline. */
+export const NOW_CARD = 'm-0 p-0 list-none flex flex-col border border-solid border-paper-edge rounded-xl bg-paper overflow-hidden';
+
+/** A row inside a NOW_CARD. */
+export const NOW_CARD_ROW = 'border-t border-solid border-paper-mute first:border-t-0';
