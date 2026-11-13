@@ -507,6 +507,75 @@ pub struct RelayStartedRun {
     pub planning_task_id: Uuid,
 }
 
+/// One `relay.run_list` row (#419).
+#[derive(Debug, Clone)]
+struct RunListRow {
+    id: Uuid,
+    crew_id: Option<Uuid>,
+    title: String,
+    goal: String,
+    state: String,
+    repo_key: Option<String>,
+    workspace_id: Option<Uuid>,
+    created_at: DateTime<Utc>,
+    started_at: Option<DateTime<Utc>>,
+    completed_at: Option<DateTime<Utc>>,
+    delete_after: Option<DateTime<Utc>>,
+    total_tasks: i64,
+    done_tasks: i64,
+    members: i64,
+}
+
+impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for RunListRow {
+    fn from_row(r: &'r sqlx_postgres::PgRow) -> Result<Self, sqlx_core::Error> {
+        use sqlx_core::row::Row;
+        Ok(RunListRow {
+            id: r.try_get("id")?,
+            crew_id: r.try_get("crew_id")?,
+            title: r.try_get("title")?,
+            goal: r.try_get("goal")?,
+            state: r.try_get("state")?,
+            repo_key: r.try_get("repo_key")?,
+            workspace_id: r.try_get("workspace_id")?,
+            created_at: r.try_get("created_at")?,
+            started_at: r.try_get("started_at")?,
+            completed_at: r.try_get("completed_at")?,
+            delete_after: r.try_get("delete_after")?,
+            total_tasks: r.try_get("total_tasks")?,
+            done_tasks: r.try_get("done_tasks")?,
+            members: r.try_get("members")?,
+        })
+    }
+}
+
+const RUN_LIST_SELECT: &str = "select id, crew_id, title, goal, state::text as state, repo_key,
+        workspace_id, created_at, started_at, completed_at, delete_after, total_tasks,
+        done_tasks, members
+   from relay.run_list where user_id = $1";
+const RUN_LIST_SELECT_ALL: &str = "select id, crew_id, title, goal, state::text as state, repo_key,
+        workspace_id, created_at, started_at, completed_at, delete_after, total_tasks,
+        done_tasks, members
+   from relay.run_list where user_id = $1 order by created_at, id";
+
+fn run_list_json(row: &RunListRow) -> serde_json::Value {
+    serde_json::json!({
+        "id": row.id.to_string(),
+        "crew_id": row.crew_id.map(|id| id.to_string()),
+        "title": row.title,
+        "goal": row.goal,
+        "state": row.state,
+        "repo_key": row.repo_key,
+        "workspace_id": row.workspace_id.map(|id| id.to_string()),
+        "created_at": iso(row.created_at),
+        "started_at": row.started_at.map(iso),
+        "completed_at": row.completed_at.map(iso),
+        "delete_after": row.delete_after.map(iso),
+        "total_tasks": row.total_tasks,
+        "done_tasks": row.done_tasks,
+        "members": row.members,
+    })
+}
+
 /// A run's cancel (#419): what it stopped and what it gave back.
 #[derive(Debug, Clone)]
 pub struct RelayCancelledRun {
@@ -4596,8 +4665,10 @@ impl PgStore {
         .fetch_all(&mut *tx)
         .await
         .map_err(db_err)?;
+        // When it ended: the past runs list it, deleted 30 days on (#419).
         sqlx_core::query::query(
-            "update relay.runs set state = 'cancelled'::relay.run_state
+            "update relay.runs set state = 'cancelled'::relay.run_state,
+                    completed_at = current_timestamp
              where user_id = $1 and id = $2",
         )
         .bind(user_id)
@@ -4607,6 +4678,168 @@ impl PgStore {
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         Ok(RelayCancelledRun { run_id, crew_id, cancelled_tasks, returned_items })
+    }
+
+    /// `GET /relay/runs` (#419): the open runs (draft, planning, active),
+    /// oldest first, and the ended ones (completed, cancelled), newest
+    /// first, each with `delete_after`.
+    pub async fn relay_runs(&self, user_id: Uuid) -> Result<serde_json::Value, RelayError> {
+        let rows: Vec<RunListRow> = sqlx_core::query_as::query_as(RUN_LIST_SELECT_ALL)
+            .bind(user_id)
+            .fetch_all(self.pool())
+            .await
+            .map_err(db_err)?;
+        let (mut active, mut archived) = (Vec::new(), Vec::new());
+        for row in &rows {
+            if matches!(row.state.as_str(), "completed" | "cancelled") {
+                archived.push(run_list_json(row));
+            } else {
+                active.push(run_list_json(row));
+            }
+        }
+        // The query orders by creation; the archive reads newest first.
+        archived.reverse();
+        Ok(serde_json::json!({ "active": active, "archived": archived }))
+    }
+
+    /// `GET /relay/runs/{id}` (#419): the run's row, its tasks grouped by
+    /// state (each with its lane and step counters; only states that hold
+    /// a task appear), and its members — every lane that wrote on its tasks,
+    /// and while it is open the crew's live lanes.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
+    pub async fn relay_run_detail(
+        &self,
+        user_id: Uuid,
+        run_id: Uuid,
+    ) -> Result<serde_json::Value, RelayError> {
+        let row: Option<RunListRow> =
+            sqlx_core::query_as::query_as(&format!("{RUN_LIST_SELECT} and id = $2"))
+                .bind(user_id)
+                .bind(run_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+        let Some(row) = row else {
+            return Err(RelayError::NotFound("run not found".into()));
+        };
+        let tasks: Vec<(
+            Uuid,
+            String,
+            String,
+            String,
+            i32,
+            DateTime<Utc>,
+            Option<DateTime<Utc>>,
+            Option<String>,
+            i64,
+            i64,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "select t.id, t.title, t.phase::text, t.state::text, t.round, t.state_changed_at,
+                    t.completed_at, t.checkpoint->>'current_step',
+                    (select count(*) from jsonb_array_elements(t.steps) st
+                      where st->>'state' in ('done', 'skipped')),
+                    jsonb_array_length(t.steps)::bigint,
+                    l.id, l.code, l.suggested_name
+               from relay.tasks t
+               left join relay.lanes l on l.user_id = t.user_id and l.id = t.lane_id
+              where t.user_id = $1 and t.run_id = $2
+              order by t.state_changed_at, t.id",
+        )
+        .bind(user_id)
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        let mut by_state = serde_json::Map::new();
+        for (
+            id,
+            title,
+            phase,
+            state,
+            round,
+            changed,
+            completed,
+            current_step,
+            steps_done,
+            steps_total,
+            lane_id,
+            lane_code,
+            lane_name,
+        ) in tasks
+        {
+            let lane = match (lane_id, lane_code) {
+                (Some(id), Some(code)) => serde_json::json!({
+                    "id": id.to_string(), "code": code, "suggested_name": lane_name,
+                }),
+                _ => serde_json::Value::Null,
+            };
+            let entry = serde_json::json!({
+                "id": id.to_string(),
+                "title": title,
+                "phase": phase,
+                "state": state,
+                "round": round,
+                "state_changed_at": iso(changed),
+                "completed_at": completed.map(iso),
+                "current_step": current_step,
+                "steps_done": steps_done,
+                "steps_total": steps_total,
+                "lane": lane,
+            });
+            match by_state.entry(state).or_insert_with(|| serde_json::json!([])) {
+                serde_json::Value::Array(list) => list.push(entry),
+                _ => unreachable!("tasks_by_state holds arrays only"),
+            }
+        }
+        let open = !matches!(row.state.as_str(), "completed" | "cancelled");
+        let members: Vec<(
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "select l.id, l.code, l.role::text, l.title, l.suggested_name, l.family, l.model
+                   from relay.lanes l
+                  where l.user_id = $1
+                    and (exists (
+                           select 1 from relay.actions a
+                             join relay.tasks t on t.user_id = a.user_id and t.id = a.task_id
+                            where a.user_id = l.user_id and a.lane_id = l.id and t.run_id = $2)
+                         or ($3 and l.crew_id = $4 and l.unregistered_at is null))",
+        )
+        .bind(user_id)
+        .bind(run_id)
+        .bind(open)
+        .bind(row.crew_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        let mut members = members;
+        members.sort_by(|a, b| code_rank(&a.1).cmp(&code_rank(&b.1)));
+        Ok(serde_json::json!({
+            "run": run_list_json(&row),
+            "tasks_by_state": by_state,
+            "members": members
+                .iter()
+                .map(|(id, code, role, title, name, family, model)| serde_json::json!({
+                    "id": id.to_string(),
+                    "code": code,
+                    "role": role,
+                    "title": title,
+                    "suggested_name": name,
+                    "family": family,
+                    "model": model,
+                }))
+                .collect::<Vec<_>>(),
+        }))
     }
 
     /// Unpack a validated plan into the queue, inside the caller's

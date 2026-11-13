@@ -665,6 +665,22 @@ fn started_json(started: &RelayStartedRun) -> serde_json::Value {
     })
 }
 
+/// `GET /relay/runs` (#419): the open runs and the ended ones (past runs).
+pub(crate) async fn runs(State(state): State<AppState>) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    ok(state.pg.relay_runs(user_id).await.map_err(err)?)
+}
+
+/// `GET /relay/runs/{id}` (#419): one run, its tasks by state, its members.
+pub(crate) async fn run_detail(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let run_id = parse_uuid(&run_id, "run_id").map_err(err)?;
+    ok(state.pg.relay_run_detail(user_id, run_id).await.map_err(err)?)
+}
+
 /// `POST /relay/runs/{id}/start` (#419): the draft binds the crew (≥ 1 live
 /// lane) and Task 0 joins the pool.
 pub(crate) async fn start_run(
