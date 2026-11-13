@@ -8067,6 +8067,240 @@ impl PgStore {
         .map_err(db_err)?;
         Ok(item_id)
     }
+
+    /// `POST /relay/backlog` with a ticket (#419): the ticket a synced
+    /// tracker of that provider holds under the key (or a key it had)
+    /// joins the backlog, its title and kind snapshotted from the tracker
+    /// and its workspace the tracker's. Not synced or removed is not found;
+    /// a ticket the tracker gave no title is refused (D83: no invented
+    /// title); a ticket already open in the queue is a conflict.
+    pub async fn relay_backlog_add_ticket(
+        &self,
+        user_id: Uuid,
+        provider: RelayTicketProvider,
+        key: &str,
+    ) -> Result<Uuid, RelayError> {
+        let provider = word(provider);
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(RelayError::Validation("ticket_key must not be empty".into()));
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let tickets: Vec<(Uuid, String, Option<String>, Option<String>, Uuid)> =
+            sqlx_core::query_as::query_as(
+                "select tt.id, tt.key, tt.summary, tt.issue_type, t.workspace_id
+                   from sensei.tracker_tasks tt
+                   join sensei.trackers t on t.id = tt.tracker_id
+                  where t.kind::text = $1 and tt.removed_at is null
+                    and (tt.key = $2 or exists (
+                          select 1 from sensei.tracker_task_keys k
+                           where k.task_id = tt.id and k.key = $2))",
+            )
+            .bind(provider.as_str())
+            .bind(key)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let (ticket_id, current_key, summary, issue_type, workspace_id) = match tickets.as_slice() {
+            [] => {
+                return Err(RelayError::NotFound(format!(
+                    "no synced {provider} tracker holds {key}"
+                )));
+            }
+            [one] => one.clone(),
+            _ => {
+                return Err(RelayError::Conflict(format!(
+                    "{key} names more than one synced {provider} ticket"
+                )));
+            }
+        };
+        let Some(title) = summary.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+            return Err(RelayError::Validation(format!("the tracker gave {key} no title")));
+        };
+        // Open already, under its key now or any key it had.
+        let open: bool = sqlx_core::query_scalar::query_scalar(
+            "select exists (
+               select 1 from relay.items i
+                where i.user_id = $1 and i.ticket_provider = $2
+                  and i.state in ('triage', 'backlog', 'planned')
+                  and (i.ticket_key = $3 or i.ticket_key in (
+                        select k.key from sensei.tracker_task_keys k where k.task_id = $4)))",
+        )
+        .bind(user_id)
+        .bind(provider.as_str())
+        .bind(current_key.as_str())
+        .bind(ticket_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if open {
+            return Err(RelayError::Conflict(format!("{current_key} is already in the queue")));
+        }
+        let max: Option<i32> = sqlx_core::query_scalar::query_scalar(
+            "select max(position) from relay.items where user_id = $1 and state = 'backlog'",
+        )
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let item_id = new_id();
+        sqlx_core::query::query(
+            "insert into relay.items
+               (user_id, id, workspace_id, repo_key, ticket_provider, ticket_key, title, kind,
+                tags, state, position, added_by)
+             values ($1, $2, $3, null, $4, $5, $6, $7::relay.item_kind, null,
+                     'backlog'::relay.item_state, $8, null)",
+        )
+        .bind(user_id)
+        .bind(item_id)
+        .bind(workspace_id)
+        .bind(provider.as_str())
+        .bind(current_key.as_str())
+        .bind(title.as_str())
+        .bind(word(item_kind_of_issue_type(issue_type.as_deref())))
+        .bind(max.unwrap_or(0) + 1)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(item_id)
+    }
+
+    /// `DELETE /relay/items/{id}` (#419): a triage or backlog item closes
+    /// (the row stays: runs and history name it). A planned item is its
+    /// run's; a closed one is closed.
+    pub async fn relay_close_item(&self, user_id: Uuid, item_id: Uuid) -> Result<(), RelayError> {
+        let state: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select state::text from relay.items where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(item_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some(state) = state else {
+            return Err(RelayError::NotFound("item not found".into()));
+        };
+        let closed = sqlx_core::query::query(
+            "update relay.items set state = 'closed'::relay.item_state, position = null
+             where user_id = $1 and id = $2 and state in ('triage', 'backlog')",
+        )
+        .bind(user_id)
+        .bind(item_id)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        if closed.rows_affected() == 0 {
+            return Err(RelayError::Conflict(format!("item is {state}")));
+        }
+        Ok(())
+    }
+
+    /// `PATCH /relay/items/{id}` (#419): retitle a hand-added triage or
+    /// backlog item (a ticket's title is its tracker's), and/or move a
+    /// backlog item to `position` (1-based; the rest renumber in order).
+    /// Answers the items whose position changed.
+    pub async fn relay_patch_item(
+        &self,
+        user_id: Uuid,
+        item_id: Uuid,
+        title: Option<String>,
+        position: Option<i64>,
+    ) -> Result<Vec<Uuid>, RelayError> {
+        if title.is_none() && position.is_none() {
+            return Err(RelayError::Validation("send a title or a position".into()));
+        }
+        let title = title.map(|t| t.trim().to_string());
+        if let Some(t) = &title {
+            if t.is_empty() {
+                return Err(RelayError::Validation("title must not be empty".into()));
+            }
+            check_summary(t, "title")?;
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let item: Option<(String, Option<String>)> = sqlx_core::query_as::query_as(
+            "select state::text, ticket_provider from relay.items
+             where user_id = $1 and id = $2 for update",
+        )
+        .bind(user_id)
+        .bind(item_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let Some((state, provider)) = item else {
+            return Err(RelayError::NotFound("item not found".into()));
+        };
+        if state != "triage" && state != "backlog" {
+            return Err(RelayError::Conflict(format!("item is {state}")));
+        }
+        if let Some(t) = &title {
+            if provider.is_some() {
+                return Err(RelayError::Conflict("a ticket's title is its tracker's".into()));
+            }
+            sqlx_core::query::query(
+                "update relay.items set title = $1 where user_id = $2 and id = $3",
+            )
+            .bind(t.as_str())
+            .bind(user_id)
+            .bind(item_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        let mut moved = Vec::new();
+        if let Some(position) = position {
+            if state != "backlog" {
+                return Err(RelayError::Conflict("only the backlog is ordered".into()));
+            }
+            let order: Vec<(Uuid, Option<i32>)> = sqlx_core::query_as::query_as(
+                "select id, position from relay.items
+                 where user_id = $1 and state = 'backlog'
+                 order by position nulls last, id for update",
+            )
+            .bind(user_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            let len = order.len() as i64;
+            if !(1..=len).contains(&position) {
+                return Err(RelayError::Validation(format!("position must be 1 to {len}")));
+            }
+            let mut ids: Vec<Uuid> =
+                order.iter().map(|(id, _)| *id).filter(|id| *id != item_id).collect();
+            ids.insert((position - 1) as usize, item_id);
+            for (index, id) in ids.iter().enumerate() {
+                let next = index as i32 + 1;
+                let was = order.iter().find(|(o, _)| o == id).and_then(|(_, p)| *p);
+                if was == Some(next) {
+                    continue;
+                }
+                sqlx_core::query::query(
+                    "update relay.items set position = $1 where user_id = $2 and id = $3",
+                )
+                .bind(next)
+                .bind(user_id)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                moved.push(*id);
+            }
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(moved)
+    }
+}
+
+/// A tracker's issue type as a queue item's kind (#419): bugs and features
+/// by their common names; anything else, or none, is an `issue`.
+fn item_kind_of_issue_type(issue_type: Option<&str>) -> RelayItemKind {
+    match issue_type.map(|t| t.trim().to_ascii_lowercase()).as_deref() {
+        Some("bug" | "defect") => RelayItemKind::Bug,
+        Some("story" | "feature" | "new feature" | "enhancement" | "user story") => {
+            RelayItemKind::Feature
+        }
+        _ => RelayItemKind::Issue,
+    }
 }
 
 #[cfg(test)]

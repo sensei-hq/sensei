@@ -1904,11 +1904,7 @@ pub(crate) async fn backlog(
             let leaving = item_leaving(&state.pg, &item_id, "backlogged").await;
             let id = state
                 .pg
-                .relay_backlog_add(
-                    user_id,
-                    RelayCaller::Person { surface },
-                    item_id,
-                )
+                .relay_backlog_add(user_id, RelayCaller::Person { surface }, item_id)
                 .await
                 .map_err(err)?;
             // Out of triage, into the backlog with its row (#418).
@@ -1918,11 +1914,72 @@ pub(crate) async fn backlog(
             }
             ok(serde_json::json!({ "item_id": id.to_string() }))
         }
-        (None, Some(_), Some(_)) => Err(err(RelayError::NotImplemented(
-            "the tracker pull is slice 2; a ticketed add names no title the daemon could honestly store".into(),
-        ))),
-        _ => Err(err(RelayError::Validation("send item_id or a ticket, not both or neither".into()))),
+        (None, Some(provider), Some(key)) => {
+            // #419: the synced tracker's ticket, titled as the tracker has it.
+            let provider =
+                parse_word::<RelayTicketProvider>(&provider, "ticket_provider").map_err(err)?;
+            let id =
+                state.pg.relay_backlog_add_ticket(user_id, provider, &key).await.map_err(err)?;
+            if let Some(event) = item_added(&state.pg, &id, "backlogged").await {
+                let _ = state.event_tx.send(event);
+            }
+            ok(serde_json::json!({ "item_id": id.to_string() }))
+        }
+        _ => {
+            Err(err(RelayError::Validation("send item_id or a ticket, not both or neither".into())))
+        }
     }
+}
+
+/// `DELETE /relay/items/{id}` (#419): the item closes and leaves the queue.
+pub(crate) async fn close_item(
+    State(state): State<AppState>,
+    Path(item_id): Path<String>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let item_id = parse_uuid(&item_id, "item_id").map_err(err)?;
+    // Read before the write: the remove names the id the screen holds.
+    let leaving = item_leaving(&state.pg, &item_id, "closed").await;
+    state.pg.relay_close_item(user_id, item_id).await.map_err(err)?;
+    if let Some(event) = leaving {
+        let _ = state.event_tx.send(event);
+    }
+    ok(serde_json::json!({ "item_id": item_id.to_string(), "state": "closed" }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PatchItemBody {
+    title: Option<String>,
+    position: Option<i64>,
+}
+
+/// `PATCH /relay/items/{id}` (#419): retitle a hand-added item, or move a
+/// backlog item; each changed row rides the stream.
+pub(crate) async fn patch_item(
+    State(state): State<AppState>,
+    Path(item_id): Path<String>,
+    Json(body): Json<PatchItemBody>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let item_id = parse_uuid(&item_id, "item_id").map_err(err)?;
+    let edited = body.title.is_some();
+    let moved = state
+        .pg
+        .relay_patch_item(user_id, item_id, body.title, body.position)
+        .await
+        .map_err(err)?;
+    if edited && !moved.contains(&item_id) {
+        if let Some(event) = item_added(&state.pg, &item_id, "edited").await {
+            let _ = state.event_tx.send(event);
+        }
+    }
+    for id in &moved {
+        if let Some(event) = item_added(&state.pg, id, "moved").await {
+            let _ = state.event_tx.send(event);
+        }
+    }
+    ok(serde_json::json!({ "item_id": item_id.to_string() }))
 }
 
 #[cfg(test)]

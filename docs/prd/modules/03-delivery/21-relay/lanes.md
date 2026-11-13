@@ -226,7 +226,12 @@ answers (v2) spells the loop out.
 `POST /relay/runs/{id}/start` (binds the crew, which needs a live lane; mints Task 0) · `POST /relay/runs/{id}/cancel`
 (cancels its open tasks, gives its planned items back to the backlog) · `GET /relay/runs` · `GET /relay/runs/{id}` ·
 `POST /relay/crews/{id}/close` (refused while the crew has a planning or active run; releases every live lane — the
-session stays open and takes no work — then closes the crew) · `POST /relay/messages` with `nudge` (§15). A lane
+session stays open and takes no work — then closes the crew) · `POST /relay/messages` with `nudge` (§15) ·
+`POST /relay/backlog` with `ticket_provider` + `ticket_key` (the ticket a synced tracker holds under that key or a key
+it had: title and kind snapshotted from the tracker, workspace the tracker's; not synced → 404, no title → 422, open
+already → 409; GitLab tickets wait for a `gitlab` relay provider) · `DELETE /relay/items/{id}` (a triage or backlog
+item closes; the row stays) · `PATCH /relay/items/{id}` (`title` for hand-added items; `position` 1-based in the
+backlog, the rest renumbered). A lane
 sees each of these only through what it already reads: a cancelled task, a released lane (`410` on its next call).
 The existing `start_run` / `register_plan` / `update_task_status` / `report_run_outcome` /
 `run_status` / `pause_run` are reused where they already fit, and not cloned.
