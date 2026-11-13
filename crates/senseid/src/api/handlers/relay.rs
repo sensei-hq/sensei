@@ -3464,6 +3464,66 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     }
 
+    // ── #419: the person closes a crew (CONTRACT §3k: lanes released) ──
+
+    async fn person_close(h: &Harness, crew_id: &str) -> (StatusCode, Value) {
+        call(h, "POST", &format!("/relay/crews/{crew_id}/close"), Some(json!({})), None).await
+    }
+
+    #[tokio::test]
+    async fn the_person_closes_a_crew_and_its_lanes_leave_now() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = person_close(&h, &coord.2).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({"crew_id": coord.2, "status": "closed"}));
+        // Each lane leaves Now on the stream, named by its id.
+        let mut removed = Vec::new();
+        while removed.len() < 2 {
+            let event = event_for_entity(&mut rx, "lane").await;
+            assert_eq!(
+                serde_json::to_value(&event.action).unwrap(),
+                json!("remove"),
+                "{:?}",
+                event.data
+            );
+            removed.push(event.data["id"].as_str().unwrap().to_string());
+        }
+        removed.sort();
+        let mut want = vec![coord.0.clone(), lane.clone()];
+        want.sort();
+        assert_eq!(removed, want);
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(now["lanes"].as_array().unwrap().len(), 0, "{now}");
+        // Released: the session takes no more work.
+        let (status, body) = claim_next(&h, &lane, &token).await;
+        assert!(status.is_client_error(), "{status}: {body}");
+        // Closing a closed crew is a no-op; an unknown crew is not found.
+        let (status, _) = person_close(&h, &coord.2).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = person_close(&h, "01931560-9000-7000-8000-000000000099").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_crew_with_an_open_run_does_not_close() {
+        // The run is stopped first, so closing never strands its tasks.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let run_id = draft_run(&h, &triage_item(&h).await).await;
+        let (status, _) = run_verb(&h, &run_id, "start").await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = person_close(&h, &coord.2).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["message"].as_str().unwrap().contains("open run"), "{body}");
+        let (status, _) = run_verb(&h, &run_id, "cancel").await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = person_close(&h, &coord.2).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
     #[tokio::test]
     async fn approving_task0_emits_unpack_and_run_activated() {
         let h = harness().await;
