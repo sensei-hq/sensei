@@ -24,10 +24,11 @@ export interface RelayStats {
 export const minutesSince = (iso: string, at: number): number =>
   Math.max(0, Math.round((at - new Date(iso).getTime()) / 60_000));
 
-/** On a task, or holding a review: working. */
+/** On a task, or holding a review: working — not while the task waits on the person's answer (that is Blocked). */
 export const isWorking = (lane: RelayLane): boolean =>
   lane.lease_state !== 'expired' &&
-  (Boolean(lane.reviewing) || (lane.task != null && ['working', 'assigned', 'rework'].includes(lane.task.state)));
+  (Boolean(lane.reviewing) ||
+    (lane.task != null && !lane.task.needs_answer && ['working', 'assigned', 'rework'].includes(lane.task.state)));
 
 /** Reachable, nothing claimed, nothing to review: idle (lanes.md §15 `no_work`). */
 export const isIdle = (lane: RelayLane): boolean =>

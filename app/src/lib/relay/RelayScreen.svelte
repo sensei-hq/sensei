@@ -15,18 +15,20 @@
   import { failureReason } from '$lib/api.js';
   import { useGlyphMode } from '$lib/glyphs';
   import type { RelayState } from '@sensei/state';
-  import { toCompletedRows, toLaneGroups, type NowRowOptions } from '@sensei/state';
+  import { toCompletedRows, toLaneGroups, toNeedsYou, toWaitRows, type NowRowOptions } from '@sensei/state';
   import { WAIT_THRESHOLD_MIN, toRelayShell, type RelayNarrowKey } from './relay-shell.js';
   import { toShellInput } from './relay-shell-input.js';
-  import { providerLabel, taskHref } from './relay-format.js';
-  import DecisionRow from './DecisionRow.svelte';
-  import MessageRow from './MessageRow.svelte';
+  import { taskHref } from './relay-format.js';
   import ComposeBand from './ComposeBand.svelte';
   import CreateSprintForm from './CreateSprintForm.svelte';
   import FloatingReviewRow from './FloatingReviewRow.svelte';
   import QueueRow from './QueueRow.svelte';
   import LaneList from './LaneList.svelte';
   import CompletedList from './CompletedList.svelte';
+  import NeedsYou from './NeedsYou.svelte';
+  import SectionHeading from './SectionHeading.svelte';
+  import WaitList from './WaitList.svelte';
+  import { NOW_CARD } from './primitives.js';
   import RelayShell from './RelayShell.svelte';
   import SprintBand from './SprintBand.svelte';
 
@@ -89,13 +91,6 @@
     ),
   );
 
-  const triageTotal = $derived((state.now?.triage ?? []).reduce((n, t) => n + t.count, 0));
-  const triageFrom = $derived(
-    (state.now?.triage ?? [])
-      .map((t) => (t.provider === 'manual' ? 'you added it' : `${providerLabel(t.provider)} ${t.sprint ?? ''}`.trim()))
-      .join(' · '),
-  );
-
   /** The notice a failed crew read draws: a fault, its reason, and a Retry. */
   const failure = $derived(
     state.nowError
@@ -126,7 +121,21 @@
     href: (crewId, taskId) => taskHref(base, crewId, taskId),
     byCrew: filtered,
   });
-  const laneGroups = $derived(toLaneGroups(state.now, rowOptions));
+  /** The pressed stat, choosing what Now shows (§1c-0). */
+  const filter = $derived(state.statFilter);
+  const FILTER_LABEL = { working: 'Working', waiting: 'Waiting', blocked: 'Blocked', done: 'Completed today' } as const;
+  const showing = $derived(filter ? { label: FILTER_LABEL[filter], onclear: () => (state.statFilter = null) } : null);
+  const laneGroups = $derived(
+    toLaneGroups(state.now, { ...rowOptions, only: filter === 'working' || filter === 'blocked' ? filter : undefined }),
+  );
+  const waitRows = $derived(toWaitRows(state.now, rowOptions));
+  const needsYou = $derived(toNeedsYou(state.now, state.queue, rowOptions));
+
+  /** Answer a decision by its id (Needs you calls back with it). */
+  function answer(id: string, option: string): Promise<string | null> {
+    const decision = state.now?.decisions.find((d) => d.id === id);
+    return decision ? state.answer(decision, option) : Promise.resolve('This decision is no longer open.');
+  }
   const completedRows = $derived(toCompletedRows(state.now, rowOptions));
 
   /** The two lines a session pastes to register (CONTRACT §1h, until #424's AddMember). */
@@ -193,36 +202,21 @@
       {/if}
     </section>
   {:else if state.now && state.hasCrew && shell.view === 'now'}
-    {#if state.now.decisions.length > 0 || triageTotal > 0 || state.now.person_messages.length > 0}
-      <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="needs-you">
-        <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Needs you</h2>
-        {#each state.now.decisions as decision (decision.id)}
-          <DecisionRow
-            {decision}
-            href={decision.task_id ? taskHref(base, decision.crew_id, decision.task_id) : null}
-            onanswer={(option) => state.answer(decision, option)}
-          />
-        {/each}
-        {#each state.now.person_messages as message (message.id)}
-          <MessageRow
-            {message}
-            href={message.task_id ? taskHref(base, message.crew_id, message.task_id) : null}
-          />
-        {/each}
-        {#if triageTotal > 0}
-          <button
-            type="button"
-            class="text-left text-sm text-ink-soft hover:text-ink"
-            data-triage-line
-            onclick={() => state.openQueue()}
-          >
-            {triageTotal} to triage — from {triageFrom}
-          </button>
-        {/if}
-      </section>
+    <!-- Now (CONTRACT §1c): what needs the person, then the lanes, then today's
+         completions. A pressed stat chooses what shows (§1c-0); Needs you hides
+         while one is on. -->
+    {#if needsYou && !filter}
+      <div class="p-4 pb-0">
+        <NeedsYou
+          view={needsYou}
+          href={(crewId, taskId) => taskHref(base, crewId, taskId)}
+          onanswer={(id, option) => answer(id, option)}
+          onopenqueue={() => state.openQueue()}
+        />
+      </div>
     {/if}
 
-    {#if state.now.floating_reviews.length > 0}
+    {#if !filter && state.now.floating_reviews.length > 0}
       <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="reviews">
         <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">
           Needs a reviewer · {state.now.floating_reviews.length}
@@ -233,7 +227,7 @@
       </section>
     {/if}
 
-    {#if state.now.runs.length > 0}
+    {#if !filter && state.now.runs.length > 0}
       <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="sprints">
         <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Sprints · {state.now.runs.length}</h2>
         {#each state.now.runs as run (run.run_id)}
@@ -242,13 +236,20 @@
       </section>
     {/if}
 
-    <div class="p-4 pb-0">
-      <LaneList groups={laneGroups} />
-    </div>
+    {#if filter === 'waiting'}
+      <section aria-label="Waiting · oldest first" data-relay-section="waiting" class="flex flex-col gap-1.5 p-4">
+        <SectionHeading label="Waiting · oldest first" count={waitRows.length} {showing} />
+        <div class="{NOW_CARD} px-3.5"><WaitList rows={waitRows} /></div>
+      </section>
+    {:else if filter !== 'done'}
+      <div class="p-4 pb-0">
+        <LaneList groups={laneGroups} {showing} />
+      </div>
+    {/if}
 
-    {#if completedRows.length > 0}
+    {#if (!filter || filter === 'done') && completedRows.length > 0}
       <div class="p-4">
-        <CompletedList rows={completedRows} />
+        <CompletedList rows={completedRows} showing={filter === 'done' ? showing : null} />
       </div>
     {/if}
   {:else if state.now && shell.view === 'queue'}

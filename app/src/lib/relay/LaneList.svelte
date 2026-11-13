@@ -7,12 +7,15 @@
   import SectionHeading from './SectionHeading.svelte';
   import { NOW_CARD } from './primitives.js';
 
-  let { groups }: { groups: RelayLaneGroupView[] } = $props();
+  let {
+    groups,
+    showing = null,
+  }: { groups: RelayLaneGroupView[]; showing?: { label: string; onclear: () => void } | null } = $props();
   const count = $derived(groups.reduce((n, g) => n + g.rows.length, 0));
 </script>
 
 <section aria-label="Lanes" data-relay-section="lanes" class="flex flex-col gap-1.5">
-  <SectionHeading label="Lanes" {count} />
+  <SectionHeading label="Lanes" {count} {showing} />
   {#each groups as group (group.id)}
     <div data-crew-group={group.id} class="flex flex-col gap-1.5">
       {#if group.label}<p data-crew-heading class="m-0 text-xs text-ink-mute">{group.label}</p>{/if}

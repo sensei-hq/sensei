@@ -5,11 +5,14 @@
   import SectionHeading from './SectionHeading.svelte';
   import { NOW_CARD } from './primitives.js';
 
-  let { rows }: { rows: RelayCompletedRowView[] } = $props();
+  let {
+    rows,
+    showing = null,
+  }: { rows: RelayCompletedRowView[]; showing?: { label: string; onclear: () => void } | null } = $props();
 </script>
 
 <section aria-label="Completed today" data-relay-section="completed" class="flex flex-col gap-1.5">
-  <SectionHeading label="Completed today" count={rows.length} />
+  <SectionHeading label="Completed today" count={rows.length} {showing} />
   <ul data-completed-card class={NOW_CARD}>
     {#each rows as row (row.id)}
       <CompletedRow {row} />

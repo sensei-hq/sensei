@@ -4,7 +4,7 @@
 // a resume the daemon did not give is not invented (D83).
 
 import { crewGroups, crewRepoLabel, hhmm, providerLabel, since } from './format.js';
-import { minutesSince } from './relay-selectors.js';
+import { isWorking, minutesSince } from './relay-selectors.js';
 import type {
   RelayCompletedTask,
   RelayDecision,
@@ -65,6 +65,15 @@ export interface NowRowOptions {
   href: (crewId: string, taskId: string) => string;
   /** The main window groups the lanes by crew; the workspace window shows them flat. */
   byCrew: boolean;
+  /** A stat's filter narrows the lanes (CONTRACT §1c-0): Working or Blocked. */
+  only?: 'working' | 'blocked';
+}
+
+/** Whether a lane belongs under a stat's filter. */
+function laneIn(lane: RelayLane, only: NowRowOptions['only']): boolean {
+  if (only === 'working') return isWorking(lane);
+  if (only === 'blocked') return lane.lease_state === 'expired' || Boolean(lane.task?.needs_answer);
+  return true;
 }
 
 // The assistant families the screen names; any other reads as the daemon wrote it, made readable.
@@ -165,10 +174,11 @@ function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayLaneRow
 /** The lanes as LaneList draws them: one group in the workspace window, one per crew in the main window. */
 export function toLaneGroups(now: RelayNow | null, o: NowRowOptions): RelayLaneGroupView[] {
   if (!now) return [];
+  const lanes = now.lanes.filter((l) => laneIn(l, o.only));
   if (!o.byCrew) {
-    return [{ id: now.crews[0]?.id ?? 'lanes', label: null, rows: now.lanes.map((l) => laneRow(l, now, o)) }];
+    return [{ id: now.crews[0]?.id ?? 'lanes', label: null, rows: lanes.map((l) => laneRow(l, now, o)) }];
   }
-  return crewGroups(now.crews, now.lanes).map((g) => ({
+  return crewGroups(now.crews, lanes).map((g) => ({
     id: g.crew.id,
     label: crewRepoLabel(g.crew),
     rows: g.lanes.map((l) => laneRow(l, now, o)),
