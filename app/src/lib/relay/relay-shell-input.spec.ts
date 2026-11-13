@@ -1,0 +1,125 @@
+import { describe, it, expect } from 'vitest';
+import { toShellInput, type ShellSource } from './relay-shell-input.js';
+import { WAIT_THRESHOLD_MIN } from './relay-shell.js';
+import {
+  coordinatorLane,
+  decision,
+  floatingReview,
+  lane,
+  minutesAgo,
+  now,
+  sprint,
+} from '$lib/test-stubs/relay-fixtures.js';
+
+// From what the screen holds (the read, its state, the person's view) to the
+// shell's input (relay-shell.ts). Pure: the stats are counted from the read
+// the daemon gave, never guessed, and a number it did not give reads as such.
+
+const source = (over: Partial<ShellSource> = {}): ShellSource => ({
+  surface: 'desktop',
+  where: 'sensei',
+  now: now(),
+  failed: false,
+  reading: false,
+  view: 'now',
+  composing: false,
+  statFilter: null,
+  queueCount: 7,
+  ...over,
+});
+
+describe('toShellInput · load and run', () => {
+  it('a read in flight is loading, a failed read is error, no crew is empty, else loaded', () => {
+    expect(toShellInput(source({ reading: true })).load).toBe('loading');
+    expect(toShellInput(source({ failed: true, now: null })).load).toBe('error');
+    expect(toShellInput(source({ now: now({ crews: [], lanes: [] }) })).load).toBe('empty');
+    expect(toShellInput(source()).load).toBe('loaded');
+  });
+
+  it('the run is the first open sprint, named by the end of its id; none → no run', () => {
+    expect(toShellInput(source({ now: now({ runs: [sprint()] }) })).run).toEqual({ id: 'ab10' });
+    expect(toShellInput(source()).run).toBeNull();
+    expect(toShellInput(source({ now: now({ runs: [sprint({ state: 'completed' })] }) })).run).toBeNull();
+  });
+
+  it('passes the surface, the place, the view, the compose and filter state through', () => {
+    const input = toShellInput(source({ view: 'crew', composing: true, statFilter: 'waiting' }));
+    expect(input).toMatchObject({ surface: 'desktop', workspace: 'sensei', view: 'crew', from: null, compose: true, filter: 'waiting', info: true, freshness: null });
+    expect(input.threshold).toBe(WAIT_THRESHOLD_MIN);
+  });
+});
+
+describe('toShellInput · counts and today', () => {
+  it('the Queue badge is the queue count (0 while it is unknown); the Crew badge is the lanes', () => {
+    expect(toShellInput(source()).counts).toEqual({ queue: 7, crew: 2 });
+    expect(toShellInput(source({ queueCount: null })).counts.queue).toBe(0);
+  });
+
+  it('Today: the completed count and the first-pass line; no review reported reads so', () => {
+    expect(toShellInput(source()).today).toEqual({ done: 2, firstPass: '1 of 5 passed review first time.' });
+    const quiet = now({ today: { completed: 0, reviewed: null, first_pass_approved: null } });
+    expect(toShellInput(source({ now: quiet })).today).toEqual({ done: 0, firstPass: 'no review reported yet' });
+    expect(toShellInput(source({ now: null, failed: true })).today).toBeNull();
+  });
+});
+
+describe('toShellInput · the four stats, counted from the read', () => {
+  const busy = () =>
+    now({
+      // the coordinator's task is in review (its report floats) — not working;
+      // L1 works; L3 lost its lease; L4 is idle with nothing claimed.
+      lanes: [
+        coordinatorLane(),
+        lane(),
+        lane({ id: 'l3', code: 'L3', title: 'Billing', lease_state: 'expired', task: null }),
+        lane({ id: 'l4', code: 'L4', title: 'Sync hardening', task: null }),
+      ],
+      floating_reviews: [
+        floatingReview({ reported_at: minutesAgo(26) }),
+        floatingReview({ task_id: 't-libs', title: 'Libraries page', reported_at: minutesAgo(52) }),
+      ],
+      decisions: [decision()],
+    });
+
+  it('Working counts lanes on a task or holding a review', () => {
+    expect(toShellInput(source({ now: busy() })).stats?.working).toBe(1);
+    const reviewing = now({ lanes: [lane({ task: null, reviewing: { id: 'r1', title: 'Notice polish', phase: 'impl', round: 1, claimed_at: minutesAgo(3) } })] });
+    expect(toShellInput(source({ now: reviewing })).stats?.working).toBe(1);
+  });
+
+  it('Waiting counts floating reviews and idle lanes, oldest by the oldest floating report', () => {
+    expect(toShellInput(source({ now: busy() })).stats?.waiting).toEqual({ count: 3, oldestMin: 52 });
+    expect(toShellInput(source()).stats?.waiting).toEqual({ count: 0, oldestMin: null });
+  });
+
+  it('Blocked counts open decisions and lanes whose lease is lost', () => {
+    expect(toShellInput(source({ now: busy() })).stats?.blocked).toBe(2);
+  });
+
+  it('Completed today is the list, with the first-pass line', () => {
+    expect(toShellInput(source()).stats).toMatchObject({ done: 2, firstPass: '1 of 5 first-pass' });
+    const quiet = now({ today: { completed: 0, reviewed: null, first_pass_approved: null }, completed_today: [] });
+    expect(toShellInput(source({ now: quiet })).stats).toMatchObject({ done: 0, firstPass: 'no review reported yet' });
+  });
+
+  it('no read, no stats', () => {
+    expect(toShellInput(source({ now: null, reading: true })).stats).toBeNull();
+  });
+});
+
+describe('toShellInput · resources', () => {
+  it('the build lease with its age in minutes, free disk and swap with the floor', () => {
+    expect(toShellInput(source()).resources).toEqual({
+      build: { resource: 'rust-build', lane: 'L1', minutes: 4 },
+      disk_free_gb: 46,
+      swap_free_gb: 1.2,
+      swap_floor_gb: 1,
+    });
+  });
+
+  it('no build lease, and numbers the daemon did not report, pass as null', () => {
+    const bare = now({ resources: { build_lease: null, disk_free_gb: null, disk_floor_gb: 25, swap_free_gb: null, swap_floor_gb: 1 } });
+    expect(toShellInput(source({ now: bare })).resources).toEqual({ build: null, disk_free_gb: null, swap_free_gb: null, swap_floor_gb: 1 });
+    expect(toShellInput(source({ now: null, failed: true })).resources).toBeNull();
+  });
+});
