@@ -246,3 +246,11 @@ describe('toNeedsYou · decisions, the long waits, triage, the unassigned', () =
     expect(toNeedsYou(null, null, opts())).toBeNull();
   });
 });
+
+describe('toNeedsYou · messages to the person', () => {
+  it('a lane’s message to the person needs them too, and counts', () => {
+    const n = toNeedsYou(F.now({ triage: [], decisions: [], person_messages: [F.personMessage()] }), F.queue({ triage: [] }), opts());
+    expect(n?.messages.map((m) => m.id)).toEqual([F.personMessage().id]);
+    expect(n?.count).toBe(1);
+  });
+});
