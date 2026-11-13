@@ -3,9 +3,17 @@
 // threshold and how a task is linked go in; row data comes out. A codename, a time or
 // a resume the daemon did not give is not invented (D83).
 
-import { crewGroups, crewRepoLabel, hhmm, since } from './format.js';
+import { crewGroups, crewRepoLabel, hhmm, providerLabel, since } from './format.js';
 import { minutesSince } from './relay-selectors.js';
-import type { RelayCompletedTask, RelayLane, RelayNow, RelayRole } from './types.js';
+import type {
+  RelayCompletedTask,
+  RelayDecision,
+  RelayLane,
+  RelayNow,
+  RelayQueue,
+  RelayRole,
+  RelayTicketProvider,
+} from './types.js';
 
 /** The tone a pill or a mark carries. */
 export type RelayTone = 'accent' | 'warning' | 'danger' | 'success' | 'neutral';
@@ -183,4 +191,121 @@ export function toCompletedRows(now: RelayNow | null, o: NowRowOptions): RelayCo
     outcome: { label: row.outcome, tone: 'success' as const },
     href: o.href(row.crew_id, row.task_id),
   }));
+}
+
+// ─── Waiting and Needs you (CONTRACT §1c-0 Waiting's filter, §1c-1, §3f-bis) ──────────
+
+/** One task (or idle lane) waiting on someone, as WaitRow draws it. */
+export interface RelayWaitRowView {
+  /** The task's id, or the lane's when it has none. */
+  id: string;
+  /** How long it has waited; null when the daemon did not say (an idle lane). */
+  minutes: number | null;
+  minutesText: string;
+  /** At or past the threshold. */
+  over: boolean;
+  task: string;
+  /** "objective · reason · waiting on party". */
+  why: string;
+  href: string | null;
+  /** The person's nudge to the party waited on; offered once the daemon takes it (#419). */
+  nudge: { label: string; canNudge: boolean };
+}
+
+/** What Needs you shows; null when there is nothing (the section hides). */
+export interface RelayNeedsYouView {
+  count: number;
+  decisions: RelayDecision[];
+  /** The waits at or past the threshold, oldest first. */
+  stale: { title: string; rows: RelayWaitRowView[] } | null;
+  /** The queue's triage items, by source: the line opens the Queue. */
+  triage: { count: number; from: string } | null;
+  /** Tasks no lane has taken (the coordinator's to place): read-only. */
+  unassigned: { count: number; from: string } | null;
+}
+
+/** Why a task waits, and whether it waits on the coordinator or its own lane (§3f-bis). */
+function waitReason(lane: RelayLane, now: RelayNow): { reason: string; onLane: boolean } | null {
+  const task = lane.task;
+  if (lane.lease_state === 'expired' || lane.limit_scope) return null;
+  if (!task) return lane.role === 'contributor' && !lane.reviewing ? { reason: 'lane idle, nothing assigned', onLane: false } : null;
+  if (task.needs_answer) return null; // a decision: its own card
+  if (task.state === 'in_review' && now.floating_reviews.some((r) => r.task_id === task.id)) {
+    return { reason: 'report has no reviewer', onLane: false };
+  }
+  if (task.state === 'rework') return { reason: 'verdict filed, not picked up', onLane: true };
+  if (task.state === 'approved') return { reason: 'approved, not merged', onLane: false };
+  return null;
+}
+
+function waitRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayWaitRowView | null {
+  const w = waitReason(lane, now);
+  if (!w) return null;
+  const objective = lane.title ?? lane.code;
+  const party = w.onLane ? `${objective} (${codename(lane)})` : 'the coordinator';
+  const task = lane.task;
+  const minutes = task ? minutesSince(task.state_changed_at, o.at) : null;
+  return {
+    id: task?.id ?? lane.id,
+    minutes,
+    minutesText: minutes == null ? '' : since(task!.state_changed_at, o.at),
+    over: minutes != null && minutes >= o.threshold,
+    task: task ? `${task.title} (${task.phase} r${task.round})` : 'Nothing assigned',
+    why: `${objective} · ${w.reason} · waiting on ${party}`,
+    href: task ? o.href(lane.crew_id, task.id) : null,
+    nudge: { label: `Nudge ${w.onLane ? codename(lane) : 'the coordinator'}`, canNudge: false },
+  };
+}
+
+/** Every wait, oldest first; one with no time (an idle lane) after them. */
+export function toWaitRows(now: RelayNow | null, o: NowRowOptions): RelayWaitRowView[] {
+  if (!now) return [];
+  return now.lanes
+    .map((l) => waitRow(l, now, o))
+    .filter((r): r is RelayWaitRowView => r !== null)
+    .sort((a, b) => (b.minutes ?? -1) - (a.minutes ?? -1));
+}
+
+/** "From Jira sprint 47, GitHub milestone 11, and an open item". */
+function fromLine(sources: Array<{ provider: string; sprint: string | null; count: number }>): string {
+  const named: string[] = [];
+  let manual = 0;
+  for (const s of sources) {
+    if (s.provider === 'manual') {
+      manual += s.count;
+      continue;
+    }
+    const label = `${providerLabel(s.provider as RelayTicketProvider)}${s.sprint ? ` ${s.sprint}` : ''}`;
+    if (!named.includes(label)) named.push(label);
+  }
+  if (manual > 0) named.push(manual === 1 ? 'an open item' : `${manual} open items`);
+  if (named.length <= 1) return `From ${named[0] ?? 'the queue'}`;
+  if (named.length === 2) return `From ${named[0]} and ${named[1]}`;
+  return `From ${named.slice(0, -1).join(', ')}, and ${named[named.length - 1]}`;
+}
+
+/** What Needs you shows, or null when nothing needs the person. */
+export function toNeedsYou(now: RelayNow | null, queue: RelayQueue | null, o: NowRowOptions): RelayNeedsYouView | null {
+  if (!now) return null;
+  const staleRows = toWaitRows(now, o).filter((r) => r.over);
+  const stale = staleRows.length
+    ? {
+        title: `${staleRows.length} ${staleRows.length === 1 ? 'task has' : 'tasks have'} waited ${o.threshold} min or more — oldest first`,
+        rows: staleRows,
+      }
+    : null;
+  const triageItems = queue?.triage ?? [];
+  const triage = triageItems.length
+    ? {
+        count: triageItems.length,
+        from: fromLine(
+          triageItems.map((t) => (t.ticket ? { provider: t.ticket.provider, sprint: t.sprint, count: 1 } : { provider: 'manual', sprint: null, count: 1 })),
+        ),
+      }
+    : null;
+  const unassignedCount = now.triage.reduce((n, t) => n + t.count, 0);
+  const unassigned = unassignedCount ? { count: unassignedCount, from: fromLine(now.triage) } : null;
+  const count = now.decisions.length + (stale ? 1 : 0) + (triage ? 1 : 0) + (unassigned ? 1 : 0);
+  if (count === 0) return null;
+  return { count, decisions: now.decisions, stale, triage, unassigned };
 }
