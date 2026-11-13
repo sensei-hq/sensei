@@ -136,6 +136,19 @@ describe('AddMember', () => {
     expect(text(root.querySelector('[data-listening]'))).toBe('Listening · 0 of 2 to start a run');
   });
 
+  it('a line naming its crew shows whole: it wraps, never cut short (#419)', () => {
+    const line = 'register with sensei as contributor in crew 019a5e2c-4b1d-7c00-8d2e-00000000c7f3';
+    const c = mount(AddMember, {
+      view: setup({ role: 'contributor', roleLocked: true, command: { ...setup().command, text: line } }),
+      oncopy: vi.fn(),
+      onrole: vi.fn(),
+    });
+    const code = c.querySelector('[data-paste-text]')!;
+    expect(text(code)).toBe(line);
+    expect(code.className).not.toMatch(/\btruncate\b/);
+    expect(code.className).toMatch(/\bbreak-all\b/);
+  });
+
   it('the coordinator taken: Contributor only, Coordinator disabled', () => {
     const c = mount(AddMember, { view: setup({ role: 'contributor', roleLocked: true }), oncopy: vi.fn(), onrole: vi.fn() });
     const [coordinator, contributor] = [...c.querySelectorAll('[data-role-option]')] as HTMLButtonElement[];
