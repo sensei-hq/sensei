@@ -30,7 +30,8 @@ export interface GalleryEntry {
   component: Component<any>;
   props: Record<string, unknown>;
   /** A fixed sample height, for a component that fills its container (the shell). */
-  frame?: { height: number };
+  /** A shell drawn in a box of this height; on a phone the header bands stack, so it gets `phoneHeight`. */
+  frame?: { height: number; phoneHeight?: number };
 }
 
 const entry = (
@@ -57,7 +58,7 @@ const band = createRawSnippet(() => ({
 
 export const GALLERY: GalleryEntry[] = [
   ...SHELL_FIXTURES.map((f) =>
-    entry(`RelayShell/${f.name}`, f.note, RelayShell, { shell: toRelayShell(f.input(), still), viewId: `gallery.relay.${f.name}`, children: body, compose: band }, { height: 560 }),
+    entry(`RelayShell/${f.name}`, f.note, RelayShell, { shell: toRelayShell(f.input(), still), viewId: `gallery.relay.${f.name}`, children: body, compose: band }, { height: 560, phoneHeight: 1500 }),
   ),
 
   entry('Pill/neutral', 'a state pill, neutral tone', Pill, { label: 'idle', tone: 'neutral' }),

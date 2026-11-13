@@ -71,7 +71,7 @@
           class:w-[390px]={data.width === 'phone'}
           class:max-w-[1100px]={data.width === 'wide' && !item.frame}
           class:max-w-[1400px]={data.width === 'wide' && Boolean(item.frame)}
-          style:height={item.frame ? `${item.frame.height}px` : undefined}
+          style:height={item.frame ? `${data.width === 'phone' ? (item.frame.phoneHeight ?? item.frame.height) : item.frame.height}px` : undefined}
         >
           <item.component {...item.props} />
         </div>
