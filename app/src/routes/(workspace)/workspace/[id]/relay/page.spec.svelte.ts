@@ -441,7 +441,9 @@ describe('Relay · Now — Lanes (#422: LaneList from the selectors)', () => {
     const l1 = need(one(lanes, '[data-lane-row="L1"]'), '[data-lane-row="L1"]');
     // No codename yet (#395): the code stands in, beside the assistant.
     expect(text(one(l1, '[data-part="name"]'))).toBe('Diagrams L1 · Claude Code 2.1');
-    expect(text(one(l1, '[data-part="task"]'))).toBe('Structure view on the shell (tests r1)');
+    expect(text(one(l1, '[data-task-title]'))).toBe('Structure view on the shell (tests r1)');
+    // The holder's reported progress, from the read's current_step and counts (#418).
+    expect(text(one(l1, '[data-lane-progress]'))).toBe('2 of 5 steps done · Writing the failing specs');
     expect(state(c, 'L1')).toBe('working');
     expect(text(one(l1, '[data-part="when"]'))).toBe('38 min');
 
