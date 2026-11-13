@@ -2788,6 +2788,213 @@ mod tests {
         json!({"action": action, "entity": "item", "data": data})
     }
 
+    // ── #419: the queue's item ops and the ticketed backlog add ──
+
+    /// A Jira board synced into a workspace, with its tickets: AUTH-1 (a
+    /// bug, once called AUTH-OLD), AUTH-2 (no summary), AUTH-3 (removed).
+    async fn synced_jira(h: &Harness) -> String {
+        let ws: uuid::Uuid = sqlx_core::query_scalar::query_scalar(
+            "insert into sensei.workspaces (name) values ('relay-ticket-ws') returning id",
+        )
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        let tracker: uuid::Uuid = sqlx_core::query_scalar::query_scalar(
+            "insert into sensei.trackers
+               (workspace_id, kind, base_url, account, external_scope, board_ref, secret_service)
+             values ($1, 'jira', $2, 'dev@example.com', 'AUTH', '42', 'svc') returning id",
+        )
+        .bind(ws)
+        .bind(format!("https://h{}.atlassian.net", uuid::Uuid::new_v4().simple()))
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        for sql in [
+            "insert into sensei.tracker_tasks (tracker_id, external_id, key, summary, issue_type)
+             values ($1, '1', 'AUTH-1', 'Fix the login redirect', 'Bug')",
+            "insert into sensei.tracker_tasks (tracker_id, external_id, key, summary)
+             values ($1, '2', 'AUTH-2', null)",
+            "insert into sensei.tracker_tasks (tracker_id, external_id, key, summary, removed_at)
+             values ($1, '3', 'AUTH-3', 'Gone', now())",
+            "insert into sensei.tracker_task_keys (task_id, key)
+             select id, 'AUTH-OLD' from sensei.tracker_tasks where tracker_id = $1 and key = 'AUTH-1'",
+        ] {
+            sqlx_core::query::query(sql)
+                .bind(tracker)
+                .execute(h.state.pg.pool())
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+        ws.to_string()
+    }
+
+    async fn ticket_add(h: &Harness, key: &str) -> (StatusCode, Value) {
+        call(
+            h,
+            "POST",
+            "/relay/backlog",
+            Some(json!({"ticket_provider": "jira", "ticket_key": key})),
+            None,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_ticket_joins_the_backlog_titled_from_its_synced_tracker() {
+        // The title is the tracker's (D83: never invented); the kind its type.
+        let h = harness().await;
+        let ws = synced_jira(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = ticket_add(&h, "AUTH-1").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let item = body["item_id"].as_str().unwrap().to_string();
+        let row = queue_row(&h, "backlog", &item).await;
+        assert_eq!(row["title"], "Fix the login redirect");
+        assert_eq!(row["kind"], "bug");
+        assert_eq!(row["workspace_id"], ws.as_str());
+        assert_eq!(row["ticket"]["provider"], "jira");
+        assert_eq!(row["ticket"]["key"], "AUTH-1");
+        let added = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        assert_eq!(added, item_event("add", "backlogged", "backlog", &item, Some(row)));
+        // Once open in the queue, the same ticket (by any key it had) is a conflict.
+        for key in ["AUTH-1", "AUTH-OLD"] {
+            let (status, body) = ticket_add(&h, key).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{key}: {body}");
+        }
+        // Not synced, removed from the tracker, or without a title: refused.
+        for (key, want) in [
+            ("AUTH-404", StatusCode::NOT_FOUND),
+            ("AUTH-3", StatusCode::NOT_FOUND),
+            ("AUTH-2", StatusCode::UNPROCESSABLE_ENTITY),
+        ] {
+            let (status, body) = ticket_add(&h, key).await;
+            assert_eq!(status, want, "{key}: {body}");
+        }
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/backlog",
+            Some(json!({"ticket_provider": "linear", "ticket_key": "X-1"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_queue_item_is_closed_and_leaves_the_queue() {
+        let h = harness().await;
+        let item = triage_item(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(&h, "DELETE", &format!("/relay/items/{item}"), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({"item_id": item, "state": "closed"}));
+        let gone = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        assert_eq!(gone, item_event("remove", "closed", "triage", &item, None));
+        assert_eq!(item_state(&h, &item).await, "closed");
+        let (status, _) = call(&h, "DELETE", &format!("/relay/items/{item}"), None, None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        // An item taken by a run is the run's: cancel the run to free it.
+        let planned = triage_item(&h).await;
+        draft_run(&h, &planned).await;
+        let (status, _) = call(&h, "DELETE", &format!("/relay/items/{planned}"), None, None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _) =
+            call(&h, "DELETE", "/relay/items/01931560-9000-7000-8000-000000000099", None, None)
+                .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    async fn to_backlog(h: &Harness) -> String {
+        let item = triage_item(h).await;
+        let (status, body) =
+            call(h, "POST", "/relay/backlog", Some(json!({"item_id": item})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        item
+    }
+
+    async fn patch_item(h: &Harness, item: &str, body: Value) -> (StatusCode, Value) {
+        call(h, "PATCH", &format!("/relay/items/{item}"), Some(body), None).await
+    }
+
+    #[tokio::test]
+    async fn the_backlog_reorders_and_a_hand_added_title_edits() {
+        let h = harness().await;
+        let (a, b, c) = (to_backlog(&h).await, to_backlog(&h).await, to_backlog(&h).await);
+        let mut rx = h.state.event_tx.subscribe();
+        // C to the top: the rest move down one, in their order.
+        let (status, body) = patch_item(&h, &c, json!({"position": 1})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, queue) = call(&h, "GET", "/relay/queue", None, None).await;
+        let order: Vec<&str> = queue["backlog"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["item_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(order, vec![c.as_str(), a.as_str(), b.as_str()], "{queue}");
+        let positions: Vec<i64> = queue["backlog"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["position"].as_i64().unwrap())
+            .collect();
+        assert_eq!(positions, vec![1, 2, 3]);
+        // Every row that moved rides the stream with its new row.
+        let mut moved = Vec::new();
+        for _ in 0..3 {
+            let event = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+            assert_eq!(event["data"]["op"], "moved", "{event}");
+            let id = event["data"]["id"].as_str().unwrap().to_string();
+            assert_eq!(
+                event,
+                item_event(
+                    "add",
+                    "moved",
+                    "backlog",
+                    &id,
+                    Some(queue_row(&h, "backlog", &id).await)
+                )
+            );
+            moved.push(id);
+        }
+        moved.sort();
+        let mut want = vec![a.clone(), b.clone(), c.clone()];
+        want.sort();
+        assert_eq!(moved, want);
+        // A hand-added item's title edits; the row rides the stream.
+        let (status, body) = patch_item(&h, &a, json!({"title": "Sharper title"})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(queue_row(&h, "backlog", &a).await["title"], "Sharper title");
+        let edited = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        assert_eq!(edited["data"]["op"], "edited", "{edited}");
+        // Refusals: nothing to change, an empty title, a position past the end
+        // or below 1, a triage item's position, a ticket's title (the
+        // tracker's), an unknown item.
+        let triage = triage_item(&h).await;
+        let ws = synced_jira(&h).await;
+        let _ = ws;
+        let (_, body) = ticket_add(&h, "AUTH-1").await;
+        let ticketed = body["item_id"].as_str().unwrap().to_string();
+        for (case, item, body, want) in [
+            ("nothing", a.clone(), json!({}), StatusCode::UNPROCESSABLE_ENTITY),
+            ("empty title", a.clone(), json!({"title": " "}), StatusCode::UNPROCESSABLE_ENTITY),
+            ("position 0", a.clone(), json!({"position": 0}), StatusCode::UNPROCESSABLE_ENTITY),
+            ("past the end", a.clone(), json!({"position": 9}), StatusCode::UNPROCESSABLE_ENTITY),
+            ("triage position", triage.clone(), json!({"position": 1}), StatusCode::CONFLICT),
+            ("ticket title", ticketed.clone(), json!({"title": "Mine"}), StatusCode::CONFLICT),
+            (
+                "unknown",
+                "01931560-9000-7000-8000-000000000099".to_string(),
+                json!({"title": "x"}),
+                StatusCode::NOT_FOUND,
+            ),
+        ] {
+            let (status, out) = patch_item(&h, &item, body).await;
+            assert_eq!(status, want, "{case}: {out}");
+        }
+    }
+
     #[tokio::test]
     async fn queue_writes_ride_the_stream_as_item_rows() {
         // #418: each queue write is confirmed by the item events it causes —
@@ -5542,8 +5749,8 @@ mod tests {
             call(&h, "POST", "/relay/backlog", Some(json!({"item_id": item_id})), None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["item_id"], item_id);
-        // Slice 2 owns the tracker pull: a ticketed add is 501, never a
-        // fabricated title (derived).
+        // #419: a ticketed add takes its title from the synced tracker; a
+        // ticket no tracker synced is not found — never a fabricated title.
         let (status, body) = call(
             &h,
             "POST",
@@ -5552,8 +5759,7 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
-        assert_eq!(body["error"], "relay_not_implemented");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     }
 
     // ── F3: triage / cancel / close ──
