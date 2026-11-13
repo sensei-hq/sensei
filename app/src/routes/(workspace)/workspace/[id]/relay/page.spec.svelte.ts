@@ -1028,6 +1028,9 @@ describe('Relay r2 — one write per press (F4)', () => {
     answer.click();
     answer.click();
     pending.resolve(F.ok({ action_id: 'act-answer' }));
+    await vi.waitFor(() => expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1));
+    // The event the answer causes takes it out of Needs you (#421).
+    relay.streams[0].fire({ action: 'update', entity: 'task', data: { op: 'answer', task_id: 't-structure' } });
     await vi.waitFor(() => expect(one(c, '[data-decision]')).toBeNull());
     expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1);
   });
@@ -1166,6 +1169,9 @@ describe('Relay follow-up — a re-read that fails after a write (N8)', () => {
     need(one(row, '[data-option="file"]'), 'the file option').click();
     await tick();
     need(one(row, '[data-decision-answer]'), 'Answer').click();
+    await vi.waitFor(() => expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1));
+    // The answer's event names ids only today: Now is read again, and that read fails.
+    relay.streams[0].fire({ action: 'update', entity: 'task', data: { op: 'answer', task_id: 't-structure' } });
 
     await vi.waitFor(() => expect(one(c, '[data-relay-error]')).not.toBeNull());
     const notice = need(one(c, '[data-relay-error]'), 'the fault Notice after a failed re-read');

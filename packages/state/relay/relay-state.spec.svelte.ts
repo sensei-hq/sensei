@@ -164,6 +164,20 @@ describe('RelayState · apply: an event that names ids only (today’s daemon, u
     expect(s.now?.lanes).toEqual([]);
   });
 
+  it('a second press of Retry shares the read in flight: one read, with no catch-up read after it', async () => {
+    const d = F.deferred<ApiResult<RelayNow>>();
+    const { source } = fakeSource({ readNow: vi.fn(() => d.promise) });
+    const s = new RelayState(source, {}, { now: null, nowError: F.fail(503, 'down').error, queue: null, queueError: null });
+    const first = s.retryNow();
+    const second = s.retryNow();
+    expect(s.reading).toBe(true);
+    d.resolve(F.ok(F.now()));
+    await Promise.all([first, second]);
+    await settle();
+    expect(source.readNow).toHaveBeenCalledTimes(1);
+    expect(s.reading).toBe(false);
+  });
+
   it('a step is the task screen’s, and an unknown entity changes nothing', async () => {
     const { source } = fakeSource();
     const s = new RelayState(source, {}, reads());
