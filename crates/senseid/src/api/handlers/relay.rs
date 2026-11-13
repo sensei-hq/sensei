@@ -5051,15 +5051,39 @@ mod tests {
         }
     }
 
-    fn lane_event(action: &str, op: &str, lane_id: &str, crew_id: &str) -> Value {
-        json!({
-            "action": action, "entity": "lane",
-            "data": {"op": op, "lane_id": lane_id, "crew_id": crew_id},
-        })
+    /// A lane event as #418 shapes it: the lane's row exactly as `/relay/now`
+    /// shows it, plus the op, the lane id and (on suspend/resume) the reason.
+    async fn lane_event(
+        h: &Harness,
+        action: &str,
+        op: &str,
+        lane_id: &str,
+        crew_id: &str,
+    ) -> Value {
+        let (status, now) = call(h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        let mut data = now["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["id"] == lane_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("lane {lane_id} not on Now: {now}"));
+        assert_eq!(data["crew_id"], crew_id);
+        data["op"] = json!(op);
+        data["lane_id"] = json!(lane_id);
+        json!({"action": action, "entity": "lane", "data": data})
     }
 
-    fn lane_event_why(action: &str, op: &str, lane_id: &str, crew_id: &str, reason: &str) -> Value {
-        let mut event = lane_event(action, op, lane_id, crew_id);
+    async fn lane_event_why(
+        h: &Harness,
+        action: &str,
+        op: &str,
+        lane_id: &str,
+        crew_id: &str,
+        reason: &str,
+    ) -> Value {
+        let mut event = lane_event(h, action, op, lane_id, crew_id).await;
         event["data"]["reason"] = json!(reason);
         event
     }
@@ -5073,7 +5097,7 @@ mod tests {
         let mut rx = h.state.event_tx.subscribe();
         let (lane_id, _) = register_contributor(&h, &coord.2).await;
         let event = event_for(&mut rx, "lane", "registered").await;
-        assert_eq!(event, lane_event("add", "registered", &lane_id, &coord.2));
+        assert_eq!(event, lane_event(&h, "add", "registered", &lane_id, &coord.2).await);
     }
 
     #[tokio::test]
@@ -5083,7 +5107,7 @@ mod tests {
         let mut rx = h.state.event_tx.subscribe();
         let coord = register_coordinator(&h).await;
         let event = event_for(&mut rx, "lane", "registered").await;
-        assert_eq!(event, lane_event("add", "registered", &coord.0, &coord.2));
+        assert_eq!(event, lane_event(&h, "add", "registered", &coord.0, &coord.2).await);
     }
 
     #[tokio::test]
@@ -5103,7 +5127,12 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let event = event_for(&mut rx, "lane", "unregistered").await;
-        assert_eq!(event, lane_event("remove", "unregistered", &lane_id, &coord.2));
+        // A removal names the row by its id: the screen drops it in place.
+        assert_eq!(
+            event,
+            json!({"action": "remove", "entity": "lane",
+                   "data": {"op": "unregistered", "id": lane_id, "lane_id": lane_id, "crew_id": coord.2}})
+        );
     }
 
     #[tokio::test]
@@ -5173,7 +5202,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let event = event_for(&mut rx, "lane", "reregistered").await;
-        assert_eq!(event, lane_event("add", "reregistered", &lane_id, &coord.2));
+        assert_eq!(event, lane_event(&h, "add", "reregistered", &lane_id, &coord.2).await);
     }
 
     #[tokio::test]
@@ -5186,7 +5215,10 @@ mod tests {
             limit_pause(&h, &lane_id, &token, "daily", serde_json::Value::Null, None).await;
         assert_eq!(status, StatusCode::OK);
         let event = event_for(&mut rx, "lane", "suspended").await;
-        assert_eq!(event, lane_event_why("update", "suspended", &lane_id, &coord.2, "limit_pause"));
+        assert_eq!(
+            event,
+            lane_event_why(&h, "update", "suspended", &lane_id, &coord.2, "limit_pause").await
+        );
     }
 
     #[tokio::test]
@@ -5252,8 +5284,8 @@ mod tests {
         ];
         suspended.sort_by_key(|e| e["data"]["lane_id"].as_str().unwrap().to_string());
         let mut expected = vec![
-            lane_event_why("update", "suspended", &coord.0, &coord.2, "lease_expired"),
-            lane_event_why("update", "suspended", &lane_id, &coord.2, "lease_expired"),
+            lane_event_why(&h, "update", "suspended", &coord.0, &coord.2, "lease_expired").await,
+            lane_event_why(&h, "update", "suspended", &lane_id, &coord.2, "lease_expired").await,
         ];
         expected.sort_by_key(|e| e["data"]["lane_id"].as_str().unwrap().to_string());
         assert_eq!(suspended, expected);
@@ -5270,7 +5302,7 @@ mod tests {
         let event = event_for(&mut rx, "lane", "resumed").await;
         assert_eq!(
             event,
-            lane_event_why("update", "resumed", &lane_id, &coord.2, "lease_regranted")
+            lane_event_why(&h, "update", "resumed", &lane_id, &coord.2, "lease_regranted").await
         );
     }
 
