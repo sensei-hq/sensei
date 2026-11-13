@@ -69,7 +69,7 @@ use crate::db::pg_store::relay::{
     RelayReviewInput, RelayStepInput, RelayStepOutput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
-use crate::relay::rows::{with_lane_row, with_run_row};
+use crate::relay::rows::{decision_asked, with_lane_row, with_run_row};
 use crate::relay::{
     DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole,
     RelayStepState, RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict,
@@ -1381,6 +1381,10 @@ pub(crate) async fn ask(
         Some(task_id) => emit_task(&state, "ask", &task_id),
         None => emit(&state, "ask"),
     }
+    // Asked of the person: Needs you gains the row (#418).
+    if let Some(event) = decision_asked(&state.pg, &out.decision_id, &session.crew_id).await {
+        let _ = state.event_tx.send(event);
+    }
     ok(serde_json::json!({ "decision_id": out.decision_id.to_string() }))
 }
 
@@ -1660,12 +1664,13 @@ pub(crate) async fn person_answer(
 ) -> RelayResult {
     let user_id = person_user(&state).await.map_err(err)?;
     let surface = parse_word::<RelaySurface>(&body.surface, "surface").map_err(err)?;
+    let decision_id = parse_uuid(&body.decision_id, "decision_id").map_err(err)?;
     let out: RelayAnswerOutput = state
         .pg
         .relay_answer_decision(
             user_id,
             RelayCaller::Person { surface },
-            parse_uuid(&body.decision_id, "decision_id").map_err(err)?,
+            decision_id,
             RelayAnswerInput { option: body.option, note: body.note },
         )
         .await
@@ -1674,6 +1679,8 @@ pub(crate) async fn person_answer(
         Some(task_id) => emit_task(&state, "answer", &task_id),
         None => emit(&state, "answer"),
     }
+    // Answered: the row leaves Needs you (#418).
+    let _ = state.event_tx.send(StateEvent::relay_decision(true, &decision_id, &out.crew_id));
     ok(serde_json::json!({ "action_id": out.action_id.to_string() }))
 }
 

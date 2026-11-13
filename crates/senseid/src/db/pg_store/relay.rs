@@ -539,6 +539,8 @@ pub struct RelayAskOutput {
 pub struct RelayAnswerOutput {
     pub action_id: Uuid,
     pub task_id: Option<Uuid>,
+    /// The decision's crew (the stream names it, #418).
+    pub crew_id: Uuid,
 }
 
 /// `POST /api/relay/decisions/{id}/answer` (person and lane share it; the
@@ -1188,6 +1190,39 @@ fn next_code(codes: &[String]) -> Option<String> {
 }
 
 // ─── The store ───
+
+/// One open person decision as Needs you shows it: the `relay.now`
+/// `open_asked` payload, shaped. `relay_now` lists them;
+/// `relay_decision_row` reads one for the stream (#418).
+fn now_decision_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serde_json::Value {
+    let options = payload
+        .get("options")
+        .and_then(|v| v.as_array())
+        .map(|options| {
+            options
+                .iter()
+                .map(|o| {
+                    serde_json::json!({
+                        "id": o.get("id"),
+                        "label": o.get("label"),
+                        "detail": o.get("detail").cloned().unwrap_or(serde_json::Value::Null),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "id": id.to_string(),
+        "crew_id": crew_id.to_string(),
+        "task_id": payload.get("task_id"),
+        "task_title": payload.get("task_title"),
+        "question": payload.get("question"),
+        "context": payload.get("context"),
+        "options": options,
+        "recommended": payload.get("recommended"),
+        "asked_at": payload.get("asked_at"),
+    })
+}
 
 /// One open run as the sprint band shows it: the `relay.now`
 /// `sprint_summary` payload with its crew. `relay_now` lists them;
@@ -4705,7 +4740,7 @@ impl PgStore {
             .map_err(db_err)?;
         }
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayAnswerOutput { action_id: answer_id, task_id })
+        Ok(RelayAnswerOutput { action_id: answer_id, task_id, crew_id })
     }
 
     /// Queue a message on the bus — person and lane share it.
@@ -6184,6 +6219,25 @@ impl PgStore {
         Ok(tx)
     }
 
+    /// One open person decision's Needs-you row, for the stream (#418);
+    /// `None` when it is answered or was asked of a lane.
+    pub async fn relay_decision_row(
+        &self,
+        decision_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, RelayError> {
+        let mut tx = self.begin_local_zone().await?;
+        let row: Option<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.id, v.crew_id, v.payload from relay.now v
+             where v.section = 'open_asked' and v.id = $1",
+        )
+        .bind(decision_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(row.map(|(id, crew_id, payload)| now_decision_json(&id, &crew_id, &payload)))
+    }
+
     /// One open run's band row, for the stream (#418); `None` once the run
     /// left the band (completed, archived, deleted) or was never there.
     pub async fn relay_run_row(
@@ -6360,35 +6414,7 @@ impl PgStore {
         .map_err(db_err)?;
         let decisions_json: Vec<serde_json::Value> = decisions
             .iter()
-            .map(|(id, crew_id, payload)| {
-                let options = payload
-                    .get("options")
-                    .and_then(|v| v.as_array())
-                    .map(|options| {
-                        options
-                            .iter()
-                            .map(|o| {
-                                serde_json::json!({
-                                    "id": o.get("id"),
-                                    "label": o.get("label"),
-                                    "detail": o.get("detail").cloned().unwrap_or(serde_json::Value::Null),
-                                })
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                serde_json::json!({
-                    "id": id.to_string(),
-                    "crew_id": crew_id.to_string(),
-                    "task_id": payload.get("task_id"),
-                    "task_title": payload.get("task_title"),
-                    "question": payload.get("question"),
-                    "context": payload.get("context"),
-                    "options": options,
-                    "recommended": payload.get("recommended"),
-                    "asked_at": payload.get("asked_at"),
-                })
-            })
+            .map(|(id, crew_id, payload)| now_decision_json(id, crew_id, payload))
             .collect();
         // Q2 part 2: crew → person mail for Needs-you, newest first.
         // Reading walks the envelope's receipt ladder for the person

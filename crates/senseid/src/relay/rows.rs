@@ -37,3 +37,23 @@ pub async fn with_run_row(pg: &PgStore, event: StateEvent, run_id: &Uuid) -> Sta
         }
     }
 }
+
+/// The decision event for an ask: its Needs-you row when it was asked of
+/// the person; `None` when it was asked of a lane (Needs you never shows
+/// it) or could not be read (logged) — the task event beside it re-reads.
+pub async fn decision_asked(
+    pg: &PgStore,
+    decision_id: &Uuid,
+    crew_id: &Uuid,
+) -> Option<StateEvent> {
+    match pg.relay_decision_row(*decision_id).await {
+        Ok(Some(row)) => {
+            Some(StateEvent::relay_decision(false, decision_id, crew_id).with_row(row))
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!(decision_id = %decision_id, error = ?e, "relay stream: decision row unread; no decision event");
+            None
+        }
+    }
+}

@@ -360,10 +360,26 @@ impl StateEvent {
         }
     }
 
+    /// A decision asked of the person (`Add`, then its Needs-you row joins
+    /// it) or answered (`Remove`, named by its id) — #418.
+    pub fn relay_decision(answered: bool, decision_id: &uuid::Uuid, crew_id: &uuid::Uuid) -> Self {
+        let (action, op) =
+            if answered { (Action::Remove, "answered") } else { (Action::Add, "asked") };
+        Self {
+            action,
+            entity: "decision".into(),
+            data: serde_json::json!({
+                "op": op,
+                "id": decision_id.to_string(),
+                "crew_id": crew_id.to_string(),
+            }),
+        }
+    }
+
     /// The relay family's entities, the only ones `/api/relay/events`
     /// forwards (workspace/folder/activity ride the scan socket).
     pub fn is_relay_family(entity: &str) -> bool {
-        matches!(entity, "relay" | "task" | "step" | "lane" | "run")
+        matches!(entity, "relay" | "task" | "step" | "lane" | "run" | "decision")
     }
 
     /// Whether a stream narrowed to `crew` carries this event: no filter
@@ -569,7 +585,7 @@ mod tests {
     fn relay_family_forwards_lane_and_run() {
         // `/api/relay/events` forwards only the relay family: the new
         // entities must ride it, the scan entities must not.
-        for entity in ["relay", "task", "step", "lane", "run"] {
+        for entity in ["relay", "task", "step", "lane", "run", "decision"] {
             assert!(StateEvent::is_relay_family(entity), "{entity}");
         }
         for entity in ["workspace", "folder", "activity", "assistant"] {
