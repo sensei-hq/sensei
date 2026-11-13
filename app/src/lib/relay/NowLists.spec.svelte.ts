@@ -76,6 +76,30 @@ describe('LaneList · LaneRow', () => {
     expect(text(part(li, 'when'))).toBe('38 min');
   });
 
+  it('step progress (#418): a second line under the task — the words, and a track filled to the counts', () => {
+    const c = mount(LaneList, {
+      groups: [group([working({ progress: { text: '2 of 5 steps done · Writing the failing specs', done: 2, total: 5 } })])],
+    });
+    const task = part(c.querySelector('[data-lane-row="L1"]')!, 'task')!;
+    expect(text(task.querySelector('[data-task-title]'))).toBe('Structure view on the shell (tests r1)');
+    const line = task.querySelector('[data-lane-progress]')!;
+    expect(text(line)).toBe('2 of 5 steps done · Writing the failing specs');
+    expect(line.className).toMatch(/text-xs/);
+    expect(line.className).toMatch(/text-ink-mute/);
+    // The track is decoration: the words already say it.
+    const fill = line.querySelector('[data-lane-progress-fill]') as HTMLElement;
+    expect(fill.closest('[aria-hidden="true"]')).not.toBeNull();
+    expect(fill.style.width).toBe('40%');
+  });
+
+  it('a step with no counts is words only, no track; nothing reported is no line', () => {
+    const stepOnly = mount(LaneList, { groups: [group([working({ progress: { text: 'Reading the brief', done: 0, total: 0 } })])] });
+    const line = stepOnly.querySelector('[data-lane-progress]')!;
+    expect(text(line)).toBe('Reading the brief');
+    expect(line.querySelector('[data-lane-progress-fill]')).toBeNull();
+    expect(mount(LaneList, { groups: [group([working()])] }).querySelector('[data-lane-progress]')).toBeNull();
+  });
+
   it('an idle lane is no link and has no chevron', () => {
     const c = mount(LaneList, {
       groups: [group([working({ task: 'Nothing assigned', state: { label: 'idle', tone: 'neutral' }, when: { text: '', over: false }, href: null })])],
