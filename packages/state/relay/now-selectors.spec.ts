@@ -254,3 +254,28 @@ describe('toNeedsYou · messages to the person', () => {
     expect(n?.count).toBe(1);
   });
 });
+
+describe('toLaneGroups · a stat’s filter narrows the lanes (CONTRACT §1c-0)', () => {
+  const now = () =>
+    F.now({
+      lanes: [
+        F.lane(),
+        F.lane({ id: 'l2', code: 'L2', lease_state: 'expired', task: { ...F.lane().task!, id: 't2' } }),
+        F.lane({ id: 'l3', code: 'L3', task: { ...F.lane().task!, id: 't3', needs_answer: true } }),
+        F.lane({ id: 'l4', code: 'L4', task: null }),
+      ],
+    });
+  const codes = (only: NowRowOptions['only']) => toLaneGroups(now(), opts({ only })).flatMap((g) => g.rows.map((r) => r.code));
+
+  it('Working: the lanes on a task or holding a review', () => {
+    expect(codes('working')).toEqual(['L1']);
+  });
+
+  it('Blocked: a lost lease, or a question for the person', () => {
+    expect(codes('blocked')).toEqual(['L2', 'L3']);
+  });
+
+  it('no filter: every lane', () => {
+    expect(codes(undefined)).toEqual(['L1', 'L2', 'L3', 'L4']);
+  });
+});

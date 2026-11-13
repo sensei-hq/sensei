@@ -305,29 +305,36 @@ describe('Relay · Now — Needs you', () => {
     expect(one(second, `a[href="/workspace/w1/relay/${F.CREW_ID}/t-billing"]`)).not.toBeNull();
   });
 
-  it('"N to triage — from …" counts every source, names them, and opens Queue', async () => {
-    const { c } = await open({
-      now: F.ok(
-        F.now({
-          triage: [
-            { provider: 'jira', sprint: 'sprint 47', count: 2 },
-            { provider: 'github', sprint: 'milestone 11', count: 1 },
-            { provider: 'manual', sprint: null, count: 1 },
-          ],
-        }),
-      ),
-    });
-    const line = one(c, '[data-triage-line]');
-    expect(line).not.toBeNull();
-    expect(text(line)).toContain('4 to triage');
-    expect(text(line)).toContain('Jira sprint 47');
-    expect(text(line)).toContain('GitHub milestone 11');
-
-    line!.click();
+  it('"N to triage" counts the queue’s triage items by source and opens the Queue, which shows them (the #379 brief)', async () => {
+    const { c } = await open({ now: F.ok(F.now({ triage: [] })) });
+    const line = need(one(c, '[data-triage-line]'), 'the triage line');
+    expect(text(line)).toContain('2 to triage');
+    expect(text(line)).toContain('From Jira sprint 47 and an open item');
+    line.click();
     await tick();
     expect(section(c, 'triage')).not.toBeNull();
     expect(section(c, 'lanes')).toBeNull();
     expect(isActive(tab(c, 'Queue'))).toBe(true);
+  });
+
+  it('tasks no lane has taken are their own read-only row, apart from triage (the #379 brief)', async () => {
+    const { c } = await open({
+      now: F.ok(F.now({ triage: [{ provider: 'github', sprint: 'milestone 11', count: 3 }, { provider: 'manual', sprint: null, count: 1 }] })),
+      queue: F.ok(F.queue({ triage: [] })),
+    });
+    const row = need(one(c, '[data-unassigned]'), 'the unassigned row');
+    expect(text(row)).toContain('Unassigned · 4');
+    expect(text(row)).toContain('From GitHub milestone 11 and an open item');
+    expect(one(c, '[data-triage-line]')).toBeNull();
+  });
+
+  it('a wait at the threshold is in Needs you’s long-waits card, oldest first', async () => {
+    const { c } = await open({
+      now: F.ok(F.now({ lanes: [F.lane({ task: { ...F.lane().task!, state: 'approved', state_changed_at: F.minutesAgo(52) } })] })),
+    });
+    const card = need(one(c, '[data-relay-section="needs-you"] [data-stale-waits]'), 'the long-waits card');
+    expect(text(one(card, '[data-stale-title]'))).toContain('1 task has waited 15 min or more');
+    expect(all(card, '[data-wait-row]').map((r) => r.getAttribute('data-wait-row'))).toEqual(['t-structure']);
   });
 
   it('Answer sends the option the person picked; the event it causes takes the decision out of Needs you', async () => {
@@ -372,6 +379,53 @@ describe('Relay · Now — Needs you', () => {
 });
 
 // ─── Now · Lanes ────────────────────────────────────────────────────────────
+
+describe('Relay · Now — the stat filters choose what Now shows (CONTRACT §1c-0, #422)', () => {
+  const stat = (c: HTMLElement, id: string) => need(one(c, `[data-screen-stats] [data-stat="${id}"]`), `the ${id} stat`);
+  const busy = () =>
+    F.now({
+      decisions: [F.decision()],
+      lanes: [
+        F.lane(),
+        F.lane({ id: 'l2', code: 'L2', title: 'Billing', lease_state: 'expired', task: { ...F.lane().task!, id: 't2' } }),
+        F.lane({ id: 'l4', code: 'L4', title: 'ER diagrams', task: { ...F.lane().task!, id: 't4', state: 'approved', state_changed_at: F.minutesAgo(52) } }),
+      ],
+    });
+  const rows = (c: HTMLElement) => all(c, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'));
+
+  it('Waiting replaces the lanes with every wait, oldest first; Needs you and Completed hide; Clear restores', async () => {
+    const { c } = await open({ now: F.ok(busy()) });
+    stat(c, 'waiting').click();
+    await tick();
+    const waiting = need(section(c, 'waiting'), 'the waiting section');
+    expect(text(one(waiting, '[data-section-heading]'))).toBe('Waiting · oldest first · 1');
+    expect(all(waiting, '[data-wait-row]').map((r) => r.getAttribute('data-wait-row'))).toEqual(['t4']);
+    expect(section(c, 'lanes')).toBeNull();
+    expect(section(c, 'needs-you')).toBeNull();
+    expect(section(c, 'completed')).toBeNull();
+    expect(text(one(waiting, '[data-showing]'))).toContain('Waiting');
+    need(one(waiting, '[data-showing] button'), 'Clear').click();
+    await tick();
+    expect(section(c, 'waiting')).toBeNull();
+    expect(section(c, 'lanes')).not.toBeNull();
+    expect(section(c, 'needs-you')).not.toBeNull();
+  });
+
+  it('Working and Blocked narrow the lanes; Completed today shows the completed alone', async () => {
+    const { c } = await open({ now: F.ok(busy()) });
+    stat(c, 'working').click();
+    await tick();
+    expect(rows(c)).toEqual(['L1']);
+    expect(section(c, 'completed')).toBeNull();
+    stat(c, 'blocked').click();
+    await tick();
+    expect(rows(c)).toEqual(['L2']);
+    stat(c, 'done').click();
+    await tick();
+    expect(section(c, 'lanes')).toBeNull();
+    expect(section(c, 'completed')).not.toBeNull();
+  });
+});
 
 describe('Relay · Now — Lanes (#422: LaneList from the selectors)', () => {
   const crew = F.fiveLaneCrew;
