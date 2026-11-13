@@ -9,8 +9,9 @@
 // writes sheet.artifact.html: self-contained (images inlined) and shaped for
 // publishing as a page — it starts at <title>, no document wrapper.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { resolve, relative, dirname } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve, relative, dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -77,7 +78,20 @@ function mockupCrop(id, variant) {
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const rel = (p) => relative(OUT, p);
-const dataUri = (p) => `data:image/png;base64,${readFileSync(p).toString('base64')}`;
+// Embedded images are re-encoded as JPEG at half the 2x capture's width (macOS `sips`),
+// so the self-contained page stays under the artifact's 16 MB; without sips, the PNG.
+const shrinkDir = mkdtempSync(join(tmpdir(), 'gallery-sheet-'));
+let shrunk = 0;
+const dataUri = (p) => {
+  try {
+    const width = Number(/pixelWidth: (\d+)/.exec(execFileSync('sips', ['-g', 'pixelWidth', p], { encoding: 'utf8' }))?.[1]);
+    const out = join(shrinkDir, `${shrunk++}.jpg`);
+    execFileSync('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '78', '--resampleWidth', String(Math.max(1, Math.round(width / 2))), p, '--out', out], { stdio: 'ignore' });
+    return `data:image/jpeg;base64,${readFileSync(out).toString('base64')}`;
+  } catch {
+    return `data:image/png;base64,${readFileSync(p).toString('base64')}`;
+  }
+};
 const label = (variant) => variant.replace('wide', 'desktop').replaceAll('-', ' · ');
 
 /** One fixture's block: its id and note, then a mockup | component pair per variant. */
