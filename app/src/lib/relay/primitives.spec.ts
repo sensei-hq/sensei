@@ -142,7 +142,7 @@ describe('RoleMark (§3a)', () => {
     expect(coord.frame).toContain('h-6');
     expect(coord.frame).toContain('rounded-full');
     expect(coord.frame).toContain('border-paper-edge');
-    expect(coord.frame).toContain('bg-[color-mix(in_oklch,var(--accent)_20%,var(--paper))]');
+    expect(coord.frame).toContain('bg-[color-mix(in_oklab,var(--accent)_20%,var(--paper))]');
     expect(coord.glyph).toContain('text-xs');
     expect(coord.glyph).toContain('text-accent');
     expect(coord.title).toBe('Coordinator');
@@ -163,8 +163,8 @@ describe('RoleMark (§3a)', () => {
       const mark = roleMarkClass('contributor', status, 30);
       expect(mark.frame).toContain('w-[30px]');
       expect(mark.frame).toContain('h-[30px]');
-      expect(mark.frame).toContain(`bg-[color-mix(in_oklch,var(--${tone})_14%,var(--paper))]`);
-      expect(mark.frame).toContain(`border-[color-mix(in_oklch,var(--${tone})_45%,var(--paper))]`);
+      expect(mark.frame).toContain(`bg-[color-mix(in_oklab,var(--${tone})_14%,var(--paper))]`);
+      expect(mark.frame).toContain(`border-[color-mix(in_oklab,var(--${tone})_45%,var(--paper))]`);
       expect(mark.glyph).toContain('text-sm');
       expect(mark.glyph).toContain(`text-${tone}`);
       expect(mark.title).toBe(`Contributor · ${label}`);

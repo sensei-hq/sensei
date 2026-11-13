@@ -23,10 +23,10 @@ const PILL_BASE =
 /** 11px, 1/8 padding, full radius, nowrap; fill the tone at 16% over the paper (the mockup's
  *  tint, which darkens with the page — the -soft tokens stay light in dark mode), border at 35%. */
 const PILL_TONE: Record<PillTone, string> = {
-  accent: 'bg-[color-mix(in_oklch,var(--accent)_16%,var(--paper))] border-[color-mix(in_oklch,var(--accent)_35%,var(--paper))]',
-  warning: 'bg-[color-mix(in_oklch,var(--warning)_16%,var(--paper))] border-[color-mix(in_oklch,var(--warning)_35%,var(--paper))]',
-  danger: 'bg-[color-mix(in_oklch,var(--danger)_16%,var(--paper))] border-[color-mix(in_oklch,var(--danger)_35%,var(--paper))]',
-  success: 'bg-[color-mix(in_oklch,var(--success)_16%,var(--paper))] border-[color-mix(in_oklch,var(--success)_35%,var(--paper))]',
+  accent: 'bg-[color-mix(in_oklab,var(--accent)_16%,var(--paper))] border-[color-mix(in_oklab,var(--accent)_35%,var(--paper))]',
+  warning: 'bg-[color-mix(in_oklab,var(--warning)_16%,var(--paper))] border-[color-mix(in_oklab,var(--warning)_35%,var(--paper))]',
+  danger: 'bg-[color-mix(in_oklab,var(--danger)_16%,var(--paper))] border-[color-mix(in_oklab,var(--danger)_35%,var(--paper))]',
+  success: 'bg-[color-mix(in_oklab,var(--success)_16%,var(--paper))] border-[color-mix(in_oklab,var(--success)_35%,var(--paper))]',
   // The app has no `neutral` colour token; the mute surface is the neutral tone.
   neutral: 'bg-paper-mute border-paper-edge',
 };
@@ -83,7 +83,7 @@ const MARK_FRAME = 'shrink-0 inline-flex items-center justify-center rounded-ful
 
 /** A lane mark: 24px, coordinator accent-tinted at 20%, contributor on paper. */
 const LANE_FRAME: Record<RelayRole, string> = {
-  coordinator: 'w-6 h-6 border-paper-edge bg-[color-mix(in_oklch,var(--accent)_20%,var(--paper))]',
+  coordinator: 'w-6 h-6 border-paper-edge bg-[color-mix(in_oklab,var(--accent)_20%,var(--paper))]',
   contributor: 'w-6 h-6 border-paper-edge bg-paper',
 };
 
@@ -92,10 +92,10 @@ const LANE_GLYPH = 'text-xs text-accent';
 /** A crew mark: 30px, filled with the status tone at 14%, bordered at 45%. */
 const CREW_FRAME: Record<RoleStatus, string> = {
   active:
-    'w-[30px] h-[30px] bg-[color-mix(in_oklch,var(--success)_14%,var(--paper))] border-[color-mix(in_oklch,var(--success)_45%,var(--paper))]',
-  idle: 'w-[30px] h-[30px] bg-[color-mix(in_oklch,var(--ink-mute)_14%,var(--paper))] border-[color-mix(in_oklch,var(--ink-mute)_45%,var(--paper))]',
+    'w-[30px] h-[30px] bg-[color-mix(in_oklab,var(--success)_14%,var(--paper))] border-[color-mix(in_oklab,var(--success)_45%,var(--paper))]',
+  idle: 'w-[30px] h-[30px] bg-[color-mix(in_oklab,var(--ink-mute)_14%,var(--paper))] border-[color-mix(in_oklab,var(--ink-mute)_45%,var(--paper))]',
   not_responding:
-    'w-[30px] h-[30px] bg-[color-mix(in_oklch,var(--warning)_14%,var(--paper))] border-[color-mix(in_oklch,var(--warning)_45%,var(--paper))]',
+    'w-[30px] h-[30px] bg-[color-mix(in_oklab,var(--warning)_14%,var(--paper))] border-[color-mix(in_oklab,var(--warning)_45%,var(--paper))]',
 };
 
 const CREW_GLYPH: Record<RoleStatus, string> = {

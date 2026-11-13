@@ -35,7 +35,7 @@
 
 <article
   data-decision
-  class="flex flex-col gap-2 p-3.5 rounded-xl border border-solid border-warning bg-[color-mix(in_oklch,var(--warning)_8%,var(--paper))]"
+  class="flex flex-col gap-2 p-3.5 rounded-xl border border-solid border-warning bg-[color-mix(in_oklab,var(--warning)_8%,var(--paper))]"
 >
   <strong data-decision-question class="text-base font-semibold">{decision.question}</strong>
   <span class="text-sm text-ink-soft">

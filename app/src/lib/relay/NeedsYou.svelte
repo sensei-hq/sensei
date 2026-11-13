@@ -50,7 +50,7 @@
   {#if view.stale}
     <article
       data-stale-waits
-      class="flex flex-col gap-2 p-3.5 rounded-xl border border-solid border-warning bg-[color-mix(in_oklch,var(--warning)_8%,var(--paper))]"
+      class="flex flex-col gap-2 p-3.5 rounded-xl border border-solid border-warning bg-[color-mix(in_oklab,var(--warning)_8%,var(--paper))]"
     >
       <strong data-stale-title class="flex items-center gap-1.5 text-base font-semibold">
         {@render mark('待', 'text-warning', 'text-base')}{view.stale.title}
