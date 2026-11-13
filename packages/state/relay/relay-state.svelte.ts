@@ -281,8 +281,6 @@ export class RelayState {
     if (typeof crew === 'string' && this.#summary && !this.#summary.crews.some((c) => c.id === crew)) {
       void this.reReadNow();
     }
-    // A run's items move with it (planned, unpacked) and no item event says so yet.
-    if (entity === 'run') void this.reReadQueue();
   }
 
   /** Subscribe to the source's stream; returns the teardown (call on destroy). Each open
@@ -384,8 +382,8 @@ export class RelayState {
     return answer.ok ? null : failureReason(answer.error);
   }
 
-  /** Add a triage row to the backlog by its own identity. The daemon emits nothing for
-   *  it yet (#418), so the queue is read again. */
+  /** Add a triage row to the backlog by its own identity; its item events confirm it
+   *  (#418). */
   async addToBacklog(item: RelayTriageItem): Promise<string | null> {
     this.addError = null;
     const answer = await this.source.addToBacklog(
@@ -397,12 +395,11 @@ export class RelayState {
       this.addError = failureReason(answer.error);
       return this.addError;
     }
-    await this.reReadQueue();
     return null;
   }
 
-  /** Add an open item to triage. The daemon emits nothing for it yet (#418), so the
-   *  queue is read again; a refusal is the reason, in `triageError`. */
+  /** Add an open item to triage; its item event confirms it (#418). A refusal is the
+   *  reason, in `triageError`. */
   async addTriage(body: RelayAddTriage): Promise<string | null> {
     this.triageError = null;
     const answer = await this.source.addTriage(body);
@@ -410,7 +407,6 @@ export class RelayState {
       this.triageError = failureReason(answer.error);
       return this.triageError;
     }
-    await this.reReadQueue();
     return null;
   }
 
@@ -436,8 +432,8 @@ export class RelayState {
   }
 
   /** Mint a sprint over the selection: the run's id, or null when refused (the reason in
-   *  `sprintError`, the selection kept). One write per press. The run's event re-reads
-   *  Now; nothing tells the queue its items were planned yet (#418), so both are read. */
+   *  `sprintError`, the selection kept). One write per press. The run's row and its
+   *  items' removals confirm it (#418): nothing is read back. */
   async createSprint(draft: RelaySprintDraft): Promise<string | null> {
     if (this.#createInFlight) return this.#createInFlight;
     // Cleared when this write settles — not inside it: a refusal that never awaits would
@@ -464,7 +460,6 @@ export class RelayState {
     }
     this.clearSelection();
     this.creatingSprint = false;
-    await Promise.all([this.reReadNow(), this.reReadQueue()]);
     return answer.data.run_id;
   }
 }

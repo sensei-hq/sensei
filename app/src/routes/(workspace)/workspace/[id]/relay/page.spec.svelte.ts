@@ -543,29 +543,23 @@ describe('Relay · Queue', () => {
     expect(one(manual, '[data-add-to-backlog]')).not.toBeNull();
   });
 
-  it('+ adds a tracker task by its identity, then the re-read queue shows it in Backlog', async () => {
+  it('+ adds a tracker task by its identity; its item events move it to Backlog with no read (#418)', async () => {
     const { c, api } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
-    api.tryGetQueue.mockResolvedValue(
-      F.ok(
-        F.queue({
-          triage: [F.queue().triage[1]],
-          backlog: [...F.queue().backlog, F.backlogItem({ item_id: 'item-58', title: 'Sync shows "synced" for a refused repository', position: 3 })],
-        }),
-      ),
-    );
-
     const [ticketed] = triageRows(c);
     need(one(ticketed, '[data-add-to-backlog]'), '[data-add-to-backlog]').click();
-
+    await vi.waitFor(() => expect(api.tryAddToBacklog).toHaveBeenCalledTimes(1));
+    expect(api.tryAddToBacklog).toHaveBeenCalledWith({ ticket_provider: 'jira', ticket_key: 'SEN-58' });
+    // The daemon's confirmation: out of triage by the ticket id, into the backlog with its row.
+    relay.streams[0].fire({ action: 'remove', entity: 'item', data: { op: 'backlogged', id: 'jira:SEN-58', stage: 'triage' } });
+    const row = F.backlogItem({ item_id: 'item-58', title: 'Sync shows "synced" for a refused repository', position: 3 });
+    relay.streams[0].fire({ action: 'add', entity: 'item', data: { ...row, op: 'backlogged', id: 'item-58', stage: 'backlog' } });
     await vi.waitFor(() =>
       expect(text(section(c, 'backlog'))).toContain('Sync shows "synced" for a refused repository'),
     );
-    expect(api.tryAddToBacklog).toHaveBeenCalledTimes(1);
-    expect(api.tryAddToBacklog).toHaveBeenCalledWith({ ticket_provider: 'jira', ticket_key: 'SEN-58' });
-    expect(api.tryGetQueue).toHaveBeenCalledTimes(2);
     expect(all(need(section(c, 'triage'), 'the triage section'), '[data-queue-row]')).toHaveLength(1);
+    expect(api.tryGetQueue).toHaveBeenCalledTimes(1);
   });
 
   it('+ adds a manual item by its id', async () => {
@@ -578,20 +572,24 @@ describe('Relay · Queue', () => {
     expect(api.tryAddToBacklog).toHaveBeenCalledWith({ item_id: 'item-manual' });
   });
 
-  it('the person adds an open item to triage: the form under the card sends it, and the re-read queue shows it (#423)', async () => {
+  it('the person adds an open item to triage: the form under the card sends it, and its item event shows it (#423, #418)', async () => {
     const { c, api } = await open();
     api.tryAddTriage.mockResolvedValue(F.ok({ item_id: 'item-9' }));
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
-    api.tryGetQueue.mockResolvedValue(F.ok(F.queue({ triage: [...F.queue().triage, F.manualItem({ item_id: 'item-9', title: 'Hook skips the dōjō tests' })] })));
     const form = need(one(section(c, 'triage')!, '[data-add-item]'), 'the add-an-item form');
     const title = need(one(form, 'input[data-add-item-title]'), 'the title') as HTMLInputElement;
     title.value = 'Hook skips the dōjō tests';
     title.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
     need(one(form, '[data-add-item-submit]'), 'Add').click();
-    await vi.waitFor(() => expect(text(section(c, 'triage'))).toContain('Hook skips the dōjō tests'));
+    await vi.waitFor(() => expect(api.tryAddTriage).toHaveBeenCalledTimes(1));
     expect(api.tryAddTriage).toHaveBeenCalledWith({ title: 'Hook skips the dōjō tests', kind: 'issue', tags: [], repo_key: null, workspace_id: 'w1' });
+    // Its item event confirms it (#418).
+    const row = F.manualItem({ item_id: 'item-9', title: 'Hook skips the dōjō tests' });
+    relay.streams[0].fire({ action: 'add', entity: 'item', data: { ...row, op: 'triaged', id: 'item-9', stage: 'triage' } });
+    await vi.waitFor(() => expect(text(section(c, 'triage'))).toContain('Hook skips the dōjō tests'));
+    expect(api.tryGetQueue).toHaveBeenCalledTimes(1);
   });
 
   it('a refused + says why and keeps the row in Triage', async () => {
@@ -1136,7 +1134,8 @@ describe('Relay r2 — one write per press (F4)', () => {
     add.click();
     add.click();
     pending.resolve(F.ok({ item_id: 'item-58' }));
-    await vi.waitFor(() => expect(api.tryGetQueue).toHaveBeenCalledTimes(2));
+    await pending.promise;
+    await tick();
     expect(api.tryAddToBacklog).toHaveBeenCalledTimes(1);
   });
 });
@@ -1277,17 +1276,13 @@ describe('Relay follow-up — a re-read that fails after a write (N8)', () => {
     expect(one(c, '[data-relay-error]')).toBeNull();
   });
 
-  it('an add whose queue re-read fails is the queue’s fault Notice', async () => {
+  it('a reconnect whose queue read fails is the queue’s fault Notice', async () => {
     const { c, api } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
     api.tryGetQueue.mockResolvedValueOnce(F.fail(503, 'the daemon dropped the read'));
-
-    const row = need(
-      triageRows(c).find((r) => one(r, '[data-add-to-backlog]')),
-      'a triage row with +',
-    );
-    need(one(row, '[data-add-to-backlog]'), '[data-add-to-backlog]').click();
+    // The stream comes back: a broadcast replays nothing, so the queue is read again.
+    relay.streams[0].open();
 
     await vi.waitFor(() => expect(one(c, '[data-relay-queue-error]')).not.toBeNull());
     const notice = need(one(c, '[data-relay-queue-error]'), 'the queue’s fault Notice after a failed re-read');
