@@ -25,6 +25,9 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+          # DeepSource attributes a report to the commit it was taken on; on a
+          # pull request that must be the head, not the synthetic merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
@@ -45,6 +48,14 @@ jobs:
         with:
           token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
           files: target/lcov.info
+      # DeepSource, over OIDC: the CLI reads the workflow's identity token
+      # (--use-oidc), so there is no DSN. Run from the repo root so the report's
+      # paths resolve (they are repo-root relative after the sed above). Several
+      # reports under one key merge implicitly (this job and `senseid` both send `rust`).
+      - name: Install DeepSource CLI
+        run: curl -fsSL https://cli.deepsource.com/install | BINDIR=./bin sh
+      - name: Report Rust coverage to DeepSource
+        run: ./bin/deepsource report --analyzer test-coverage --key rust --value-file target/lcov.info --use-oidc
 
   # senseid's pure (DB-free) modules — language parsers, config adapters, assistant
   # transcript parsing, ranking/classifiers/plan-graph/etc. Their tests run with NO
@@ -56,6 +67,9 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+          # DeepSource attributes a report to the commit it was taken on; on a
+          # pull request that must be the head, not the synthetic merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
@@ -77,6 +91,10 @@ jobs:
         with:
           token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
           files: target/senseid-pure.lcov
+      - name: Install DeepSource CLI
+        run: curl -fsSL https://cli.deepsource.com/install | BINDIR=./bin sh
+      - name: Report senseid pure coverage to DeepSource
+        run: ./bin/deepsource report --analyzer test-coverage --key rust --value-file target/senseid-pure.lcov --use-oidc
 
   app:
     runs-on: ubuntu-latest
@@ -84,6 +102,9 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+          # DeepSource attributes a report to the commit it was taken on; on a
+          # pull request that must be the head, not the synthetic merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       # KNOWN ISSUE: app is on vitest ^4 / vite ^8; `--coverage` runs fine locally
       # but crashes on the CI linux runner under rolldown-vite (node:module
@@ -118,6 +139,19 @@ jobs:
           files: app/coverage/lcov.info
           add-prefix: app
           skip-missing-files: true
+      # The app's lcov paths are relative to app/ (qlty gets `add-prefix`); DeepSource
+      # reads the file from the repo root, so prefix a copy. The coverage step above
+      # is continue-on-error, so a missing file is reported, not skipped silently.
+      - name: Install DeepSource CLI
+        run: curl -fsSL https://cli.deepsource.com/install | BINDIR=./bin sh
+      - name: Report app coverage to DeepSource
+        run: |
+          if [ ! -f app/coverage/lcov.info ]; then
+            echo "::warning::app coverage produced no lcov (the known vitest/rolldown crash) — nothing sent to DeepSource"
+            exit 0
+          fi
+          sed 's|^SF:|SF:app/|' app/coverage/lcov.info > app/coverage/lcov.deepsource.info
+          ./bin/deepsource report --analyzer test-coverage --key javascript --value-file app/coverage/lcov.deepsource.info --use-oidc
 
   dojo:
     runs-on: ubuntu-latest
@@ -125,6 +159,9 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+          # DeepSource attributes a report to the commit it was taken on; on a
+          # pull request that must be the head, not the synthetic merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - name: dojo coverage
         run: cd dojo && bun install --frozen-lockfile && bun run test --coverage
@@ -134,3 +171,9 @@ jobs:
           token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
           files: dojo/coverage/lcov.info
           add-prefix: dojo
+      - name: Install DeepSource CLI
+        run: curl -fsSL https://cli.deepsource.com/install | BINDIR=./bin sh
+      - name: Report dojo coverage to DeepSource
+        run: |
+          sed 's|^SF:|SF:dojo/|' dojo/coverage/lcov.info > dojo/coverage/lcov.deepsource.info
+          ./bin/deepsource report --analyzer test-coverage --key javascript --value-file dojo/coverage/lcov.deepsource.info --use-oidc
