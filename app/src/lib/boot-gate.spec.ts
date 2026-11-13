@@ -20,6 +20,23 @@ describe('gateTarget', () => {
     setSetupComplete(true); // default for health-tier tests
   });
 
+  describe('the development gallery', () => {
+    // /gallery renders fixtures for review against the mockup; it needs no
+    // daemon, so a fresh browser load (health still 'checking', setup
+    // unhydrated) must reach it — in DEV only, where the page exists.
+    it('is reachable before health resolves and without setup', () => {
+      setHealth('checking');
+      setSetupComplete(false);
+      expect(target('http://localhost/gallery')).toBeUndefined();
+      expect(target('http://localhost/gallery/relay')).toBeUndefined();
+    });
+
+    it('does not widen the gate for a look-alike path', () => {
+      setHealth('checking');
+      expect(target('http://localhost/galleryx')).toBe('/health');
+    });
+  });
+
   describe('health tier', () => {
     it('returns undefined when already on /health (no redirect loop)', () => {
       setHealth('needs-action');
