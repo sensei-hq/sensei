@@ -313,3 +313,24 @@ describe('RelayState · the sprint selection and createSprint', () => {
     expect(s.selectedCount).toBe(1);
   });
 });
+
+describe('RelayState · an open item the person adds to triage (#423)', () => {
+  const draft = { title: 'Hook skips the dōjō tests', kind: 'finding' as const, tags: ['dōjō'], repo_key: null, workspace_id: 'w1' };
+
+  it('goes to the source; the queue is read again (the daemon emits nothing for it yet, #418)', async () => {
+    const { source } = fakeSource({ addTriage: vi.fn(async () => F.ok({ item_id: 'item-9' })) });
+    const s = new RelayState(source, { workspace_id: 'w1' }, reads());
+    expect(await s.addTriage(draft)).toBeNull();
+    expect(source.addTriage).toHaveBeenCalledWith(draft);
+    expect(source.readQueue).toHaveBeenCalledTimes(1);
+    expect(s.triageError).toBeNull();
+  });
+
+  it('a refusal says why, and nothing is read', async () => {
+    const { source } = fakeSource({ addTriage: vi.fn(async () => F.fail(422, 'title is empty')) });
+    const s = new RelayState(source, {}, reads());
+    expect(await s.addTriage({ ...draft, title: '' })).toBe('title is empty');
+    expect(s.triageError).toBe('title is empty');
+    expect(source.readQueue).not.toHaveBeenCalled();
+  });
+});

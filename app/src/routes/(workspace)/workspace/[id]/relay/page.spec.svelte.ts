@@ -578,6 +578,21 @@ describe('Relay · Queue', () => {
     expect(api.tryAddToBacklog).toHaveBeenCalledWith({ item_id: 'item-manual' });
   });
 
+  it('the person adds an open item to triage: the form under the card sends it, and the re-read queue shows it (#423)', async () => {
+    const { c, api } = await open();
+    api.tryAddTriage.mockResolvedValue(F.ok({ item_id: 'item-9' }));
+    need(tab(c, 'Queue'), 'the Queue tab').click();
+    await tick();
+    api.tryGetQueue.mockResolvedValue(F.ok(F.queue({ triage: [...F.queue().triage, F.manualItem({ item_id: 'item-9', title: 'Hook skips the dōjō tests' })] })));
+    const form = need(one(section(c, 'triage')!, '[data-add-item]'), 'the add-an-item form');
+    const title = need(one(form, 'input[data-add-item-title]'), 'the title') as HTMLInputElement;
+    title.value = 'Hook skips the dōjō tests';
+    title.dispatchEvent(new Event('input', { bubbles: true }));
+    need(one(form, '[data-add-item-submit]'), 'Add').click();
+    await vi.waitFor(() => expect(text(section(c, 'triage'))).toContain('Hook skips the dōjō tests'));
+    expect(api.tryAddTriage).toHaveBeenCalledWith({ title: 'Hook skips the dōjō tests', kind: 'issue', tags: [], repo_key: null, workspace_id: 'w1' });
+  });
+
   it('a refused + says why and keeps the row in Triage', async () => {
     const { c, api } = await open();
     api.tryAddToBacklog.mockResolvedValue(F.fail(500, 'Internal Server Error'));

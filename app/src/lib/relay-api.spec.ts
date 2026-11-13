@@ -88,6 +88,12 @@ describe('relayApi — the paths', () => {
         (a) => a.tryAddToBacklog({ ticket_provider: 'jira', ticket_key: 'SEN-58' }),
         { ticket_provider: 'jira', ticket_key: 'SEN-58' },
       ],
+      // #423: an open item the person adds to triage.
+      [
+        '/relay/triage',
+        (a) => a.tryAddTriage({ title: 'Hook skips the dōjō tests', kind: 'finding', tags: ['dōjō'], repo_key: null, workspace_id: 'w1' }),
+        { title: 'Hook skips the dōjō tests', kind: 'finding', tags: ['dōjō'], repo_key: null, workspace_id: 'w1' },
+      ],
     ];
     for (const [path, call, body] of cases) {
       const fetch = stub(200, { id: 'x' });
