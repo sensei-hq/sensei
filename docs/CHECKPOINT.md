@@ -13,12 +13,15 @@
   step counters, lane/run/task rows, `decision`/`message`/`item` entities; the app applies rows in place and reads
   nothing back after its writes (`863742b5d`). Live check on a scratch broker: `coord/reports/relay-screen/daemon-418/`.
 
-**Remaining (in order):** LaneRow step progress (current step, n of m) benched vs mockup → #419 (draft/start/cancel
-run, nudge, catalogue) → #426 run-journey e2e. Gaps outside #418: `task.waiting`; person-message read ladder.
+- LaneRow step progress (not in the mockup): selector `3ca277909`, component `9193b3fe2`, bench `008575ac0`
+  (`bench-r8`; sheet artifact 3869a0ea v10). Awaiting the user's call on the design.
 
-**Next command:** LaneRow step progress: render the mockup's lane rows, bench the row with current_step/steps,
-then compose. The installed daemon is this branch's (`make install-debug`, 2026-11-13); relay e2e 8/8 against it;
-live `relay.now` view applied (`dbd apply -n relay.now`).
+**Remaining (in order):** #419 (draft/start/cancel run, nudge, catalogue) → #426 run-journey e2e. Gaps outside
+#418: `task.waiting`; person-message read ladder. Lane is NOT merged to develop (user's call).
+
+**Next command:** #419 — red tests for `POST /relay/runs/{id}/start|cancel` and the nudge route in
+`crates/senseid/src/api/handlers/relay.rs`. Installed: daemon = this lane; /Applications app = v0.21.1 (diagrams skew,
+backlog item) — `make install-app` from this lane would match them.
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
 phone header height; merge #417 + `make release`; `font-display` no-op elsewhere in the app.
