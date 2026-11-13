@@ -66,7 +66,7 @@ use crate::db::pg_store::relay::{
     RelayHandoverInput, RelayHeartbeatOutput, RelayLaneSession, RelayLimitPauseInput,
     RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayPlanInput, RelayReadFilter,
     RelayRegisterInput, RelayReleaseInput, RelayReportInput, RelayResourceRequest,
-    RelayReviewInput, RelayStepInput, RelayTicketInput, RelayTriageInput,
+    RelayReviewInput, RelayStepInput, RelayStepOutput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::{
@@ -149,6 +149,22 @@ fn emit(state: &AppState, op: &str) {
 /// A task changed: the screen re-reads that task's view (F8).
 fn emit_task(state: &AppState, op: &str, task_id: &Uuid) {
     let _ = state.event_tx.send(StateEvent::relay_task(op, task_id));
+}
+
+/// A step as the wire carries it (the step route's answer and the step event).
+fn step_json(out: &RelayStepOutput) -> serde_json::Value {
+    serde_json::json!({
+        "key": out.key,
+        "title": out.title,
+        "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+        "reason": out.reason,
+        "updated_at": out.updated_at,
+    })
+}
+
+/// A step was created or restated: the screen applies it without re-reading (F8).
+fn emit_step(state: &AppState, task_id: &Uuid, out: &RelayStepOutput) {
+    let _ = state.event_tx.send(StateEvent::relay_step(task_id, &step_json(out), out.created));
 }
 
 /// A lane's crew membership changed: the Lanes section follows.
@@ -435,7 +451,7 @@ pub(crate) async fn checkpoint(
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
-    let checkpointed_at = state
+    let out = state
         .pg
         .relay_checkpoint_task(
             session.user_id,
@@ -445,10 +461,13 @@ pub(crate) async fn checkpoint(
         )
         .await
         .map_err(err)?;
+    for step in &out.steps {
+        emit_step(&state, &task_id, step);
+    }
     emit_task(&state, "checkpoint", &task_id);
     ok(serde_json::json!({
         "task_id": task_id.to_string(),
-        "checkpointed_at": iso(checkpointed_at),
+        "checkpointed_at": iso(out.checkpointed_at),
     }))
 }
 
@@ -1508,17 +1527,10 @@ pub(crate) async fn post_step(
         )
         .await
         .map_err(err)?;
-    let step = serde_json::json!({
-        "key": out.key,
-        "title": out.title,
-        "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
-        "reason": out.reason,
-        "updated_at": out.updated_at,
-    });
-    let _ = state.event_tx.send(StateEvent::relay_step(&task_id, &step, out.created));
+    emit_step(&state, &task_id, &out);
     ok(serde_json::json!({
         "task_id": task_id.to_string(),
-        "step": step,
+        "step": step_json(&out),
     }))
 }
 

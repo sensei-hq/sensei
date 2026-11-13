@@ -458,6 +458,14 @@ pub struct RelayCheckpointInput {
     pub steps: Vec<RelayStepInput>,
 }
 
+/// What a checkpoint stored: when, and each step as it now stands (the
+/// stream carries them as step events, #418).
+#[derive(Debug, Clone)]
+pub struct RelayCheckpointOutput {
+    pub checkpointed_at: DateTime<Utc>,
+    pub steps: Vec<RelayStepOutput>,
+}
+
 /// `POST /relay/runs` (person): a sprint run over backlog items. The crew
 /// is the named one, else the user's single active crew. `config` carries
 /// the gate inputs (`base_checkout`, `base_branch`, `verify_cmd`,
@@ -3935,7 +3943,7 @@ impl PgStore {
         lane_id: Uuid,
         task_id: Uuid,
         input: RelayCheckpointInput,
-    ) -> Result<DateTime<Utc>, RelayError> {
+    ) -> Result<RelayCheckpointOutput, RelayError> {
         if let Some(step) = input.current_step.as_deref() {
             check_summary(step, "current_step")?;
         }
@@ -3963,8 +3971,9 @@ impl PgStore {
         if !matches!(cur, RelayTaskState::Working | RelayTaskState::Rework) {
             return Err(RelayError::Conflict(format!("cannot checkpoint a {} task", word(cur))));
         }
+        let mut steps = Vec::with_capacity(input.steps.len());
         for step in input.steps {
-            self.relay_post_step(user_id, lane_id, task_id, step).await?;
+            steps.push(self.relay_post_step(user_id, lane_id, task_id, step).await?);
         }
         let mut patch = serde_json::Map::new();
         if let Some(step) = input.current_step {
@@ -4007,7 +4016,7 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
-        Ok(stamp)
+        Ok(RelayCheckpointOutput { checkpointed_at: stamp, steps })
     }
 
     /// End a limit pause early (F03): the lane says it is back. Returns
@@ -8864,8 +8873,8 @@ mod tests {
         // Not the holder: refused, nothing written.
         let err = pg.relay_checkpoint_task(u1(), a2, t, input.clone()).await.unwrap_err();
         assert!(matches!(err, RelayError::Forbidden(_)), "{err:?}");
-        let stamp = pg.relay_checkpoint_task(u1(), a1, t, input.clone()).await.unwrap();
-        assert!(stamp <= Utc::now());
+        let out = pg.relay_checkpoint_task(u1(), a1, t, input.clone()).await.unwrap();
+        assert!(out.checkpointed_at <= Utc::now());
         let (state, checkpoint, steps): (String, serde_json::Value, serde_json::Value) =
             sqlx_core::query_as::query_as(
                 "select state::text, checkpoint, steps from relay.tasks where id = $1",
