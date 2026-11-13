@@ -72,6 +72,17 @@ describe('ShellScreen', () => {
     expect(root?.classList.contains('min-h-0'), 'min-h-0').toBe(true);
   });
 
+  // The shell's sidebar scrolls on its own once the shell fills its container. A
+  // scrolling region with nothing focusable in it is out of a keyboard's reach
+  // (axe scrollable-region-focusable, serious — the diagrams sidebar, #420 e2e).
+  it('the sidebar is keyboard-reachable: it takes focus, so it can be scrolled from the keys', () => {
+    const { container, destroy } = mountComponent(Harness, { viewId: 'test.view', glyphs: 'kanji' });
+    cleanup.push(destroy);
+    const side = container.querySelector('[data-screen-sidebar]');
+    expect(side, 'the sidebar').not.toBeNull();
+    expect(side?.getAttribute('tabindex')).toBe('0');
+  });
+
   it('draws the kanji in kanji mode', () => {
     const m = mountComponent(Harness, { glyphs: 'kanji' });
     cleanup.push(m.destroy);

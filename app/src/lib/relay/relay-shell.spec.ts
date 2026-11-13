@@ -285,6 +285,14 @@ describe('toRelayShell · footer', () => {
     expect(footer.map((f) => f.tone)).toEqual(['muted', 'muted', 'muted']);
   });
 
+  it('no read at all (reading, or it failed) keeps the footer whole: each resource "not reported" (§1f, D83)', () => {
+    for (const input of [{ ...loading(), resources: null }, { ...error(), resources: null }]) {
+      const footer = toRelayShell(input, actions()).footer;
+      expect(footer.map((f) => f.text)).toEqual(['Build not reported', 'Disk not reported', 'Swap not reported']);
+      expect(footer.map((f) => f.tone)).toEqual(['muted', 'muted', 'muted']);
+    }
+  });
+
   it('the dōjō: when it was last updated from the desktop, and what is shared', () => {
     expect(toRelayShell(dojoLoaded(), actions()).footer).toEqual([
       { tone: 'success', text: 'From your desktop · 1 min ago' },
