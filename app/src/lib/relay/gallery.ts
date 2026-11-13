@@ -18,6 +18,9 @@ import Pill from './Pill.svelte';
 import QueueRow from './QueueRow.svelte';
 import QueueSection from './QueueSection.svelte';
 import AddItemForm from './AddItemForm.svelte';
+import RunCard from './RunCard.svelte';
+import AddMember from './AddMember.svelte';
+import { addContributor, mockupGroups, mockupRunCard, setupStep1 } from './crew.fixtures.js';
 import { mockupBacklog, mockupTriage } from './queue.fixtures.js';
 import RelayChecklist from './RelayChecklist.svelte';
 import RoleMark from './RoleMark.svelte';
@@ -126,6 +129,13 @@ export const GALLERY: GalleryEntry[] = [
     onadd: accepted,
   }),
   entry('AddItemForm/empty', 'add an open item to triage — not in the r1 mockup: the smallest form the contract needs, for Design', AddItemForm, { onsubmit: accepted }),
+  entry('RunCard/running', 'the mockup’s run: the coordinator, six contributors — one not responding, one idle', RunCard, {
+    card: mockupRunCard(),
+    groups: mockupGroups(),
+    onmessage: () => {},
+  }),
+  entry('AddMember/setup', 'no crew yet: step 1 of 2, the coordinator', AddMember, { view: setupStep1(), oncopy: () => {}, onrole: () => {} }),
+  entry('AddMember/add', 'a crew at work: Add a member, contributors only', AddMember, { view: addContributor(), oncopy: () => {}, onrole: () => {} }),
   entry('QueueSection/backlog', 'Backlog: the mockup’s four rows, in order', QueueSection, {
     id: 'backlog',
     label: 'Backlog',
