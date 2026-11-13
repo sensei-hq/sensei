@@ -25,3 +25,11 @@ export {
   type RelayRunRow,
   type RelayTaskRow,
 } from './relay/entity-states.svelte.js';
+export { relaySseSource, type RelayEventStream } from './relay/sources/sse.js';
+export {
+  relayRealtimeSource,
+  cannedRealtime,
+  type CannedWrite,
+  type RelayChannelStatus,
+  type RelayRealtimeTransport,
+} from './relay/sources/realtime.js';
