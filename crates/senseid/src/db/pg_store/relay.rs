@@ -8074,6 +8074,9 @@ impl PgStore {
     /// and its workspace the tracker's. Not synced or removed is not found;
     /// a ticket the tracker gave no title is refused (D83: no invented
     /// title); a ticket already open in the queue is a conflict.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
     pub async fn relay_backlog_add_ticket(
         &self,
         user_id: Uuid,

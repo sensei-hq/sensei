@@ -1969,10 +1969,11 @@ pub(crate) async fn patch_item(
         .relay_patch_item(user_id, item_id, body.title, body.position)
         .await
         .map_err(err)?;
-    if edited && !moved.contains(&item_id) {
-        if let Some(event) = item_added(&state.pg, &item_id, "edited").await {
-            let _ = state.event_tx.send(event);
-        }
+    if edited
+        && !moved.contains(&item_id)
+        && let Some(event) = item_added(&state.pg, &item_id, "edited").await
+    {
+        let _ = state.event_tx.send(event);
     }
     for id in &moved {
         if let Some(event) = item_added(&state.pg, id, "moved").await {
