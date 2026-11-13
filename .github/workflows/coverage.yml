@@ -48,14 +48,15 @@ jobs:
         with:
           token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
           files: target/lcov.info
-      # DeepSource, over OIDC: the CLI reads the workflow's identity token
-      # (--use-oidc), so there is no DSN. Run from the repo root so the report's
-      # paths resolve (they are repo-root relative after the sed above). Several
-      # reports under one key merge implicitly (this job and `senseid` both send `rust`).
-      - name: Install DeepSource CLI
-        run: curl -fsSL https://cli.deepsource.com/install | BINDIR=./bin sh
+      # DeepSource, over OIDC (.github/actions/deepsource-report: a pinned,
+      # checksummed CLI; --use-oidc, so there is no DSN). The paths are repo-root
+      # relative after the sed above. Several reports under one key merge
+      # implicitly (this job and `senseid` both send `rust`).
       - name: Report Rust coverage to DeepSource
-        run: ./bin/deepsource report --analyzer test-coverage --key rust --value-file target/lcov.info --use-oidc
+        uses: ./.github/actions/deepsource-report
+        with:
+          key: rust
+          file: target/lcov.info
 
   # senseid's pure (DB-free) modules — language parsers, config adapters, assistant
   # transcript parsing, ranking/classifiers/plan-graph/etc. Their tests run with NO
@@ -91,10 +92,11 @@ jobs:
         with:
           token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
           files: target/senseid-pure.lcov
-      - name: Install DeepSource CLI
-        run: curl -fsSL https://cli.deepsource.com/install | BINDIR=./bin sh
       - name: Report senseid pure coverage to DeepSource
-        run: ./bin/deepsource report --analyzer test-coverage --key rust --value-file target/senseid-pure.lcov --use-oidc
+        uses: ./.github/actions/deepsource-report
+        with:
+          key: rust
+          file: target/senseid-pure.lcov
 
   app:
     runs-on: ubuntu-latest
@@ -140,18 +142,15 @@ jobs:
           add-prefix: app
           skip-missing-files: true
       # The app's lcov paths are relative to app/ (qlty gets `add-prefix`); DeepSource
-      # reads the file from the repo root, so prefix a copy. The coverage step above
-      # is continue-on-error, so a missing file is reported, not skipped silently.
-      - name: Install DeepSource CLI
-        run: curl -fsSL https://cli.deepsource.com/install | BINDIR=./bin sh
+      # reads the file from the repo root, so the action prefixes a copy. The coverage
+      # step above is continue-on-error, so a missing file is a warning, not silence.
       - name: Report app coverage to DeepSource
-        run: |
-          if [ ! -f app/coverage/lcov.info ]; then
-            echo "::warning::app coverage produced no lcov (the known vitest/rolldown crash) — nothing sent to DeepSource"
-            exit 0
-          fi
-          sed 's|^SF:|SF:app/|' app/coverage/lcov.info > app/coverage/lcov.deepsource.info
-          ./bin/deepsource report --analyzer test-coverage --key javascript --value-file app/coverage/lcov.deepsource.info --use-oidc
+        uses: ./.github/actions/deepsource-report
+        with:
+          key: javascript
+          file: app/coverage/lcov.info
+          prefix: app
+          skip-missing: 'true'
 
   dojo:
     runs-on: ubuntu-latest
@@ -171,9 +170,9 @@ jobs:
           token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
           files: dojo/coverage/lcov.info
           add-prefix: dojo
-      - name: Install DeepSource CLI
-        run: curl -fsSL https://cli.deepsource.com/install | BINDIR=./bin sh
       - name: Report dojo coverage to DeepSource
-        run: |
-          sed 's|^SF:|SF:dojo/|' dojo/coverage/lcov.info > dojo/coverage/lcov.deepsource.info
-          ./bin/deepsource report --analyzer test-coverage --key javascript --value-file dojo/coverage/lcov.deepsource.info --use-oidc
+        uses: ./.github/actions/deepsource-report
+        with:
+          key: javascript
+          file: dojo/coverage/lcov.info
+          prefix: dojo
