@@ -4,8 +4,12 @@ on:
     branches: [main, develop]
   pull_request:
 
-# Least-privilege: this job only reads the repo and uploads coverage to qlty.
+# Least-privilege: the jobs read the repo and upload coverage to qlty (token) and
+# to DeepSource over OIDC (user, 2026-11-12): `id-token: write` lets the pinned
+# DeepSource CLI exchange the workflow's OIDC token for a temporary DSN, so no
+# DeepSource secret is stored here.
 permissions:
+  id-token: write
   contents: read
 
 concurrency:
