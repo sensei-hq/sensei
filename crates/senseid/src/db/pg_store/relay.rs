@@ -1407,6 +1407,7 @@ fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serd
         // review the lane holds (both the view's keys).
         "suggested_name": payload.get("suggested_name"),
         "reviewing": payload.get("reviewing"),
+        "presence": payload.get("presence"),
     })
 }
 
