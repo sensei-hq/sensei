@@ -5,43 +5,22 @@
 `docs/design/2026-11-12-relay-screen-rebuild.md`; issues #418–#429 (#429 = the rig).
 
 **Done:**
-- #429 rig: mockup renderer, `/gallery` (DEV-only), `gallery:capture` + `gallery:sheet [--embed]`; shell frames
-  shot whole on a phone (`2c5305088`).
-- #420 complete on the lane: RelayShell on both pages (`afd37d1d0`), schema filters #384 (`9fa889983`), footer
-  "not reported" + focusable shell sidebar (`d501e8ebc`), e2e state pins error/no-crew/loaded 3/3 against the real
-  daemon (`3e6e74e52`). Covers #383 #384 #385 #394 (commented; close on merge). Evidence:
-  `coord/reports/relay-screen/{bench-r1,bench-r2,e2e-r1}/`. Review sheet republished (artifact 3869a0ea v4).
+- #429 rig (`/gallery`, `gallery:capture`, `gallery:sheet --embed`); review sheet = artifact 3869a0ea.
+- #420 shell + filters + footer; #421 `@sensei/state` + both pages cut over; #422 Now; #423 Queue (+add-to-triage
+  form, not in mockup); #424 Crew; #425 Task view (#380/#381/#388 fixed; relay hooks no longer collide with rokkit).
+  Each benched vs mockup (`coord/reports/relay-screen/bench-r1..r7`), relay e2e 8/8 against the real daemon.
+- #418 slice 1/4: `GET /api/relay/events?crew_id=` drops events naming another crew (crew-less task/relay ops pass;
+  bad id 400) (`0f11b8feb`); the task route opens its crew's stream (`d72406159`). senseid relay 376/376.
 
-- #421 first cut: `packages/state` (`@sensei/state`) — base class, EventManager, results, relay types/client/fixtures,
-  six entity states + composite RelayState over a RelaySource (SSE source; realtime seam + canned double), `toStats`,
-  RelayTaskState; both relay pages cut over (`f193776e4`), old state/crew-stream retired. Relay e2e 8/8 incl.
-  live-stream no-refresh specs. View row selectors land with #422–#425.
+**Remaining (in order):** #418 slice 2 (checkpoint `steps[]` emits `step` events) → 3 (`/relay/now` lanes gain
+current_step/steps_done/steps_total, DDL view) → 4 (lane/task/run events carry rows; item/decision/message entities;
+triage/backlog writes emit) → #419 (draft/start/cancel run, nudge, catalogue) → #426 run-journey e2e.
 
-- #422 part 1: `toLaneGroups`/`toCompletedRows` (package) + SectionHeading, LaneList/LaneRow, CompletedList/CompletedRow
-  benched vs mockup (bench-r3) and composed into Now (`c67c235cf`); Pill hook `data-relay-pill` + paper tint fix.
+**Next command:** red test in `crates/senseid/src/api/handlers/relay.rs` tests: a checkpoint with `steps[]` emits one
+`step` event per step (`cargo test --bin senseid relay -- --test-threads=1`).
 
-- #422 part 2: `toWaitRows`/`toNeedsYou`, DecisionCard, WaitList/WaitRow, NeedsYou (triage line, Unassigned row) benched
-  (bench-r4) and composed; stat filters drive Now (`34dced24c`); relay e2e 8/8 (`44cd5b730`). #422 done but for daemon
-  gaps (#419 nudge, #395 codenames, run grouping).
+**Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
+phone header height; merge #417 + `make release`; `font-display` no-op elsewhere in the app.
 
-- #423: `toQueueRows`, QueueRow/QueueSection conformed + benched (bench-r5) and composed (`218d8eab9`); tints mix in
-  OKLab (`46ab65816`); add an open item to triage end to end (`eea645d67`, form not in mockup — Design). e2e 9/9.
-
-- #424: crew selectors, RunCard/MemberCard/AddMember benched (bench-r6) and composed (`fab34a809`); e2e 9/9. Daemon
-  gaps: past runs, catalogue, heartbeat, host, run draft/start/cancel.
-
-- #425: `toTaskView`, TaskHeader/RunDetails/HandoffCard, HistoryEntry + TaskHistory benched (bench-r7) and composed;
-  #380 (task shell anchor), #381, #388 fixed; relay hooks no longer collide with rokkit; e2e 8/8.
-
-**Remaining (in order):** → #426 e2e run (blocked on daemon #418/#419: draft run, start, catalogue, step events). Daemon #418/#419 in parallel (row-carrying events; #421's apply is ready for them).
-
-**Next command:** daemon #418 (row-carrying events, step on checkpoint, lane current_step) and #419 (draft/start/cancel run,
-nudge, catalogue) — the UI is waiting on them; then #426's run journey e2e.
-
-**Open questions (user):** feedback on the bench sheet (r2). Retire `lane/relay-screen-conformance`? (its r2/r3
-commits live only there). Header height: with the info band open, the header bands push the body below the fold
-(phone ~1100px; a desktop window shows only "Needs you"); "Completed today" truncates in the stat card.
-
-**Known broken:** none on the lane. Bare hooks rokkit's theme also styles: [data-field] [data-select]
-[data-progress] [data-timeline] (CreateSprintForm, QueueRow, SprintBand, RelayTimeline) — fix with #423–#425. A whole-suite e2e run must use explicit spec paths: a bare `relay` filter ran
-everything.
+**Known broken:** none on the lane. `sensei_test` template was stale (rebuilt with `make test-template`). Whole-suite
+e2e runs need explicit spec paths.
