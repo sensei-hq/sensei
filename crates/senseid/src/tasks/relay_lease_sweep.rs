@@ -17,7 +17,7 @@ use crate::db::pg_store::PgStore;
 use crate::db::pg_store::relay::{RelaySweepReport, RelaySweptTask};
 use crate::relay::RelayError;
 use crate::relay::gate::GateRunner;
-use crate::relay::rows::{with_lane_row, with_run_row};
+use crate::relay::rows::{decision_asked, with_lane_row, with_run_row};
 
 /// One pass at wall-clock now.
 pub async fn tick<G: GateRunner>(
@@ -89,6 +89,12 @@ pub async fn pass<G: GateRunner>(
             "relay_lease: gate ran",
         );
         let _ = event_tx.send(StateEvent::relay_task("gate", &written.task_id));
+        // A gate that could not run asks the person: Needs you gains it (#418).
+        if let Some(ask) = written.asked
+            && let Some(event) = decision_asked(pg, &ask, &written.crew_id).await
+        {
+            let _ = event_tx.send(event);
+        }
     }
     Ok(report)
 }

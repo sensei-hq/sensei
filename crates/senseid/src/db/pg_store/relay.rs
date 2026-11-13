@@ -387,6 +387,9 @@ pub struct RelayGateReport {
     /// The agent task (not the broker task).
     pub task_id: Uuid,
     pub state: RelayTaskState,
+    /// The ask to the person when the gate could not run (#418 streams it).
+    pub asked: Option<Uuid>,
+    pub crew_id: Uuid,
 }
 
 /// The gate's `asked` options when it cannot run at all.
@@ -3218,6 +3221,7 @@ impl PgStore {
         outcome: &GateOutcome,
         now: DateTime<Utc>,
     ) -> Result<RelayGateReport, RelayError> {
+        let mut asked = None;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
         let gate: Option<(Uuid, Uuid, String, String, serde_json::Value)> =
             sqlx_core::query_as::query_as(
@@ -3406,6 +3410,8 @@ impl PgStore {
                 });
                 validate_props(RelayActionKind::Asked, &props)
                     .map_err(|e| RelayError::Internal(format!("gate ask props: {}", e.message)))?;
+                let ask_id = new_id();
+                asked = Some(ask_id);
                 sqlx_core::query::query(
                     "insert into relay.actions
                        (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
@@ -3414,7 +3420,7 @@ impl PgStore {
                              $5::relay.task_phase, $6, $7, $8)",
                 )
                 .bind(user_id)
-                .bind(new_id())
+                .bind(ask_id)
                 .bind(crew_id)
                 .bind(gate_task_id)
                 .bind(phase.as_str())
@@ -3428,7 +3434,7 @@ impl PgStore {
             }
         };
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayGateReport { task_id: spec.task_id, state })
+        Ok(RelayGateReport { task_id: spec.task_id, state, asked, crew_id })
     }
 
     /// The claim guard shared by `claim_next`, `claim` and `claim_review`:
@@ -11095,7 +11101,10 @@ mod tests {
         fx_gate(&pg, c1, a2, t, g).await;
         let merged = GateOutcome::Merged { sha: "abc123".into() };
         let rep = pg.relay_gate_outcome(g, &merged, t0()).await.unwrap();
-        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Done });
+        assert_eq!(
+            rep,
+            RelayGateReport { task_id: t, state: RelayTaskState::Done, asked: None, crew_id: c1 }
+        );
         for id in [t, g] {
             let (state, _, completed) = state_round_completed(&pg, id).await;
             assert_eq!(state, "done", "{id}");
@@ -11121,7 +11130,10 @@ mod tests {
         fx_gate(&pg, c1, a2, t, g).await;
         let conflict = GateOutcome::Conflict { detail: "CONFLICT (content): README".into() };
         let rep = pg.relay_gate_outcome(g, &conflict, t0()).await.unwrap();
-        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Rework });
+        assert_eq!(
+            rep,
+            RelayGateReport { task_id: t, state: RelayTaskState::Rework, asked: None, crew_id: c1 }
+        );
         let (state, round, _) = state_round_completed(&pg, t).await;
         assert_eq!((state.as_str(), round), ("rework", 2));
         assert_eq!(task_state(&pg, g).await, "done");
@@ -11149,7 +11161,10 @@ mod tests {
             tail: "boom".into(),
         };
         let rep = pg.relay_gate_outcome(g, &failed, t0()).await.unwrap();
-        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Rework });
+        assert_eq!(
+            rep,
+            RelayGateReport { task_id: t, state: RelayTaskState::Rework, asked: None, crew_id: c1 }
+        );
         let (state, round, _) = state_round_completed(&pg, t).await;
         assert_eq!((state.as_str(), round), ("rework", 2));
         assert_eq!(task_state(&pg, g).await, "done");
@@ -11170,7 +11185,8 @@ mod tests {
         fx_gate(&pg, c1, a2, t, g).await;
         let error = GateOutcome::Error("git not installed".into());
         let rep = pg.relay_gate_outcome(g, &error, t0()).await.unwrap();
-        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Approved });
+        assert_eq!((rep.task_id, rep.state, rep.crew_id), (t, RelayTaskState::Approved, c1));
+        assert!(rep.asked.is_some(), "the ask is reported");
         assert_eq!(task_state(&pg, t).await, "approved");
         let (state, from): (String, Option<String>) = sqlx_core::query_as::query_as(
             "select state::text, blocked_from_state::text from relay.tasks where id = $1",
