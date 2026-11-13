@@ -14,12 +14,16 @@
 
 - #418 slice 2/4: a checkpoint's `steps[]` arrive as step events, then the task event (`8280d0422`).
 
-**Remaining (in order):** #418 slice 3 (`/relay/now` lanes gain current_step/steps_done/steps_total) → 4 (lane/task/run
-events carry rows; item/decision/message entities; triage/backlog writes emit) → #419 (draft/start/cancel run, nudge,
-catalogue) → #426 run-journey e2e.
+- #418 slice 3/4: `relay.now` lane tasks carry current_step/steps_done/steps_total (`2d34546f1`).
+- #418 slice 4a: lane events carry the lane's Now row (`b15ba05da`; `relay/rows.rs`, `relay_lane_row`); the app
+  restates re-added rows, strips op/reason/lane_id, reads Now for an unseen crew (`5dba05a34`).
 
-**Next command:** red test for slice 3 in `crates/senseid/src/api/handlers/relay.rs` (`cargo test --bin senseid relay
--- --test-threads=1`).
+**Remaining (in order):** #418 4b run rows → 4c `decision` entity (ask/answer) → 4d `message` entity → 4e `item`
+entity (triage/backlog/sprint writes emit) → 4f task rows → 4g app stops re-reading after writes → LaneRow step
+progress on the bench → #419 → #426. Live check needs the new daemon installed (Keychain #283 caveat).
+
+**Next command:** red test: run events carry the run's Now row (`crates/senseid/src/api/handlers/relay.rs`;
+`cargo test --bin senseid relay -- --test-threads=1`).
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
 phone header height; merge #417 + `make release`; `font-display` no-op elsewhere in the app.
