@@ -1189,6 +1189,14 @@ fn next_code(codes: &[String]) -> Option<String> {
 
 // ─── The store ───
 
+/// One open run as the sprint band shows it: the `relay.now`
+/// `sprint_summary` payload with its crew. `relay_now` lists them;
+/// `relay_run_row` reads one for the stream (#418).
+fn now_run_json(crew_id: &Uuid, mut payload: serde_json::Value) -> serde_json::Value {
+    payload["crew_id"] = serde_json::Value::String(crew_id.to_string());
+    payload
+}
+
 /// One lane as the Now screen shows it: the `relay.now` lane payload,
 /// shaped. `relay_now` lists them; `relay_lane_row` reads one for the
 /// stream (#418), so the event and the read never disagree.
@@ -6176,6 +6184,25 @@ impl PgStore {
         Ok(tx)
     }
 
+    /// One open run's band row, for the stream (#418); `None` once the run
+    /// left the band (completed, archived, deleted) or was never there.
+    pub async fn relay_run_row(
+        &self,
+        run_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, RelayError> {
+        let mut tx = self.begin_local_zone().await?;
+        let row: Option<(Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.crew_id, v.payload from relay.now v
+             where v.section = 'sprint_summary' and v.id = $1",
+        )
+        .bind(run_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(row.map(|(crew_id, payload)| now_run_json(&crew_id, payload)))
+    }
+
     /// One lane's Now row, for the stream (#418); `None` when the lane is
     /// not there. Keyed by the lane alone: the relay socket is this
     /// machine's, like every relay event on it.
@@ -6300,13 +6327,8 @@ impl PgStore {
         .fetch_all(&mut *tx)
         .await
         .map_err(db_err)?;
-        let runs_json: Vec<serde_json::Value> = runs
-            .into_iter()
-            .map(|(crew_id, mut payload)| {
-                payload["crew_id"] = serde_json::Value::String(crew_id.to_string());
-                payload
-            })
-            .collect();
+        let runs_json: Vec<serde_json::Value> =
+            runs.into_iter().map(|(crew_id, payload)| now_run_json(&crew_id, payload)).collect();
         // The review queue's head: every report waiting for a reviewer,
         // oldest first (the view's `floating_review`).
         let floating: Vec<(Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(

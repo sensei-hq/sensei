@@ -69,7 +69,7 @@ use crate::db::pg_store::relay::{
     RelayReviewInput, RelayStepInput, RelayStepOutput, RelayTicketInput, RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
-use crate::relay::rows::with_lane_row;
+use crate::relay::rows::{with_lane_row, with_run_row};
 use crate::relay::{
     DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole,
     RelayStepState, RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict,
@@ -169,6 +169,13 @@ fn emit_step(state: &AppState, task_id: &Uuid, out: &RelayStepOutput) {
 }
 
 /// A lane's crew membership changed: the Lanes section follows.
+/// A run reached a lifecycle point: the event carries its band row (#418).
+async fn emit_run(state: &AppState, change: RunChange, run_id: &Uuid, crew_id: &Uuid) {
+    let event =
+        with_run_row(&state.pg, StateEvent::relay_run(change, run_id, crew_id), run_id).await;
+    let _ = state.event_tx.send(event);
+}
+
 /// The event carries the lane's Now row (#418); a removal carries its id.
 async fn emit_lane(state: &AppState, change: LaneChange, lane_id: &Uuid, crew_id: &Uuid) {
     let removed = matches!(change, LaneChange::Unregistered);
@@ -601,8 +608,7 @@ pub(crate) async fn create_run(
         )
         .await
         .map_err(err)?;
-    let _ =
-        state.event_tx.send(StateEvent::relay_run(RunChange::Created, &out.run_id, &out.crew_id));
+    emit_run(&state, RunChange::Created, &out.run_id, &out.crew_id).await;
     emit_task(&state, "plan", &out.planning_task_id);
     Ok((
         StatusCode::CREATED,
@@ -1322,11 +1328,7 @@ pub(crate) async fn review(
     // active — both announced beside the review itself.
     if let Some(run_id) = out.run_activated {
         emit_task(&state, "unpack", &task_id);
-        let _ = state.event_tx.send(StateEvent::relay_run(
-            RunChange::Activated,
-            &run_id,
-            &session.crew_id,
-        ));
+        emit_run(&state, RunChange::Activated, &run_id, &session.crew_id).await;
     }
     ok(serde_json::json!({
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
@@ -1586,11 +1588,7 @@ pub(crate) async fn close_crew(
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_close_crew(session.user_id, caller, crew_id).await.map_err(err)?;
     // A crew's lifecycle event: the crew id stands as the run id (§3k).
-    let _ = state.event_tx.send(StateEvent::relay_run(
-        RunChange::Completed,
-        &out.crew_id,
-        &out.crew_id,
-    ));
+    emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
     ok(serde_json::json!({
         "crew_id": out.crew_id.to_string(),
         "status": out.status,

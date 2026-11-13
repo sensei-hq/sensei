@@ -21,3 +21,19 @@ pub async fn with_lane_row(pg: &PgStore, event: StateEvent, lane_id: &Uuid) -> S
         }
     }
 }
+
+/// `event` with the run's band row and its `id`, while the run is open.
+/// A run that left the band stays id-only: the screen reads Now for it.
+pub async fn with_run_row(pg: &PgStore, event: StateEvent, run_id: &Uuid) -> StateEvent {
+    match pg.relay_run_row(*run_id).await {
+        Ok(Some(mut row)) => {
+            row["id"] = serde_json::Value::String(run_id.to_string());
+            event.with_row(row)
+        }
+        Ok(None) => event,
+        Err(e) => {
+            tracing::warn!(run_id = %run_id, error = ?e, "relay stream: run row unread; event goes id-only");
+            event
+        }
+    }
+}

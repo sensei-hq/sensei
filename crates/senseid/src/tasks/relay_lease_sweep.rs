@@ -17,7 +17,7 @@ use crate::db::pg_store::PgStore;
 use crate::db::pg_store::relay::{RelaySweepReport, RelaySweptTask};
 use crate::relay::RelayError;
 use crate::relay::gate::GateRunner;
-use crate::relay::rows::with_lane_row;
+use crate::relay::rows::{with_lane_row, with_run_row};
 
 /// One pass at wall-clock now.
 pub async fn tick<G: GateRunner>(
@@ -102,11 +102,13 @@ pub async fn sweep_at(
 ) -> Result<RelaySweepReport, RelayError> {
     let report = pg.relay_sweep_leases(now).await?;
     for event in sweep_events(&report) {
-        // A lane event carries the lane's Now row (#418).
-        let lane =
-            event.data.get("lane_id").and_then(|v| v.as_str()).and_then(|id| id.parse().ok());
-        let event = match (event.entity.as_str(), lane) {
-            ("lane", Some(lane_id)) => with_lane_row(pg, event, &lane_id).await,
+        // Lane and run events carry their Now rows (#418).
+        let id = |key: &str| -> Option<uuid::Uuid> {
+            event.data.get(key).and_then(|v| v.as_str()).and_then(|id| id.parse().ok())
+        };
+        let event = match (event.entity.as_str(), id("lane_id"), id("run_id")) {
+            ("lane", Some(lane_id), _) => with_lane_row(pg, event, &lane_id).await,
+            ("run", _, Some(run_id)) => with_run_row(pg, event, &run_id).await,
             _ => event,
         };
         let _ = event_tx.send(event);
