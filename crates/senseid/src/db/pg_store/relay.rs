@@ -66,6 +66,8 @@ pub struct RelayRegisterOutput {
     pub lane_token: String,
     pub lane_id: Uuid,
     pub lane_title: Option<String>,
+    /// The lane's codename: the one it offered, else minted (#419).
+    pub suggested_name: Option<String>,
     pub crew_id: Uuid,
     pub guidance: RelayGuidance,
 }
@@ -1473,12 +1475,33 @@ impl PgStore {
         // F2: the lane title is minted here, never null — the assistant's
         // own name when it offered one (queue cutover), else code + family
         // (`L4 · Muse`), else the bare code when the family is empty.
-        let suggested_name =
+        let offered =
             input.suggested_name.as_deref().map(str::trim).filter(|name| !name.is_empty());
-        let title = match suggested_name {
+        let title = match offered {
             Some(name) => name.to_string(),
             None if input.family.is_empty() => code.clone(),
             None => format!("{} · {}", code, input.family),
+        };
+        // #419 (lanes.md §16): a lane that offers no name gets a codename,
+        // unique in its crew; the title stays as minted above.
+        let suggested_name = match offered {
+            Some(name) => Some(name.to_string()),
+            None => {
+                let taken: Vec<String> = sqlx_core::query_scalar::query_scalar(
+                    "select suggested_name from relay.lanes
+                     where user_id = $1 and crew_id = $2 and suggested_name is not null",
+                )
+                .bind(user_id)
+                .bind(crew_id)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                let minted = crate::relay::mint_codename(lane_id.as_u64_pair().1, &taken);
+                if minted.is_none() {
+                    tracing::warn!(%crew_id, "relay register: every codename is taken; lane goes unnamed");
+                }
+                minted
+            }
         };
         let insert_lane = sqlx_core::query::query(
             "insert into relay.lanes
@@ -1500,7 +1523,7 @@ impl PgStore {
         .bind(input.worktree.as_deref())
         .bind(token_hash.as_str())
         .bind(title.as_str())
-        .bind(suggested_name)
+        .bind(suggested_name.as_deref())
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert_lane {
@@ -1535,6 +1558,7 @@ impl PgStore {
             lane_token: token,
             lane_id,
             lane_title: Some(title),
+            suggested_name,
             crew_id,
             guidance,
         })
@@ -7059,9 +7083,10 @@ impl PgStore {
                     Option<String>,
                     Option<DateTime<Utc>>,
                     Option<String>,
+                    Option<String>,
                 )> = sqlx_core::query_as::query_as(
                     "select code, title, family, version, model, limit_scope::text,
-                            limit_resumes_at, limit_note
+                            limit_resumes_at, limit_note, suggested_name
                      from relay.lanes
                      where user_id = $1 and id = $2",
                 )
@@ -7080,11 +7105,13 @@ impl PgStore {
                         limit_scope,
                         limit_resumes_at,
                         limit_note,
+                        suggested_name,
                     )| {
                         serde_json::json!({
                             "id": lane_id.to_string(),
                             "code": code,
                             "title": title,
+                            "suggested_name": suggested_name,
                             "family": family,
                             "version": version,
                             "model": model,
@@ -7384,14 +7411,16 @@ impl PgStore {
                 })
             })
             .collect();
-        let mut lane_refs: Vec<(Uuid, String, Option<String>)> = sqlx_core::query_as::query_as(
-            "select id, code, title from relay.lanes where user_id = $1 and crew_id = $2",
-        )
-        .bind(user_id)
-        .bind(crew_id)
-        .fetch_all(self.pool())
-        .await
-        .map_err(db_err)?;
+        let mut lane_refs: Vec<(Uuid, String, Option<String>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "select id, code, title, suggested_name from relay.lanes
+             where user_id = $1 and crew_id = $2",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .fetch_all(self.pool())
+            .await
+            .map_err(db_err)?;
         lane_refs.sort_by(|a, b| code_rank(&a.1).cmp(&code_rank(&b.1)));
         Ok(serde_json::json!({
             "task": {
@@ -7447,10 +7476,11 @@ impl PgStore {
             "steps": steps,
             "lanes": lane_refs
                 .iter()
-                .map(|(id, code, title)| serde_json::json!({
+                .map(|(id, code, title, suggested_name)| serde_json::json!({
                     "id": id.to_string(),
                     "code": code,
                     "title": title,
+                    "suggested_name": suggested_name,
                 }))
                 .collect::<Vec<_>>(),
         }))

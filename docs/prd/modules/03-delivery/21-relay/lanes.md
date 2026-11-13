@@ -303,6 +303,12 @@ Lanes read better as names than as codes. The broker mints each lane a stable co
 show the codename as the primary human handle next to the objective title ("Beige Aster · Diagrams"); the code (L1)
 stays for compact and technical contexts. Slice 1 ships code + objective title as contracted; codenames land as a
 tests-first slice-2 item (model column + minting rule + uniqueness, in `lanes-data.md` and `relay-api.ts` then).
+**As built (#419):** a lane that offers no `suggested_name` at register gets one minted: lowercase `colour-star`
+(`cobalt-lyra`, as the mockup draws them; `relay::CODENAME_COLOURS` × `CODENAME_STARS`, 576 pairs), the first not
+already held in the crew, starting where the new lane's id points. An offered name is kept as given and stays the
+title; a minted one leaves the title as `L4 · family`. The codename is answered by register and served on every lane
+shape: `relay.now` lanes, the task view's `task.lane` and `lanes[]`. With every pair taken the lane goes unnamed
+(logged) and screens fall back to its code.
 Handshake is negotiated, not assumed. At register the broker probes what the assistant family supports: the probe
 itself, session-minted codenames, and direct session-to-session handshakes (as Muse sessions do today). Where an
 assistant (freebuff, opencode, claude, cowork, chatgpt, …) lacks direct-handshake support, traffic falls back to the

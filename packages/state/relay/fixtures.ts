@@ -637,9 +637,9 @@ export function historyWithSteps(): RelayAction[] {
 
 /** The crew's lanes by id, for codes behind uuids in props. */
 export const laneRefs = () => [
-  { id: LANE.L0, code: 'L0', title: 'Planning & review' },
-  { id: LANE.L1, code: 'L1', title: 'Diagrams' },
-  { id: LANE.L3, code: 'L3', title: 'Activity logs' },
+  { id: LANE.L0, code: 'L0', title: 'Planning & review', suggested_name: 'atlas-rigel' },
+  { id: LANE.L1, code: 'L1', title: 'Diagrams', suggested_name: 'cobalt-lyra' },
+  { id: LANE.L3, code: 'L3', title: 'Activity logs', suggested_name: 'coral-spica' },
 ];
 
 export function taskView(over: Partial<RelayTaskView> = {}): RelayTaskView {
@@ -654,7 +654,7 @@ export function taskView(over: Partial<RelayTaskView> = {}): RelayTaskView {
       state: 'done',
       round: 2,
       ticket: { provider: 'jira', key: 'SEN-52', url: 'https://acme.atlassian.net/browse/SEN-52' },
-      lane: { id: LANE.L1, code: 'L1', title: 'Diagrams', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5', limit_scope: null, limit_resumes_at: null, limit_note: null },
+      lane: { id: LANE.L1, code: 'L1', title: 'Diagrams', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5', limit_scope: null, limit_resumes_at: null, limit_note: null, suggested_name: 'cobalt-lyra' },
       run_id: null,
       deps_status: 'satisfied',
       unmet_deps: [],

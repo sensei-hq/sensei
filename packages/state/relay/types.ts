@@ -336,6 +336,8 @@ export interface RelayTaskLane {
   limit_resumes_at: string | null;
   /** The lane's own words on the pause (audit; shown nowhere yet). */
   limit_note: string | null;
+  /** The codename: the lane's offered name, else the broker's (#419). */
+  suggested_name: string | null;
 }
 
 export interface RelayTaskHeader {
@@ -524,6 +526,8 @@ export interface RelayLaneRef {
   id: string;
   code: string;
   title: string | null;
+  /** The codename (#419). */
+  suggested_name: string | null;
 }
 
 /** One flat-checklist step (F8): the holder's turn narrated step by step. */

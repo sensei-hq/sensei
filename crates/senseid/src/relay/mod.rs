@@ -855,8 +855,19 @@ pub const CODENAME_STARS: &[&str] = &[
 /// A lane's codename (#419; lanes.md §16): `colour-star`, the first one
 /// not in `taken`, starting where `seed` points so crews don't all open on
 /// the same name. `None` once every pair is taken.
-pub fn mint_codename(_seed: u64, _taken: &[String]) -> Option<String> {
-    None
+pub fn mint_codename(seed: u64, taken: &[String]) -> Option<String> {
+    let (colours, stars) = (CODENAME_COLOURS.len() as u64, CODENAME_STARS.len() as u64);
+    let pairs = colours * stars;
+    (0..pairs)
+        .map(|step| (seed % pairs + step) % pairs)
+        .map(|i| {
+            format!(
+                "{}-{}",
+                CODENAME_COLOURS[(i % colours) as usize],
+                CODENAME_STARS[(i / colours) as usize]
+            )
+        })
+        .find(|name| !taken.iter().any(|t| t == name))
 }
 
 /// True once `now` reaches the lease's end. Clocks are fed in (tests never

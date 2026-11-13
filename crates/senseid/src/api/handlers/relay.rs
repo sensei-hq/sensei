@@ -917,6 +917,7 @@ pub(crate) async fn register(
         "lane_token": out.lane_token,
         "lane_id": out.lane_id.to_string(),
         "lane_title": out.lane_title,
+        "suggested_name": out.suggested_name,
         "crew_id": out.crew_id.to_string(),
         "guidance": {
             "version": out.guidance.version,

@@ -7,9 +7,9 @@ import { buildTimeline, foldReceipts } from './relay-timeline.js';
 // action). Every kind maps; an unmapped kind is a bug, never a gap.
 
 const LANES: RelayLaneRef[] = [
-  { id: 'lane-1', code: 'L1', title: 'Coord' },
-  { id: 'lane-2', code: 'L2', title: 'Worker' },
-  { id: 'lane-3', code: 'L3', title: 'Reviewer' },
+  { id: 'lane-1', code: 'L1', title: 'Coord', suggested_name: null },
+  { id: 'lane-2', code: 'L2', title: 'Worker', suggested_name: null },
+  { id: 'lane-3', code: 'L3', title: 'Reviewer', suggested_name: null },
 ];
 
 let n = 0;
