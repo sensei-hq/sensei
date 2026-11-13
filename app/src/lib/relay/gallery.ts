@@ -19,6 +19,10 @@ import QueueRow from './QueueRow.svelte';
 import QueueSection from './QueueSection.svelte';
 import AddItemForm from './AddItemForm.svelte';
 import RunCard from './RunCard.svelte';
+import TaskHeader from './TaskHeader.svelte';
+import RunDetails from './RunDetails.svelte';
+import HandoffCard from './HandoffCard.svelte';
+import { mockupHandoff, mockupRunDetails, mockupTaskHeader } from './task.fixtures.js';
 import AddMember from './AddMember.svelte';
 import { addContributor, mockupGroups, mockupRunCard, setupStep1 } from './crew.fixtures.js';
 import { mockupBacklog, mockupTriage } from './queue.fixtures.js';
@@ -136,6 +140,9 @@ export const GALLERY: GalleryEntry[] = [
   }),
   entry('AddMember/setup', 'no crew yet: step 1 of 2, the coordinator', AddMember, { view: setupStep1(), oncopy: () => {}, onrole: () => {} }),
   entry('AddMember/add', 'a crew at work: Add a member, contributors only', AddMember, { view: addContributor(), oncopy: () => {}, onrole: () => {} }),
+  entry('TaskHeader/merged', 'the task header: back, title and state, the ticket pill, the facts', TaskHeader, { header: mockupTaskHeader() }),
+  entry('RunDetails/folded', 'Run details, folded to its line (open it: a value nobody reported reads so)', RunDetails, { run: mockupRunDetails() }),
+  entry('HandoffCard/brief', 'Handed off: when, the brief, its docs', HandoffCard, { handoff: mockupHandoff() }),
   entry('QueueSection/backlog', 'Backlog: the mockup’s four rows, in order', QueueSection, {
     id: 'backlog',
     label: 'Backlog',
