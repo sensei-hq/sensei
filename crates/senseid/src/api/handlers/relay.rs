@@ -3580,6 +3580,51 @@ mod tests {
         assert_eq!(event.data["task_id"], task_id);
     }
 
+    /// #418: a task event carries the task's header exactly as the task view
+    /// serves it, named by `id`.
+    async fn assert_carries_task_row(h: &Harness, data: &Value, crew_id: &str, task_id: &str) {
+        let (status, view) =
+            call(h, "GET", &format!("/relay/tasks/{crew_id}/{task_id}"), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        for (key, value) in view["task"].as_object().unwrap() {
+            assert_eq!(&data[key], value, "{key} in {data}");
+        }
+        assert_eq!(data["id"], task_id, "{data}");
+    }
+
+    #[tokio::test]
+    async fn task_events_carry_the_task_header() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&holder)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let reported = event_for(&mut rx, "task", "report").await;
+        assert_eq!(reported["data"]["task_id"], task_id);
+        assert_carries_task_row(&h, &reported["data"], &coord.2, &task_id).await;
+        // The sweep's events carry it too: a lapsed lease interrupts the task.
+        let (task_id, _, _) = working_task(&h, &coord).await;
+        let past_lease = chrono::Utc::now() + chrono::Duration::seconds(301);
+        crate::tasks::relay_lease_sweep::sweep_at(&h.state.pg, &h.state.event_tx, past_lease)
+            .await
+            .unwrap();
+        let interrupted = loop {
+            let e = event_for(&mut rx, "task", "interrupt").await;
+            if e["data"]["task_id"] == task_id {
+                break e;
+            }
+        };
+        assert_carries_task_row(&h, &interrupted["data"], &coord.2, &task_id).await;
+    }
+
     #[tokio::test]
     async fn relay_step_post_emits_step_event() {
         // F8: step posts stream the step itself (add on create, update on
