@@ -7,7 +7,7 @@
 // props it takes, nothing else.
 
 import { createRawSnippet, type Component } from 'svelte';
-import { decision, floatingReview, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
+import { decision, floatingReview, history, laneRefs, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
 import { toRelayShell } from './relay-shell.js';
 import { SHELL_FIXTURES } from './relay-shell.fixtures.js';
 import RelayShell from './RelayShell.svelte';
@@ -20,6 +20,7 @@ import QueueSection from './QueueSection.svelte';
 import AddItemForm from './AddItemForm.svelte';
 import RunCard from './RunCard.svelte';
 import TaskHeader from './TaskHeader.svelte';
+import TaskHistory from './TaskHistory.svelte';
 import RunDetails from './RunDetails.svelte';
 import HandoffCard from './HandoffCard.svelte';
 import { mockupHandoff, mockupRunDetails, mockupTaskHeader } from './task.fixtures.js';
@@ -143,6 +144,7 @@ export const GALLERY: GalleryEntry[] = [
   entry('TaskHeader/merged', 'the task header: back, title and state, the ticket pill, the facts', TaskHeader, { header: mockupTaskHeader() }),
   entry('RunDetails/folded', 'Run details, folded to its line (open it: a value nobody reported reads so)', RunDetails, { run: mockupRunDetails() }),
   entry('HandoffCard/brief', 'Handed off: when, the brief, its docs', HandoffCard, { handoff: mockupHandoff() }),
+  entry('TaskHistory/merged', 'a merged task’s history, newest first: merge, messages, reviews, turns', TaskHistory, { history: history(), lanes: laneRefs() }),
   entry('QueueSection/backlog', 'Backlog: the mockup’s four rows, in order', QueueSection, {
     id: 'backlog',
     label: 'Backlog',

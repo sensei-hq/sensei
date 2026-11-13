@@ -30,7 +30,7 @@ test('every gallery fixture is captured across the matrix', async ({ page }) => 
     const name = `${v.width}-${v.theme}-${v.glyph}`;
     // Tall enough that a whole shell frame fits (gallery.ts `phoneHeight`): a sample taller
     // than the viewport is shot in pieces, under the gallery's sticky header.
-    await page.setViewportSize({ width: v.width === 'phone' ? 430 : 1440, height: v.width === 'phone' ? 1800 : 1000 });
+    await page.setViewportSize({ width: v.width === 'phone' ? 430 : 1440, height: v.width === 'phone' ? 1800 : 2600 });
     await page.goto(`/gallery?theme=${v.theme}&glyph=${v.glyph}&width=${v.width}`);
     await page.locator('[data-gallery-ready]').waitFor({ timeout: 60_000 });
     await page.evaluate(() => document.fonts?.ready);

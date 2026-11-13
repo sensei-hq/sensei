@@ -14,7 +14,7 @@
   import HandoffCard from './HandoffCard.svelte';
   import RunDetails from './RunDetails.svelte';
   import TaskHeader from './TaskHeader.svelte';
-  import HistoryEntry from './HistoryEntry.svelte';
+  import TaskHistory from './TaskHistory.svelte';
   import RelayChecklist from './RelayChecklist.svelte';
   import RelayTimeline from './RelayTimeline.svelte';
 
@@ -37,19 +37,6 @@
   // The header, Run details and Handed off, from the @sensei/state selector (#425).
   const parts = $derived(view ? toTaskView(view, { back: { label: 'Relay', href: backHref } }) : null);
 
-  /** A message's receipts, folded by the message they reply to (§1e.6, F5). */
-  const receipts = $derived.by(() => {
-    const out: Record<string, 'sent' | 'delivered' | 'read'> = {};
-    for (const a of view?.history ?? []) {
-      if (!a.reply_to) continue;
-      if (a.kind === 'read') out[a.reply_to] = 'read';
-      else if (a.kind === 'delivered' && out[a.reply_to] !== 'read') out[a.reply_to] = 'delivered';
-    }
-    return out;
-  });
-
-  /** Receipts are not entries of their own: they fold into their message. */
-  const entries = $derived((view?.history ?? []).filter((a) => a.kind !== 'delivered' && a.kind !== 'read'));
 </script>
 
 <ShellScreen
@@ -111,12 +98,7 @@
           <HandoffCard handoff={parts.handoff} />
         {/if}
 
-        <section class="flex flex-col gap-2" data-relay-section="history">
-          <h3 class="text-xs uppercase tracking-wide text-ink-mute m-0">History</h3>
-          {#each entries as action (action.id)}
-            <HistoryEntry {action} lanes={view.lanes} messageState={receipts[action.id] ?? (action.kind === 'message' ? 'sent' : null)} />
-          {/each}
-        </section>
+        <TaskHistory history={view.history} lanes={view.lanes} />
       {/if}
     </div>
   </ShellScreen>

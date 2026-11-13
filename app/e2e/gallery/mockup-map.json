@@ -34,5 +34,6 @@
   "RunCard/running": { "state": { "view": "crew", "load": "loaded" }, "crop": "section[aria-label=\"Run 7f3a\"]" },
   "AddMember/setup": { "state": { "view": "crew", "load": "empty" }, "crop": "section[aria-label=\"Start a run: set up your crew\"]" },
   "RunDetails/folded": { "state": { "view": "task", "from": "now", "load": "loaded" }, "crop": "details" },
-  "HandoffCard/brief": { "state": { "view": "task", "from": "now", "load": "loaded" }, "crop": "section[aria-label=\"Handed off\"]" }
+  "HandoffCard/brief": { "state": { "view": "task", "from": "now", "load": "loaded" }, "crop": "section[aria-label=\"Handed off\"]" },
+  "TaskHistory/merged": { "state": { "view": "task", "from": "now", "load": "loaded" }, "crop": "ol[aria-label=\"History, newest first\"]" }
 }
