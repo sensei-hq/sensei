@@ -20,12 +20,15 @@
 - #422 part 1: `toLaneGroups`/`toCompletedRows` (package) + SectionHeading, LaneList/LaneRow, CompletedList/CompletedRow
   benched vs mockup (bench-r3) and composed into Now (`c67c235cf`); Pill hook `data-relay-pill` + paper tint fix.
 
-**Remaining (in order):** #422 rest (DecisionCard, WaitList/WaitRow + Nudge, triage line + Unassigned row,
-`toNeedsYou`/`toWaitRows`, stat filters drive lists) → #423 Queue → #424 Crew → #425 Task (incl. #388,
+- #422 part 2: `toWaitRows`/`toNeedsYou`, DecisionCard, WaitList/WaitRow, NeedsYou (triage line, Unassigned row) benched
+  (bench-r4) and composed; stat filters drive Now (`34dced24c`); relay e2e 8/8 (`44cd5b730`). #422 done but for daemon
+  gaps (#419 nudge, #395 codenames, run grouping).
+
+**Remaining (in order):** → #423 Queue → #424 Crew → #425 Task (incl. #388,
 verify #380) → #426 e2e run. Daemon #418/#419 in parallel (row-carrying events; #421's apply is ready for them).
 
-**Next command:** render the mockup's Needs you (`node app/e2e/mockup/render.mjs … --state '{"view":"now","load":"loaded","pending":true}' --shot --crop 'section[aria-label="Needs you"]'`),
-then red spec for `toWaitRows`/`toNeedsYou` and DecisionCard/WaitRow on the bench.
+**Next command:** `gh issue view 423` (Queue), render the mockup's Queue (`--state '{"view":"queue","load":"loaded"}'`),
+then conform QueueRow on the bench (fix its bare `[data-select]` hook first).
 
 **Open questions (user):** feedback on the bench sheet (r2). Retire `lane/relay-screen-conformance`? (its r2/r3
 commits live only there). Header height: with the info band open, the header bands push the body below the fold
