@@ -125,7 +125,8 @@ describe('toAddMember · set up the crew, or add to it', () => {
       mode: 'setup',
       role: 'contributor',
       roleLocked: true,
-      command: { step: 'Step 2 of 2.', text: 'register with sensei as contributor' },
+      // #419: the crew named, so the line works with several crews open.
+      command: { step: 'Step 2 of 2.', text: `register with sensei as contributor in crew ${F.CREW_ID}` },
       listening: 'Listening · 1 of 2 to start a run',
     });
   });
@@ -134,5 +135,12 @@ describe('toAddMember · set up the crew, or add to it', () => {
     const add = toAddMember(F.now(), 'contributor');
     expect(add).toMatchObject({ mode: 'add', title: 'Add a member', role: 'contributor', roleLocked: true });
     expect(add.command.step).toBe('');
+    expect(add.command.text).toBe(`register with sensei as contributor in crew ${F.CREW_ID}`);
+  });
+
+  it('a crew whose coordinator left: the coordinator line names the crew too (#419)', () => {
+    const add = toAddMember(F.now({ lanes: [F.lane()], runs: [] }), 'coordinator');
+    expect(add.role).toBe('coordinator');
+    expect(add.command.text).toBe(`register with sensei as coordinator in crew ${F.CREW_ID}`);
   });
 });
