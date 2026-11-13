@@ -240,7 +240,14 @@ function footer(input: RelayShellInput): RelayFooterItem[] {
     ];
   }
   const r = input.resources;
-  if (!r) return [];
+  // Nothing read (still reading, or the read failed): the footer stays whole and says so (§1f, D83).
+  if (!r) {
+    return [
+      { tone: 'muted', text: 'Build not reported' },
+      { tone: 'muted', text: 'Disk not reported' },
+      { tone: 'muted', text: 'Swap not reported' },
+    ];
+  }
   const build: RelayFooterItem = r.build
     ? { tone: 'accent', text: `${resourceName(r.build.resource)}: ${r.build.lane} (${r.build.minutes} min)` }
     : { tone: 'muted', text: 'No build running' };

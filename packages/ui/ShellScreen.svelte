@@ -32,6 +32,7 @@
     // band is drawn open, never written as open.
     pinned = [],
     class: className,
+    bandAttrs,
     ...rest
   }: ShellProps & { viewId: string; glyphs?: 'kanji' | 'icon'; pinned?: PanelId[] } = $props();
 
@@ -44,6 +45,11 @@
   // (contract §1): rokkit's root is `height: 100%`, which against an
   // auto-height wrapper grows and gets clipped — the way Relay lost its scroll.
   const shellClass = $derived(['h-full', 'min-h-0', className].filter(Boolean).join(' '));
+
+  // That makes the sidebar a scroller of its own; one with nothing focusable in it
+  // is out of a keyboard's reach (axe scrollable-region-focusable), so it takes
+  // focus. A screen's own sidebar attributes still win.
+  const shellBandAttrs = $derived<ScreenShellProps['bandAttrs']>({ ...bandAttrs, side: { tabindex: '0', ...bandAttrs?.side } });
 
   // The shell's panels follow the store. They are the wrapper's own state so a
   // refused save can put them back: rokkit flips its copy before we hear of it.
@@ -83,7 +89,7 @@
 <!-- `sidebar`, `info`, `stats`, `filters`, `footer`, `toolbar` and the rest pass
      through untouched; the body is this screen's children, with the one Notice
      a refused save needs. -->
-<ScreenShell {...rest} {viewId} class={shellClass} glyphs={shellGlyphs} panels={shownPanels} onpanels={keep} bind:filter>
+<ScreenShell {...rest} {viewId} class={shellClass} bandAttrs={shellBandAttrs} glyphs={shellGlyphs} panels={shownPanels} onpanels={keep} bind:filter>
   {#if failure}
     <div class="px-4 pt-4" data-screen-views-notice>
       <Notice tone="fault" size="inline" title={failure} />
