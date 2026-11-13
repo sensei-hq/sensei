@@ -167,6 +167,16 @@ describe('RelayState · apply: an event with its row changes that row alone', ()
     expect(s.now?.runs[0].done_tasks).toBe(9);
     expect(s.now?.runs[0].run_id).toBe(run.run_id);
   });
+
+  it('a run row reads the queue again — its items moved — but not Now (#418)', async () => {
+    const now = F.sprintNow();
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads(now));
+    s.apply({ action: 'update', entity: 'run', data: { id: now.runs[0].run_id, op: 'activated' } as never });
+    await settle();
+    expect(source.readQueue).toHaveBeenCalledTimes(1);
+    expect(source.readNow).not.toHaveBeenCalled();
+  });
 });
 
 describe('RelayState · apply: an event that names ids only (today’s daemon, until #418) re-reads', () => {
