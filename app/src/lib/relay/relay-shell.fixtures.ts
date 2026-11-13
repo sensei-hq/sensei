@@ -30,6 +30,7 @@ const base: RelayShellInput = {
   resources,
   freshness: null,
   threshold: WAIT_THRESHOLD_MIN,
+  narrow: null,
 };
 
 const over = (patch: Partial<RelayShellInput>): RelayShellInput => ({ ...base, ...patch });
@@ -63,6 +64,19 @@ export const severalCrews = (): RelayShellInput => over({ run: null, crews: 2 })
 /** The same shell on the dōjō: context and footer differ, nothing else. */
 export const dojoLoaded = (): RelayShellInput =>
   over({ surface: 'dojo', resources: null, freshness: { updated: '1 min ago', shared: true } });
+/** The main window: every crew, narrowed by repository or workspace through the filter band (§1a). */
+export const mainWindow = (): RelayShellInput =>
+  over({
+    workspace: 'all workspaces',
+    run: null,
+    crews: 2,
+    narrow: {
+      repos: ['github.com/sensei-hq/sensei', 'github.com/jerrythomas/scratch'],
+      workspaces: [{ id: 'w1', name: 'Sensei' }],
+      repo: '',
+      workspace: 'w1',
+    },
+  });
 /** Numbers the daemon did not report read "not reported", never 0 (D83). */
 export const unreported = (): RelayShellInput =>
   over({ resources: { build: null, disk_free_gb: null, swap_free_gb: null, swap_floor_gb: null } });
@@ -79,5 +93,6 @@ export const SHELL_FIXTURES: Array<{ name: string; note: string; input: () => Re
   { name: 'no-run', note: 'no run yet: Crew is the landing, the info band says what to do', input: noRun },
   { name: 'crew-no-run', note: 'a crew registered, no sprint yet: the context names the crew', input: crewNoRun },
   { name: 'dojo', note: 'the dōjō surface: context and footer', input: dojoLoaded },
+  { name: 'main-window', note: 'the main window: repository and workspace filters as a schema form', input: mainWindow },
   { name: 'unreported', note: 'resources the daemon did not report', input: unreported },
 ];

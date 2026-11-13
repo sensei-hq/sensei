@@ -54,6 +54,27 @@ describe('toShellInput · load and run', () => {
   });
 });
 
+describe('toShellInput · the main window’s narrowing (§1a)', () => {
+  it('the workspace window passes no narrowing: it has no filter band', () => {
+    expect(toShellInput(source()).narrow).toBeNull();
+  });
+
+  it('the main window: the read’s repositories and workspaces, and the URL’s current values', () => {
+    const input = toShellInput(source({ narrow: { repo: '', workspace: 'w1' } }));
+    expect(input.narrow).toEqual({
+      repos: ['github.com/sensei-hq/sensei'],
+      workspaces: [{ id: 'w1', name: 'Sensei' }],
+      repo: '',
+      workspace: 'w1',
+    });
+  });
+
+  it('before a read the band keeps the URL’s values with nothing else to offer', () => {
+    const input = toShellInput(source({ now: null, reading: true, narrow: { repo: 'github.com/x/y', workspace: '' } }));
+    expect(input.narrow).toEqual({ repos: [], workspaces: [], repo: 'github.com/x/y', workspace: '' });
+  });
+});
+
 describe('toShellInput · counts and today', () => {
   it('the Queue badge is the queue count (0 while it is unknown); the Crew badge is the lanes', () => {
     expect(toShellInput(source()).counts).toEqual({ queue: 7, crew: 2 });

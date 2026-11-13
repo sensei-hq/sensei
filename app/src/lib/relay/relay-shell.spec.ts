@@ -12,6 +12,7 @@ import {
   loadedNow,
   loadedQueue,
   loading,
+  mainWindow,
   noRun,
   taskFromQueue,
   unreported,
@@ -21,7 +22,7 @@ import {
 // a pure selector from the page's state to what ShellScreen draws. Rules the
 // selector owns are pinned here, not in the component.
 
-const actions = (): RelayShellActions => ({ view: vi.fn(), compose: vi.fn(), filter: vi.fn() });
+const actions = (): RelayShellActions => ({ view: vi.fn(), compose: vi.fn(), filter: vi.fn(), narrow: vi.fn() });
 const ids = (items: Array<Record<string, unknown>>) => items.map((i) => (i.type === 'separator' ? '|' : String(i.id)));
 const item = (items: Array<Record<string, unknown>>, id: string) => items.find((i) => i.id === id) as Record<string, unknown>;
 
@@ -191,6 +192,80 @@ describe('toRelayShell · stats', () => {
   it('the active filter is the shell filter state the stat band reads', () => {
     expect(toRelayShell(filteredWorking(), actions()).filter).toEqual({ values: { show: 'working' }, stat: 'working' });
     expect(toRelayShell(loadedNow(), actions()).filter).toEqual({ values: {}, stat: null });
+  });
+});
+
+describe('toRelayShell · the filter band (§1a, #384)', () => {
+  type Element = { scope?: string; label?: string; props?: { options?: Array<{ value: string; label: string }>; placeholder?: string } };
+  const layoutOf = (shell: ReturnType<typeof toRelayShell>) => (shell.filters?.layout as { elements: Element[] }).elements;
+
+  it('the workspace window has no band: it is already narrowed to its workspace', () => {
+    expect(toRelayShell(loadedNow(), actions()).filters).toBeUndefined();
+  });
+
+  it('the main window draws repository and workspace as a rokkit schema form, not hand-made selects', () => {
+    const shell = toRelayShell(mainWindow(), actions());
+    expect(shell.filters?.schema).toEqual({
+      type: 'object',
+      properties: { repo: { type: 'string' }, workspace: { type: 'string' } },
+    });
+    const [repo, workspace] = layoutOf(shell);
+    expect(repo.scope).toBe('#/repo');
+    expect(repo.label).toBe('Repository');
+    // "All" is the empty value: the select shows it as its placeholder.
+    expect(repo.props?.options).toEqual([
+      { value: '', label: 'All repositories' },
+      { value: 'github.com/sensei-hq/sensei', label: 'sensei-hq/sensei' },
+      { value: 'github.com/jerrythomas/scratch', label: 'jerrythomas/scratch' },
+    ]);
+    expect(repo.props?.placeholder).toBe('All repositories');
+    expect(workspace.scope).toBe('#/workspace');
+    expect(workspace.props?.options).toEqual([
+      { value: '', label: 'All workspaces' },
+      { value: 'w1', label: 'Sensei' },
+    ]);
+  });
+
+  it('the filter values carry the URL’s narrowing beside the stat, one source of truth', () => {
+    expect(toRelayShell(mainWindow(), actions()).filter).toEqual({ values: { repo: '', workspace: 'w1' }, stat: null });
+    expect(toRelayShell({ ...mainWindow(), filter: 'blocked' }, actions()).filter).toEqual({
+      values: { repo: '', workspace: 'w1', show: 'blocked' },
+      stat: 'blocked',
+    });
+  });
+
+  it('a change from the band narrows by the one key that moved; a stat change sets the stat filter', () => {
+    const a = actions();
+    const shell = toRelayShell(mainWindow(), a);
+    shell.onfilter({ values: { repo: 'github.com/jerrythomas/scratch', workspace: 'w1' }, stat: null });
+    expect(a.narrow).toHaveBeenCalledWith('repo', 'github.com/jerrythomas/scratch');
+    expect(a.narrow).toHaveBeenCalledTimes(1);
+    expect(a.filter).not.toHaveBeenCalled();
+
+    shell.onfilter({ values: { repo: '', workspace: '' }, stat: null });
+    expect(a.narrow).toHaveBeenLastCalledWith('workspace', '');
+
+    shell.onfilter({ values: { repo: '', workspace: 'w1', show: 'waiting' }, stat: 'waiting' });
+    expect(a.filter).toHaveBeenCalledWith('waiting');
+    expect(a.narrow).toHaveBeenCalledTimes(2);
+  });
+
+  it('a cleared value (null from the select) narrows to all', () => {
+    const a = actions();
+    toRelayShell(mainWindow(), a).onfilter({ values: { repo: '', workspace: null }, stat: null });
+    expect(a.narrow).toHaveBeenCalledWith('workspace', '');
+  });
+
+  it('clearing the stat clears the stat filter; the workspace window only ever moves the stat', () => {
+    const a = actions();
+    toRelayShell({ ...mainWindow(), filter: 'working' }, a).onfilter({ values: { repo: '', workspace: 'w1' }, stat: null });
+    expect(a.filter).toHaveBeenCalledWith(null);
+    expect(a.narrow).not.toHaveBeenCalled();
+
+    const b = actions();
+    toRelayShell(loadedNow(), b).onfilter({ values: { show: 'done' }, stat: 'done' });
+    expect(b.filter).toHaveBeenCalledWith('done');
+    expect(b.narrow).not.toHaveBeenCalled();
   });
 });
 

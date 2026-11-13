@@ -199,21 +199,36 @@ describe('Observatory · Relay — the shell (D87)', () => {
   });
 });
 
-describe('Observatory · Relay — the filter band: repository and workspace', () => {
-  it('lists the repositories and workspaces the crews work in', async () => {
-    const { c } = await open();
+describe('Observatory · Relay — the filter band: repository and workspace (#384)', () => {
+  type Element = { scope: string; label: string; props: { options: Array<{ value: string; label: string }> } };
+  const filterShell = () => {
+    const props = shellProps();
+    return {
+      schema: (props.filters as { schema: Record<string, unknown> }).schema,
+      elements: (props.filters as { layout: { elements: Element[] } }).layout.elements,
+      filter: props.filter as { values: Record<string, unknown>; stat: string | null },
+      onfilter: props.onfilter as (next: { values: Record<string, unknown>; stat: string | null }) => void,
+    };
+  };
+
+  it('a rokkit schema form lists the repositories and workspaces the crews work in', async () => {
+    const { c } = await open({ search: '?workspace=w1' });
+    const { schema, elements, filter } = filterShell();
+    expect(Object.keys((schema as { properties: object }).properties)).toEqual(['repo', 'workspace']);
+    expect(elements.map((e) => e.props.options.map((o) => o.value))).toEqual([['', F.REPO, F.LOOSE_REPO], ['', 'w1']]);
+    expect(elements[1].props.options[1].label).toBe('Sensei');
+    // The URL's narrowing is the form's value.
+    expect(filter.values).toMatchObject({ repo: '', workspace: 'w1' });
     const band = need(one(c, '[data-screen-filters]'), 'the filter band');
-    const repo = need(one(band, 'select[data-relay-filter-repo]'), 'the repository filter') as HTMLSelectElement;
-    expect([...repo.options].map((o) => o.value)).toEqual(['', F.REPO, F.LOOSE_REPO]);
-    const ws = need(one(band, 'select[data-relay-filter-workspace]'), 'the workspace filter') as HTMLSelectElement;
-    expect([...ws.options].map((o) => o.value)).toEqual(['', 'w1']);
-    expect(ws.options[1].textContent?.trim()).toBe('Sensei');
+    need(one(band, '[data-form-root]'), 'the rokkit form');
+    expect(text(band)).toContain('Repository');
+    expect(text(band)).toContain('Workspace');
+    expect(one(band, 'select[data-relay-filter-repo]'), 'no hand-made select').toBeNull();
   });
 
   it('choosing one navigates with it in the URL; All clears it', async () => {
-    const { c, api } = await open({ search: '?workspace=w1' });
-    const band = need(one(c, '[data-screen-filters]'), 'the filter band');
-    setValue(need(one(band, 'select[data-relay-filter-repo]'), 'the repository filter'), F.LOOSE_REPO);
+    const { api } = await open({ search: '?workspace=w1' });
+    filterShell().onfilter({ values: { repo: F.LOOSE_REPO, workspace: 'w1' }, stat: null });
     await tick();
     expect(vi.mocked(goto)).toHaveBeenCalledTimes(1);
     const [href, ...rest] = vi.mocked(goto).mock.calls[0];
@@ -228,7 +243,7 @@ describe('Observatory · Relay — the filter band: repository and workspace', (
     expect(api.tryGetNow).toHaveBeenCalledTimes(1);
     expect(api.tryGetQueue).toHaveBeenCalledTimes(1);
 
-    setValue(need(one(band, 'select[data-relay-filter-workspace]'), 'the workspace filter'), '');
+    filterShell().onfilter({ values: { repo: '', workspace: '' }, stat: null });
     await tick();
     const cleared = new URL(String(vi.mocked(goto).mock.calls[1][0]), 'http://localhost');
     expect(cleared.searchParams.has('workspace')).toBe(false);
