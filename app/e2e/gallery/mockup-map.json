@@ -1,0 +1,17 @@
+{
+  "_": "Component (or Component/fixture) → the mockup region it replaces: the artboard state to render and the CSS selector to crop. theme/width/glyph come from the capture variant.",
+  "Pill": { "state": { "view": "now", "load": "loaded" }, "crop": "section[aria-label=\"Lanes\"] li:first-child [data-dc=\"ln.stateStyle\"]" },
+  "Tag/family": { "state": { "view": "crew", "load": "loaded" }, "crop": "[data-dc=\"famTag\"]" },
+  "Tag/model": { "state": { "view": "crew", "load": "loaded" }, "crop": "[data-dc=\"modelTag\"]" },
+  "Tag/host": { "state": { "view": "crew", "load": "loaded" }, "crop": "[data-dc=\"hostPill\"]" },
+  "RoleMark/coordinator-24": { "state": { "view": "now", "load": "loaded" }, "crop": "section[aria-label=\"Lanes\"] li:first-child span[title=\"Coordinator\"]" },
+  "RoleMark/contributor-24": { "state": { "view": "now", "load": "loaded" }, "crop": "section[aria-label=\"Lanes\"] li:nth-child(2) span[title=\"Contributor\"]" },
+  "RoleMark/coordinator-30-active": { "state": { "view": "crew", "load": "loaded" }, "crop": "[data-dc=\"mb.markStyle\"]" },
+  "RoleMark/contributor-30-not_responding": { "state": { "view": "crew", "load": "loaded" }, "crop": "section[aria-label=\"Run 7f3a\"] li:nth-of-type(2) [data-dc=\"mb.markStyle\"]" },
+  "QueueRow/triage-ticket": { "state": { "view": "queue", "load": "loaded" }, "crop": "section[aria-label=\"Triage\"] li:first-child" },
+  "QueueRow/triage-manual": { "state": { "view": "queue", "load": "loaded" }, "crop": "section[aria-label=\"Triage\"] li:nth-child(3)" },
+  "QueueRow/backlog": { "state": { "view": "queue", "load": "loaded" }, "crop": "section[aria-label=\"Backlog\"] li:first-child" },
+  "DecisionRow": { "state": { "view": "now", "load": "loaded", "pending": true }, "crop": "section[aria-label=\"Needs you\"] article:first-of-type" },
+  "FloatingReviewRow": { "state": { "view": "now", "load": "loaded" }, "crop": "section[aria-label=\"Lanes\"] li:nth-child(3)" },
+  "SprintBand": { "state": { "view": "crew", "load": "loaded" }, "crop": "section[aria-label=\"Run 7f3a\"] > div > div:first-child" }
+}

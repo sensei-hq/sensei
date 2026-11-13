@@ -20,7 +20,16 @@ const ALWAYS_REACHABLE = new Set(['/health', '/logs', '/upgrade']);
 // kind of window (user, 2026-10-27). This matches the singular `/workspace/`
 // window routes, not the observatory's plural `/workspaces` list (still gated).
 function isReachable(path: string): boolean {
-  return ALWAYS_REACHABLE.has(path) || path.startsWith('/workspace/') || isSettingsPath(path);
+  return (
+    ALWAYS_REACHABLE.has(path) ||
+    path.startsWith('/workspace/') ||
+    isSettingsPath(path) ||
+    // The component gallery (development only, `routes/gallery`) renders
+    // fixtures and needs no daemon, so a fresh browser load reaches it before
+    // health resolves. A production build has no such page: the constant is
+    // false there and the gate is unchanged.
+    (import.meta.env.DEV && (path === '/gallery' || path.startsWith('/gallery/')))
+  );
 }
 
 export function gateTarget(
