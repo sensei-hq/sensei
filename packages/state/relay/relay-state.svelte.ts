@@ -86,6 +86,15 @@ export interface RelayStateOptions {
 /** An event that carries its row (#418 shape), by the entity state that holds it. */
 const ROW_ENTITIES = ['lane', 'run', 'decision', 'message', 'item'] as const;
 type RowEntity = (typeof ROW_ENTITIES)[number];
+/** Keys a row event carries about the event, not the row (#418): what happened, why,
+ *  and the id it is named by today beside `id`. */
+const EVENT_KEYS: Record<RowEntity, readonly string[]> = {
+  lane: ['op', 'reason', 'lane_id'],
+  run: ['op', 'reason'],
+  decision: ['op', 'reason'],
+  message: ['op', 'reason'],
+  item: ['op', 'reason'],
+};
 
 export class RelayState {
   readonly source: RelaySource;
@@ -250,15 +259,28 @@ export class RelayState {
     }
   }
 
-  #applyRow(entity: RowEntity, action: RelayStreamEvent['action'], row: { id: string }): void {
+  #applyRow(entity: RowEntity, action: RelayStreamEvent['action'], data: { id: string }): void {
+    // The event's own keys say what happened; they are not the row's fields.
+    const row: Record<string, unknown> & { id: string } = { ...data };
+    for (const key of EVENT_KEYS[entity]) delete row[key];
     const target = {
       lane: this.lanes,
       run: this.runs,
       decision: this.decisions,
       message: this.messages,
       item: this.items,
-    }[entity] as { apply(e: { action: RelayStreamEvent['action']; entity: string; data: { id: string } }): void };
-    target.apply({ action, entity, data: row });
+    }[entity] as {
+      get(id: string): unknown;
+      apply(e: { action: RelayStreamEvent['action']; entity: string; data: { id: string } }): void;
+    };
+    // The daemon adds a row it may already hold (a lane re-registers): restate it.
+    const restate = action === 'add' && target.get(row.id) !== undefined;
+    target.apply({ action: restate ? 'update' : action, entity, data: row });
+    // A lane in a crew this screen has not read: a coordinator minted it — read the crew.
+    const crew = entity === 'lane' && action !== 'remove' ? (row as { crew_id?: unknown }).crew_id : undefined;
+    if (typeof crew === 'string' && this.#summary && !this.#summary.crews.some((c) => c.id === crew)) {
+      void this.reReadNow();
+    }
   }
 
   /** Subscribe to the source's stream; returns the teardown (call on destroy). Each open
