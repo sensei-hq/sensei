@@ -10,6 +10,9 @@ import type { ToolbarItem } from '@rokkit/ui';
 import { toolbarBadgeAfterClass, toolbarIconClass, toolbarItemClass, toolbarLabel } from '@sensei/ui';
 import { KANJI_ICONS } from '$lib/glyph-vocabulary';
 
+/** lanes.md §15: a wait at or past this many minutes is too long (one threshold per crew; the default). */
+export const WAIT_THRESHOLD_MIN = 15;
+
 export type RelaySurface = 'desktop' | 'dojo';
 export type RelayLoad = 'loading' | 'error' | 'empty' | 'loaded';
 export type RelayView = 'now' | 'queue' | 'crew' | 'archive' | 'task';
@@ -23,7 +26,11 @@ export interface RelayShellInput {
   /** Where the task or archive view came from — it keeps that button pressed. */
   from: 'now' | 'queue' | 'archive' | null;
   workspace: string;
+  /** The open run, by the end of its id; null while the crew has none. */
   run: { id: string } | null;
+  /** The crew the screen is on, by the end of its id (null = no crew yet), and how many the read holds (the main window may show several). */
+  crew: { id: string } | null;
+  crews: number;
   counts: { queue: number; crew: number };
   today: { done: number; firstPass: string } | null;
   stats: {
@@ -154,7 +161,8 @@ function toolbar(input: RelayShellInput, pressed: RelayView, actions: RelayShell
     iconButton('queue', 'Queue', VIEW_ICONS.queue, 'view', pressed === 'queue', input.counts.queue, () => actions.view('queue')),
     iconButton('crew', 'Crew', VIEW_ICONS.crew, 'view', pressed === 'crew', input.counts.crew, () => actions.view('crew')),
   ];
-  const message = input.run
+  // Someone to message: a crew. A run is not required — lanes register before a sprint starts.
+  const message = input.crew
     ? [iconButton('message', 'Message the crew', MESSAGE_ICON, 'toggle', input.compose, 0, () => actions.compose())]
     : [];
   return [...views, { type: 'separator' }, ...message, info];
@@ -170,7 +178,9 @@ function infoBand(input: RelayShellInput): InfoColumn[] {
 
 function stats(input: RelayShellInput, pressed: RelayView): ShellStat[] | null | undefined {
   if (input.load === 'loading') return null;
-  if (input.load !== 'loaded' || !input.run || pressed !== 'now') return undefined;
+  // The band belongs to a loaded crew on Now — with or without a sprint: lanes work,
+  // wait and block before a run starts too.
+  if (input.load !== 'loaded' || !input.crew || pressed !== 'now') return undefined;
   const s = input.stats;
   if (!s) return null;
   const oldest = s.waiting.oldestMin;
@@ -232,15 +242,26 @@ export function toRelayShell(input: RelayShellInput, actions: RelayShellActions)
   const pressed = pressedView(input);
   const view: RelayView = input.load === 'empty' ? pressed : input.view;
   const where = input.surface === 'dojo' ? 'from your desktop' : input.workspace;
+  // The run when one is open (CONTRACT §1a); until then the crew, by the end of its
+  // id — the main window may hold several — and "no run" when there is nobody yet.
+  const what = input.run
+    ? `run ${input.run.id}`
+    : input.crews > 1
+      ? `${input.crews} crews`
+      : input.crew
+        ? `crew ${input.crew.id}`
+        : input.load === 'loading' || input.load === 'error'
+          ? 'crew not reported'
+          : 'no run';
   return {
     view,
-    context: `${where} · ${input.run ? `run ${input.run.id}` : 'no run'}`,
+    context: `${where} · ${what}`,
     toolbar: toolbar(input, pressed, actions),
     info: infoBand(input),
     pinned: input.load === 'empty' ? ['info'] : [],
     stats: stats(input, pressed),
     filter: input.filter ? { values: { show: input.filter }, stat: input.filter } : { values: {}, stat: null },
-    compose: input.compose && Boolean(input.run),
+    compose: input.compose && Boolean(input.crew),
     footer: footer(input),
   };
 }

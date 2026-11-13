@@ -44,7 +44,10 @@ export class RelayState {
   reading = $state(false);
   readingQueue = $state(false);
 
-  tab = $state<'now' | 'queue'>('now');
+  /** The view the toolbar shows: Now, Queue or Crew (CONTRACT §1a). */
+  view = $state<'now' | 'queue' | 'crew'>('now');
+  /** The pressed stat on Now, narrowing its lists (CONTRACT §1c-0); null = everything. */
+  statFilter = $state<'working' | 'waiting' | 'blocked' | 'done' | null>(null);
   composing = $state(false);
   /** Why the last add to the backlog was refused (the row stays where it was). */
   addError = $state<string | null>(null);
@@ -82,7 +85,7 @@ export class RelayState {
   }
 
   openQueue(): void {
-    this.tab = 'queue';
+    this.view = 'queue';
   }
 
   /** Open sprint runs, in the order the daemon created them (the band); null while

@@ -5,7 +5,6 @@
   import { relayApi } from '$lib/relay-api.js';
   import { RelayState } from '$lib/relay/relay-state.svelte.js';
   import { subscribeCrewStream } from '$lib/relay/relay-crew-stream.js';
-  import { crewTail } from '$lib/relay/relay-format.js';
   import RelayScreen from '$lib/relay/RelayScreen.svelte';
 
   let { data } = $props();
@@ -18,11 +17,10 @@
   // re-reads the crew; a navigation resubscribes with the new state.
   $effect(() => subscribeCrewStream(appState.port, state));
 
-  const workspaceName = $derived(
-    (data as unknown as { workspace?: { name: string } }).workspace?.name ?? null,
-  );
-  const context = $derived(
-    [workspaceName, state.crew ? `crew ${crewTail(state.crew.id)}` : null].filter(Boolean).join(' · '),
+  // The context names the place and the run (CONTRACT §1a): the workspace by its
+  // name, or by its window when the layout did not give one.
+  const where = $derived(
+    (data as unknown as { workspace?: { name: string } }).workspace?.name ?? 'this workspace',
   );
 </script>
 
@@ -30,5 +28,5 @@
   {state}
   viewId="workspace.relay"
   base={`/workspace/${data.workspaceId}/relay`}
-  {context}
+  {where}
 />

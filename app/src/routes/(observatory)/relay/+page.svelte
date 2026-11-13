@@ -5,7 +5,6 @@
   import { relayApi } from '$lib/relay-api.js';
   import { RelayState } from '$lib/relay/relay-state.svelte.js';
   import { subscribeCrewStream } from '$lib/relay/relay-crew-stream.js';
-  import { crewSizeContext } from '$lib/relay/relay-format.js';
   import RelayScreen from '$lib/relay/RelayScreen.svelte';
 
   let { data } = $props();
@@ -17,7 +16,9 @@
   $effect(() => subscribeCrewStream(appState.port, state));
 
   // The crew's size, not its count: there is always one crew (#394).
-  const context = $derived(crewSizeContext(state.now, state.nowError));
+  // The context names the place and the run (CONTRACT §1a); the crew's size is the
+  // Crew button's badge. The main window shows every workspace's crews.
+  const where = 'all workspaces';
 </script>
 
-<RelayScreen {state} viewId="observatory.relay" base="/relay" {context} filtered />
+<RelayScreen {state} viewId="observatory.relay" base="/relay" {where} filtered />

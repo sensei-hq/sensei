@@ -5,6 +5,7 @@
   // It draws what it is given and nothing else; the state and the rules live in
   // `relay-shell.ts`.
   import type { Snippet } from 'svelte';
+  import type { FilterApi, FilterState } from '@rokkit/app';
   import { ShellScreen } from '@sensei/ui';
   import { KANJI_ICONS } from '$lib/glyph-vocabulary';
   import type { RelayFooterTone, RelayShell } from './relay-shell.js';
@@ -17,6 +18,8 @@
     viewId,
     glyphs,
     compose,
+    filters,
+    onfilter,
     children,
     ...rest
   }: {
@@ -25,6 +28,10 @@
     glyphs?: 'kanji' | 'icon';
     /** The compose band (Message the crew), drawn first in the body while open. */
     compose?: Snippet;
+    /** The main window's repository/workspace filter band. */
+    filters?: Snippet<[FilterApi]>;
+    /** A stat pressed or cleared: the shell's filter state, for the page to keep. */
+    onfilter?: (next: FilterState) => void;
     children: Snippet;
     [key: `data-${string}`]: string;
   } = $props();
@@ -51,6 +58,8 @@
   pinned={shell.pinned}
   stats={shell.stats}
   filter={shell.filter}
+  {filters}
+  {onfilter}
   data-screen="relay"
   data-relay-view={shell.view}
   {...rest}

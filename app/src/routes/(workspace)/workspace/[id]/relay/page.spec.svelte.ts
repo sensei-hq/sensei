@@ -120,12 +120,15 @@ function triageRows(c: HTMLElement) {
   return rows;
 }
 
-/** A header tab by its label ("Now", "Queue"), wherever the header draws it. */
+/** A header view button by its name ("Now", "Queue"), wherever the header draws it. The
+ *  mockup's buttons are icons: the name is the accessible name, with the count ("Queue · 7"). */
 function tab(c: HTMLElement, label: string): HTMLElement | null {
   const header = one(c, '[data-screen-header]');
   if (!header) return null;
   return (
-    all(header, '[role="tab"], button, a').find((el) => text(el).startsWith(label)) ?? null
+    all(header, '[role="tab"], button, a').find((el) =>
+      (el.getAttribute('aria-label') || text(el)).startsWith(label),
+    ) ?? null
   );
 }
 const isActive = (el: HTMLElement | null) =>
@@ -365,11 +368,13 @@ describe('Relay · Now — Completed today', () => {
 // ─── Queue ──────────────────────────────────────────────────────────────────
 
 describe('Relay · Queue', () => {
-  it('the Queue tab shows its count, and opens Triage, then Backlog', async () => {
+  it('the Queue button carries its count (the badge and the accessible name), and opens Triage, then Backlog', async () => {
     const { c } = await open();
     const queueTab = tab(c, 'Queue');
     expect(queueTab).not.toBeNull();
-    expect(text(queueTab)).toContain('4');
+    // The badge is drawn from `data-count`; the name folds the count in ("Queue · 4").
+    expect(queueTab!.getAttribute('data-count')).toBe('4');
+    expect(queueTab!.getAttribute('aria-label')).toBe('Queue · 4');
     expect(isActive(tab(c, 'Now'))).toBe(true);
 
     queueTab!.click();
@@ -719,16 +724,21 @@ describe('Relay — a navigation replaces what is shown', () => {
 });
 
 describe('Relay — no crew yet', () => {
-  it('the info band frames it: the two paste lines, and "Listening · 0 of 2 to start"; the body is empty', async () => {
+  it('the info band frames it ("No crew yet", what to do); the Crew view is the landing with the two paste lines and "Listening · 0 of 2 to start"', async () => {
     const { c } = await open({ now: F.ok(F.noCrew()) });
     const info = need(one(c, '[data-screen-info]'), '[data-screen-info]');
     expect(info).not.toBeNull();
     expect(text(info)).toContain('No crew yet');
-    expect(all(info, '[data-paste-line]').map((l) => text(one(l, '[data-paste-text]')))).toEqual([
+    expect(text(info)).toContain('Set it up below');
+    // CONTRACT §1b/§1h (r1): the setup moved from the band to the Crew view, which is
+    // the landing while there is no run; the Crew button is the pressed one.
+    expect(isActive(tab(c, 'Crew'))).toBe(true);
+    const crew = need(section(c, 'crew'), 'the crew section');
+    expect(all(crew, '[data-paste-line]').map((l) => text(one(l, '[data-paste-text]')))).toEqual([
       'register with sensei as coordinator',
       'register with sensei as contributor',
     ]);
-    expect(text(info)).toContain('Listening · 0 of 2 to start');
+    expect(text(crew)).toContain('Listening · 0 of 2 to start');
 
     expect(section(c, 'needs-you')).toBeNull();
     expect(section(c, 'lanes')).toBeNull();
@@ -758,15 +768,15 @@ describe('Relay — no crew yet', () => {
 // ─── The shell (D87) ────────────────────────────────────────────────────────
 
 describe('Relay — the shell (D87)', () => {
-  it('rokkit’s shell for workspace.relay: mark 継, title Relay, no stats band', async () => {
+  it('rokkit’s shell for workspace.relay: mark 継, title Relay, the four stat cards on Now (§1c-0)', async () => {
     const { c } = await open();
     expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
     const props = shellProps();
     expect(props).toMatchObject({ viewId: 'workspace.relay', title: 'Relay', mark: { kanji: '継' } });
-    expect(props.stats).toBeUndefined();
+    expect((props.stats as Array<{ id: string }>).map((s) => s.id)).toEqual(['working', 'waiting', 'blocked', 'done']);
     expect(one(c, '[data-screen-shell]')?.getAttribute('data-view')).toBe('workspace.relay');
     expect(text(one(c, '[data-screen-title]'))).toBe('Relay');
-    expect(one(c, '[data-screen-stats]')).toBeNull();
+    expect(one(c, '[data-screen-stats]')).not.toBeNull();
   });
 
   it('the context names this crew by the end of its id (a uuid v7 starts with the clock)', async () => {
@@ -813,11 +823,12 @@ describe('Relay — the shell (D87)', () => {
     expect(text(one(icon.c, '[data-lane-row="L0"] [data-lane-role]'))).not.toBe('指');
   });
 
-  it('the e2e anchor: data-screen="relay" around the shell', async () => {
+  it('the e2e anchor: data-screen="relay" is the shell itself (no wrapper: the shell fills its container)', async () => {
     const { c } = await open();
     const anchor = one(c, '[data-screen="relay"]');
     expect(anchor).not.toBeNull();
-    expect(one(anchor!, '[data-screen-shell]')).not.toBeNull();
+    expect(anchor!.hasAttribute('data-screen-shell'), 'the anchor is the shell root').toBe(true);
+    expect(anchor!.classList.contains('h-full'), 'the shell fills its container (#420)').toBe(true);
   });
 });
 
@@ -902,12 +913,16 @@ describe('Relay r2 — the header (F1, F2, L4)', () => {
   it('the header’s controls are exactly Now, Queue, Message the crew and the info toggle', async () => {
     const { c } = await open();
     const header = need(one(c, '[data-screen-header]'), 'the shell header');
+    // The stats band lives in the header too; its cards are its own controls (§1c-0).
     const controls = all(header, 'button, a, [role="tab"]')
+      .filter((el) => !el.closest('[data-screen-stats]'))
       .map((el) => el.getAttribute('aria-label') || text(el))
-      .map((label) => (label.startsWith('Queue') ? 'Queue' : label))
+      .map((label) => (label.startsWith('Queue') || label.startsWith('Crew') ? label.split(' · ')[0] : label))
       .sort();
-    // No stats / filters / side toggles, and no other action (CONTRACT §1a, user r1).
-    expect(controls).toEqual(['Message the crew', 'Now', 'Queue', 'What it’s for']);
+    // The three views, Message the crew and the info toggle; no stats / filters / side
+    // toggles and no other action (CONTRACT §1a, user r1; the view buttons carry the
+    // counts, the info toggle its own label).
+    expect(controls).toEqual(['Crew', 'Hide info', 'Message the crew', 'Now', 'Queue']);
   });
 
   it('the context is the workspace, then the crew', async () => {

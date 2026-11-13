@@ -3,7 +3,9 @@ import { toRelayShell, type RelayShellActions } from './relay-shell.js';
 import {
   archive,
   calm,
+  crewNoRun,
   dojoLoaded,
+  severalCrews,
   error,
   filteredWorking,
   loadedCrewComposing,
@@ -107,10 +109,18 @@ describe('toRelayShell · view, context, info band', () => {
     expect(toRelayShell({ ...noRun(), view: 'queue' }, actions()).view).toBe('queue');
   });
 
-  it('the context names the workspace and the run, or "no run"; the dōjō says where it comes from', () => {
+  it('the context names the workspace and the run; before a run, the crew (or how many); none → "no run"', () => {
     expect(toRelayShell(loadedNow(), actions()).context).toBe('sensei · run 7f3a');
+    expect(toRelayShell(crewNoRun(), actions()).context).toBe('sensei · crew c7f3');
+    expect(toRelayShell(severalCrews(), actions()).context).toBe('sensei · 2 crews');
     expect(toRelayShell(noRun(), actions()).context).toBe('sensei · no run');
     expect(toRelayShell(dojoLoaded(), actions()).context).toBe('from your desktop · run 7f3a');
+    // A read that failed before anything was known says so (D83), never "no run".
+    expect(toRelayShell({ ...error(), run: null, crew: null, crews: 0 }, actions()).context).toBe('sensei · crew not reported');
+  });
+
+  it('Message the crew needs a crew, not a run: lanes register before a sprint starts', () => {
+    expect(ids(toRelayShell(crewNoRun(), actions()).toolbar)).toContain('message');
   });
 
   it('loaded with a run: framing, the three steps (one line each, no eyebrow), and Today with the count', () => {
@@ -170,10 +180,12 @@ describe('toRelayShell · stats', () => {
     expect(quiet[2].tone).toBe('ink');
   });
 
-  it('the stats band shows only on Now; it reads "still reading" while loading and is absent without a run', () => {
+  it('the stats band shows only on Now; it reads "still reading" while loading and is absent without a crew', () => {
     expect(toRelayShell(loadedQueue(), actions()).stats).toBeUndefined();
     expect(toRelayShell(loading(), actions()).stats).toBeNull();
     expect(toRelayShell(noRun(), actions()).stats).toBeUndefined();
+    // A crew with no sprint yet still works, waits and blocks: the band shows.
+    expect(toRelayShell(crewNoRun(), actions()).stats?.map((s) => s.value)).toEqual([0, 2, 0, 0]);
   });
 
   it('the active filter is the shell filter state the stat band reads', () => {

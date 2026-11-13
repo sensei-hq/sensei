@@ -148,48 +148,54 @@ describe('Observatory · Relay — every crew, workspace or not', () => {
     expect(text(one(loose, '[data-crew-heading]'))).toBe('no repository · crew b10c');
   });
 
-  // #394: there is always one crew, so a crew count says nothing. The context
-  // line reads the crew's size — the assistant sessions it shows.
-  it('the context reads the crew’s size — the assistants it shows — never a crew count (#394)', async () => {
+  // #394 asked for the crew's size instead of a crew count. The r1 mockup (CONTRACT
+  // §1a) puts the size on the Crew button's badge and makes the context name the
+  // place and the run — the main window, which may hold several crews, counts them.
+  it('the crew’s size is the Crew button’s count; the context names the place and the crews (#394, r1)', async () => {
     const { c } = await open();
-    const context = text(one(c, '[data-screen-context]'));
-    expect(context).toBe('4 assistants');
-    expect(context).not.toMatch(/\bcrews?\b/);
+    const crew = need(one(c, '[data-screen-tools] [aria-label^="Crew"]'), 'the Crew button');
+    expect(crew.getAttribute('aria-label')).toBe('Crew · 4');
+    expect(text(one(c, '[data-screen-context]'))).toBe('all workspaces · 2 crews');
   });
 
-  it('one assistant reads singular (#394)', async () => {
+  it('one crew: the context names it by the end of its id; one assistant is a count of 1', async () => {
     const { c } = await open({ now: F.ok(F.now({ lanes: [F.coordinatorLane()] })) });
-    expect(text(one(c, '[data-screen-context]'))).toBe('1 assistant');
+    expect(text(one(c, '[data-screen-context]'))).toBe(`all workspaces · crew ${F.CREW_ID.slice(-4)}`);
+    expect(need(one(c, '[data-screen-tools] [aria-label^="Crew"]'), 'the Crew button').getAttribute('aria-label')).toBe('Crew · 1');
   });
 
-  it('a failed read says the size was not reported, never "0 assistants" (D83)', async () => {
+  it('a failed read says the crew was not reported, never "0" or "no run" (D83)', async () => {
     const { c } = await open({ now: F.fail(503, 'Service Unavailable') });
-    expect(text(one(c, '[data-screen-context]'))).toBe('assistants not reported');
+    expect(text(one(c, '[data-screen-context]'))).toBe('all workspaces · crew not reported');
+    expect(one(c, '[data-screen-tools] [aria-label^="Crew"]')).toBeNull();
   });
 });
 
 describe('Observatory · Relay — the shell (D87)', () => {
-  it('rokkit’s shell for observatory.relay: mark 継, title Relay, search off, no stats', async () => {
+  it('rokkit’s shell for observatory.relay: mark 継, title Relay, search off, the four stats on Now', async () => {
     const { c } = await open();
     expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
     const props = shellProps();
     expect(props).toMatchObject({ viewId: 'observatory.relay', title: 'Relay', mark: { kanji: '継' } });
     expect(props.search).toBe(false);
-    expect(props.stats).toBeUndefined();
+    // CONTRACT §1c-0: Working · Waiting · Blocked · Completed today, each a filter of Now.
+    expect((props.stats as Array<{ id: string }>).map((s) => s.id)).toEqual(['working', 'waiting', 'blocked', 'done']);
     expect(one(c, '[data-screen-search]')).toBeNull();
     const anchor = need(one(c, '[data-screen="relay"]'), 'the e2e anchor');
-    expect(one(anchor, '[data-screen-shell]')).not.toBeNull();
+    expect(anchor.hasAttribute('data-screen-shell'), 'the anchor is the shell itself').toBe(true);
   });
 
-  it('the header’s controls: Now, Queue, Message the crew, the info and the filters toggles', async () => {
+  it('the header’s controls: the three views, Message the crew and the info toggle — no filters toggle, the band stays', async () => {
     const { c } = await open();
     const header = need(one(c, '[data-screen-header]'), 'the shell header');
+    // The stats band and the filter band live in the header too; their controls are theirs.
     const controls = all(header, 'button, a, [role="tab"]')
-      .filter((el) => !el.closest('[data-screen-filters]'))
+      .filter((el) => !el.closest('[data-screen-filters]') && !el.closest('[data-screen-stats]'))
       .map((el) => el.getAttribute('aria-label') || text(el))
-      .map((label) => (label.startsWith('Queue') ? 'Queue' : label))
+      .map((label) => (label.startsWith('Queue') || label.startsWith('Crew') ? label.split(' · ')[0] : label))
       .sort();
-    expect(controls).toEqual(['Filters', 'Message the crew', 'Now', 'Queue', 'What it’s for']);
+    expect(controls).toEqual(['Crew', 'Hide info', 'Message the crew', 'Now', 'Queue']);
+    expect(one(c, '[data-screen-filters]'), 'the repository/workspace band').not.toBeNull();
   });
 });
 

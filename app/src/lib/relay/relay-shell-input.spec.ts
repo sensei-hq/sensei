@@ -42,6 +42,11 @@ describe('toShellInput · load and run', () => {
     expect(toShellInput(source({ now: now({ runs: [sprint({ state: 'completed' })] }) })).run).toBeNull();
   });
 
+  it('the crew is the first one read, by the end of its id, and the read’s crew count travels', () => {
+    expect(toShellInput(source())).toMatchObject({ crew: { id: 'c7f3' }, crews: 1 });
+    expect(toShellInput(source({ now: now({ crews: [], lanes: [] }) }))).toMatchObject({ crew: null, crews: 0 });
+  });
+
   it('passes the surface, the place, the view, the compose and filter state through', () => {
     const input = toShellInput(source({ view: 'crew', composing: true, statFilter: 'waiting' }));
     expect(input).toMatchObject({ surface: 'desktop', workspace: 'sensei', view: 'crew', from: null, compose: true, filter: 'waiting', info: true, freshness: null });
@@ -58,7 +63,7 @@ describe('toShellInput · counts and today', () => {
   it('Today: the completed count and the first-pass line; no review reported reads so', () => {
     expect(toShellInput(source()).today).toEqual({ done: 2, firstPass: '1 of 5 passed review first time.' });
     const quiet = now({ today: { completed: 0, reviewed: null, first_pass_approved: null } });
-    expect(toShellInput(source({ now: quiet })).today).toEqual({ done: 0, firstPass: 'no review reported yet' });
+    expect(toShellInput(source({ now: quiet })).today).toEqual({ done: 0, firstPass: 'first pass not reported' });
     expect(toShellInput(source({ now: null, failed: true })).today).toBeNull();
   });
 });
@@ -99,7 +104,7 @@ describe('toShellInput · the four stats, counted from the read', () => {
   it('Completed today is the list, with the first-pass line', () => {
     expect(toShellInput(source()).stats).toMatchObject({ done: 2, firstPass: '1 of 5 first-pass' });
     const quiet = now({ today: { completed: 0, reviewed: null, first_pass_approved: null }, completed_today: [] });
-    expect(toShellInput(source({ now: quiet })).stats).toMatchObject({ done: 0, firstPass: 'no review reported yet' });
+    expect(toShellInput(source({ now: quiet })).stats).toMatchObject({ done: 0, firstPass: 'first pass not reported' });
   });
 
   it('no read, no stats', () => {

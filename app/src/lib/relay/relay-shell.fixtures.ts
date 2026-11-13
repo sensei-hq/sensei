@@ -3,9 +3,7 @@
 // the gallery renders `RelayShell` from them, so a fixture here is both a test
 // case and a picture on the bench.
 
-import type { RelayShellInput } from './relay-shell.js';
-
-export const WAIT_THRESHOLD_MIN = 15;
+import { WAIT_THRESHOLD_MIN, type RelayShellInput } from './relay-shell.js';
 
 const resources = {
   build: { resource: 'rust-build', lane: 'cobalt-lyra', minutes: 4 },
@@ -21,6 +19,8 @@ const base: RelayShellInput = {
   from: null,
   workspace: 'sensei',
   run: { id: '7f3a' },
+  crew: { id: 'c7f3' },
+  crews: 1,
   counts: { queue: 7, crew: 7 },
   today: { done: 5, firstPass: '1 of 5 passed review first time.' },
   stats: { working: 1, waiting: { count: 4, oldestMin: 52 }, blocked: 2, done: 5, firstPass: '1 of 5 first-pass' },
@@ -55,7 +55,11 @@ export const loading = (): RelayShellInput => over({ load: 'loading', today: nul
 export const error = (): RelayShellInput => over({ load: 'error', today: null, stats: null, counts: { queue: 0, crew: 0 } });
 /** No run yet: the Crew view is the landing, the info band says what to do. */
 export const noRun = (): RelayShellInput =>
-  over({ load: 'empty', view: 'now', run: null, counts: { queue: 7, crew: 0 }, today: null, stats: null });
+  over({ load: 'empty', view: 'now', run: null, crew: null, crews: 0, counts: { queue: 7, crew: 0 }, today: null, stats: null });
+/** A crew registered, no sprint started yet: Message works, the context names the crew. */
+export const crewNoRun = (): RelayShellInput => over({ run: null, stats: { working: 0, waiting: { count: 2, oldestMin: null }, blocked: 0, done: 0, firstPass: 'no review reported yet' } });
+/** The main window holds several crews: the context counts them. */
+export const severalCrews = (): RelayShellInput => over({ run: null, crews: 2 });
 /** The same shell on the dōjō: context and footer differ, nothing else. */
 export const dojoLoaded = (): RelayShellInput =>
   over({ surface: 'dojo', resources: null, freshness: { updated: '1 min ago', shared: true } });
@@ -73,6 +77,7 @@ export const SHELL_FIXTURES: Array<{ name: string; note: string; input: () => Re
   { name: 'loading', note: 'still reading: no view buttons, no Message, Today not reported', input: loading },
   { name: 'error', note: 'the read failed: the shell stays whole', input: error },
   { name: 'no-run', note: 'no run yet: Crew is the landing, the info band says what to do', input: noRun },
+  { name: 'crew-no-run', note: 'a crew registered, no sprint yet: the context names the crew', input: crewNoRun },
   { name: 'dojo', note: 'the dōjō surface: context and footer', input: dojoLoaded },
   { name: 'unreported', note: 'resources the daemon did not report', input: unreported },
 ];
