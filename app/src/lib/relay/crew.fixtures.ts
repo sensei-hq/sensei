@@ -66,6 +66,18 @@ export const setupStep1 = (): RelayAddMemberView => ({
   listening: 'Listening · 0 of 2 to start a run',
 });
 
+/** The crew's id on the lines that name it (#419). */
+const CREW = '019a5e2c-4b1d-7c00-8d2e-00000000c7f3';
+
+/** The coordinator registered: step 2 of 2, a contributor into this crew (#419: the line names it). */
+export const setupStep2 = (): RelayAddMemberView => ({
+  ...setupStep1(),
+  role: 'contributor',
+  roleLocked: true,
+  command: { ...setupStep1().command, step: 'Step 2 of 2.', text: `register with sensei as contributor in crew ${CREW}` },
+  listening: 'Listening · 1 of 2 to start a run',
+});
+
 /** A crew at work: Add a member, contributors only. */
 export const addContributor = (): RelayAddMemberView => ({
   ...setupStep1(),
@@ -74,6 +86,6 @@ export const addContributor = (): RelayAddMemberView => ({
   lead: 'Another session joins as a contributor and takes the next piece of work.',
   role: 'contributor',
   roleLocked: true,
-  command: { ...setupStep1().command, step: '', text: 'register with sensei as contributor' },
+  command: { ...setupStep1().command, step: '', text: `register with sensei as contributor in crew ${CREW}` },
   listening: 'Listening · a new member shows above as it registers',
 });

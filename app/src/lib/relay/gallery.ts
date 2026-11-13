@@ -25,7 +25,7 @@ import RunDetails from './RunDetails.svelte';
 import HandoffCard from './HandoffCard.svelte';
 import { mockupHandoff, mockupRunDetails, mockupTaskHeader } from './task.fixtures.js';
 import AddMember from './AddMember.svelte';
-import { addContributor, mockupGroups, mockupRunCard, setupStep1 } from './crew.fixtures.js';
+import { addContributor, mockupGroups, mockupRunCard, setupStep1, setupStep2 } from './crew.fixtures.js';
 import { mockupBacklog, mockupTriage } from './queue.fixtures.js';
 import RelayChecklist from './RelayChecklist.svelte';
 import RoleMark from './RoleMark.svelte';
@@ -142,6 +142,7 @@ export const GALLERY: GalleryEntry[] = [
     onmessage: () => {},
   }),
   entry('AddMember/setup', 'no crew yet: step 1 of 2, the coordinator', AddMember, { view: setupStep1(), oncopy: () => {}, onrole: () => {} }),
+  entry('AddMember/setup-step2', 'the coordinator in: step 2 of 2, a contributor; the line names the crew (#419, beyond the mockup line)', AddMember, { view: setupStep2(), oncopy: () => {}, onrole: () => {} }),
   entry('AddMember/add', 'a crew at work: Add a member, contributors only', AddMember, { view: addContributor(), oncopy: () => {}, onrole: () => {} }),
   entry('TaskHeader/merged', 'the task header: back, title and state, the ticket pill, the facts', TaskHeader, { header: mockupTaskHeader() }),
   entry('RunDetails/folded', 'Run details, folded to its line (open it: a value nobody reported reads so)', RunDetails, { run: mockupRunDetails() }),

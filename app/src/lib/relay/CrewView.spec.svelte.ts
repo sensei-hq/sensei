@@ -146,7 +146,7 @@ describe('AddMember', () => {
     const code = c.querySelector('[data-paste-text]')!;
     expect(text(code)).toBe(line);
     expect(code.className).not.toMatch(/\btruncate\b/);
-    expect(code.className).toMatch(/\bbreak-all\b/);
+    expect(code.className).toContain("[overflow-wrap:anywhere]");
   });
 
   it('the coordinator taken: Contributor only, Coordinator disabled', () => {

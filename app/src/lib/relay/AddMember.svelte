@@ -47,7 +47,7 @@
       Paste this into an assistant session.
     </p>
     <div data-paste-line class="flex items-center gap-2 py-1.5 pl-3 pr-1.5 rounded-lg border border-solid border-paper-edge bg-paper">
-      <code data-paste-text class="flex-1 min-w-0 font-mono text-xs truncate">{view.command.text}</code>
+      <code data-paste-text class="flex-1 min-w-0 font-mono text-xs [overflow-wrap:anywhere]">{view.command.text}</code>
       <button
         type="button"
         data-paste-copy
