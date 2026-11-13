@@ -15,14 +15,14 @@
   import { failureReason } from '$lib/api.js';
   import { useGlyphMode } from '$lib/glyphs';
   import type { RelayState } from '@sensei/state';
-  import { toCompletedRows, toLaneGroups, toNeedsYou, toWaitRows, type NowRowOptions } from '@sensei/state';
+  import { toCompletedRows, toLaneGroups, toNeedsYou, toQueueRows, toWaitRows, type NowRowOptions } from '@sensei/state';
   import { WAIT_THRESHOLD_MIN, toRelayShell, type RelayNarrowKey } from './relay-shell.js';
   import { toShellInput } from './relay-shell-input.js';
   import { taskHref } from './relay-format.js';
   import ComposeBand from './ComposeBand.svelte';
   import CreateSprintForm from './CreateSprintForm.svelte';
   import FloatingReviewRow from './FloatingReviewRow.svelte';
-  import QueueRow from './QueueRow.svelte';
+  import QueueSection from './QueueSection.svelte';
   import LaneList from './LaneList.svelte';
   import CompletedList from './CompletedList.svelte';
   import NeedsYou from './NeedsYou.svelte';
@@ -130,6 +130,15 @@
   );
   const waitRows = $derived(toWaitRows(state.now, rowOptions));
   const needsYou = $derived(toNeedsYou(state.now, state.queue, rowOptions));
+
+  // The Queue's rows (#423): Triage as read, the backlog in its order.
+  const queueRows = $derived(toQueueRows(state.queue));
+
+  /** Add a triage row to the backlog, found by its row id in the read. */
+  function addRow(id: string): Promise<string | null> {
+    const item = state.queue?.triage.find((t) => (t.item_id ?? `${t.ticket.provider}:${t.ticket.key}`) === id);
+    return item ? state.addToBacklog(item) : Promise.resolve('This item is no longer in triage.');
+  }
 
   /** Answer a decision by its id (Needs you calls back with it). */
   function answer(id: string, option: string): Promise<string | null> {
@@ -280,42 +289,29 @@
           }}
         />
       {/if}
-      <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="triage">
-        <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Triage · {state.queue.triage.length}</h2>
-        {#if state.addError}
-          <Notice size="inline" tone="fault" title={state.addError} data-add-error />
-        {/if}
-        {#each state.queue.triage as item (item.item_id ?? item.ticket?.key)}
-          <QueueRow
-            id={item.item_id ?? item.ticket?.key ?? ''}
-            title={item.title}
-            kind={item.kind}
-            tags={item.tags}
-            sprint={item.sprint}
-            addedByYou={item.added_by_you}
-            ticket={item.ticket}
-            onadd={() => state.addToBacklog(item)}
-          />
-        {/each}
-      </section>
-
-      <section class="flex flex-col gap-2 p-4" data-relay-section="backlog">
-        <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Backlog · {state.queue.backlog.length}</h2>
-        {#each [...state.queue.backlog].sort((a, b) => a.position - b.position) as item (item.item_id)}
-          <QueueRow
-            id={item.item_id}
-            title={item.title}
-            kind={item.kind}
-            tags={item.tags}
-            sprint={item.sprint}
-            addedByYou={item.added_by_you}
-            ticket={item.ticket}
-            selectable
-            selected={state.isSelected(item.item_id)}
-            ontoggle={() => state.toggleSelected(item.item_id)}
-          />
-        {/each}
-      </section>
+      <div class="flex flex-col gap-5 p-4">
+        <QueueSection
+          id="triage"
+          label="Triage"
+          kanji="選"
+          description="From your active sprints in Jira, Azure DevOps and GitHub, and open items you add."
+          rows={queueRows.triage}
+          onadd={(row) => addRow(row.id)}
+        >
+          {#if state.addError}
+            <Notice size="inline" tone="fault" title={state.addError} data-add-error />
+          {/if}
+        </QueueSection>
+        <QueueSection
+          id="backlog"
+          label="Backlog"
+          kanji="列"
+          description="Your tasks, in order. The crew's coordinator takes the top one next and puts it on a lane."
+          rows={queueRows.backlog}
+          isSelected={(id) => state.isSelected(id)}
+          ontoggle={(row) => state.toggleSelected(row.id)}
+        />
+      </div>
     {/if}
   {/if}
 </RelayShell>
