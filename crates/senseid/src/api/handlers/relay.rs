@@ -3567,6 +3567,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn person_decision_rides_the_stream_as_its_row() {
+        // #418: asked of the person, the decision arrives with its Needs-you
+        // row (exactly as /relay/now shows it); answered, it leaves by id.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &holder,
+                json!({
+                    "task_id": task_id, "question": "Where?",
+                    "options": [{"id": "db", "label": "Db"}],
+                    "blocks": [], "asked_of": "person",
+                }),
+            )),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let decision_id = body["decision_id"].as_str().unwrap().to_string();
+        let asked = serde_json::to_value(event_for_entity(&mut rx, "decision").await).unwrap();
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let mut row = now["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == decision_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("decision not on Now: {now}"));
+        row["op"] = json!("asked");
+        assert_eq!(asked, json!({"action": "add", "entity": "decision", "data": row}));
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/answers",
+            Some(json!({"decision_id": decision_id, "option": "db", "note": null, "surface": "desktop"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let answered = serde_json::to_value(event_for_entity(&mut rx, "decision").await).unwrap();
+        assert_eq!(
+            answered,
+            json!({"action": "remove", "entity": "decision",
+                   "data": {"op": "answered", "id": decision_id, "crew_id": coord.2}})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_decision_asked_of_a_lane_sends_no_decision_event() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &holder,
+                json!({
+                    "task_id": task_id, "question": "Which?",
+                    "options": [{"id": "a", "label": "A"}],
+                    "blocks": [], "asked_of": coord.0,
+                }),
+            )),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // The task notification arrives; nothing names a decision.
+        assert_eq!(event_for(&mut rx, "task", "ask").await["data"]["task_id"], task_id);
+        while let Ok(event) = rx.try_recv() {
+            assert_ne!(event.entity, "decision", "{:?}", event.data);
+        }
+    }
+
+    /// The next event naming `entity`, skipping others (5 s).
+    async fn event_for_entity(
+        rx: &mut tokio::sync::broadcast::Receiver<crate::api::events::StateEvent>,
+        entity: &str,
+    ) -> crate::api::events::StateEvent {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut seen = Vec::new();
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Ok(event)) if event.entity == entity => return event,
+                Ok(Ok(event)) => seen.push(event.entity),
+                _ => panic!("no {entity} event; saw {seen:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn relay_events_endpoint_streams_event_stream() {
         // F8: GET /api/relay/events speaks SSE (headers only — the stream
         // never ends, so the test never reads the body).
