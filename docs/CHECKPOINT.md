@@ -18,12 +18,16 @@
 - #418 slice 4a: lane events carry the lane's Now row (`b15ba05da`; `relay/rows.rs`, `relay_lane_row`); the app
   restates re-added rows, strips op/reason/lane_id, reads Now for an unseen crew (`5dba05a34`).
 
-**Remaining (in order):** #418 4b run rows → 4c `decision` entity (ask/answer) → 4d `message` entity → 4e `item`
-entity (triage/backlog/sprint writes emit) → 4f task rows → 4g app stops re-reading after writes → LaneRow step
-progress on the bench → #419 → #426. Live check needs the new daemon installed (Keychain #283 caveat).
+- #418 4b: run events carry the band row (`e6e2535d7`); app re-reads the queue on a run row (`cbdea17fe`).
+- #418 4c: `decision` entity — person ask adds its Needs-you row, answer removes by id, gate ask too (`df0306482`,
+  `08de0f413`). No-fabrication hook: one reviewed R3 allow row (rows.rs, logged fallback to the task re-read).
 
-**Next command:** red test: run events carry the run's Now row (`crates/senseid/src/api/handlers/relay.rs`;
-`cargo test --bin senseid relay -- --test-threads=1`).
+**Remaining (in order):** #418 4d `message` entity → 4e `item` entity (triage/backlog/sprint writes emit) → 4f task
+rows → 4g app stops re-reading after writes → LaneRow step progress on the bench → #419 → #426. Live check needs
+the new daemon installed (Keychain #283 caveat).
+
+**Next command:** red test: a lane's message to the person arrives as a `message` add with its Needs-you row
+(`crates/senseid/src/api/handlers/relay.rs`; `cargo test --bin senseid relay -- --test-threads=1`).
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
 phone header height; merge #417 + `make release`; `font-display` no-op elsewhere in the app.
