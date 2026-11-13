@@ -2733,6 +2733,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn now_lane_task_reads_its_current_step_and_step_counts() {
+        // #418: the Now lane row says where the holder is — the checkpoint's
+        // current step and the checklist's settled/total counts (done and
+        // skipped are settled). Nothing reported reads null, never a guess.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let lane_task = |now: &Value| {
+            now["lanes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|l| l["task"]["id"] == task_id)
+                .map(|l| l["task"].clone())
+                .expect("the holder's lane carries the task")
+        };
+        let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        let task = lane_task(&now);
+        assert_eq!(task["current_step"], Value::Null, "{task}");
+        assert_eq!(task["steps_done"], 0, "{task}");
+        assert_eq!(task["steps_total"], 1, "{task}");
+        let save = json!({
+            "current_step": "running clippy",
+            "steps": [
+                {"key": "ddl", "title": "Apply the schema", "state": "done"},
+                {"key": "lint", "title": "Lint", "state": "skipped", "reason": "clippy covers it"},
+            ],
+        });
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/checkpoint"),
+            Some(lane_body(&holder, save)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let task = lane_task(&now);
+        assert_eq!(task["current_step"], "running clippy", "{task}");
+        assert_eq!(task["steps_done"], 2, "{task}");
+        assert_eq!(task["steps_total"], 3, "{task}");
+    }
+
+    #[tokio::test]
     async fn limit_resume_ends_a_pause_early_and_emits_resumed() {
         let h = harness().await;
         let coord = register_coordinator(&h).await;
