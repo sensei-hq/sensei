@@ -51,7 +51,7 @@ test.describe('Relay — one screen, two places', () => {
     test.setTimeout(180_000);
     await navigateToScreen(tauriPage, '/relay', '[data-screen="relay"]');
     expect(await pathname(tauriPage)).toBe('/relay');
-    await expect(tauriPage.locator('[data-screen="relay"] [data-screen-shell]')).toBeVisible();
+    await expect(tauriPage.locator('[data-screen="relay"][data-screen-shell]')).toBeVisible();
   });
 
   test('the workspace window renders the same screen, pre-filtered', async ({ tauriPage }) => {
@@ -59,7 +59,7 @@ test.describe('Relay — one screen, two places', () => {
     const id = await firstWorkspaceId();
     await navigateToScreen(tauriPage, `/workspace/${id}/relay`, '[data-screen="relay"]');
     expect(await pathname(tauriPage)).toBe(`/workspace/${id}/relay`);
-    await expect(tauriPage.locator('[data-screen="relay"] [data-screen-shell]')).toBeVisible();
+    await expect(tauriPage.locator('[data-screen="relay"][data-screen-shell]')).toBeVisible();
   });
 
   test('both rails link to Relay', async ({ tauriPage }) => {
