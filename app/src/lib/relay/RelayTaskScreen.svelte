@@ -52,8 +52,8 @@
   const entries = $derived((view?.history ?? []).filter((a) => a.kind !== 'delivered' && a.kind !== 'read'));
 </script>
 
-<div data-screen="relay">
-  <ShellScreen
+<ShellScreen
+    data-screen="relay"
     {viewId}
     glyphs={mode()}
     mark={{ kanji: '継', icon: KANJI_ICONS['継'] }}
@@ -120,4 +120,3 @@
       {/if}
     </div>
   </ShellScreen>
-</div>

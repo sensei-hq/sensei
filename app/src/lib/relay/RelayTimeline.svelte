@@ -15,7 +15,7 @@
   let open = $state<Record<string, boolean>>({});
 </script>
 
-<section class="flex flex-col gap-2" data-timeline>
+<section class="flex flex-col gap-2" data-relay-timeline>
   <h3 class="text-xs uppercase tracking-wide text-ink-mute m-0">Timeline</h3>
   {#each rows as row (row.id)}
     <div class="rounded-sm border border-paper-edge" data-timeline-row={row.id}>
