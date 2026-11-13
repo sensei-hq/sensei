@@ -3335,6 +3335,119 @@ mod tests {
         assert_eq!(now_lane(&h, &lane).await["task"], Value::Null);
     }
 
+    // ── #419: the run list and one run (CONTRACT §1i, §3k) ──
+
+    #[tokio::test]
+    async fn runs_list_the_open_ones_and_the_ended_ones_with_their_delete_date() {
+        // Open: draft, planning, active. Ended (the past runs): completed or
+        // cancelled, each deleted 30 days after it ended.
+        let h = harness().await;
+        let draft = draft_run(&h, &triage_item(&h).await).await;
+        let cancelled = draft_run(&h, &triage_item(&h).await).await;
+        let (status, _) = run_verb(&h, &cancelled, "cancel").await;
+        assert_eq!(status, StatusCode::OK);
+        let completed = draft_run(&h, &triage_item(&h).await).await;
+        sqlx_core::query::query(
+            "update relay.runs set state = 'completed',
+                    completed_at = timestamptz '2026-11-01T10:00:00Z'
+             where id = $1::uuid",
+        )
+        .bind(&completed)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (status, body) = call(&h, "GET", "/relay/runs", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let ids = |key: &str| -> Vec<String> {
+            body[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(ids("active"), vec![draft.clone()], "{body}");
+        let mut ended = ids("archived");
+        ended.sort();
+        let mut want = vec![cancelled.clone(), completed.clone()];
+        want.sort();
+        assert_eq!(ended, want, "{body}");
+        let row = |key: &str, id: &str| {
+            body[key].as_array().unwrap().iter().find(|r| r["id"] == id).unwrap().clone()
+        };
+        let done = row("archived", &completed);
+        assert_eq!(done["state"], "completed");
+        assert_eq!(done["title"], "Sprint 1");
+        assert!(
+            done["delete_after"].as_str().unwrap().starts_with("2026-12-01T10:00:00"),
+            "30 days after it completed: {done}"
+        );
+        let stopped = row("archived", &cancelled);
+        assert_eq!(stopped["state"], "cancelled");
+        assert!(stopped["completed_at"].is_string(), "cancel stamps when it ended: {stopped}");
+        assert!(stopped["delete_after"].is_string(), "{stopped}");
+        let open = row("active", &draft);
+        assert_eq!(open["state"], "draft");
+        assert_eq!(open["delete_after"], Value::Null);
+        assert_eq!(open["crew_id"], Value::Null);
+        assert_eq!((open["total_tasks"].as_i64(), open["done_tasks"].as_i64()), (Some(0), Some(0)));
+    }
+
+    #[tokio::test]
+    async fn one_run_shows_its_tasks_by_state_with_lane_and_steps_and_its_members() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let run_id = draft_run(&h, &triage_item(&h).await).await;
+        let (status, body) = run_verb(&h, &run_id, "start").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let task0 = body["planning_task_id"].as_str().unwrap().to_string();
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let (status, _) = claim_next(&h, &lane, &token).await;
+        assert_eq!(status, StatusCode::OK);
+        let save = json!({"current_step": "Reading the items", "steps": [
+            {"key": "read", "title": "Read the items", "state": "done"},
+            {"key": "plan", "title": "Write the plan", "state": "open"},
+        ]});
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task0}/checkpoint"),
+            Some(lane_body(&lane, save)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, run) = call(&h, "GET", &format!("/relay/runs/{run_id}"), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["run"]["id"], run_id.as_str());
+        assert_eq!(run["run"]["state"], "planning");
+        assert_eq!(run["run"]["crew_id"], coord.2);
+        assert_eq!(run["run"]["total_tasks"], 1);
+        let working =
+            run["tasks_by_state"]["working"].as_array().unwrap_or_else(|| panic!("{run}"));
+        assert_eq!(working.len(), 1, "{run}");
+        let task = &working[0];
+        assert_eq!(task["id"], task0.as_str());
+        assert_eq!(task["phase"], "planning");
+        assert_eq!(task["lane"]["id"], lane.as_str());
+        assert_codename(&task["lane"]["suggested_name"]);
+        assert_eq!((task["steps_done"].as_i64(), task["steps_total"].as_i64()), (Some(1), Some(2)));
+        assert_eq!(task["current_step"], "Reading the items");
+        // Only states that hold a task appear.
+        assert_eq!(run["tasks_by_state"].as_object().unwrap().len(), 1, "{run}");
+        // The members: the crew's lanes on this run, each named.
+        let members = run["members"].as_array().unwrap();
+        let ids: Vec<&str> = members.iter().map(|m| m["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&lane.as_str()) && ids.contains(&coord.0.as_str()), "{run}");
+        for m in members {
+            assert_codename(&m["suggested_name"]);
+            assert!(m["role"].is_string() && m["code"].is_string(), "{m}");
+        }
+        let (status, body) =
+            call(&h, "GET", "/relay/runs/01931560-9000-7000-8000-000000000099", None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    }
+
     #[tokio::test]
     async fn approving_task0_emits_unpack_and_run_activated() {
         let h = harness().await;
