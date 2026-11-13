@@ -17,13 +17,15 @@
   state) · run draft/start/cancel (daemon + state; smoke draft→start PASS, `coord/reports/relay-screen/daemon-419/`) ·
   run list/detail (`relay.run_list`; archive schema + daily purge NOT built) · person crew close · item close/
   reorder/retitle + ticketed backlog (`d7c243d38`, clippy fix `b43450572`; GitLab tickets wait for a `gitlab`
-  provider). Relay 406/406, app 3604/3604. Live DDL NOT applied; install batched to the end of #419.
+  provider) · catalogue first cut: AddMember's line names the crew (`3efdff3cc`), wraps whole (`5ee789c5b`, bench-r9,
+  sheet v11 `AddMember/setup-step2`; awaiting the user's look). Full catalogue NOT built (no adapter launch templates,
+  kinds, or per-assistant session attribution). Relay 406/406, app 3605/3605. Live DDL NOT applied; install batched to the end of #419.
 
-**Remaining (in order):** #419 slice 8 (catalogue) + wrap-up (guidance v2 text, live DDL, install, e2e) → #426 run-journey e2e. Gaps outside
+**Remaining (in order):** #419 wrap-up (guidance v2 text, live DDL, install, e2e) → #426 run-journey e2e. Gaps outside
 #418: `task.waiting`; person-message read ladder. Lane is NOT merged to develop (user's call).
 
-**Next command:** #419 slice 8 — red tests: the AddMember catalogue (CONTRACT §3l): assistants/editors seen on this
-machine with launch template or paste line, or first cut the two paste lines with the crew id. DB tests: `TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_screen`
+**Next command:** #419 wrap-up — guidance v2 text where a lane sees a change; apply live DDL (`run_state` draft,
+runs.crew_id nullable, `relay.run_list`, now.ddl); `make install-debug`; relay e2e; `make test-template`. DB tests: `TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_screen`
 (rebuild with the scratchpad `lane-template.sh` after DDL changes; other lanes restamp `sensei_test`).
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
