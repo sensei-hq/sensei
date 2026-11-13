@@ -9,9 +9,7 @@
 - #420 shell + filters + footer; #421 `@sensei/state` + both pages cut over; #422 Now; #423 Queue (+add-to-triage
   form, not in mockup); #424 Crew; #425 Task view (#380/#381/#388 fixed; relay hooks no longer collide with rokkit).
   Each benched vs mockup (`coord/reports/relay-screen/bench-r1..r7`), relay e2e 8/8 against the real daemon.
-- #418 DONE on the lane (comment on the issue lists each commit): crew filter, checkpoint step events, Now lane
-  step counters, lane/run/task rows, `decision`/`message`/`item` entities; the app applies rows in place and reads
-  nothing back after its writes (`863742b5d`). Live check on a scratch broker: `coord/reports/relay-screen/daemon-418/`.
+- #418 DONE on the lane (commits listed on the issue); live check `coord/reports/relay-screen/daemon-418/`.
 
 - LaneRow step progress (not in the mockup): selector `3ca277909`, component `9193b3fe2`, bench `008575ac0`
   (`bench-r8`; sheet artifact 3869a0ea v10). Approved by the user on desktop and phone (2026-11-13).
@@ -21,17 +19,18 @@
   served by register, now, task view `task.lane`/`lanes[]`; TS types gain it. Relay 392/392, app relay 846/846.
 - #419 slice 3 live lanes: red `45892a03c` → green `41dbad77a` (relay.now drops unregistered lanes + closed crews,
   lane `presence`); state red `65a6facaa` → green `550a8600e` (`isNotResponding` reads it everywhere). Relay 394/394,
-  app 3603/3603, state 86/86. Live `relay.now` NOT yet applied; install batched to the end of #419.
+  app 3603/3603, state 86/86. Live DDL NOT yet applied; install batched to the end of #419.
+- #419 slice 4 run lifecycle: red `8ef273e72` → green `5f73e0800` (draft/start/cancel, `run_state` draft, runs.crew_id
+  nullable + repo_key/workspace_id; smoke draft→start PASS on a scratch broker,
+  `coord/reports/relay-screen/daemon-419/`); state red `d507ce3da` → green `547148d6c`. Relay 399/399, app 3604/3604.
 
-**Remaining (in order):** #419 slices 4–8 (run draft/start/cancel ·
-run list/detail · person crew close · item delete/patch + ticketed backlog · catalogue) → #426 run-journey e2e. Gaps outside
+**Remaining (in order):** #419 slices 5–8 (run list/detail · person crew close · item delete/patch + ticketed backlog · catalogue) → #426 run-journey e2e. Gaps outside
 #418: `task.waiting`; person-message read ladder. Lane is NOT merged to develop (user's call).
 
-**Next command:** #419 slice 4 — red tests: `POST /relay/runs` makes a `draft` run (no crew, no Task 0);
-`POST /relay/runs/{id}/start` binds the active crew + mints Task 0; `/cancel`. DB tests use this lane's own template:
-`TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_screen` (other lanes restamp `sensei_test`;
-rebuild it with the `test-template` recipe steps against that URL). Installed: daemon = this lane; /Applications app = v0.21.1 (diagrams skew,
-backlog item) — `make install-app` from this lane would match them.
+**Next command:** #419 slice 5 — red tests: `GET /relay/runs` (active + archived with `delete_after`) and
+`GET /relay/runs/{id}` (tasks by state with lane, step counters; members). DB tests:
+`TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_screen`; rebuild it with the scratchpad
+`lane-template.sh` after DDL changes (other lanes restamp `sensei_test`).
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
 phone header height; merge #417 + `make release`; `font-display` no-op elsewhere in the app.
