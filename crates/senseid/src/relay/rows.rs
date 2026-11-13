@@ -100,3 +100,16 @@ pub async fn item_leaving(pg: &PgStore, item_id: &Uuid, op: &str) -> Option<Stat
         }
     }
 }
+
+/// `event` with the task's header (as the task view serves it), when the
+/// task can be read.
+pub async fn with_task_row(pg: &PgStore, event: StateEvent, task_id: &Uuid) -> StateEvent {
+    match pg.relay_task_row(*task_id).await {
+        Ok(Some(row)) => event.with_row(row),
+        Ok(None) => event,
+        Err(e) => {
+            tracing::warn!(task_id = %task_id, error = ?e, "relay stream: task row unread; event goes id-only");
+            event
+        }
+    }
+}

@@ -71,6 +71,7 @@ use crate::db::pg_store::relay::{
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
 use crate::relay::rows::{
     decision_asked, item_added, item_leaving, message_sent, with_lane_row, with_run_row,
+    with_task_row,
 };
 use crate::relay::{
     DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole,
@@ -150,8 +151,10 @@ fn emit(state: &AppState, op: &str) {
 }
 
 /// A task changed: the screen re-reads that task's view (F8).
-fn emit_task(state: &AppState, op: &str, task_id: &Uuid) {
-    let _ = state.event_tx.send(StateEvent::relay_task(op, task_id));
+/// The event carries the task's header (#418).
+async fn emit_task(state: &AppState, op: &str, task_id: &Uuid) {
+    let event = with_task_row(&state.pg, StateEvent::relay_task(op, task_id), task_id).await;
+    let _ = state.event_tx.send(event);
 }
 
 /// A step as the wire carries it (the step route's answer and the step event).
@@ -413,11 +416,11 @@ pub(crate) async fn claim_next(
         .map_err(err)?;
     let (claim_type, task) = match &claim {
         RelayClaim::Review(review) => {
-            emit_task(&state, "claim_review", &review.task_id);
+            emit_task(&state, "claim_review", &review.task_id).await;
             ("review", claimed_review_json(review))
         }
         RelayClaim::Task(task) => {
-            emit_task(&state, "claim", &task.task_id);
+            emit_task(&state, "claim", &task.task_id).await;
             ("task", claimed_task_json(task))
         }
         RelayClaim::None => ("none", serde_json::Value::Null),
@@ -439,7 +442,7 @@ pub(crate) async fn claim_task(
         .relay_claim_task(session.user_id, lane_id, task_id, chrono::Utc::now())
         .await
         .map_err(err)?;
-    emit_task(&state, "claim", &task_id);
+    emit_task(&state, "claim", &task_id).await;
     ok(serde_json::json!({ "claim_type": "task", "task": claimed_task_json(&task) }))
 }
 
@@ -478,7 +481,7 @@ pub(crate) async fn checkpoint(
     for step in &out.steps {
         emit_step(&state, &task_id, step);
     }
-    emit_task(&state, "checkpoint", &task_id);
+    emit_task(&state, "checkpoint", &task_id).await;
     ok(serde_json::json!({
         "task_id": task_id.to_string(),
         "checkpointed_at": iso(out.checkpointed_at),
@@ -505,7 +508,7 @@ pub(crate) async fn release(
         })
         .await
         .map_err(err)?;
-    emit_task(&state, "release", &task_id);
+    emit_task(&state, "release", &task_id).await;
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "kind": serde_json::to_value(out.kind).unwrap_or(serde_json::Value::Null),
@@ -620,7 +623,7 @@ pub(crate) async fn create_run(
     for event in leaving {
         let _ = state.event_tx.send(event);
     }
-    emit_task(&state, "plan", &out.planning_task_id);
+    emit_task(&state, "plan", &out.planning_task_id).await;
     Ok((
         StatusCode::CREATED,
         Json(serde_json::json!({
@@ -1006,7 +1009,7 @@ pub(crate) async fn unregister(
     emit(&state, "unregister");
     emit_lane(&state, LaneChange::Unregistered, &lane_id, &session.crew_id).await;
     if let Some(task_id) = out.interrupted {
-        emit_task(&state, "interrupt", &task_id);
+        emit_task(&state, "interrupt", &task_id).await;
     }
     ok(serde_json::json!({ "lane_id": body.lane_id }))
 }
@@ -1203,7 +1206,7 @@ pub(crate) async fn assign(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "assign", &task_id);
+    emit_task(&state, "assign", &task_id).await;
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "round": out.round,
@@ -1256,7 +1259,7 @@ pub(crate) async fn report(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "report", &task_id);
+    emit_task(&state, "report", &task_id).await;
     ok(serde_json::json!({
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
         "round": out.round,
@@ -1277,7 +1280,7 @@ pub(crate) async fn claim_review(
         .relay_claim_review(session.user_id, caller, task_id, chrono::Utc::now())
         .await
         .map_err(err)?;
-    emit_task(&state, "claim_review", &task_id);
+    emit_task(&state, "claim_review", &task_id).await;
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "title": out.title,
@@ -1334,11 +1337,11 @@ pub(crate) async fn review(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "review", &task_id);
+    emit_task(&state, "review", &task_id).await;
     // An approved Task 0 unpacked its plan: the queue grew and the run is
     // active — both announced beside the review itself.
     if let Some(run_id) = out.run_activated {
-        emit_task(&state, "unpack", &task_id);
+        emit_task(&state, "unpack", &task_id).await;
         emit_run(&state, RunChange::Activated, &run_id, &session.crew_id).await;
     }
     ok(serde_json::json!({
@@ -1389,7 +1392,7 @@ pub(crate) async fn ask(
         .await
         .map_err(err)?;
     match task_id {
-        Some(task_id) => emit_task(&state, "ask", &task_id),
+        Some(task_id) => emit_task(&state, "ask", &task_id).await,
         None => emit(&state, "ask"),
     }
     // Asked of the person: Needs you gains the row (#418).
@@ -1419,7 +1422,7 @@ pub(crate) async fn lane_answer(
         .await
         .map_err(err)?;
     match out.task_id {
-        Some(task_id) => emit_task(&state, "answer", &task_id),
+        Some(task_id) => emit_task(&state, "answer", &task_id).await,
         None => emit(&state, "answer"),
     }
     ok(serde_json::json!({ "action_id": out.action_id.to_string() }))
@@ -1445,7 +1448,7 @@ pub(crate) async fn lane_message(
         .await
         .map_err(err)?;
     match task_id {
-        Some(task_id) => emit_task(&state, "message", &task_id),
+        Some(task_id) => emit_task(&state, "message", &task_id).await,
         None => emit(&state, "message"),
     }
     // To the person: Needs you gains the row (#418).
@@ -1485,7 +1488,7 @@ pub(crate) async fn merge(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "merge", &task_id);
+    emit_task(&state, "merge", &task_id).await;
     ok(serde_json::json!({ "task_id": task_id.to_string() }))
 }
 
@@ -1499,7 +1502,7 @@ pub(crate) async fn cancel(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
     let out = state.pg.relay_cancel_task(session.user_id, caller, task_id).await.map_err(err)?;
-    emit_task(&state, "cancel", &task_id);
+    emit_task(&state, "cancel", &task_id).await;
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
@@ -1526,7 +1529,7 @@ pub(crate) async fn handover(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "handover", &task_id);
+    emit_task(&state, "handover", &task_id).await;
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
@@ -1573,8 +1576,9 @@ pub(crate) async fn post_step(
 /// BroadcastStream-over-`event_tx` shape as the scan socket.
 ///
 /// `?crew_id=` narrows the stream to one crew (#418): an event naming
-/// another crew is dropped; one naming no crew (a task or relay op) still
-/// arrives, and the screen re-reads its own crew's view on it. A malformed
+/// another crew is dropped; one naming no crew (a relay op, or a task whose
+/// row could not be read) still arrives, and the screen re-reads its own
+/// crew's view on it. A malformed
 /// id is a 400 from the query extractor.
 pub(crate) async fn relay_events_sse(
     State(state): State<AppState>,
@@ -1670,7 +1674,7 @@ pub(crate) async fn person_message(
         .await
         .map_err(err)?;
     match task_id {
-        Some(task_id) => emit_task(&state, "message", &task_id),
+        Some(task_id) => emit_task(&state, "message", &task_id).await,
         None => emit(&state, "message"),
     }
     ok(serde_json::json!({ "message_id": out.message_id.to_string() }))
@@ -1694,7 +1698,7 @@ pub(crate) async fn person_answer(
         .await
         .map_err(err)?;
     match out.task_id {
-        Some(task_id) => emit_task(&state, "answer", &task_id),
+        Some(task_id) => emit_task(&state, "answer", &task_id).await,
         None => emit(&state, "answer"),
     }
     // Answered: the row leaves Needs you (#418).

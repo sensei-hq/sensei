@@ -6437,6 +6437,25 @@ impl PgStore {
         Ok(Some((stage, screen_id, row)))
     }
 
+    /// One task's header as the task view serves it, for the stream
+    /// (#418); `None` when the task is not there.
+    pub async fn relay_task_row(
+        &self,
+        task_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, RelayError> {
+        let owner: Option<(Uuid, Uuid)> =
+            sqlx_core::query_as::query_as("select user_id, crew_id from relay.tasks where id = $1")
+                .bind(task_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+        let Some((user_id, crew_id)) = owner else {
+            return Ok(None);
+        };
+        let mut view = self.relay_task_view(user_id, crew_id, task_id).await?;
+        Ok(Some(view["task"].take()))
+    }
+
     /// One open run's band row, for the stream (#418); `None` once the run
     /// left the band (completed, archived, deleted) or was never there.
     pub async fn relay_run_row(

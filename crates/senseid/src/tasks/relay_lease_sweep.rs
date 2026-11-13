@@ -17,7 +17,7 @@ use crate::db::pg_store::PgStore;
 use crate::db::pg_store::relay::{RelaySweepReport, RelaySweptTask};
 use crate::relay::RelayError;
 use crate::relay::gate::GateRunner;
-use crate::relay::rows::{decision_asked, with_lane_row, with_run_row};
+use crate::relay::rows::{decision_asked, with_lane_row, with_run_row, with_task_row};
 
 /// One pass at wall-clock now.
 pub async fn tick<G: GateRunner>(
@@ -88,7 +88,8 @@ pub async fn pass<G: GateRunner>(
             outcome = ?outcome,
             "relay_lease: gate ran",
         );
-        let _ = event_tx.send(StateEvent::relay_task("gate", &written.task_id));
+        let gated = StateEvent::relay_task("gate", &written.task_id);
+        let _ = event_tx.send(with_task_row(pg, gated, &written.task_id).await);
         // A gate that could not run asks the person: Needs you gains it (#418).
         if let Some(ask) = written.asked
             && let Some(event) = decision_asked(pg, &ask, &written.crew_id).await
@@ -108,13 +109,17 @@ pub async fn sweep_at(
 ) -> Result<RelaySweepReport, RelayError> {
     let report = pg.relay_sweep_leases(now).await?;
     for event in sweep_events(&report) {
-        // Lane and run events carry their Now rows (#418).
+        // Lane, run and task events carry their rows (#418).
         let id = |key: &str| -> Option<uuid::Uuid> {
             event.data.get(key).and_then(|v| v.as_str()).and_then(|id| id.parse().ok())
         };
         let event = match (event.entity.as_str(), id("lane_id"), id("run_id")) {
             ("lane", Some(lane_id), _) => with_lane_row(pg, event, &lane_id).await,
             ("run", _, Some(run_id)) => with_run_row(pg, event, &run_id).await,
+            ("task", _, _) => match id("task_id") {
+                Some(task_id) => with_task_row(pg, event, &task_id).await,
+                None => event,
+            },
             _ => event,
         };
         let _ = event_tx.send(event);
