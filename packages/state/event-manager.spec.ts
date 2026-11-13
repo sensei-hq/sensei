@@ -3,7 +3,7 @@
  * Uses a mock EventSource to verify subscribe/dispatch/reconnect behavior.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { EventManager } from './events.js';
+import { EventManager } from './event-manager.js';
 
 // ── Mock EventSource ─────────────────────────────────────────────────────────
 
