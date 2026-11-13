@@ -31,7 +31,7 @@ function mount(over: Partial<{ error: string | null; onsubmit: Submit }> = {}) {
   });
   cleanup.push(m.destroy);
   const root = m.container.querySelector('[data-create-sprint]') as HTMLElement;
-  const field = (name: string) => root.querySelector(`[data-field="${name}"]`) as HTMLInputElement;
+  const field = (name: string) => root.querySelector(`[data-sprint-field="${name}"]`) as HTMLInputElement;
   const type = (name: string, value: string) => {
     const el = field(name);
     el.value = value;
@@ -42,6 +42,7 @@ function mount(over: Partial<{ error: string | null; onsubmit: Submit }> = {}) {
   return { root, field, type, submit, onsubmit, oncancel };
 }
 
+// rokkit's theme styles a bare [data-field]: the form's fields carry their own hook (#425).
 describe('CreateSprintForm', () => {
   it('lists the selection and keeps submit off until title, goal and checkout are there', () => {
     const { root, type, submit, field } = mount();
