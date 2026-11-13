@@ -4762,6 +4762,79 @@ mod tests {
         body["lanes"].as_array().unwrap().iter().find(|l| l["id"] == lane_id).cloned().unwrap()
     }
 
+    // ── #419: now lists the live lanes, each with its presence (CONTRACT §1h) ──
+
+    async fn now_lane_ids(h: &Harness) -> Vec<String> {
+        let (status, body) = call(h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let mut ids: Vec<String> = body["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["id"].as_str().unwrap().to_string())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[tokio::test]
+    async fn now_leaves_out_unregistered_lanes_and_closed_crews() {
+        // A lane that left, and every lane of a closed crew, leave the list
+        // (their rows stay for history; the past-runs archive shows them).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (stays, _) = register_contributor(&h, &coord.2).await;
+        let (leaves, token) = register_contributor(&h, &coord.2).await;
+        unregister_lane(&h, &leaves, &token).await;
+        let other = register_coordinator(&h).await;
+        assert_ne!(other.2, coord.2, "a second crew");
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", other.2),
+            Some(json!({"lane_id": other.0})),
+            Some(&other.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let mut expected = vec![coord.0.clone(), stays];
+        expected.sort();
+        assert_eq!(now_lane_ids(&h).await, expected);
+    }
+
+    #[tokio::test]
+    async fn now_lanes_carry_their_presence() {
+        // active: on a task (or a review) under a live lease; idle: a live
+        // lease and nothing held; not_responding: the lease is no longer live.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (_, holder, _) = working_task(&h, &coord).await;
+        let (idle, _) = register_contributor(&h, &coord.2).await;
+        let (silent, _) = register_contributor(&h, &coord.2).await;
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = current_timestamp - interval '1 minute'
+             where lane_id = $1::uuid and kind = 'lane'",
+        )
+        .bind(&silent)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(now_lane(&h, &holder).await["presence"], "active");
+        assert_eq!(now_lane(&h, &idle).await["presence"], "idle");
+        assert_eq!(now_lane(&h, &silent).await["presence"], "not_responding");
+        // The sweeper's verdict reads the same: an expired lease is not live.
+        sqlx_core::query::query(
+            "update relay.leases set state = 'expired'::relay.lease_state,
+                    expires_at = current_timestamp + interval '1 minute'
+             where lane_id = $1::uuid and kind = 'lane'",
+        )
+        .bind(&idle)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(now_lane(&h, &idle).await["presence"], "not_responding");
+    }
+
     #[tokio::test]
     async fn limit_pause_records_scope_and_resume() {
         // The lane reports quota exhaustion; the person feed echoes scope
