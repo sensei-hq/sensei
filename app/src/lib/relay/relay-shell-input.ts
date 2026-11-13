@@ -19,6 +19,8 @@ export interface ShellSource {
   composing: boolean;
   statFilter: RelayStatFilter | null;
   queueCount: number | null;
+  /** The main window's URL narrowing ('' = all); absent in the workspace window. */
+  narrow?: { repo: string; workspace: string } | null;
   /** The clock, for ages; defaults to now. */
   at?: number;
 }
@@ -88,5 +90,13 @@ export function toShellInput(src: ShellSource): RelayShellInput {
       : null,
     freshness: null,
     threshold: WAIT_THRESHOLD_MIN,
+    narrow: src.narrow
+      ? {
+          repos: now?.facets.repos ?? [],
+          workspaces: now?.facets.workspaces ?? [],
+          repo: src.narrow.repo,
+          workspace: src.narrow.workspace,
+        }
+      : null,
   };
 }

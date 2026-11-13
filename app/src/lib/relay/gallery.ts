@@ -45,7 +45,7 @@ const entry = (
  *  callbacks resolve to "no refusal" so the component can be exercised. */
 const accepted = async () => null;
 /** A shell fixture's actions go nowhere: the bench shows one state at a time. */
-const still = { view: () => {}, compose: () => {}, filter: () => {} };
+const still = { view: () => {}, compose: () => {}, filter: () => {}, narrow: () => {} };
 /** A stand-in body, so the shell's own regions are what the picture shows. */
 const body = createRawSnippet(() => ({
   render: () => '<div class="p-5 text-sm text-ink-mute">the view’s body goes here</div>',

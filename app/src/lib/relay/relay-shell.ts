@@ -5,7 +5,7 @@
 // band on Now, the footer. Every rule the contract gives the shell lives here,
 // unit-tested on data; the component only draws the result.
 
-import type { FilterState, InfoColumn, ShellStat } from '@rokkit/app';
+import type { FilterSchema, FilterState, InfoColumn, ShellStat } from '@rokkit/app';
 import type { ToolbarItem } from '@rokkit/ui';
 import { toolbarBadgeAfterClass, toolbarIconClass, toolbarItemClass, toolbarLabel } from '@sensei/ui';
 import { KANJI_ICONS } from '$lib/glyph-vocabulary';
@@ -53,12 +53,26 @@ export interface RelayShellInput {
   freshness: { updated: string; shared: boolean } | null;
   /** lanes.md §15: a wait at or past it is too long. */
   threshold: number;
+  /** The main window's repository/workspace narrowing (§1a): what the read offers and the
+   *  URL's current values ('' = all). null in the workspace window, which has no band. */
+  narrow: RelayNarrow | null;
+}
+
+export type RelayNarrowKey = 'repo' | 'workspace';
+
+export interface RelayNarrow {
+  repos: string[];
+  workspaces: Array<{ id: string; name: string }>;
+  repo: string;
+  workspace: string;
 }
 
 export interface RelayShellActions {
   view(id: RelayView): void;
   compose(): void;
   filter(id: RelayStatFilter | null): void;
+  /** Narrow the main window's read by repository or workspace ('' = all). */
+  narrow(key: RelayNarrowKey, value: string): void;
 }
 
 export interface RelayFooterItem {
@@ -77,6 +91,10 @@ export interface RelayShell {
   /** `undefined` = no band; `null` = still reading. */
   stats: ShellStat[] | null | undefined;
   filter: FilterState;
+  /** The main window's band, drawn by `@rokkit/forms`; `undefined` = no band. */
+  filters: FilterSchema | undefined;
+  /** The shell's filter change, routed: a band value narrows the URL, a stat sets the stat filter. */
+  onfilter(next: FilterState): void;
   compose: boolean;
   footer: RelayFooterItem[];
 }
@@ -238,6 +256,50 @@ function footer(input: RelayShellInput): RelayFooterItem[] {
   return [build, disk, swap];
 }
 
+const NARROW_KEYS: RelayNarrowKey[] = ['repo', 'workspace'];
+
+/** A repository key without its host, as people say it. */
+const shortRepo = (repo: string) => repo.replace(/^github\.com\//, '');
+
+/** One select of the band: "All …" is the empty value, which the select shows as its placeholder. */
+function narrowField(key: RelayNarrowKey, label: string, all: string, options: Array<{ value: string; label: string }>) {
+  return { scope: `#/${key}`, label, props: { placeholder: all, options: [{ value: '', label: all }, ...options] } };
+}
+
+/** The main window's repository/workspace band as a rokkit schema form (§1a, #384). */
+function filterSchema(narrow: RelayNarrow | null): FilterSchema | undefined {
+  if (!narrow) return undefined;
+  return {
+    schema: { type: 'object', properties: { repo: { type: 'string' }, workspace: { type: 'string' } } },
+    layout: {
+      type: 'horizontal',
+      elements: [
+        narrowField('repo', 'Repository', 'All repositories', narrow.repos.map((r) => ({ value: r, label: shortRepo(r) }))),
+        narrowField('workspace', 'Workspace', 'All workspaces', narrow.workspaces.map((w) => ({ value: w.id, label: w.name }))),
+      ],
+    },
+  };
+}
+
+/** The filter values: the URL's narrowing beside the stat's `show` — one source of truth. */
+function filterState(input: RelayShellInput): FilterState {
+  const values: Record<string, unknown> = input.narrow ? { repo: input.narrow.repo, workspace: input.narrow.workspace } : {};
+  if (input.filter) values.show = input.filter;
+  return { values, stat: input.filter };
+}
+
+/** Route a filter change: each band key that moved narrows the URL; a stat that moved sets the stat filter. */
+function routeFilter(input: RelayShellInput, actions: RelayShellActions, next: FilterState): void {
+  if (input.narrow) {
+    for (const key of NARROW_KEYS) {
+      const value = String(next.values[key] ?? '');
+      if (value !== input.narrow[key]) actions.narrow(key, value);
+    }
+  }
+  const stat = (next.stat ?? null) as RelayStatFilter | null;
+  if (stat !== input.filter) actions.filter(stat);
+}
+
 export function toRelayShell(input: RelayShellInput, actions: RelayShellActions): RelayShell {
   const pressed = pressedView(input);
   const view: RelayView = input.load === 'empty' ? pressed : input.view;
@@ -260,7 +322,9 @@ export function toRelayShell(input: RelayShellInput, actions: RelayShellActions)
     info: infoBand(input),
     pinned: input.load === 'empty' ? ['info'] : [],
     stats: stats(input, pressed),
-    filter: input.filter ? { values: { show: input.filter }, stat: input.filter } : { values: {}, stat: null },
+    filter: filterState(input),
+    filters: filterSchema(input.narrow),
+    onfilter: (next) => routeFilter(input, actions, next),
     compose: input.compose && Boolean(input.crew),
     footer: footer(input),
   };

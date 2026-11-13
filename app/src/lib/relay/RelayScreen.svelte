@@ -15,7 +15,7 @@
   import { failureReason } from '$lib/api.js';
   import { useGlyphMode } from '$lib/glyphs';
   import type { RelayState } from './relay-state.svelte.js';
-  import { toRelayShell } from './relay-shell.js';
+  import { toRelayShell, type RelayNarrowKey } from './relay-shell.js';
   import { toShellInput } from './relay-shell-input.js';
   import {
     crewGroups,
@@ -55,6 +55,20 @@
 
   const mode = useGlyphMode();
 
+  // ─── The main window's filters (CONTRACT §1a) ─────────────────────
+  // The band is a schema form the shell draws (`relay-shell.ts`); its values are
+  // the URL's, so a narrowed view is a link the person can keep.
+  const current = (key: RelayNarrowKey) => page.url.searchParams.get(key) ?? '';
+
+  function narrow(key: RelayNarrowKey, value: string): void {
+    const url = new URL(page.url);
+    if (value) url.searchParams.set(key, value);
+    else url.searchParams.delete(key);
+    // The search change is this route's to answer: `goto` re-runs its load, and
+    // nothing above it depends on the filter (N9).
+    void goto(`${url.pathname}${url.search}`);
+  }
+
   // The shell, as data: the read and the screen's state → what the header draws.
   const shell = $derived(
     toRelayShell(
@@ -68,6 +82,7 @@
         composing: state.composing,
         statFilter: state.statFilter,
         queueCount: state.queueCount,
+        narrow: filtered ? { repo: current('repo'), workspace: current('workspace') } : null,
       }),
       {
         view: (id) => {
@@ -75,6 +90,7 @@
         },
         compose: () => (state.composing = !state.composing),
         filter: (id) => (state.statFilter = id),
+        narrow,
       },
     ),
   );
@@ -95,21 +111,6 @@
         }
       : null,
   );
-
-  // ─── The main window's filters (CONTRACT §1a) ─────────────────────
-  const filtersNow = $derived(state.now?.facets ?? { repos: [], workspaces: [] });
-  const current = (key: 'repo' | 'workspace') => page.url.searchParams.get(key) ?? '';
-
-  function narrow(key: 'repo' | 'workspace', value: string): void {
-    const url = new URL(page.url);
-    if (value) url.searchParams.set(key, value);
-    else url.searchParams.delete(key);
-    // The search change is this route's to answer: `goto` re-runs its load, and
-    // nothing above it depends on the filter (N9).
-    void goto(`${url.pathname}${url.search}`);
-  }
-
-  const shortRepo = (repo: string) => repo.replace(/^github\.com\//, '');
 
   /** The backlog rows the person picked for a sprint, in backlog order. */
   const selectedItems = $derived(
@@ -138,39 +139,6 @@
   }
 </script>
 
-{#snippet filterBand()}
-  <div class="flex flex-wrap items-center gap-4">
-    <label class="flex items-center gap-2 text-xs text-ink-mute">
-      <span>Repository</span>
-      <select
-        data-relay-filter-repo
-        class="rounded-sm border border-paper-edge bg-paper py-1 px-2 text-sm text-ink"
-        value={current('repo')}
-        onchange={(e) => narrow('repo', e.currentTarget.value)}
-      >
-        <option value="">All repositories</option>
-        {#each filtersNow.repos as repo (repo)}
-          <option value={repo}>{shortRepo(repo)}</option>
-        {/each}
-      </select>
-    </label>
-    <label class="flex items-center gap-2 text-xs text-ink-mute">
-      <span>Workspace</span>
-      <select
-        data-relay-filter-workspace
-        class="rounded-sm border border-paper-edge bg-paper py-1 px-2 text-sm text-ink"
-        value={current('workspace')}
-        onchange={(e) => narrow('workspace', e.currentTarget.value)}
-      >
-        <option value="">All workspaces</option>
-        {#each filtersNow.workspaces as ws (ws.id)}
-          <option value={ws.id}>{ws.name}</option>
-        {/each}
-      </select>
-    </label>
-  </div>
-{/snippet}
-
 {#snippet composeBand()}
   {#if state.now}
     <ComposeBand
@@ -187,8 +155,6 @@
   {viewId}
   glyphs={mode()}
   compose={composeBand}
-  filters={filtered ? filterBand : undefined}
-  onfilter={(next) => (state.statFilter = (next.stat as RelayState['statFilter']) ?? null)}
 >
   {#if state.reading}
     <Loading />

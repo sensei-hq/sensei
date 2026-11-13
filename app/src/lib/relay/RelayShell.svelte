@@ -3,23 +3,23 @@
   // of the page's state — mark, title, context, the five toolbar buttons, the
   // info band, the stats band, the footer — and the body the screen hands it.
   // It draws what it is given and nothing else; the state and the rules live in
-  // `relay-shell.ts`.
+  // `relay-shell.ts` — the filter band (a schema form) and where a filter change
+  // goes included.
   import type { Snippet } from 'svelte';
-  import type { FilterApi, FilterState } from '@rokkit/app';
   import { ShellScreen } from '@sensei/ui';
   import { KANJI_ICONS } from '$lib/glyph-vocabulary';
   import type { RelayFooterTone, RelayShell } from './relay-shell.js';
   // The header's icon buttons: a scoped override of the theme's toolbar look
   // (user ruling 2026-11-09), one partial, to be upstreamed.
   import './relay-toolbar.css';
+  // The filter band's fields in a row (rokkit stacks a schema form): the same kind of partial.
+  import './relay-filters.css';
 
   let {
     shell,
     viewId,
     glyphs,
     compose,
-    filters,
-    onfilter,
     children,
     ...rest
   }: {
@@ -28,10 +28,6 @@
     glyphs?: 'kanji' | 'icon';
     /** The compose band (Message the crew), drawn first in the body while open. */
     compose?: Snippet;
-    /** The main window's repository/workspace filter band. */
-    filters?: Snippet<[FilterApi]>;
-    /** A stat pressed or cleared: the shell's filter state, for the page to keep. */
-    onfilter?: (next: FilterState) => void;
     children: Snippet;
     [key: `data-${string}`]: string;
   } = $props();
@@ -58,8 +54,8 @@
   pinned={shell.pinned}
   stats={shell.stats}
   filter={shell.filter}
-  {filters}
-  {onfilter}
+  filters={shell.filters}
+  onfilter={shell.onfilter}
   data-screen="relay"
   data-relay-view={shell.view}
   {...rest}
