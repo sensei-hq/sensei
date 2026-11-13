@@ -82,6 +82,8 @@ describe('LaneList · LaneRow', () => {
     const li = c.querySelector('[data-lane-row="L1"]')!;
     expect(li.querySelectorAll('a, button')).toHaveLength(0);
     expect(part(li, 'chevron')).toBeNull();
+    // It keeps the chevron's room, so its pill and time stay in the column.
+    expect(li.querySelector('[data-chevron-space]')).not.toBeNull();
     expect(text(part(li, 'task'))).toBe('Nothing assigned');
   });
 
