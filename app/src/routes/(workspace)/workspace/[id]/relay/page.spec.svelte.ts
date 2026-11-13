@@ -1171,6 +1171,9 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
     state: 'working' as const,
     round: 1,
     state_changed_at: F.minutesAgo(12),
+    current_step: null as string | null,
+    steps_done: 0,
+    steps_total: 0,
     needs_answer: false,
     ...over,
   });

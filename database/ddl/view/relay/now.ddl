@@ -23,6 +23,12 @@ select l.user_id, 'lane'::text as section, l.crew_id, l.id,
         'id', t.id, 'title', t.title, 'repo_key', t.repo_key, 'workspace_id', t.workspace_id,
         'phase', t.phase, 'state', t.state, 'round', t.round,
         'state_changed_at', t.state_changed_at,
+        -- Where the holder is (#418): the checkpoint's current step, and the
+        -- checklist settled (done or skipped) over its total.
+        'current_step', t.checkpoint->>'current_step',
+        'steps_done', (select count(*) from jsonb_array_elements(t.steps) s
+                        where s->>'state' in ('done', 'skipped')),
+        'steps_total', jsonb_array_length(t.steps),
         'needs_answer', exists (
           select 1 from relay.actions a
            where a.user_id = l.user_id and a.kind = 'asked'

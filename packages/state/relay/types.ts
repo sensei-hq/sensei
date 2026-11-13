@@ -106,6 +106,11 @@ export interface RelayLaneTask {
   state: RelayTaskState;
   round: number;
   state_changed_at: string;
+  /** The holder's last checkpointed step; null when none was reported. */
+  current_step: string | null;
+  /** Checklist steps settled (done or skipped), of `steps_total`. */
+  steps_done: number;
+  steps_total: number;
   /** An open `asked` action blocks it: the task reads "needs your answer". */
   needs_answer: boolean;
 }
