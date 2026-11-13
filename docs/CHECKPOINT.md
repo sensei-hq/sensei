@@ -17,13 +17,15 @@
   (`bench-r8`; sheet artifact 3869a0ea v10). Approved by the user on desktop and phone (2026-11-13).
 - #419 slice 1 nudge: red `544a62ef7`, green `88016e584` — `POST /relay/messages` takes `nudge`+`reason`
   (+`waiting_min`), `NUDGE_REASONS` held by the props check, history shows the nudge. Relay tests 386/386.
+- #419 slice 2 codenames: red `2cafda34b`, green `ebe37a476` — register mints `colour-star` (unique per crew),
+  served by register, now, task view `task.lane`/`lanes[]`; TS types gain it. Relay 392/392, app relay 846/846.
 
-**Remaining (in order):** #419 slices 2–8 (codename minting · now live lanes + presence · run draft/start/cancel ·
+**Remaining (in order):** #419 slices 3–8 (now live lanes + presence · run draft/start/cancel ·
 run list/detail · person crew close · item delete/patch + ticketed backlog · catalogue) → #426 run-journey e2e. Gaps outside
 #418: `task.waiting`; person-message read ladder. Lane is NOT merged to develop (user's call).
 
-**Next command:** #419 slice 2 — red test: register mints `suggested_name` when absent (colour-star, unique per
-crew) in `crates/senseid/src/api/handlers/relay.rs`. Installed: daemon = this lane; /Applications app = v0.21.1 (diagrams skew,
+**Next command:** #419 slice 3 — red test: `/relay/now` lists only live lanes (`unregistered_at is null`) of active
+crews, each with `presence: active|idle|not_responding` (`database/ddl/view/relay/now.ddl` + handler tests). Installed: daemon = this lane; /Applications app = v0.21.1 (diagrams skew,
 backlog item) — `make install-app` from this lane would match them.
 
 **Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
