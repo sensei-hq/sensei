@@ -30,11 +30,13 @@
 - #424: crew selectors, RunCard/MemberCard/AddMember benched (bench-r6) and composed (`fab34a809`); e2e 9/9. Daemon
   gaps: past runs, catalogue, heartbeat, host, run draft/start/cancel.
 
-**Remaining (in order):** → #425 Task (incl. #388,
-verify #380) → #426 e2e run. Daemon #418/#419 in parallel (row-carrying events; #421's apply is ready for them).
+- #425: `toTaskView`, TaskHeader/RunDetails/HandoffCard, HistoryEntry + TaskHistory benched (bench-r7) and composed;
+  #380 (task shell anchor), #381, #388 fixed; relay hooks no longer collide with rokkit; e2e 8/8.
 
-**Next command:** `gh issue view 425` (Task), render the mockup's Task view (`--state '{"view":"task","from":"now","load":"loaded"}'`),
-then TaskHeader/RunDetails/HandoffCard on the bench (fix [data-timeline]/[data-progress] hooks; #388 radius; verify #380 scroll).
+**Remaining (in order):** → #426 e2e run (blocked on daemon #418/#419: draft run, start, catalogue, step events). Daemon #418/#419 in parallel (row-carrying events; #421's apply is ready for them).
+
+**Next command:** daemon #418 (row-carrying events, step on checkpoint, lane current_step) and #419 (draft/start/cancel run,
+nudge, catalogue) — the UI is waiting on them; then #426's run journey e2e.
 
 **Open questions (user):** feedback on the bench sheet (r2). Retire `lane/relay-screen-conformance`? (its r2/r3
 commits live only there). Header height: with the info band open, the header bands push the body below the fold
