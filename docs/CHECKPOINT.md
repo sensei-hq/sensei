@@ -17,15 +17,20 @@
   RelayTaskState; both relay pages cut over (`f193776e4`), old state/crew-stream retired. Relay e2e 8/8 incl.
   live-stream no-refresh specs. View row selectors land with #422–#425.
 
-**Remaining (in order):** #422 Now (incl. #386 lanes table) → #423 Queue → #424 Crew → #425 Task (incl. #388,
+- #422 part 1: `toLaneGroups`/`toCompletedRows` (package) + SectionHeading, LaneList/LaneRow, CompletedList/CompletedRow
+  benched vs mockup (bench-r3) and composed into Now (`c67c235cf`); Pill hook `data-relay-pill` + paper tint fix.
+
+**Remaining (in order):** #422 rest (DecisionCard, WaitList/WaitRow + Nudge, triage line + Unassigned row,
+`toNeedsYou`/`toWaitRows`, stat filters drive lists) → #423 Queue → #424 Crew → #425 Task (incl. #388,
 verify #380) → #426 e2e run. Daemon #418/#419 in parallel (row-carrying events; #421's apply is ready for them).
 
-**Next command:** read #422 (`gh issue view 422`) and the mockup's Now view; build LaneRow/CompletedRow/WaitRow/
-SectionHeading + their selectors on the bench (gallery fixture + capture vs mockup) before integrating.
+**Next command:** render the mockup's Needs you (`node app/e2e/mockup/render.mjs … --state '{"view":"now","load":"loaded","pending":true}' --shot --crop 'section[aria-label="Needs you"]'`),
+then red spec for `toWaitRows`/`toNeedsYou` and DecisionCard/WaitRow on the bench.
 
 **Open questions (user):** feedback on the bench sheet (r2). Retire `lane/relay-screen-conformance`? (its r2/r3
 commits live only there). Header height: with the info band open, the header bands push the body below the fold
 (phone ~1100px; a desktop window shows only "Needs you"); "Completed today" truncates in the stat card.
 
-**Known broken:** none on the lane. A whole-suite e2e run must use explicit spec paths: a bare `relay` filter ran
+**Known broken:** none on the lane. Bare hooks rokkit's theme also styles: [data-field] [data-select]
+[data-progress] [data-timeline] (CreateSprintForm, QueueRow, SprintBand, RelayTimeline) — fix with #423–#425. A whole-suite e2e run must use explicit spec paths: a bare `relay` filter ran
 everything.
