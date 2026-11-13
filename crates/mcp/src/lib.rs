@@ -1124,7 +1124,7 @@ pub fn handle_list_tools() -> Value {
                 ("task", "string", "Optional task description; a sensitive/destructive task escalates an otherwise-low change."),
             ]),
             tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization — the dōjō — / workspace / repository, where detected stacks' packs apply) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey. The response carries a `dojo_rules` marker (`not_bound` | `ok` with a count | `unavailable` with a reason) plus `rules_incomplete`, so a failed Dōjō pull reads as unavailable, never as no remote rules.", &[], &[]),
-            tool("get_ticket", "Fetch a tracker ticket by its key and start work on it: the ticket as the tracker has it now, with the repository's rules. Call this first when the user hands you a ticket.", &[
+            tool("get_ticket", "Fetch a tracker ticket by its key and start work on it: the ticket as the tracker has it now, with the repository's rules and `sdd_framework`, the third-party spec-driven framework (openspec, spec_kit, kiro, bmad) first detected in the ticket's sessions, or null when none is. Call this first when the user hands you a ticket.", &[
                     ("key", "string", "The ticket's key, e.g. AUTH-420."),
                 ], &[
                     ("session_id", "string", "Your session id, so the start of work is recorded against it."),
@@ -2583,6 +2583,7 @@ mod tests {
         assert!(t["inputSchema"]["properties"]["session_id"].is_object());
         let d = t["description"].as_str().unwrap();
         assert!(d.contains("start work"), "{d}");
+        assert!(d.contains("sdd_framework"), "the pinned framework is advertised: {d}");
         // Targets reach the ticket with TG2–TG4; until then it promises none.
         assert!(!d.to_lowercase().contains("target"), "{d}");
     }

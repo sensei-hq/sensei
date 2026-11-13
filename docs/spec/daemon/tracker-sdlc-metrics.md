@@ -172,6 +172,7 @@ incremental pass). It never fails the pass.
 | `catalogue_hash` text not null | S3 catalogue hash at derivation |
 | `error` text | NULL when derived. Otherwise why derivation failed, and the session's signals are absent |
 | `derived_at` timestamptz not null default now() | |
+| `derive_version` integer not null default 0 | the derivation code version (`sdlc::signals::DERIVE_VERSION`) that wrote the mark, on success and failure; 0 = written before versions existed |
 
 `activity.session_signals`: PK `(session_id, seq)`.
 
@@ -211,6 +212,8 @@ projects only what derivation reads:
 - the output text `stdout + stderr` (or `error` for a `PostToolUseFailure`), capped at its
   **last 64 KiB**, where result lines are
 - `agent_id`, `notification_type`, `is_interrupt`
+- `prompt` (a `UserPromptSubmit`'s `payload.prompt`) and `skill` (a `Skill` call's `tool_input.skill`), for
+  SDD-framework detection (below)
 
 The existing `get_hook_events_for_session_with_id` (whole payloads, `ts` order only) is not
 used.
@@ -222,7 +225,7 @@ are cut at the fixed base.
 | signal | rule |
 |---|---|
 | `prompt` | each `UserPromptSubmit` |
-| `code_edit` | each `PostToolUse` of `Edit`, `MultiEdit` or `Write` (path `tool_input.file_path`) or `NotebookEdit` (path `tool_input.notebook_path`) whose path is **code**: its extension is not a documentation type (`md`, `mdx`, `rst`, `adoc`, `txt`), and no path segment is `openspec`, `.sensei` or `.claude`. A route under `docs/` or an RSpec file under `spec/` is code (A4) |
+| `code_edit` | each `PostToolUse` of `Edit`, `MultiEdit` or `Write` (path `tool_input.file_path`) or `NotebookEdit` (path `tool_input.notebook_path`) whose path is **code**: its extension is not a documentation type (`md`, `mdx`, `rst`, `adoc`, `txt`), no path segment is an agent folder (`.sensei`, `.claude`, `.kiro`), and it is not under an SDD framework's folder (`sdlc::framework::SIGNATURES` `paths`: `openspec/`, `.specify/`, `.kiro/specs/`, `_bmad/`, `_bmad-output/`, `.bmad-core/`, at a segment boundary; #392, `DERIVE_VERSION` 2). A route under `docs/` or an RSpec file under `spec/` is code (A4) |
 | run signals | each Bash `PostToolUse`/`PostToolUseFailure`, classified by S3 (`classify(command, output, exit, catalogue, folder_commands)`) into `{category}_ok`, `{category}_fail`, `run_unknown` or `unclassified_fail`. `build`/`typecheck` → `build_*`; `test`/`e2e` → `test_*` |
 | `unmatched_call` | a Bash `PreToolUse` whose `tool_use_id` has no `PostToolUse`/`PostToolUseFailure` in the session. `category` is set from S3's `run_categories(command, …)` (the same tokenizer and recognition, no outcome) when it names a run. A plugin without `PostToolUseFailure` (C1) loses failures exactly this way, so a lost failure is **counted**, never read as 0 |
 | `pr_created` | a successful Bash whose command contains `gh pr create` or `glab mr create` |
@@ -254,10 +257,13 @@ and `database/import/staging/schedules.jsonl`, and spawned in `api/server.rs` li
    where:
    - there is no mark; or
    - the events' `max(id)` ≠ `through_event_id` or `count(*)` ≠ `event_count`; or
-   - `catalogue_hash` ≠ the current hash.
+   - `catalogue_hash` ≠ the current hash; or
+   - `derive_version` ≠ `DERIVE_VERSION` (a code change that must reach sessions already
+     derived; blueprint 2026-11-10-ticket-sdd-framework B9).
 
-   A mark with an `error` is selected again only when one of these inputs changed. A
-   failed session is not retried until then.
+   Sessions stale **only** by `derive_version` come after every other candidate, so a
+   backfill never delays new sessions. A mark with an `error` is selected again only when
+   one of these inputs changed. A failed session is not retried until then.
 3. Per session, in one transaction: read its events, derive, delete its signals, insert the
    new ones, and upsert the mark with the `max(id)` and `count` **actually read**. A
    derivation error or an out-of-range `ts` is deterministic: the session's mark is
@@ -267,6 +273,16 @@ and `database/import/staging/schedules.jsonl`, and spawned in `api/server.rs` li
    signals are removed and the pass **continues** with the next session. A pass in which
    any session failed reports a failed run to the schedule (`N of M session(s)
    failed`). A failed session's figures read as `derivation_failed` (A9, S6): a failure on unchanged inputs is not a lag.
+4. **SDD framework.** In the same transaction, the session's `activity.sessions.sdd_framework` and
+   `sdd_framework_source` are written (`sdlc::framework`; rules in
+   `docs/blueprints/2026-11-10-ticket-sdd-framework.md`). When the session's events name no framework, its
+   repository's marker directories are probed on disk, once per repository per pass, off the runtime, under a
+   5 s timeout. A probe error or timeout is stored as `probe_failed` and does **not** fail the session: its
+   signals are kept. A session deleted mid-pass is skipped, not failed.
+5. **Ticket pin.** After the session's transaction commits, its tickets (linked to it, or pinned from it) are
+   pinned in a separate short transaction (`lock_timeout` 5 s): `pin_ticket_frameworks`, blueprint B13–B18.
+   A pin failure (e.g. a tracker apply holding the ticket) is logged, is **not** a session failure, and leaves
+   the session's signals in place; the next tracker apply, which pins its whole tracker, heals it (B15).
 
 ### S3 · Build/test classifier (D8)
 
@@ -573,7 +589,9 @@ means these merged slices.
 
 **Derivation must be current.** Every session in `S` needs a mark with no `error`, whose
 `through_event_id` and `event_count` equal its events' `max(id)` and `count(*)`, and whose
-catalogue hash is current. Otherwise every
+catalogue hash is current. The mark's `derive_version` does not enter it: an older version
+re-selects the session for the pass (S2), but its signals still reflect these events and keep
+counting until it is derived again. Otherwise every
 signal-based figure (everything below except `ai_token_cost`, `estimated_points` and
 `expected_minutes`) is null with reason `not_derived`. A not-yet-derived session never reads
 as zeros.

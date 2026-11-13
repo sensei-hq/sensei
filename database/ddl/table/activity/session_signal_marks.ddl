@@ -9,10 +9,11 @@ create table if not exists session_signal_marks (
 , catalogue_hash    text         not null
 , error             text
 , derived_at        timestamptz  not null default now()
+, derive_version    integer      not null default 0
 );
 
 comment on table session_signal_marks is
-'Derivation watermark per session (spec tracker-sdlc-metrics S2). A session is derived again when its events'' max(id) or count, or the catalogue hash, differ from the mark.';
+'Derivation watermark per session (spec tracker-sdlc-metrics S2). A session is derived again when its events'' max(id) or count, the catalogue hash, or the derivation version differ from the mark.';
 
 comment on column session_signal_marks.session_id
      is 'The session.';
@@ -26,3 +27,5 @@ comment on column session_signal_marks.error
      is 'NULL when derived. Otherwise why derivation failed; the session then has no signals and is not retried until its inputs change.';
 comment on column session_signal_marks.derived_at
      is 'When the mark was written.';
+comment on column session_signal_marks.derive_version
+     is 'The derivation code version (sdlc::signals::DERIVE_VERSION) that wrote the mark, success or failure. A mark below the current version is derived again, after every session stale by its events or catalogue. 0 = written before versions existed.';
