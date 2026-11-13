@@ -24,10 +24,43 @@ import * as F from '$lib/test-stubs/relay-fixtures.js';
 const PAGE = './+page.svelte';
 const LOADER = './+page.js';
 
-const relay = vi.hoisted(() => ({ api: null as unknown }));
-vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api) }));
-// The socket is the route's, pinned in relay-crew-stream.spec — not here.
-vi.mock('$lib/relay/relay-crew-stream.js', () => ({ subscribeCrewStream: vi.fn(() => () => {}) }));
+// The relay socket is a stream the spec drives: opened, and fired, by hand (#421).
+const relay = vi.hoisted(() => {
+  type Stream = {
+    onopen: (() => void) | null;
+    handler: ((e: unknown) => void) | null;
+    destroyed: boolean;
+    subscribe(h: (e: unknown) => void): () => void;
+    destroy(): void;
+    open(): void;
+    fire(e: unknown): void;
+  };
+  const streams: Stream[] = [];
+  const stream = (): Stream => {
+    const s: Stream = {
+      onopen: null,
+      handler: null,
+      destroyed: false,
+      subscribe(h) {
+        s.handler = h;
+        return () => (s.handler = null);
+      },
+      destroy() {
+        s.destroyed = true;
+      },
+      open() {
+        s.onopen?.();
+      },
+      fire(e) {
+        s.handler?.(e);
+      },
+    };
+    streams.push(s);
+    return s;
+  };
+  return { api: null as unknown, streams, stream };
+});
+vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api), relayStream: vi.fn(() => relay.stream()) }));
 
 const route = vi.hoisted(() => ({ id: 'w1' }));
 vi.mock('$app/state', () => ({
@@ -62,6 +95,7 @@ let cleanup: Array<() => void> = [];
 afterEach(() => {
   cleanup.forEach((fn) => fn());
   cleanup = [];
+  relay.streams.length = 0;
   vi.unstubAllGlobals();
   vi.mocked(ScreenShell).mockClear();
   glyphs.mode = 'kanji';
@@ -165,6 +199,48 @@ describe('Relay — the loader’s read', () => {
 
 // ─── Now · Needs you ────────────────────────────────────────────────────────
 
+// #421: the page builds the relay state over the daemon's source and connects it; the
+// socket's events apply to the state, so a row that arrives redraws that row alone.
+describe('Relay — the live stream (#421)', () => {
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  it('the page connects one socket; its first open reads Now and the queue (nothing before it is missed)', async () => {
+    const { api } = await open();
+    expect(relay.streams).toHaveLength(1);
+    api.tryGetNow.mockClear();
+    api.tryGetQueue.mockClear();
+    relay.streams[0].open();
+    await settle();
+    expect(api.tryGetNow).toHaveBeenCalledWith({ workspace_id: 'w1' });
+    expect(api.tryGetQueue).toHaveBeenCalledWith({ workspace_id: 'w1' });
+  });
+
+  it('a lane row that arrives changes that lane on the screen, with no read', async () => {
+    const { c, api } = await open();
+    const lane = F.now().lanes[1];
+    const reads = api.tryGetNow.mock.calls.length;
+    relay.streams[0].fire({ action: 'update', entity: 'lane', data: { id: lane.id, title: 'Streamed objective' } });
+    await tick();
+    expect(text(need(one(c, `[data-lane-row="${lane.code}"]`), 'the lane row'))).toContain('Streamed objective');
+    expect(api.tryGetNow.mock.calls.length).toBe(reads);
+  });
+
+  it('an event that names ids only (today’s daemon) reads Now again', async () => {
+    const { api } = await open();
+    const reads = api.tryGetNow.mock.calls.length;
+    relay.streams[0].fire({ action: 'update', entity: 'task', data: { task_id: 't-structure' } });
+    await settle();
+    expect(api.tryGetNow.mock.calls.length).toBe(reads + 1);
+  });
+
+  it('leaving the screen closes the socket', async () => {
+    await open();
+    cleanup.forEach((fn) => fn());
+    cleanup = [];
+    expect(relay.streams[0].destroyed).toBe(true);
+  });
+});
+
 describe('Relay · Now — Needs you', () => {
   it('is absent when nothing needs the person', async () => {
     // r2 L6: the default crew has triage (as the default queue does), so this one has none.
@@ -254,25 +330,29 @@ describe('Relay · Now — Needs you', () => {
     expect(isActive(tab(c, 'Queue'))).toBe(true);
   });
 
-  it('Answer sends the option the person picked, and the decision leaves Needs you', async () => {
+  it('Answer sends the option the person picked; the event it causes takes the decision out of Needs you', async () => {
     const { c, api } = await open({ now: F.ok(F.now({ decisions: [F.decision()] })) });
     api.tryGetNow.mockResolvedValue(F.ok(F.now({ decisions: [] })));
+    const reads = api.tryGetNow.mock.calls.length;
 
     const row = need(one(c, '[data-decision]'), '[data-decision]');
     need(one(row, '[data-option="file"]'), '[data-option="file"]').click();
     await tick();
     need(one(row, '[data-decision-answer]'), '[data-decision-answer]').click();
 
-    await vi.waitFor(() => expect(one(c, '[data-decision]')).toBeNull());
-    expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1));
     expect(api.tryAnswerDecision).toHaveBeenCalledWith({
       decision_id: 'ask-1',
       option: 'file',
       note: null,
       surface: 'desktop',
     });
-    // The answer is the daemon's to record; the screen re-reads rather than guessing.
-    expect(api.tryGetNow).toHaveBeenCalledTimes(2);
+    // The answer is the daemon's to record: the screen does not remove the row itself,
+    // nor read again on its own — the event the answer causes does (#421).
+    expect(api.tryGetNow.mock.calls.length).toBe(reads);
+    expect(one(c, '[data-decision]')).not.toBeNull();
+    relay.streams[0].fire({ action: 'update', entity: 'task', data: { op: 'answer', task_id: 't-structure' } });
+    await vi.waitFor(() => expect(one(c, '[data-decision]')).toBeNull());
   });
 
   it('a refused answer says why, keeps the decision, and can be sent again', async () => {

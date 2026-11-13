@@ -17,10 +17,43 @@ import * as F from '$lib/test-stubs/relay-fixtures.js';
 const PAGE = './+page.svelte';
 const LOADER = './+page.js';
 
-const relay = vi.hoisted(() => ({ api: null as unknown }));
-vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api) }));
-// The socket is the route's, pinned in relay-crew-stream.spec — not here.
-vi.mock('$lib/relay/relay-crew-stream.js', () => ({ subscribeCrewStream: vi.fn(() => () => {}) }));
+// The relay socket is a stream the spec drives: opened, and fired, by hand (#421).
+const relay = vi.hoisted(() => {
+  type Stream = {
+    onopen: (() => void) | null;
+    handler: ((e: unknown) => void) | null;
+    destroyed: boolean;
+    subscribe(h: (e: unknown) => void): () => void;
+    destroy(): void;
+    open(): void;
+    fire(e: unknown): void;
+  };
+  const streams: Stream[] = [];
+  const stream = (): Stream => {
+    const s: Stream = {
+      onopen: null,
+      handler: null,
+      destroyed: false,
+      subscribe(h) {
+        s.handler = h;
+        return () => (s.handler = null);
+      },
+      destroy() {
+        s.destroyed = true;
+      },
+      open() {
+        s.onopen?.();
+      },
+      fire(e) {
+        s.handler?.(e);
+      },
+    };
+    streams.push(s);
+    return s;
+  };
+  return { api: null as unknown, streams, stream };
+});
+vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api), relayStream: vi.fn(() => relay.stream()) }));
 
 const route = vi.hoisted(() => ({ search: '' }));
 vi.mock('$app/state', () => ({
@@ -45,6 +78,7 @@ let cleanup: Array<() => void> = [];
 afterEach(() => {
   cleanup.forEach((fn) => fn());
   cleanup = [];
+  relay.streams.length = 0;
   vi.unstubAllGlobals();
   vi.mocked(ScreenShell).mockClear();
   vi.mocked(goto).mockClear();

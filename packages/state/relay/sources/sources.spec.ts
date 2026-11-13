@@ -1,6 +1,7 @@
 // The relay sources (#421; design 2026-11-12 §2b, §4): the daemon's SSE on the
 // desktop, and the seam the dōjō's Supabase realtime fills. Each is a RelaySource:
-// reads, writes and a stream whose reconnects (not its first open) re-read.
+// reads, writes, and a stream that reports every open — the state reads on each, so
+// nothing between the loader's read and the socket opening is missed.
 import { describe, it, expect, vi } from 'vitest';
 import type { RelayApi } from '../client.js';
 import type { RelayStreamEvent } from '../types.js';
@@ -62,19 +63,19 @@ describe('relaySseSource — the daemon', () => {
     expect(api.tryAddToBacklog).toHaveBeenCalledWith({ item_id: 'x' });
   });
 
-  it('passes every event on; the first open is the connect, each later open a reconnect; teardown closes it', () => {
+  it('passes every event on, reports every open (the first included), and the teardown closes it', () => {
     const stream = fakeStream();
     const source = relaySseSource(fakeApi(), () => stream);
     const on = vi.fn();
-    const reconnect = vi.fn();
-    const stop = source.events(on, reconnect);
+    const opened = vi.fn();
+    const stop = source.events(on, opened);
+    expect(opened).not.toHaveBeenCalled();
     stream.open();
-    expect(reconnect).not.toHaveBeenCalled();
+    expect(opened).toHaveBeenCalledTimes(1);
     stream.fire(lane());
     expect(on).toHaveBeenCalledWith(lane());
     stream.open();
-    stream.open();
-    expect(reconnect).toHaveBeenCalledTimes(2);
+    expect(opened).toHaveBeenCalledTimes(2);
     stop();
     expect(stream.destroyed).toBe(true);
     stream.fire(lane());
@@ -83,19 +84,20 @@ describe('relaySseSource — the daemon', () => {
 });
 
 describe('relayRealtimeSource — the dōjō seam', () => {
-  it('reads and writes through the transport, and maps its channel status: a re-subscribe is a reconnect', () => {
+  it('maps the channel status: each SUBSCRIBED (the first, and after a drop) is an open', () => {
     const t = cannedRealtime({ now: F.now(), queue: F.queue() });
     const source = relayRealtimeSource(t);
     const on = vi.fn();
-    const reconnect = vi.fn();
-    const stop = source.events(on, reconnect);
+    const opened = vi.fn();
+    const stop = source.events(on, opened);
     t.status('SUBSCRIBED');
-    expect(reconnect).not.toHaveBeenCalled();
+    expect(opened).toHaveBeenCalledTimes(1);
     t.emit(lane());
     expect(on).toHaveBeenCalledWith(lane());
     t.status('CHANNEL_ERROR');
+    expect(opened).toHaveBeenCalledTimes(1);
     t.status('SUBSCRIBED');
-    expect(reconnect).toHaveBeenCalledTimes(1);
+    expect(opened).toHaveBeenCalledTimes(2);
     stop();
     t.emit(lane());
     expect(on).toHaveBeenCalledTimes(1);

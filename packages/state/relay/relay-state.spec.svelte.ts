@@ -11,7 +11,7 @@ import * as F from './fixtures.js';
 /** A source whose reads and writes are spies, and whose stream the test drives. */
 function fakeSource(over: Partial<Record<keyof RelaySource, unknown>> = {}) {
   let on: ((e: RelayStreamEvent) => void) | null = null;
-  let reconnect: (() => void) | null = null;
+  let opened: (() => void) | null = null;
   const teardown = vi.fn();
   const source = {
     readNow: vi.fn(async (): Promise<ApiResult<RelayNow>> => F.ok(F.now())),
@@ -23,9 +23,9 @@ function fakeSource(over: Partial<Record<keyof RelaySource, unknown>> = {}) {
       async (): Promise<ApiResult<RelayCreatedRun>> =>
         F.ok({ run_id: F.RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' }),
     ),
-    events: vi.fn((handler: (e: RelayStreamEvent) => void, onReconnect: () => void) => {
+    events: vi.fn((handler: (e: RelayStreamEvent) => void, onOpen: () => void) => {
       on = handler;
-      reconnect = onReconnect;
+      opened = onOpen;
       return teardown;
     }),
     ...over,
@@ -33,7 +33,7 @@ function fakeSource(over: Partial<Record<keyof RelaySource, unknown>> = {}) {
   return {
     source: source as unknown as RelaySource & typeof source,
     emit: (e: RelayStreamEvent) => on?.(e),
-    reconnect: () => reconnect?.(),
+    open: () => opened?.(),
     teardown,
   };
 }
@@ -185,22 +185,25 @@ describe('RelayState · apply: an event that names ids only (today’s daemon, u
 });
 
 describe('RelayState · connect: the stream is the source’s, the state applies it', () => {
-  it('subscribes once, applies what arrives, re-reads both on a reconnect, and tears down', async () => {
+  it('subscribes once; each open of the stream (the first too) reads Now and the queue; events apply; teardown', async () => {
     const f = fakeSource();
     const s = new RelayState(f.source, { workspace_id: 'w1' }, reads());
     const stop = s.connect();
     expect(f.source.events).toHaveBeenCalledTimes(1);
-    // The read the loader made predates the socket: one read covers the gap.
+    // Nothing is read until the socket is open: the read then covers everything before it.
+    await settle();
+    expect(f.source.readNow).not.toHaveBeenCalled();
+    f.open();
     await settle();
     expect(f.source.readNow).toHaveBeenCalledWith({ workspace_id: 'w1' });
-    f.source.readNow.mockClear();
+    expect(f.source.readQueue).toHaveBeenCalledWith({ workspace_id: 'w1' });
     const lane = s.lanes.items[0];
     f.emit({ action: 'update', entity: 'lane', data: { id: lane.id, title: 'Live' } } as never);
     expect(s.lanes.get(lane.id)?.title).toBe('Live');
-    f.reconnect();
+    f.open();
     await settle();
-    expect(f.source.readNow).toHaveBeenCalledTimes(1);
-    expect(f.source.readQueue).toHaveBeenCalledTimes(1);
+    expect(f.source.readNow).toHaveBeenCalledTimes(2);
+    expect(f.source.readQueue).toHaveBeenCalledTimes(2);
     stop();
     expect(f.teardown).toHaveBeenCalledTimes(1);
   });
