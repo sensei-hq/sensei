@@ -308,8 +308,10 @@ test.describe('Relay — every state keeps the shell whole', () => {
     const reviewer = await contributor();
     const worker = await contributor();
     await completeOneTask(coord, holder, reviewer, 'Relay conformance · finished today');
-    // A lane on a task, and a decision that needs the person (§1c-1, §1c-2).
+    // A lane on a task, and a decision that needs the person (§1c-1, §1c-2): that lane
+    // is Blocked (its task waits on the person), so another lane works a task of its own.
     const working = await startTask(coord, worker, reviewer, 'Relay conformance · on a lane now');
+    await startTask(coord, holder, reviewer, 'Relay conformance · working');
     await relayCall('POST', '/api/relay/decisions', coord.lane_token, {
       lane_id: coord.lane_id,
       task_id: working,
@@ -346,8 +348,8 @@ test.describe('Relay — every state keeps the shell whole', () => {
       // §1c-0: the four cards, counted from the read.
       expect(d.stats?.map((s) => s.id), `${name}: the stats band`).toEqual(['working', 'waiting', 'blocked', 'done']);
       const value = (id: string) => Number((d.stats!.find((s) => s.id === id)!.text.match(/\d+/) ?? ['NaN'])[0]);
-      expect(value('working'), `${name}: the lane on a task`).toBeGreaterThanOrEqual(1);
-      expect(value('blocked'), `${name}: the decision`).toBeGreaterThanOrEqual(1);
+      expect(value('working'), `${name}: the lane on a task of its own`).toBeGreaterThanOrEqual(1);
+      expect(value('blocked'), `${name}: the decision, and its lane`).toBeGreaterThanOrEqual(1);
       expect(value('done'), `${name}: the finished task`).toBeGreaterThanOrEqual(1);
       // #384: the main window narrows through a rokkit schema form; the workspace window has none.
       if (main) {
