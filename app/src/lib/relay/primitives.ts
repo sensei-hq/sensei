@@ -20,12 +20,13 @@ export const PILL_TONES: PillTone[] = ['accent', 'warning', 'danger', 'success',
 const PILL_BASE =
   'inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink';
 
-/** 11px, 1/8 padding, full radius, nowrap; fill `bg-{tone}-soft`, border at 35%. */
+/** 11px, 1/8 padding, full radius, nowrap; fill the tone at 16% over the paper (the mockup's
+ *  tint, which darkens with the page — the -soft tokens stay light in dark mode), border at 35%. */
 const PILL_TONE: Record<PillTone, string> = {
-  accent: 'bg-accent-soft border-[color-mix(in_oklch,var(--accent)_35%,var(--paper))]',
-  warning: 'bg-warning-soft border-[color-mix(in_oklch,var(--warning)_35%,var(--paper))]',
-  danger: 'bg-danger-soft border-[color-mix(in_oklch,var(--danger)_35%,var(--paper))]',
-  success: 'bg-success-soft border-[color-mix(in_oklch,var(--success)_35%,var(--paper))]',
+  accent: 'bg-[color-mix(in_oklch,var(--accent)_16%,var(--paper))] border-[color-mix(in_oklch,var(--accent)_35%,var(--paper))]',
+  warning: 'bg-[color-mix(in_oklch,var(--warning)_16%,var(--paper))] border-[color-mix(in_oklch,var(--warning)_35%,var(--paper))]',
+  danger: 'bg-[color-mix(in_oklch,var(--danger)_16%,var(--paper))] border-[color-mix(in_oklch,var(--danger)_35%,var(--paper))]',
+  success: 'bg-[color-mix(in_oklch,var(--success)_16%,var(--paper))] border-[color-mix(in_oklch,var(--success)_35%,var(--paper))]',
   // The app has no `neutral` colour token; the mute surface is the neutral tone.
   neutral: 'bg-paper-mute border-paper-edge',
 };

@@ -34,6 +34,9 @@
   >{row.when.text}</span>
   {#if row.href}
     <span data-part="chevron" aria-hidden="true" class="hidden md:inline text-ink-mute">›</span>
+  {:else}
+    <!-- No link, no chevron — but its room, so the pill and time stay in the column. -->
+    <span data-chevron-space aria-hidden="true" class="hidden md:inline invisible">›</span>
   {/if}
 {/snippet}
 

@@ -1,9 +1,9 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`Pill > pins every tone 1`] = `
-"<span data-relay-pill="" data-tone="accent" class="inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink bg-accent-soft border-[color-mix(in_oklch,var(--accent)_35%,var(--paper))]">tone accent</span>
-<span data-relay-pill="" data-tone="warning" class="inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink bg-warning-soft border-[color-mix(in_oklch,var(--warning)_35%,var(--paper))]">tone warning</span>
-<span data-relay-pill="" data-tone="danger" class="inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink bg-danger-soft border-[color-mix(in_oklch,var(--danger)_35%,var(--paper))]">tone danger</span>
-<span data-relay-pill="" data-tone="success" class="inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink bg-success-soft border-[color-mix(in_oklch,var(--success)_35%,var(--paper))]">tone success</span>
+"<span data-relay-pill="" data-tone="accent" class="inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink bg-[color-mix(in_oklch,var(--accent)_16%,var(--paper))] border-[color-mix(in_oklch,var(--accent)_35%,var(--paper))]">tone accent</span>
+<span data-relay-pill="" data-tone="warning" class="inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink bg-[color-mix(in_oklch,var(--warning)_16%,var(--paper))] border-[color-mix(in_oklch,var(--warning)_35%,var(--paper))]">tone warning</span>
+<span data-relay-pill="" data-tone="danger" class="inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink bg-[color-mix(in_oklch,var(--danger)_16%,var(--paper))] border-[color-mix(in_oklch,var(--danger)_35%,var(--paper))]">tone danger</span>
+<span data-relay-pill="" data-tone="success" class="inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink bg-[color-mix(in_oklch,var(--success)_16%,var(--paper))] border-[color-mix(in_oklch,var(--success)_35%,var(--paper))]">tone success</span>
 <span data-relay-pill="" data-tone="neutral" class="inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink bg-paper-mute border-paper-edge">tone neutral</span>"
 `;
