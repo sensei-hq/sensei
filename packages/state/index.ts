@@ -84,3 +84,10 @@ export {
   type RelayPresence,
   type RelayRunCardView,
 } from './relay/crew-selectors.js';
+export {
+  toTaskView,
+  type RelayHandoffView,
+  type RelayRunDetailsView,
+  type RelayTaskHeaderView,
+  type RelayTaskPartsView,
+} from './relay/task-selectors.js';
