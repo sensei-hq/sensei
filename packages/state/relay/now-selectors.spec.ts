@@ -2,7 +2,7 @@
 // read to the rows LaneList and CompletedList draw. Pure: the read and a clock in, row
 // data out. A number or name the daemon did not give is not invented (D83).
 import { describe, it, expect } from 'vitest';
-import { toCompletedRows, toLaneGroups, assistantLabel, type NowRowOptions } from './now-selectors.js';
+import { toCompletedRows, toLaneGroups, toNeedsYou, toWaitRows, assistantLabel, type NowRowOptions } from './now-selectors.js';
 import { hhmm } from './format.js';
 import * as F from './fixtures.js';
 
@@ -158,5 +158,91 @@ describe('toCompletedRows · Completed today (CONTRACT §1c-3)', () => {
 
   it('no read, no rows', () => {
     expect(toCompletedRows(null, opts())).toEqual([]);
+  });
+});
+
+// ─── Waiting and Needs you (CONTRACT §1c-0 Waiting's filter, §1c-1, §3f-bis) ──────────
+
+describe('toWaitRows · who waits, on whom, oldest first', () => {
+  const task = F.lane().task!;
+  const waits = () =>
+    F.now({
+      lanes: [
+        F.coordinatorLane({ task: null }),
+        F.lane({ id: 'l4', code: 'L4', title: 'ER diagrams', suggested_name: 'iris-deneb', task: { ...task, id: 't-er', title: 'ER sidebar on the shell', phase: 'impl', state: 'approved', state_changed_at: F.minutesAgo(52) } }),
+        F.lane({ id: 'l5', code: 'L5', title: 'Docs pages', suggested_name: 'coral-spica', task: { ...task, id: 't-libs', title: 'Libraries page', phase: 'docs', round: 4, state: 'rework', state_changed_at: F.minutesAgo(41) } }),
+        F.lane({ id: 'l1', code: 'L1', title: 'Diagrams', task: { ...task, state: 'in_review', state_changed_at: F.minutesAgo(26) } }),
+        F.lane({ id: 'l6', code: 'L6', title: 'Sync hardening', task: null }),
+        F.lane({ id: 'l2', code: 'L2', title: 'Billing', task: { ...task, id: 't-b', state: 'working' } }),
+      ],
+      floating_reviews: [F.floatingReview({ task_id: 't-structure' })],
+    });
+
+  it('a merge pending, a verdict unread, a report with no reviewer, an idle contributor — oldest first, the idle last', () => {
+    const rows = toWaitRows(waits(), opts());
+    // The coordinator idle is not waiting on itself: only an idle contributor waits for work.
+    expect(rows.map((r) => r.id)).toEqual(['t-er', 't-libs', 't-structure', 'l6']);
+    expect(rows[0]).toEqual({
+      id: 't-er',
+      minutes: 52,
+      minutesText: '52 min',
+      over: true,
+      task: 'ER sidebar on the shell (impl r1)',
+      why: 'ER diagrams · approved, not merged · waiting on the coordinator',
+      href: `/relay/${F.CREW_ID}/t-er`,
+      nudge: { label: 'Nudge the coordinator', canNudge: false },
+    });
+    expect(rows[1].why).toBe('Docs pages · verdict filed, not picked up · waiting on Docs pages (coral-spica)');
+    expect(rows[1].nudge.label).toBe('Nudge coral-spica');
+    expect(rows[2].why).toBe('Diagrams · report has no reviewer · waiting on the coordinator');
+  });
+
+  it('an idle lane waits on the coordinator with no time: the daemon reports no idle-since (D83)', () => {
+    const idle = toWaitRows(waits(), opts()).find((r) => r.id === 'l6')!;
+    expect(idle).toMatchObject({ minutes: null, minutesText: '', over: false, task: 'Nothing assigned', href: null });
+    expect(idle.why).toBe('Sync hardening · lane idle, nothing assigned · waiting on the coordinator');
+  });
+
+  it('nobody can nudge from the screen until the daemon takes a person’s nudge (#419)', () => {
+    expect(toWaitRows(waits(), opts()).every((r) => r.nudge.canNudge === false)).toBe(true);
+  });
+
+  it('a working lane does not wait; no read, no rows', () => {
+    expect(toWaitRows(waits(), opts()).some((r) => r.id === 't-b')).toBe(false);
+    expect(toWaitRows(null, opts())).toEqual([]);
+  });
+});
+
+describe('toNeedsYou · decisions, the long waits, triage, the unassigned', () => {
+  it('the decisions; the waits at or past the threshold, oldest first, with the count in words', () => {
+    const now = F.now({
+      decisions: [F.decision()],
+      lanes: [F.lane({ task: { ...F.lane().task!, state: 'approved', state_changed_at: F.minutesAgo(52) } }), F.lane({ id: 'l9', code: 'L9', task: { ...F.lane().task!, id: 't9', state: 'approved', state_changed_at: F.minutesAgo(5) } })],
+      triage: [],
+    });
+    const n = toNeedsYou(now, F.queue({ triage: [] }), opts());
+    expect(n?.decisions.map((d) => d.id)).toEqual([now.decisions[0].id]);
+    expect(n?.stale?.title).toBe('1 task has waited 15 min or more — oldest first');
+    expect(n?.stale?.rows.map((r) => r.id)).toEqual(['t-structure']);
+    expect(n?.triage).toBeNull();
+    expect(n?.count).toBe(2);
+  });
+
+  it('triage counts the queue’s triage items, by where they came from, and opens the Queue (the #379 brief)', () => {
+    const n = toNeedsYou(F.now({ triage: [] }), F.queue(), opts());
+    expect(n?.triage).toEqual({ count: 2, from: 'From Jira sprint 47 and an open item' });
+    expect(n?.count).toBe(1);
+  });
+
+  it('tasks no lane has taken are their own read-only row, apart from triage', () => {
+    const now = F.now({ triage: [{ provider: 'github', sprint: 'milestone 11', count: 3 }, { provider: 'manual', sprint: null, count: 1 }] });
+    const n = toNeedsYou(now, F.queue({ triage: [] }), opts());
+    expect(n?.unassigned).toEqual({ count: 4, from: 'From GitHub milestone 11 and an open item' });
+    expect(n?.triage).toBeNull();
+  });
+
+  it('nothing to do is no section (null); no read is null too', () => {
+    expect(toNeedsYou(F.now({ triage: [], decisions: [] }), F.queue({ triage: [] }), opts())).toBeNull();
+    expect(toNeedsYou(null, null, opts())).toBeNull();
   });
 });
