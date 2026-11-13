@@ -334,3 +334,12 @@ describe('RelayState · an open item the person adds to triage (#423)', () => {
     expect(source.readQueue).not.toHaveBeenCalled();
   });
 });
+
+describe('RelayState · the role AddMember shows (#424)', () => {
+  it('starts with the coordinator, and keeps what the person picked', () => {
+    const s = new RelayState(fakeSource().source, {}, reads());
+    expect(s.addRole).toBe('coordinator');
+    s.addRole = 'contributor';
+    expect(s.addRole).toBe('contributor');
+  });
+});

@@ -15,7 +15,17 @@
   import { failureReason } from '$lib/api.js';
   import { useGlyphMode } from '$lib/glyphs';
   import type { RelayState } from '@sensei/state';
-  import { toCompletedRows, toLaneGroups, toNeedsYou, toQueueRows, toWaitRows, type NowRowOptions } from '@sensei/state';
+  import {
+    toAddMember,
+    toCompletedRows,
+    toLaneGroups,
+    toMemberGroups,
+    toNeedsYou,
+    toQueueRows,
+    toRunCard,
+    toWaitRows,
+    type NowRowOptions,
+  } from '@sensei/state';
   import { WAIT_THRESHOLD_MIN, toRelayShell, type RelayNarrowKey } from './relay-shell.js';
   import { toShellInput } from './relay-shell-input.js';
   import { taskHref } from './relay-format.js';
@@ -24,6 +34,8 @@
   import FloatingReviewRow from './FloatingReviewRow.svelte';
   import QueueSection from './QueueSection.svelte';
   import AddItemForm from './AddItemForm.svelte';
+  import AddMember from './AddMember.svelte';
+  import RunCard from './RunCard.svelte';
   import LaneList from './LaneList.svelte';
   import CompletedList from './CompletedList.svelte';
   import NeedsYou from './NeedsYou.svelte';
@@ -148,8 +160,11 @@
   }
   const completedRows = $derived(toCompletedRows(state.now, rowOptions));
 
-  /** The two lines a session pastes to register (CONTRACT §1h, until #424's AddMember). */
-  const pasteLines = ['register with sensei as coordinator', 'register with sensei as contributor'];
+  // The Crew view (#424): the run card, the members by role, and AddMember for the role
+  // the person picked (the coordinator first).
+  const runCard = $derived(toRunCard(state.now));
+  const memberGroups = $derived(toMemberGroups(state.now, Date.now()));
+  const addMember = $derived(toAddMember(state.now, state.addRole));
   async function copy(text: string): Promise<void> {
     await navigator.clipboard?.writeText(text);
   }
@@ -187,29 +202,13 @@
       />
     </div>
   {:else if state.now && shell.view === 'crew'}
-    <!-- The Crew view (CONTRACT §1h): the roster, the run card and Add a member arrive
-         with #424; until then it is the setup — the line a session pastes to join. -->
-    <section class="flex flex-col gap-2 p-4" data-relay-section="crew">
-      <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">
-        {state.hasCrew ? 'Add a lane' : 'Start a run: set up your crew'}
-      </h2>
-      {#if !state.hasCrew}
-        <p class="text-sm font-medium m-0" data-no-crew>No crew yet</p>
+    <!-- The Crew view (CONTRACT §1h; #424): the run card over the members by role, then
+         AddMember — set-up while there is no run, else Add a member. -->
+    <section aria-label="Crew" class="flex flex-col gap-5 p-4" data-relay-section="crew">
+      {#if runCard}
+        <RunCard card={runCard} groups={memberGroups} onmessage={() => (state.composing = true)} />
       {/if}
-      <p class="text-sm text-ink-soft m-0">
-        {state.hasCrew
-          ? 'Paste the contributor line into a new session in this repository; it registers and takes the next piece of work.'
-          : 'Register a session in this repository as the coordinator, then the contributors it invites.'}
-      </p>
-      {#each pasteLines as line (line)}
-        <div class="flex items-center gap-2" data-paste-line>
-          <code class="text-xs rounded-sm px-2 py-1 bg-paper-soft" data-paste-text>{line}</code>
-          <button type="button" class="text-xs underline" data-paste-copy onclick={() => void copy(line)}>Copy</button>
-        </div>
-      {/each}
-      {#if !state.hasCrew}
-        <p class="text-xs text-ink-faint m-0">Listening · 0 of 2 to start</p>
-      {/if}
+      <AddMember view={addMember} oncopy={(text) => void copy(text)} onrole={(role) => (state.addRole = role)} />
     </section>
   {:else if state.now && state.hasCrew && shell.view === 'now'}
     <!-- Now (CONTRACT §1c): what needs the person, then the lanes, then today's

@@ -124,6 +124,8 @@ export class RelayState {
   /** Backlog item ids picked for a sprint. Reassigned on every change: a Set is not proxied. */
   selected = $state<Set<string>>(new Set());
   creatingSprint = $state(false);
+  /** The role AddMember shows the register line for: the coordinator first (#424). */
+  addRole = $state<'coordinator' | 'contributor'>('coordinator');
   /** Why the last sprint was refused (the selection and the form stay as they were). */
   sprintError = $state<string | null>(null);
 
