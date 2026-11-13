@@ -222,6 +222,12 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
 `relay_merge_task`, `relay_cancel_task`, `relay_handover_task`, `relay_close_crew` (coordinator) ·
 `relay_post_step`. A sprint run is the person's (`POST /relay/runs`), not a lane tool. The guidance `register`
 answers (v2) spells the loop out.
+**The person's routes (#419), not lane tools:** `POST /relay/runs` drafts a run (`start: true` starts it at once) ·
+`POST /relay/runs/{id}/start` (binds the crew, which needs a live lane; mints Task 0) · `POST /relay/runs/{id}/cancel`
+(cancels its open tasks, gives its planned items back to the backlog) · `GET /relay/runs` · `GET /relay/runs/{id}` ·
+`POST /relay/crews/{id}/close` (refused while the crew has a planning or active run; releases every live lane — the
+session stays open and takes no work — then closes the crew) · `POST /relay/messages` with `nudge` (§15). A lane
+sees each of these only through what it already reads: a cancelled task, a released lane (`410` on its next call).
 The existing `start_run` / `register_plan` / `update_task_status` / `report_run_outcome` /
 `run_status` / `pause_run` are reused where they already fit, and not cloned.
 

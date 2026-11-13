@@ -1747,6 +1747,28 @@ pub(crate) async fn close_crew(
 
 // ─── Person routes ───
 
+/// `POST /relay/crews/{id}/close` (#419): the person closes the crew; its
+/// lanes are released and leave Now on the stream.
+pub(crate) async fn person_close_crew(
+    State(state): State<AppState>,
+    Path(crew_id): Path<String>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
+    let out = state.pg.relay_person_close_crew(user_id, crew_id).await.map_err(err)?;
+    for (lane_id, interrupted) in &out.released {
+        emit_lane(&state, LaneChange::Unregistered, lane_id, &out.crew_id).await;
+        if let Some(task_id) = interrupted {
+            emit_task(&state, "interrupt", task_id).await;
+        }
+    }
+    if out.closed_now {
+        // A crew's lifecycle event: the crew id stands as the run id (§3k).
+        emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
+    }
+    ok(serde_json::json!({ "crew_id": out.crew_id.to_string(), "status": "closed" }))
+}
+
 pub(crate) async fn now(
     State(state): State<AppState>,
     Query(query): Query<ReadQuery>,

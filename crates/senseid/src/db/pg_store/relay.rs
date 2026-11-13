@@ -90,6 +90,16 @@ pub struct RelayHeartbeatOutput {
     pub regranted: bool,
 }
 
+/// The person's crew close (#419): each released lane, with the task its
+/// leaving suspended, if any. Empty when the crew was already closed.
+#[derive(Debug, Clone)]
+pub struct RelayPersonCloseOutput {
+    pub crew_id: Uuid,
+    /// False when the crew was closed already (a no-op).
+    pub closed_now: bool,
+    pub released: Vec<(Uuid, Option<Uuid>)>,
+}
+
 /// `POST /api/relay/unregister`: the task the leave interrupted, if the
 /// lane held one.
 #[derive(Debug, Clone)]
@@ -1928,11 +1938,26 @@ impl PgStore {
             return Err(RelayError::Gone("lane already unregistered".into()));
         }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let interrupted = Self::relay_unregister_tx(&mut tx, user_id, crew_id, lane_id).await?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayUnregisterOutput { interrupted })
+    }
+
+    /// A lane leaves, inside the caller's transaction: its lease released,
+    /// its held task suspended (`interrupted`, named in the answer), its
+    /// resource grants freed to their next waiters. The lane's own
+    /// unregister and the person's crew close (#419) share it.
+    async fn relay_unregister_tx(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        crew_id: Uuid,
+        lane_id: Uuid,
+    ) -> Result<Option<Uuid>, RelayError> {
         sqlx_core::query::query(
             "update relay.lanes set unregistered_at = current_timestamp where id = $1",
         )
         .bind(lane_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(db_err)?;
         sqlx_core::query::query(
@@ -1944,7 +1969,7 @@ impl PgStore {
                order by granted_at desc nulls last, id desc limit 1)",
         )
         .bind(lane_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(db_err)?;
         // A voluntary leave suspends the lane's work like a lost lease; the
@@ -1959,7 +1984,7 @@ impl PgStore {
         )
         .bind(user_id)
         .bind(lane_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(db_err)?;
         let interrupted = task.as_ref().map(|(task_id, ..)| *task_id);
@@ -1975,7 +2000,7 @@ impl PgStore {
             .bind(word(next))
             .bind(user_id)
             .bind(task_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(db_err)?;
             sqlx_core::query::query(
@@ -1991,7 +2016,7 @@ impl PgStore {
             .bind(lane_id)
             .bind(round)
             .bind(phase)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(db_err)?;
         }
@@ -2006,21 +2031,20 @@ impl PgStore {
              returning resource",
         )
         .bind(lane_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await
         .map_err(db_err)?;
         if !freed.is_empty() {
             let now: DateTime<Utc> =
                 sqlx_core::query_scalar::query_scalar("select current_timestamp")
-                    .fetch_one(&mut *tx)
+                    .fetch_one(&mut **tx)
                     .await
                     .map_err(db_err)?;
             for resource in &freed {
-                grant_next_waiter(&mut tx, resource, now).await?;
+                grant_next_waiter(tx, resource, now).await?;
             }
         }
-        tx.commit().await.map_err(db_err)?;
-        Ok(RelayUnregisterOutput { interrupted })
+        Ok(interrupted)
     }
 
     /// Request a resource lease (item 3, Q1–Q3/Q5/Q6): the lane's live
@@ -6017,6 +6041,74 @@ impl PgStore {
         }
         tx.commit().await.map_err(db_err)?;
         Ok(RelayCloseOutput { crew_id, status: "closed".to_string() })
+    }
+
+    /// `POST /relay/crews/{id}/close` (#419; CONTRACT §3k): the person
+    /// closes the crew and releases its lanes — each live lane unregisters
+    /// (its session stays open and takes no work) — in one transaction.
+    /// A crew with an open run is refused: the person cancels the run
+    /// first. A closed crew closes again as a no-op.
+    pub async fn relay_person_close_crew(
+        &self,
+        user_id: Uuid,
+        crew_id: Uuid,
+    ) -> Result<RelayPersonCloseOutput, RelayError> {
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let status: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select status from relay.crews where user_id = $1 and id = $2 for update",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let Some(status) = status else {
+            return Err(RelayError::NotFound("crew not found".into()));
+        };
+        let mut released = Vec::new();
+        if status != "closed" {
+            let open_run: bool = sqlx_core::query_scalar::query_scalar(
+                "select exists (
+                   select 1 from relay.runs
+                   where user_id = $1 and crew_id = $2 and state in ('planning', 'active'))",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if open_run {
+                return Err(RelayError::Conflict(
+                    "the crew has an open run: cancel it first".into(),
+                ));
+            }
+            let lanes: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
+                "select id from relay.lanes
+                 where user_id = $1 and crew_id = $2 and unregistered_at is null
+                 order by id for update",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            for lane_id in lanes {
+                let interrupted =
+                    Self::relay_unregister_tx(&mut tx, user_id, crew_id, lane_id).await?;
+                released.push((lane_id, interrupted));
+            }
+            sqlx_core::query::query(
+                "update relay.crews set status = 'closed', completed_at = current_timestamp
+                 where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayPersonCloseOutput { crew_id, closed_now: status != "closed", released })
     }
 
     /// The lane's grouped envelope (Q4): messages, answers, reviews,
