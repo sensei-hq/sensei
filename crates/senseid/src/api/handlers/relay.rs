@@ -4354,6 +4354,104 @@ mod tests {
         assert!(body["message_id"].is_string());
     }
 
+    // ── #419: the person's nudge (CONTRACT §3f-bis; lanes.md §15) ──
+
+    async fn person_nudge(h: &Harness, body: serde_json::Value) -> (StatusCode, Value) {
+        call(h, "POST", "/relay/messages", Some(body), None).await
+    }
+
+    #[tokio::test]
+    async fn a_person_nudge_is_a_message_with_its_reason_in_the_history() {
+        // A nudge is a message with props.nudge, the reason and the wait so
+        // far; the task's history row says so ("Nudge · to … · from you").
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, _) = working_task(&h, &coord).await;
+        let (status, body) = person_nudge(
+            &h,
+            json!({
+                "crew_id": coord.2, "to": {"kind": "lane", "lane_id": holder},
+                "task_id": task_id, "text": "Waiting on you: your verdict is filed.",
+                "surface": "desktop", "nudge": true, "reason": "verdict_unread", "waiting_min": 41,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let message_id = body["message_id"].as_str().unwrap().to_string();
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        let row = view["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == message_id.as_str())
+            .unwrap_or_else(|| panic!("nudge in history: {view}"));
+        assert_eq!(row["kind"], "message", "{row}");
+        assert_eq!(row["props"]["nudge"], true, "{row}");
+        assert_eq!(row["props"]["reason"], "verdict_unread", "{row}");
+        assert_eq!(row["props"]["waiting_min"], 41, "{row}");
+        assert_eq!(row["props"]["surface"], "desktop", "{row}");
+    }
+
+    #[tokio::test]
+    async fn a_plain_message_carries_no_nudge_in_the_history() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, _) = working_task(&h, &coord).await;
+        let (status, body) = person_nudge(
+            &h,
+            json!({"to": {"kind": "lane", "lane_id": holder}, "task_id": task_id,
+                   "text": "hi", "surface": "desktop"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let message_id = body["message_id"].as_str().unwrap().to_string();
+        let (_, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        let row = view["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == message_id.as_str())
+            .unwrap_or_else(|| panic!("message in history: {view}"));
+        assert_eq!(
+            row["props"],
+            json!({"to": {"kind": "lane", "lane_id": holder}, "surface": "desktop"})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_person_nudge_needs_a_known_reason_and_a_party_to_nudge() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, _) = working_task(&h, &coord).await;
+        let base = |extra: serde_json::Value| {
+            let mut b = json!({"to": {"kind": "lane", "lane_id": holder}, "task_id": task_id,
+                               "text": "nudge", "surface": "desktop"});
+            b.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            b
+        };
+        for (case, body) in [
+            ("no reason", base(json!({"nudge": true}))),
+            ("unknown reason", base(json!({"nudge": true, "reason": "bored"}))),
+            ("reason without nudge", base(json!({"reason": "verdict_unread"}))),
+            ("wait without nudge", base(json!({"waiting_min": 3}))),
+            ("negative wait", base(json!({"nudge": true, "reason": "no_work", "waiting_min": -1}))),
+            (
+                "the person nudging the person",
+                base(json!({"to": {"kind": "person"}, "nudge": true, "reason": "decision"})),
+            ),
+        ] {
+            let (status, out) = person_nudge(&h, body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{case}: {out}");
+        }
+        // The wait so far is optional: the person may nudge at any time.
+        let (status, out) =
+            person_nudge(&h, base(json!({"nudge": true, "reason": "merge_pending"}))).await;
+        assert_eq!(status, StatusCode::OK, "{out}");
+    }
+
     // ── Q2 part 2: crew → person messages in Needs-you ──
 
     async fn send_lane_message(
