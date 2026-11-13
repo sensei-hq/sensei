@@ -76,12 +76,16 @@ describe('Pill (§3a)', () => {
   // The mockup's tint(role) is the tone at 16% over the paper, so it darkens with the
   // page: the app's -soft tokens stay light in dark mode, under the pill's light text
   // (unreadable on the #422 bench).
-  it('fills with the tone at 16% over the paper, and borders it at 35%', () => {
+  // Mixed in OKLab, not OKLCH: OKLCH interpolates the hue, and over the app's warm paper
+  // a 16% red came out amber and a green olive (#423 bench). OKLab blends without
+  // rotating the hue, so each tone keeps its colour.
+  it('fills with the tone at 16% over the paper, and borders it at 35% — mixed in OKLab', () => {
     for (const tone of ['accent', 'warning', 'danger', 'success'] as const) {
       const cls = pillClass(tone);
-      expect(cls).toContain(`bg-[color-mix(in_oklch,var(--${tone})_16%,var(--paper))]`);
+      expect(cls).toContain(`bg-[color-mix(in_oklab,var(--${tone})_16%,var(--paper))]`);
       expect(cls).not.toContain(`bg-${tone}-soft`);
-      expect(cls).toContain(`border-[color-mix(in_oklch,var(--${tone})_35%,var(--paper))]`);
+      expect(cls).toContain(`border-[color-mix(in_oklab,var(--${tone})_35%,var(--paper))]`);
+      expect(cls).not.toContain('in_oklch');
     }
   });
 
