@@ -5,7 +5,7 @@
 // everything else is ignored. The dojo replays this same contract over
 // Supabase realtime; only this dispatcher's source changes.
 import { relayStream } from '$lib/relay-api.js';
-import type { RelayTaskState } from './relay-task-state.svelte.js';
+import type { RelayTaskState } from '@sensei/state';
 
 /** Subscribe the task route; returns the teardown (call on destroy). */
 export function subscribeTaskStream(

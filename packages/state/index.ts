@@ -41,3 +41,4 @@ export {
   minutesSince,
   type RelayStats,
 } from './relay/relay-selectors.js';
+export { RelayTaskState, type TaskReads } from './relay/task-state.svelte.js';

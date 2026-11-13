@@ -10,7 +10,7 @@
   import { KANJI_ICONS } from '$lib/glyph-vocabulary';
   import { useGlyphMode } from '$lib/glyphs';
   import type { RelayRunDetails, RelayTaskView } from '$lib/relay-api.js';
-  import type { RelayTaskState } from './relay-task-state.svelte.js';
+  import type { RelayTaskState } from '@sensei/state';
   import { hhmm, providerLabel, roundsLabel, taskStateLabel } from './relay-format.js';
   import DecisionRow from './DecisionRow.svelte';
   import HistoryEntry from './HistoryEntry.svelte';

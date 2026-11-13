@@ -1,8 +1,21 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
-import { RelayTaskState } from './relay-task-state.svelte.js';
-import * as F from '$lib/test-stubs/relay-fixtures.js';
-import type { RelayTaskStep, RelayTaskView } from '$lib/relay-api.js';
+import { describe, it, expect, vi } from 'vitest';
+import { RelayTaskState } from './task-state.svelte.js';
+import * as F from './fixtures.js';
+import type { RelayApi } from './client.js';
+import type { RelayTaskStep, RelayTaskView } from './types.js';
+
+/** The relay client, its every call a spy (the app's fakeRelayApi; a package cannot share it). */
+const fakeApi = () =>
+  ({
+    tryGetNow: vi.fn(async () => F.ok(F.now())),
+    tryGetQueue: vi.fn(async () => F.ok(F.queue())),
+    tryGetTask: vi.fn(async () => F.ok(F.taskView())),
+    trySendMessage: vi.fn(async () => F.ok({ message_id: 'msg-1' })),
+    tryAnswerDecision: vi.fn(async () => F.ok({ action_id: 'act-answer' })),
+    tryAddToBacklog: vi.fn(async () => F.ok({ item_id: 'item-new' })),
+    tryCreateRun: vi.fn(async () => F.ok({ run_id: F.RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' as const })),
+  }) as unknown as { [K in keyof RelayApi]: ReturnType<typeof vi.fn> & RelayApi[K] };
 
 // F8: the stream feeds the state through apply-style updaters — steps land
 // directly, task notifications re-read. Anything for another task is ignored.
@@ -16,7 +29,7 @@ const step = (key: string, state: RelayTaskStep['state'] = 'open'): RelayTaskSte
 });
 
 const stateFor = (view: RelayTaskView | null = F.taskView()): RelayTaskState =>
-  new RelayTaskState({ view, error: null }, F.fakeRelayApi(), 'crew-1', 'task-1');
+  new RelayTaskState({ view, error: null }, fakeApi(), 'crew-1', 'task-1');
 
 describe('RelayTaskState stream updaters', () => {
   it('applyStep appends a new step in place', () => {
@@ -45,7 +58,7 @@ describe('RelayTaskState stream updaters', () => {
   });
 
   it('applyTaskChanged re-reads its own task only', async () => {
-    const api = F.fakeRelayApi();
+    const api = fakeApi();
     const fresh = F.taskView();
     api.tryGetTask.mockResolvedValue({ ok: true, data: fresh });
     const s = new RelayTaskState({ view: F.taskView(), error: null }, api, 'crew-1', 'task-1');

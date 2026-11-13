@@ -3,8 +3,9 @@
 // A task is read by (crew, task): another crew's task, or another user's, is a
 // 404 and the screen says "not found" — nothing broke, and Retry would ask the
 // same question again. Everything else that fails is a fault with a Retry.
-import { failureReason, type ApiError } from '$lib/api.js';
-import type { RelayApi, RelayDecision, RelayTaskStep, RelayTaskView } from '$lib/relay-api.js';
+import { failureReason, type ApiError } from '../result.js';
+import type { RelayApi } from './client.js';
+import type { RelayDecision, RelayTaskStep, RelayTaskView } from './types.js';
 
 export interface TaskReads {
   view: RelayTaskView | null;

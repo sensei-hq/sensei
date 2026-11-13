@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { RelayTaskState } from './relay-task-state.svelte.js';
+import { RelayTaskState } from '@sensei/state';
 import * as F from '$lib/test-stubs/relay-fixtures.js';
 import { subscribeTaskStream } from './relay-task-stream.js';
 
