@@ -5,9 +5,9 @@
 
 import { crewTail, hhmm } from './format.js';
 import { assistantLabel, type RelayTone } from './now-selectors.js';
-import type { RelayLane, RelayNow, RelayRole } from './types.js';
+import type { RelayLane, RelayNow, RelayPresence, RelayRole } from './types.js';
 
-export type RelayPresence = 'active' | 'idle' | 'not_responding';
+export type { RelayPresence };
 
 /** The run, or the crew before its first run (COMPONENTS §3e RunCard). */
 export interface RelayRunCardView {
@@ -82,15 +82,10 @@ export function toRunCard(now: RelayNow | null): RelayRunCardView | null {
   };
 }
 
-function presence(lane: RelayLane): RelayPresence {
-  if (lane.lease_state === 'expired') return 'not_responding';
-  return lane.task || lane.reviewing ? 'active' : 'idle';
-}
-
 const STATUS_TEXT: Record<RelayPresence, string> = { active: 'Active', idle: 'Idle', not_responding: 'Not responding' };
 
 function member(lane: RelayLane): RelayMemberView {
-  const status = presence(lane);
+  const status = lane.presence;
   return {
     id: lane.id,
     codename: codename(lane),

@@ -110,7 +110,7 @@ describe('toLaneGroups · a lane row (CONTRACT §1c-2)', () => {
 
   it('lease lost is the daemon’s presence (#419): a granted lease past its end reads lost too', () => {
     const lost = F.minutesAgo(3);
-    const row = one(F.lane({ lease_state: 'granted', lease_expires_at: lost, presence: 'not_responding' } as never));
+    const row = one(F.lane({ lease_state: 'granted', lease_expires_at: lost, presence: 'not_responding' }));
     expect(row.state).toEqual({ label: 'lease lost', tone: 'danger' });
   });
 

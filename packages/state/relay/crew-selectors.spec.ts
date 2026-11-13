@@ -88,7 +88,7 @@ describe('toMemberGroups · presence (CONTRACT §1h)', () => {
   it('presence is the daemon’s (#419): a lease past its end, not yet swept, reads not responding', () => {
     const lost = F.minutesAgo(2);
     const [m] = toMemberGroups(
-      F.now({ lanes: [F.lane({ lease_state: 'granted', lease_expires_at: lost, presence: 'not_responding' } as never)] }),
+      F.now({ lanes: [F.lane({ lease_state: 'granted', lease_expires_at: lost, presence: 'not_responding' })] }),
       AT,
     )[0].members;
     expect(m.status).toBe('not_responding');

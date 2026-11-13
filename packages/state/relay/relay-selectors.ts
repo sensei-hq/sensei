@@ -24,15 +24,18 @@ export interface RelayStats {
 export const minutesSince = (iso: string, at: number): number =>
   Math.max(0, Math.round((at - new Date(iso).getTime()) / 60_000));
 
+/** No live lease, by the daemon's call (#419): the lane shows lost and counts as blocked. */
+export const isNotResponding = (lane: RelayLane): boolean => lane.presence === 'not_responding';
+
 /** On a task, or holding a review: working — not while the task waits on the person's answer (that is Blocked). */
 export const isWorking = (lane: RelayLane): boolean =>
-  lane.lease_state !== 'expired' &&
+  !isNotResponding(lane) &&
   (Boolean(lane.reviewing) ||
     (lane.task != null && !lane.task.needs_answer && ['working', 'assigned', 'rework'].includes(lane.task.state)));
 
 /** Reachable, nothing claimed, nothing to review: idle (lanes.md §15 `no_work`). */
 export const isIdle = (lane: RelayLane): boolean =>
-  lane.lease_state !== 'expired' && !lane.limit_scope && !lane.task && !lane.reviewing;
+  !isNotResponding(lane) && !lane.limit_scope && !lane.task && !lane.reviewing;
 
 /** "1 of 5 <suffix>": first-pass approvals of the reviews today; no review reported reads so. */
 export function firstPassLine(now: RelayNow, suffix: string): string {
@@ -53,7 +56,7 @@ export function toStats(now: RelayNow | null, at: number): RelayStats | null {
         ? Math.max(...now.floating_reviews.map((r) => minutesSince(r.reported_at, at)))
         : null,
     },
-    blocked: now.decisions.length + now.lanes.filter((l) => l.lease_state === 'expired').length,
+    blocked: now.decisions.length + now.lanes.filter(isNotResponding).length,
     done: now.completed_today.length,
     firstPass: firstPassLine(now, 'first-pass'),
   };

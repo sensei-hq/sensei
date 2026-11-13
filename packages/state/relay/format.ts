@@ -5,6 +5,7 @@
 // in one place; and every one of them says "not reported" rather than inventing a
 // zero (D83).
 import type { ApiError } from '../result.js';
+import { isNotResponding } from './relay-selectors.js';
 import type {
   RelayCrew,
   RelayLane,
@@ -65,7 +66,7 @@ export function crewSizeContext(now: Pick<RelayNow, 'lanes'> | null, error: ApiE
 
 /** One lane's state pill: the lease first, then the person's open question, then the task. */
 export function laneState(lane: RelayLane): string {
-  if (lane.lease_state === 'expired') return 'lease lost';
+  if (isNotResponding(lane)) return 'lease lost';
   // A live lease with a reported quota pause reads paused, never lost —
   // and a dead lease reads lost even with a stale pause on the row.
   if (lane.limit_scope) return 'paused';

@@ -8,6 +8,7 @@
 import type { ApiResult } from '../result.js';
 import type {
   RelayAction,
+  RelayPresence,
   RelayActionKind,
   RelayActionProps,
   RelayBacklogItem,
@@ -57,7 +58,7 @@ export const fail = (status: number, message: string): ApiResult<never> => ({
 });
 
 export function lane(over: Partial<RelayLane> = {}): RelayLane {
-  return {
+  const row: Omit<RelayLane, 'presence'> = {
     id: LANE.L1,
     crew_id: CREW_ID,
     code: 'L1',
@@ -89,6 +90,10 @@ export function lane(over: Partial<RelayLane> = {}): RelayLane {
     },
     ...over,
   };
+  // The daemon's presence rule (relay.now, #419), unless a spec states one.
+  const presence: RelayPresence =
+    over.presence ?? (row.lease_state !== 'granted' ? 'not_responding' : row.task || row.reviewing ? 'active' : 'idle');
+  return { ...row, presence };
 }
 
 export const coordinatorLane = (over: Partial<RelayLane> = {}) =>

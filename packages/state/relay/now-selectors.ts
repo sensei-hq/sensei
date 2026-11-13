@@ -4,7 +4,7 @@
 // a resume the daemon did not give is not invented (D83).
 
 import { crewGroups, crewRepoLabel, hhmm, providerLabel, since } from './format.js';
-import { isWorking, minutesSince } from './relay-selectors.js';
+import { isNotResponding, isWorking, minutesSince } from './relay-selectors.js';
 import type {
   RelayCompletedTask,
   RelayDecision,
@@ -75,7 +75,7 @@ export interface NowRowOptions {
 /** Whether a lane belongs under a stat's filter. */
 function laneIn(lane: RelayLane, only: NowRowOptions['only']): boolean {
   if (only === 'working') return isWorking(lane);
-  if (only === 'blocked') return lane.lease_state === 'expired' || Boolean(lane.task?.needs_answer);
+  if (only === 'blocked') return isNotResponding(lane) || Boolean(lane.task?.needs_answer);
   return true;
 }
 
@@ -131,7 +131,7 @@ function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayLaneRow
   const taskLine = task ? `${task.title} (${task.phase} r${task.round})` : 'Nothing assigned';
 
   // The lease first, then a quota pause, then the person's question, then the task.
-  if (lane.lease_state === 'expired') {
+  if (isNotResponding(lane)) {
     const when = lane.lease_expires_at ? `at ${hhmm(lane.lease_expires_at)}` : 'not reported';
     return { ...base, task: taskLine, state: { label: 'lease lost', tone: 'danger' }, when: { text: when, over: false }, href: taskHref };
   }
@@ -253,7 +253,7 @@ export interface RelayNeedsYouView {
 /** Why a task waits, and whether it waits on the coordinator or its own lane (§3f-bis). */
 function waitReason(lane: RelayLane, now: RelayNow): { reason: string; onLane: boolean } | null {
   const task = lane.task;
-  if (lane.lease_state === 'expired' || lane.limit_scope) return null;
+  if (isNotResponding(lane) || lane.limit_scope) return null;
   if (!task) return lane.role === 'contributor' && !lane.reviewing ? { reason: 'lane idle, nothing assigned', onLane: false } : null;
   if (task.needs_answer) return null; // a decision: its own card
   if (task.state === 'in_review' && now.floating_reviews.some((r) => r.task_id === task.id)) {

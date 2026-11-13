@@ -142,7 +142,12 @@ export interface RelayLane {
   suggested_name: string | null;
   /** The review this lane holds (`review_claimed_by`), beside its own task; null when none. */
   reviewing: RelayLaneReview | null;
+  /** The session's presence, the daemon's call on its lease and what it holds (#419; CONTRACT §1h). */
+  presence: RelayPresence;
 }
+
+/** active: a live lease holding a task or a review · idle: a live lease, nothing held · not_responding: no live lease. */
+export type RelayPresence = 'active' | 'idle' | 'not_responding';
 
 /** The review a lane holds (`relay.now` lane payload `reviewing`). */
 export interface RelayLaneReview {

@@ -39,7 +39,7 @@ describe('toStats · the four stats, counted from the read', () => {
   });
 
   it('a lane the daemon calls not responding is blocked, not working or waiting (#419)', () => {
-    const silent = now({ lanes: [lane({ presence: 'not_responding' } as never), lane({ id: 'l2', code: 'L2', task: null, presence: 'not_responding' } as never)] });
+    const silent = now({ lanes: [lane({ presence: 'not_responding' }), lane({ id: 'l2', code: 'L2', task: null, presence: 'not_responding' })] });
     const stats = toStats(silent, Date.now());
     expect([stats?.working, stats?.waiting.count, stats?.blocked]).toEqual([0, 0, 2]);
   });
