@@ -17,7 +17,7 @@ export default defineConfig({
   server: { fs: { allow: ['.', '../packages'] } },
   test: {
     // e2e/lib: the inspect harness's own pure helpers (#284).
-    include: ['src/**/*.spec.ts', 'src/**/*.spec.svelte.ts', 'e2e/lib/**/*.spec.ts', '../packages/codemap/**/*.spec.ts', '../packages/codemap/**/*.spec.svelte.ts'],
+    include: ['src/**/*.spec.ts', 'src/**/*.spec.svelte.ts', 'e2e/lib/**/*.spec.ts', '../packages/codemap/**/*.spec.ts', '../packages/codemap/**/*.spec.svelte.ts', '../packages/state/**/*.spec.ts', '../packages/state/**/*.spec.svelte.ts'],
     // jsdom lacks browser APIs @rokkit/chart needs: window.matchMedia at barrel
     // load (AnimatedPlot → svelte/motion), and ResizeObserver for the library's
     // self-sizing chart wrappers. Stub both so chart component tests can run.
@@ -49,6 +49,7 @@ export default defineConfig({
       '@sensei/sdlc-figures': fileURLToPath(new URL('../packages/sdlc-figures/index.js', import.meta.url)),
       '@sensei/ui': fileURLToPath(new URL('../packages/ui/index.js', import.meta.url)),
       '@sensei/codemap': fileURLToPath(new URL('../packages/codemap/index.ts', import.meta.url)),
+      '@sensei/state': fileURLToPath(new URL('../packages/state/index.ts', import.meta.url)),
 
       // SvelteKit generates `$app/*` modules at build time. Under Vitest
       // there's no SvelteKit runtime, so any component or hook that

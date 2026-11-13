@@ -2,10 +2,9 @@
  * Tests for the Stage pattern foundation — StateReactiveStageContext CRUD and event dispatch.
  */
 import { describe, it, expect } from 'vitest';
-import { ReactiveStageContext } from './stage.svelte.js';
+import { ReactiveStageContext, type StateEvent } from '@sensei/state';
 // Alias for brevity in tests
 const Ctx = ReactiveStageContext;
-import type { StateEvent } from './types.js';
 
 // ── Test entity ──────────────────────────────────────────────────────────────
 
