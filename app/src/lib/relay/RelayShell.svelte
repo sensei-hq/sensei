@@ -9,11 +9,6 @@
   import { ShellScreen } from '@sensei/ui';
   import { KANJI_ICONS } from '$lib/glyph-vocabulary';
   import type { RelayFooterTone, RelayShell } from './relay-shell.js';
-  // The header's icon buttons: a scoped override of the theme's toolbar look
-  // (user ruling 2026-11-09), one partial, to be upstreamed.
-  import './relay-toolbar.css';
-  // The filter band's fields in a row (rokkit stacks a schema form): the same kind of partial.
-  import './relay-filters.css';
 
   let {
     shell,

@@ -7,7 +7,6 @@
 
 import type { FilterSchema, FilterState, InfoColumn, ShellStat } from '@rokkit/app';
 import type { ToolbarItem } from '@rokkit/ui';
-import { toolbarBadgeAfterClass, toolbarIconClass, toolbarItemClass, toolbarLabel } from '@sensei/ui';
 import { KANJI_ICONS } from '$lib/glyph-vocabulary';
 
 /** lanes.md §15: a wait at or past this many minutes is too long (one threshold per crew; the default). */
@@ -145,8 +144,9 @@ function pressedView(input: RelayShellInput): RelayView {
   return input.view;
 }
 
-/** A 36px icon button: the shell toolbar renders the button and hangs `attrs` on
- *  it, so the look (and the badge, from `data-count`) rides the class. */
+/** A title-bar button: rokkit's zen-sumi draws the 36px framed button from its `kind` — a
+ *  pressed view reads accent, a pressed toggle ink — and the count as a badge, named
+ *  "Queue · 7". Nothing of our own rides on it. */
 function iconButton(
   id: string,
   label: string,
@@ -156,11 +156,7 @@ function iconButton(
   count: number,
   onclick: () => void,
 ): ToolbarItem {
-  const classes = [toolbarItemClass(pressed), toolbarIconClass(kind, pressed), count > 0 ? toolbarBadgeAfterClass() : ''];
-  const attrs: Record<string, string> = { class: classes.filter(Boolean).join(' ') };
-  if (kind === 'view') attrs['data-relay-view'] = id;
-  if (count > 0) attrs['data-count'] = String(count);
-  return { id, value: id, type: 'button', label: toolbarLabel(label, count), icon, active: pressed, attrs, onclick };
+  return { id, value: id, type: 'button', kind, label, icon, active: pressed, count, onclick };
 }
 
 function toolbar(input: RelayShellInput, pressed: RelayView, actions: RelayShellActions): ToolbarItem[] {
@@ -169,9 +165,10 @@ function toolbar(input: RelayShellInput, pressed: RelayView, actions: RelayShell
     id: 'info',
     value: 'info',
     type: 'toggle',
+    kind: 'toggle',
     icon: INFO_ICON,
     label: input.info ? 'Hide info' : 'Show info',
-    attrs: { class: [toolbarItemClass(input.info), toolbarIconClass('toggle', input.info)].join(' ') },
+    active: input.info,
   };
   if (!read) return [info];
   const views: ToolbarItem[] = [

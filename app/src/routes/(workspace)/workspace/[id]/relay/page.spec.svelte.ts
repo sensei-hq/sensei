@@ -504,8 +504,8 @@ describe('Relay · Queue', () => {
     const { c } = await open();
     const queueTab = tab(c, 'Queue');
     expect(queueTab).not.toBeNull();
-    // The badge is drawn from `data-count`; the name folds the count in ("Queue · 4").
-    expect(queueTab!.getAttribute('data-count')).toBe('4');
+    // The badge is rokkit's count badge (the item's `count`); the name folds the count in.
+    expect(queueTab!.querySelector('[data-toolbar-count]')?.textContent).toBe('4');
     expect(queueTab!.getAttribute('aria-label')).toBe('Queue · 4');
     expect(isActive(tab(c, 'Now'))).toBe(true);
 
