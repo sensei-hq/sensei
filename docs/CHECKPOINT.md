@@ -23,13 +23,16 @@ User ruling 2026-11-14: one shell — fix rokkit, never patch per screen; reuse 
   not the lane into develop — release PR #417 is open and this slice is unfinished. `shot()` gained `unavailable`
   in `e2e/lib/shot.ts`; ratchet 1,197 (measured 1,195). `lane/relay-screen-conformance` retired (superseded, §5).
 
-**Remaining (in order):** shared-component catalogue `docs/spec/2026-11-14-shared-component-catalogue.md` —
-awaiting the user's agreement · TaskHistory → rokkit Timeline · lists → rokkit List (no-button rows) · StatCard
-fixtures · #419 wrap-up (guidance v2, live DDL incl. now.ddl `last_nudge`, install, e2e) → #426.
+- Catalogue spec `docs/spec/2026-11-14-shared-component-catalogue.md` **approved**; ruling: `/preview` covers the
+  dōjō's components too (shared preview kit in `@sensei/ui`, dōjō mounts its own `/preview`; Rule 6, Order step 3).
 
-**Next command:** the Timeline migration (red-first), once the catalogue is agreed.
+**Remaining (in order):** TaskHistory → rokkit Timeline · lists → rokkit List (no-button rows) · StatCard
+fixtures · #419 wrap-up (guidance v2, live DDL incl. now.ddl `last_nudge`, install, e2e) → #426. Then catalogue
+Order 2–5 (guards, dōjō `/preview`, families).
 
-**Open questions (user):** the catalogue spec; host tag needs a Pill `title`; merge #417 + `make release`
+**Next command:** the Timeline migration (red-first): TaskHistory/HistoryEntry → rokkit `Timeline`.
+
+**Open questions (user):** host tag needs a Pill `title`; merge #417 + `make release`
 (then this lane → develop when finished).
 
 **Known broken:** CONTRACT §15 auto-nudge for non-review waits not built (`task.waiting` gap). Dev Vite binds IPv6
