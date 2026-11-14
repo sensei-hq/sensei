@@ -42,6 +42,9 @@ fn run(dir: &Path, args: &[&str]) -> (std::process::Output, Vec<String>) {
     let out = Command::new(script())
         .args(args)
         .env("PATH", path)
+        // run.sh prefers TEST_DATABASE_URL over SENSEI_DATABASE_URL, and CI sets
+        // it for the whole job: the fake's daemon URL must be the one asked for.
+        .env_remove("TEST_DATABASE_URL")
         .env("DATABASE_URL", DOJO)
         .env("SENSEI_DATABASE_URL", SENSEI)
         .output()
