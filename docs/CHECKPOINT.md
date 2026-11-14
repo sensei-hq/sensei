@@ -17,11 +17,9 @@
 - Two spec-line citations were wrong.
 - X1 "proven by production" was misleading. It was then settled live against gitlab.com.
 
-**Next command:** `/sensei:plan docs/spec/daemon/tracker-forge-comment-writeback.md`. This
-registers the plan graph and creates GitHub issues, and is waiting on the user's go-ahead.
-Then `/sensei:build`.
+**Next command:** `/sensei:build` W1 (#436). Plan `docs/plans/2026-11-14-forge-comment-writeback.md`, issues #436–#443.
 
-**Open questions (user):** commit the analysis and spec on develop? Create the plan's issues?
+**Open questions (user):** none. The branch `feature/forge-comment-writeback` is cut from develop and pushed.
 
 ---
 
