@@ -163,6 +163,11 @@ describe('toRelayShell · stats', () => {
     ]);
   });
 
+  it('Working reads in the accent, as the mockup draws it, busy or quiet (rokkit 1.15.4 has the tone)', () => {
+    expect(toRelayShell(loadedNow(), actions()).stats![0].tone).toBe('accent');
+    expect(toRelayShell(calm(), actions()).stats![0].tone).toBe('accent');
+  });
+
   it('Waiting warns past the threshold and says how old; Blocked is danger only when something is blocked', () => {
     const hot = toRelayShell(loadedNow(), actions()).stats!;
     expect(hot[1].tone).toBe('warning');
