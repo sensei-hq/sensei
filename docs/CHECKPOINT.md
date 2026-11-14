@@ -1,3 +1,30 @@
+# Checkpoint — 2026-11-13 (forge comment write-back: design complete, on develop, uncommitted)
+
+**Slice:** comment write-back for GitLab and GitHub, one slice (user, 2026-11-13). Analysis
+`docs/analysis/2026-11-13-forge-comment-writeback.md`; spec
+`docs/spec/daemon/tracker-forge-comment-writeback.md` (r4, gate PASS).
+
+**Decided (user):**
+- Both forges in one slice. O1: write scope needed only for write-back, not at connect.
+- O2: `fields_unsupported`. O3: a rate-limit 403 on a write is `rate_limited`.
+- Never comment on a public or internal repository or project (new status `not_private`).
+
+**Claims found false and what changed:**
+- "refused whatever the body is": the 409 keeps today's order, after the body checks.
+- The golden-1 bracket example belonged to golden 2.
+- C13: 4 `RawResponse` literals, not 5.
+- The handler tests use real adapters, not `gitlab_like`.
+- Two spec-line citations were wrong.
+- X1 "proven by production" was misleading. It was then settled live against gitlab.com.
+
+**Next command:** `/sensei:plan docs/spec/daemon/tracker-forge-comment-writeback.md`. This
+registers the plan graph and creates GitHub issues, and is waiting on the user's go-ahead.
+Then `/sensei:build`.
+
+**Open questions (user):** commit the analysis and spec on develop? Create the plan's issues?
+
+---
+
 # Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue → develop)
 
 **Slice:** Relay autonomous queue — phases 1–5 COMPLETE, merged into develop `072ffec80`; `origin/main` merged back
