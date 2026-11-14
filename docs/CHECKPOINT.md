@@ -30,9 +30,14 @@ User ruling 2026-11-14: one shell — fix rokkit, never patch per screen; reuse 
 fixtures · #419 wrap-up (guidance v2, live DDL incl. now.ddl `last_nudge`, install, e2e) → #426. Then catalogue
 Order 2–5 (guards, dōjō `/preview`, families).
 
-**Next command:** the Timeline migration (red-first): TaskHistory/HistoryEntry → rokkit `Timeline`.
+- Timeline, rokkit side: **PR sensei-hq/rokkit#182 awaiting the user's review** (branch `feat/timeline-tone-dot`,
+  red `50a173808` → green `695bbd4ed`; check 9092 + browser 183): item `tone` → `data-tone`; `marker="dot"`, a 12px
+  dot centred on one line; `--timeline-gap`, `--timeline-dot-top`.
 
-**Open questions (user):** host tag needs a Pill `title`; merge #417 + `make release`
+**Next command:** after #182 is merged and published (1.15.5): bump `@rokkit/*` in app + dōjō, then TaskHistory →
+`<Timeline marker="dot">` with HistoryEntry as the `content` snippet (red-first; drop the hand-placed node).
+
+**Open questions (user):** review/merge/publish rokkit#182; host tag needs a Pill `title`; merge #417 + `make release`
 (then this lane → develop when finished).
 
 **Known broken:** CONTRACT §15 auto-nudge for non-review waits not built (`task.waiting` gap). Dev Vite binds IPv6
