@@ -304,18 +304,29 @@ async fn verify_merged_tree(
     }
     .await;
     // Cleanup never spends the budget and never masks the verdict.
-    let removed =
-        run_in(git, &["worktree", "remove", "--force", &worktree_str], base, CLEANUP_TIMEOUT).await;
+    remove_verify_worktree(git, base, &worktree).await;
+    verdict
+}
+
+/// Remove the verify worktree, whatever state it was left in.
+async fn remove_verify_worktree(git: &str, base: &Path, worktree: &Path) {
+    let worktree_str = worktree.to_string_lossy().into_owned();
+    let removed = run_in(
+        git,
+        &["worktree", "remove", "--force", &worktree_str],
+        base,
+        CLEANUP_TIMEOUT,
+    )
+    .await;
     if let Err(why) = removed {
         tracing::warn!(worktree = %worktree_str, %why, "relay gate: verify worktree not removed");
     }
     if worktree.exists()
-        && let Err(why) = std::fs::remove_dir_all(&worktree)
+        && let Err(why) = std::fs::remove_dir_all(worktree)
     {
         tracing::warn!(worktree = %worktree_str, %why, "relay gate: verify dir not removed");
     }
     let _ = run_in(git, &["worktree", "prune"], base, CLEANUP_TIMEOUT).await;
-    verdict
 }
 
 /// A gate that answers with a fixed outcome and remembers what it was asked.
@@ -452,6 +463,22 @@ mod tests {
 
     fn worktrees(dir: &Path) -> usize {
         git(dir, &["worktree", "list"]).lines().count()
+    }
+
+    #[tokio::test]
+    async fn the_cleanup_removes_a_verify_worktree_left_locked() {
+        // A `git worktree add` killed by the budget leaves its worktree locked
+        // ("initializing"); `remove --force` and `prune` both skip a locked one.
+        let tmp = repo(false);
+        let dir = tmp.path();
+        let wt = std::env::temp_dir().join(format!("sensei-gate-{}", Uuid::now_v7().simple()));
+        let wt_str = wt.to_string_lossy().into_owned();
+        git(dir, &["worktree", "add", "-q", "--detach", &wt_str, "lane/x"]);
+        git(dir, &["worktree", "lock", &wt_str]);
+        assert_eq!(worktrees(dir), 2);
+        remove_verify_worktree("git", dir, &wt).await;
+        assert_eq!(worktrees(dir), 1, "the locked verify worktree is gone");
+        assert!(!wt.exists());
     }
 
     #[tokio::test]

@@ -721,6 +721,9 @@ mod tests {
     struct Counting {
         counter: std::path::PathBuf,
         pause: &'static str,
+        /// A file the compile writes into the project, as rust-analyzer 1.100
+        /// writes a `Cargo.lock` into a project that has none.
+        creates: Option<&'static str>,
     }
     impl CompilerEngine for Counting {
         fn manifest(&self) -> &'static str {
@@ -744,7 +747,7 @@ mod tests {
             }
         }
         fn sources(&self) -> &'static [&'static str] {
-            &["rs", "toml"]
+            &["rs", "toml", "lock"]
         }
         fn configs(&self) -> &'static [&'static str] {
             &["{}"]
@@ -755,9 +758,13 @@ mod tests {
                 args: vec![
                     "-c".into(),
                     format!(
-                        "echo start >> '{c}'; sleep {p}; : > '{output}'; echo end >> '{c}'",
+                        "echo start >> '{c}'; sleep {p}; {w}: > '{output}'; echo end >> '{c}'",
                         c = self.counter.display(),
                         p = self.pause,
+                        w = self
+                            .creates
+                            .map(|f| format!("echo made > '{root}/{f}'; "))
+                            .unwrap_or_default(),
                     ),
                 ],
                 cwd: root.into(),
@@ -782,7 +789,7 @@ mod tests {
         let elsewhere = tempfile::tempdir().unwrap();
         let counter = elsewhere.path().join("compiles.txt");
         let engine: &'static Counting =
-            Box::leak(Box::new(Counting { counter: counter.clone(), pause: "0" }));
+            Box::leak(Box::new(Counting { counter: counter.clone(), pause: "0", creates: None }));
         let sessions = CompilerSessions::new(&root);
         let runs = || {
             std::fs::read_to_string(&counter)
@@ -817,6 +824,7 @@ mod tests {
         let engine: &'static Counting = Box::leak(Box::new(Counting {
             counter: elsewhere.path().join("compiles.txt"),
             pause: "0",
+            creates: None,
         }));
         let sessions = CompilerSessions::new(&root);
         let project = sessions.project_for(engine, &root).await.expect("compiles");
@@ -828,6 +836,43 @@ mod tests {
 
         std::fs::write(root.join("lib.rs"), "pub fn a() {}\npub fn b() {}\n").unwrap();
         assert_eq!(sessions.is_current_now(engine, &project).await, Ok(false), "a source moved on");
+    }
+
+    /// **WHAT THE COMPILE WRITES ITSELF IS PART OF WHAT IT COMPILED.**
+    /// rust-analyzer 1.100 writes a `Cargo.lock` into a project that has none.
+    /// Counted as an edit, every compile was stale the moment it finished, so
+    /// the scan's files waited for a fresh compile that one compile per scan
+    /// never gave them: a Rust project without a committed lockfile indexed
+    /// nothing. A source edited during the compile still makes it stale.
+    #[tokio::test]
+    async fn a_file_the_compile_creates_does_not_make_it_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::write(root.join("lib.rs"), "pub fn a() {}\n").unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let counter = elsewhere.path().join("compiles.txt");
+        let engine: &'static Counting = Box::leak(Box::new(Counting {
+            counter: counter.clone(),
+            pause: "0",
+            creates: Some("Cargo.lock"),
+        }));
+        let sessions = CompilerSessions::new(&root);
+        let project = sessions.project_for(engine, &root).await.expect("compiles");
+        assert!(root.join("Cargo.lock").exists(), "the compile wrote its lockfile");
+        assert_eq!(sessions.is_current_now(engine, &project).await, Ok(true), "still current");
+        sessions.project_for(engine, &root).await.expect("reuses");
+        let runs =
+            std::fs::read_to_string(&counter).unwrap().lines().filter(|l| *l == "end").count();
+        assert_eq!(runs, 1, "not compiled again for its own lockfile");
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(root.join("lib.rs"), "pub fn a() {}\npub fn b() {}\n").unwrap();
+        assert_eq!(
+            sessions.is_current_now(engine, &project).await,
+            Ok(false),
+            "an edit still counts"
+        );
     }
 
     /// **A NEWER COMPILE NEVER BLANKS AN OLDER ONE, NOR RUNS BESIDE IT.** While
@@ -843,7 +888,7 @@ mod tests {
         let elsewhere = tempfile::tempdir().unwrap();
         let counter = elsewhere.path().join("compiles.txt");
         let engine: &'static Counting =
-            Box::leak(Box::new(Counting { counter: counter.clone(), pause: "0.6" }));
+            Box::leak(Box::new(Counting { counter: counter.clone(), pause: "0.6", creates: None }));
         let sessions = Arc::new(CompilerSessions::new(&root));
         sessions.project_for(engine, &root).await.expect("first compile");
 
@@ -1571,7 +1616,7 @@ mod tests {
             }
         }
         fn sources(&self) -> &'static [&'static str] {
-            &["rs", "toml"]
+            &["rs", "toml", "lock"]
         }
         fn configs(&self) -> &'static [&'static str] {
             &["{}"]
