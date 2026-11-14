@@ -68,7 +68,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "tracker_sync",
-        "Tracker sync — mirrors each connected Jira, GitLab or GitHub board's sprints and tickets, writes usage and SDLC metrics back to tickets assigned to you (Jira), and drains removed credentials",
+        "Tracker sync — mirrors each connected Jira, GitLab or GitHub board's sprints and tickets, writes usage metrics back to tickets assigned to you (and SDLC metrics on Jira), and drains removed credentials",
     ),
     ("watchdog", "Run watchdog — stalled-run detection and recovery"),
 ];

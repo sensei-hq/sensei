@@ -18,7 +18,7 @@ import type {
   TrackerMetric,
   TrackerSyncCounts,
 } from '$lib/types.js';
-import { FIELD_MAPPING_ERRORS, WRITEBACK_STOPPED, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
+import { FIELD_MAPPING_ERRORS, errorFor, writebackStopped, type TrackerAlert } from '$lib/tracker-errors.js';
 
 export { CREATE_TOKEN_URL, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
 
@@ -137,29 +137,39 @@ export function elapsedLabel(iso: string, now: Date): string {
 const lastErrorText = (code: string | null, kind: TrackerKind = 'jira') =>
   code ? errorFor(502, { error: code }, kind).text : '';
 
-/** A board's write-back state as the card says it (W-UI). */
-export function writebackText(w: TrackerConnection['writeback']): string {
-  const tickets = (n: number) => `${n} ${n === 1 ? 'ticket' : 'tickets'}`;
+const tickets = (n: number) => `${n} ${n === 1 ? 'ticket' : 'tickets'}`;
+
+/** A board's write-back state as the card says it (W-UI), naming its tracker. */
+export function writebackText(w: TrackerConnection['writeback'], kind: TrackerKind): string {
   switch (w.state) {
     case 'active': {
       const failing = w.failing > 0 ? ` ${w.failing} couldn’t be written.` : '';
-      return `Writing to ${tickets(w.assigned)} assigned to you.${failing}`;
+      // Skipped tickets are not written to (tracker-forge-comment-writeback F7).
+      return `Writing to ${tickets(w.assigned - w.not_private)} assigned to you.${failing}`;
     }
     case 'disabled':
       return 'Write-back is off.';
     case 'pass_failed':
-      return (w.error && WRITEBACK_STOPPED[w.error]) || `Write-back stopped (${w.error ?? 'unknown'}).`;
+      return (w.error && writebackStopped(w.error, kind)) || `Write-back stopped (${w.error ?? 'unknown'}).`;
     case 'owner_not_a_person':
       return 'This token belongs to an app account, so sensei can’t tell which tickets are yours. Nothing is written.';
     case 'owner_lookup_failed':
       return w.error
-        ? `Couldn’t check which tickets are yours: ${lastErrorText(w.error).replace(/\.$/, '')}. Retrying on each sync.`
+        ? `Couldn’t check which tickets are yours: ${lastErrorText(w.error, kind).replace(/\.$/, '')}. Retrying on each sync.`
         : 'Couldn’t check which tickets are yours. Retrying on each sync.';
     case 'owner_unknown':
       return 'Checking which tickets are yours on the next sync.';
     case 'nothing_assigned':
       return 'No tickets on this board are assigned to you.';
   }
+}
+
+/** The tickets write-back skips because their repository or project is not private
+ *  (tracker-forge-comment-writeback F7), or `null` when there are none. */
+export function notPrivateText(w: TrackerConnection['writeback']): string | null {
+  if (w.not_private <= 0) return null;
+  const are = w.not_private === 1 ? 'is' : 'are';
+  return `${tickets(w.not_private)} ${are} in public or internal repositories; sensei doesn’t comment there.`;
 }
 
 export type View = 'loading' | 'daemon_error' | 'not_connected' | 'connected';
@@ -371,8 +381,30 @@ export class TrackerIntegration {
 
   /** The board's write-back state as text (W-UI). */
   writebackLine(t: TrackerConnection): string {
-    return writebackText(t.writeback);
+    return writebackText(t.writeback, t.kind);
   }
+
+  /** Tickets skipped because their repository is not private (F7), or `null`. */
+  notPrivateLine(t: TrackerConnection): string | null {
+    return notPrivateText(t.writeback);
+  }
+
+  /** What write-back does on a tracker without field mapping, and the token it needs (F10). */
+  commentOnlyNote(t: TrackerConnection): string {
+    const where = t.kind === 'gitlab' ? 'private projects' : 'private repositories';
+    const scope: Partial<Record<TrackerKind, string>> = {
+      gitlab: 'The token needs the api scope.',
+      github: 'The token needs Issues: read and write on each repository (or a classic repo token).',
+    };
+    return [
+      `Sensei posts one comment on each ticket assigned to you, in ${where} only, and keeps it up to date.`,
+      scope[t.kind],
+      'The first comment notifies the ticket’s participants; updates don’t.',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
 
   /** Switch write-back on or off; the card shows what the daemon returns, or stays as it was. */
   async toggleWriteback(t: TrackerConnection) {

@@ -38,7 +38,7 @@ const connected: TrackerConnection = {
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
   counts: { tasks: 142, sprints: 6 },
-  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, not_private: 0, supports: { comment: true, fields: true }, error: null },
   sdlc_project: projectSdlc(),
 };
 
@@ -113,7 +113,7 @@ describe('not connected', () => {
     expect(q('[data-field="confirm_host"]')).toBeNull();
   });
 
-  it('a GitLab board names GitLab, its sprint source and no write-back, and never Jira', async () => {
+  it('a GitLab board names GitLab and its sprint source, writes the comment only, and never names Jira', async () => {
     const gitlab: TrackerConnection = {
       ...connected,
       kind: 'gitlab',
@@ -126,14 +126,19 @@ describe('not connected', () => {
       full_path: 'acme',
       status: 'error',
       last_error: 'unauthorized',
-      writeback: { ...connected.writeback, enabled: false },
+      writeback: { ...connected.writeback, enabled: false, supports: { comment: true, fields: false } },
     };
     const { m, q } = await open({ tryListTrackers: async () => ({ ok: true, data: [gitlab] }) });
     const card = q('[data-tracker="t-1"]')!;
     expect(card.textContent).toContain('GitLab · gitlab.example.com · acme');
     expect(q('[data-sprint-source="milestone"]')!.textContent).toContain('Sprints: milestones');
-    expect(q('[data-writeback="unsupported"]')!.textContent).toContain('not available for GitLab yet');
-    expect(q('[data-action="writeback"]')).toBeNull();
+    // tracker-forge-comment-writeback F10: the toggle and the comment note, no Fields.
+    expect(q<HTMLInputElement>('[data-action="writeback"]')?.labels?.[0]?.textContent).toContain('Write back to GitLab');
+    expect(q('[data-writeback="comment-only"]')!.textContent).toBe(
+      'Sensei posts one comment on each ticket assigned to you, in private projects only, and keeps it up to date. The token needs the api scope. The first comment notifies the ticket’s participants; updates don’t.',
+    );
+    expect(q('[data-action="fields"]')).toBeNull();
+    expect(q('[data-writeback="unsupported"]')).toBeNull();
     expect(card.textContent).not.toMatch(/Jira/);
     expect(m.container.textContent).toContain('Jira, GitLab or GitHub boards');
   });
@@ -158,7 +163,7 @@ describe('not connected', () => {
     expect(choices.textContent).toContain('Release');
   });
 
-  it('a GitHub project names GitHub, its Iteration field and no write-back, and never Jira or GitLab', async () => {
+  it('a GitHub project names GitHub and its Iteration field, writes the comment only, and never names Jira or GitLab', async () => {
     const github: TrackerConnection = {
       ...connected,
       kind: 'github',
@@ -169,13 +174,26 @@ describe('not connected', () => {
       board_name: 'Roadmap',
       url: 'https://github.com/orgs/acme/projects/3',
       iteration_field: 'Sprint',
-      writeback: { ...connected.writeback, enabled: false },
+      writeback: {
+        ...connected.writeback,
+        enabled: true,
+        state: 'active',
+        assigned: 5,
+        not_private: 2,
+        supports: { comment: true, fields: false },
+      },
     };
     const { q } = await open({ tryListTrackers: async () => ({ ok: true, data: [github] }) });
     const card = q('[data-tracker="t-1"]')!;
     expect(card.textContent).toContain('GitHub · acme/3 · Roadmap');
     expect(card.textContent).toContain('Sprints: the Sprint iteration field');
-    expect(q('[data-writeback="unsupported"]')!.textContent).toContain('not available for GitHub yet');
+    expect(q<HTMLInputElement>('[data-action="writeback"]')?.labels?.[0]?.textContent).toContain('Write back to GitHub');
+    expect(q('[data-writeback-state]')!.textContent!.trim()).toBe('Writing to 3 tickets assigned to you.');
+    expect(q('[data-writeback="not-private"]')!.textContent).toBe(
+      '2 tickets are in public or internal repositories; sensei doesn’t comment there.',
+    );
+    expect(q('[data-writeback="comment-only"]')!.textContent).toContain('Issues: read and write on each repository');
+    expect(q('[data-action="fields"]')).toBeNull();
     expect(card.textContent).not.toMatch(/Jira|GitLab/);
   });
 
@@ -350,7 +368,7 @@ describe('write-back on the board card (W-UI)', () => {
   it('the header says what sensei writes back, and where', async () => {
     const { m } = await open({ tryListTrackers: async () => ({ ok: true, data: [active] }) });
     expect(m.container.textContent).toContain(
-      'Connect this workspace’s Jira, GitLab or GitHub boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map (GitLab and GitHub boards are read-only for now).',
+      'Connect this workspace’s Jira, GitLab or GitHub boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to the tracker: as a comment, or on Jira in the fields you map. It never comments on a public or internal GitLab project or GitHub repository.',
     );
     expect(m.container.textContent).not.toContain('never changes anything in Jira');
   });

@@ -36,7 +36,7 @@ const row = (over: Partial<TrackerConnection> = {}): TrackerConnection => ({
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
   counts: { tasks: 142, sprints: 6 },
-  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, not_private: 0, supports: { comment: true, fields: true }, error: null },
   sdlc_project: projectSdlc(),
   ...over,
 });
@@ -654,6 +654,8 @@ describe('write-back (tracker-metrics-writeback W8, W-UI)', () => {
     mapped: 0,
     assigned: 2,
     failing: 0,
+    not_private: 0,
+    supports: { comment: true, fields: true },
     error: null,
     ...over,
   });
@@ -679,6 +681,23 @@ describe('write-back (tracker-metrics-writeback W8, W-UI)', () => {
     expect(passFailed('db')).toBe('Couldn’t record what was written. Write-back retries on each sync.');
     expect(passFailed('rate_limited')).toBe('Jira is rate-limiting writes. Write-back resumes on the next sync.');
     expect(passFailed('transport')).toBe('Writing didn’t finish in time. Write-back resumes on the next sync.');
+    // tracker-forge-comment-writeback F10: the stop text names the board's tracker.
+    const onGithub = (error: string) =>
+      s.writebackLine(row({ kind: 'github', writeback: wb({ state: 'pass_failed', error }) }));
+    expect(onGithub('rate_limited')).toBe('GitHub is rate-limiting writes. Write-back resumes on the next sync.');
+    expect(onGithub('token_missing')).toBe('Couldn’t read the GitHub token to write back. Replace the token.');
+    expect(onGithub('rate_limited')).not.toMatch(/Jira/);
+    const lookupOnGitlab = s.writebackLine(
+      row({ kind: 'gitlab', writeback: wb({ state: 'owner_lookup_failed', error: 'unauthorized' }) }),
+    );
+    expect(lookupOnGitlab).toContain('GitLab rejected the token');
+    expect(lookupOnGitlab).not.toMatch(/Jira/);
+    // Skipped tickets are not written to (F7).
+    expect(line({ assigned: 5, not_private: 2 })).toBe('Writing to 3 tickets assigned to you.');
+    expect(s.notPrivateLine(row({ writeback: wb({ not_private: 1 }) }))).toBe(
+      '1 ticket is in public or internal repositories; sensei doesn’t comment there.',
+    );
+    expect(s.notPrivateLine(row({ writeback: wb() }))).toBeNull();
     expect(passFailed('decode')).toBe('Write-back stopped (decode).');
     expect(line({ state: 'pass_failed', error: null })).toBe('Write-back stopped (unknown).');
     expect(line({ state: 'owner_lookup_failed', error: null })).toBe(

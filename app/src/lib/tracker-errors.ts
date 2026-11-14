@@ -58,6 +58,7 @@ const WORDS: Record<string, string> = {
   invalid_body: 'sensei refused that change.',
   host_not_confirmed: 'Type the GitLab host again, exactly as in the board URL.',
   writeback_unsupported: 'Write-back isn’t available for this tracker yet.',
+  fields_unsupported: 'Field mapping isn’t available for this tracker; sensei writes a comment instead.',
 };
 
 /** GitLab's words where they differ from Jira's (tracker-gitlab §G10). */
@@ -65,7 +66,8 @@ const GITLAB_WORDS: Record<string, string> = {
   invalid_base_url:
     'That isn’t a GitLab board address. Use https://<host>/<group> or https://<host>/<group>/<project>: https on the standard port, no subpath, and not a local name such as .local or .internal.',
   unauthorized: 'GitLab rejected the token. Check it has the read_api scope and hasn’t expired.',
-  token_required: 'Enter a GitLab access token with the read_api scope.',
+  token_required:
+    'Enter a GitLab access token with the read_api scope. Write-back also needs the api scope.',
   not_found: 'GitLab no longer has this group or project (it may have been deleted or moved).',
   rate_limited: 'GitLab is rate-limiting requests. Try again in a minute.',
   transport: reach('transport', 'GitLab'),
@@ -81,7 +83,8 @@ const GITHUB_WORDS: Record<string, string> = {
     'That isn’t a GitHub project address. Use https://github.com/orgs/<org>/projects/<number> or https://github.com/users/<user>/projects/<number>.',
   unauthorized: 'GitHub rejected the token. Check it hasn’t expired, or create a new one.',
   forbidden: 'The token can’t read this project. It needs Projects: read (fine-grained) or the read:project scope (classic).',
-  token_required: 'Enter a GitHub token with Projects: read and Issues: read.',
+  token_required:
+    'Enter a GitHub token with Projects: read and Issues: read. Write-back also needs Issues: read and write.',
   not_found: 'GitHub no longer has this project, or its Iteration field (it may have been deleted or renamed).',
   rate_limited: 'GitHub is rate-limiting requests. Try again in a minute.',
   transport: reach('transport', 'GitHub'),
@@ -95,14 +98,19 @@ const GITHUB_WORDS: Record<string, string> = {
 };
 
 /** Why a write-back pass could not run or stopped (tracker-metrics-writeback W-UI), by its
- *  `writeback_error` code. Apart from `WORDS`: the same codes mean something else for a sync. */
-export const WRITEBACK_STOPPED: Record<string, string> = {
-  token_missing: 'Couldn’t read the Jira token to write back. Replace the token.',
-  credential_store: 'Couldn’t read the Jira token to write back. Replace the token.',
-  db: 'Couldn’t record what was written. Write-back retries on each sync.',
-  rate_limited: 'Jira is rate-limiting writes. Write-back resumes on the next sync.',
-  transport: 'Writing didn’t finish in time. Write-back resumes on the next sync.',
-};
+ *  `writeback_error` code, naming the tracker (tracker-forge-comment-writeback F10). Apart
+ *  from `WORDS`: the same codes mean something else for a sync. `null` for an unknown code. */
+export function writebackStopped(code: string, kind: TrackerKind): string | null {
+  const name = TRACKER_NAME[kind];
+  const stopped: Record<string, string> = {
+    token_missing: `Couldn’t read the ${name} token to write back. Replace the token.`,
+    credential_store: `Couldn’t read the ${name} token to write back. Replace the token.`,
+    db: 'Couldn’t record what was written. Write-back retries on each sync.',
+    rate_limited: `${name} is rate-limiting writes. Write-back resumes on the next sync.`,
+    transport: 'Writing didn’t finish in time. Write-back resumes on the next sync.',
+  };
+  return stopped[code] ?? null;
+}
 
 /** Why the Fields editor's save was refused (W7), shown on the row it names (W-UI). Apart
  *  from `WORDS`: there `invalid_body` is the write-back switch's text. */

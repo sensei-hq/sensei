@@ -89,13 +89,10 @@ impl<R> PolicyTransport<R> {
     }
 }
 
-/// [`map_response`] for a write: an empty 2xx (Jira's 204) is `Null`, not `Decode`, and
-/// a 403 that names a rate limit is `RateLimited`, retried next pass, not the sticky
-/// `Forbidden` (tracker-forge-comment-writeback F8).
+/// [`map_response`] for a write: an empty 2xx (Jira's 204) is `Null`, not `Decode`.
 pub fn map_write_response(resp: &RawResponse) -> Result<serde_json::Value, TrackerError> {
     match resp.status {
         200..=299 if resp.body.is_empty() => Ok(serde_json::Value::Null),
-        403 if names_a_rate_limit(resp) => Err(TrackerError::RateLimited),
         _ => map_response(resp),
     }
 }
@@ -111,15 +108,18 @@ fn names_a_rate_limit(resp: &RawResponse) -> bool {
             .is_some_and(|m| m.contains("rate limit"))
 }
 
-/// Map a non-429 response onto the result the caller sees.
+/// Map a non-429 response onto the result the caller sees. A 403 that names a rate limit
+/// is `RateLimited`, not `Forbidden` (GitHub limits with 403; write-back treats
+/// `forbidden` as lasting), and a 410 is the resource gone (tracker-forge-comment-writeback F8).
 pub fn map_response(resp: &RawResponse) -> Result<serde_json::Value, TrackerError> {
     match resp.status {
         200..=299 => serde_json::from_slice(&resp.body).map_err(|_| TrackerError::Decode),
         300..=399 => Err(TrackerError::Redirect),
         400 => Err(TrackerError::BadRequest),
         401 => Err(TrackerError::Unauthorized),
+        403 if names_a_rate_limit(resp) => Err(TrackerError::RateLimited),
         403 => Err(TrackerError::Forbidden),
-        404 => Err(TrackerError::NotFound),
+        404 | 410 => Err(TrackerError::NotFound),
         429 => Err(TrackerError::RateLimited),
         _ => Err(TrackerError::HttpError),
     }
@@ -276,6 +276,7 @@ impl RawWrite for ReqwestRaw {
         let verb = match method {
             WriteMethod::Post => reqwest::Method::POST,
             WriteMethod::Put => reqwest::Method::PUT,
+            WriteMethod::Patch => reqwest::Method::PATCH,
         };
         let req = self
             .client
@@ -422,9 +423,8 @@ mod tests {
             && serde_json::from_slice::<serde_json::Value>(b).unwrap() == body));
     }
 
-    /// tracker-forge-comment-writeback F8 / gate 9: a write's 403 that names a rate limit
-    /// is `RateLimited` (retried next pass); any other 403 stays `Forbidden` (sticky). A
-    /// read's mapping is unchanged.
+    /// tracker-forge-comment-writeback F8 / gate 9: a 403 that names a rate limit is
+    /// `RateLimited` (retried next pass); any other 403 stays `Forbidden` (sticky).
     #[test]
     fn a_write_403_that_names_a_rate_limit_is_rate_limited() {
         let r = |retry_after: Option<&str>, exhausted: bool, body: &str| RawResponse {
@@ -448,10 +448,15 @@ mod tests {
             Err(TrackerError::Forbidden),
             "only a JSON message is read"
         );
-        // Reads keep their mapping (tracker-github §H1 accepted it for reads).
-        assert_eq!(map_response(&r(Some("30"), false, "")), Err(TrackerError::Forbidden));
-        assert_eq!(map_response(&r(None, true, "")), Err(TrackerError::Forbidden));
-        assert_eq!(map_response(&r(None, false, secondary)), Err(TrackerError::Forbidden));
+        // Reads too (amended at build, W5 review): GitHub's GETs are limited with 403, and a
+        // sticky `forbidden` on the comment-list read would hold the ticket for good.
+        assert_eq!(map_response(&r(Some("30"), false, "")), limited);
+        assert_eq!(map_response(&r(None, true, "")), limited);
+        assert_eq!(map_response(&r(None, false, secondary)), limited);
+        assert_eq!(map_response(&r(None, false, denied)), Err(TrackerError::Forbidden));
+        let gone =
+            RawResponse { status: 410, retry_after: None, rate_exhausted: false, body: vec![] };
+        assert_eq!(map_response(&gone), Err(TrackerError::NotFound), "410 Gone is gone");
     }
 
     #[test]
@@ -672,7 +677,9 @@ mod tests {
         ))
         .await;
         let t = PolicyTransport::new(ReqwestRaw::new(&base, basic("u", "t")).unwrap(), 0);
-        for (m, name) in [(WriteMethod::Post, "POST"), (WriteMethod::Put, "PUT")] {
+        for (m, name) in
+            [(WriteMethod::Post, "POST"), (WriteMethod::Put, "PUT"), (WriteMethod::Patch, "PATCH")]
+        {
             let echo = t
                 .send_json(
                     m,

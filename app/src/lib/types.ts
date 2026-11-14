@@ -1907,8 +1907,13 @@ export interface TrackerWriteback {
   mapped: number;
   /** Live tickets assigned to the token owner. */
   assigned: number;
-  /** The assigned tickets whose last write failed. */
+  /** The assigned tickets whose last write failed (a `not_private` skip is no failure). */
   failing: number;
+  /** Assigned tickets skipped because their repository or project is public or internal
+   *  (tracker-forge-comment-writeback F7). */
+  not_private: number;
+  /** What this tracker's adapter can write: the comment, mapped fields (F1). */
+  supports: { comment: boolean; fields: boolean };
   /** A fixed `tracker_error` code for `pass_failed` / `owner_lookup_failed`, else null. */
   error: string | null;
 }
@@ -1965,7 +1970,8 @@ export type TrackerWritebackStatus =
   | 'comment_removed'
   | 'not_found'
   | 'rate_limited'
-  | 'error';
+  | 'error'
+  | 'not_private';
 
 /** What `POST …/trackers/sync` counted. */
 export interface TrackerSyncCounts {

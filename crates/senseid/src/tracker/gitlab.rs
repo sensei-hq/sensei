@@ -2,7 +2,8 @@
 //! `docs/spec/daemon/tracker-gitlab.md`). A board is a group (with its subgroups) or
 //! a project, keyed by GitLab's numeric id. Sprints are iterations where the
 //! iterations probe answers 200, milestones otherwise. Keys and links are
-//! [`crate::tracker::forge`]'s. History and write-back are unsupported (§G8).
+//! [`crate::tracker::forge`]'s. History and mapped fields are unsupported (§G8); write-back
+//! writes the comment, as a note (tracker-forge-comment-writeback F5).
 
 use crate::tracker::forge::{date, midnight, text, timestamp};
 use crate::tracker::http::normalize_base_url;
@@ -11,7 +12,7 @@ use crate::tracker::{
     AccountRef, ApiToken, Audience, AuthScheme, BoardScope, Capabilities, ConnectParams,
     Discovered, FieldCheck, FieldValue, GetTransport, KnownTask, Link, OwnerLookup, ParamError,
     PrevState, SessionText, Snapshot, SprintRow, TaskRef, TaskRow, TrackerAdapter, TrackerError,
-    TrackerKind, ValidateError, Validated, WriteTransport,
+    TrackerKind, ValidateError, Validated, WriteMethod, WriteTransport, is_numeric_id,
 };
 
 pub struct GitlabAdapter;
@@ -54,6 +55,17 @@ pub fn typed_path(board_url: &str) -> Option<String> {
 /// only `[A-Za-z0-9_.\-/]`, so `/` is the one character to encode.
 fn encoded(path: &str) -> String {
     path.replace('/', "%2F")
+}
+
+/// `{API}/projects/:path/issues/:iid` for a ticket, from its stored key (F5); a key that
+/// is not a GitLab key is refused before any request, as Jira refuses a bad id.
+fn issue_api(task: &TaskRef<'_>) -> Result<String, TrackerError> {
+    let (path, iid) = crate::tracker::forge::parse_key(task.key).ok_or(TrackerError::BadRequest)?;
+    // A project path always has its namespace; a bare `12345` would be read as an id.
+    if !path.contains('/') || iid == 0 || iid > i64::MAX as u64 {
+        return Err(TrackerError::BadRequest);
+    }
+    Ok(format!("{API}/projects/{}/issues/{iid}", encoded(&path)))
 }
 
 /// Which kind of namespace a board is.
@@ -315,8 +327,7 @@ impl TrackerAdapter for GitlabAdapter {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // The comment surface arrives with its methods (tracker-forge-comment-writeback W5).
-        Capabilities { history: false, comment: false, fields: false }
+        Capabilities { history: false, comment: true, fields: false }
     }
 
     fn connect_params(&self, body: &serde_json::Value) -> Result<ConnectParams, ParamError> {
@@ -513,32 +524,49 @@ impl TrackerAdapter for GitlabAdapter {
         Ok(found)
     }
 
-    // ── Write-back: unsupported (§G8), unreachable behind the capability guards ──
+    // ── Write-back: the comment, as a note (tracker-forge-comment-writeback F5) ──
 
     async fn find_comment(
         &self,
-        _t: &dyn GetTransport,
-        _task: &TaskRef<'_>,
-        _owner: &AccountRef,
+        t: &dyn GetTransport,
+        task: &TaskRef<'_>,
+        owner: &AccountRef,
     ) -> Result<Option<String>, TrackerError> {
-        Err(TrackerError::UnsupportedTracker)
+        let issue = issue_api(task)?;
+        crate::tracker::forge::same_ticket(&t.get_json(&issue, &[]).await?, task)?;
+        let query = [
+            ("sort", "desc".to_string()),
+            ("order_by", "created_at".to_string()),
+            ("per_page", "50".to_string()),
+        ];
+        let notes = t.get_json(&format!("{issue}/notes"), &query).await?;
+        let notes = notes.as_array().ok_or(TrackerError::Decode)?;
+        Ok(notes.iter().find_map(|n| crate::tracker::forge::sensei_comment(n, "/author/id", owner)))
     }
     async fn create_comment(
         &self,
-        _w: &dyn WriteTransport,
-        _task: &TaskRef<'_>,
-        _report: &crate::tracker::writeback::Report,
+        w: &dyn WriteTransport,
+        task: &TaskRef<'_>,
+        report: &crate::tracker::writeback::Report,
     ) -> Result<String, TrackerError> {
-        Err(TrackerError::UnsupportedTracker)
+        let path = format!("{}/notes", issue_api(task)?);
+        let body = serde_json::json!({"body": crate::tracker::writeback::markdown(report)});
+        let created = w.send_json(WriteMethod::Post, &path, &[], &body).await?;
+        crate::tracker::forge::id_text(&created).ok_or(TrackerError::Decode)
     }
     async fn update_comment(
         &self,
-        _w: &dyn WriteTransport,
-        _task: &TaskRef<'_>,
-        _comment: &str,
-        _report: &crate::tracker::writeback::Report,
+        w: &dyn WriteTransport,
+        task: &TaskRef<'_>,
+        comment_ref: &str,
+        report: &crate::tracker::writeback::Report,
     ) -> Result<(), TrackerError> {
-        Err(TrackerError::UnsupportedTracker)
+        if !is_numeric_id(comment_ref) {
+            return Err(TrackerError::BadRequest);
+        }
+        let path = format!("{}/notes/{comment_ref}", issue_api(task)?);
+        let body = serde_json::json!({"body": crate::tracker::writeback::markdown(report)});
+        w.send_json(WriteMethod::Put, &path, &[], &body).await.map(|_| ())
     }
     /// The ticket's project path (F7): its tickets share one visibility read.
     fn audience_key(&self, task: &TaskRef<'_>) -> Option<String> {
@@ -580,10 +608,19 @@ impl TrackerAdapter for GitlabAdapter {
     }
     async fn issue_exists(
         &self,
-        _t: &dyn GetTransport,
-        _task: &TaskRef<'_>,
+        t: &dyn GetTransport,
+        task: &TaskRef<'_>,
     ) -> Result<bool, TrackerError> {
-        Err(TrackerError::UnsupportedTracker)
+        // Another issue at the address is not this ticket (F6b): the ticket is gone.
+        match t.get_json(&issue_api(task)?, &[]).await {
+            Ok(issue) => match crate::tracker::forge::same_ticket(&issue, task) {
+                Ok(()) => Ok(true),
+                Err(TrackerError::NotFound) => Ok(false),
+                Err(e) => Err(e),
+            },
+            Err(TrackerError::NotFound) => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -1090,6 +1127,166 @@ mod tests {
         );
         issue["references"] = serde_json::Value::Null;
         assert_eq!(task_row(&issue, BASE), Err(TrackerError::Decode));
+    }
+
+    fn report() -> crate::tracker::writeback::Report {
+        crate::tracker::writeback::Report { title: "T".into(), lines: vec!["a: 1".into()] }
+    }
+
+    const ISSUE: &str = "/api/v4/projects/acme%2Fplatform/issues/12";
+    const NOTES_QUERY: &str = "sort=desc&order_by=created_at&per_page=50";
+
+    fn ticket() -> crate::tracker::TaskRef<'static> {
+        crate::tracker::TaskRef { external_id: "9012", key: "acme/platform#12" }
+    }
+
+    fn note(id: u64, author: u64, body: &str, system: bool) -> serde_json::Value {
+        serde_json::json!({"id": id, "author": {"id": author}, "body": body, "system": system})
+    }
+
+    /// tracker-forge-comment-writeback F5 / gate 5: sensei adopts only its own note: by
+    /// the owner, marked, and not a system note. The ticket is read first and must still
+    /// be the stored one (F6b).
+    #[tokio::test]
+    async fn the_newest_owner_note_with_the_marker_is_adopted() {
+        use crate::tracker::test_support::Canned;
+        let owner = AccountRef::new("77");
+        let marked = "<!-- sensei:writeback -->\n**x**";
+        let notes = serde_json::json!([
+            note(9, 77, marked, true),
+            note(8, 55, marked, false),
+            note(7, 77, "**Sensei · AI usage** no marker", false),
+            note(6, 77, marked, false),
+            note(5, 77, marked, false),
+        ]);
+        let t = Canned::default()
+            .answer(ISSUE, serde_json::json!({"id": 9012}))
+            .answer(&format!("{ISSUE}/notes"), notes);
+        assert_eq!(GitlabAdapter.find_comment(&t, &ticket(), &owner).await, Ok(Some("6".into())));
+        assert_eq!(t.calls(), [ISSUE.to_string(), format!("{ISSUE}/notes?{NOTES_QUERY}")]);
+
+        let none = Canned::default()
+            .answer(ISSUE, serde_json::json!({"id": 9012}))
+            .answer(&format!("{ISSUE}/notes"), serde_json::json!([note(8, 55, marked, false)]));
+        assert_eq!(GitlabAdapter.find_comment(&none, &ticket(), &owner).await, Ok(None));
+        let odd = Canned::default()
+            .answer(ISSUE, serde_json::json!({"id": 9012}))
+            .answer(&format!("{ISSUE}/notes"), serde_json::json!({"message": "?"}));
+        assert_eq!(
+            GitlabAdapter.find_comment(&odd, &ticket(), &owner).await,
+            Err(TrackerError::Decode)
+        );
+    }
+
+    /// F6b: a different issue now at the address is not this ticket: `NotFound`, and no
+    /// notes are read.
+    #[tokio::test]
+    async fn another_issue_at_the_ticket_s_address_is_not_found() {
+        use crate::tracker::test_support::Canned;
+        let t = Canned::default().answer(ISSUE, serde_json::json!({"id": 4444}));
+        assert_eq!(
+            GitlabAdapter.find_comment(&t, &ticket(), &AccountRef::new("77")).await,
+            Err(TrackerError::NotFound)
+        );
+        assert_eq!(t.calls(), [ISSUE]);
+    }
+
+    /// F5: a note is created and edited at the ticket's project-and-number address, with
+    /// the shared Markdown body; the returned integer id is the comment ref.
+    #[tokio::test]
+    async fn a_note_is_created_then_edited_at_the_ticket_s_address() {
+        use crate::tracker::test_support::CannedWrites;
+        let body = serde_json::json!({"body": crate::tracker::writeback::markdown(&report())});
+        let w = CannedWrites::default()
+            .answer(
+                WriteMethod::Post,
+                &format!("{ISSUE}/notes"),
+                Ok(serde_json::json!({"id": 321})),
+            )
+            .answer(
+                WriteMethod::Put,
+                &format!("{ISSUE}/notes/321"),
+                Ok(serde_json::json!({"id": 321})),
+            );
+        assert_eq!(GitlabAdapter.create_comment(&w, &ticket(), &report()).await, Ok("321".into()));
+        assert_eq!(GitlabAdapter.update_comment(&w, &ticket(), "321", &report()).await, Ok(()));
+        assert_eq!(
+            w.sent(),
+            [
+                (WriteMethod::Post, format!("{ISSUE}/notes"), body.clone()),
+                (WriteMethod::Put, format!("{ISSUE}/notes/321"), body),
+            ]
+        );
+        let nested = crate::tracker::TaskRef { external_id: "1", key: "acme/sub/my.repo-x#3" };
+        let w = CannedWrites::default().answer(
+            WriteMethod::Post,
+            "/api/v4/projects/acme%2Fsub%2Fmy.repo-x/issues/3/notes",
+            Ok(serde_json::json!({"id": 1})),
+        );
+        assert_eq!(GitlabAdapter.create_comment(&w, &nested, &report()).await, Ok("1".into()));
+    }
+
+    /// F5 / gate 8: a key or ref of the wrong shape is refused before any request.
+    #[tokio::test]
+    async fn a_bad_key_or_comment_ref_sends_nothing() {
+        use crate::tracker::test_support::{Canned, CannedWrites};
+        let (t, w) = (Canned::default(), CannedWrites::default());
+        let owner = AccountRef::new("77");
+        for key in [
+            "not a key",
+            "acme/platform#0",
+            "../x#1",
+            "acme/platform#",
+            "acme/platform#9223372036854775808",
+            "12345#3",
+        ] {
+            let bad = crate::tracker::TaskRef { external_id: "1", key };
+            assert_eq!(
+                GitlabAdapter.update_comment(&w, &bad, "1", &report()).await,
+                Err(TrackerError::BadRequest),
+                "{key}"
+            );
+            assert_eq!(
+                GitlabAdapter.find_comment(&t, &bad, &owner).await,
+                Err(TrackerError::BadRequest),
+                "{key}"
+            );
+            assert_eq!(
+                GitlabAdapter.create_comment(&w, &bad, &report()).await,
+                Err(TrackerError::BadRequest),
+                "{key}"
+            );
+            assert_eq!(
+                GitlabAdapter.issue_exists(&t, &bad).await,
+                Err(TrackerError::BadRequest),
+                "{key}"
+            );
+        }
+        for r in ["abc", "1234567890123456789", "1/../2", ""] {
+            assert_eq!(
+                GitlabAdapter.update_comment(&w, &ticket(), r, &report()).await,
+                Err(TrackerError::BadRequest),
+                "{r:?}"
+            );
+        }
+        assert!(t.calls().is_empty() && w.sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_issue_that_answers_exists_and_a_404_does_not() {
+        use crate::tracker::test_support::Canned;
+        let here = Canned::default().answer(ISSUE, serde_json::json!({"id": 9012}));
+        assert_eq!(GitlabAdapter.issue_exists(&here, &ticket()).await, Ok(true));
+        let gone = Canned::default().fail(ISSUE, TrackerError::NotFound);
+        assert_eq!(GitlabAdapter.issue_exists(&gone, &ticket()).await, Ok(false));
+        // F6b: another issue at the address means this ticket is gone.
+        let taken = Canned::default().answer(ISSUE, serde_json::json!({"id": 4444}));
+        assert_eq!(GitlabAdapter.issue_exists(&taken, &ticket()).await, Ok(false));
+        let denied = Canned::default().fail(ISSUE, TrackerError::Forbidden);
+        assert_eq!(
+            GitlabAdapter.issue_exists(&denied, &ticket()).await,
+            Err(TrackerError::Forbidden)
+        );
     }
 
     /// tracker-forge-comment-writeback F7: a ticket's project is its audience key, and

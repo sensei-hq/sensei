@@ -58,6 +58,9 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         pg.writeback_counts(row.id).await.map_err(|_| internal())?;
     let fields = pg.tracker_fields(row.id).await.map_err(|_| internal())?;
     let mapped = fields.iter().filter(|f| f.metric.is_some()).count();
+    // What the adapter can write (tracker-forge-comment-writeback F10). A row of an
+    // unregistered kind is a defect, never a guessed capability.
+    let caps = crate::tracker::capabilities_of_kind(&row.kind).map_err(|_| internal())?;
     let (wb_state, wb_error) = writeback_state(&WritebackFacts {
         enabled: row.writeback_enabled,
         writeback_error: row.writeback_error.as_deref(),
@@ -114,6 +117,7 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
             "failing": failing,
             // F7: assigned tickets skipped because their repository is not private.
             "not_private": not_private,
+            "supports": {"comment": caps.comment, "fields": caps.fields},
             "error": wb_error,
         },
         // S4: the ticket-history task's last run.
@@ -1121,10 +1125,9 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(
-            (st, json(&b)["error"].clone()),
-            (StatusCode::CONFLICT, json!("writeback_unsupported"))
-        );
+        // A GitHub tracker writes the comment (tracker-forge-comment-writeback F1, gate 3).
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert_eq!(json(&b)["writeback"]["enabled"], json!(true));
         // The same project, typed under another spelling, from another workspace.
         let again = json!({
             "kind": "github", "level": "sprint",
@@ -1350,10 +1353,11 @@ mod tests {
     }
 
     /// D10, end to end: a GitLab board connects over HTTP against the recorded CE,
-    /// syncs, refuses write-back, and reads `unsupported_by_tracker` where its
+    /// syncs, takes write-back's comment but refuses mapped fields
+    /// (tracker-forge-comment-writeback F1), and reads `unsupported_by_tracker` where its
     /// figures need history.
     #[tokio::test]
-    async fn a_gitlab_board_connects_syncs_and_refuses_write_back() {
+    async fn a_gitlab_board_connects_syncs_takes_the_comment_and_refuses_fields() {
         let h = harness().await;
         let p = workspace(&h).await;
         let gitlab = Arc::new(crate::tracker::gitlab::test_support::RecordedGitlab::load(
@@ -1383,11 +1387,11 @@ mod tests {
         let t = tracker(&h, p).await;
         let uri = format!("/api/workspaces/{p}/trackers/{t}");
 
+        // A GitLab tracker writes the comment (tracker-forge-comment-writeback F1, gate 3).
         let (st, b) = call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": true})), None).await;
-        assert_eq!(
-            (st, json(&b)["error"].clone()),
-            (StatusCode::CONFLICT, json!("writeback_unsupported"))
-        );
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert_eq!(json(&b)["writeback"]["enabled"], json!(true));
+        assert_eq!(json(&b)["writeback"]["supports"], json!({"comment": true, "fields": false}));
         let (st, _) =
             call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": false})), None).await;
         assert_eq!(st, StatusCode::OK, "turning it off is allowed");
@@ -1794,6 +1798,7 @@ mod tests {
             assert_eq!(wb["assigned"], json!(if want == "active" { 1 } else { 0 }));
             assert_eq!(wb["failing"], json!(0));
             assert_eq!(wb["not_private"], json!(0), "F7: present, and none skipped on Jira");
+            assert_eq!(wb["supports"], json!({"comment": true, "fields": true}), "F10");
             assert_eq!(wb["error"], error);
         }
         // A lookup that fails is shown with its code.

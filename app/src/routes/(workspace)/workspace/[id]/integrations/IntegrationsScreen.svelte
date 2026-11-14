@@ -70,7 +70,7 @@
       icon="i-solar-link-bold-duotone"
       eyebrow="Integrations"
       title="Issue trackers"
-      description="Connect this workspace’s Jira, GitLab or GitHub boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map (GitLab and GitHub boards are read-only for now)."
+      description="Connect this workspace’s Jira, GitLab or GitHub boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to the tracker: as a comment, or on Jira in the fields you map. It never comments on a public or internal GitLab project or GitHub repository."
     />
   {/snippet}
 <section data-screen="integrations" class="flex flex-col">
@@ -123,7 +123,7 @@
                 ></span>
                 {screen.cardStatus(tracker)}
               </p>
-              {#if tracker.kind === 'jira'}
+              {#if tracker.writeback.supports.comment}
               <div class="flex flex-wrap items-center gap-3">
                 <label class="flex items-center gap-2 text-sm text-ink">
                   <input
@@ -137,12 +137,21 @@
                       void screen.toggleWriteback(tracker);
                     }}
                   />
-                  Write back to Jira
+                  Write back to {TRACKER_NAME[tracker.kind]}
                 </label>
                 <p class="m-0 text-xs text-ink-mute" data-writeback-state={tracker.writeback.state}>
                   {screen.writebackLine(tracker)}
                 </p>
               </div>
+              {#if screen.notPrivateLine(tracker)}
+                <p class="m-0 text-xs text-ink-mute" data-writeback="not-private">{screen.notPrivateLine(tracker)}</p>
+              {/if}
+              {#if !tracker.writeback.supports.fields}
+                <p class="m-0 text-xs text-ink-mute" data-writeback="comment-only">
+                  {screen.commentOnlyNote(tracker)}
+                </p>
+              {/if}
+              {#if tracker.writeback.supports.fields}
               <div class="flex flex-col gap-2">
                 <div class="self-start">
                   <Button
@@ -202,6 +211,7 @@
                   </div>
                 {/if}
               </div>
+              {/if}
               {:else}
                 <p class="m-0 text-xs text-ink-mute" data-writeback="unsupported">
                   Write-back: not available for {TRACKER_NAME[tracker.kind]} yet
@@ -329,7 +339,7 @@
               'password',
               screen.token,
               (v) => (screen.token = v),
-              'Create a fine-grained, read-only token with Projects: read on the owner and Issues: read on the project’s repositories. A classic token with repo and read:project also works, but can write to every repository it reaches. A ticket in a repository the token can’t read shows as not found.',
+              'Create a fine-grained, read-only token with Projects: read on the owner and Issues: read on the project’s repositories. A classic token with repo and read:project also works, but can write to every repository it reaches. A ticket in a repository the token can’t read shows as not found. Write-back also needs Issues: read and write.',
             )}
             {@render field(
               'tracker-iteration-field',
@@ -381,7 +391,7 @@
               'password',
               screen.token,
               (v) => (screen.token = v),
-              'In GitLab, create a personal or group access token with the read_api scope, and paste it here.',
+              'In GitLab, create a personal or group access token with the read_api scope, and paste it here. Write-back also needs the api scope.',
             )}
           {:else if !screen.advanced}
             {@render field(

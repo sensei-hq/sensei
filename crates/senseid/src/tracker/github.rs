@@ -2,7 +2,8 @@
 //! `docs/spec/daemon/tracker-github.md`, D92). Sprints are the iterations of the
 //! project's Iteration field; tickets are its issues, from any repository. Reads
 //! go through validated GraphQL queries (§H2) with the board's own token. Keys and
-//! links are [`crate::tracker::forge`]'s. History and write-back are unsupported (§H6).
+//! links are [`crate::tracker::forge`]'s. History and mapped fields are unsupported (§H6);
+//! write-back writes the comment, over REST (tracker-forge-comment-writeback F6).
 
 use crate::tracker::forge::{date, midnight, text, timestamp};
 use crate::tracker::graphql::GraphqlQuery;
@@ -11,7 +12,7 @@ use crate::tracker::{
     AccountRef, ApiToken, Audience, AuthScheme, BoardScope, Capabilities, ConnectParams,
     Discovered, FieldCheck, FieldValue, GetTransport, KnownTask, Link, OwnerLookup, ParamError,
     PrevState, SessionText, Snapshot, SprintRow, TaskRef, TaskRow, TrackerAdapter, TrackerError,
-    TrackerKind, ValidateError, Validated, WriteTransport,
+    TrackerKind, ValidateError, Validated, WriteMethod, WriteTransport, is_numeric_id,
 };
 
 pub struct GithubAdapter;
@@ -126,6 +127,16 @@ pub fn github_key(key: &str) -> Option<(String, String, i64)> {
         return None;
     }
     Some((owner.to_string(), name.to_string(), n as i64))
+}
+
+/// Comments per page when sensei looks for its own (F6).
+const COMMENT_PAGE: u64 = 50;
+
+/// `/repos/:owner/:name/issues/:n` for a ticket, from its stored key (F6); a key that is
+/// not a GitHub key is refused before any request.
+fn issue_rest(task: &TaskRef<'_>) -> Result<String, TrackerError> {
+    let (owner, name, n) = github_key(task.key).ok_or(TrackerError::BadRequest)?;
+    Ok(format!("/repos/{owner}/{name}/issues/{n}"))
 }
 
 /// One Iteration field of a project, as validate and the snapshot read it.
@@ -468,8 +479,7 @@ impl TrackerAdapter for GithubAdapter {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // The comment surface arrives with its methods (tracker-forge-comment-writeback W5).
-        Capabilities { history: false, comment: false, fields: false }
+        Capabilities { history: false, comment: true, fields: false }
     }
 
     fn reads_graphql(&self) -> bool {
@@ -596,32 +606,61 @@ impl TrackerAdapter for GithubAdapter {
         Ok(found)
     }
 
-    // ── Write-back: unsupported (§H6), unreachable behind the capability guards ──
+    // ── Write-back: the comment, over REST (tracker-forge-comment-writeback F6) ──
 
     async fn find_comment(
         &self,
-        _t: &dyn GetTransport,
-        _task: &TaskRef<'_>,
-        _owner: &AccountRef,
+        t: &dyn GetTransport,
+        task: &TaskRef<'_>,
+        owner: &AccountRef,
     ) -> Result<Option<String>, TrackerError> {
-        Err(TrackerError::UnsupportedTracker)
+        let issue = issue_rest(task)?;
+        let found = t.get_json(&issue, &[]).await?;
+        crate::tracker::forge::same_ticket(&found, task)?;
+        let count = found.get("comments").and_then(|c| c.as_u64()).ok_or(TrackerError::Decode)?;
+        // The newest comments: the last page and, past one page, the one before it,
+        // so at least the 50 newest are read (as Jira's `maxResults=50`).
+        let last = count.div_ceil(COMMENT_PAGE);
+        for page in (last.saturating_sub(1).max(1)..=last).rev() {
+            let query = [("per_page", COMMENT_PAGE.to_string()), ("page", page.to_string())];
+            let listed = t.get_json(&format!("{issue}/comments"), &query).await?;
+            let listed = listed.as_array().ok_or(TrackerError::Decode)?;
+            if let Some(id) = listed
+                .iter()
+                .rev()
+                .find_map(|c| crate::tracker::forge::sensei_comment(c, "/user/id", owner))
+            {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
     }
     async fn create_comment(
         &self,
-        _w: &dyn WriteTransport,
-        _task: &TaskRef<'_>,
-        _report: &crate::tracker::writeback::Report,
+        w: &dyn WriteTransport,
+        task: &TaskRef<'_>,
+        report: &crate::tracker::writeback::Report,
     ) -> Result<String, TrackerError> {
-        Err(TrackerError::UnsupportedTracker)
+        let path = format!("{}/comments", issue_rest(task)?);
+        let body = serde_json::json!({"body": crate::tracker::writeback::markdown(report)});
+        let created = w.send_json(WriteMethod::Post, &path, &[], &body).await?;
+        crate::tracker::forge::id_text(&created).ok_or(TrackerError::Decode)
     }
     async fn update_comment(
         &self,
-        _w: &dyn WriteTransport,
-        _task: &TaskRef<'_>,
-        _comment: &str,
-        _report: &crate::tracker::writeback::Report,
+        w: &dyn WriteTransport,
+        task: &TaskRef<'_>,
+        comment_ref: &str,
+        report: &crate::tracker::writeback::Report,
     ) -> Result<(), TrackerError> {
-        Err(TrackerError::UnsupportedTracker)
+        let (owner, name, _) = github_key(task.key).ok_or(TrackerError::BadRequest)?;
+        if !is_numeric_id(comment_ref) {
+            return Err(TrackerError::BadRequest);
+        }
+        // A comment id is the repository's, not the issue's (GitHub's REST shape).
+        let path = format!("/repos/{owner}/{name}/issues/comments/{comment_ref}");
+        let body = serde_json::json!({"body": crate::tracker::writeback::markdown(report)});
+        w.send_json(WriteMethod::Patch, &path, &[], &body).await.map(|_| ())
     }
     /// The ticket's repository, `owner/name` (F7): its tickets share one visibility read.
     fn audience_key(&self, task: &TaskRef<'_>) -> Option<String> {
@@ -665,10 +704,19 @@ impl TrackerAdapter for GithubAdapter {
     }
     async fn issue_exists(
         &self,
-        _t: &dyn GetTransport,
-        _task: &TaskRef<'_>,
+        t: &dyn GetTransport,
+        task: &TaskRef<'_>,
     ) -> Result<bool, TrackerError> {
-        Err(TrackerError::UnsupportedTracker)
+        // Another issue at the address is not this ticket (F6b): the ticket is gone.
+        match t.get_json(&issue_rest(task)?, &[]).await {
+            Ok(issue) => match crate::tracker::forge::same_ticket(&issue, task) {
+                Ok(()) => Ok(true),
+                Err(TrackerError::NotFound) => Ok(false),
+                Err(e) => Err(e),
+            },
+            Err(TrackerError::NotFound) => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -816,6 +864,169 @@ mod tests {
     use super::test_support::RecordedGithub;
     use super::*;
 
+    fn report() -> crate::tracker::writeback::Report {
+        crate::tracker::writeback::Report { title: "T".into(), lines: vec!["a: 1".into()] }
+    }
+
+    const ISSUE: &str = "/repos/acme/platform/issues/12";
+
+    fn ticket() -> TaskRef<'static> {
+        TaskRef { external_id: "3012", key: "acme/platform#12" }
+    }
+
+    fn comment(id: u64, user: u64, body: &str) -> serde_json::Value {
+        serde_json::json!({"id": id, "user": {"id": user}, "body": body})
+    }
+
+    fn page(n: u64) -> String {
+        format!("{ISSUE}/comments?per_page=50&page={n}")
+    }
+
+    /// tracker-forge-comment-writeback F6 / gate 6: the comment count picks the pages, the
+    /// newest pages are read newest first, and only the owner's marked comment is adopted.
+    #[tokio::test]
+    async fn the_newest_pages_are_read_for_the_owner_s_marked_comment() {
+        use crate::tracker::test_support::Canned;
+        let owner = AccountRef::new("77");
+        let marked = "<!-- sensei:writeback -->\n**x**";
+        let comments = format!("{ISSUE}/comments");
+
+        // 120 comments: pages 3 then 2. Page 3 holds only others' marked comments.
+        let t = Canned::default()
+            .answer(ISSUE, serde_json::json!({"id": 3012, "comments": 120}))
+            .answer(
+                &comments,
+                serde_json::json!([comment(11, 55, marked), comment(12, 66, marked)]),
+            );
+        // Canned answers one body per path, so page 2 is asserted through the call log.
+        assert_eq!(GithubAdapter.find_comment(&t, &ticket(), &owner).await, Ok(None));
+        assert_eq!(t.calls(), [ISSUE.to_string(), page(3), page(2)]);
+
+        for (count, pages) in [(0u64, vec![]), (30, vec![1]), (50, vec![1]), (51, vec![2, 1])] {
+            let t = Canned::default()
+                .answer(ISSUE, serde_json::json!({"id": 3012, "comments": count}))
+                .answer(&comments, serde_json::json!([]));
+            assert_eq!(GithubAdapter.find_comment(&t, &ticket(), &owner).await, Ok(None));
+            let want: Vec<String> =
+                std::iter::once(ISSUE.to_string()).chain(pages.into_iter().map(page)).collect();
+            assert_eq!(t.calls(), want, "{count} comments");
+        }
+
+        // The newest matching comment on the page wins; others' and unmarked ones never.
+        let t =
+            Canned::default().answer(ISSUE, serde_json::json!({"id": 3012, "comments": 5})).answer(
+                &comments,
+                serde_json::json!([
+                    comment(1, 77, marked),
+                    comment(2, 77, marked),
+                    comment(3, 77, "**Sensei · AI usage** no marker"),
+                    comment(4, 55, marked),
+                ]),
+            );
+        assert_eq!(GithubAdapter.find_comment(&t, &ticket(), &owner).await, Ok(Some("2".into())));
+
+        let uncounted = Canned::default().answer(ISSUE, serde_json::json!({"id": 3012}));
+        assert_eq!(
+            GithubAdapter.find_comment(&uncounted, &ticket(), &owner).await,
+            Err(TrackerError::Decode)
+        );
+    }
+
+    /// F6b: a different issue at the address (a transferred or renamed repository) is
+    /// not this ticket: `NotFound`, and no page is read.
+    #[tokio::test]
+    async fn another_issue_at_the_ticket_s_address_is_not_found() {
+        use crate::tracker::test_support::Canned;
+        let t = Canned::default().answer(ISSUE, serde_json::json!({"id": 9999, "comments": 3}));
+        assert_eq!(
+            GithubAdapter.find_comment(&t, &ticket(), &AccountRef::new("77")).await,
+            Err(TrackerError::NotFound)
+        );
+        assert_eq!(t.calls(), [ISSUE]);
+        let gone = Canned::default().fail(ISSUE, TrackerError::NotFound);
+        assert_eq!(
+            GithubAdapter.find_comment(&gone, &ticket(), &AccountRef::new("77")).await,
+            Err(TrackerError::NotFound)
+        );
+    }
+
+    /// F6: a comment is created on the issue and edited by its repository-wide id, with
+    /// PATCH and the shared Markdown body.
+    #[tokio::test]
+    async fn a_comment_is_created_then_edited_with_patch() {
+        use crate::tracker::WriteMethod;
+        use crate::tracker::test_support::CannedWrites;
+        let body = serde_json::json!({"body": crate::tracker::writeback::markdown(&report())});
+        let edit = "/repos/acme/platform/issues/comments/4242";
+        let w = CannedWrites::default()
+            .answer(
+                WriteMethod::Post,
+                &format!("{ISSUE}/comments"),
+                Ok(serde_json::json!({"id": 4242})),
+            )
+            .answer(WriteMethod::Patch, edit, Ok(serde_json::json!({"id": 4242})));
+        assert_eq!(GithubAdapter.create_comment(&w, &ticket(), &report()).await, Ok("4242".into()));
+        assert_eq!(GithubAdapter.update_comment(&w, &ticket(), "4242", &report()).await, Ok(()));
+        assert_eq!(
+            w.sent(),
+            [
+                (WriteMethod::Post, format!("{ISSUE}/comments"), body.clone()),
+                (WriteMethod::Patch, edit.to_string(), body),
+            ]
+        );
+    }
+
+    /// F6 / gate 8: a key or ref of the wrong shape is refused before any request.
+    #[tokio::test]
+    async fn a_bad_key_or_comment_ref_sends_nothing() {
+        use crate::tracker::test_support::{Canned, CannedWrites};
+        let (t, w) = (Canned::default(), CannedWrites::default());
+        let owner = AccountRef::new("77");
+        for key in ["not a key", "acme/platform#0", "acme/a/b#1", "acme/..#1", "-x/y#1"] {
+            let bad = TaskRef { external_id: "1", key };
+            assert_eq!(
+                GithubAdapter.find_comment(&t, &bad, &owner).await,
+                Err(TrackerError::BadRequest),
+                "{key}"
+            );
+            assert_eq!(
+                GithubAdapter.create_comment(&w, &bad, &report()).await,
+                Err(TrackerError::BadRequest),
+                "{key}"
+            );
+            assert_eq!(
+                GithubAdapter.update_comment(&w, &bad, "1", &report()).await,
+                Err(TrackerError::BadRequest),
+                "{key}"
+            );
+            assert_eq!(
+                GithubAdapter.issue_exists(&t, &bad).await,
+                Err(TrackerError::BadRequest),
+                "{key}"
+            );
+        }
+        for r in ["abc", "1234567890123456789", "1/../2", ""] {
+            assert_eq!(
+                GithubAdapter.update_comment(&w, &ticket(), r, &report()).await,
+                Err(TrackerError::BadRequest),
+                "{r:?}"
+            );
+        }
+        assert!(t.calls().is_empty() && w.sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_issue_that_answers_exists_and_a_404_does_not() {
+        use crate::tracker::test_support::Canned;
+        let here = Canned::default().answer(ISSUE, serde_json::json!({"id": 3012}));
+        assert_eq!(GithubAdapter.issue_exists(&here, &ticket()).await, Ok(true));
+        let gone = Canned::default().fail(ISSUE, TrackerError::NotFound);
+        assert_eq!(GithubAdapter.issue_exists(&gone, &ticket()).await, Ok(false));
+        // F6b: another issue at the address (a transferred repository's) means it is gone.
+        let taken = Canned::default().answer(ISSUE, serde_json::json!({"id": 9999}));
+        assert_eq!(GithubAdapter.issue_exists(&taken, &ticket()).await, Ok(false));
+    }
+
     /// tracker-forge-comment-writeback F7: a ticket's repository is its audience key,
     /// and one GET reads its visibility.
     #[tokio::test]
@@ -925,7 +1136,7 @@ mod tests {
         assert!(GithubAdapter.reads_graphql());
         assert_eq!(
             GithubAdapter.capabilities(),
-            Capabilities { history: false, comment: false, fields: false }
+            Capabilities { history: false, comment: true, fields: false }
         );
     }
 

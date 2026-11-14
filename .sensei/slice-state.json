@@ -13,11 +13,14 @@
     "W6 #441",
     "W7 #442"
   ],
-  "current_phase": "W5 #440",
+  "current_phase": "W7 #442",
   "completed": [
     "W1 #436",
     "W3 #438",
-    "W4 #439"
+    "W4 #439",
+    "W2 #437",
+    "W5 #440",
+    "W6 #441"
   ],
   "gate_status": "pass",
   "open_questions": [],
@@ -47,7 +50,12 @@
       "phase": "W4",
       "what": "status_for(Audience): only 404 is final; 403/401 \u2192 error (retried); rate limit counted; non-RL failure resets the streak",
       "why": "W4 review HIGH: a GET 403 can't be told from GitHub's rate-limit 403, and a sticky forbidden would hold a whole repository after one throttled read"
+    },
+    {
+      "phase": "W5",
+      "what": "rate-limit 403 \u2192 RateLimited on reads too; 410 \u2192 NotFound; issue_exists checks identity; sanitiser defuses line-start blocks, drops empty title; GitLab key needs a namespace; X6 probe + accepted transfer risk",
+      "why": "W5 review: HIGH (no pass-level tests \u2014 added), MEDIUM (read 403 sticky on GitHub), LOWs"
     }
   ],
-  "next_command": "git stash pop (W2 renderer), then /sensei:build W5 (#440): WriteMethod::Patch + gate 11; GitLab notes (F5) and GitHub REST comments (F6) with F6b identity; comment: true on both; gates 3, 5\u20138, 14"
+  "next_command": "/sensei:build W7 (#442): F11 docs \u2014 parent spec (Out of scope, W5, W7, W8, W9, W10, W11, W-UI, gate 13), linkage :528 :531 :533 :548 :707, tracker-gitlab.md, tracker-github.md, decisions.md D93 + notes on D50/D91/D92, screen specs workspace-integrations.md and workspace-tickets.md, backlog entry; gate 15 rg checks"
 }

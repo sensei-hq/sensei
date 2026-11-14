@@ -251,10 +251,12 @@ pub trait GetTransport: Send + Sync {
 }
 
 /// The verbs a write may use (spec W10).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WriteMethod {
     Post,
     Put,
+    /// GitHub edits a comment with PATCH (tracker-forge-comment-writeback F3).
+    Patch,
 }
 
 /// Write access to a tracker's API, held only by the write-back pass (W10).
@@ -919,8 +921,9 @@ pub mod test_support {
         }
     }
 
-    /// A GET transport with canned answers by path (the query is ignored), recording each
-    /// path it was asked for. An unknown path panics, so a test never passes on a guess.
+    /// A GET transport with canned answers by path, recording each request as
+    /// `path` or `path?k=v&…` (the query in the order sent). An unknown path panics, so a
+    /// test never passes on a guess.
     #[derive(Default)]
     pub struct Canned {
         answers: std::collections::HashMap<String, Result<serde_json::Value, TrackerError>>,
@@ -928,6 +931,12 @@ pub mod test_support {
     }
 
     impl Canned {
+        /// Answer one exact request, `path?k=v&…` as [`calls`](Self::calls) records it,
+        /// ahead of any answer for its bare path.
+        pub fn answer_request(mut self, request: &str, body: serde_json::Value) -> Self {
+            self.answers.insert(request.into(), Ok(body));
+            self
+        }
         pub fn answer(mut self, path: &str, body: serde_json::Value) -> Self {
             self.answers.insert(path.into(), Ok(body));
             self
@@ -946,10 +955,57 @@ pub mod test_support {
         async fn get_json(
             &self,
             path: &str,
-            _query: &[(&str, String)],
+            query: &[(&str, String)],
         ) -> Result<serde_json::Value, TrackerError> {
-            self.calls.lock().unwrap().push(path.into());
-            self.answers.get(path).unwrap_or_else(|| panic!("no answer for GET {path}")).clone()
+            let q: Vec<String> = query.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            let call =
+                if q.is_empty() { path.to_string() } else { format!("{path}?{}", q.join("&")) };
+            let answer = self.answers.get(&call).or_else(|| self.answers.get(path)).cloned();
+            self.calls.lock().unwrap().push(call);
+            answer.unwrap_or_else(|| panic!("no answer for GET {path}"))
+        }
+    }
+
+    /// A write transport with canned answers by verb and path, recording each send as
+    /// `(verb, path, body)`. An unknown send panics.
+    #[derive(Default)]
+    pub struct CannedWrites {
+        answers: std::collections::HashMap<
+            (WriteMethod, String),
+            Result<serde_json::Value, TrackerError>,
+        >,
+        sent: Mutex<Vec<(WriteMethod, String, serde_json::Value)>>,
+    }
+
+    impl CannedWrites {
+        pub fn answer(
+            mut self,
+            method: WriteMethod,
+            path: &str,
+            answer: Result<serde_json::Value, TrackerError>,
+        ) -> Self {
+            self.answers.insert((method, path.into()), answer);
+            self
+        }
+        pub fn sent(&self) -> Vec<(WriteMethod, String, serde_json::Value)> {
+            self.sent.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WriteTransport for CannedWrites {
+        async fn send_json(
+            &self,
+            method: WriteMethod,
+            path: &str,
+            _query: &[(&str, String)],
+            body: &serde_json::Value,
+        ) -> Result<serde_json::Value, TrackerError> {
+            self.sent.lock().unwrap().push((method, path.into(), body.clone()));
+            self.answers
+                .get(&(method, path.to_string()))
+                .unwrap_or_else(|| panic!("no answer for {method:?} {path}"))
+                .clone()
         }
     }
 
@@ -1673,9 +1729,16 @@ pub mod test_support {
         next_id: std::sync::atomic::AtomicU32,
         on_send: Option<Hook>,
         delay: Option<std::time::Duration>,
+        /// Created ids as JSON numbers, as GitLab and GitHub return them (Jira: strings).
+        numeric_ids: bool,
     }
 
     impl RecordingWrites {
+        /// Answer creates with a numeric `id`, as a forge does.
+        pub fn forge_ids(mut self) -> Self {
+            self.numeric_ids = true;
+            self
+        }
         /// Answer the next `times` sends of `method` to `path` with `status`.
         pub fn respond(self, method: WriteMethod, path: &str, status: u16, times: usize) -> Self {
             self.respond_after(method, path, status, None, times)
@@ -1748,9 +1811,13 @@ pub mod test_support {
                 (Some((status, retry_after)), _) => raw(status, retry_after, String::new()),
                 (None, WriteMethod::Post) => {
                     let id = 20000 + self.next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    raw(201, None, format!(r#"{{"id":"{id}"}}"#))
+                    if self.numeric_ids {
+                        raw(201, None, format!(r#"{{"id":{id}}}"#))
+                    } else {
+                        raw(201, None, format!(r#"{{"id":"{id}"}}"#))
+                    }
                 }
-                (None, WriteMethod::Put) => raw(204, None, String::new()),
+                (None, WriteMethod::Put | WriteMethod::Patch) => raw(204, None, String::new()),
             })
         }
     }
@@ -1923,7 +1990,7 @@ mod seam_tests {
         for kind in ["gitlab", "github"] {
             assert_eq!(
                 capabilities_of_kind(kind),
-                Ok(Capabilities { history: false, comment: false, fields: false })
+                Ok(Capabilities { history: false, comment: true, fields: false })
             );
         }
     }

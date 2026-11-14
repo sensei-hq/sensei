@@ -131,7 +131,12 @@ derivable from the stored, lowercased `key`.
      - GitLab inline diffs (`{`, `}`, `+`)
      - emphasis, code, heading and table syntax
 
-     A bare `www.` autolink cannot be escaped. Report text holds no hostnames today; the
+     3. (Amended at build, W5 review.) Leading space is trimmed, a leading `-` is escaped,
+     and the `.` after a leading number is escaped, so text right after `- ` starts no
+     list, thematic break or indented code. An empty title is left out, not rendered as
+     `****`.
+
+  A bare `www.` autolink cannot be escaped. Report text holds no hostnames today; the
      guard is for future text.
 
   Report strings come only from `writeback::render`. Its output is digits, units, `·`, `—`,
@@ -151,7 +156,8 @@ Both forge adapters call these, and neither has a renderer of its own. The comme
 
 ### F5 · GitLab comments (notes)
 
-**Address.** `forge::parse_key(task.key)` gives `(path, iid)`; it already validates `path`
+**Address.** (Amended at build: a path with no `/` is refused too, since GitLab would
+read a bare `12345` as a project id.) `forge::parse_key(task.key)` gives `(path, iid)`; it already validates `path`
 with `is_key_path` (`forge.rs:26`). Any of these gives `Err(BadRequest)` **before any
 request**, as Jira's `issue_path` does:
 - `parse_key` returns `None`
@@ -330,7 +336,12 @@ it. Deleting comments stays out of scope (parent).
 - the body's `message` (JSON) contains `rate limit`, ignoring case. This is the case for
   GitHub's secondary limit, which can send no header.
 
-Any other 403 stays `Forbidden`. `map_response`, the read mapping, does not change.
+Any other 403 stays `Forbidden`.
+
+**Amended at build (2026-11-14, W5 review):** the rule lives in `map_response`, so it
+applies to reads too. GitHub's comment-list GETs are limited with 403, and the
+comment-list read's `forbidden` is sticky, so one throttled read would have held the
+ticket for good. A 410 (GitHub: a deleted issue) maps to `NotFound`.
 
 The policy loop still retries only 429. The pass counts the write as `rate_limited`, which
 is not sticky, and its existing `RATE_LIMITED_STOP` rule ends the pass after a run of them.
@@ -470,6 +481,13 @@ public; GitHub Enterprise Server; writing SDLC figures to a forge (the comment c
 usage only, parent S9 note); retrying a rate-limit 403 inside the transport; a per-tracker
 override to comment on public repositories.
 
+**Accepted risk (W5 review):** a GitHub issue transferred from a private repository to a
+public one keeps its comments. Until the next sync re-keys the ticket, the visibility read
+still names the old, private repository, and the PATCH by comment id may reach the comment
+on its new, public issue. The pass runs right after each sync, which re-keys a transferred
+issue, so the window is between a transfer and the next sync. Probe X6 checks whether
+GitHub scopes a comment edit to the repository in its path.
+
 **Accepted risk:** `update_comment` edits by the stored `comment_ref` without re-reading the
 comment's author. The ref is only ever written by sensei, from its own create or from an
 adoption that matched author and marker. GitHub's `PATCH …/issues/comments/{id}` is not
@@ -550,8 +568,9 @@ Recorded in D93.
      - 403 with `x-ratelimit-remaining: 0`
      - 403 with no rate headers and body `{"message":"You have exceeded a secondary rate limit"}`
    - A bare 403 on a write → `forbidden`.
-   - A **read** with 403 and `retry-after`, or with `x-ratelimit-remaining: 0` →
-     `Forbidden` (unchanged).
+   - A **read** with 403 and `retry-after`, `x-ratelimit-remaining: 0` or a rate-limit
+     message → `RateLimited` too (amended at build); any other read 403 → `Forbidden`.
+   - Any 410 → `NotFound`.
 10. **Public skip** (fake adapter and fixtures):
     - Two tickets in one public GitHub repo: 1 `GET /repos/o/r` (cached), 0 comment
       requests, both `not_private`.
@@ -643,6 +662,7 @@ that (`is_marked` changes, the design does not). If X3 fails, only copy changes.
 | X3 | Editing a comment sends no notification | manual, after merge; copy only |
 | X4 | A GitHub token without write access gets 403 or 404 on `POST …/comments` | **resolved by design**: F6a maps both to `forbidden` when the issue exists |
 | X5 | Public and private repos behave per F7 against the real APIs | manual, after merge |
+| X6 | `PATCH /repos/A/issues/comments/{id}` after the issue moved to repo B answers 404 or 301 (scoped to A) | manual, after merge; if it edits the comment in B, add an identity GET before each GitHub update |
 
 ## Claims (about the existing code; r1 verified 2026-11-13 by `sensei-claims-verifier`; r2 claims marked †)
 

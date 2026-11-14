@@ -438,6 +438,61 @@ pub fn render(u: &Usage, updated_at: chrono::DateTime<chrono::Utc>) -> Report {
     }
 }
 
+/// The first line of every forge comment sensei writes: hidden when rendered, and what
+/// marks the comment as sensei's for adoption (tracker-forge-comment-writeback F4).
+pub const COMMENT_MARKER: &str = "<!-- sensei:writeback -->";
+
+/// Pure: a report as the Markdown body of a GitLab note or GitHub comment (F4): the
+/// marker, the title in bold, then one bullet per line. Every string is sanitised.
+pub fn markdown(r: &Report) -> String {
+    let mut parts = vec![COMMENT_MARKER.to_string()];
+    let title = sanitise(&r.title);
+    // An empty title would leave `****`, a thematic break.
+    if !title.is_empty() {
+        parts.push(format!("**{title}**"));
+    }
+    if !r.lines.is_empty() {
+        parts.push(String::new());
+        parts.extend(r.lines.iter().map(|l| format!("- {}", sanitise(l))));
+    }
+    parts.join("\n")
+}
+
+/// Whether a comment body is one sensei wrote (F4).
+pub fn is_marked(body: &str) -> bool {
+    body.starts_with(COMMENT_MARKER)
+}
+
+/// Pure (F4): no line terminator or tab survives, and every ASCII punctuation mark
+/// that can start a Markdown construct, a mention, a reference or an HTML tag gets a
+/// backslash. `. , ' - /` form nothing inside a line and are left as they are.
+fn sanitise(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\r' | '\n' | '\t' | '\u{85}' | '\u{2028}' | '\u{2029}' => out.push(' '),
+            '.' | ',' | '\'' | '-' | '/' => out.push(c),
+            c if c.is_ascii_punctuation() => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    // Text right after `- ` starts a block: a list item (`-`, `1.`), a thematic break
+    // (`---`) or indented code. Leading space goes, and a leading `-` or the `.` after a
+    // leading number is escaped; `+ * #` already are.
+    let out = out.trim_start().to_string();
+    let digits = out.bytes().take_while(u8::is_ascii_digit).count();
+    if out.starts_with('-') {
+        format!("\\{out}")
+    } else if digits > 0 && out[digits..].starts_with('.') {
+        format!("{}\\{}", &out[..digits], &out[digits..])
+    } else {
+        out
+    }
+}
+
 /// The change key of a comment: its lines, never its title (which carries the
 /// "updated" time).
 pub fn comment_hash(r: &Report) -> String {
@@ -997,6 +1052,86 @@ mod tests {
                 "Cost: metered 1.50 [1 of 3 sessions] · API $30.00 [2 of 3 sessions] (partly priced for 2 sessions)",
             ]
         );
+    }
+
+    /// tracker-forge-comment-writeback F4 / gate 4: the forge body for golden 1, exactly.
+    #[test]
+    fn golden_1_renders_as_the_forge_markdown_exactly() {
+        let body = markdown(&render(&golden_1(), at(UPDATED)));
+        assert_eq!(
+            body,
+            [
+                "<!-- sensei:writeback -->",
+                r"**Sensei · AI usage from the assignee's sessions \(updated 2026-10-26 14\:30 UTC\)**",
+                "",
+                r"- Sessions\: 3 \(1 shared with other tickets\)",
+                r"- Active time\: 2.05 h \(Claude 1.30 h, you 0.75 h\)",
+                r"- Wall-clock time\: 4.00 h",
+                r"- Cycle time\: 48.00 h",
+                r"- Tokens\: fresh 120000 · cache read 900000 · cache write 30000 · out 45000 · reasoning —",
+                r"- Cost\: metered — · API \$4.32 \(partly priced for 1 session\)",
+            ]
+            .join("\n")
+        );
+        assert!(is_marked(&body));
+    }
+
+    #[test]
+    fn golden_2_renders_as_the_forge_markdown_exactly() {
+        let body = markdown(&render(&golden_2(), at(UPDATED)));
+        let lines: Vec<&str> = body.lines().skip(3).collect();
+        assert_eq!(
+            lines,
+            [
+                r"- Sessions\: 3",
+                r"- Active time\: 2.05 h \(Claude 1.30 h \[2 of 3 sessions\], you 0.75 h\)",
+                r"- Wall-clock time\: 4.00 h \[1 of 3 sessions\]",
+                r"- Cycle time\: 48.00 h",
+                r"- Tokens\: fresh 120000 · cache read 900000 \[2 of 3 sessions\] · cache write — · out 45000 · reasoning —",
+                r"- Cost\: metered 1.50 \[1 of 3 sessions\] · API \$30.00 \[2 of 3 sessions\] \(partly priced for 2 sessions\)",
+            ]
+        );
+        assert!(is_marked(&body));
+    }
+
+    /// F4's sanitising: every ASCII punctuation mark but `. , ' - /` is escaped, and no
+    /// line terminator or tab survives, so report text can never form a Markdown
+    /// construct, a mention or a GitLab quick action.
+    #[test]
+    fn report_text_can_form_no_markdown_construct() {
+        let one = |line: &str| {
+            let r = Report { title: "t".into(), lines: vec![line.into()] };
+            markdown(&r).lines().nth(3).unwrap().to_string()
+        };
+        for c in "!\"#$%&()*+:;<=>?@[\\]^_`{|}~".chars() {
+            assert_eq!(one(&c.to_string()), format!("- \\{c}"), "{c:?} is escaped");
+        }
+        for c in ".,'-/".chars() {
+            assert_eq!(one(&format!("a{c}")), format!("- a{c}"), "{c:?} is left alone in a line");
+        }
+        // What would start a block right after `- ` is defused (W5 review).
+        assert_eq!(one("-"), r"- \-", "no nested list");
+        assert_eq!(one("--- x"), r"- \--- x", "no thematic break");
+        assert_eq!(one("1. x"), r"- 1\. x", "no nested ordered list");
+        assert_eq!(one("12.50 h"), r"- 12\.50 h");
+        assert_eq!(one("    code"), "- code", "no indented code");
+        let untitled = Report { title: String::new(), lines: vec!["a".into()] };
+        assert_eq!(markdown(&untitled), "<!-- sensei:writeback -->\n\n- a", "no `****` break");
+        assert_eq!(one("x\n/close"), "- x /close", "a quick action cannot start a line");
+        assert_eq!(one("@team"), r"- \@team");
+        assert_eq!(one("a\u{2028}b\t&123 {+x+}"), r"- a b \&123 \{\+x\+\}");
+        assert_eq!(one("a\r\u{85}\u{2029}b"), "- a   b");
+        let title = Report { title: "**x**\n# y".into(), lines: vec![] };
+        assert_eq!(markdown(&title), "<!-- sensei:writeback -->\n**\\*\\*x\\*\\* \\# y**");
+        assert_eq!(markdown(&title).lines().count(), 2, "no line break inside the title");
+    }
+
+    #[test]
+    fn only_a_body_that_starts_with_the_marker_is_sensei_s() {
+        assert!(is_marked("<!-- sensei:writeback -->\n**x**"));
+        assert!(!is_marked("**Sensei · AI usage** <!-- sensei:writeback -->"));
+        assert!(!is_marked(" <!-- sensei:writeback -->"));
+        assert!(!is_marked(""));
     }
 
     #[test]
@@ -1635,6 +1770,121 @@ mod pass_tests {
         assert_eq!(script.calls(), 2);
         assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
         assert_eq!(w.sent().len(), 2);
+    }
+
+    /// Ticket 10001 as a forge ticket: its key `acme/platform#12`, owned by account 77.
+    /// Re-applied after a re-sync, which rewrites the key and assignment from the Jira
+    /// board the fixture syncs.
+    async fn as_forge_ticket(f: &Fixture) {
+        f.sql("UPDATE sensei.trackers SET owner_ref = '77' WHERE id = $1").await;
+        f.sql(
+            "UPDATE sensei.tracker_tasks SET key = 'acme/platform#12', assigned_to_me = true
+              WHERE tracker_id = $1 AND external_id = '10001'",
+        )
+        .await;
+    }
+
+    fn sent_paths(w: &RecordingWrites) -> Vec<(WriteMethod, String)> {
+        w.sent().into_iter().map(|s| (s.method, s.path)).collect()
+    }
+
+    /// tracker-forge-comment-writeback gate 5, through the pass: the GitLab ticket's
+    /// project is read for its visibility, the ticket for its identity, its notes for an
+    /// adoptable one, and the note is posted; then edited; then left alone.
+    #[tokio::test]
+    async fn the_pass_comments_on_a_gitlab_ticket_by_its_key() {
+        use crate::tracker::gitlab::GitlabAdapter;
+        use crate::tracker::test_support::Canned;
+        let f = fixture([Some("A1"), None, None]).await;
+        as_forge_ticket(&f).await;
+        let project = "/api/v4/projects/acme%2Fplatform";
+        let issue = format!("{project}/issues/12");
+        let gitlab = Arc::new(
+            Canned::default()
+                .answer(project, json!({"visibility": "private"}))
+                .answer(&issue, json!({"id": 10001}))
+                .answer(&format!("{issue}/notes"), json!([])),
+        );
+        f.factory.serve_transport(&f.site, gitlab.clone());
+        let w = f.writes(RecordingWrites::default().forge_ids());
+
+        assert_eq!(
+            f.pass_with(&GitlabAdapter).await,
+            PassOutcome::Done { written: 1, unchanged: 0, failed: 0 }
+        );
+        assert_eq!(
+            gitlab.calls(),
+            [
+                project.to_string(),
+                issue.clone(),
+                format!("{issue}/notes?sort=desc&order_by=created_at&per_page=50"),
+            ]
+        );
+        assert_eq!(sent_paths(&w), [(WriteMethod::Post, format!("{issue}/notes"))]);
+        let posted = w.sent()[0].body["body"].as_str().unwrap().to_string();
+        assert!(posted.starts_with(COMMENT_MARKER), "{posted}");
+        let row = f.state().await[0].clone();
+        assert_eq!((row.1.as_deref(), row.2.as_deref()), (Some("ok"), Some("20000")));
+
+        // A new session changes the figures: one visibility read, then the edit.
+        f.new_session("AUTH-1").await;
+        as_forge_ticket(&f).await;
+        f.pass_with(&GitlabAdapter).await;
+        assert_eq!(gitlab.calls().len(), 4);
+        assert_eq!(gitlab.calls()[3], project);
+        assert_eq!(sent_paths(&w)[1..], [(WriteMethod::Put, format!("{issue}/notes/20000"))]);
+
+        // Nothing changed: no request at all.
+        f.pass_with(&GitlabAdapter).await;
+        assert_eq!((gitlab.calls().len(), w.sent().len()), (4, 2));
+    }
+
+    /// Gate 6, through the pass: 120 comments, so the pass reads pages 3 then 2, adopts
+    /// the owner's marked comment on page 2, and edits it with PATCH.
+    #[tokio::test]
+    async fn the_pass_adopts_and_edits_a_github_comment_by_its_key() {
+        use crate::tracker::github::GithubAdapter;
+        use crate::tracker::test_support::Canned;
+        let f = fixture([Some("A1"), None, None]).await;
+        as_forge_ticket(&f).await;
+        let repo = "/repos/acme/platform";
+        let issue = format!("{repo}/issues/12");
+        let marked = format!("{COMMENT_MARKER}\n**old**");
+        let github = Arc::new(
+            Canned::default()
+                .answer(repo, json!({"visibility": "private"}))
+                .answer(&issue, json!({"id": 10001, "comments": 120}))
+                .answer_request(
+                    &format!("{issue}/comments?per_page=50&page=3"),
+                    json!([{"id": 5001, "user": {"id": 55}, "body": marked}]),
+                )
+                .answer_request(
+                    &format!("{issue}/comments?per_page=50&page=2"),
+                    json!([
+                        {"id": 4242, "user": {"id": 77}, "body": marked},
+                        {"id": 4243, "user": {"id": 77}, "body": "not sensei's"},
+                    ]),
+                ),
+        );
+        f.factory.serve_transport(&f.site, github.clone());
+        let w = f.writes(RecordingWrites::default().forge_ids());
+
+        assert_eq!(
+            f.pass_with(&GithubAdapter).await,
+            PassOutcome::Done { written: 1, unchanged: 0, failed: 0 }
+        );
+        assert_eq!(
+            github.calls(),
+            [
+                repo.to_string(),
+                issue.clone(),
+                format!("{issue}/comments?per_page=50&page=3"),
+                format!("{issue}/comments?per_page=50&page=2"),
+            ]
+        );
+        assert_eq!(sent_paths(&w), [(WriteMethod::Patch, format!("{repo}/issues/comments/4242"))]);
+        let row = f.state().await[0].clone();
+        assert_eq!((row.1.as_deref(), row.2.as_deref()), (Some("ok"), Some("4242")));
     }
 
     /// F7: the cache is per repository. A private repository's answer never carries over

@@ -117,7 +117,8 @@ pub enum ConnectKind {
         #[arg(long)]
         level: String,
     },
-    /// GitLab: gitlab.com or a self-managed instance (https on the standard port)
+    /// GitLab: gitlab.com or a self-managed instance (https on the standard port).
+    /// The token needs read_api; write-back also needs api.
     Gitlab {
         #[arg(long)]
         workspace: String,
@@ -134,7 +135,7 @@ pub enum ConnectKind {
     /// GitHub: a Project on github.com, sprints from its Iteration field. Use a
     /// fine-grained, read-only token (Projects: read; Issues and Metadata: read). A
     /// classic token with repo and read:project also works, but can write to every
-    /// repository it reaches.
+    /// repository it reaches. Write-back also needs Issues: read and write.
     Github {
         #[arg(long)]
         workspace: String,
@@ -462,11 +463,12 @@ pub fn describe_error_for(p: Provider, status: u16, body: &Value) -> String {
         ("unauthorized", Provider::Jira) => "Jira rejected the email and token. Check both, or create a new token at \
              https://id.atlassian.com/manage-profile/security/api-tokens"
             .into(),
-        ("unauthorized", Provider::Gitlab) => "GitLab rejected the token. Check it has the read_api scope and has not \
-             expired, or create a new one under Preferences → Access tokens."
+        ("unauthorized", Provider::Gitlab) => "GitLab rejected the token. Check it has the read_api scope (write-back \
+             also needs api) and has not expired, or create a new one under Preferences → Access tokens."
             .into(),
         ("unauthorized", Provider::Github) => "GitHub rejected the token. Use a fine-grained token with Projects: \
-             read and Issues: read, or a classic token with repo and read:project, and check it has not expired."
+             read and Issues: read (write-back also needs Issues: read and write), or a classic \
+             token with repo and read:project, and check it has not expired."
             .into(),
         ("forbidden", Provider::Github) => "The token can't read this project. It needs Projects: read \
              (fine-grained) or the read:project scope (classic)."
@@ -626,7 +628,9 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             let id = workspace_id(&workspace)?;
             let env = std::env::var(GITLAB_TOKEN_ENV).ok();
             if env.as_deref().is_none_or(|t| t.trim().is_empty()) {
-                eprintln!("Paste the GitLab access token (read_api), then press Enter:");
+                eprintln!(
+                    "Paste the GitLab access token (read_api; write-back also needs api), then press Enter:"
+                );
             }
             let token = read_token(GITLAB_TOKEN_ENV, env, &mut std::io::stdin().lock())?;
             let body = gitlab_connect_body(&board_url, confirm_host.as_deref(), &level, &token);
@@ -640,7 +644,8 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             let env = std::env::var(GITHUB_TOKEN_ENV).ok();
             if env.as_deref().is_none_or(|t| t.trim().is_empty()) {
                 eprintln!(
-                    "Paste the GitHub token (Projects: read, Issues: read), then press Enter:"
+                    "Paste the GitHub token (Projects: read, Issues: read; write-back also needs Issues: read \
+                     and write), then press Enter:"
                 );
             }
             let token = read_token(GITHUB_TOKEN_ENV, env, &mut std::io::stdin().lock())?;
