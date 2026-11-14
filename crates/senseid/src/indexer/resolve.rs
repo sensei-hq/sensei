@@ -4574,9 +4574,9 @@ mod tests {
         // this slice to earn a print for that reason.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,136, headroom {})",
+             (ceiling 1,153, headroom {})",
             elsewhere.len(),
-            1_136_i64 - other as i64
+            1_153_i64 - other as i64
         );
         // Lowered from 1,300 on 2026-10-26: the store's row types moved to the
         // path their callers name (`pg_store::FolderRow`), so the re-exports the
@@ -4653,6 +4653,19 @@ mod tests {
         // claim, checkpoint, release, queue and run handlers, the gate pass
         // and their driving tests. Same documented class, same backlog cure
         // (follow the alias and the derive), not a lower number.
+        // Raised 1,136 → 1,140 on 2026-11-10, measured 1,138 over 230
+        // identities (develop base 1,136/229 — the ratchet stood at zero
+        // headroom): the #359 r2 pin adds 2 over 1 new identity. The new
+        // one is the test-only `FakeEmbedAdapter`'s `self.clone()` in
+        // `register_into` (the codebase idiom; `Arc::clone` exists in no
+        // walked source — the derive-generated cause above), and the
+        // shared-identity +1 is another `Logger::noop` reach (the ctx
+        // mirrors `make_ctx`; cross-crate `sensei_logger::` paths the
+        // walk does not follow — the #339 re-export cause). Same
+        // documented classes, same backlog cures, not a lower number.
+        // Merged 2026-11-14 (#359 into develop): measured 1,153 over 232 —
+        // develop's 1,151/231 plus the #359 pin's 2/1, exactly additive; the
+        // ceiling stays 1,153 at zero headroom. The merge adds no code here.
         assert!(
             other <= 1_153,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
