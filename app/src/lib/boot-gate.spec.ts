@@ -20,20 +20,22 @@ describe('gateTarget', () => {
     setSetupComplete(true); // default for health-tier tests
   });
 
-  describe('the development gallery', () => {
-    // /gallery renders fixtures for review against the mockup; it needs no
-    // daemon, so a fresh browser load (health still 'checking', setup
+  describe('the development preview', () => {
+    // /preview renders component fixtures for review against the mockup; it needs
+    // no daemon, so a fresh browser load (health still 'checking', setup
     // unhydrated) must reach it — in DEV only, where the page exists.
-    it('is reachable before health resolves and without setup', () => {
+    it('is reachable before health resolves and without setup: the index, a component, all', () => {
       setHealth('checking');
       setSetupComplete(false);
-      expect(target('http://localhost/gallery')).toBeUndefined();
-      expect(target('http://localhost/gallery/relay')).toBeUndefined();
+      expect(target('http://localhost/preview')).toBeUndefined();
+      expect(target('http://localhost/preview/WaitList')).toBeUndefined();
+      expect(target('http://localhost/preview/all')).toBeUndefined();
     });
 
-    it('does not widen the gate for a look-alike path', () => {
+    it('does not widen the gate for a look-alike path, nor for the retired /gallery', () => {
       setHealth('checking');
-      expect(target('http://localhost/galleryx')).toBe('/health');
+      expect(target('http://localhost/previewx')).toBe('/health');
+      expect(target('http://localhost/gallery')).toBe('/health');
     });
   });
 
