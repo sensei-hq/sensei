@@ -11,6 +11,8 @@ use crate::tracker::{GetTransport, TrackerError, WriteMethod, WriteTransport};
 pub struct RawResponse {
     pub status: u16,
     pub retry_after: Option<String>,
+    /// The response said no requests are left (`x-ratelimit-remaining: 0`; F8).
+    pub rate_exhausted: bool,
     pub body: Vec<u8>,
 }
 
@@ -87,12 +89,26 @@ impl<R> PolicyTransport<R> {
     }
 }
 
-/// [`map_response`] for a write: an empty 2xx (Jira's 204) is `Null`, not `Decode`.
+/// [`map_response`] for a write: an empty 2xx (Jira's 204) is `Null`, not `Decode`, and
+/// a 403 that names a rate limit is `RateLimited`, retried next pass, not the sticky
+/// `Forbidden` (tracker-forge-comment-writeback F8).
 pub fn map_write_response(resp: &RawResponse) -> Result<serde_json::Value, TrackerError> {
     match resp.status {
         200..=299 if resp.body.is_empty() => Ok(serde_json::Value::Null),
+        403 if names_a_rate_limit(resp) => Err(TrackerError::RateLimited),
         _ => map_response(resp),
     }
+}
+
+/// Pure: a 403 is a rate limit when it carries `Retry-After`, reports no requests left,
+/// or its JSON `message` says so (GitHub's secondary limit can send neither header).
+fn names_a_rate_limit(resp: &RawResponse) -> bool {
+    resp.retry_after.is_some()
+        || resp.rate_exhausted
+        || serde_json::from_slice::<serde_json::Value>(&resp.body)
+            .ok()
+            .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_ascii_lowercase))
+            .is_some_and(|m| m.contains("rate limit"))
 }
 
 /// Map a non-429 response onto the result the caller sees.
@@ -201,8 +217,13 @@ impl ReqwestRaw {
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .map(String::from);
+        let rate_exhausted = resp
+            .headers()
+            .get("x-ratelimit-remaining")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.trim() == "0");
         let body = resp.bytes().await.map_err(|_| ())?.to_vec();
-        Ok(RawResponse { status, retry_after, body })
+        Ok(RawResponse { status, retry_after, rate_exhausted, body })
     }
 }
 
@@ -322,6 +343,7 @@ mod tests {
         Ok(RawResponse {
             status,
             retry_after: retry_after.map(String::from),
+            rate_exhausted: false,
             body: body.as_bytes().to_vec(),
         })
     }
@@ -398,6 +420,38 @@ mod tests {
         assert!(sent.iter().all(|(m, p, b)| *m == WriteMethod::Put
             && p == "/c/1"
             && serde_json::from_slice::<serde_json::Value>(b).unwrap() == body));
+    }
+
+    /// tracker-forge-comment-writeback F8 / gate 9: a write's 403 that names a rate limit
+    /// is `RateLimited` (retried next pass); any other 403 stays `Forbidden` (sticky). A
+    /// read's mapping is unchanged.
+    #[test]
+    fn a_write_403_that_names_a_rate_limit_is_rate_limited() {
+        let r = |retry_after: Option<&str>, exhausted: bool, body: &str| RawResponse {
+            status: 403,
+            retry_after: retry_after.map(String::from),
+            rate_exhausted: exhausted,
+            body: body.as_bytes().to_vec(),
+        };
+        let limited = Err(TrackerError::RateLimited);
+        assert_eq!(map_write_response(&r(Some("30"), false, "")), limited);
+        assert_eq!(map_write_response(&r(None, true, "")), limited);
+        let secondary = r#"{"message":"You have exceeded a secondary rate limit. Please wait."}"#;
+        assert_eq!(map_write_response(&r(None, false, secondary)), limited);
+        let shouting = r#"{"message":"API RATE LIMIT exceeded"}"#;
+        assert_eq!(map_write_response(&r(None, false, shouting)), limited);
+        let denied = r#"{"message":"Resource not accessible by personal access token"}"#;
+        assert_eq!(map_write_response(&r(None, false, denied)), Err(TrackerError::Forbidden));
+        assert_eq!(map_write_response(&r(None, false, "")), Err(TrackerError::Forbidden));
+        assert_eq!(
+            map_write_response(&r(None, false, "rate limit, but not JSON")),
+            Err(TrackerError::Forbidden),
+            "only a JSON message is read"
+        );
+        // Reads keep their mapping (tracker-github §H1 accepted it for reads).
+        assert_eq!(map_response(&r(Some("30"), false, "")), Err(TrackerError::Forbidden));
+        assert_eq!(map_response(&r(None, true, "")), Err(TrackerError::Forbidden));
+        assert_eq!(map_response(&r(None, false, secondary)), Err(TrackerError::Forbidden));
     }
 
     #[test]
@@ -651,6 +705,18 @@ mod tests {
                     }),
                 )
                 .route(
+                    "/exhausted",
+                    axum::routing::get(|| async {
+                        (axum::http::StatusCode::FORBIDDEN, [("x-ratelimit-remaining", "0")], "")
+                    }),
+                )
+                .route(
+                    "/left",
+                    axum::routing::get(|| async {
+                        (axum::http::StatusCode::FORBIDDEN, [("x-ratelimit-remaining", "1")], "")
+                    }),
+                )
+                .route(
                     "/echo",
                     axum::routing::get(
                         |headers: axum::http::HeaderMap, q: axum::extract::RawQuery| async move {
@@ -666,6 +732,11 @@ mod tests {
         let raw = ReqwestRaw::new(&base, basic("dev@example.com", "tok")).unwrap();
         let limited = raw.get("/limited", &[]).await.unwrap();
         assert_eq!((limited.status, limited.retry_after.as_deref()), (429, Some("7")));
+        assert!(!limited.rate_exhausted, "no remaining-count header");
+        let exhausted = raw.get("/exhausted", &[]).await.unwrap();
+        assert_eq!((exhausted.status, exhausted.rate_exhausted), (403, true));
+        let left = raw.get("/left", &[]).await.unwrap();
+        assert_eq!((left.status, left.rate_exhausted), (403, false), "1 remaining is not 0");
         let echo =
             map_response(&raw.get("/echo", &[("startAt", "100".into())]).await.unwrap()).unwrap();
         use base64::Engine;

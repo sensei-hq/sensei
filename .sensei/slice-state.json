@@ -13,9 +13,10 @@
     "W6 #441",
     "W7 #442"
   ],
-  "current_phase": "W2 #437",
+  "current_phase": "W4 #439",
   "completed": [
-    "W1 #436"
+    "W1 #436",
+    "W3 #438"
   ],
   "gate_status": "pass",
   "open_questions": [],
@@ -25,7 +26,12 @@
       "phase": "W1",
       "what": "WriteMethod::Patch and gate 11 moved from W1 to W5",
       "why": "clippy -D warnings: variant never constructed until GitHub's comment PATCH exists (W5); suppressing the lint would be a workaround"
+    },
+    {
+      "phase": "W2",
+      "what": "W2 renderer built and green, held in `git stash` ('W2 renderer (lands with W5)'); committed with W5. Build order now W3, W4, then W2+W5",
+      "why": "markdown/is_marked/COMMENT_MARKER have no production caller until W5; senseid is a binary crate, so clippy -D warnings flags them as dead code"
     }
   ],
-  "next_command": "/sensei:build W2 (#437): writeback::{COMMENT_MARKER, markdown, is_marked} + sanitiser (spec F4, gate 4)"
+  "next_command": "/sensei:build W4 (#439): F7 not_private \u2014 DDL enum + apply/before hook + design.yaml + dbml, WritebackStatus::NotPrivate, WriteOp::Audience arms, Audience + audience_key/audience trait methods, per-pass cache, writeback_counts 3 values, card not_private; make test-template"
 }

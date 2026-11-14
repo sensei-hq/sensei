@@ -802,11 +802,19 @@ impl Pass<'_> {
             None => match self.adapter.find_comment(get, ticket, owner).await {
                 Ok(Some(r)) => r,
                 Ok(None) => {
-                    return self
-                        .adapter
-                        .create_comment(write, ticket, report)
-                        .await
-                        .map_err(|e| status_for(WriteOp::CreateComment, e));
+                    return match self.adapter.create_comment(write, ticket, report).await {
+                        Ok(id) => Ok(id),
+                        // A 404 on a create: the ticket gone, or a token that can read it but
+                        // not comment on it (GitHub answers 404 there; F6a).
+                        Err(TrackerError::NotFound) => {
+                            match self.adapter.issue_exists(get, ticket).await {
+                                Ok(true) => Err(WritebackStatus::Forbidden),
+                                Ok(false) => Err(WritebackStatus::NotFound),
+                                Err(e) => Err(status_for(WriteOp::IssueCheck, e)),
+                            }
+                        }
+                        Err(e) => Err(status_for(WriteOp::CreateComment, e)),
+                    };
                 }
                 Err(e) => return Err(status_for(WriteOp::FindComment, e)),
             },
@@ -1528,12 +1536,60 @@ mod pass_tests {
         }
     }
 
+    /// tracker-forge-comment-writeback F6a / gate 7: a 404 on a comment create is
+    /// followed by the issue check, as an update's 404 already was. The ticket readable
+    /// means the token may not comment (`forbidden`); the ticket gone is `not_found`.
+    #[tokio::test]
+    async fn a_404_on_a_create_asks_whether_the_ticket_is_still_there() {
+        for (issue_check, want) in [
+            (None, "forbidden"),
+            (Some(TrackerError::NotFound), "not_found"),
+            (Some(TrackerError::HttpError), "error"),
+        ] {
+            let mut served = standard([Some("A1"), None, None]);
+            if let Some(e) = issue_check {
+                served = served.fail("/rest/api/3/issue/10001", e);
+            }
+            let f = fixture_with(standard([Some("A1"), None, None]), served).await;
+            let w = f.writes(RecordingWrites::default().respond(
+                WriteMethod::Post,
+                &comment_path("10001"),
+                404,
+                1,
+            ));
+            f.pass().await;
+            assert_eq!(f.status_of("10001").await.as_deref(), Some(want), "{want}");
+            assert_eq!(w.sent().len(), 1, "{want}: one create, and no retry within the pass");
+        }
+    }
+
+    /// F8 / gate 9 through the pass: a write's 403 carrying `Retry-After` is a rate limit,
+    /// retried next pass, never the sticky `forbidden`.
+    #[tokio::test]
+    async fn a_rate_limited_403_on_a_write_is_retried_next_pass() {
+        let f = fixture([Some("A1"), None, None]).await;
+        let w = f.writes(RecordingWrites::default().respond_after(
+            WriteMethod::Post,
+            &comment_path("10001"),
+            403,
+            Some("30"),
+            1,
+        ));
+        f.pass().await;
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("rate_limited"));
+        f.pass().await;
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"), "the next pass writes it");
+        assert_eq!(w.sent().len(), 2);
+    }
+
     #[tokio::test]
     async fn every_failed_write_leaves_its_status_and_only_sticky_ones_wait() {
         for (code, want, sticky) in [
             (401, "forbidden", true),
             (403, "forbidden", true),
-            (404, "not_found", true),
+            // F6a: a create's 404 asks the issue check, and this ticket exists, so the
+            // token may read it but not comment on it.
+            (404, "forbidden", true),
             (400, "error", false),
             (500, "error", false),
             (302, "error", false),

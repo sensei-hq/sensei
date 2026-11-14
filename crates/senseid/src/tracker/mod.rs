@@ -1450,6 +1450,7 @@ pub mod test_support {
             let raw = |status, retry_after, body: String| crate::tracker::transport::RawResponse {
                 status,
                 retry_after,
+                rate_exhausted: false,
                 body: body.into_bytes(),
             };
             Ok(match (scripted, method) {

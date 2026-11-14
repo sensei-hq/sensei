@@ -755,6 +755,7 @@ pub(crate) mod test_support {
                     &crate::tracker::transport::RawResponse {
                         status: *status,
                         retry_after: None,
+                        rate_exhausted: false,
                         body: serde_json::to_vec(body).unwrap(),
                     },
                 ),
