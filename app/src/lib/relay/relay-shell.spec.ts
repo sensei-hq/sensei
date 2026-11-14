@@ -32,7 +32,7 @@ describe('toRelayShell · toolbar', () => {
     expect(ids(shell.toolbar)).toEqual(['now', 'queue', 'crew', '|', 'message', 'info']);
   });
 
-  it('a view button is a 36px icon button with its Solar Linear icon, pressed for the view shown', () => {
+  it('a view button is a view, Message and Info are toggles: rokkit draws the 36px framed button from the kind (#420)', () => {
     const shell = toRelayShell(loadedNow(), actions());
     const now = item(shell.toolbar, 'now');
     expect(now.icon).toBe('i-solar-pulse-linear');
@@ -42,27 +42,22 @@ describe('toRelayShell · toolbar', () => {
     expect(item(shell.toolbar, 'info').icon).toBe('i-solar-info-circle-linear');
     expect(now.active).toBe(true);
     expect(item(shell.toolbar, 'queue').active).toBe(false);
-    const attrs = now.attrs as Record<string, string>;
-    expect(attrs.class).toMatch(/\bw-9\b/);
-    expect(attrs.class).toMatch(/\bh-9\b/);
-    expect(attrs['data-relay-view']).toBe('now');
+    expect(['now', 'queue', 'crew'].map((id) => item(shell.toolbar, id).kind)).toEqual(['view', 'view', 'view']);
+    expect(['message', 'info'].map((id) => item(shell.toolbar, id).kind)).toEqual(['toggle', 'toggle']);
+    // The look is the theme's: no class or hook of our own rides on a button.
+    for (const id of ['now', 'queue', 'crew', 'message', 'info']) expect(item(shell.toolbar, id).attrs, id).toBeUndefined();
   });
 
-  it('Queue and Crew carry their counts as a badge and in the accessible name; Now never does', () => {
+  it('Queue and Crew carry their counts (rokkit draws the badge and names it "Queue · 7"); Now never does', () => {
     const shell = toRelayShell(loadedNow(), actions());
-    const queue = item(shell.toolbar, 'queue');
-    expect(queue.label).toBe('Queue · 7');
-    expect((queue.attrs as Record<string, string>)['data-count']).toBe('7');
-    expect(item(shell.toolbar, 'crew').label).toBe('Crew · 7');
-    const now = item(shell.toolbar, 'now');
-    expect(now.label).toBe('Now');
-    expect((now.attrs as Record<string, string>)['data-count']).toBeUndefined();
+    expect(item(shell.toolbar, 'queue')).toMatchObject({ label: 'Queue', count: 7 });
+    expect(item(shell.toolbar, 'crew')).toMatchObject({ label: 'Crew', count: 7 });
+    expect(item(shell.toolbar, 'now')).toMatchObject({ label: 'Now', count: 0 });
   });
 
   it('a count of zero draws no badge', () => {
     const shell = toRelayShell(noRun(), actions());
-    expect((item(shell.toolbar, 'crew').attrs as Record<string, string>)['data-count']).toBeUndefined();
-    expect(item(shell.toolbar, 'crew').label).toBe('Crew');
+    expect(item(shell.toolbar, 'crew')).toMatchObject({ label: 'Crew', count: 0 });
   });
 
   it('pressing a view asks the page for that view; Message toggles the compose band', () => {
