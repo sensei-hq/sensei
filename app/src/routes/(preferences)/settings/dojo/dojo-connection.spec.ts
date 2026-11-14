@@ -165,6 +165,22 @@ describe('the sync switch on a repository row', () => {
     ]);
   });
 
+  // D46: an organisation's admin may switch its repositories; a member may not.
+  // The switch reads the person's election, not whether the repository syncs.
+  it.skip('pending: wp8-daemon — an org admin may switch an org repository, a member may not', () => {
+    const asAdmin = new Map([ruling('github.com/sensei-hq/sensei', true)]);
+    expect(toggles(asAdmin)).toContainEqual(['github.com/sensei-hq/sensei', { on: true }]);
+    const asMember = new Map([ruling('github.com/sensei-hq/sensei', false)]);
+    expect(toggles(asMember)).toContainEqual(['github.com/sensei-hq/sensei', null]);
+  });
+
+  it.skip('pending: wp8-daemon — the switch reads the election, not whether it syncs', () => {
+    const notSubscribed = new Map([
+      ['github.com/jerrythomas/burn-e', { repo_key: 'github.com/jerrythomas/burn-e', elected: true, sync_enabled: false, configurable_by_me: true }],
+    ]);
+    expect(toggles(notSubscribed)).toContainEqual(['github.com/jerrythomas/burn-e', { on: true }]);
+  });
+
   it('is absent where the dōjō has no ruling, or the rulings could not be read', () => {
     expect(toggles(new Map())).toEqual([
       ['github.com/jerrythomas/burn-e', null],

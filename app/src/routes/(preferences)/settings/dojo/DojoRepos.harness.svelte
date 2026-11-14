@@ -7,8 +7,13 @@
     dojos,
     ontoggle,
     electionNotice = null,
-  }: { dojos: DojoGroup[]; ontoggle?: (key: string, elected: boolean) => void; electionNotice?: ScreenNoticeProps | null } =
-    $props();
+    electionsError = null,
+  }: {
+    dojos: DojoGroup[];
+    ontoggle?: (key: string, elected: boolean) => void;
+    electionNotice?: ScreenNoticeProps | null;
+    electionsError?: string | null;
+  } = $props();
 </script>
 
-<DojoRepos {dojos} {ontoggle} {electionNotice} />
+<DojoRepos {dojos} {ontoggle} {electionNotice} {electionsError} />

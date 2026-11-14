@@ -23,7 +23,12 @@ const group = (repos: RepoView[]): DojoGroup => ({
 
 import type { ScreenNoticeProps } from './dojo-connection-state.svelte.js';
 
-type Props = { dojos: DojoGroup[]; ontoggle?: (key: string, elected: boolean) => void; electionNotice?: ScreenNoticeProps | null };
+type Props = {
+  dojos: DojoGroup[];
+  ontoggle?: (key: string, elected: boolean) => void;
+  electionNotice?: ScreenNoticeProps | null;
+  electionsError?: string | null;
+};
 
 function mount(props: Props) {
   const m = mountComponent(Harness, props);
@@ -62,5 +67,21 @@ describe('DojoRepos · the sync switch', () => {
     const notice = root.querySelector('[data-election-notice]');
     expect(notice?.textContent).toContain('Only this organisation’s admin can change this repository’s sync');
     expect(notice?.textContent).toContain('only an admin may change this');
+  });
+
+  // Review r2 MED-4: with no rulings every switch is absent, which alone would read
+  // as "nothing here is yours to change". The failure is said instead. No retry is
+  // offered: the rulings are read again when the identity is reselected.
+  it.skip('pending: wp8-daemon — rulings that could not be read show a fault, not an empty choice', () => {
+    const root = mount({ dojos: [group([row('github.com/me/notes', null)])], electionsError: 'dōjō returned 500' });
+    const err = root.querySelector('[data-elections-error]');
+    expect(err?.textContent).toContain('Couldn’t read which repositories you can change');
+    expect(err?.textContent).toContain('dōjō returned 500');
+    expect(root.querySelector('[data-repo-toggle]')).toBeNull();
+  });
+
+  it('shows no rulings fault when none was reported', () => {
+    const root = mount({ dojos: [group([row('github.com/me/notes', { on: true })])] });
+    expect(root.querySelector('[data-elections-error]')).toBeNull();
   });
 });

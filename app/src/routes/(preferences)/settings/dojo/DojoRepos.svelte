@@ -7,17 +7,20 @@
   import type { DojoGroup } from './dojo-connection.js';
   import type { ScreenNoticeProps } from './dojo-connection-state.svelte.js';
 
-  // pending: wp8-daemon — `ontoggle` and `electionNotice` are rendered in phase B.
+  // pending: wp8-daemon — `ontoggle`, `electionNotice` and `electionsError` are rendered in phase B.
   let {
     dojos,
     ontoggle: _ontoggle,
     electionNotice: _electionNotice = null,
+    electionsError: _electionsError = null,
   }: {
     dojos: DojoGroup[];
     /** Turn a repository's sync on or off (only rows with a `toggle` offer it). */
     ontoggle?: (key: string, elected: boolean) => void;
     /** What the last change could not do, and why. */
     electionNotice?: ScreenNoticeProps | null;
+    /** Why the dōjō's rulings could not be read: no switch can be shown. */
+    electionsError?: string | null;
   } = $props();
   const DOT = { syncing: 'bg-success', off: 'border border-ink-faint', failing: 'bg-danger' } as const;
 </script>

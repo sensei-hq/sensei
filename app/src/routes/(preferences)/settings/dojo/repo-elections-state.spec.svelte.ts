@@ -65,7 +65,10 @@ describe('RepoElections', () => {
   });
 
   it.skip('pending: wp8-daemon — a change that failed (502) is a fault Notice; nothing flips', async () => {
-    const { s } = setup({ tryPatchRepositoryElection: vi.fn(() => fail(502, 'dōjō returned 500')) });
+    const { s } = setup({
+      tryPatchRepositoryElection: vi.fn(() =>
+        fail(502, 'dojo_unavailable', { error: 'dojo_unavailable', repo_key: NOTES.repo_key, reason: 'dōjō returned 500' })),
+    });
     await s.load();
     await s.toggle(NOTES.repo_key, false);
     expect(s.notice).toEqual({
@@ -73,6 +76,37 @@ describe('RepoElections', () => {
       title: 'Couldn’t change this repository’s sync',
       detail: 'dōjō returned 500',
       code: 'election_failed',
+    });
+    expect(s.rows?.get(NOTES.repo_key)).toEqual(NOTES);
+  });
+
+  it.skip('pending: wp8-daemon — a repository the dōjō hasn’t registered says so, not that an admin decides', async () => {
+    const { s } = setup({
+      tryPatchRepositoryElection: vi.fn(() => fail(409, 'not_registered', { error: 'not_registered', repo_key: NOTES.repo_key })),
+    });
+    await s.load();
+    await s.toggle(NOTES.repo_key, false);
+    expect(s.notice).toEqual({
+      tone: 'refusal',
+      title: 'The dōjō hasn’t registered this repository yet',
+      code: 'not_registered',
+    });
+    expect(s.rows?.get(NOTES.repo_key)).toEqual(NOTES);
+  });
+
+  it.skip('pending: wp8-daemon — a repository the dōjō can’t decide yet carries the dōjō’s reason', async () => {
+    const reason = 'github.com/me/notes has no authority yet: forge visibility not captured';
+    const { s } = setup({
+      tryPatchRepositoryElection: vi.fn(() =>
+        fail(409, 'not_decidable_yet', { error: 'not_decidable_yet', repo_key: NOTES.repo_key, reason })),
+    });
+    await s.load();
+    await s.toggle(NOTES.repo_key, false);
+    expect(s.notice).toEqual({
+      tone: 'refusal',
+      title: 'The dōjō can’t decide this repository’s sync yet',
+      detail: reason,
+      code: 'not_decidable_yet',
     });
     expect(s.rows?.get(NOTES.repo_key)).toEqual(NOTES);
   });
