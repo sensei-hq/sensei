@@ -264,7 +264,9 @@ adapter methods:
     Anything else (`public`, `internal`, missing) gives `Visible`.
   - Jira: never called; its trait body returns `Err(UnsupportedTracker)`.
 
-**In the pass**, after the unchanged-hash check and before `writeback_target`:
+**In the pass**, after the unchanged-hash check and once `writeback_target` returns `Go`
+(amended at build, 2026-11-14: `writeback_target` only reads, and checking after it means
+a reassigned ticket or a stopped pass costs no visibility request):
 - `audience_key(task)` is `None` → write as today (this covers Jira).
 - Otherwise read the per-pass cache, a `HashMap<String, Audience>`. On a miss, call
   `audience` once per key per pass.
@@ -292,13 +294,19 @@ it. Deleting comments stays out of scope (parent).
 
   `database/design.dbml:826-834` gets the same value.
 - `status_for` (`writeback.rs:89`) gains `WriteOp::Audience`, with explicit arms placed
-  before the generic ones:
-  - `Unauthorized` or `Forbidden` → `forbidden`
-  - `NotFound` → `not_found`. Both forges answer 404 for a repository the token cannot see,
-    and the ticket cannot be written then.
+  before the generic ones (amended at build, 2026-11-14, W4 review HIGH):
+  - `NotFound` → `not_found`. Both forges answer 404 for a repository the token cannot
+    see, and the ticket cannot be written then.
   - `RateLimited` → `rate_limited`, so `RATE_LIMITED_STOP` counts it
-  - anything else → `error`
+  - anything else, `Forbidden` and `Unauthorized` included → `error`, retried next pass.
+    The read is a GET, and a GET's 403 cannot be told from GitHub's rate-limit 403
+    (F8 maps only writes). A sticky `forbidden` would let one throttled read hold every
+    ticket of the repository until write-back is toggled.
 
+  A failed read is cached for the pass like an answer, so each ticket it holds back
+  counts once; a cached rate limit therefore ends the pass after `RATE_LIMITED_STOP`
+  tickets. A non-rate-limit failure resets that run, as a write's does; a `not_private`
+  skip leaves it as it was.
   Its op × `TrackerError::ALL` test covers the new op.
 - `WritebackStatus::ALL` gains `NotPrivate` in the same position. A test pins that order.
 - `database/apply/before/sensei_tracker_writeback_status_not_private.sql` adds the value to
@@ -551,10 +559,14 @@ Recorded in D93.
       the same result.
     - A repo-visibility GET that errors → that ticket's status per `status_for(Audience, …)`,
       and 0 comment requests:
-      - 404 → `not_found`
-      - 403 → `forbidden`
+      - 404 → `not_found` (sticky)
+      - 403 or 401 → `error` (retried next pass)
       - 429 → `rate_limited`
       - malformed JSON → `error`
+    - Two repositories in one pass, one private and one public: two reads, and only the
+      private ticket is commented.
+    - A ticket already commented whose repository goes public: no update, status
+      `not_private`, the comment ref kept.
     - The fixture switched to private → the next pass comments.
     - `writeback_counts`: a `not_private` ticket is in `not_private`, not in `failing`.
     - The DDL enum labels equal `WritebackStatus::ALL`, with `not_private` last.

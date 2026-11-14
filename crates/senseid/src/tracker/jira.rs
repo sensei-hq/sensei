@@ -4,7 +4,7 @@
 use crate::tracker::http::{InvalidBaseUrl, normalize_base_url};
 use crate::tracker::sprint::SprintState;
 use crate::tracker::{
-    AccountRef, ApiToken, AuthScheme, BoardScope, ConnectParams, Discovered, FieldCheck,
+    AccountRef, ApiToken, Audience, AuthScheme, BoardScope, ConnectParams, Discovered, FieldCheck,
     FieldValue, GetTransport, KnownTask, Link, LinkSource, OwnerLookup, ParamError, PrevState,
     SessionText, Snapshot, SprintRow, TaskRef, TaskRow, TrackerAdapter, TrackerError, TrackerKind,
     ValidateError, Validated, WriteMethod, WriteTransport, is_numeric_id,
@@ -174,6 +174,15 @@ impl TrackerAdapter for JiraAdapter {
         w.send_json(WriteMethod::Put, &path, &query, &serde_json::json!({"body": adf(report)}))
             .await
             .map(|_| ())
+    }
+
+    /// Jira has no repository visibility: every ticket is written as before (F7).
+    fn audience_key(&self, _task: &TaskRef<'_>) -> Option<String> {
+        None
+    }
+
+    async fn audience(&self, _t: &dyn GetTransport, _key: &str) -> Result<Audience, TrackerError> {
+        Err(TrackerError::UnsupportedTracker)
     }
 
     fn field_ref_shape(&self, field_ref: &str) -> bool {

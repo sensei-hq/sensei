@@ -54,7 +54,8 @@ pub(crate) async fn known_workspace(state: &AppState, id: &str) -> Result<uuid::
 async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, ApiErr> {
     let pg = &state.pg;
     let (tasks, sprints) = pg.tracker_counts(row.id).await.map_err(|_| internal())?;
-    let (assigned, failing) = pg.writeback_counts(row.id).await.map_err(|_| internal())?;
+    let (assigned, failing, not_private) =
+        pg.writeback_counts(row.id).await.map_err(|_| internal())?;
     let fields = pg.tracker_fields(row.id).await.map_err(|_| internal())?;
     let mapped = fields.iter().filter(|f| f.metric.is_some()).count();
     let (wb_state, wb_error) = writeback_state(&WritebackFacts {
@@ -111,6 +112,8 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
             "mapped": mapped,
             "assigned": assigned,
             "failing": failing,
+            // F7: assigned tickets skipped because their repository is not private.
+            "not_private": not_private,
             "error": wb_error,
         },
         // S4: the ticket-history task's last run.
@@ -1790,6 +1793,7 @@ mod tests {
             assert_eq!(wb["mapped"], json!(0));
             assert_eq!(wb["assigned"], json!(if want == "active" { 1 } else { 0 }));
             assert_eq!(wb["failing"], json!(0));
+            assert_eq!(wb["not_private"], json!(0), "F7: present, and none skipped on Jira");
             assert_eq!(wb["error"], error);
         }
         // A lookup that fails is shown with its code.

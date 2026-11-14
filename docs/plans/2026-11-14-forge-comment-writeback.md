@@ -118,8 +118,13 @@ their comment methods. Flipping it earlier would let the pass reach the
   - `tracker/writeback.rs`: `WritebackStatus::NotPrivate`, `WriteOp::Audience` arms, the
     per-pass audience cache and check
   - `tracker/mod.rs`: `Audience`, and trait methods `audience_key` and `audience`. Jira
-    returns `None` and `UnsupportedTracker`. The forges return `None` for now; W5
-    implements them.
+    returns `None` and `UnsupportedTracker`.
+  - **Amended at build (2026-11-14):** the forges' `audience_key` and `audience` (one GET
+    each, via the shared `forge::audience_of`) land here, not in W5. Clippy rejects
+    `Audience` variants that nothing constructs, and the forges are what construct them.
+    They stay inert until W5 sets `comment: true`.
+  - The check runs once `writeback_target` returns `Go` (spec F7 amended).
+  - `github::is_repo_name` now refuses `.` and `..`, found by the new visibility test.
   - `db/pg_store/trackers.rs`: `writeback_counts` returns 3 values
   - `api/handlers/trackers.rs`: the card gains `not_private`
   - `make test-template`

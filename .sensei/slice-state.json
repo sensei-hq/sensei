@@ -13,10 +13,11 @@
     "W6 #441",
     "W7 #442"
   ],
-  "current_phase": "W4 #439",
+  "current_phase": "W5 #440",
   "completed": [
     "W1 #436",
-    "W3 #438"
+    "W3 #438",
+    "W4 #439"
   ],
   "gate_status": "pass",
   "open_questions": [],
@@ -31,7 +32,22 @@
       "phase": "W2",
       "what": "W2 renderer built and green, held in `git stash` ('W2 renderer (lands with W5)'); committed with W5. Build order now W3, W4, then W2+W5",
       "why": "markdown/is_marked/COMMENT_MARKER have no production caller until W5; senseid is a binary crate, so clippy -D warnings flags them as dead code"
+    },
+    {
+      "phase": "W4",
+      "what": "F7 visibility check placed after writeback_target returns Go, not before it; spec F7 updated",
+      "why": "writeback_target is a read; a reassigned ticket or a stopped pass then makes no visibility request"
+    },
+    {
+      "phase": "W4",
+      "what": "forge audience_key/audience moved W5 \u2192 W4; github::is_repo_name refuses '.' and '..'",
+      "why": "clippy: Audience variants never constructed without them; the new test showed '/repos/a/..' reachable through is_repo_name"
+    },
+    {
+      "phase": "W4",
+      "what": "status_for(Audience): only 404 is final; 403/401 \u2192 error (retried); rate limit counted; non-RL failure resets the streak",
+      "why": "W4 review HIGH: a GET 403 can't be told from GitHub's rate-limit 403, and a sticky forbidden would hold a whole repository after one throttled read"
     }
   ],
-  "next_command": "/sensei:build W4 (#439): F7 not_private \u2014 DDL enum + apply/before hook + design.yaml + dbml, WritebackStatus::NotPrivate, WriteOp::Audience arms, Audience + audience_key/audience trait methods, per-pass cache, writeback_counts 3 values, card not_private; make test-template"
+  "next_command": "git stash pop (W2 renderer), then /sensei:build W5 (#440): WriteMethod::Patch + gate 11; GitLab notes (F5) and GitHub REST comments (F6) with F6b identity; comment: true on both; gates 3, 5\u20138, 14"
 }

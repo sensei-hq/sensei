@@ -147,6 +147,17 @@ pub fn unknown_keys(session: &SessionText, known: &[KnownTask]) -> Vec<String> {
 
 // ── JSON readers shared by the forge adapters (GitLab, GitHub) ──────────────
 
+/// Who can see a repository or project, from its `visibility` (GitHub repository,
+/// GitLab project): only `private` is private; `public`, `internal` and a missing value
+/// are not (tracker-forge-comment-writeback F7).
+pub(crate) fn audience_of(v: &serde_json::Value) -> crate::tracker::Audience {
+    if text(v, "visibility") == Some("private") {
+        crate::tracker::Audience::Private
+    } else {
+        crate::tracker::Audience::Visible
+    }
+}
+
 /// A string field, or `None`.
 pub(crate) fn text<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     v.get(key).and_then(|x| x.as_str())
@@ -257,6 +268,18 @@ pub fn candidates_for_key<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_private_visibility_is_private() {
+        use crate::tracker::Audience;
+        let of = |v: serde_json::Value| audience_of(&v);
+        assert_eq!(of(serde_json::json!({"visibility": "private"})), Audience::Private);
+        assert_eq!(of(serde_json::json!({"visibility": "public"})), Audience::Visible);
+        assert_eq!(of(serde_json::json!({"visibility": "internal"})), Audience::Visible);
+        assert_eq!(of(serde_json::json!({"visibility": "PRIVATE"})), Audience::Visible);
+        assert_eq!(of(serde_json::json!({})), Audience::Visible, "unstated is not private");
+        assert_eq!(of(serde_json::json!({"private": true})), Audience::Visible);
+    }
 
     fn task(id: &str, key: &str, scope: &str) -> KnownTask {
         KnownTask {

@@ -1678,11 +1678,17 @@ impl PgStore {
         tx.commit().await.map_err(err)
     }
 
-    /// `(assigned, failing)` for the board card (W8).
-    pub async fn writeback_counts(&self, tracker_id: uuid::Uuid) -> Result<(i64, i64), String> {
+    /// `(assigned, failing, not_private)` for the board card (W8). A ticket skipped
+    /// because its repository is not private is not failing (tracker-forge-comment-writeback F7).
+    pub async fn writeback_counts(
+        &self,
+        tracker_id: uuid::Uuid,
+    ) -> Result<(i64, i64, i64), String> {
         sqlx_core::query_as::query_as(
             "SELECT count(*) FILTER (WHERE assigned_to_me),
-                    count(*) FILTER (WHERE assigned_to_me AND writeback_status <> 'ok')
+                    count(*) FILTER (WHERE assigned_to_me
+                                     AND writeback_status NOT IN ('ok', 'not_private')),
+                    count(*) FILTER (WHERE assigned_to_me AND writeback_status = 'not_private')
                FROM sensei.tracker_tasks WHERE tracker_id = $1 AND removed_at IS NULL",
         )
         .bind(tracker_id)

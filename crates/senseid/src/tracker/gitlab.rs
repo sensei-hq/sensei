@@ -8,10 +8,10 @@ use crate::tracker::forge::{date, midnight, text, timestamp};
 use crate::tracker::http::normalize_base_url;
 use crate::tracker::sprint::SprintState;
 use crate::tracker::{
-    AccountRef, ApiToken, AuthScheme, BoardScope, Capabilities, ConnectParams, Discovered,
-    FieldCheck, FieldValue, GetTransport, KnownTask, Link, OwnerLookup, ParamError, PrevState,
-    SessionText, Snapshot, SprintRow, TaskRef, TaskRow, TrackerAdapter, TrackerError, TrackerKind,
-    ValidateError, Validated, WriteTransport,
+    AccountRef, ApiToken, Audience, AuthScheme, BoardScope, Capabilities, ConnectParams,
+    Discovered, FieldCheck, FieldValue, GetTransport, KnownTask, Link, OwnerLookup, ParamError,
+    PrevState, SessionText, Snapshot, SprintRow, TaskRef, TaskRow, TrackerAdapter, TrackerError,
+    TrackerKind, ValidateError, Validated, WriteTransport,
 };
 
 pub struct GitlabAdapter;
@@ -539,6 +539,18 @@ impl TrackerAdapter for GitlabAdapter {
         _report: &crate::tracker::writeback::Report,
     ) -> Result<(), TrackerError> {
         Err(TrackerError::UnsupportedTracker)
+    }
+    /// The ticket's project path (F7): its tickets share one visibility read.
+    fn audience_key(&self, task: &TaskRef<'_>) -> Option<String> {
+        crate::tracker::forge::parse_key(task.key).map(|(path, _)| path)
+    }
+    /// `GET /projects/:path` → its `visibility` (F7).
+    async fn audience(&self, t: &dyn GetTransport, key: &str) -> Result<Audience, TrackerError> {
+        if !crate::tracker::forge::is_key_path(key) {
+            return Err(TrackerError::BadRequest);
+        }
+        let project = t.get_json(&format!("{API}/projects/{}", encoded(key)), &[]).await?;
+        Ok(crate::tracker::forge::audience_of(&project))
     }
     fn field_ref_shape(&self, _field_ref: &str) -> bool {
         false
@@ -1078,6 +1090,37 @@ mod tests {
         );
         issue["references"] = serde_json::Value::Null;
         assert_eq!(task_row(&issue, BASE), Err(TrackerError::Decode));
+    }
+
+    /// tracker-forge-comment-writeback F7: a ticket's project is its audience key, and
+    /// one GET reads its visibility.
+    #[tokio::test]
+    async fn a_project_s_visibility_is_read_by_its_path() {
+        use crate::tracker::test_support::Canned;
+        use crate::tracker::{Audience, TaskRef};
+        let ticket = TaskRef { external_id: "9001", key: "acme/sub/platform#12" };
+        assert_eq!(GitlabAdapter.audience_key(&ticket).as_deref(), Some("acme/sub/platform"));
+        let bad = TaskRef { external_id: "9001", key: "not a key" };
+        assert_eq!(GitlabAdapter.audience_key(&bad), None);
+
+        let path = "/api/v4/projects/acme%2Fsub%2Fplatform";
+        for (visibility, want) in [
+            ("private", Audience::Private),
+            ("internal", Audience::Visible),
+            ("public", Audience::Visible),
+        ] {
+            let t = Canned::default().answer(path, serde_json::json!({"visibility": visibility}));
+            assert_eq!(GitlabAdapter.audience(&t, "acme/sub/platform").await, Ok(want));
+            assert_eq!(t.calls(), [path]);
+        }
+        let gone = Canned::default().fail(path, TrackerError::NotFound);
+        assert_eq!(
+            GitlabAdapter.audience(&gone, "acme/sub/platform").await,
+            Err(TrackerError::NotFound)
+        );
+        let none = Canned::default();
+        assert_eq!(GitlabAdapter.audience(&none, "../x").await, Err(TrackerError::BadRequest));
+        assert!(none.calls().is_empty(), "a bad key sends nothing");
     }
 
     #[test]

@@ -8,10 +8,10 @@ use crate::tracker::forge::{date, midnight, text, timestamp};
 use crate::tracker::graphql::GraphqlQuery;
 use crate::tracker::sprint::SprintState;
 use crate::tracker::{
-    AccountRef, ApiToken, AuthScheme, BoardScope, Capabilities, ConnectParams, Discovered,
-    FieldCheck, FieldValue, GetTransport, KnownTask, Link, OwnerLookup, ParamError, PrevState,
-    SessionText, Snapshot, SprintRow, TaskRef, TaskRow, TrackerAdapter, TrackerError, TrackerKind,
-    ValidateError, Validated, WriteTransport,
+    AccountRef, ApiToken, Audience, AuthScheme, BoardScope, Capabilities, ConnectParams,
+    Discovered, FieldCheck, FieldValue, GetTransport, KnownTask, Link, OwnerLookup, ParamError,
+    PrevState, SessionText, Snapshot, SprintRow, TaskRef, TaskRow, TrackerAdapter, TrackerError,
+    TrackerKind, ValidateError, Validated, WriteTransport,
 };
 
 pub struct GithubAdapter;
@@ -73,9 +73,12 @@ fn is_owner(s: &str) -> bool {
         && s.as_bytes()[0].is_ascii_alphanumeric()
 }
 
-/// A repository name: 1–100 of `[A-Za-z0-9._-]` (§H4).
+/// A repository name: 1–100 of `[A-Za-z0-9._-]` (§H4), never `.` or `..` (GitHub
+/// refuses both, and either would walk a request path).
 fn is_repo_name(s: &str) -> bool {
     (1..=100).contains(&s.len())
+        && s != "."
+        && s != ".."
         && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
@@ -620,6 +623,20 @@ impl TrackerAdapter for GithubAdapter {
     ) -> Result<(), TrackerError> {
         Err(TrackerError::UnsupportedTracker)
     }
+    /// The ticket's repository, `owner/name` (F7): its tickets share one visibility read.
+    fn audience_key(&self, task: &TaskRef<'_>) -> Option<String> {
+        github_key(task.key).map(|(owner, name, _)| format!("{owner}/{name}"))
+    }
+    /// `GET /repos/:owner/:name` → its `visibility` (F7).
+    async fn audience(&self, t: &dyn GetTransport, key: &str) -> Result<Audience, TrackerError> {
+        let Some((owner, name)) =
+            key.split_once('/').filter(|(o, n)| is_owner(o) && is_repo_name(n))
+        else {
+            return Err(TrackerError::BadRequest);
+        };
+        let repo = t.get_json(&format!("/repos/{owner}/{name}"), &[]).await?;
+        Ok(crate::tracker::forge::audience_of(&repo))
+    }
     fn field_ref_shape(&self, _field_ref: &str) -> bool {
         false
     }
@@ -798,6 +815,43 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::RecordedGithub;
     use super::*;
+
+    /// tracker-forge-comment-writeback F7: a ticket's repository is its audience key,
+    /// and one GET reads its visibility.
+    #[tokio::test]
+    async fn a_repository_s_visibility_is_read_by_its_name() {
+        use crate::tracker::test_support::Canned;
+        use crate::tracker::{Audience, TaskRef};
+        let ticket = TaskRef { external_id: "3001", key: "sensei-hq/sensei#12" };
+        assert_eq!(GithubAdapter.audience_key(&ticket).as_deref(), Some("sensei-hq/sensei"));
+        let bad = TaskRef { external_id: "3001", key: "acme/a/b#1" };
+        assert_eq!(GithubAdapter.audience_key(&bad), None, "a GitHub key has one slash");
+
+        let path = "/repos/sensei-hq/sensei";
+        for (visibility, want) in [
+            ("private", Audience::Private),
+            ("internal", Audience::Visible),
+            ("public", Audience::Visible),
+        ] {
+            let t = Canned::default().answer(path, serde_json::json!({"visibility": visibility}));
+            assert_eq!(GithubAdapter.audience(&t, "sensei-hq/sensei").await, Ok(want));
+            assert_eq!(t.calls(), [path]);
+        }
+        let hidden = Canned::default().fail(path, TrackerError::NotFound);
+        assert_eq!(
+            GithubAdapter.audience(&hidden, "sensei-hq/sensei").await,
+            Err(TrackerError::NotFound)
+        );
+        let none = Canned::default();
+        for bad in ["sensei-hq", "a/b/c", "-bad/x", "a/..", "a/."] {
+            assert_eq!(
+                GithubAdapter.audience(&none, bad).await,
+                Err(TrackerError::BadRequest),
+                "{bad}"
+            );
+        }
+        assert!(none.calls().is_empty(), "a bad key sends nothing");
+    }
     use serde_json::json;
 
     fn at(day: &str) -> chrono::DateTime<chrono::Utc> {

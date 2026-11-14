@@ -33,11 +33,14 @@ pub enum WritebackStatus {
     NotFound,
     RateLimited,
     Error,
+    /// The ticket's repository or project is public or internal: nothing is written,
+    /// and the next pass checks again (tracker-forge-comment-writeback F7).
+    NotPrivate,
 }
 
 impl WritebackStatus {
     /// In the enum's declared order.
-    pub const ALL: [WritebackStatus; 7] = [
+    pub const ALL: [WritebackStatus; 8] = [
         WritebackStatus::Ok,
         WritebackStatus::Forbidden,
         WritebackStatus::FieldInvalid,
@@ -45,6 +48,7 @@ impl WritebackStatus {
         WritebackStatus::NotFound,
         WritebackStatus::RateLimited,
         WritebackStatus::Error,
+        WritebackStatus::NotPrivate,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -56,6 +60,7 @@ impl WritebackStatus {
             WritebackStatus::NotFound => "not_found",
             WritebackStatus::RateLimited => "rate_limited",
             WritebackStatus::Error => "error",
+            WritebackStatus::NotPrivate => "not_private",
         }
     }
     pub fn parse(s: &str) -> Option<WritebackStatus> {
@@ -71,17 +76,20 @@ pub enum WriteOp {
     UpdateComment,
     IssueCheck,
     WriteFields,
+    /// The repository or project visibility read (tracker-forge-comment-writeback F7).
+    Audience,
 }
 
 impl WriteOp {
     /// Every operation, for the exhaustive status table test.
     #[cfg(test)]
-    pub const ALL: [WriteOp; 5] = [
+    pub const ALL: [WriteOp; 6] = [
         WriteOp::FindComment,
         WriteOp::CreateComment,
         WriteOp::UpdateComment,
         WriteOp::IssueCheck,
         WriteOp::WriteFields,
+        WriteOp::Audience,
     ];
 }
 
@@ -94,6 +102,11 @@ pub fn status_for(op: WriteOp, e: TrackerError) -> WritebackStatus {
         // The issue check only tells which object a 404 meant (W5).
         (WriteOp::IssueCheck, E::NotFound) => WritebackStatus::NotFound,
         (WriteOp::IssueCheck, _) => WritebackStatus::Error,
+        // The visibility read (F7) is a GET, and a GET's 403 cannot be told from a rate
+        // limit, so only a 404 (a repository the token cannot see) is final.
+        (WriteOp::Audience, E::NotFound) => WritebackStatus::NotFound,
+        (WriteOp::Audience, E::RateLimited) => WritebackStatus::RateLimited,
+        (WriteOp::Audience, _) => WritebackStatus::Error,
         // A mapped-field write: a 400 is the field the tracker refused (W6, W9).
         (WriteOp::WriteFields, E::BadRequest) => WritebackStatus::FieldInvalid,
         // The comment-list read (W9).
@@ -651,6 +664,11 @@ impl Pass<'_> {
         };
 
         let (mut written, mut unchanged, mut failed, mut rate_limited) = (0, 0, 0, 0);
+        // One visibility read per repository per pass (F7), its failure included.
+        let mut audiences: std::collections::HashMap<
+            String,
+            Result<crate::tracker::Audience, TrackerError>,
+        > = std::collections::HashMap::new();
         for task in tasks {
             let status = task.status.as_deref().and_then(WritebackStatus::parse);
             // A deleted comment holds back the comment surface only (W4).
@@ -700,6 +718,47 @@ impl Pass<'_> {
                 Ok(WriteTarget::Reassigned) => continue,
                 Ok(WriteTarget::Stop) => return PassOutcome::Superseded,
                 Err(_) => return self.stop(TrackerError::Db.code()).await,
+            }
+            // Never a comment where the repository is public or internal (F7). Checked
+            // once the ticket is a write target, so a reassigned one costs no request.
+            let ticket = TaskRef { external_id: &task.external_id, key: &task.key };
+            if let Some(key) = self.adapter.audience_key(&ticket) {
+                let audience = match audiences.get(&key) {
+                    Some(a) => *a,
+                    None => {
+                        let a = self.adapter.audience(get.as_ref(), &key).await;
+                        audiences.insert(key, a);
+                        a
+                    }
+                };
+                let held = match audience {
+                    Ok(crate::tracker::Audience::Private) => None,
+                    Ok(crate::tracker::Audience::Visible) => Some(WritebackStatus::NotPrivate),
+                    Err(e) => Some(status_for(WriteOp::Audience, e)),
+                };
+                if let Some(status) = held {
+                    match self.pg.record_write_status(task.id, &self.service, status.as_str()).await
+                    {
+                        Ok(true) => {}
+                        Ok(false) => return PassOutcome::Superseded,
+                        Err(_) => return self.stop(TrackerError::Db.code()).await,
+                    }
+                    // A skip is no failure and leaves the run of rate limits as it was; a
+                    // failure counts as a write's would. A cached rate limit counts once
+                    // per ticket it holds back, so a throttled repository ends the pass.
+                    if status != WritebackStatus::NotPrivate {
+                        failed += 1;
+                        if status == WritebackStatus::RateLimited {
+                            rate_limited += 1;
+                            if rate_limited >= RATE_LIMITED_STOP {
+                                return self.stop(TrackerError::RateLimited.code()).await;
+                            }
+                        } else {
+                            rate_limited = 0;
+                        }
+                    }
+                    continue;
+                }
             }
             *in_flight.lock().unwrap() = Some(task.id);
             let clear_refs: Vec<String> = clears.iter().map(|(r, _)| r.clone()).collect();
@@ -1018,6 +1077,10 @@ mod tests {
                     // The issue check only tells which object a 404 meant (W5).
                     (WriteOp::IssueCheck, E::NotFound) => S::NotFound,
                     (WriteOp::IssueCheck, _) => S::Error,
+                    // The visibility read (F7): only a 404 is final.
+                    (WriteOp::Audience, E::NotFound) => S::NotFound,
+                    (WriteOp::Audience, E::RateLimited) => S::RateLimited,
+                    (WriteOp::Audience, _) => S::Error,
                     // The comment-list read (W9).
                     (WriteOp::FindComment, E::Forbidden | E::Unauthorized) => S::Forbidden,
                     (WriteOp::FindComment, E::NotFound) => S::NotFound,
@@ -1326,6 +1389,12 @@ mod pass_tests {
         async fn pass(&self) -> PassOutcome {
             self.pass_within(WRITEBACK_DEADLINE).await
         }
+        async fn pass_with(&self, adapter: &'static dyn TrackerAdapter) -> PassOutcome {
+            let guard = self.rt.locks.try_lock(self.t).expect("the guard is free");
+            let service = self.pg.tracker_by_id(self.t).await.unwrap().unwrap().secret_service;
+            let io = PassIo::of(&self.rt);
+            run(&self.pg, &io, self.t, &service, adapter, WRITEBACK_DEADLINE, &guard).await
+        }
         /// Link one more session to `key` and re-sync, so its usage changes.
         async fn new_session(&self, key: &str) {
             session_with(&self.pg, Some(self.repo), &[&format!("fix/{key}")], &[]).await;
@@ -1533,6 +1602,113 @@ mod pass_tests {
             f.new_session("AUTH-1").await;
             f.pass().await;
             assert_eq!(w.sent().len(), 2, "{want} is sticky: nothing is posted again");
+        }
+    }
+
+    /// tracker-forge-comment-writeback F7 / gate 10: a ticket whose repository is public
+    /// or internal gets no comment and reads `not_private`; one visibility read serves
+    /// every ticket of the repository in a pass; the next pass checks again.
+    #[tokio::test]
+    async fn a_ticket_in_a_visible_repository_gets_no_comment() {
+        use crate::tracker::Audience;
+        use crate::tracker::test_support::{AudienceScript, JiraDelegate};
+        let f = fixture([Some("A1"), Some("A1"), None]).await;
+        let w = f.writes(RecordingWrites::default());
+        let script = AudienceScript::answering(Ok(Audience::Visible)).arc();
+        let adapter = JiraDelegate::with_audience(script.clone());
+        assert_eq!(
+            f.pass_with(adapter).await,
+            PassOutcome::Done { written: 0, unchanged: 0, failed: 0 },
+            "a skip is not a failure"
+        );
+        assert_eq!(script.asked(), ["acme/platform"], "one read for the repository's two tickets");
+        assert!(w.sent().is_empty(), "no comment is created");
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("not_private"));
+        assert_eq!(f.status_of("10002").await.as_deref(), Some("not_private"));
+
+        // Made private: the next pass checks again and comments.
+        *script.answer.lock().unwrap() = Ok(Audience::Private);
+        assert_eq!(
+            f.pass_with(adapter).await,
+            PassOutcome::Done { written: 2, unchanged: 0, failed: 0 }
+        );
+        assert_eq!(script.calls(), 2);
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
+        assert_eq!(w.sent().len(), 2);
+    }
+
+    /// F7: the cache is per repository. A private repository's answer never carries over
+    /// to a public one in the same pass.
+    #[tokio::test]
+    async fn each_repository_is_read_and_answered_on_its_own() {
+        use crate::tracker::Audience;
+        use crate::tracker::test_support::{AudienceScript, JiraDelegate};
+        let f = fixture([Some("A1"), Some("A1"), None]).await;
+        let w = f.writes(RecordingWrites::default());
+        let script = AudienceScript::answering(Err(TrackerError::Decode))
+            .in_repo("10001", "acme/private", Ok(Audience::Private))
+            .in_repo("10002", "acme/public", Ok(Audience::Visible))
+            .arc();
+        f.pass_with(JiraDelegate::with_audience(script.clone())).await;
+        let mut asked = script.asked();
+        asked.sort();
+        assert_eq!(asked, ["acme/private", "acme/public"]);
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
+        assert_eq!(f.status_of("10002").await.as_deref(), Some("not_private"));
+        let posts: Vec<_> = w.sent().into_iter().map(|s| s.path).collect();
+        assert_eq!(posts, [comment_path("10001")], "only the private ticket is commented");
+    }
+
+    /// F7: a comment already written stops being edited once its repository goes public.
+    #[tokio::test]
+    async fn a_comment_whose_repository_went_public_is_no_longer_edited() {
+        use crate::tracker::Audience;
+        use crate::tracker::test_support::{AudienceScript, JiraDelegate};
+        let f = fixture([Some("A1"), None, None]).await;
+        let w = f.writes(RecordingWrites::default());
+        let script = AudienceScript::answering(Ok(Audience::Private)).arc();
+        let adapter = JiraDelegate::with_audience(script.clone());
+        f.pass_with(adapter).await;
+        let written = f.state().await[0].clone();
+        assert_eq!(written.1.as_deref(), Some("ok"));
+        assert!(written.2.is_some(), "the comment is held");
+
+        *script.answer.lock().unwrap() = Ok(Audience::Visible);
+        f.new_session("AUTH-1").await;
+        f.pass_with(adapter).await;
+        assert_eq!(w.sent().len(), 1, "no update is sent");
+        let now = f.state().await[0].clone();
+        assert_eq!(now.1.as_deref(), Some("not_private"));
+        assert_eq!(now.2, written.2, "the comment ref is kept");
+    }
+
+    /// F7: a visibility read that fails writes nothing (fail closed). Only a 404 is
+    /// final; a 403 cannot be told from a rate limit on a read, so it is retried.
+    #[tokio::test]
+    async fn a_failed_visibility_read_writes_nothing() {
+        use crate::tracker::test_support::{AudienceScript, JiraDelegate};
+        for (e, want, sticky) in [
+            (TrackerError::NotFound, "not_found", true),
+            (TrackerError::Forbidden, "error", false),
+            (TrackerError::Unauthorized, "error", false),
+            (TrackerError::RateLimited, "rate_limited", false),
+            (TrackerError::Decode, "error", false),
+        ] {
+            let f = fixture([Some("A1"), Some("A1"), None]).await;
+            let w = f.writes(RecordingWrites::default());
+            let script = AudienceScript::answering(Err(e)).arc();
+            let adapter = JiraDelegate::with_audience(script.clone());
+            assert_eq!(
+                f.pass_with(adapter).await,
+                PassOutcome::Done { written: 0, unchanged: 0, failed: 2 },
+                "{e:?}"
+            );
+            assert_eq!(f.status_of("10001").await.as_deref(), Some(want), "{e:?}");
+            assert_eq!(f.status_of("10002").await.as_deref(), Some(want), "{e:?}");
+            assert!(w.sent().is_empty(), "{e:?}: no comment request");
+            assert_eq!(script.calls(), 1, "{e:?}: the failure is cached for the pass");
+            f.pass_with(adapter).await;
+            assert_eq!(script.calls(), if sticky { 1 } else { 2 }, "{e:?}: retried next pass?");
         }
     }
 
@@ -1822,9 +1998,12 @@ mod pass_tests {
         f.sql("INSERT INTO sensei.tracker_tasks (tracker_id, external_id, key, assigned_to_me, writeback_status, removed_at)
                VALUES ($1, '10009', 'AUTH-9', true, 'error', now())")
             .await;
-        assert_eq!(f.pg.writeback_counts(f.t).await, Ok((2, 0)));
+        assert_eq!(f.pg.writeback_counts(f.t).await, Ok((2, 0, 0)));
         f.sql("UPDATE sensei.tracker_tasks SET writeback_status = 'error' WHERE tracker_id = $1 AND external_id = '10001'").await;
-        assert_eq!(f.pg.writeback_counts(f.t).await, Ok((2, 1)));
+        assert_eq!(f.pg.writeback_counts(f.t).await, Ok((2, 1, 0)));
+        // F7: a deliberate skip is counted apart, never as a failure.
+        f.sql("UPDATE sensei.tracker_tasks SET writeback_status = 'not_private' WHERE tracker_id = $1 AND external_id = '10001'").await;
+        assert_eq!(f.pg.writeback_counts(f.t).await, Ok((2, 0, 1)));
     }
 
     #[tokio::test]

@@ -1183,137 +1183,6 @@ mod tests {
         assert_eq!(links(&pg, t).await, vec![link(live, "10002", "prompt", "AUTH-2", 1)]);
     }
 
-    /// Jira, but every link it produces breaks the `mentions > 0` check.
-    struct BrokenLinks;
-
-    #[async_trait::async_trait]
-    impl crate::tracker::TrackerAdapter for BrokenLinks {
-        fn kind(&self) -> crate::tracker::TrackerKind {
-            JiraAdapter.kind()
-        }
-        fn capabilities(&self) -> crate::tracker::Capabilities {
-            JiraAdapter.capabilities()
-        }
-        fn connect_params(
-            &self,
-            body: &serde_json::Value,
-        ) -> Result<crate::tracker::ConnectParams, crate::tracker::ParamError> {
-            JiraAdapter.connect_params(body)
-        }
-        fn auth(
-            &self,
-            account: &str,
-            token: &crate::tracker::ApiToken,
-        ) -> crate::tracker::AuthScheme {
-            JiraAdapter.auth(account, token)
-        }
-        async fn owner(
-            &self,
-            t: &dyn GetTransport,
-        ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
-            JiraAdapter.owner(t).await
-        }
-        async fn find_comment(
-            &self,
-            t: &dyn GetTransport,
-            task: &crate::tracker::TaskRef<'_>,
-            owner: &crate::tracker::AccountRef,
-        ) -> Result<Option<String>, TrackerError> {
-            JiraAdapter.find_comment(t, task, owner).await
-        }
-        async fn create_comment(
-            &self,
-            w: &dyn crate::tracker::WriteTransport,
-            task: &crate::tracker::TaskRef<'_>,
-            report: &crate::tracker::writeback::Report,
-        ) -> Result<String, TrackerError> {
-            JiraAdapter.create_comment(w, task, report).await
-        }
-        async fn update_comment(
-            &self,
-            w: &dyn crate::tracker::WriteTransport,
-            task: &crate::tracker::TaskRef<'_>,
-            comment: &str,
-            report: &crate::tracker::writeback::Report,
-        ) -> Result<(), TrackerError> {
-            JiraAdapter.update_comment(w, task, comment, report).await
-        }
-        async fn issue_exists(
-            &self,
-            t: &dyn GetTransport,
-            task: &crate::tracker::TaskRef<'_>,
-        ) -> Result<bool, TrackerError> {
-            JiraAdapter.issue_exists(t, task).await
-        }
-        fn field_ref_shape(&self, f: &str) -> bool {
-            JiraAdapter.field_ref_shape(f)
-        }
-        async fn check_fields(
-            &self,
-            t: &dyn GetTransport,
-            f: &[String],
-        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
-            JiraAdapter.check_fields(t, f).await
-        }
-        async fn field_in_use(
-            &self,
-            t: &dyn GetTransport,
-            b: &BoardScope,
-            f: &str,
-        ) -> Result<bool, TrackerError> {
-            JiraAdapter.field_in_use(t, b, f).await
-        }
-        async fn write_fields(
-            &self,
-            w: &dyn crate::tracker::WriteTransport,
-            task: &str,
-            f: &[(String, crate::tracker::FieldValue)],
-        ) -> Result<(), TrackerError> {
-            JiraAdapter.write_fields(w, task, f).await
-        }
-        async fn validate(
-            &self,
-            t: &dyn GetTransport,
-            p: &crate::tracker::ConnectParams,
-        ) -> Result<crate::tracker::Validated, crate::tracker::ValidateError> {
-            JiraAdapter.validate(t, p).await
-        }
-        async fn fetch_snapshot(
-            &self,
-            t: &dyn GetTransport,
-            board: &BoardScope,
-            prev: &crate::tracker::PrevState,
-        ) -> Result<crate::tracker::Snapshot, TrackerError> {
-            JiraAdapter.fetch_snapshot(t, board, prev).await
-        }
-        fn match_links(
-            &self,
-            session: &crate::tracker::SessionText,
-            known: &[crate::tracker::KnownTask],
-        ) -> Vec<crate::tracker::Link> {
-            JiraAdapter
-                .match_links(session, known)
-                .into_iter()
-                .map(|l| crate::tracker::Link { mentions: 0, ..l })
-                .collect()
-        }
-        fn unknown_keys(
-            &self,
-            session: &crate::tracker::SessionText,
-            known: &[crate::tracker::KnownTask],
-        ) -> Vec<String> {
-            JiraAdapter.unknown_keys(session, known)
-        }
-        async fn fetch_tasks(
-            &self,
-            t: &dyn GetTransport,
-            board: &BoardScope,
-            keys: &[String],
-        ) -> Result<crate::tracker::Discovered, TrackerError> {
-            JiraAdapter.fetch_tasks(t, board, keys).await
-        }
-    }
-
     #[tokio::test]
     async fn a_database_failure_changes_no_rows_and_is_recorded_as_db() {
         let pg = PgStore::test_store().await;
@@ -1325,7 +1194,7 @@ mod tests {
             &pg,
             &TrackerLocks::default(),
             t,
-            &BrokenLinks,
+            crate::tracker::test_support::JiraDelegate::broken_links(),
             &FakeBoard::standard(),
             SYNC_DEADLINE,
         )

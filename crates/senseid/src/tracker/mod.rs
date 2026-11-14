@@ -185,6 +185,15 @@ pub struct TaskRef<'a> {
     pub key: &'a str,
 }
 
+/// Who can see a ticket's repository or project (tracker-forge-comment-writeback F7):
+/// sensei comments only where it is `Private`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Audience {
+    Private,
+    /// Public, internal, or a visibility the provider did not state.
+    Visible,
+}
+
 /// Pure: a plain decimal id of 1–18 digits, the only id shape that reaches a request
 /// path (W10).
 pub fn is_numeric_id(id: &str) -> bool {
@@ -574,6 +583,16 @@ pub trait TrackerAdapter: Send + Sync {
         comment_ref: &str,
         report: &writeback::Report,
     ) -> Result<(), TrackerError>;
+    /// Pure: the repository or project a ticket's visibility is read from, or `None`
+    /// where the tracker has no such notion (Jira; F7). Tickets that share a key share
+    /// one visibility read per pass.
+    fn audience_key(&self, task: &TaskRef<'_>) -> Option<String>;
+    /// Who can see the repository or project `audience_key` named (F7).
+    async fn audience(
+        &self,
+        t: &dyn GetTransport,
+        audience_key: &str,
+    ) -> Result<Audience, TrackerError>;
     /// Pure: whether `field_ref` is a field id this tracker can write (W7).
     fn field_ref_shape(&self, field_ref: &str) -> bool;
     /// What the tracker says about each of these fields (W7).
@@ -870,7 +889,7 @@ mod tests {
 #[cfg(test)]
 pub mod test_support {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     /// A second, non-Jira adapter: GitLab-like `#12` keys relative to a project
     /// scope, and iteration-named sprints. The coordinator must handle it unchanged
@@ -897,6 +916,268 @@ pub mod test_support {
                 params_extra: Default::default(),
                 capabilities: Capabilities { history: true, comment: true, fields: true },
             }
+        }
+    }
+
+    /// A GET transport with canned answers by path (the query is ignored), recording each
+    /// path it was asked for. An unknown path panics, so a test never passes on a guess.
+    #[derive(Default)]
+    pub struct Canned {
+        answers: std::collections::HashMap<String, Result<serde_json::Value, TrackerError>>,
+        pub calls: Mutex<Vec<String>>,
+    }
+
+    impl Canned {
+        pub fn answer(mut self, path: &str, body: serde_json::Value) -> Self {
+            self.answers.insert(path.into(), Ok(body));
+            self
+        }
+        pub fn fail(mut self, path: &str, e: TrackerError) -> Self {
+            self.answers.insert(path.into(), Err(e));
+            self
+        }
+        pub fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl GetTransport for Canned {
+        async fn get_json(
+            &self,
+            path: &str,
+            _query: &[(&str, String)],
+        ) -> Result<serde_json::Value, TrackerError> {
+            self.calls.lock().unwrap().push(path.into());
+            self.answers.get(path).unwrap_or_else(|| panic!("no answer for GET {path}")).clone()
+        }
+    }
+
+    /// What a [`JiraDelegate`]'s repository visibility answers, per repository, and which
+    /// repositories it was asked about. A ticket not placed with
+    /// [`in_repo`](Self::in_repo) is in `acme/platform`, answered by `answer`.
+    pub struct AudienceScript {
+        pub answer: Mutex<Result<crate::tracker::Audience, TrackerError>>,
+        repos: std::collections::HashMap<
+            String,
+            (String, Result<crate::tracker::Audience, TrackerError>),
+        >,
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl AudienceScript {
+        pub fn answering(answer: Result<crate::tracker::Audience, TrackerError>) -> Self {
+            AudienceScript {
+                answer: Mutex::new(answer),
+                repos: Default::default(),
+                asked: Default::default(),
+            }
+        }
+        /// Put ticket `external_id` in `repo`, whose visibility answers `answer`.
+        pub fn in_repo(
+            mut self,
+            external_id: &str,
+            repo: &str,
+            answer: Result<crate::tracker::Audience, TrackerError>,
+        ) -> Self {
+            self.repos.insert(external_id.into(), (repo.into(), answer));
+            self
+        }
+        pub fn arc(self) -> Arc<Self> {
+            Arc::new(self)
+        }
+        fn repo_of(&self, external_id: &str) -> String {
+            self.repos.get(external_id).map_or_else(|| "acme/platform".into(), |(r, _)| r.clone())
+        }
+        fn answer_for(&self, repo: &str) -> Result<crate::tracker::Audience, TrackerError> {
+            match self.repos.values().find(|(r, _)| r == repo) {
+                Some((_, a)) => *a,
+                None => *self.answer.lock().unwrap(),
+            }
+        }
+        /// How many visibility reads were made.
+        pub fn calls(&self) -> usize {
+            self.asked.lock().unwrap().len()
+        }
+        /// The repositories asked about, in order.
+        pub fn asked(&self) -> Vec<String> {
+            self.asked.lock().unwrap().clone()
+        }
+    }
+
+    /// Jira in every respect but two hooks: links that break the `mentions > 0` check,
+    /// and tickets in repositories whose visibility an [`AudienceScript`] answers, as a
+    /// forge's would (tracker-forge-comment-writeback F7).
+    #[derive(Default)]
+    pub struct JiraDelegate {
+        pub broken_links: bool,
+        pub audience: Option<Arc<AudienceScript>>,
+    }
+
+    impl JiraDelegate {
+        pub fn broken_links() -> &'static JiraDelegate {
+            Box::leak(Box::new(JiraDelegate { broken_links: true, audience: None }))
+        }
+        pub fn with_audience(script: Arc<AudienceScript>) -> &'static JiraDelegate {
+            Box::leak(Box::new(JiraDelegate { broken_links: false, audience: Some(script) }))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::tracker::TrackerAdapter for JiraDelegate {
+        fn kind(&self) -> crate::tracker::TrackerKind {
+            crate::tracker::jira::JiraAdapter.kind()
+        }
+        fn capabilities(&self) -> crate::tracker::Capabilities {
+            crate::tracker::jira::JiraAdapter.capabilities()
+        }
+        fn audience_key(&self, task: &crate::tracker::TaskRef<'_>) -> Option<String> {
+            self.audience.as_ref().map(|s| s.repo_of(task.external_id))
+        }
+        async fn audience(
+            &self,
+            _t: &dyn GetTransport,
+            key: &str,
+        ) -> Result<crate::tracker::Audience, TrackerError> {
+            let script = self.audience.as_ref().ok_or(TrackerError::UnsupportedTracker)?;
+            script.asked.lock().unwrap().push(key.into());
+            script.answer_for(key)
+        }
+        async fn board_terms(
+            &self,
+            t: &dyn GetTransport,
+            board: &BoardScope,
+        ) -> Result<crate::tracker::BoardTerms, TrackerError> {
+            crate::tracker::jira::JiraAdapter.board_terms(t, board).await
+        }
+        async fn changelog(
+            &self,
+            t: &dyn GetTransport,
+            issue_external_id: &str,
+            sprint_field: Option<&str>,
+            estimation_field: Option<&str>,
+        ) -> Result<Vec<crate::tracker::ChangeRow>, TrackerError> {
+            crate::tracker::jira::JiraAdapter
+                .changelog(t, issue_external_id, sprint_field, estimation_field)
+                .await
+        }
+        fn connect_params(
+            &self,
+            body: &serde_json::Value,
+        ) -> Result<crate::tracker::ConnectParams, crate::tracker::ParamError> {
+            crate::tracker::jira::JiraAdapter.connect_params(body)
+        }
+        fn auth(
+            &self,
+            account: &str,
+            token: &crate::tracker::ApiToken,
+        ) -> crate::tracker::AuthScheme {
+            crate::tracker::jira::JiraAdapter.auth(account, token)
+        }
+        async fn owner(
+            &self,
+            t: &dyn GetTransport,
+        ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
+            crate::tracker::jira::JiraAdapter.owner(t).await
+        }
+        async fn find_comment(
+            &self,
+            t: &dyn GetTransport,
+            task: &crate::tracker::TaskRef<'_>,
+            owner: &crate::tracker::AccountRef,
+        ) -> Result<Option<String>, TrackerError> {
+            crate::tracker::jira::JiraAdapter.find_comment(t, task, owner).await
+        }
+        async fn create_comment(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &crate::tracker::TaskRef<'_>,
+            report: &crate::tracker::writeback::Report,
+        ) -> Result<String, TrackerError> {
+            crate::tracker::jira::JiraAdapter.create_comment(w, task, report).await
+        }
+        async fn update_comment(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &crate::tracker::TaskRef<'_>,
+            comment: &str,
+            report: &crate::tracker::writeback::Report,
+        ) -> Result<(), TrackerError> {
+            crate::tracker::jira::JiraAdapter.update_comment(w, task, comment, report).await
+        }
+        async fn issue_exists(
+            &self,
+            t: &dyn GetTransport,
+            task: &crate::tracker::TaskRef<'_>,
+        ) -> Result<bool, TrackerError> {
+            crate::tracker::jira::JiraAdapter.issue_exists(t, task).await
+        }
+        fn field_ref_shape(&self, f: &str) -> bool {
+            crate::tracker::jira::JiraAdapter.field_ref_shape(f)
+        }
+        async fn check_fields(
+            &self,
+            t: &dyn GetTransport,
+            f: &[String],
+        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
+            crate::tracker::jira::JiraAdapter.check_fields(t, f).await
+        }
+        async fn field_in_use(
+            &self,
+            t: &dyn GetTransport,
+            b: &BoardScope,
+            f: &str,
+        ) -> Result<bool, TrackerError> {
+            crate::tracker::jira::JiraAdapter.field_in_use(t, b, f).await
+        }
+        async fn write_fields(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &str,
+            f: &[(String, crate::tracker::FieldValue)],
+        ) -> Result<(), TrackerError> {
+            crate::tracker::jira::JiraAdapter.write_fields(w, task, f).await
+        }
+        async fn validate(
+            &self,
+            t: &dyn GetTransport,
+            p: &crate::tracker::ConnectParams,
+        ) -> Result<crate::tracker::Validated, crate::tracker::ValidateError> {
+            crate::tracker::jira::JiraAdapter.validate(t, p).await
+        }
+        async fn fetch_snapshot(
+            &self,
+            t: &dyn GetTransport,
+            board: &BoardScope,
+            prev: &crate::tracker::PrevState,
+        ) -> Result<crate::tracker::Snapshot, TrackerError> {
+            crate::tracker::jira::JiraAdapter.fetch_snapshot(t, board, prev).await
+        }
+        fn match_links(
+            &self,
+            session: &crate::tracker::SessionText,
+            known: &[crate::tracker::KnownTask],
+        ) -> Vec<crate::tracker::Link> {
+            let links = crate::tracker::jira::JiraAdapter.match_links(session, known);
+            if !self.broken_links {
+                return links;
+            }
+            links.into_iter().map(|l| crate::tracker::Link { mentions: 0, ..l }).collect()
+        }
+        fn unknown_keys(
+            &self,
+            session: &crate::tracker::SessionText,
+            known: &[crate::tracker::KnownTask],
+        ) -> Vec<String> {
+            crate::tracker::jira::JiraAdapter.unknown_keys(session, known)
+        }
+        async fn fetch_tasks(
+            &self,
+            t: &dyn GetTransport,
+            board: &BoardScope,
+            keys: &[String],
+        ) -> Result<crate::tracker::Discovered, TrackerError> {
+            crate::tracker::jira::JiraAdapter.fetch_tasks(t, board, keys).await
         }
     }
 
@@ -974,6 +1255,16 @@ pub mod test_support {
             _t: &dyn GetTransport,
             _task: &crate::tracker::TaskRef<'_>,
         ) -> Result<bool, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        fn audience_key(&self, _task: &crate::tracker::TaskRef<'_>) -> Option<String> {
+            None
+        }
+        async fn audience(
+            &self,
+            _t: &dyn GetTransport,
+            _key: &str,
+        ) -> Result<crate::tracker::Audience, TrackerError> {
             Err(TrackerError::UnsupportedTracker)
         }
         fn field_ref_shape(&self, _f: &str) -> bool {
@@ -1703,6 +1994,54 @@ mod seam_tests {
         .unwrap();
         exec(format!("DROP SCHEMA {schema} CASCADE")).await;
         assert_eq!(labels, ["jira", "gitlab", "github"]);
+    }
+
+    /// tracker-forge-comment-writeback F7 / gate 10: on a database whose
+    /// `tracker_writeback_status` predates `not_private`, the apply/before hook appends it
+    /// after `error`, and a second run is a no-op.
+    #[tokio::test]
+    async fn the_upgrade_hook_appends_not_private_to_an_existing_status_enum() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let schema = format!("zt_wbs_{}", uuid::Uuid::new_v4().simple());
+        let exec = |sql: String| {
+            let pool = pg.pool().clone();
+            async move { sqlx_core::raw_sql::raw_sql(&sql).execute(&pool).await.unwrap() }
+        };
+        exec(format!(
+            "CREATE SCHEMA {schema}; CREATE TYPE {schema}.tracker_writeback_status AS ENUM \
+             ('ok', 'forbidden', 'field_invalid', 'comment_removed', 'not_found', 'rate_limited', 'error');"
+        ))
+        .await;
+        let hook = std::fs::read_to_string(format!(
+            "{}/../../database/apply/before/sensei_tracker_writeback_status_not_private.sql",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap()
+        .replace("sensei.tracker_writeback_status", &format!("{schema}.tracker_writeback_status"));
+        exec(hook.clone()).await;
+        exec(hook).await;
+        let labels: Vec<String> = sqlx_core::query_scalar::query_scalar(&format!(
+            "SELECT enumlabel::text FROM pg_enum WHERE enumtypid = '{schema}.tracker_writeback_status'::regtype ORDER BY enumsortorder"
+        ))
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        exec(format!("DROP SCHEMA {schema} CASCADE")).await;
+        let want: Vec<&str> =
+            crate::tracker::writeback::WritebackStatus::ALL.iter().map(|w| w.as_str()).collect();
+        assert_eq!(labels, want);
+        assert_eq!(want.last(), Some(&"not_private"));
+    }
+
+    /// The hook is registered, or dbd never runs it on an upgraded install.
+    #[test]
+    fn the_not_private_hook_is_registered_before_apply() {
+        let yaml = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../database/design.yaml"
+        ))
+        .unwrap();
+        assert!(yaml.contains("- apply/before/sensei_tracker_writeback_status_not_private.sql"));
     }
 
     #[test]
