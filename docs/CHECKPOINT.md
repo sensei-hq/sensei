@@ -1,25 +1,31 @@
-# Checkpoint — 2026-11-13 (forge comment write-back: design complete, on develop, uncommitted)
+# Checkpoint — 2026-11-14 (forge comment write-back: W1–W7 built on feature/forge-comment-writeback)
 
-**Slice:** comment write-back for GitLab and GitHub, one slice (user, 2026-11-13). Analysis
-`docs/analysis/2026-11-13-forge-comment-writeback.md`; spec
-`docs/spec/daemon/tracker-forge-comment-writeback.md` (r4, gate PASS).
+**Slice:** comment write-back for GitLab and GitHub (spec
+`docs/spec/daemon/tracker-forge-comment-writeback.md`, plan
+`docs/plans/2026-11-14-forge-comment-writeback.md`, issues #436–#443, D93). Built unattended
+(user, 2026-11-14).
 
-**Decided (user):**
-- Both forges in one slice. O1: write scope needed only for write-back, not at connect.
-- O2: `fields_unsupported`. O3: a rate-limit 403 on a write is `rate_limited`.
-- Never comment on a public or internal repository or project (new status `not_private`).
+**Done (pushed):** W1 `7305d36c3`, W3 `cb0d3dfb7`, W4 `fcad91d78`, W2+W5+W6 `867687b79`,
+W7 `de85312c6`. Each feature had red-first or mutation-checked tests, fmt and clippy
+(`-D warnings`) clean, and an adversarial review whose CRITICAL/HIGH/MEDIUM findings were
+fixed. Full senseid suite: 4902 passed (before the W5 review fixes; tracker and handler
+tests 409 after). App: 172 unit tests, svelte-check clean. CLI: 100 tests.
 
-**Claims found false and what changed:**
-- "refused whatever the body is": the 409 keeps today's order, after the body checks.
-- The golden-1 bracket example belonged to golden 2.
-- C13: 4 `RawResponse` literals, not 5.
-- The handler tests use real adapters, not `gitlab_like`.
-- Two spec-line citations were wrong.
-- X1 "proven by production" was misleading. It was then settled live against gitlab.com.
+**Amended at build (all recorded in the spec and `.sensei/slice-state.json`):**
+- `Patch` and W2 moved into W5; the forge visibility reads moved into W4 (clippy dead code).
+- The visibility check runs after `writeback_target` returns Go.
+- A failed visibility read is final only on 404.
+- A rate-limit 403 is `rate_limited` on reads too; 410 → `NotFound`.
+- `issue_exists` checks identity.
+- The sanitiser defuses line-start blocks.
+- GitLab keys need a namespace.
+- `github::is_repo_name` refuses `.` and `..`.
 
-**Next command:** `/sensei:build` W1 (#436). Plan `docs/plans/2026-11-14-forge-comment-writeback.md`, issues #436–#443.
+**Next command:** open a PR `feature/forge-comment-writeback` → `develop`. After merge, W8
+(#443, the user's): the live check X2, X3, X5, X6 on gitlab.com and github.com test projects.
+Then `/sensei:complete`, which closes #436–#443.
 
-**Open questions (user):** none. The branch `feature/forge-comment-writeback` is cut from develop and pushed.
+**Open questions (user):** none.
 
 ---
 
