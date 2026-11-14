@@ -10,11 +10,12 @@
 //! Language-neutral: nothing here names a language. A new language with a
 //! compiler is an adapter declaring one.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::indexer::facts::{FileFacts, Fqn, Reason};
+
 use crate::indexer::lang::compiler::{CompilerEngine, CompilerIndex, Declarations, Invocation};
 use crate::indexer::lang::{self, Source, TypeHomes};
 
@@ -199,18 +200,30 @@ impl CompilerSessions {
         engine: &'static dyn CompilerEngine,
         root: &Path,
     ) -> Result<Arc<Project>, String> {
-        let fingerprint = fingerprint(root, engine.sources()).await?;
+        let before = source_files(root, engine.sources()).await?;
+        let fingerprint = digest(&before);
         let key = (engine.manifest(), root.to_path_buf());
         let (cell, turn) = self.compile_cell(key.clone(), &fingerprint)?;
         let project = cell
             .get_or_init(|| async {
                 let _turn = turn.lock().await;
-                compile(engine, root, &fingerprint).await.map(Arc::new)
+                let mut project = compile(engine, root, &fingerprint).await?;
+                // A file the compile created (rust-analyzer's `Cargo.lock`) is
+                // part of what it compiled; a source edited meanwhile is not.
+                let after = source_files(root, engine.sources()).await?;
+                if before.iter().all(|(path, seen)| after.get(path) == Some(seen)) {
+                    project.fingerprint = digest(&after);
+                }
+                Ok(Arc::new(project))
             })
             .await
             .clone()?;
         if let Some(compiles) = self.compiled.lock().map_err(|_| poisoned())?.get_mut(&key) {
             compiles.finished = Some(project.clone());
+            // The sources as the compile left them map to this compile.
+            if compiles.fingerprint == fingerprint {
+                compiles.fingerprint = project.fingerprint.clone();
+            }
         }
         Ok(project)
     }
@@ -294,10 +307,28 @@ const LOOK_AGAIN: std::time::Duration = std::time::Duration::from_secs(2);
 /// ignore whose extension is one of `sources`, by path, length and
 /// modification time.
 async fn fingerprint(root: &Path, sources: &'static [&'static str]) -> Result<Fingerprint, String> {
+    Ok(digest(&source_files(root, sources).await?))
+}
+
+/// One hash of the sources' state.
+fn digest(files: &BTreeMap<String, String>) -> Fingerprint {
+    use sha2::Digest;
+    let mut hash = sha2::Sha256::new();
+    for (path, state) in files {
+        hash.update(format!("{path}\0{state}\n").as_bytes());
+    }
+    format!("{:x}", hash.finalize())
+}
+
+/// The sources under `root` (see [`fingerprint`]): path → length and
+/// modification time.
+async fn source_files(
+    root: &Path,
+    sources: &'static [&'static str],
+) -> Result<BTreeMap<String, String>, String> {
     let root = root.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        use sha2::Digest;
-        let mut files = Vec::new();
+        let mut files = BTreeMap::new();
         for entry in ignore::WalkBuilder::new(&root).build() {
             let entry = entry.map_err(|e| format!("cannot walk {root:?}: {e}"))?;
             if !entry.file_type().is_some_and(|t| t.is_file()) {
@@ -317,14 +348,9 @@ async fn fingerprint(root: &Path, sources: &'static [&'static str]) -> Result<Fi
                 .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_nanos());
-            files.push(format!("{}\0{}\0{modified}\n", entry.path().display(), meta.len()));
+            files.insert(entry.path().display().to_string(), format!("{}\0{modified}", meta.len()));
         }
-        files.sort();
-        let mut hash = sha2::Sha256::new();
-        for file in files {
-            hash.update(file.as_bytes());
-        }
-        Ok(format!("{:x}", hash.finalize()))
+        Ok(files)
     })
     .await
     .map_err(|e| format!("the fingerprint of the sources failed: {e}"))?

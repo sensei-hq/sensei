@@ -308,12 +308,14 @@ async fn verify_merged_tree(
     verdict
 }
 
-/// Remove the verify worktree, whatever state it was left in.
+/// Remove the verify worktree, whatever state it was left in — including
+/// locked, as a `git worktree add` killed by the budget leaves it: a locked
+/// worktree takes `--force` twice, and `prune` skips it.
 async fn remove_verify_worktree(git: &str, base: &Path, worktree: &Path) {
     let worktree_str = worktree.to_string_lossy().into_owned();
     let removed = run_in(
         git,
-        &["worktree", "remove", "--force", &worktree_str],
+        &["worktree", "remove", "--force", "--force", &worktree_str],
         base,
         CLEANUP_TIMEOUT,
     )
