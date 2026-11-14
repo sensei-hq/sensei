@@ -214,8 +214,7 @@ function stats(input: RelayShellInput, pressed: RelayView): ShellStat[] | null |
     attrs: { 'data-relay-stat': id },
   });
   return [
-    // Working is accent on the mockup; rokkit's stat tones have no accent — ink until Design rules.
-    card('working', '進', 'Working', s.working, 'on a task now', 'ink'),
+    card('working', '進', 'Working', s.working, 'on a task now', 'accent'),
     card('waiting', '待', 'Waiting', s.waiting.count, waitingText, over ? 'warning' : 'ink'),
     card('blocked', '止', 'Blocked', s.blocked, 'on you, or lease lost', s.blocked > 0 ? 'danger' : 'ink'),
     card('done', '済', 'Completed today', s.done, s.firstPass, 'success'),
