@@ -5022,6 +5022,7 @@ dependencies = [
  "dirs",
  "dojo-protocol",
  "encoding_rs",
+ "flate2",
  "globset",
  "hex",
  "ignore",

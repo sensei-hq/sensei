@@ -300,6 +300,93 @@ impl PgStore {
         Ok((turns, family))
     }
 
+    // ── Raw transcript backup ──────────────────────────────────────────────
+
+    /// Back up a transcript unit's raw bytes, gzipped, keyed by content sha.
+    /// Returns whether the blob was (re)written: a row whose sha already
+    /// matches only advances `last_seen_at`, so re-reads never churn the
+    /// stored blob.
+    pub async fn upsert_transcript_raw(
+        &self,
+        source: &str,
+        file_path: &str,
+        session_id: &str,
+        raw: &[u8],
+    ) -> Result<bool, String> {
+        use sha2::Digest as _;
+        let mut h = sha2::Sha256::new();
+        h.update(raw);
+        let sha = hex::encode(h.finalize());
+        let prev: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT sha256 FROM activity.transcript_raw WHERE source = $1 AND file_path = $2",
+        )
+        .bind(source)
+        .bind(file_path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("transcript_raw: read sha for {source} {file_path}: {e}"))?;
+        if prev.as_ref().is_some_and(|(s,)| s == &sha) {
+            self.touch_transcript_raw(source, file_path).await?;
+            return Ok(false);
+        }
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut enc, raw)
+            .map_err(|e| format!("transcript_raw: gzip {source} {file_path}: {e}"))?;
+        let gzipped = enc
+            .finish()
+            .map_err(|e| format!("transcript_raw: gzip finish {source} {file_path}: {e}"))?;
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_raw
+                (source, file_path, session_id, sha256, raw_bytes, content_gzip, last_seen_at)
+             VALUES ($1, $2, $3, $4, $5, $6, now())
+             ON CONFLICT (source, file_path) DO UPDATE SET
+               session_id   = EXCLUDED.session_id,
+               sha256       = EXCLUDED.sha256,
+               raw_bytes    = EXCLUDED.raw_bytes,
+               content_gzip = EXCLUDED.content_gzip,
+               last_seen_at = now()",
+        )
+        .bind(source)
+        .bind(file_path)
+        .bind(session_id)
+        .bind(&sha)
+        .bind(raw.len() as i64)
+        .bind(&gzipped)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("transcript_raw: upsert {source} {file_path}: {e}"))?;
+        Ok(true)
+    }
+
+    /// Advance a backup's sighting without touching its blob. A no-op when no
+    /// row exists yet — the next content ingest writes it.
+    pub async fn touch_transcript_raw(&self, source: &str, file_path: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.transcript_raw SET last_seen_at = now()
+              WHERE source = $1 AND file_path = $2",
+        )
+        .bind(source)
+        .bind(file_path)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("transcript_raw: touch {source} {file_path}: {e}"))?;
+        Ok(())
+    }
+
+    /// Delete backups last seen more than `days` ago — their files rotated
+    /// away. Returns the rows reclaimed.
+    pub async fn prune_transcript_raw(&self, days: i32) -> Result<u64, String> {
+        let gone = sqlx_core::query::query(
+            "DELETE FROM activity.transcript_raw
+              WHERE last_seen_at < now() - (interval '1 day' * $1)",
+        )
+        .bind(days)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("transcript_raw: prune older than {days}d: {e}"))?;
+        Ok(gone.rows_affected())
+    }
+
     // ── Historical-bootstrap import (#75) ────────────────────────────────────
 }
 

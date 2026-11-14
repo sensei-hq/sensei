@@ -58,3 +58,13 @@ Every per-turn attribute the transcript carried, verbatim. The adapters see a fa
 
 
 ── Promoted: signals with a known consumer ─────────────────────────────── `max_tokens` is a DETERMINISTIC context-pressure signal; the shipped context_pressure_rate metric currently infers it from a text hint.
+
+
+## `activity.transcript_raw`
+
+[`database/ddl/table/activity/transcript_raw.ddl`](../../database/ddl/table/activity/transcript_raw.ddl)
+
+
+The file's bytes as ingested, gzipped — recovery for rotated transcripts. `attrs` keeps the parsed shape; this keeps the unparsed one, so a format detail the parser drops (tool I/O, thinking, record boundaries) survives the file's rotation for the retention window (90 days past last sighting, `activity.transcript_raw_retention_days`).
+
+Three decisions: the sha-compare skip (an upsert with unchanged bytes advances `last_seen_at` without rewriting megabytes of bytea — re-reads are common, changes are not); the sighting clock (fresh skips touch `last_seen_at` without re-reading, so a live file never expires, and a gone file's backup survives exactly the window past its last sighting); best-effort writes (a backup failure warns and the ingest continues — the backup guards the ingest, it must never break it). Units too large to hold whole get no row: the capture re-reads via `load_content`, whose size cap returns None past it, and the Claude adapter streams without keeping bytes at all.

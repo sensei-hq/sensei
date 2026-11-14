@@ -13,6 +13,8 @@
 //!   - `activity.transcript_turns` — by client_session_id (text, no FK)
 //!   - `activity.assistant_events` — by client_session_id AND session-less
 //!     orphans by ts
+//!   - `activity.transcript_raw` — by `last_seen_at`, on its own
+//!     `activity.transcript_raw_retention_days` (default 90)
 //!
 //! What is NOT pruned:
 //!   - `inference.detected_patterns` / `recommendations` / `reasoning_traces`
@@ -46,6 +48,11 @@ const DEFAULT_EXECUTION_RETENTION_DAYS: i32 = 14;
 /// they are rare enough to be free (32,664 of 4.8M — 0.7%).
 const DEFAULT_EXECUTION_FAILED_RETENTION_DAYS: i32 = 90;
 
+/// Keep a rotated transcript's raw bytes for 90 days past its last sighting —
+/// the same window as the activity it guards, on its own knob so the two can
+/// move independently.
+const DEFAULT_TRANSCRIPT_RAW_RETENTION_DAYS: i32 = 90;
+
 /// Positive-integer config with a default — shared by the two execution-retention
 /// knobs so neither can drift from the other's parsing rules.
 fn parse_positive(cfg: Option<String>, default: i32) -> i32 {
@@ -54,6 +61,10 @@ fn parse_positive(cfg: Option<String>, default: i32) -> i32 {
 
 fn parse_retention(cfg: Option<String>) -> i32 {
     parse_positive(cfg, DEFAULT_RETENTION_DAYS)
+}
+
+fn parse_raw_retention(cfg: Option<String>) -> i32 {
+    parse_positive(cfg, DEFAULT_TRANSCRIPT_RAW_RETENTION_DAYS)
 }
 
 /// The capture-before-reclaim backstop: a session older than this is reclaimed
@@ -131,6 +142,23 @@ async fn prune_once(pg: &PgStore) -> Result<(), String> {
         ),
         Ok(_) => {}
         Err(e) => tracing::warn!(error = %e, "activity_pruner: task_execution rollup failed"),
+    }
+
+    // Raw transcript backups ride the same pass on their own retention: the same
+    // concern (reclaim captured activity) on the same schedule, a separate
+    // window. A failure is logged and swallowed like the rollup's — it must
+    // not stop the activity prune that follows it.
+    let raw_days = setting(
+        pg.get_config("activity.transcript_raw_retention_days").await,
+        parse_raw_retention,
+    )?;
+    match pg.prune_transcript_raw(raw_days).await {
+        Ok(n) if n > 0 => tracing::info!(
+            pruned = n,
+            "activity_pruner: reclaimed raw transcript backups older than {raw_days}d",
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "activity_pruner: transcript_raw prune failed"),
     }
 
     // The capture-before-reclaim guard (I20) is scoped inside prune_activity to
@@ -259,5 +287,17 @@ mod tests {
         // A valid explicit override wins outright.
         assert_eq!(parse_backstop(Some("200".into()), 30), 200);
         assert_eq!(parse_backstop(Some(" 45 ".into()), 30), 45);
+    }
+
+    #[test]
+    fn parse_raw_retention_defaults_to_90_days() {
+        assert_eq!(
+            DEFAULT_TRANSCRIPT_RAW_RETENTION_DAYS, 90,
+            "raw transcript backups keep the 90-day activity window unless configured"
+        );
+        assert_eq!(parse_raw_retention(None), 90);
+        assert_eq!(parse_raw_retention(Some("x".into())), 90);
+        assert_eq!(parse_raw_retention(Some("0".into())), 90);
+        assert_eq!(parse_raw_retention(Some("30".into())), 30);
     }
 }

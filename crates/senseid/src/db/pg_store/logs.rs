@@ -343,7 +343,7 @@ impl PgStore {
     pub async fn vacuum_activity(&self) -> Result<(), String> {
         sqlx_core::raw_sql::raw_sql(
             "VACUUM (ANALYZE) activity.sessions, activity.turns, \
-             activity.assistant_events, activity.transcript_turns",
+             activity.assistant_events, activity.transcript_turns, activity.transcript_raw",
         )
         .execute(&self.pool)
         .await

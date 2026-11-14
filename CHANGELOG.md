@@ -15,6 +15,13 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- **Raw transcript backup.** Every ingested transcript's bytes are kept gzipped
+  in `activity.transcript_raw` (sha-keyed, so re-reads never rewrite the blob),
+  and pruned 90 days past their last sighting (`activity.transcript_raw_retention_days`)
+  on the daily activity prune pass — rotated files stay recoverable for the window.
+
 ## [0.22.0] — 2026-11-12
 
 ### Added

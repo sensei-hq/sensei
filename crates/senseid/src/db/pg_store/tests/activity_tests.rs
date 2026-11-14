@@ -1301,3 +1301,153 @@ async fn workspace_hotspots_count_recent_file_edits_and_reedits() {
         .collect();
     assert_eq!(files, vec![("src/a.rs", 3, 1)], "{rows:?}");
 }
+
+// ── Raw transcript backup tests ──────────────────────────────────────
+
+/// One backup row read back whole: (sha256, raw_bytes, content_gzip, last_seen_at).
+async fn raw_row(
+    s: &PgStore,
+    source: &str,
+    path: &str,
+) -> (String, i64, Vec<u8>, chrono::DateTime<chrono::Utc>) {
+    sqlx_core::query_as::query_as(
+        "SELECT sha256, raw_bytes, content_gzip, last_seen_at
+           FROM activity.transcript_raw WHERE source = $1 AND file_path = $2",
+    )
+    .bind(source)
+    .bind(path)
+    .fetch_one(s.pool())
+    .await
+    .unwrap()
+}
+
+fn gunzip(bytes: &[u8]) -> Vec<u8> {
+    let mut d = flate2::read::GzDecoder::new(bytes);
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut d, &mut out).unwrap();
+    out
+}
+
+/// Unchanged bytes must not rewrite the stored blob — a re-read (mtime bump,
+/// metadata backfill) would otherwise churn megabytes of bytea + WAL every
+/// ingest. The sighting still advances, so a live file never expires.
+#[tokio::test]
+async fn transcript_raw_upsert_skips_the_rewrite_when_bytes_are_unchanged() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let (source, path, sid) = ("_test_raw", format!("/tmp/{uniq}.jsonl"), uniq.clone());
+    let bytes = serde_json::to_vec(&serde_json::json!({"t": "x".repeat(2000)})).unwrap();
+
+    assert!(s.upsert_transcript_raw(source, &path, &sid, &bytes).await.unwrap());
+    let (sha1, raw1, gz1, _) = raw_row(&s, source, &path).await;
+    assert_eq!(raw1, bytes.len() as i64, "raw size recorded");
+    assert_eq!(gunzip(&gz1), bytes, "stored blob gunzips to the file's bytes");
+    // Backdate the sighting so the second upsert must visibly advance it.
+    sqlx_core::query::query(
+        "UPDATE activity.transcript_raw SET last_seen_at = now() - interval '1 day'
+          WHERE source = $1 AND file_path = $2",
+    )
+    .bind(source)
+    .bind(&path)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    assert!(!s.upsert_transcript_raw(source, &path, &sid, &bytes).await.unwrap());
+    let (sha2, _, gz2, seen2) = raw_row(&s, source, &path).await;
+    assert_eq!((sha1, gz1), (sha2, gz2), "same bytes: sha + blob untouched");
+    assert!(
+        seen2 > chrono::Utc::now() - chrono::Duration::hours(23),
+        "same bytes: sighting still advanced to now ({seen2})"
+    );
+
+    sqlx_core::query::query(
+        "DELETE FROM activity.transcript_raw WHERE source = $1 AND file_path = $2",
+    )
+    .bind(source)
+    .bind(&path)
+    .execute(s.pool())
+    .await
+    .ok();
+}
+
+/// Changed bytes rewrite the blob + sha (the recovery case: the file moved on
+/// and the backup must follow it).
+#[tokio::test]
+async fn transcript_raw_upsert_rewrites_when_bytes_change() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let (source, path, sid) = ("_test_raw", format!("/tmp/{uniq}.jsonl"), uniq.clone());
+    let before = br#"{"v":1,"pad":"xxxxxxxxxx"}"#.to_vec();
+    let after = br#"{"v":2,"pad":"yyyyyyyyyyyyyyyyyyyy"}"#.to_vec();
+
+    assert!(s.upsert_transcript_raw(source, &path, &sid, &before).await.unwrap());
+    let (sha1, _, _, _) = raw_row(&s, source, &path).await;
+    assert!(s.upsert_transcript_raw(source, &path, &sid, &after).await.unwrap());
+    let (sha2, raw2, gz2, _) = raw_row(&s, source, &path).await;
+
+    assert_ne!(sha1, sha2, "sha follows the bytes");
+    assert_eq!(raw2, after.len() as i64);
+    assert_eq!(gunzip(&gz2), after, "blob follows the bytes");
+
+    sqlx_core::query::query(
+        "DELETE FROM activity.transcript_raw WHERE source = $1 AND file_path = $2",
+    )
+    .bind(source)
+    .bind(&path)
+    .execute(s.pool())
+    .await
+    .ok();
+}
+
+/// Retention runs off the sighting, not the capture: a row last seen past the
+/// window goes (its file rotated away), a recently-seen row stays.
+#[tokio::test]
+async fn prune_transcript_raw_deletes_only_rows_past_retention() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let source = "_test_raw";
+    let (old_path, new_path) = (format!("/tmp/{uniq}-old.jsonl"), format!("/tmp/{uniq}-new.jsonl"));
+    let bytes = b"{}".to_vec();
+    s.upsert_transcript_raw(source, &old_path, &uniq, &bytes).await.unwrap();
+    s.upsert_transcript_raw(source, &new_path, &uniq, &bytes).await.unwrap();
+    sqlx_core::query::query(
+        "UPDATE activity.transcript_raw SET last_seen_at = now() - interval '100 days'
+          WHERE source = $1 AND file_path = $2",
+    )
+    .bind(source)
+    .bind(&old_path)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    assert_eq!(s.prune_transcript_raw(90).await.unwrap(), 1);
+
+    let left: (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM activity.transcript_raw WHERE source = $1 AND file_path = ANY($2)",
+    )
+    .bind(source)
+    .bind(vec![old_path.clone(), new_path.clone()])
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(left.0, 1, "old row pruned, fresh row kept");
+    let fresh_kept: (bool,) = sqlx_core::query_as::query_as(
+        "SELECT EXISTS(SELECT 1 FROM activity.transcript_raw WHERE source = $1 AND file_path = $2)",
+    )
+    .bind(source)
+    .bind(&new_path)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert!(fresh_kept.0);
+
+    sqlx_core::query::query(
+        "DELETE FROM activity.transcript_raw WHERE source = $1 AND file_path = ANY($2)",
+    )
+    .bind(source)
+    .bind(vec![old_path, new_path])
+    .execute(s.pool())
+    .await
+    .ok();
+}
