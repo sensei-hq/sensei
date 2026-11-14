@@ -410,6 +410,9 @@ pub fn create_router(state: AppState) -> Router {
         // #218: reading an assistant's history is its own consent, per source.
         .route("/api/transcripts/consent", get(observatory::transcript_consent))
         .route("/api/transcripts/consent/{source}", put(observatory::set_transcript_consent))
+        // Lossy export: rebuild JSONL from kept turns for files gone from disk.
+        .route("/api/transcripts/export/{session}", get(observatory::transcript_export))
+        .route("/api/transcripts/missing", get(observatory::transcripts_missing))
         .route("/api/metrics/backfill", post(observatory::backfill_metrics))
         .route("/api/workspaces/{id}/roles", get(observatory::solution_roles))
         // Folder mutations (setup wizard — Workspaces stage)
@@ -4379,6 +4382,140 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND, "an unknown source is not stored");
 
         crate::transcript::consent::set(&state.pg, "zed", false).await.unwrap();
+    }
+
+    async fn seed_export_turn(state: &AppState, source: &str, sess: &str, user: &str, asst: &str) {
+        state
+            .pg
+            .upsert_transcript_turns(
+                &crate::db::pg_store::TranscriptSource {
+                    source,
+                    session_id: sess,
+                    family: "test",
+                    provider: None,
+                    model: Some("test-model"),
+                },
+                &[crate::transcript::TranscriptTurn {
+                    turn_index: 1,
+                    user_text: Some(user.into()),
+                    assistant_text: asst.into(),
+                    attrs: serde_json::json!({ "uuid": "u1" }),
+                    ..Default::default()
+                }],
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn seed_export_mark(state: &AppState, sess: &str, file_path: &str) {
+        state
+            .pg
+            .set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+                source: "claude_code",
+                file_path,
+                session_id: Some(sess),
+                mtime_ns: 1,
+                turns: 1,
+            })
+            .await
+            .unwrap();
+    }
+
+    /// Export serves kept turns as marked JSONL; an unknown session is a 404.
+    #[tokio::test]
+    async fn transcript_export_serves_marked_jsonl_and_404s_unknown() {
+        let (app, state) = test_app().await;
+        seed_export_turn(&state, "claude_code", "_test-export-jsonl", "do it", "done").await;
+        seed_export_mark(&state, "_test-export-jsonl", "/nonexistent/sensei-test-gone.jsonl").await;
+
+        let resp = app
+            .clone()
+            .oneshot(
+                local_request()
+                    .uri("/api/transcripts/export/_test-export-jsonl")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "application/x-ndjson");
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        let lines: Vec<serde_json::Value> =
+            text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["message"]["content"], "do it");
+        assert_eq!(lines[1]["message"]["content"][0]["text"], "done");
+        assert!(lines.iter().all(|l| l["sensei_regenerated"] == true));
+
+        let (status, _) =
+            req(app, "GET", "/api/transcripts/export/_test-export-nobody", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// A file that still exists — or no watermark to judge by — is a 409:
+    /// only proven-gone files are rebuilt, never touched otherwise.
+    #[tokio::test]
+    async fn transcript_export_refuses_present_and_unwatermarked_files() {
+        let (app, state) = test_app().await;
+        seed_export_turn(&state, "claude_code", "_test-export-here", "do it", "done").await;
+        let dir = tempfile::tempdir().unwrap();
+        let here = dir.path().join("here.jsonl");
+        std::fs::write(&here, "{}\n").unwrap();
+        seed_export_mark(&state, "_test-export-here", here.to_str().unwrap()).await;
+        seed_export_turn(&state, "claude_code", "_test-export-nowm", "do it", "done").await;
+
+        let (status, _) =
+            req(app.clone(), "GET", "/api/transcripts/export/_test-export-here", None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _) = req(app, "GET", "/api/transcripts/export/_test-export-nowm", None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    /// Shapes the exporter doesn't know are refused, not misshaped.
+    #[tokio::test]
+    async fn transcript_export_refuses_unsupported_sources() {
+        let (app, state) = test_app().await;
+        seed_export_turn(&state, "zed", "_test-export-zed", "do it", "done").await;
+
+        let (status, body) =
+            req(app, "GET", "/api/transcripts/export/_test-export-zed", None).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+
+    /// The missing-file list: gone paths with kept turns, not present files.
+    #[tokio::test]
+    async fn transcript_missing_lists_gone_paths_with_turns() {
+        let (app, state) = test_app().await;
+        seed_export_turn(&state, "claude_code", "_test-missing-gone", "do it", "done").await;
+        seed_export_turn(&state, "claude_code", "_test-missing-here", "do it", "done").await;
+        let dir = tempfile::tempdir().unwrap();
+        let here = dir.path().join("here.jsonl");
+        std::fs::write(&here, "{}\n").unwrap();
+        for (sess, path) in [
+            ("_test-missing-gone", "/nonexistent/sensei-test-gone.jsonl"),
+            ("_test-missing-here", here.to_str().unwrap()),
+        ] {
+            state
+                .pg
+                .set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+                    source: "claude_code",
+                    file_path: path,
+                    session_id: Some(sess),
+                    mtime_ns: 1,
+                    turns: 1,
+                })
+                .await
+                .unwrap();
+        }
+
+        let (status, body) = req(app, "GET", "/api/transcripts/missing", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let ids: Vec<&str> =
+            body.as_array().unwrap().iter().map(|r| r["session_id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&"_test-missing-gone"), "{ids:?}");
+        assert!(!ids.contains(&"_test-missing-here"), "{ids:?}");
     }
 
     #[tokio::test]

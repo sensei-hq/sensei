@@ -565,6 +565,59 @@ pub(crate) async fn set_transcript_consent(
     Ok(Json(serde_json::json!({ "ok": true, "source": source, "consented": body.consented })))
 }
 
+/// GET /api/transcripts/export/{session} — the session's kept turns rebuilt as
+/// lossy JSONL (`transcript::export`). 404 without kept turns, 422 for a source
+/// the exporter doesn't know, 409 unless the file is proven gone: files that
+/// exist are never touched, and no watermark means no export. Every line
+/// carries the regeneration marker, so re-ingesting an export can never
+/// overwrite rich rows with poor ones.
+pub(crate) async fn transcript_export(
+    State(state): State<AppState>,
+    Path(session): Path<String>,
+) -> Result<([(axum::http::header::HeaderName, &'static str); 1], String), StatusCode> {
+    let bundle = state.pg.get_transcript_export(&session).await.map_err(|e| {
+        tracing::error!(error = %e, session, "transcript_export: read failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let Some(b) = bundle else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let lines =
+        crate::transcript::export::export_turns(&b.source, &session, &b.turns, b.model.as_deref())
+            .map_err(|e| {
+                tracing::error!(error = %e, session, "transcript_export: unsupported source");
+                StatusCode::UNPROCESSABLE_ENTITY
+            })?;
+    match state.pg.transcript_file_state(&session).await.map_err(|e| {
+        tracing::error!(error = %e, session, "transcript_export: file check failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })? {
+        crate::db::pg_store::transcript::TranscriptFileState::Missing { .. } => Ok((
+            [(axum::http::header::CONTENT_TYPE, "application/x-ndjson")],
+            lines.join("\n") + "\n",
+        )),
+        crate::db::pg_store::transcript::TranscriptFileState::Present { file_path } => {
+            tracing::error!(session, file_path, "transcript_export: file exists, refusing");
+            Err(StatusCode::CONFLICT)
+        }
+        crate::db::pg_store::transcript::TranscriptFileState::Unknown => {
+            tracing::error!(session, "transcript_export: no watermark, refusing");
+            Err(StatusCode::CONFLICT)
+        }
+    }
+}
+
+/// GET /api/transcripts/missing — watermarked transcript files gone from disk
+/// that still have kept turns: the sessions a lossy export can rebuild.
+pub(crate) async fn transcripts_missing(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::db::pg_store::transcript::MissingTranscriptFile>>, StatusCode> {
+    state.pg.missing_transcript_files().await.map(Json).map_err(|e| {
+        tracing::error!(error = %e, "transcripts_missing: read failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
+}
+
 /// Enqueue a metrics backfill (Phase 5 — history recovery): one `ComputeWorkspaceMetrics` per
 /// workspace. The planner then backfills every data day its sources reach and recomputes
 /// today, so the metric charts render months of history. Overlap-guarded

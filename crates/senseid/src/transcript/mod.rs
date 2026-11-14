@@ -13,6 +13,7 @@ pub mod claude;
 pub mod consent;
 pub mod copilot_cli;
 pub mod cursor;
+pub mod export;
 pub mod opencode;
 pub mod vscode;
 pub mod zed;
@@ -606,6 +607,13 @@ async fn ingest_one(
     // more, so the scope gate below can ignore it and record the skip.
     let has_row = pg.session_exists(&session_id).await?;
     if prose_fresh && !needs_synth && !needs_meta && has_row {
+        // The file is live (its stamp read) and in scope (its session has a
+        // row): advance its backup's sighting so retention never expires a
+        // present file. No content re-read — fresh means bytes unchanged.
+        // Best-effort, like every backup write: it must never fail the ingest.
+        if let Err(e) = pg.touch_transcript_raw(adapter.source(), key).await {
+            tracing::warn!(error = %e, source = adapter.source(), file = key, "transcript_raw: touch failed");
+        }
         return Ok(IngestOutcome::skipped());
     }
     // Adapter owns the read + its own oversize/format guards (returns None to skip).
@@ -662,6 +670,18 @@ async fn ingest_one(
             turns: turns as i32,
         })
         .await?;
+    }
+    // 1b. raw backup: the file's bytes as read, gzipped + keyed by sha, so a
+    // rotated file stays recoverable for the retention window. Re-reads via
+    // `load_content` — the parse above may have streamed without keeping the
+    // bytes — so units too large to hold whole simply get no backup.
+    // Best-effort: a backup failure warns and the ingest continues; the next
+    // tick retries.
+    if let Some(content) = adapter.load_content(key)
+        && let Err(e) =
+            pg.upsert_transcript_raw(adapter.source(), key, &session_id, content.as_bytes()).await
+    {
+        tracing::warn!(error = %e, source = adapter.source(), file = key, "transcript_raw: backup failed");
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
@@ -1233,6 +1253,91 @@ mod tests {
         );
 
         consent::set(ctx.pg(), "claude_code", false).await.unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The live-file guarantee: a present file's raw backup must never expire
+    /// while the file is there. The first ingest captures the bytes; the second
+    /// ingest skips as fresh — and that skip still advances the backup's
+    /// sighting, without re-reading content (fresh ⇒ bytes unchanged).
+    ///
+    /// Mutation that must break this: drop the touch on the fresh-skip path.
+    #[tokio::test]
+    async fn a_fresh_skip_advances_the_raw_backup_sighting() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let dir = std::env::temp_dir().join(format!("sensei-rawtouch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sid = format!("_test-rawtouch-{}", uuid::Uuid::new_v4());
+        let file = dir.join(format!("{sid}.jsonl"));
+        std::fs::write(&file, SAMPLE).unwrap();
+        let key = file.to_string_lossy().to_string();
+        sqlx_core::query::query("INSERT INTO activity.sessions (client_session_id) VALUES ($1)")
+            .bind(&sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        // One hook-captured event: the session needs no synthesis, so the
+        // second ingest reaches the fresh-skip path instead of the content one.
+        sqlx_core::query::query(
+            "INSERT INTO activity.assistant_events (session_id, event_type, ts) VALUES ($1, 'prompt', 0)",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let adapter = claude::ClaudeAdapter::new(dir.clone());
+        let backed_up = || async {
+            let (n,): (i64,) = sqlx_core::query_as::query_as(
+                "SELECT count(*) FROM activity.transcript_raw WHERE source = 'claude_code' AND file_path = $1",
+            )
+            .bind(&key)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            n
+        };
+
+        let first = ingest_one(&pg, &adapter, &key).await.unwrap();
+        assert!(!first.skipped && first.turns > 0, "first ingest captures turns");
+        assert_eq!(backed_up().await, 1, "first ingest captures the raw bytes");
+        sqlx_core::query::query(
+            "UPDATE activity.transcript_raw SET last_seen_at = now() - interval '10 days'
+              WHERE source = 'claude_code' AND file_path = $1",
+        )
+        .bind(&key)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let second = ingest_one(&pg, &adapter, &key).await.unwrap();
+        assert!(second.skipped, "unchanged file skips as fresh");
+        let (seen,): (chrono::DateTime<chrono::Utc>,) = sqlx_core::query_as::query_as(
+            "SELECT last_seen_at FROM activity.transcript_raw
+                  WHERE source = 'claude_code' AND file_path = $1",
+        )
+        .bind(&key)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!(
+            seen > chrono::Utc::now() - chrono::Duration::days(9),
+            "the fresh skip advanced the sighting ({seen})"
+        );
+
+        for sql in [
+            "DELETE FROM activity.transcript_turns WHERE session_id = $1",
+            "DELETE FROM activity.assistant_events WHERE session_id = $1",
+            "DELETE FROM activity.sessions WHERE client_session_id = $1",
+        ] {
+            sqlx_core::query::query(sql).bind(&sid).execute(pg.pool()).await.ok();
+        }
+        sqlx_core::query::query(
+            "DELETE FROM activity.transcript_raw WHERE source = 'claude_code' AND file_path = $1",
+        )
+        .bind(&key)
+        .execute(pg.pool())
+        .await
+        .ok();
         std::fs::remove_dir_all(&dir).ok();
     }
 

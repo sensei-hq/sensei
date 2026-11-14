@@ -4574,9 +4574,9 @@ mod tests {
         // this slice to earn a print for that reason.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,136, headroom {})",
+             (ceiling 1,197, headroom {})",
             elsewhere.len(),
-            1_136_i64 - other as i64
+            1_197_i64 - other as i64
         );
         // Lowered from 1,300 on 2026-10-26: the store's row types moved to the
         // path their callers name (`pg_store::FolderRow`), so the re-exports the
@@ -4653,8 +4653,39 @@ mod tests {
         // claim, checkpoint, release, queue and run handlers, the gate pass
         // and their driving tests. Same documented class, same backlog cure
         // (follow the alias and the derive), not a lower number.
+        // Raised 1,136 → 1,140 on 2026-11-10, measured 1,138 over 230
+        // identities (develop base 1,136/229 — the ratchet stood at zero
+        // headroom): the #359 r2 pin adds 2 over 1 new identity. The new
+        // one is the test-only `FakeEmbedAdapter`'s `self.clone()` in
+        // `register_into` (the codebase idiom; `Arc::clone` exists in no
+        // walked source — the derive-generated cause above), and the
+        // shared-identity +1 is another `Logger::noop` reach (the ctx
+        // mirrors `make_ctx`; cross-crate `sensei_logger::` paths the
+        // walk does not follow — the #339 re-export cause). Same
+        // documented classes, same backlog cures, not a lower number.
+        // Merged 2026-11-14 (#359 into develop): measured 1,153 over 232 —
+        // develop's 1,151/231 plus the #359 pin's 2/1, exactly additive; the
+        // ceiling stays 1,153 at zero headroom. The merge adds no code here.
+        // Raised 1,153 → 1,161 on 2026-11-13, measured 1,159 over 231
+        // identities: the transcript-export slice adds 8 over 0 new
+        // identities — 4× `AppState·pg` alias reaches (two handler reads, the
+        // missing-list read, the route-test seeder) and 4× clap-derive
+        // `Cli::parse_from`/`try_parse_from` in the CLI arg tests. Same
+        // documented classes, same backlog cures, not a lower number. (The
+        // println above still named the 1,136 ceiling; corrected to match.)
+        // Merged 2026-11-14 (#435 into develop, after #359): measured 1,161
+        // over 232 — develop's 1,153/232 plus the export slice's 8/0, exactly
+        // additive. Ceiling 1,161, headroom 0. The merge adds no code here.
+        // Raised 1,161 → 1,197 on 2026-11-14 (develop merged into the relay
+        // screen rebuild), measured 1,195 over 232 identities — develop's
+        // 1,161/232 plus 34 over 0 new identities, all alias reaches: +22
+        // `AppState·pg` and +12 `AppState·event_tx`, from the rebuild's
+        // #418/#419 daemon routes and row-carrying events and their driving
+        // tests. The lane had stood at 1,185 against its own 1,153 unnoticed.
+        // Same documented class, same backlog cure (follow the alias), not a
+        // lower number.
         assert!(
-            other <= 1_153,
+            other <= 1_197,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

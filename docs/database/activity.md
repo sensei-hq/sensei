@@ -53,8 +53,20 @@ Enum, not text: a renamed or retired kind used to orphan its history silently (f
 
 Every per-turn attribute the transcript carried, verbatim. The adapters see a far richer record than we model (parentUuid, requestId, permissionMode, usage.speed, usage.server_tool_use, …) and anything not promoted below used to be dropped on the floor at parse time — unrecoverable without re-reading files the user may have rotated away. Keep the raw shape here so a new signal is a query, not a re-ingest, and promote a column only once something reads it.
 
+Lossy export: `GET /api/transcripts/export/{session}` rebuilds an approximate JSONL transcript from these rows, but only for sessions whose file is proven gone (anything else is a 409 — existing files are never touched); `GET /api/transcripts/missing` lists the eligible sessions and `sensei transcript export` is the CLI. Rebuildable: prose, the turn-starting record's envelope, summed usage. Unrecoverable by construction: tool I/O, thinking, record boundaries, per-record timestamps, the uuid chain. Every rebuilt line carries `sensei_regenerated: true`, which ingest skips, so an export can never overwrite rich rows with poor ones.
+
 
 ── Promoted: token accounting ──────────────────────────────────────────── Split, NOT summed. `tokens_in` on activity.sessions folds fresh input + cache-write + cache-read into one number, and measured against real transcripts ~98% of it is cache reads — which bill about 10x cheaper. Every cost metric built on that sum therefore reads roughly an order of magnitude high, and improving cache use makes it go UP. Kept separate at this grain so cost can be computed honestly.
 
 
 ── Promoted: signals with a known consumer ─────────────────────────────── `max_tokens` is a DETERMINISTIC context-pressure signal; the shipped context_pressure_rate metric currently infers it from a text hint.
+
+
+## `activity.transcript_raw`
+
+[`database/ddl/table/activity/transcript_raw.ddl`](../../database/ddl/table/activity/transcript_raw.ddl)
+
+
+The file's bytes as ingested, gzipped — recovery for rotated transcripts. `attrs` keeps the parsed shape; this keeps the unparsed one, so a format detail the parser drops (tool I/O, thinking, record boundaries) survives the file's rotation for the retention window (90 days past last sighting, `activity.transcript_raw_retention_days`).
+
+Three decisions: the sha-compare skip (an upsert with unchanged bytes advances `last_seen_at` without rewriting megabytes of bytea — re-reads are common, changes are not); the sighting clock (fresh skips touch `last_seen_at` without re-reading, so a live file never expires, and a gone file's backup survives exactly the window past its last sighting); best-effort writes (a backup failure warns and the ingest continues — the backup guards the ingest, it must never break it). Units too large to hold whole get no row: the capture re-reads via `load_content`, whose size cap returns None past it, and the Claude adapter streams without keeping bytes at all.

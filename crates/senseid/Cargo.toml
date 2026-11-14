@@ -98,6 +98,9 @@ clap = { workspace = true }
 # Utilities
 sha2 = { workspace = true }
 hex = "0.4"
+# Already in the tree transitively; taken as a direct dependency so the raw
+# transcript backup can gzip file bytes before storing them.
+flate2 = "1"
 base64 = "0.22"
 globset = "0.4"
 walkdir = "2"

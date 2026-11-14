@@ -186,7 +186,7 @@ crates/senseid/src/tasks/version_rescan.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) =
 crates/senseid/src/tasks/watchdog_scheduler.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/transcript/claude.rs	R1	.ok()	PARSE-DEFAULT	.ok() — clock skew	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/transcript/claude.rs	R2	.ok()?	GENUINE-EMPTY	.ok() — file mtime absent	audit 2026-11-03 App. C	2026-11-03
-crates/senseid/src/transcript/claude.rs	R5	serde_json::from_str(line).ok().map(|v| (n, v))	PARSE-DEFAULT	.ok() — per-line parse, tolerated	audit 2026-11-03 App. C	2026-11-03
+crates/senseid/src/transcript/claude.rs	R5	.ok()	PARSE-DEFAULT	.ok() — per-line parse, tolerated (reflowed 2026-11-13: regenerated-line filter joined the chain)	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/transcript/copilot_cli.rs	R2	.ok()?	GENUINE-EMPTY	.ok() — file mtime absent	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/transcript/copilot_cli.rs	R6	if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed)	PARSE-DEFAULT	if let Ok( — scan lines for model	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/transcript/cursor.rs	R2	.ok()?	GENUINE-EMPTY	.ok() — file mtime absent	audit 2026-11-03 App. C	2026-11-03
@@ -469,3 +469,4 @@ database/ddl/function/dojo/org_repositories.ddl	S1	and coalesce(e.entitlement_re
 dojo/src/lib/server/admin-data.ts	T3	return (data ?? []) as unknown as OrgRepository[];	GENUINE-EMPTY	?? [] — error checked first	org-repositories impl r1 (L4), for L6 review	2026-11-06
 app/src/routes/(workspace)/workspace/[id]/integrations/integrations-state.svelte.ts	T2	} catch {	PARSE-DEFAULT	catch {} — boardHost: text that is not a URL yet has no host; it only decides whether the form asks to confirm one, and the daemon validates the URL	tracker-gitlab review 2026-11-09	2026-11-09
 crates/senseid/src/relay/rows.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err( — an unread decision or message row is logged and sends no row event; the task/relay event beside it makes the screen re-read Now (#418)	review 2026-11-13 #418	2026-11-13
+crates/senseid/src/tasks/handlers/embed.rs	R1	let cap = embed_calls_per_run(ctx.pg().get_config("embed.calls_per_run").await.ok().flatten());	PARSE-DEFAULT	.ok().flatten() — unset/unreadable config knob falls back to documented default (batch_per_tick precedent)	fix-359 impl r1 (frost-capella), for reviewer	2026-11-09
