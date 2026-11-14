@@ -364,6 +364,15 @@
       "path": "commands/help.md"
     },
     {
+      "name": "register",
+      "kind": "command",
+      "description": "Join a relay crew in one step — register, print the lane loop, and start the 60s heartbeat.",
+      "scope": "project",
+      "recommended_for": ["all"],
+      "stage": ["active"],
+      "path": "commands/register.md"
+    },
+    {
       "name": "sensei-analyst",
       "kind": "agent",
       "description": "Autonomous problem analysis — requirements, constraints, scope definition",
