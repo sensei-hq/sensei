@@ -3,9 +3,9 @@
   // mark in its presence tone, the codename (mono, in that tone; its title the status),
   // objective · code, the family and model tags, Message; not responding: the warning
   // border and its line under the card. On a phone: mark, name, Message; tags below.
+  import { Pill } from '@rokkit/ui';
   import type { RelayMemberView, RelayPresence } from '@sensei/state';
   import RoleMark from './RoleMark.svelte';
-  import Tag from './Tag.svelte';
 
   let { member, onmessage }: { member: RelayMemberView; onmessage: (laneId: string) => void } = $props();
 
@@ -30,9 +30,9 @@
     <span data-member-codename title={member.statusText} class="font-mono text-sm font-semibold truncate {TONE[member.status]}">{member.codename}</span>
     <span data-member-lane class="text-xs text-ink-soft truncate">{member.lane}</span>
   </span>
-  <span class="order-3 md:order-none basis-full md:basis-auto pl-11 md:pl-0 flex-[1_1_auto] min-w-0 flex flex-wrap gap-1.5">
-    <Tag kind="family" label={member.family} />
-    <Tag kind="model" label={member.model} />
+  <span data-member-tags class="order-3 md:order-none basis-full md:basis-auto pl-11 md:pl-0 flex-[1_1_auto] min-w-0 flex flex-wrap gap-1.5">
+    <Pill value={member.family} size="sm" />
+    <Pill value={member.model} variant="outline" size="sm" class="font-mono" />
   </span>
   <button
     type="button"

@@ -1,5 +1,5 @@
-// Relay primitives — the class vocabulary of COMPONENTS.md §3a (Pill, Tag,
-// RoleMark). Pure data: the component specs render the fixtures and pin the
+// Relay primitives — the class vocabulary of COMPONENTS.md §3a (RoleMark; Pill and
+// Tag are rokkit's Pill, #410). Pure data: the component specs render the fixtures and pin the
 // output; this module is what they draw, so a wrong tone, radius or type stop
 // fails here on data instead of inside a DOM snapshot.
 //
@@ -10,56 +10,6 @@
 // not generated).
 
 import type { RelayRole } from '$lib/relay-api.js';
-
-// ── Pill (§3a) ──────────────────────────────────────────────────────────────
-
-export type PillTone = 'accent' | 'warning' | 'danger' | 'success' | 'neutral';
-
-export const PILL_TONES: PillTone[] = ['accent', 'warning', 'danger', 'success', 'neutral'];
-
-const PILL_BASE =
-  'inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink';
-
-/** 11px, 1/8 padding, full radius, nowrap; fill the tone at 16% over the paper (the mockup's
- *  tint, which darkens with the page — the -soft tokens stay light in dark mode), border at 35%. */
-const PILL_TONE: Record<PillTone, string> = {
-  accent: 'bg-[color-mix(in_oklab,var(--accent)_16%,var(--paper))] border-[color-mix(in_oklab,var(--accent)_35%,var(--paper))]',
-  warning: 'bg-[color-mix(in_oklab,var(--warning)_16%,var(--paper))] border-[color-mix(in_oklab,var(--warning)_35%,var(--paper))]',
-  danger: 'bg-[color-mix(in_oklab,var(--danger)_16%,var(--paper))] border-[color-mix(in_oklab,var(--danger)_35%,var(--paper))]',
-  success: 'bg-[color-mix(in_oklab,var(--success)_16%,var(--paper))] border-[color-mix(in_oklab,var(--success)_35%,var(--paper))]',
-  // The app has no `neutral` colour token; the mute surface is the neutral tone.
-  neutral: 'bg-paper-mute border-paper-edge',
-};
-
-export function pillClass(tone: PillTone): string {
-  return `${PILL_BASE} ${PILL_TONE[tone]}`;
-}
-
-// ── Tag (§3a) ───────────────────────────────────────────────────────────────
-
-export type TagKind = 'family' | 'model' | 'host';
-
-const TAG_BASE = 'inline-flex items-center text-xs px-2 rounded-full whitespace-nowrap';
-
-const TAG_KIND: Record<TagKind, string> = {
-  family: 'py-0.5 bg-paper-mute text-ink',
-  model: 'py-0.5 font-mono border border-solid border-paper-edge text-ink-soft',
-  host: 'py-0 border border-solid border-paper-edge-strong text-ink-soft',
-};
-
-export function tagClass(kind: TagKind): string {
-  return `${TAG_BASE} ${TAG_KIND[kind]}`;
-}
-
-/** A host tag reads "in <editor>"; the other two read their label. */
-export function tagText(kind: TagKind, label: string, editor: string): string {
-  return kind === 'host' ? `in ${editor}` : label;
-}
-
-/** The host tag's title explains what the editor is, since "in Cursor" alone does not. */
-export function tagTitle(kind: TagKind, editor: string): string | undefined {
-  return kind === 'host' ? `${editor} is the editor; the assistant inside it does the work.` : undefined;
-}
 
 // ── RoleMark (§3a) ──────────────────────────────────────────────────────────
 

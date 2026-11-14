@@ -4,8 +4,8 @@
   // reported — #418, beyond the mockup) · state pill · time in state · chevron. A
   // lane on a task is one link to it; an idle lane is no link and has no chevron.
   // On a phone: mark, name and pill, then task and time, no chevron.
+  import { Pill } from '@rokkit/ui';
   import type { RelayLaneRowView } from '@sensei/state';
-  import Pill from './Pill.svelte';
   import RoleMark from './RoleMark.svelte';
   import { NOW_CARD_ROW, NOW_ROW } from './primitives.js';
 
@@ -41,7 +41,7 @@
     {/if}
   </span>
   <span data-part="state" data-tone={row.state.tone} class="order-2 md:order-none flex-[0_0_auto]">
-    <Pill label={row.state.label} tone={row.state.tone} />
+    <Pill value={row.state.label} tone={row.state.tone} size="sm" />
   </span>
   <span
     data-part="when"

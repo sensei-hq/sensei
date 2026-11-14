@@ -7,6 +7,7 @@
 // props it takes, nothing else.
 
 import { createRawSnippet } from 'svelte';
+import { Pill } from '@rokkit/ui';
 import type { PreviewEntry } from '$lib/preview/catalogue.js';
 import { decision, floatingReview, history, laneRefs, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
 import { toRelayShell } from './relay-shell.js';
@@ -15,7 +16,6 @@ import RelayShell from './RelayShell.svelte';
 import DecisionRow from './DecisionRow.svelte';
 import FloatingReviewRow from './FloatingReviewRow.svelte';
 import MessageRow from './MessageRow.svelte';
-import Pill from './Pill.svelte';
 import QueueRow from './QueueRow.svelte';
 import QueueSection from './QueueSection.svelte';
 import AddItemForm from './AddItemForm.svelte';
@@ -31,7 +31,6 @@ import { mockupBacklog, mockupTriage } from './queue.fixtures.js';
 import RelayChecklist from './RelayChecklist.svelte';
 import RoleMark from './RoleMark.svelte';
 import SprintBand from './SprintBand.svelte';
-import Tag from './Tag.svelte';
 import LaneList from './LaneList.svelte';
 import CompletedList from './CompletedList.svelte';
 import NeedsYou from './NeedsYou.svelte';
@@ -106,15 +105,13 @@ export const RELAY_CATALOGUE: PreviewEntry[] = [
     entry(`RelayShell/${f.name}`, f.note, RelayShell, { shell: toRelayShell(f.input(), still), viewId: `preview.relay.${f.name}`, children: body, compose: band }, { height: 560, phoneHeight: 900 }),
   ),
 
-  entry('Pill/neutral', 'a state pill, neutral tone', Pill, { label: 'idle', tone: 'neutral' }),
-  entry('Pill/accent', 'working', Pill, { label: 'reviewing', tone: 'accent' }),
-  entry('Pill/warning', 'a wait past the threshold', Pill, { label: 'approved, not merged', tone: 'warning' }),
-  entry('Pill/danger', 'a lost lease', Pill, { label: 'lease lost', tone: 'danger' }),
-  entry('Pill/success', 'merged', Pill, { label: 'merged', tone: 'success' }),
-
-  entry('Tag/family', 'the assistant family', Tag, { kind: 'family', label: 'Claude Code 2.1' }),
-  entry('Tag/model', 'the model, mono', Tag, { kind: 'model', label: 'claude-opus-5-5' }),
-  entry('Tag/host', 'an assistant inside an editor', Tag, { kind: 'host', editor: 'Cursor' }),
+  entry('Pill/neutral', 'rokkit Pill, small: a state, neutral tone', Pill, { value: 'idle', tone: 'neutral', size: 'sm' }),
+  entry('Pill/accent', 'working', Pill, { value: 'reviewing', tone: 'accent', size: 'sm' }),
+  entry('Pill/warning', 'a wait past the threshold', Pill, { value: 'approved, not merged', tone: 'warning', size: 'sm' }),
+  entry('Pill/danger', 'a lost lease', Pill, { value: 'lease lost', tone: 'danger', size: 'sm' }),
+  entry('Pill/success', 'merged', Pill, { value: 'merged', tone: 'success', size: 'sm' }),
+  entry('Pill/family', 'the assistant family: the plain chip', Pill, { value: 'Claude Code 2.1', size: 'sm' }),
+  entry('Pill/model', 'the model: the outline chip, in mono', Pill, { value: 'claude-opus-5-5', variant: 'outline', size: 'sm', class: 'font-mono' }),
 
   entry('RoleMark/coordinator-24', 'lane row size, coordinator', RoleMark, { role: 'coordinator', size: 24 }),
   entry('RoleMark/contributor-24', 'lane row size, contributor', RoleMark, { role: 'contributor', size: 24 }),

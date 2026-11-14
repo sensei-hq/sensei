@@ -4,9 +4,8 @@
   // the key alone on a phone); + in Triage to add it to the backlog by its own
   // identity; in the backlog a checkbox picks it for a run. It draws toQueueRows'
   // data and calls back.
+  import { Pill } from '@rokkit/ui';
   import type { RelayQueueRowView } from '@sensei/state';
-  import Pill from './Pill.svelte';
-  import Tag from './Tag.svelte';
   import { NOW_CARD_ROW } from './primitives.js';
 
   let {
@@ -51,9 +50,9 @@
   <div class="flex-[1_1_calc(100%-150px)] md:flex-[1_1_260px] min-w-0 flex flex-col gap-1.5">
     <span data-queue-title class="text-base text-ink">{row.title}</span>
     <span data-queue-pills class="flex flex-wrap items-center gap-1.5">
-      <span><Pill label={row.kind.label} tone={row.kind.tone} /></span>
+      <span><Pill value={row.kind.label} tone={row.kind.tone} size="sm" /></span>
       {#each row.tags as tag (tag)}
-        <span><Tag kind="family" label={tag} /></span>
+        <span><Pill value={tag} size="sm" /></span>
       {/each}
     </span>
   </div>

@@ -2,8 +2,8 @@
   // The task view's header (COMPONENTS §3d TaskHeader; CONTRACT §1e): back to where the
   // task was opened from, the title in the display face with its state, the ticket as a
   // pill linking out (#381), and one line of facts — key muted, value in ink.
+  import { Pill } from '@rokkit/ui';
   import type { RelayTaskHeaderView } from '@sensei/state';
-  import Pill from './Pill.svelte';
 
   let { header }: { header: RelayTaskHeaderView } = $props();
 </script>
@@ -14,7 +14,7 @@
   </a>
   <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
     <h2 data-task-title class="m-0 display text-xl font-medium">{header.title}</h2>
-    <span data-task-state><Pill label={header.state.label} tone={header.state.tone} /></span>
+    <span data-task-state><Pill value={header.state.label} tone={header.state.tone} size="sm" /></span>
     {#if header.ticket}
       <a
         data-ticket

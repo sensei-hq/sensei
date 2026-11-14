@@ -5,10 +5,10 @@
   // files, gates and telemetry folded. Each review its outcome, summary and comments; the
   // merge its note; a message to the crew with the receipts folded into it. A number
   // nobody reported reads "not reported", never 0 (D83).
+  import { Pill } from '@rokkit/ui';
   import type { RelayAction, RelayLaneRef } from '$lib/relay-api.js';
   import type { RelayTone } from '@sensei/state';
   import { codeOf, hhmm } from './relay-format.js';
-  import Pill from './Pill.svelte';
 
   let {
     action,
@@ -110,7 +110,7 @@
       {:else if action.kind === 'handed_over'}Handed over from {codeOf(lanes, action.props.from_lane)} to {codeOf(lanes, action.props.to_lane)}
       {/if}
     </p>
-    {#if outcome}<span data-entry-outcome><Pill label={outcome.label} tone={outcome.tone} /></span>{/if}
+    {#if outcome}<span data-entry-outcome><Pill value={outcome.label} tone={outcome.tone} size="sm" /></span>{/if}
     <span data-entry-time class="ml-auto font-mono text-xs text-ink-mute">{hhmm(action.created_at)}</span>
   </div>
   {#if action.lane_code}<p data-entry-by class="m-0 text-xs text-ink-soft">{action.lane_code}</p>{/if}
