@@ -1,35 +1,31 @@
-# Checkpoint — 2026-11-13 (lanes/relay-screen on lane/relay-screen-rebuild, from develop @ d19c71807)
+# Checkpoint — 2026-11-14 (lanes/relay-screen on lane/relay-screen-rebuild, from develop @ d19c71807)
 
-**Slice:** Relay screen rebuild to mockup r1 — one issue at a time, each component verified against the mockup
-(desktop + phone × light/dark × kanji/icon) on the bench before integration (user, 2026-11-12). Design:
-`docs/design/2026-11-12-relay-screen-rebuild.md`; issues #418–#429 (#429 = the rig).
+**Slice:** Relay screen rebuild to mockup r1, each component benched against the mockup (desktop + phone ×
+light/dark × kanji/icon). Design `docs/design/2026-11-12-relay-screen-rebuild.md`; issues #418–#429 (#429 = rig).
+User ruling 2026-11-14: one shell — fix rokkit, never patch per screen; reuse rokkit components over local copies.
 
-**Done:**
-- #429 rig (`/gallery`, `gallery:capture`, `gallery:sheet --embed`); review sheet = artifact 3869a0ea.
-- #420 shell + filters + footer; #421 `@sensei/state` + both pages cut over; #422 Now; #423 Queue (+add-to-triage
-  form, not in mockup); #424 Crew; #425 Task view (#380/#381/#388 fixed; relay hooks no longer collide with rokkit).
-  Each benched vs mockup (`coord/reports/relay-screen/bench-r1..r7`), relay e2e 8/8 against the real daemon.
-- #418 DONE on the lane (commits listed on the issue); live check `coord/reports/relay-screen/daemon-418/`.
+**Done (2026-11-14, red-first):**
+- rokkit `fix/zen-sumi-shell-parity` → **PR sensei-hq/rokkit#180, awaiting the user's review** (not merged, not
+  published): font utilities resolve (`font-display`/`font-ui` emitted NOTHING; sans/mono read system stacks);
+  stat cards = mockup (display font 24, mute pressed fill, edge frame — user ruling, not 3:1; toned icon; accent
+  tone; 1-line description); toolbar `kind` + `count` badge; zen-sumi title-bar 36px framed buttons; filter row (#178).
+- Nudge end to end: `now` task `last_nudge {at, by}` (`44c729251`); WaitList Nudge {party} → `RelayState.nudge`,
+  "Nudged just now · by you", Sensei's beside a long wait (`63ef0f1b7`). Two stale SQL pins fixed (`4d6c6a2a7`).
+- `/preview` replaces `/gallery` (`b4fead1c4`): index, `/preview/<Component>` with fixture tabs + view toggles,
+  `/preview/all`; wholly dev-only (verified absent from `build/`). Rig: `preview:capture|sheet|scroll`.
+- Scroll test (`9eb7cd209`): RelayShell fixtures overflow inside the app's `<main>` chain; `preview:scroll` green at
+  wide + phone; mutation-checked (a stray wrapper fails it).
 
-- LaneRow step progress (not in the mockup): selector `3ca277909`, component `9193b3fe2`, bench `008575ac0`
-  (`bench-r8`; sheet artifact 3869a0ea v10). Approved by the user on desktop and phone (2026-11-13).
-- #419 slices 1–6 green, each red-first (commits in `git log`): nudge · codenames · live lanes + presence (daemon +
-  state) · run draft/start/cancel (daemon + state; smoke draft→start PASS, `coord/reports/relay-screen/daemon-419/`) ·
-  run list/detail (`relay.run_list`; archive schema + daily purge NOT built) · person crew close · item close/
-  reorder/retitle + ticketed backlog (`d7c243d38`, clippy fix `b43450572`; GitLab tickets wait for a `gitlab`
-  provider) · catalogue first cut: AddMember's line names the crew (`3efdff3cc`), wraps whole (`5ee789c5b`, bench-r9,
-  sheet v11 `AddMember/setup-step2`; awaiting the user's look). Full catalogue NOT built (no adapter launch templates,
-  kinds, or per-assistant session attribution). Relay 406/406, app 3605/3605. Live DDL NOT applied; install batched to the end of #419.
+**Remaining (in order):** user reviews rokkit#180 → merge + publish → bump app `@rokkit/*`, delete
+`relay-toolbar.css`, `relay-filters.css`, sensei `toolbar-item.js` helpers; Working stat tone `accent`; relay
+toolbar via `kind`/`count` · rokkit-first pass (Pill/Tag, lists → rokkit List, TaskHistory → rokkit Timeline,
+StatCard fixture, toolbar separator) — plan pending the user · app font tokens → `font-display`/`font-ui` · #419
+wrap-up (guidance v2, live DDL incl. now.ddl `last_nudge`, install, e2e) → #426.
 
-**Remaining (in order):** #419 wrap-up (guidance v2 text, live DDL, install, e2e) → #426 run-journey e2e. Gaps outside
-#418: `task.waiting`; person-message read ladder. Lane is NOT merged to develop (user's call).
+**Next command:** `gh pr view 180 -R sensei-hq/rokkit` (review state), then the rokkit-first plan once agreed.
 
-**Next command:** #419 wrap-up — guidance v2 text where a lane sees a change; apply live DDL (`run_state` draft,
-runs.crew_id nullable, `relay.run_list`, now.ddl); `make install-debug`; relay e2e; `make test-template`. DB tests: `TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_screen`
-(rebuild with the scratchpad `lane-template.sh` after DDL changes; other lanes restamp `sensei_test`).
+**Open questions (user):** →| Relay mark needs a non-Solar glyph (amends the 2026-10-27 Solar-only rule)?;
+rokkit#180 review; Pill vs Tag; retire `lane/relay-screen-conformance`?; merge #417 + `make release`.
 
-**Open questions (user):** bench sheet feedback; retire `lane/relay-screen-conformance`?; AddItemForm design;
-phone header height; merge #417 + `make release`; `font-display` no-op elsewhere in the app.
-
-**Known broken:** none on the lane. `sensei_test` template was stale (rebuilt with `make test-template`). Whole-suite
-e2e runs need explicit spec paths.
+**Known broken:** CONTRACT §15 auto-nudge for non-review waits not built (`task.waiting` gap). Dev Vite binds IPv6
+`localhost` only (rig uses `localhost`). Lane test DB: re-apply a changed view by hand (self-apply skips).
