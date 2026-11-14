@@ -17,12 +17,16 @@
     onanswer,
     onopenqueue,
     onnudge,
+    nudging = [],
+    nudgeErrors = {},
   }: {
     view: RelayNeedsYouView;
     href: (crewId: string, taskId: string) => string;
     onanswer: (decisionId: string, option: string) => Promise<string | null>;
     onopenqueue: () => void;
     onnudge?: (row: RelayWaitRowView) => void;
+    nudging?: string[];
+    nudgeErrors?: Record<string, string>;
   } = $props();
 
   const mode = useGlyphMode();
@@ -55,7 +59,7 @@
       <strong data-stale-title class="flex items-center gap-1.5 text-base font-semibold">
         {@render mark('待', 'text-warning', 'text-base')}{view.stale.title}
       </strong>
-      <WaitList rows={view.stale.rows} {onnudge} />
+      <WaitList rows={view.stale.rows} {onnudge} {nudging} errors={nudgeErrors} />
     </article>
   {/if}
   {#each view.messages as message (message.id)}

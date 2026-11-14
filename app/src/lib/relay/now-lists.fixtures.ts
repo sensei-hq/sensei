@@ -115,6 +115,7 @@ const waitRow = (
   why: string,
   nudge: string,
   href: string | null = `/relay/c/${id}`,
+  said: { canNudge?: boolean; nudgedText?: string | null } = {},
 ): RelayWaitRowView => ({
   id,
   minutes,
@@ -123,16 +124,26 @@ const waitRow = (
   task,
   why,
   href,
-  nudge: { label: nudge, canNudge: false },
+  nudge: {
+    label: nudge,
+    canNudge: said.canNudge ?? true,
+    nudgedText: said.nudgedText ?? null,
+    message: { crew_id: 'c', to: { kind: 'coordinator' }, task_id: href ? id : null, text: task, nudge: true, reason: 'merge_pending' },
+  },
 });
 
-/** The mockup's waits, oldest first: three past the threshold, then the idle lane. */
+/** The mockup's waits, oldest first: three past the threshold — each with Sensei's last
+ *  automatic nudge beside its button — then the idle lane. */
 export const mockupWaits = (): RelayWaitRowView[] => [
-  waitRow('w1', 52, 'ER sidebar on the shell (impl r1)', 'ER diagrams · approved, not merged · waiting on the coordinator', 'Nudge the coordinator'),
-  waitRow('w2', 41, 'Libraries page (docs r4)', 'Docs pages · verdict filed, not picked up · waiting on Docs pages (coral-spica)', 'Nudge coral-spica'),
-  waitRow('d1', 26, 'Structure view on the shell (tests r1)', 'Diagrams · report has no reviewer · waiting on the coordinator', 'Nudge the coordinator'),
+  waitRow('w1', 52, 'ER sidebar on the shell (impl r1)', 'ER diagrams · approved, not merged · waiting on the coordinator', 'Nudge the coordinator', '/relay/c/w1', { nudgedText: 'Sensei nudged at 10:23' }),
+  waitRow('w2', 41, 'Libraries page (docs r4)', 'Docs pages · verdict filed, not picked up · waiting on Docs pages (coral-spica)', 'Nudge coral-spica', '/relay/c/w2', { nudgedText: 'Sensei nudged at 10:34' }),
+  waitRow('d1', 26, 'Structure view on the shell (tests r1)', 'Diagrams · report has no reviewer · waiting on the coordinator', 'Nudge the coordinator', '/relay/c/d1', { nudgedText: 'Sensei nudged at 10:31' }),
   waitRow('L6', null, 'Nothing assigned', 'Sync hardening · lane idle, nothing assigned · waiting on the coordinator', 'Nudge the coordinator', null),
 ];
+
+/** The mockup's waits after you nudged the oldest: its button has given way to when. */
+export const mockupWaitsNudged = (): RelayWaitRowView[] =>
+  mockupWaits().map((r, i) => (i === 0 ? { ...r, nudge: { ...r.nudge, canNudge: false, nudgedText: 'Nudged just now · by you' } } : r));
 
 /** Needs you as the mockup draws it with a decision pending. */
 export const mockupNeedsYou = (): RelayNeedsYouView => ({

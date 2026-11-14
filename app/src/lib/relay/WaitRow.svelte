@@ -1,10 +1,24 @@
 <script lang="ts">
   // One wait (COMPONENTS §3b WaitRow; CONTRACT §1c-0, §3f-bis): how long — amber and
   // bold at the threshold — the task with why and on whom, a link to the task, and
-  // Nudge {party} once the daemon takes a person's nudge (#419).
+  // Nudge {party} (#419). Once you nudged, the button gives way to when; past the
+  // threshold the last automatic nudge shows beside the button.
   import type { RelayWaitRowView } from '@sensei/state';
+  import { Notice } from '@sensei/ui';
 
-  let { row, onnudge }: { row: RelayWaitRowView; onnudge?: (row: RelayWaitRowView) => void } = $props();
+  let {
+    row,
+    onnudge,
+    busy = false,
+    error = null,
+  }: {
+    row: RelayWaitRowView;
+    onnudge?: (row: RelayWaitRowView) => void;
+    /** The nudge is on its way. */
+    busy?: boolean;
+    /** Why the last nudge was refused. */
+    error?: string | null;
+  } = $props();
 </script>
 
 {#snippet body()}
@@ -27,8 +41,16 @@
     <button
       type="button"
       data-nudge
+      disabled={busy}
+      aria-busy={busy}
       onclick={() => onnudge(row)}
-      class="min-h-[30px] px-2.5 rounded-[7px] border border-solid border-paper-edge bg-paper text-ink text-xs cursor-pointer"
+      class="min-h-[30px] px-2.5 rounded-[7px] border border-solid border-paper-edge bg-paper text-ink text-xs cursor-pointer disabled:cursor-wait disabled:text-ink-mute"
     >{row.nudge.label}</button>
+  {/if}
+  {#if row.nudge.nudgedText}
+    <span data-nudged class="text-xs text-ink-mute">{row.nudge.nudgedText}</span>
+  {/if}
+  {#if error}
+    <div class="basis-full"><Notice size="inline" tone="fault" title={error} data-nudge-error /></div>
   {/if}
 </li>

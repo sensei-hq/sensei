@@ -1177,6 +1177,7 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
     steps_done: 0,
     steps_total: 0,
     needs_answer: false,
+    last_nudge: null,
     ...over,
   });
 

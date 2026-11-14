@@ -221,6 +221,9 @@
           href={(crewId, taskId) => taskHref(base, crewId, taskId)}
           onanswer={(id, option) => answer(id, option)}
           onopenqueue={() => state.openQueue()}
+          onnudge={(row) => state.nudge(row)}
+          nudging={state.nudging}
+          nudgeErrors={state.nudgeErrors}
         />
       </div>
     {/if}
@@ -248,7 +251,7 @@
     {#if filter === 'waiting'}
       <section aria-label="Waiting · oldest first" data-relay-section="waiting" class="flex flex-col gap-1.5 p-4">
         <SectionHeading label="Waiting · oldest first" count={waitRows.length} {showing} />
-        <div class="{NOW_CARD} px-3.5"><WaitList rows={waitRows} /></div>
+        <div class="{NOW_CARD} px-3.5"><WaitList rows={waitRows} onnudge={(row) => state.nudge(row)} nudging={state.nudging} errors={state.nudgeErrors} /></div>
       </section>
     {:else if filter !== 'done'}
       <div class="p-4 pb-0">

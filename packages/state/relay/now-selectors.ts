@@ -14,6 +14,8 @@ import type {
   RelayQueue,
   RelayRole,
   RelayTicketProvider,
+  RelayNudgeReason,
+  RelaySendMessage,
 } from './types.js';
 
 /** The tone a pill or a mark carries. */
@@ -232,8 +234,20 @@ export interface RelayWaitRowView {
   /** "objective · reason · waiting on party". */
   why: string;
   href: string | null;
-  /** The person's nudge to the party waited on; offered once the daemon takes it (#419). */
-  nudge: { label: string; canNudge: boolean };
+  /** The person's nudge to the party waited on (#419; CONTRACT §1c-0). */
+  nudge: RelayWaitNudge;
+}
+
+/** A wait's nudge: the button, what it last said, and the message it sends. */
+export interface RelayWaitNudge {
+  /** "Nudge the coordinator", "Nudge coral-spica". */
+  label: string;
+  /** The button stays until you nudged; then it gives way to `nudgedText`. */
+  canNudge: boolean;
+  /** "Nudged just now · by you", or past the threshold "Sensei nudged at 10:23"; else null. */
+  nudgedText: string | null;
+  /** What the button sends; the surface is the window's. */
+  message: Omit<RelaySendMessage, 'surface'>;
 }
 
 /** What Needs you shows; null when there is nothing (the section hides). */
@@ -250,18 +264,65 @@ export interface RelayNeedsYouView {
   messages: RelayPersonMessage[];
 }
 
+interface WaitReason {
+  /** The reason in words, for the row. */
+  reason: string;
+  /** The daemon's reason, for the nudge. */
+  code: RelayNudgeReason;
+  /** It waits on its own lane, not the coordinator. */
+  onLane: boolean;
+}
+
 /** Why a task waits, and whether it waits on the coordinator or its own lane (§3f-bis). */
-function waitReason(lane: RelayLane, now: RelayNow): { reason: string; onLane: boolean } | null {
+function waitReason(lane: RelayLane, now: RelayNow): WaitReason | null {
   const task = lane.task;
   if (isNotResponding(lane) || lane.limit_scope) return null;
-  if (!task) return lane.role === 'contributor' && !lane.reviewing ? { reason: 'lane idle, nothing assigned', onLane: false } : null;
+  if (!task) {
+    return lane.role === 'contributor' && !lane.reviewing
+      ? { reason: 'lane idle, nothing assigned', code: 'no_work', onLane: false }
+      : null;
+  }
   if (task.needs_answer) return null; // a decision: its own card
   if (task.state === 'in_review' && now.floating_reviews.some((r) => r.task_id === task.id)) {
-    return { reason: 'report has no reviewer', onLane: false };
+    return { reason: 'report has no reviewer', code: 'review_unassigned', onLane: false };
   }
-  if (task.state === 'rework') return { reason: 'verdict filed, not picked up', onLane: true };
-  if (task.state === 'approved') return { reason: 'approved, not merged', onLane: false };
+  if (task.state === 'rework') return { reason: 'verdict filed, not picked up', code: 'verdict_unread', onLane: true };
+  if (task.state === 'approved') return { reason: 'approved, not merged', code: 'merge_pending', onLane: false };
   return null;
+}
+
+/** What a wait's nudge says it last did: yours always; an automatic one once the wait is too long. */
+function nudgedText(task: RelayLane['task'], over: boolean, at: number): string | null {
+  const last = task?.last_nudge;
+  if (!last) return null;
+  if (last.by === 'you') {
+    const minutes = minutesSince(last.at, at);
+    return `Nudged ${minutes < 1 ? 'just now' : `${since(last.at, at)} ago`} · by you`;
+  }
+  if (last.by === 'sensei' && over) return `Sensei nudged at ${hhmm(last.at)}`;
+  return null;
+}
+
+/** The wait's nudge: to its lane or the coordinator, with the reason and the wait so far. */
+function waitNudge(lane: RelayLane, w: WaitReason, minutes: number | null, over: boolean, at: number): RelayWaitNudge {
+  const task = lane.task;
+  const message: RelayWaitNudge['message'] = {
+    crew_id: lane.crew_id,
+    to: w.onLane ? { kind: 'lane', lane_id: lane.id } : { kind: 'coordinator' },
+    task_id: task?.id ?? null,
+    text: task
+      ? `${task.title} has waited ${since(task.state_changed_at, at)}: ${w.reason}.`
+      : `${lane.title ?? lane.code} is idle with nothing assigned.`,
+    nudge: true,
+    reason: w.code,
+  };
+  if (minutes != null) message.waiting_min = minutes;
+  return {
+    label: `Nudge ${w.onLane ? codename(lane) : 'the coordinator'}`,
+    canNudge: task?.last_nudge?.by !== 'you',
+    nudgedText: nudgedText(task, over, at),
+    message,
+  };
 }
 
 function waitRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayWaitRowView | null {
@@ -271,15 +332,16 @@ function waitRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayWaitRow
   const party = w.onLane ? `${objective} (${codename(lane)})` : 'the coordinator';
   const task = lane.task;
   const minutes = task ? minutesSince(task.state_changed_at, o.at) : null;
+  const over = minutes != null && minutes >= o.threshold;
   return {
     id: task?.id ?? lane.id,
     minutes,
     minutesText: minutes == null ? '' : since(task!.state_changed_at, o.at),
-    over: minutes != null && minutes >= o.threshold,
+    over,
     task: task ? `${task.title} (${task.phase} r${task.round})` : 'Nothing assigned',
     why: `${objective} · ${w.reason} · waiting on ${party}`,
     href: task ? o.href(lane.crew_id, task.id) : null,
-    nudge: { label: `Nudge ${w.onLane ? codename(lane) : 'the coordinator'}`, canNudge: false },
+    nudge: waitNudge(lane, w, minutes, over, o.at),
   };
 }
 

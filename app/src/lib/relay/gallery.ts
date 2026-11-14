@@ -42,6 +42,7 @@ import {
   mockupLanes,
   mockupNeedsYou,
   mockupWaits,
+  mockupWaitsNudged,
   needsYouUnassigned,
   progressLanes,
 } from './now-lists.fixtures.js';
@@ -91,14 +92,17 @@ export const GALLERY: GalleryEntry[] = [
     href: (crew: string, task: string) => `/relay/${crew}/${task}`,
     onanswer: accepted,
     onopenqueue: () => {},
+    onnudge: () => {},
   }),
   entry('NeedsYou/unassigned', 'tasks no lane has taken (read-only), and a lane’s message', NeedsYou, {
     view: needsYouUnassigned(),
     href: (crew: string, task: string) => `/relay/${crew}/${task}`,
     onanswer: accepted,
     onopenqueue: () => {},
+    onnudge: () => {},
   }),
-  entry('WaitList/waiting', 'Waiting’s filter: every wait, oldest first, the idle lane with no time', WaitList, { rows: mockupWaits() }),
+  entry('WaitList/waiting', 'Waiting’s filter: every wait, oldest first, the idle lane with no time; Nudge on each, Sensei’s last nudge beside the long ones', WaitList, { rows: mockupWaits(), onnudge: () => {} }),
+  entry('WaitList/nudged-by-you', 'after you nudge the oldest: its button gives way to “Nudged just now · by you”', WaitList, { rows: mockupWaitsNudged(), onnudge: () => {} }),
   entry('CompletedList/mockup', 'the mockup’s five completed tasks, merged and approved', CompletedList, { rows: mockupCompleted() }),
   ...SHELL_FIXTURES.map((f) =>
     entry(`RelayShell/${f.name}`, f.note, RelayShell, { shell: toRelayShell(f.input(), still), viewId: `gallery.relay.${f.name}`, children: body, compose: band }, { height: 560, phoneHeight: 1500 }),

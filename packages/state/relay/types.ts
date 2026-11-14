@@ -114,7 +114,25 @@ export interface RelayLaneTask {
   steps_total: number;
   /** An open `asked` action blocks it: the task reads "needs your answer". */
   needs_answer: boolean;
+  /** Its newest nudge (#419): by you, by sensei (the daemon) or by a lane; null when none. */
+  last_nudge: RelayLastNudge | null;
 }
+
+/** A task's newest nudge, as `relay.now` reads it. */
+export interface RelayLastNudge {
+  at: string;
+  by: 'you' | 'sensei' | 'lane';
+}
+
+/** Why a nudge is sent (daemon NUDGE_REASONS; CONTRACT §3f-bis). */
+export type RelayNudgeReason =
+  | 'review_unassigned'
+  | 'verdict_unread'
+  | 'merge_pending'
+  | 'no_work'
+  | 'decision'
+  | 'resource'
+  | 'review_floating';
 
 /** Which quota a limit-paused lane ran out of. */
 export type RelayLimitScope = 'daily' | 'weekly' | 'other';
@@ -572,6 +590,10 @@ export interface RelaySendMessage {
   text: string;
   /** Person-only: 'lane' is set by the daemon, never sent (Q12). */
   surface: 'desktop' | 'dojo';
+  /** A nudge (#419): `nudge: true` with its reason, and the wait so far when known. */
+  nudge?: true;
+  reason?: RelayNudgeReason;
+  waiting_min?: number;
 }
 
 /** CONTRACT §3e `answer_decision`. */

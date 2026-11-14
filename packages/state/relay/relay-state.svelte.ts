@@ -13,6 +13,7 @@
 // leaves the screen as it was (D83).
 
 import { failureReason, type ApiError, type ApiResult } from '../result.js';
+import type { RelayWaitRowView } from './now-selectors.js';
 import type {
   RelayAddToBacklog,
   RelayAddTriage,
@@ -130,6 +131,10 @@ export class RelayState {
   addError = $state<string | null>(null);
   /** Why the last open item the person added was refused (what they typed stays). */
   triageError = $state<string | null>(null);
+  /** Wait rows whose nudge is on its way (#419): the button is busy until the source answers. */
+  nudging = $state<string[]>([]);
+  /** Why a row's last nudge was refused, by row id; a later nudge that is taken clears it. */
+  nudgeErrors = $state<Record<string, string>>({});
   /** Backlog item ids picked for a sprint. Reassigned on every change: a Set is not proxied. */
   selected = $state<Set<string>>(new Set());
   creatingSprint = $state(false);
@@ -380,6 +385,21 @@ export class RelayState {
   async send(body: RelaySendMessage): Promise<string | null> {
     const answer = await this.source.send(body);
     return answer.ok ? null : failureReason(answer.error);
+  }
+
+  /** Nudge the party a wait is on (#419): the row's message, from this surface. Its reason
+   *  when refused, else null; the message's event re-reads Now, which then shows the nudge. */
+  async nudge(row: Pick<RelayWaitRowView, 'id' | 'nudge'>): Promise<string | null> {
+    if (this.nudging.includes(row.id)) return null;
+    this.nudging = [...this.nudging, row.id];
+    try {
+      const reason = await this.send({ ...row.nudge.message, surface: this.surface });
+      const { [row.id]: _, ...rest } = this.nudgeErrors;
+      this.nudgeErrors = reason === null ? rest : { ...rest, [row.id]: reason };
+      return reason;
+    } finally {
+      this.nudging = this.nudging.filter((id) => id !== row.id);
+    }
   }
 
   /** Add a triage row to the backlog by its own identity; its item events confirm it

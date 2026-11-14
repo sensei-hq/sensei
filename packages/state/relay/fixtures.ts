@@ -87,6 +87,7 @@ export function lane(over: Partial<RelayLane> = {}): RelayLane {
       steps_done: 2,
       steps_total: 5,
       needs_answer: false,
+      last_nudge: null,
     },
     ...over,
   };
@@ -115,6 +116,7 @@ export const coordinatorLane = (over: Partial<RelayLane> = {}) =>
       steps_done: 0,
       steps_total: 0,
       needs_answer: false,
+      last_nudge: null,
     },
     ...over,
   });
@@ -315,6 +317,7 @@ export const fiveLaneCrew = () =>
           steps_done: 0,
           steps_total: 0,
           needs_answer: true,
+          last_nudge: null,
         },
       }),
       lane({
@@ -336,6 +339,7 @@ export const fiveLaneCrew = () =>
           steps_done: 0,
           steps_total: 0,
           needs_answer: false,
+      last_nudge: null,
         },
       }),
       lane({ id: LANE.L5, code: 'L5', title: 'Docs pages', family: 'freebuff', version: '1.4', task: null }),
@@ -371,6 +375,7 @@ export const mainNow = (): RelayNow =>
           steps_done: 0,
           steps_total: 0,
           needs_answer: false,
+      last_nudge: null,
         },
       }),
     ],

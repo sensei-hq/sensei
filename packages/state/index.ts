@@ -68,6 +68,7 @@ export {
   type NowRowOptions,
   type RelayNeedsYouView,
   type RelayWaitRowView,
+  type RelayWaitNudge,
   type RelayCompletedRowView,
   type RelayLaneGroupView,
   type RelayLaneRowView,
