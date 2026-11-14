@@ -1,4 +1,4 @@
-# Checkpoint — 2026-11-14 (lanes/relay-screen on lane/relay-screen-rebuild, from develop @ d19c71807)
+# Checkpoint — 2026-11-14 (lanes/relay-screen on lane/relay-screen-rebuild, develop merged in @ d747d0a87)
 
 **Slice:** Relay screen rebuild to mockup r1, each component benched against the mockup (desktop + phone ×
 light/dark × kanji/icon). Design `docs/design/2026-11-12-relay-screen-rebuild.md`; issues #418–#429 (#429 = rig).
@@ -19,6 +19,9 @@ User ruling 2026-11-14: one shell — fix rokkit, never patch per screen; reuse 
 - rokkit #180 + #181 merged, **v1.15.4 published**; app + dōjō bumped (`3cd4a8cac`); relay toolbar = rokkit kind/
   count, both relay CSS overrides + `@sensei/ui` ToolbarItem deleted (`ac4640baf`); Working accent (`035b8aeac`);
   relay Pill/Tag → rokkit Pill (`942488387`). Glyphs: #406 = repurpose `@sensei/glyphs` (comments added).
+- Consolidation after the power loss (`0cf5bc480`): develop (#284, #359, #415, #435, zizmor) merged INTO this lane,
+  not the lane into develop — release PR #417 is open and this slice is unfinished. `shot()` gained `unavailable`
+  in `e2e/lib/shot.ts`; ratchet 1,197 (measured 1,195). `lane/relay-screen-conformance` retired (superseded, §5).
 
 **Remaining (in order):** shared-component catalogue `docs/spec/2026-11-14-shared-component-catalogue.md` —
 awaiting the user's agreement · TaskHistory → rokkit Timeline · lists → rokkit List (no-button rows) · StatCard
@@ -26,8 +29,8 @@ fixtures · #419 wrap-up (guidance v2, live DDL incl. now.ddl `last_nudge`, inst
 
 **Next command:** the Timeline migration (red-first), once the catalogue is agreed.
 
-**Open questions (user):** the catalogue spec; host tag needs a Pill `title`; retire
-`lane/relay-screen-conformance`?; merge #417 + `make release`.
+**Open questions (user):** the catalogue spec; host tag needs a Pill `title`; merge #417 + `make release`
+(then this lane → develop when finished).
 
 **Known broken:** CONTRACT §15 auto-nudge for non-review waits not built (`task.waiting` gap). Dev Vite binds IPv6
 `localhost` only (rig uses `localhost`). Lane test DB: re-apply a changed view by hand (self-apply skips).
