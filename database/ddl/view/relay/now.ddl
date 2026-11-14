@@ -29,6 +29,18 @@ select l.user_id, 'lane'::text as section, l.crew_id, l.id,
         'steps_done', (select count(*) from jsonb_array_elements(t.steps) s
                         where s->>'state' in ('done', 'skipped')),
         'steps_total', jsonb_array_length(t.steps),
+        -- The newest nudge about it (#419; CONTRACT §3f-bis): a nudge is a message
+        -- with props.nudge. By `you` (no lane, a person surface), `sensei` (no
+        -- lane, the daemon's own surface 'lane') or a `lane`; null when none.
+        'last_nudge', (
+          select jsonb_build_object('at', a.created_at,
+                   'by', case when a.lane_id is not null then 'lane'
+                              when a.props->>'surface' = 'lane' then 'sensei'
+                              else 'you' end)
+            from relay.actions a
+           where a.user_id = l.user_id and a.task_id = t.id and a.kind = 'message'
+             and a.props->>'nudge' = 'true'
+           order by a.created_at desc, a.id desc limit 1),
         'needs_answer', exists (
           select 1 from relay.actions a
            where a.user_id = l.user_id and a.kind = 'asked'
