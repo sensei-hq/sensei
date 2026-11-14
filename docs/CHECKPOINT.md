@@ -16,16 +16,18 @@ User ruling 2026-11-14: one shell — fix rokkit, never patch per screen; reuse 
 - Scroll test (`9eb7cd209`): RelayShell fixtures overflow inside the app's `<main>` chain; `preview:scroll` green at
   wide + phone; mutation-checked (a stray wrapper fails it).
 
-**Remaining (in order):** user reviews rokkit#180 → merge + publish → bump app `@rokkit/*`, delete
-`relay-toolbar.css`, `relay-filters.css`, sensei `toolbar-item.js` helpers; Working stat tone `accent`; relay
-toolbar via `kind`/`count` · rokkit-first pass (Pill/Tag, lists → rokkit List, TaskHistory → rokkit Timeline,
-StatCard fixture, toolbar separator) — plan pending the user · app font tokens → `font-display`/`font-ui` · #419
-wrap-up (guidance v2, live DDL incl. now.ddl `last_nudge`, install, e2e) → #426.
+- rokkit #180 + #181 merged, **v1.15.4 published**; app + dōjō bumped (`3cd4a8cac`); relay toolbar = rokkit kind/
+  count, both relay CSS overrides + `@sensei/ui` ToolbarItem deleted (`ac4640baf`); Working accent (`035b8aeac`);
+  relay Pill/Tag → rokkit Pill (`942488387`). Glyphs: #406 = repurpose `@sensei/glyphs` (comments added).
 
-**Next command:** `gh pr view 180 -R sensei-hq/rokkit` (review state), then the rokkit-first plan once agreed.
+**Remaining (in order):** shared-component catalogue `docs/spec/2026-11-14-shared-component-catalogue.md` —
+awaiting the user's agreement · TaskHistory → rokkit Timeline · lists → rokkit List (no-button rows) · StatCard
+fixtures · #419 wrap-up (guidance v2, live DDL incl. now.ddl `last_nudge`, install, e2e) → #426.
 
-**Open questions (user):** →| Relay mark needs a non-Solar glyph (amends the 2026-10-27 Solar-only rule)?;
-rokkit#180 review; Pill vs Tag; retire `lane/relay-screen-conformance`?; merge #417 + `make release`.
+**Next command:** the Timeline migration (red-first), once the catalogue is agreed.
+
+**Open questions (user):** the catalogue spec; host tag needs a Pill `title`; retire
+`lane/relay-screen-conformance`?; merge #417 + `make release`.
 
 **Known broken:** CONTRACT §15 auto-nudge for non-review waits not built (`task.waiting` gap). Dev Vite binds IPv6
 `localhost` only (rig uses `localhost`). Lane test DB: re-apply a changed view by hand (self-apply skips).
