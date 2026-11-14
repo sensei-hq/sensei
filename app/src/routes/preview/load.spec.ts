@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
 import { load as indexLoad } from './+page.js';
 import { load as componentLoad } from './[component]/+page.js';
 
@@ -9,6 +9,12 @@ const call = <T>(fn: (e: never) => T, path: string, params: Record<string, strin
   fn({ url: new URL(`http://localhost${path}`), params } as never);
 
 describe('the preview routes', () => {
+  // The first load imports the dev module — every relay component — once; under the full
+  // suite that alone can pass the default 5 s, so it is paid here, not in a test.
+  beforeAll(async () => {
+    await import('$lib/preview/dev.js');
+  }, 60_000);
+
   it('the index lists every component with its fixture count', async () => {
     const data = (await call(indexLoad, '/preview')) as { components: { name: string; count: number }[] };
     const names = data.components.map((c) => c.name);

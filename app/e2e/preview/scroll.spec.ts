@@ -49,6 +49,7 @@ for (const w of WIDTHS) {
       expect(lastBox.y + lastBox.height, `${id}: the last row is in view`).toBeLessThanOrEqual(bodyBox.y + bodyBox.height + 1);
       expect(await top(header), `${id}: the header stays put`).toBeCloseTo(headerTop, 0);
       expect(await frame.evaluate((el) => el.scrollTop), `${id}: the frame does not scroll`).toBe(0);
+      expect(await frame.locator('[data-preview-main]').evaluate((el) => el.scrollTop), `${id}: <main> does not scroll`).toBe(0);
       await expect(shell.locator('[data-screen-footer]').first(), `${id}: the footer is in view`).toBeInViewport();
     }
   });

@@ -88,20 +88,33 @@
             <span class="font-mono">{item.id}</span>
             <span class="font-normal text-ink-mute" data-preview-note>{item.note}</span>
           </h2>
-          <!-- The sample box is what the capture shoots: the component on the page's paper,
-               at the width under review (390px phone, the row's width wide). -->
-          <div
-            data-preview-sample
-            class="rounded-xl border border-paper-edge bg-paper"
-            class:p-3={!item.frame}
-            class:overflow-hidden={Boolean(item.frame)}
-            class:w-[390px]={data.view.width === 'phone'}
-            class:max-w-[1100px]={data.view.width === 'wide' && !item.frame}
-            class:max-w-[1400px]={data.view.width === 'wide' && Boolean(item.frame)}
-            style:height={item.frame ? `${data.view.width === 'phone' ? (item.frame.phoneHeight ?? item.frame.height) : item.frame.height}px` : undefined}
-          >
-            <item.component {...item.props} />
-          </div>
+          <!-- The sample box is what the capture shoots: the component on the page's paper, at
+               the width under review (390px phone, the row's width wide). A framed component
+               (a shell) sits in the app's own chain: the window's fixed-height row, then a box
+               with <main>'s classes (the observatory and workspace layouts), then the shell —
+               nothing else between, so what scrolls here scrolls in the app. -->
+          {#if item.frame}
+            <div
+              data-preview-sample
+              class="flex overflow-hidden rounded-xl border border-paper-edge bg-paper"
+              class:w-[390px]={data.view.width === 'phone'}
+              class:max-w-[1400px]={data.view.width === 'wide'}
+              style:height="{data.view.width === 'phone' ? (item.frame.phoneHeight ?? item.frame.height) : item.frame.height}px"
+            >
+              <div data-preview-main class="flex-1 min-w-0 min-h-0 overflow-hidden">
+                <item.component {...item.props} />
+              </div>
+            </div>
+          {:else}
+            <div
+              data-preview-sample
+              class="rounded-xl border border-paper-edge bg-paper p-3"
+              class:w-[390px]={data.view.width === 'phone'}
+              class:max-w-[1100px]={data.view.width === 'wide'}
+            >
+              <item.component {...item.props} />
+            </div>
+          {/if}
         </section>
       {:else}
         <p class="m-0 text-sm text-ink-mute">No fixture named {data.view.fixture}. <a href={href({ fixture: null })}>Show all of them</a>.</p>

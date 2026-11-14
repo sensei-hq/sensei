@@ -63,8 +63,17 @@ const accepted = async () => null;
 /** A shell fixture's actions go nowhere: the bench shows one state at a time. */
 const still = { view: () => {}, compose: () => {}, filter: () => {}, narrow: () => {} };
 /** A stand-in body, so the shell's own regions are what the picture shows. */
+/** Rows enough that every shell's body overflows at both widths: the scroll test
+ *  (e2e/preview/scroll.spec.ts) scrolls each one to its last row. Numbered, so a
+ *  person reviewing sees where the scroll ends. */
+const SCROLL_ROWS = 60;
 const body = createRawSnippet(() => ({
-  render: () => '<div class="p-5 text-sm text-ink-mute">the view’s body goes here</div>',
+  render: () =>
+    `<ol class="m-0 list-none p-0" data-scroll-body>${Array.from(
+      { length: SCROLL_ROWS },
+      (_, i) =>
+        `<li data-scroll-row class="border-b border-paper-mute px-5 py-2 text-sm text-ink-soft">row ${i + 1} of ${SCROLL_ROWS}</li>`,
+    ).join('')}</ol>`,
 }));
 const band = createRawSnippet(() => ({
   render: () =>
@@ -94,7 +103,7 @@ export const RELAY_CATALOGUE: PreviewEntry[] = [
   entry('WaitList/nudged-by-you', 'after you nudge the oldest: its button gives way to “Nudged just now · by you”', WaitList, { rows: mockupWaitsNudged(), onnudge: () => {} }),
   entry('CompletedList/mockup', 'the mockup’s five completed tasks, merged and approved', CompletedList, { rows: mockupCompleted() }),
   ...SHELL_FIXTURES.map((f) =>
-    entry(`RelayShell/${f.name}`, f.note, RelayShell, { shell: toRelayShell(f.input(), still), viewId: `preview.relay.${f.name}`, children: body, compose: band }, { height: 560, phoneHeight: 1500 }),
+    entry(`RelayShell/${f.name}`, f.note, RelayShell, { shell: toRelayShell(f.input(), still), viewId: `preview.relay.${f.name}`, children: body, compose: band }, { height: 560, phoneHeight: 900 }),
   ),
 
   entry('Pill/neutral', 'a state pill, neutral tone', Pill, { label: 'idle', tone: 'neutral' }),
