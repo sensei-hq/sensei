@@ -387,7 +387,203 @@ impl PgStore {
         Ok(gone.rows_affected())
     }
 
+    /// Everything the lossy exporter needs for one session: full turn rows
+    /// (attrs + facts, not just the prose the analyzer reads) with the source
+    /// and model off the first row — sessions are single-source by
+    /// construction (one watermark per (source, file)). `None` when no turns
+    /// are kept.
+    pub async fn get_transcript_export(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<TranscriptExport>, String> {
+        let rows: Vec<ExportTurnRow> = sqlx_core::query_as::query_as(
+            "SELECT source, model, turn_index, user_text, assistant_text, started_at,
+                    origin, prompt_id, attrs, tokens_in, tokens_out, cache_read, cache_write,
+                    stop_reason, is_sidechain, skill, plugin, git_branch, effort, service_tier
+               FROM activity.transcript_turns
+              WHERE session_id = $1 ORDER BY turn_index",
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        // First row wins for source/model: uniform per session by construction
+        // (one watermark per (source, file)).
+        let source = rows[0].source.clone();
+        let model = rows[0].model.clone();
+        let turns = rows
+            .into_iter()
+            .map(|r| crate::transcript::TranscriptTurn {
+                turn_index: r.turn_index,
+                user_text: r.user_text,
+                assistant_text: r.assistant_text,
+                started_at: r.started_at,
+                origin: r.origin,
+                prompt_id: r.prompt_id,
+                attrs: r.attrs,
+                facts: crate::transcript::TurnFacts {
+                    tokens_in: r.tokens_in,
+                    tokens_out: r.tokens_out,
+                    cache_read: r.cache_read,
+                    cache_write: r.cache_write,
+                    stop_reason: r.stop_reason,
+                    is_sidechain: r.is_sidechain,
+                    skill: r.skill,
+                    plugin: r.plugin,
+                    git_branch: r.git_branch,
+                    effort: r.effort,
+                    service_tier: r.service_tier,
+                    counted_messages: std::collections::HashSet::new(),
+                },
+            })
+            .collect();
+        Ok(Some(TranscriptExport { source, model, turns }))
+    }
+
+    /// Watermarked transcript files gone from disk but still have kept
+    /// turns — the sessions a lossy export can rebuild. Only path-like keys
+    /// count (a Zed thread id is a key, not a path). The turn count is the real
+    /// one, not the watermark's claim (#125).
+    pub async fn missing_transcript_files(&self) -> Result<Vec<MissingTranscriptFile>, String> {
+        let rows: Vec<(String, String, String, i64)> = sqlx_core::query_as::query_as(
+            "SELECT w.source, w.session_id, w.file_path, COUNT(t.turn_index)
+               FROM activity.capture_watermarks w
+               LEFT JOIN activity.transcript_turns t
+                 ON t.source = w.source AND t.session_id = w.session_id
+              WHERE w.session_id IS NOT NULL
+              GROUP BY w.source, w.session_id, w.file_path
+             HAVING COUNT(t.turn_index) > 0",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .filter(|(_, _, path, _)| path.starts_with('/') && !std::path::Path::new(path).exists())
+            .map(|(source, session_id, file_path, turns)| MissingTranscriptFile {
+                source,
+                session_id,
+                file_path,
+                turns,
+            })
+            .collect())
+    }
+
+    /// The state of a session's transcript file for export gating: the export
+    /// endpoint only rebuilds files proven gone. Path-like watermark keys that
+    /// no longer exist → Missing; any still present → Present (hands off);
+    /// no path-like watermark at all (thread keys, unwatermarked rows) →
+    /// Unknown, which the endpoint also refuses — absence of evidence is not
+    /// evidence of absence.
+    pub async fn transcript_file_state(
+        &self,
+        session_id: &str,
+    ) -> Result<TranscriptFileState, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT file_path FROM activity.capture_watermarks WHERE session_id = $1",
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let mut missing: Option<String> = None;
+        for (path,) in rows.into_iter().filter(|(p,)| p.starts_with('/')) {
+            if std::path::Path::new(&path).exists() {
+                return Ok(TranscriptFileState::Present { file_path: path });
+            }
+            missing.get_or_insert(path);
+        }
+        Ok(missing.map_or(TranscriptFileState::Unknown, |file_path| TranscriptFileState::Missing {
+            file_path,
+        }))
+    }
+
     // ── Historical-bootstrap import (#75) ────────────────────────────────────
+}
+
+/// One full turn row for the exporter. Read by column: sqlx caps tuple
+/// `FromRow` at 16 columns and this select carries 20.
+struct ExportTurnRow {
+    source: String,
+    model: Option<String>,
+    turn_index: i32,
+    user_text: Option<String>,
+    assistant_text: String,
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    origin: String,
+    prompt_id: Option<String>,
+    attrs: serde_json::Value,
+    tokens_in: Option<i64>,
+    tokens_out: Option<i64>,
+    cache_read: Option<i64>,
+    cache_write: Option<i64>,
+    stop_reason: Option<String>,
+    is_sidechain: Option<bool>,
+    skill: Option<String>,
+    plugin: Option<String>,
+    git_branch: Option<String>,
+    effort: Option<String>,
+    service_tier: Option<String>,
+}
+
+impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for ExportTurnRow {
+    fn from_row(r: &'r sqlx_postgres::PgRow) -> Result<Self, sqlx_core::Error> {
+        use sqlx_core::row::Row;
+        Ok(ExportTurnRow {
+            source: r.try_get("source")?,
+            model: r.try_get("model")?,
+            turn_index: r.try_get("turn_index")?,
+            user_text: r.try_get("user_text")?,
+            assistant_text: r.try_get("assistant_text")?,
+            started_at: r.try_get("started_at")?,
+            origin: r.try_get("origin")?,
+            prompt_id: r.try_get("prompt_id")?,
+            attrs: r.try_get("attrs")?,
+            tokens_in: r.try_get("tokens_in")?,
+            tokens_out: r.try_get("tokens_out")?,
+            cache_read: r.try_get("cache_read")?,
+            cache_write: r.try_get("cache_write")?,
+            stop_reason: r.try_get("stop_reason")?,
+            is_sidechain: r.try_get("is_sidechain")?,
+            skill: r.try_get("skill")?,
+            plugin: r.try_get("plugin")?,
+            git_branch: r.try_get("git_branch")?,
+            effort: r.try_get("effort")?,
+            service_tier: r.try_get("service_tier")?,
+        })
+    }
+}
+
+/// Everything the lossy exporter needs for one session — see
+/// [`PgStore::get_transcript_export`].
+#[derive(Debug, Clone)]
+pub struct TranscriptExport {
+    pub source: String,
+    pub model: Option<String>,
+    pub turns: Vec<crate::transcript::TranscriptTurn>,
+}
+
+/// A watermarked transcript file gone from disk with kept turns — see
+/// [`PgStore::missing_transcript_files`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MissingTranscriptFile {
+    pub source: String,
+    pub session_id: String,
+    pub file_path: String,
+    pub turns: i64,
+}
+
+/// What the store knows about a session's transcript file: gone from disk
+/// (exportable), still present (hands off), or no path-like watermark to
+/// judge by. See [`PgStore::transcript_file_state`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TranscriptFileState {
+    Missing { file_path: String },
+    Present { file_path: String },
+    Unknown,
 }
 
 /// A transcript file's ingest cursor — see [`PgStore::get_capture_watermark`].

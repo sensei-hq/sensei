@@ -27,7 +27,7 @@
 		"@rokkit/chart": "^1.15.2",
 		"@rokkit/core": "^1.15.2",
 		"@rokkit/forms": "^1.15.2",
-		"@rokkit/graph": "^1.15.2",
+		"@rokkit/graph": "^1.15.3",
 		"@rokkit/icons": "^1.15.2",
 		"@rokkit/states": "^1.15.2",
 		"@rokkit/themes": "^1.15.2",

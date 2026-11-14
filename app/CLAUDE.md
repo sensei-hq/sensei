@@ -57,3 +57,5 @@ Companion references:
    - Playwright behaviour (e2e): `e2e/tests/*.spec.ts`, CI gate.
    - No checked-in PNGs. Visual baselines are not the regression strategy —
      eyeball against the mockup HTML in dev.
+   - Run vitest as `TZ=America/Chicago npx vitest run`: the sessions-digest
+     day-bucketing specs assume US Central local time and fail elsewhere.

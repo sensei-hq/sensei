@@ -13,6 +13,7 @@ pub mod claude;
 pub mod consent;
 pub mod copilot_cli;
 pub mod cursor;
+pub mod export;
 pub mod opencode;
 pub mod vscode;
 pub mod zed;

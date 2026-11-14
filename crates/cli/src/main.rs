@@ -163,6 +163,13 @@ enum Commands {
         cmd: ModelsCommands,
     },
 
+    /// Imported transcripts: list files gone from disk, or rebuild one as
+    /// lossy JSONL from its kept turns.
+    Transcript {
+        #[command(subcommand)]
+        cmd: TranscriptCommands,
+    },
+
     /// Add an external library's documentation
     AddLib {
         /// Library name
@@ -226,6 +233,29 @@ enum FolderCommands {
         old: String,
         /// The new absolute path — must already be indexed (scan it first).
         new: String,
+    },
+}
+
+/// `sensei transcript <cmd>` — the lossy exporter reads kept turns through the
+/// daemon; the daemon owns the database.
+#[derive(Subcommand)]
+enum TranscriptCommands {
+    /// List transcript files gone from disk that still have kept turns.
+    Missing,
+    /// Rebuild a session's transcript as JSONL from its kept turns. Lossy by
+    /// design (tool I/O, thinking, record boundaries and the uuid chain are
+    /// unrecoverable); every line is marked `sensei_regenerated` and ingest
+    /// skips marked lines, so an export can never degrade the rows it came from.
+    Export {
+        /// Session ids to export.
+        sessions: Vec<String>,
+        /// Also export every missing-file session (see `transcript missing`).
+        #[arg(long)]
+        missing: bool,
+        /// Where to write: stdout for one session by default; a file for one
+        /// session, or an existing directory (`<session>.jsonl` each) for many.
+        #[arg(long)]
+        out: Option<String>,
     },
 }
 
@@ -314,6 +344,7 @@ fn main() -> ExitCode {
             ModelsCommands::Pull { id } => models_pull(&id),
             ModelsCommands::Status => models_status(),
         },
+        Some(Commands::Transcript { cmd }) => return transcript_cmd(cmd),
         Some(Commands::AddLib { name, url }) => add_lib(&name, url.as_deref()),
         Some(Commands::Doctor { fix }) => return ExitCode::from(doctor::run(fix) as u8),
         Some(Commands::Upgrade { acp }) => upgrade_cmd(acp.as_deref()),
@@ -1177,6 +1208,165 @@ fn scaffold_cmd(what: Option<ScaffoldTarget>, path: Option<&str>) {
 /// `sensei index doctor` — GET the daemon's read-only index integrity report and
 /// print per-class drift counts + a few samples. Read-only: the daemon's periodic
 /// audit owns repair.
+fn transcript_cmd(cmd: TranscriptCommands) -> ExitCode {
+    match cmd {
+        TranscriptCommands::Missing => transcript_missing(),
+        TranscriptCommands::Export { sessions, missing, out } => {
+            transcript_export(&sessions, missing, out.as_deref())
+        }
+    }
+}
+
+fn transcript_missing() -> ExitCode {
+    ensure_daemon();
+    match client().get(format!("{}/api/transcripts/missing", daemon_url())).send() {
+        Ok(r) if r.status().is_success() => {
+            let rows: Vec<serde_json::Value> = match r.json() {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("transcript missing failed: bad response: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if rows.is_empty() {
+                println!("No missing transcript files with kept turns.");
+            }
+            for row in rows {
+                println!(
+                    "{}\t{}\t{} turns\t{}",
+                    row["session_id"].as_str().unwrap_or("?"),
+                    row["source"].as_str().unwrap_or("?"),
+                    row["turns"].as_i64().unwrap_or(0),
+                    row["file_path"].as_str().unwrap_or("?"),
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Ok(r) => {
+            eprintln!("transcript missing failed: HTTP {}", r.status());
+            ExitCode::FAILURE
+        }
+        Err(e) => {
+            eprintln!("transcript missing failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Where one export run writes.
+#[derive(Debug)]
+enum ExportOut {
+    Stdout,
+    File(PathBuf),
+    Dir(PathBuf),
+}
+
+/// Stdout for one session by default; a file for one session, an existing
+/// directory (`<session>.jsonl` each) for many. Errors rather than guessing.
+fn resolve_export_out(sessions: &[String], out: Option<&str>) -> Result<ExportOut, String> {
+    if sessions.is_empty() {
+        return Err("name a session id or pass --missing".to_string());
+    }
+    match out {
+        None if sessions.len() == 1 => Ok(ExportOut::Stdout),
+        None => Err(format!("{} sessions need --out <dir>", sessions.len())),
+        Some(p) => {
+            let path = PathBuf::from(p);
+            if path.is_dir() {
+                Ok(ExportOut::Dir(path))
+            } else if sessions.len() == 1 {
+                Ok(ExportOut::File(path))
+            } else {
+                Err("--out must be an existing directory for several sessions".to_string())
+            }
+        }
+    }
+}
+
+fn fetch_export(session: &str) -> Result<String, String> {
+    match client().get(format!("{}/api/transcripts/export/{session}", daemon_url())).send() {
+        Ok(r) if r.status().is_success() => r.text().map_err(|e| e.to_string()),
+        Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
+            Err("no kept turns for this session".to_string())
+        }
+        Ok(r) if r.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY => {
+            Err("source not supported by the exporter yet".to_string())
+        }
+        Ok(r) if r.status() == reqwest::StatusCode::CONFLICT => {
+            Err("transcript file still exists (or no watermark proves it gone) — not touching it"
+                .to_string())
+        }
+        Ok(r) => Err(format!("HTTP {}", r.status())),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn transcript_export(sessions: &[String], missing: bool, out: Option<&str>) -> ExitCode {
+    ensure_daemon();
+    let mut ids: Vec<String> = sessions.to_vec();
+    if missing {
+        match client().get(format!("{}/api/transcripts/missing", daemon_url())).send() {
+            Ok(r) if r.status().is_success() => {
+                let rows: Vec<serde_json::Value> = match r.json() {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("transcript export: missing list unreadable: {e}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                for row in rows {
+                    if let Some(s) = row["session_id"].as_str()
+                        && !ids.iter().any(|id| id == s)
+                    {
+                        ids.push(s.to_string());
+                    }
+                }
+            }
+            Ok(r) => {
+                eprintln!("transcript export: missing list failed: HTTP {}", r.status());
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("transcript export: missing list failed: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let dest = match resolve_export_out(&ids, out) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("transcript export: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let mut failed = 0;
+    for id in &ids {
+        let body = match fetch_export(id) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{id}: {e}");
+                failed += 1;
+                continue;
+            }
+        };
+        let written = match &dest {
+            ExportOut::Stdout => {
+                print!("{body}");
+                io::stdout().flush().map_err(|e| e.to_string())
+            }
+            ExportOut::File(p) => fs::write(p, &body).map_err(|e| e.to_string()),
+            ExportOut::Dir(d) => {
+                fs::write(d.join(format!("{id}.jsonl")), &body).map_err(|e| e.to_string())
+            }
+        };
+        if let Err(e) = written {
+            eprintln!("{id}: write failed: {e}");
+            failed += 1;
+        }
+    }
+    if failed > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+}
+
 fn index_doctor() {
     ensure_daemon();
     match client().get(format!("{}/api/index/doctor", daemon_url())).send() {
@@ -1617,6 +1807,67 @@ mod tests {
     fn models_requires_a_subcommand() {
         // Bare `sensei models` must not parse — a subcommand is required.
         assert!(Cli::try_parse_from(["sensei", "models"]).is_err());
+    }
+
+    #[test]
+    fn transcript_missing_subcommand_parses() {
+        let cli = Cli::parse_from(["sensei", "transcript", "missing"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Transcript { cmd: TranscriptCommands::Missing })
+        ));
+    }
+
+    #[test]
+    fn transcript_export_parses_sessions_missing_and_out() {
+        let cli =
+            Cli::parse_from(["sensei", "transcript", "export", "s1", "s2", "--out", "/tmp/x"]);
+        match cli.command {
+            Some(Commands::Transcript {
+                cmd: TranscriptCommands::Export { sessions, missing, out },
+            }) => {
+                assert_eq!(sessions, ["s1", "s2"]);
+                assert!(!missing);
+                assert_eq!(out.as_deref(), Some("/tmp/x"));
+            }
+            other => panic!("expected Transcript export, got {:?}", other.is_some()),
+        }
+        let cli = Cli::parse_from(["sensei", "transcript", "export", "--missing"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Transcript { cmd: TranscriptCommands::Export { missing: true, .. } })
+        ));
+    }
+
+    #[test]
+    fn transcript_requires_a_subcommand() {
+        assert!(Cli::try_parse_from(["sensei", "transcript"]).is_err());
+    }
+
+    #[test]
+    fn export_out_resolves_stdout_file_and_dir() {
+        // One session, no --out → stdout.
+        assert!(matches!(resolve_export_out(&["s1".to_string()], None), Ok(ExportOut::Stdout)));
+        // No sessions at all is a usage error, not a silent no-op.
+        assert!(resolve_export_out(&[], None).is_err());
+        // Several sessions need a directory to land in.
+        assert!(resolve_export_out(&["s1".to_string(), "s2".to_string()], None).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        // An existing directory takes files however many sessions there are…
+        match resolve_export_out(&["s1".to_string()], Some(dir.path().to_str().unwrap())) {
+            Ok(ExportOut::Dir(_)) => {}
+            other => panic!("expected Dir, got {other:?}"),
+        }
+        // …while a plain path is a file only for one session.
+        let file = dir.path().join("one.jsonl");
+        match resolve_export_out(&["s1".to_string()], Some(file.to_str().unwrap())) {
+            Ok(ExportOut::File(_)) => {}
+            other => panic!("expected File, got {other:?}"),
+        }
+        assert!(
+            resolve_export_out(&["s1".to_string(), "s2".to_string()], Some(file.to_str().unwrap()))
+                .is_err()
+        );
     }
 
     #[test]

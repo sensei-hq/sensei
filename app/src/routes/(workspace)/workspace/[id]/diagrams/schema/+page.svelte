@@ -125,7 +125,10 @@
                         <button class="p-0 bg-transparent border-none cursor-pointer text-ink-mute hover:underline"
                             onclick={() => view.select(null)} data-testid="schema-back">‹ {name}</button>
                     </nav>
-                    <div data-testid="schema-page" data-page={view.page} data-details-fit>
+                    <!-- flex-1: the page fills the scroller when short, so the Diagram
+                         tab's canvas gets the sized box its height:100% chain needs (#432);
+                         long Details content still grows it and scrolls. -->
+                    <div class="flex-1" data-testid="schema-page" data-page={view.page} data-details-fit>
                         {#if view.page === 'table'}
                             <TableView {model} entityKey={view.selected} onselect={(k) => view.select(k)} />
                         {:else if view.page === 'object'}
