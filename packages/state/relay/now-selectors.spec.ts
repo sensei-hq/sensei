@@ -208,7 +208,20 @@ describe('toWaitRows · who waits, on whom, oldest first', () => {
       task: 'ER sidebar on the shell (impl r1)',
       why: 'ER diagrams · approved, not merged · waiting on the coordinator',
       href: `/relay/${F.CREW_ID}/t-er`,
-      nudge: { label: 'Nudge the coordinator', canNudge: false },
+      nudge: {
+        label: 'Nudge the coordinator',
+        canNudge: true,
+        nudgedText: null,
+        message: {
+          crew_id: F.CREW_ID,
+          to: { kind: 'coordinator' },
+          task_id: 't-er',
+          text: 'ER sidebar on the shell has waited 52 min: approved, not merged.',
+          nudge: true,
+          reason: 'merge_pending',
+          waiting_min: 52,
+        },
+      },
     });
     expect(rows[1].why).toBe('Docs pages · verdict filed, not picked up · waiting on Docs pages (coral-spica)');
     expect(rows[1].nudge.label).toBe('Nudge coral-spica');
@@ -221,8 +234,49 @@ describe('toWaitRows · who waits, on whom, oldest first', () => {
     expect(idle.why).toBe('Sync hardening · lane idle, nothing assigned · waiting on the coordinator');
   });
 
-  it('nobody can nudge from the screen until the daemon takes a person’s nudge (#419)', () => {
-    expect(toWaitRows(waits(), opts()).every((r) => r.nudge.canNudge === false)).toBe(true);
+  it('each wait nudges the party it waits on, with the reason and the wait so far (#419)', () => {
+    const rows = toWaitRows(waits(), opts());
+    expect(rows.every((r) => r.nudge.canNudge)).toBe(true);
+    const by = (id: string) => rows.find((r) => r.id === id)!.nudge.message;
+    expect(by('t-libs')).toMatchObject({ to: { kind: 'lane', lane_id: 'l5' }, reason: 'verdict_unread', waiting_min: 41, task_id: 't-libs' });
+    expect(by('t-structure')).toMatchObject({ to: { kind: 'coordinator' }, reason: 'review_unassigned', waiting_min: 26 });
+    // An idle lane has no task and no time: it nudges for work, with no wait to report.
+    const idle = by('l6');
+    expect(idle).toMatchObject({ to: { kind: 'coordinator' }, task_id: null, reason: 'no_work', nudge: true });
+    expect(idle).not.toHaveProperty('waiting_min');
+    expect(idle.text).toBe('Sync hardening is idle with nothing assigned.');
+  });
+
+  it('once you nudge, the button gives way to when you did', () => {
+    const withNudge = (minutes: number, by: 'you' | 'sensei' | 'lane', age = 52) =>
+      toWaitRows(
+        F.now({
+          lanes: [
+            F.coordinatorLane({ task: null }),
+            F.lane({ id: 'l4', code: 'L4', title: 'ER diagrams', task: { ...task, id: 't-er', state: 'approved', state_changed_at: F.minutesAgo(age), last_nudge: { at: F.minutesAgo(minutes), by } } }),
+          ],
+        }),
+        opts(),
+      )[0].nudge;
+    expect(withNudge(0, 'you')).toMatchObject({ canNudge: false, nudgedText: 'Nudged just now · by you' });
+    expect(withNudge(12, 'you')).toMatchObject({ canNudge: false, nudgedText: 'Nudged 12 min ago · by you' });
+  });
+
+  it('past the threshold the row also shows the last automatic nudge; the button stays', () => {
+    const at = F.minutesAgo(9);
+    const rows = (age: number) =>
+      toWaitRows(
+        F.now({
+          lanes: [
+            F.coordinatorLane({ task: null }),
+            F.lane({ id: 'l4', code: 'L4', title: 'ER diagrams', task: { ...task, id: 't-er', state: 'approved', state_changed_at: F.minutesAgo(age), last_nudge: { at, by: 'sensei' } } }),
+          ],
+        }),
+        opts(),
+      )[0].nudge;
+    expect(rows(52)).toMatchObject({ canNudge: true, nudgedText: `Sensei nudged at ${hhmm(at)}` });
+    // Under the threshold the wait is not too long yet: nothing to say about it.
+    expect(rows(5)).toMatchObject({ canNudge: true, nudgedText: null });
   });
 
   it('a working lane does not wait; no read, no rows', () => {

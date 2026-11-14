@@ -38,9 +38,15 @@ const wait = (over: Partial<RelayWaitRowView> = {}): RelayWaitRowView => ({
   task: 'ER sidebar on the shell (impl r1)',
   why: 'ER diagrams · approved, not merged · waiting on the coordinator',
   href: '/relay/c/t-er',
-  nudge: { label: 'Nudge the coordinator', canNudge: false },
+  nudge: {
+    label: 'Nudge the coordinator',
+    canNudge: true,
+    nudgedText: null,
+    message: { crew_id: 'c', to: { kind: 'coordinator' }, task_id: 't-er', text: 'x', nudge: true, reason: 'merge_pending', waiting_min: 52 },
+  },
   ...over,
 });
+const nudged = (over: Partial<RelayWaitRowView['nudge']>) => ({ ...wait().nudge, ...over });
 
 const view = (over: Partial<RelayNeedsYouView> = {}): RelayNeedsYouView => ({
   count: 4,
@@ -117,14 +123,34 @@ describe('WaitList · WaitRow', () => {
     expect(over.querySelector('a[href="/relay/c/t-er"]')).not.toBeNull();
   });
 
-  it('Nudge shows only when the daemon can take it (#419); an idle lane is no link', () => {
+  it('Nudge {party} sends the row; an idle lane is no link (#419)', async () => {
+    const onnudge = vi.fn();
     const c = mount(WaitList, {
       rows: [wait(), wait({ id: 'l6', minutes: null, minutesText: '', over: false, task: 'Nothing assigned', href: null })],
-      onnudge: vi.fn(),
+      onnudge,
     });
-    expect(c.querySelector('[data-nudge]')).toBeNull();
+    const button = c.querySelector('[data-wait-row="t-er"] [data-nudge]') as HTMLButtonElement;
+    expect(text(button)).toBe('Nudge the coordinator');
+    button.click();
+    expect(onnudge).toHaveBeenCalledWith(expect.objectContaining({ id: 't-er' }));
     expect(c.querySelector('[data-wait-row="l6"] a')).toBeNull();
-    const can = mount(WaitList, { rows: [wait({ nudge: { label: 'Nudge the coordinator', canNudge: true } })], onnudge: vi.fn() });
-    expect(text(can.querySelector('[data-nudge]'))).toBe('Nudge the coordinator');
+  });
+
+  it('once you nudged, the button gives way to when; an automatic nudge shows beside the button', () => {
+    const mine = mount(WaitList, { rows: [wait({ nudge: nudged({ canNudge: false, nudgedText: 'Nudged just now · by you' }) })], onnudge: vi.fn() });
+    expect(mine.querySelector('[data-nudge]')).toBeNull();
+    expect(text(mine.querySelector('[data-nudged]'))).toBe('Nudged just now · by you');
+    const auto = mount(WaitList, { rows: [wait({ nudge: nudged({ nudgedText: 'Sensei nudged at 10:23' }) })], onnudge: vi.fn() });
+    expect(auto.querySelector('[data-nudge]')).not.toBeNull();
+    expect(text(auto.querySelector('[data-nudged]'))).toBe('Sensei nudged at 10:23');
+  });
+
+  it('a nudge in flight is busy and cannot be sent twice; a refusal says why on its row', () => {
+    const busy = mount(WaitList, { rows: [wait()], onnudge: vi.fn(), nudging: ['t-er'] });
+    const button = busy.querySelector('[data-nudge]') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    const refused = mount(WaitList, { rows: [wait()], onnudge: vi.fn(), errors: { 't-er': 'that lane has gone' } });
+    expect(text(refused.querySelector('[data-nudge-error]'))).toBe('that lane has gone');
   });
 });

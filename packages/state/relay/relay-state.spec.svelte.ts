@@ -287,6 +287,31 @@ describe('RelayState · the person’s writes', () => {
     expect(source.send).toHaveBeenCalledWith(body);
   });
 
+  it('a nudge sends the row’s message from this surface, pending until the source answers (#419)', async () => {
+    let release!: (v: unknown) => void;
+    const { source } = fakeSource({ send: vi.fn(() => new Promise((r) => (release = r))) });
+    const s = new RelayState(source, {}, reads());
+    const message = { crew_id: F.CREW_ID, to: { kind: 'coordinator' }, task_id: 't-er', text: 'ER has waited 52 min: approved, not merged.', nudge: true, reason: 'merge_pending', waiting_min: 52 } as const;
+    const sent = s.nudge({ id: 't-er', nudge: { message } } as never);
+    expect(s.nudging).toEqual(['t-er']);
+    release(F.ok({ message_id: 'm1' }));
+    expect(await sent).toBeNull();
+    expect(source.send).toHaveBeenCalledWith({ ...message, surface: 'desktop' });
+    expect(s.nudging).toEqual([]);
+    expect(s.nudgeErrors).toEqual({});
+  });
+
+  it('a refused nudge keeps its reason on its row, and a later one clears it', async () => {
+    const send = vi.fn().mockResolvedValueOnce(F.fail(409, 'that lane has gone')).mockResolvedValueOnce(F.ok({ message_id: 'm2' }));
+    const { source } = fakeSource({ send });
+    const s = new RelayState(source, {}, reads());
+    const row = { id: 't-er', nudge: { message: { crew_id: F.CREW_ID, to: { kind: 'coordinator' }, task_id: 't-er', text: 'x', nudge: true, reason: 'merge_pending' } } } as never;
+    expect(await s.nudge(row)).toBe('that lane has gone');
+    expect(s.nudgeErrors).toEqual({ 't-er': 'that lane has gone' });
+    expect(await s.nudge(row)).toBeNull();
+    expect(s.nudgeErrors).toEqual({});
+  });
+
   it('adding to the backlog is confirmed by its item events: no read of its own (#418)', async () => {
     const { source } = fakeSource();
     const queue = F.queue();
