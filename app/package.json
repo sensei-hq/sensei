@@ -16,6 +16,7 @@
 		"test:e2e:cold": "playwright test --config e2e/playwright.cold.config.ts --project=cold-start",
 		"preview:capture": "playwright test --config e2e/preview/playwright.config.ts --project=preview",
 		"preview:sheet": "node e2e/preview/sheet.mjs",
+		"preview:scroll": "playwright test --config e2e/preview/playwright.config.ts --project=scroll",
 		"mockup:render": "node e2e/mockup/render.mjs"
 	},
 	"dependencies": {
