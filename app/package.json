@@ -14,8 +14,8 @@
 		"test:e2e": "playwright test --config e2e/playwright.config.ts --project=tauri",
 		"test:inspect": "playwright test --config e2e/playwright.inspect.config.ts --project=inspect",
 		"test:e2e:cold": "playwright test --config e2e/playwright.cold.config.ts --project=cold-start",
-		"gallery:capture": "playwright test --config e2e/gallery/playwright.config.ts --project=gallery",
-		"gallery:sheet": "node e2e/gallery/sheet.mjs",
+		"preview:capture": "playwright test --config e2e/preview/playwright.config.ts --project=preview",
+		"preview:sheet": "node e2e/preview/sheet.mjs",
 		"mockup:render": "node e2e/mockup/render.mjs"
 	},
 	"dependencies": {

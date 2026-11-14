@@ -120,6 +120,10 @@ export default defineConfig(({ command }) => ({
     fs: { allow: ['.', '../packages'] },
     host: host || false,
     hmr: host ? { protocol: 'ws', host, port: 5183 } : undefined,
+    // The component preview (/preview, dev only) loads its pages by a dynamic import, so
+    // UnoCSS meets their classes only after the first paint and a fresh server's first load
+    // is unstyled. Transforming them at startup lets UnoCSS scan them first.
+    warmup: { clientFiles: ['./src/lib/preview/*.svelte', './src/lib/relay/*.svelte'] },
   },
 
   // Tauri expects an inlined build with no CDN. TAURI_ENV_DEBUG is still the

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Builds the review sheet: for every captured gallery fixture, each matrix
+// Builds the review sheet: for every captured preview fixture, each matrix
 // variant's component capture beside the mockup crop that `mockup-map.json`
 // names for it (rendered on demand through e2e/mockup/render.mjs).
 //
-//   node e2e/gallery/sheet.mjs [--out <dir>] [--mockup <Relay.dc.html>] [--variants a,b] [--embed]
+//   node e2e/preview/sheet.mjs [--out <dir>] [--mockup <Relay.dc.html>] [--variants a,b] [--embed]
 //
 // index.html links the PNGs beside it and opens in any browser. `--embed` also
 // writes sheet.artifact.html: self-contained (images inlined) and shaped for
@@ -35,7 +35,7 @@ function findUp(from, rel) {
     dir = parent;
   }
 }
-const OUT = resolve(opt('--out', process.env.GALLERY_OUT ?? resolve(here, 'out')));
+const OUT = resolve(opt('--out', process.env.PREVIEW_OUT ?? resolve(here, 'out')));
 const MOCKUP = resolve(opt('--mockup', process.env.RELAY_MOCKUP ?? findUp(here, 'coord/mockups/relay-lanes/Relay.dc.html') ?? ''));
 if (!existsSync(MOCKUP)) {
   console.error(`no mockup at ${MOCKUP || '(unset)'} — pass --mockup or RELAY_MOCKUP`);
@@ -43,7 +43,7 @@ if (!existsSync(MOCKUP)) {
 }
 const manifestPath = resolve(OUT, 'components', 'manifest.json');
 if (!existsSync(manifestPath)) {
-  console.error(`no capture manifest at ${manifestPath} — run the capture first (bun run gallery:capture)`);
+  console.error(`no capture manifest at ${manifestPath} — run the capture first (bun run preview:capture)`);
   process.exit(2);
 }
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -80,7 +80,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const rel = (p) => relative(OUT, p);
 // Embedded images are re-encoded as JPEG at half the 2x capture's width (macOS `sips`),
 // so the self-contained page stays under the artifact's 16 MB; without sips, the PNG.
-const shrinkDir = mkdtempSync(join(tmpdir(), 'gallery-sheet-'));
+const shrinkDir = mkdtempSync(join(tmpdir(), 'preview-sheet-'));
 let shrunk = 0;
 const dataUri = (p) => {
   try {
@@ -188,7 +188,7 @@ const body = (src) => `<div class="wrap">
   <div class="facts"><span>fixtures <b>${ids.length}</b></span><span>components <b>${components.length}</b></span><span>variants <b>${chosen.map(label).join(' · ')}</b></span><span>generated <b>${generated} UTC</b></span><span>mockup <b>Relay.dc.html (2026-11-10)</b></span></div>
   <div class="how">
     <div><h3>Mockup side</h3><p>The artboard's own render logic run for the state the component lives in, then the one region cropped. Not a screenshot of the canvas tool: a reproduction, so any state can be shown.</p></div>
-    <div><h3>Component side</h3><p>The dev gallery at <span style="font-family:var(--mono)">/gallery</span>, where each component renders its fixture on plain paper. Nothing reads the daemon.</p></div>
+    <div><h3>Component side</h3><p>The dev preview at <span style="font-family:var(--mono)">/preview</span>, where each component renders its fixture on plain paper. Nothing reads the daemon.</p></div>
     <div><h3>How to give feedback</h3><p>Name the fixture (component / fixture) and the variant. "Matches", "close, fix X", or "wrong shape" is enough; the issue for that component carries the fix.</p></div>
   </div>
   <ul class="toc">${toc}</ul>
