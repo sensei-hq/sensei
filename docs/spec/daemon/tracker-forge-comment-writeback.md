@@ -28,7 +28,7 @@ internal repository or project** (F7, user, 2026-11-13).
 | parent "Out of scope" `:686` | "adapters other than Jira" | "mapped fields on adapters other than Jira" |
 | parent W7 step 4 `:387-389` | `capabilities().writeback = false` → 409 `writeback_unsupported` | `capabilities().fields = false` → 409 `fields_unsupported` (F1) |
 | parent W8 `:431-433` | `capabilities().writeback = false` → 409 `writeback_unsupported` | `capabilities().comment = false` → 409 `writeback_unsupported` (F1) |
-| parent W9 status table and `status_for` ops `:484-486`, `failing` (W8), W11 enum `:561`, W-UI `:592-640` | 7 statuses; 5 ops; `failing` = assigned with status ≠ `ok`; "Write back to Jira" copy; `active` N = `assigned` | adds `not_private` (not a failure; F7) and op `Audience` (its own arms, F7); a 404 on a comment create goes through the issue check (`forbidden` or `not_found`, F6a), where it was `not_found`; a write 403 that names a rate limit is `rate_limited` (F8); kind-neutral copy and `active` N = `assigned − not_private` (F10) |
+| parent W9 status table and `status_for` ops `:484-486`, `failing` (W8), W11 enum `:561`, W-UI `:592-640` | 7 statuses; 5 ops; `failing` = assigned with status ≠ `ok`; "Write back to Jira" copy; `active` N = `assigned` | adds `not_private` (not a failure; F7) and op `Audience` (its own arms, F7); a 404 on a comment create goes through the issue check (`forbidden` or `not_found`, F6a), where it was `not_found`; a 403 that names a rate limit, on a read or a write, is `rate_limited` (F8); kind-neutral copy and `active` N = `assigned − not_private` (F10) |
 | linkage `tracker-jira-linkage.md` R8 `:528` (GET shape), `:531`, `:533`, `:548`; Future adapters `:707` | PATCH and PUT `/fields` → `writeback_unsupported`; forges `{history:false, writeback:false}` | PATCH as W8 above; PUT `/fields` → `fields_unsupported`; a 409 row for it; forges `{history:false, comment:true, fields:false}` |
 | `tracker-gitlab.md` `:29`, §G8 `:193-199`, `:83` (token), Out of scope `:249`, D10 `:274` | write-back unsupported; PAT `read_api` | comment supported, fields unsupported; `api` scope needed only for write-back |
 | `tracker-github.md` `:341`, `:366`, token `:220-225`, Out of scope `:413`, E13 `:435` | write-back unsupported; read-only token | comment supported; Issues: read and write needed only for write-back (F9) |
@@ -295,8 +295,8 @@ it. Deleting comments stays out of scope (parent).
   the comment `-- the ticket's repository or project is public or internal; nothing written
   (re-checked each pass)`. The existing comments change too:
   - `forbidden` becomes `401/403 other than a rate limit: …`
-  - `rate_limited` becomes `429 after the retry budget, or a write 403 that names a rate
-    limit (F8)`
+  - `rate_limited` becomes `429 after the retry budget, or a 403 (read or write) that
+    names a rate limit (F8)`
 
   `database/design.dbml:826-834` gets the same value.
 - `status_for` (`writeback.rs:89`) gains `WriteOp::Audience`, with explicit arms placed
@@ -306,7 +306,7 @@ it. Deleting comments stays out of scope (parent).
   - `RateLimited` → `rate_limited`, so `RATE_LIMITED_STOP` counts it
   - anything else, `Forbidden` and `Unauthorized` included → `error`, retried next pass.
     The read is a GET, and a GET's 403 cannot be told from GitHub's rate-limit 403
-    (F8 maps only writes). A sticky `forbidden` would let one throttled read hold every
+    (as first written, F8 mapped only writes; it now maps reads too). A sticky `forbidden` would let one throttled read hold every
     ticket of the repository until write-back is toggled.
 
   A failed read is cached for the pass like an answer, so each ticket it holds back
@@ -326,7 +326,7 @@ it. Deleting comments stays out of scope (parent).
 - The card's `writeback` object gains `"not_private": <n>`.
 - The TS `TrackerWritebackStatus` (`app/src/lib/types.ts:1961`) gains `'not_private'`.
 
-### F8 · A rate-limit 403 on a write is `rate_limited`
+### F8 · A rate-limit 403 is `rate_limited`, on a write or a read
 
 `RawResponse` (`transport.rs:11`) gains `rate_exhausted: bool`. `ReqwestRaw::execute`
 (`:195-205`) sets it when the response carries `x-ratelimit-remaining: 0`.
@@ -646,7 +646,8 @@ that (`is_marked` changes, the design does not). If X3 fails, only copy changes.
   deliberate skip.
 - **Encoding the key wrongly.** Building the GitLab path from anything but the stored
   lowercased `key`, or encoding more than `/`.
-- **A read 403 turned into `rate_limited`.** F8 applies to writes only.
+- **A rate-limit 403 left as `forbidden`.** On a read or a write, a 403 that names a
+  rate limit must be `rate_limited`, never the sticky `forbidden` (F8, amended at build).
 - **Fields shown for a forge.** The mapping UI, or `PUT /fields`, reachable on GitLab or
   GitHub.
 - **A stub left reachable.** A forge comment method or `issue_exists` still returns

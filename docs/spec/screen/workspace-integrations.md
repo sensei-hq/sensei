@@ -46,41 +46,60 @@ Where a user **connects this project to its issue tracker**: Jira, GitLab or Git
 per-project screen, not a global setting.
 
 **Eyebrow:** `繋 · INTEGRATIONS`. **Header:** "Issue trackers". **Sub-line** (superseded
-2026-10-26 by tracker-metrics-writeback W-UI, 2026-11-07 by `tracker-gitlab.md`, and
-2026-11-09 by `tracker-github.md`):
+2026-10-26 by tracker-metrics-writeback W-UI, 2026-11-07 by `tracker-gitlab.md`,
+2026-11-09 by `tracker-github.md`, and 2026-11-14 by `tracker-forge-comment-writeback.md`):
 "Connect this workspace's Jira, GitLab or GitHub boards, each at a level, so sensei can
 link AI sessions to tickets and report time, tokens and cost per ticket. On tickets
-assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields
-you map (GitLab and GitHub boards are read-only for now)."
+assigned to you, sensei writes these numbers back to the tracker: as a comment, or on
+Jira in the fields you map. It never comments on a public or internal GitLab project or
+GitHub repository."
 
 ## Write-back on each board card (tracker-metrics-writeback W-UI)
 
-A **GitLab** or **GitHub** card has neither the checkbox nor **Fields**. In their place it
-shows "Write-back: not available for GitLab yet" (or "…for GitHub yet",
-`data-writeback="unsupported"`): the daemon refuses write-back for both with 409
-`writeback_unsupported` (`tracker-gitlab.md` §G8, `tracker-github.md` §H6).
-Everything below is the Jira card's.
+Every card whose `writeback.supports.comment` is true has the checkbox and the state line;
+only a card whose `writeback.supports.fields` is true (Jira) has **Fields** (amended 2026-11-14, tracker-forge-comment-writeback). A **GitLab**
+or **GitHub** card has the checkbox and no **Fields**: the daemon writes the comment for both
+and refuses `PUT …/fields` with 409 `fields_unsupported` (`tracker-gitlab.md` §G8,
+`tracker-github.md` §H6). The block is gated on `supports`, never on the kind. A card
+whose `supports.comment` is false shows an unsupported line (`data-writeback="unsupported"`)
+in place of the checkbox; no registered tracker is in that state.
 
-- **Write back to Jira**: a labelled checkbox (`data-action="writeback"`) that sends
+- **Write back to {tracker}** ("Write back to Jira", "Write back to GitLab", "Write back to
+  GitHub"): a labelled checkbox (`data-action="writeback"`) that sends
   `PATCH …/trackers/{tracker}` `{writeback_enabled}` (`spec/daemon/tracker-metrics-writeback.md` W8). It is disabled while any request
   runs. The card shows the tracker the daemon returns, so a refused switch stays as it
   was and the alert says why.
 - **A state line** (`data-writeback-state=<state>`), from `writeback.state`:
-  - `active`: "Writing to N tickets assigned to you." (N = `writeback.assigned`; "1
-    ticket"), plus " K couldn't be written." when `failing > 0`
+  - `active`: "Writing to N tickets assigned to you." (N = `writeback.assigned −
+    writeback.not_private`, so skipped tickets are not counted (amended 2026-11-14, tracker-forge-comment-writeback); "1 ticket"), plus
+    " K couldn't be written." when `failing > 0` (`failing` never counts `not_private`)
   - `disabled`: "Write-back is off."
-  - `pass_failed`, by `error`: token → "Couldn't read the Jira token to write back.
+  - `pass_failed`, by `error`, naming the card's tracker ({tracker} is Jira, GitLab or
+    GitHub, (amended 2026-11-14, tracker-forge-comment-writeback)): token → "Couldn't read the {tracker} token to write back.
     Replace the token."; `db` → "Couldn't record what was written. Write-back retries
-    on each sync."; `rate_limited` → "Jira is rate-limiting writes. Write-back resumes
+    on each sync."; `rate_limited` → "{tracker} is rate-limiting writes. Write-back resumes
     on the next sync."; `transport` → "Writing didn't finish in time. Write-back resumes
     on the next sync."
   - `owner_not_a_person`: "This token belongs to an app account, so sensei can't tell
     which tickets are yours. Nothing is written."
   - `owner_lookup_failed`: "Couldn't check which tickets are yours: <error text>.
-    Retrying on each sync."
+    Retrying on each sync." (the error text in the card's tracker's words)
   - `owner_unknown`: "Checking which tickets are yours on the next sync."
   - `nothing_assigned`: "No tickets on this board are assigned to you."
-- **Fields** (`data-action="fields"`, "Fields (N mapped)") opens the board's mapping in a
+- **Skipped tickets** (`data-writeback="not-private"`), only when `writeback.not_private > 0`
+  (amended 2026-11-14, tracker-forge-comment-writeback): "N tickets are in public or internal repositories; sensei doesn't comment there."
+  ("1 ticket is …" for one.)
+- **Comment-only note** (`data-writeback="comment-only"`), on a card whose
+  `supports.fields` is false (amended 2026-11-14, tracker-forge-comment-writeback):
+  - GitLab: "Sensei posts one comment on each ticket assigned to you, in private projects
+    only, and keeps it up to date. The token needs the api scope. The first comment
+    notifies the ticket's participants; updates don't."
+  - GitHub: "Sensei posts one comment on each ticket assigned to you, in private
+    repositories only, and keeps it up to date. The token needs Issues: read and write on
+    each repository (or a classic repo token). The first comment notifies the ticket's
+    participants; updates don't."
+- **Fields** (`data-action="fields"`, "Fields (N mapped)"), only when `supports.fields`
+  (Jira), opens the board's mapping in a
   `data-section="fields"` editor:
   - one row per mapped field (`data-field-row=<i>`): a metric select and a "Jira field
     id" input. The select offers the 13 usage metrics, then the 21 SDLC
@@ -118,7 +137,7 @@ The **GitLab form** (`tracker-gitlab.md` §G1) has no email and no *Advanced* fi
 |---|---|---|---|
 | 1 | Group or project URL | text | "Open the group or project in GitLab and copy the address bar, e.g. https://gitlab.example.com/acme/platform. https only, on the standard port." |
 | 2 | Confirm the host | text; shown only while the URL's host is not `gitlab.com` | "Type the host from the URL again (e.g. gitlab.example.com). sensei sends your token only to this host." |
-| 3 | Access token | `type="password"`, never echoed | "In GitLab, create a personal or group access token with the read_api scope, and paste it here." No create-token link: the token page is on the user's own host. |
+| 3 | Access token | `type="password"`, never echoed | "In GitLab, create a personal or group access token with the read_api scope, and paste it here. Write-back also needs the api scope." (amended 2026-11-14, tracker-forge-comment-writeback) No create-token link: the token page is on the user's own host. |
 
 The GitLab form sends `{board_url, api_token}`, plus `confirm_host` when one was typed.
 The daemon compares the host; the UI only reads it to decide whether to ask.
@@ -129,7 +148,7 @@ fields:
 | # | Label | Input | Help text |
 |---|---|---|---|
 | 1 | Project URL | text | "Open the project on GitHub and copy the address bar, e.g. https://github.com/orgs/acme/projects/3." |
-| 2 | Access token | `type="password"`, never echoed | "Create a fine-grained, read-only token with Projects: read on the owner and Issues: read on the project's repositories. A classic token with repo and read:project also works, but can write to every repository it reaches. A ticket in a repository the token can't read shows as not found." The `unauthorized` alert links to `https://github.com/settings/personal-access-tokens/new`. |
+| 2 | Access token | `type="password"`, never echoed | "Create a fine-grained, read-only token with Projects: read on the owner and Issues: read on the project's repositories. A classic token with repo and read:project also works, but can write to every repository it reaches. A ticket in a repository the token can't read shows as not found. Write-back also needs Issues: read and write." (amended 2026-11-14, tracker-forge-comment-writeback) Connect itself needs only read access. The `unauthorized` alert links to `https://github.com/settings/personal-access-tokens/new`. |
 | 3 | Iteration field (optional) | text | "Only when the project has more than one Iteration field: its name, as the project shows it." |
 
 The GitHub form sends `{board_url, api_token}`, plus `iteration_field` when one was typed.
@@ -161,13 +180,15 @@ Jira · acme.atlassian.net · project AUTH · board "AUTH Scrum" (#42)
 [Sync now]  [Replace token]  [Disconnect]
 ```
 
-A GitLab card (amended 2026-11-07):
+A GitLab card (amended 2026-11-07; write-back block (amended 2026-11-14, tracker-forge-comment-writeback)):
 
 ```
 GitLab · gitlab.example.com · acme/platform
 Sprints: milestones
 ● connected · synced 2 min ago · 4 sprints · 87 tickets
-Write-back: not available for GitLab yet
+☐ Write back to GitLab
+Write-back is off.
+Sensei posts one comment on each ticket assigned to you, in private projects only, …
 [Sync now]  [Replace token]  [Disconnect]
 ```
 
@@ -219,7 +240,7 @@ Use https://<host>/<group> or https://<host>/<group>/<project>: https on the sta
 port, no subpath, and not a local name such as .local or .internal."), `unauthorized`
 ("GitLab rejected the token. Check it has the read_api scope and hasn't expired.", with
 no create-token link), `token_required` ("Enter a GitLab access token with the read_api
-scope."), `board_not_found` ("No group or project <board_ref> on <base_url>."),
+scope. Write-back also needs the api scope.", (amended 2026-11-14, tracker-forge-comment-writeback)), `board_not_found` ("No group or project <board_ref> on <base_url>."),
 `not_found` ("GitLab no longer has this group or project (it may have been deleted or
 moved)."), `rate_limited`, `bad_request` and the reach codes (`transport`, `http_error`,
 `redirect`, `decode`), which name GitLab.
@@ -244,7 +265,8 @@ moved)."), `rate_limited`, `bad_request` and the reach codes (`transport`, `http
 | `db` (a sync's `last_error`) | "sensei hit a database error while syncing." | **Retry sync** |
 | `unsupported_tracker` | "This tracker type isn't available in this version of sensei." | none |
 | `host_not_confirmed` (GitLab) | "Type the GitLab host again, exactly as in the board URL." | focus Board URL |
-| `writeback_unsupported` | "Write-back isn't available for this tracker yet." | none |
+| `writeback_unsupported` | "Write-back isn't available for this tracker yet." (PATCH on a tracker that cannot write the comment; none today) | none |
+| `fields_unsupported` | "Field mapping isn't available for this tracker; sensei writes a comment instead." (PUT `/fields` on GitLab or GitHub, (amended 2026-11-14, tracker-forge-comment-writeback)) | none |
 | `busy` | "A sync is already running." | none |
 | `invalid_body` (a refused write-back PATCH) | "sensei refused that change." | none |
 | Fields editor (`FIELD_MAPPING_ERRORS`, on the row it names; a duplicate names its second row): `unknown_metric` | "Unknown metric." | none |
@@ -286,7 +308,7 @@ moved)."), `rate_limited`, `bad_request` and the reach codes (`transport`, `http
 5. Daemon stopped → the daemon-error state with Retry, never the not-connected form.
 6. a11y: every input has a programmatic label; the status and alert regions are announced (axe check passes on all three states).
 7. Write-back: each card's checkbox reflects `writeback.enabled` and sends one PATCH; the state line has the text above for its state; a refused PATCH leaves the checkbox as it was and shows the alert (component tests).
-8. GitLab (component tests, `tracker-gitlab.md` D16): the GitLab radio is enabled; a GitLab tracker with `unauthorized` and its card render no "Jira"; the card shows "Write-back: not available for GitLab yet" and no checkbox; the source-change notice shows within 14 days of `sprint_source_changed_at`.
+8. GitLab (component tests, `tracker-gitlab.md` D16): the GitLab radio is enabled; a GitLab tracker with `unauthorized` and its card render no "Jira"; the card shows the "Write back to GitLab" checkbox, the comment-only note and no **Fields** (amended 2026-11-14, tracker-forge-comment-writeback); the source-change notice shows within 14 days of `sprint_source_changed_at`.
 
 ## Wrong gate
 
@@ -294,7 +316,9 @@ moved)."), `rate_limited`, `bad_request` and the reach codes (`transport`, `http
 - "Not connected" displayed because a read failed; "daemon didn't respond" shown for a daemon error code.
 - A connect button enabled on the Jira form without an email (it would always 401 on Jira Cloud).
 - UI-side URL parsing (a second parser beside the daemon's).
-- A GitLab failure, card or form that names Jira; a write-back checkbox or Fields on a GitLab card.
+- A GitLab failure, card or form that names Jira; a Fields section on a GitLab or GitHub card (amended 2026-11-14, tracker-forge-comment-writeback).
+- The write-back block or Fields gated on the kind's name rather than `writeback.supports`.
+- The `active` line counting `not_private` tickets as written, or `not_private` shown as a failure.
 - Status conveyed by colour alone; a destructive action without a confirming dialog.
 - Per-person data (assignee, author) shown. (`assigned_to_me` and the write-back state are not person data; showing them is allowed.)
 - The write-back checkbox flipping on a click the daemon refused.

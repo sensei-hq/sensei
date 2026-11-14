@@ -26,9 +26,10 @@ as D91). Sprints are **iterations** where the instance has them and
   board list.
 - **Built here:** the adapter, the key logic shared by the forges (`forge.rs`),
   `get_ticket` for GitLab keys (D63), the host policy, and kind-aware copy.
-- **Reported as unsupported, never as an error or a placeholder:** write-back
-  (W1–W10), history (S4), and everything history feeds. That covers sprint SDLC
-  metrics, estimates and points, and status-category timings (§G8).
+- **Reported as unsupported, never as an error or a placeholder:** mapped-field
+  write-back (W6, W7), history (S4), and everything history feeds. That covers sprint SDLC
+  metrics, estimates and points, and status-category timings (§G8). The usage comment
+  (W5) is written as a GitLab note on assigned tickets in private projects (amended 2026-11-14, tracker-forge-comment-writeback).
 
 GitHub is slice 2 and reuses §G6.
 
@@ -80,7 +81,8 @@ A new `AuthScheme::Header { name: &'static str, token: ApiToken }`. GitLab uses
 `HeaderValue` is built with **`set_sensitive(true)`**, as `basic_auth` already does
 for `Basic`, so neither hyper's nor reqwest's `Debug` or trace output shows it. A
 test asserts that `format!("{:?}", request)` does not contain the token. The PAT
-needs `read_api`. OAuth is out of scope.
+needs `read_api` to connect and sync. Write-back also needs the `api` scope; connect stays
+read-only and does not check for it (amended 2026-11-14, tracker-forge-comment-writeback). OAuth is out of scope.
 
 ### G3 · Version and capability probes
 
@@ -190,13 +192,15 @@ partial board as whole. So a board of exactly 20,000 items syncs.
 
 ### G8 · Unsupported capabilities
 
-`TrackerAdapter` gains `fn capabilities(&self) -> Capabilities { history: bool, writeback: bool }`.
-Jira returns `{true, true}`. GitLab returns `{false, false}`.
+`TrackerAdapter` gains `fn capabilities(&self) -> Capabilities`. It is now
+`Capabilities { history: bool, comment: bool, fields: bool }` (amended 2026-11-14, tracker-forge-comment-writeback), where it was
+`{ history, writeback }`. Jira returns `{true, true, true}`. GitLab returns
+`{false, true, false}`.
 
 - **History task**: skips a tracker with `history: false`, leaving `history_through`, `terms_at` and the history error NULL.
 - **SDLC reads**: today a task whose `tracker_tasks.history_through` is NULL gets `history_gap_from = i64::MIN` (`tracker_history.rs:309-313`), so its sprints read `history_pending` (`sdlc/sprint_replay.rs:190`, `:387-388`). A tracker whose estimates are not `learned` (`terms_at IS NOT NULL AND points_field IS NOT DISTINCT FROM coalesce(estimation_field,'none')`, `tracker_history.rs:261-263`) gives `not_synced` for `estimated_points` (`sdlc/ticket.rs:172`) and `velocity` (`sprint_replay.rs`, asserted at `:822`). Both say the data is coming. (`lead_hours` → `not_synced` at `sdlc/ticket.rs:362` comes from a missing `issue_created_at`, not from history. GitLab supplies `created_at`, so it is unaffected and unchanged.) For a tracker whose adapter has `history: false`, every reason that depends on history reads **`unsupported_by_tracker`** instead: each sprint SDLC key (after the sprint's own window reasons, so an undated milestone still reads `no_dates`), `predictability`, and a ticket's `estimated_points`. (Corrected at build: the draft also named "status timings", which no SDLC figure computes.) It is a **registered reason code**: a new `sdlc_metrics` row in `database/import/staging/reason_codes.jsonl`, with a precedence not yet used in the domain (`unique (domain, precedence)`, `database/ddl/table/sensei/reason_codes.ddl:32`), kind `normal`, summary **"Not available from this tracker"**, and detail "This tracker's adapter doesn't read ticket history, so figures built from it can't be computed." The wording is kind-neutral because one jsonl summary serves every kind. The Tickets screen shows it through its existing `GET /api/reason-codes/sdlc_metrics` lookup (`tickets-state.svelte.ts:84`). The `registered_reasons` checks (`sdlc/ticket.rs:972`) gain a `history: false` input.
-- **Write-back**: `PATCH …/trackers/{tracker} {"writeback_enabled": true}` and `PUT …/trackers/{tracker}/fields` on a `writeback: false` tracker → **409 `writeback_unsupported`**. The write-back pass skips such trackers. Integrations shows "Write-back: not available for GitLab yet" in place of the toggle.
-- The GitLab adapter's write-back methods (`find_comment`, `create_comment`, `update_comment`, `check_fields`, `field_in_use`, `write_fields`, `issue_exists`) return `Err(UnsupportedTracker)`, and `field_ref_shape` returns false. They are unreachable behind the guards above, and the guards are tested (D10).
+- **Write-back** (amended 2026-11-14, tracker-forge-comment-writeback): GitLab writes the usage comment as a note (`tracker-forge-comment-writeback.md` F5), so `PATCH …/trackers/{tracker} {"writeback_enabled": true}` → 200, and Integrations shows the "Write back to GitLab" toggle. `PUT …/trackers/{tracker}/fields` on a `fields: false` tracker → **409 `fields_unsupported`**, and Integrations shows no field mapping. A ticket in a public or internal project gets no note (`not_private`, F7). (Was: both routes → 409 `writeback_unsupported`, and the card showed an "unsupported" line in place of the toggle.)
+- The GitLab adapter's comment methods (`find_comment`, `create_comment`, `update_comment`, `issue_exists`) and `audience` are implemented (F5, F7) (amended 2026-11-14, tracker-forge-comment-writeback). Its field methods (`check_fields`, `field_in_use`, `write_fields`) return `Err(UnsupportedTracker)`, and `field_ref_shape` returns false. They are unreachable behind the `fields` guard, and the guards are tested (D10).
 - **`owner()`**: `GET /user` → `Person(AccountRef(id))`, or `NotAPerson` when `bot: true`.
 
 ### G9 · `get_ticket` for GitLab keys (D63/D71)
@@ -226,7 +230,7 @@ Jira returns `{true, true}`. GitLab returns `{false, false}`.
 | DDL `enum/sensei/tracker_kind.ddl` | `'gitlab'` added, following the add-value convention of `enum/…/assistant_family.ddl:20`; `make test-template`. The column comments in `table/sensei/trackers.ddl:47-54` name GitLab's values. |
 | `database/design.dbml` | `Enum tracker_kind` gains `"gitlab"`; the tracker notes (`:2955-2958`) gain GitLab |
 | CLI `crates/cli/src/tracker.rs` | `sensei tracker connect gitlab --workspace <w> --level <l> --board-url <url> --confirm-host <host>`. The token comes from `SENSEI_GITLAB_TOKEN`, else the first line of stdin (Jira's pattern: `SENSEI_JIRA_TOKEN`, `read_token`). The connect client timeout becomes **180 s** (5 validate requests × 30 s + the keyring call) for GitLab. |
-| App: Integrations | A **GitLab** radio (replacing "GitLab, coming soon"); board URL, confirm host and token; `Sprints: iterations\|milestones`; the §G3 notice; "Write-back: not available for GitLab yet"; **Replace token** for GitLab re-sends `board_url` built from `base_url` + `params.full_path`, `confirm_host` = the stored host, and the new token |
+| App: Integrations | A **GitLab** radio (replacing "GitLab, coming soon"); board URL, confirm host and token; `Sprints: iterations\|milestones`; the §G3 notice; the "Write back to GitLab" toggle with the comment-only note and no field mapping (amended 2026-11-14, tracker-forge-comment-writeback); **Replace token** for GitLab re-sends `board_url` built from `base_url` + `params.full_path`, `confirm_host` = the stored host, and the new token |
 | App: kind-aware copy | Every string naming Jira on a shared path takes the tracker's kind: `app/src/lib/tracker-errors.ts` (`:14` `CREATE_TOKEN_URL`, `:17, :23, :24, :26` (`token_required`, which GitLab returns), `:28, :29, :30, :49, :56, :57, :59, :69, :104`, plus `host_not_confirmed` and `writeback_unsupported`; SDLC reasons do not live here); `tickets-state.svelte.ts:220` (`no_dates`); `integrations-state.svelte.ts:256`; `IntegrationsScreen.svelte:72, :132, :164, :382` (shared), with the Jira-only form copy at `:286, :320, :324, :333` shown only for the Jira radio; `integrations-state.svelte.ts:375` (connect kind hard-coded to `'jira'`); `TicketsScreen.svelte:49`; `api/handlers/scheduled_tasks.rs:67` |
 | Docs | **Parent** `tracker-jira-linkage.md`: `:80` (one adapter), `:157` (`board_ref` for GitLab = `project:<id>`/`group:<id>`, with the source in `params`), R4 `:280-283` (Header auth, resolver, no proxy), R5 `:388`, R8 `:511, :530-531` (`host_not_confirmed` 422, `writeback_unsupported` 409, GitLab's validate count), R10 `:546-553`, `:662`, and the "Future adapters" table (iteration `state` is an integer; `board_ref` does not name the source). `tracker-metrics-writeback.md` W7 `:375` (PUT `/fields` → 409), W8 `:426-428` (PATCH → 409) and W10 `:514-524` (client and `write_transport`: resolver, `.no_proxy()`). `tracker-sdlc-metrics.md` S4/S5, S6 (the reason table) and S8 (`estimated_points` reasons): `unsupported_by_tracker`. `tracker-levels.md:27, :48, :65-67`: forge milestones are **sprints** on a sprint-level board, distinct from T3/V11 planning milestones read from an epic tracker. Screen specs `workspace-integrations.md` (`:43, :90-99, :121, :132-139, :151-180, :216, :218`) and `workspace-tickets.md` (`:77, :105-106`). `decisions.md` D91. `backlog.md:207-212` (closed by this spec). |
 
@@ -246,8 +250,8 @@ Jira returns `{true, true}`. GitLab returns `{false, false}`.
 
 ### Out of scope
 
-Write-back, history, SDLC sprint metrics, estimates and points for GitLab (all
-`unsupported_by_tracker`); OAuth; custom CA and self-signed TLS (FT6/O4); explicit
+Mapped-field write-back (amended 2026-11-14, tracker-forge-comment-writeback), history, SDLC sprint metrics, estimates and points for
+GitLab (all `unsupported_by_tracker`); OAuth; custom CA and self-signed TLS (FT6/O4); explicit
 ports and subpaths (OPEN-G1); scoped `workflow::` labels as statuses; acceptance
 criteria parsed from descriptions; past sprint membership; epics; GitHub (slice 2).
 
@@ -271,7 +275,7 @@ criteria parsed from descriptions; past sprint membership; epics; GitHub (slice 
 | D7 | Free fixture snapshot | sprint count = the fixture's distinct milestones (ancestor milestone included); a subgroup issue on a parent-group milestone has that sprint as current; the merge request is not a task; task-type issue scope = `normalize_repo_key("git@<host>:acme/platform.git")` |
 | D8 | Premium fixture, source switch (DB) | milestone snapshot, then iteration snapshot with a colliding numeric id 53 → two sprint rows, the milestone row has `removed_at IS NOT NULL`, and `params.sprint_source_changed_at` is set |
 | D9 | No sprints | empty fixture → `sprints` empty, every task `current_sprint_id IS NULL`, `last_error IS NULL`; a failing milestone page → `last_error = 'http_error'` and the tasks untouched |
-| D10 | Guards | PATCH `writeback_enabled:true` and PUT `/fields` on a GitLab tracker → 409 `writeback_unsupported`; after a history run, the GitLab tracker's `history_error`, `history_at` and `terms_at` (`trackers.ddl:29-31`) are NULL; its `/sprints` SDLC reasons (commitment and scope, `velocity`) and a task's `estimated_points` reason are `unsupported_by_tracker` (not `history_pending` / `not_synced`); `lead_hours` is computed |
+| D10 | Guards | PUT `/fields` on a GitLab tracker → 409 `fields_unsupported`, and PATCH `writeback_enabled:true` → 200 (amended 2026-11-14, tracker-forge-comment-writeback); was both → 409 `writeback_unsupported`; after a history run, the GitLab tracker's `history_error`, `history_at` and `terms_at` (`trackers.ddl:29-31`) are NULL; its `/sprints` SDLC reasons (commitment and scope, `velocity`) and a task's `estimated_points` reason are `unsupported_by_tracker` (not `history_pending` / `not_synced`); `lead_hours` is computed |
 | D11 | `forge.rs` | two repos with `#12` each: a bare `#12` links only the session's repo's task; NULL `repo_key` → none; `fix acme/platform#12` → mentions 1; `#123` → no link to `#12`; branch `12-fix` links; `unknown_keys` never returns a bare key; discovery for `acme/platform#99` against `Acme/Platform#99` → not_on_board empty |
 | D12 | Kind tests | `mod.rs:1274`, `trackers.rs:998-1003` and `IntegrationsScreen.spec.svelte.ts:94-98` replaced by positive `gitlab` cases; `every_registered_kind_is_a_label_of_the_ddl_enum` green; the dbml enum lists `gitlab` |
 | D13 | Resolver, wired into the **production** client | `ReqwestRaw::new` is one line delegating to the constructor the test uses, with the system lookup; the filter and `.no_proxy()` live in that shared constructor. (a) The resolver itself, given a stub lookup, returns a distinct refusal (not a send error) for `10.0.0.5`, `127.0.0.1`, `::1`, `::ffff:127.0.0.1`, `::ffff:169.254.169.254`, `169.254.169.254`, `100.64.0.1`, `0.1.2.3`, `64:ff9b::a00:1`, `fd00:ec2::254`, `fd12::1`, `100.100.100.200`, `2002:7f00:1::`, and passes a public address through to its caller. (b) Through `ReqwestRaw` built by the shared constructor: a stub lookup answering `127.0.0.1:<listener>` for a hostname → the listener receives **no** connection; the same with the filter predicate swapped to allow loopback → it does (the resolver is really on the path). (c) `#[serial]`, `HTTPS_PROXY` = a local proxy stub, target `https://gitlab.example.test` with the stub lookup → the proxy stub receives no connection and the lookup **was** asked for `gitlab.example.test`. Removing the filter or `.no_proxy()` from the shared constructor turns (b) or (c) red. Refusal is never inferred from `ReqwestRaw`'s `Err(())` (`transport.rs:157`) alone |

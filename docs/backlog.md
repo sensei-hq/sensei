@@ -244,7 +244,24 @@ and file what is still true as an issue.
   self-managed host, with a public-only resolver and no proxy on every tracker client;
   PAT (`read_api`), no OAuth. Write-back and history are unsupported
   (`unsupported_by_tracker`, 409 `writeback_unsupported`). D49 still puts the new org
-  adapters (GitHub Issues, ADO) on the dōjō-owned path first.
+  adapters (GitHub Issues, ADO) on the dōjō-owned path first. (Write-back amended
+  2026-11-14 by the forge comment slice below: GitLab writes the comment.)
+
+- **Forge comment write-back** (2026-11-13 → 2026-11-14, branch
+  `feature/forge-comment-writeback`, issues #436–#443, D93). Analysis
+  [`analysis/2026-11-13-forge-comment-writeback.md`](analysis/2026-11-13-forge-comment-writeback.md),
+  spec [`spec/daemon/tracker-forge-comment-writeback.md`](spec/daemon/tracker-forge-comment-writeback.md),
+  plan [`plans/2026-11-14-forge-comment-writeback.md`](plans/2026-11-14-forge-comment-writeback.md).
+  - **What it adds:** GitLab and GitHub write the usage comment (a note; a REST comment
+    edited with PATCH), marked `<!-- sensei:writeback -->`. Mapped fields stay Jira-only
+    (`Capabilities { history, comment, fields }`; PUT `/fields` → 409 `fields_unsupported`).
+    A ticket in a public or internal repository or project gets no comment (`not_private`,
+    re-checked each pass). A 403 that names a rate limit is `rate_limited`. Connect stays
+    read-only; write-back needs GitLab `api` or GitHub Issues: read and write.
+  - **Still open:** W8 (#443), the live check after merge: probes X2 (the marker comes back
+    verbatim), X3 (an edit sends no notification), X5 (a private repo is commented, a
+    public one is not) and X6 (a GitHub comment edit after an issue transfer), against test
+    projects on gitlab.com and github.com. Outcomes go in the spec's Probes table.
 
 - **`reads_history` re-reads the tracker row** (LOW, from the GitLab F1 review) —
   `sdlc::reads_history` (`crates/senseid/src/sdlc/mod.rs`) does one primary-key read of

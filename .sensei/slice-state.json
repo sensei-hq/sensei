@@ -13,14 +13,15 @@
     "W6 #441",
     "W7 #442"
   ],
-  "current_phase": "W7 #442",
+  "current_phase": "done (W8 #443 is the user's, after merge)",
   "completed": [
     "W1 #436",
     "W3 #438",
     "W4 #439",
     "W2 #437",
     "W5 #440",
-    "W6 #441"
+    "W6 #441",
+    "W7 #442"
   ],
   "gate_status": "pass",
   "open_questions": [],
@@ -57,5 +58,5 @@
       "why": "W5 review: HIGH (no pass-level tests \u2014 added), MEDIUM (read 403 sticky on GitHub), LOWs"
     }
   ],
-  "next_command": "/sensei:build W7 (#442): F11 docs \u2014 parent spec (Out of scope, W5, W7, W8, W9, W10, W11, W-UI, gate 13), linkage :528 :531 :533 :548 :707, tracker-gitlab.md, tracker-github.md, decisions.md D93 + notes on D50/D91/D92, screen specs workspace-integrations.md and workspace-tickets.md, backlog entry; gate 15 rg checks"
+  "next_command": "Open a PR feature/forge-comment-writeback \u2192 develop; after merge, W8 (#443): live check X2, X3, X5, X6 on gitlab.com and github.com test projects; then /sensei:complete"
 }

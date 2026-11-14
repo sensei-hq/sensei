@@ -9,7 +9,7 @@ create type tracker_writeback_status as enum (
 , 'field_invalid'    -- 400 on a mapped-field write (sticky until the mapping changes)
 , 'comment_removed'  -- someone deleted sensei's comment (sticky: sensei does not re-post)
 , 'not_found'        -- the ticket is gone (sticky)
-, 'rate_limited'     -- 429 after the retry budget, or a write 403 that names a rate limit (retried next pass)
+, 'rate_limited'     -- 429 after the retry budget, or a 403 (read or write) that names a rate limit (retried next pass)
 , 'error'            -- anything else (retried next pass)
 , 'not_private'      -- the ticket's repository or project is public or internal; nothing written (re-checked each pass)
 );

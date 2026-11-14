@@ -13,12 +13,18 @@ analysis: docs/analysis/2026-10-26-tracker-metrics-writeback.md
 > in `sensei.tracker_metric`. A mapped figure still being derived holds that ticket's field
 > writes back for the pass (A9). The comment surface is unchanged.
 
+> **Extended 2026-11-14** by [`tracker-forge-comment-writeback.md`](tracker-forge-comment-writeback.md)
+> (D93): GitLab and GitHub write the comment surface too. Mapped fields stay Jira-only.
+> Capabilities split into `comment` and `fields`. A ticket in a public or internal repository
+> or project gets no comment (`not_private`). The sections below carry the amendments.
+
 ## Purpose
 
 After every successful sync, write each ticket's R7 usage back to the tracker, but only
 for tickets **assigned to the token owner**. The numbers go into the custom fields the user
 mapped on the board, or, when none are mapped, into one sensei comment per ticket that is
-edited in place. Jira is the first adapter. The engine is provider-neutral.
+edited in place. Jira was the first adapter; GitLab and GitHub write the comment only
+(amended 2026-11-14, `tracker-forge-comment-writeback.md`). The engine is provider-neutral.
 
 ## Overrides of parents (reversals approved by the user, 2026-10-26)
 
@@ -325,6 +331,22 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   
   The comment ref is kept with `comment_removed`, so the status explains it. Sensei
   doesn't post again on its own.
+- **Per kind** (amended 2026-11-14, `tracker-forge-comment-writeback.md` F4–F6b):
+
+  | Kind | Comment | Adopted when | Update |
+  |---|---|---|---|
+  | Jira | ADF `doc`, as above | author is the owner and the first text node starts with `Sensei · AI usage` | `PUT …/comment/{ref}?notifyUsers=false` |
+  | GitLab | a note, Markdown (F4) | author is the owner, the body starts with `<!-- sensei:writeback -->`, and it isn't a system note | `PUT …/issues/{iid}/notes/{ref}` |
+  | GitHub | a REST issue comment, Markdown (F4) | author is the owner and the body starts with `<!-- sensei:writeback -->` | `PATCH /repos/{o}/{r}/issues/comments/{ref}` |
+
+  The forge body starts with the hidden marker `<!-- sensei:writeback -->`, then the title in
+  bold and one list item per line. Every title and line is sanitised (F4). A forge addresses
+  the ticket by the stored `key`. Before any adoption or create, the issue at that address
+  must have `id` = `external_id`, otherwise `not_found` (F6b). A forge ticket whose
+  repository or project is public or internal gets no comment (`not_private`, F7).
+- **A 404 on create** (amended 2026-11-14, F6a, every kind) runs the same issue check: the
+  ticket is there → `forbidden` (it can be read but not commented on); it's gone →
+  `not_found`; the check fails → `status_for(IssueCheck, e)`.
 
 ### W6 · Surface: mapped fields
 
@@ -384,9 +406,10 @@ from the edit screen is refused with a 400, which is `field_invalid` (W4).
      (the second occurrence's value).
   4. Unknown workspace or tracker → 404 (`workspace_not_found` / `tracker_not_found`). This
      comes first because the tracker's adapter owns the field-id shape; it is a database
-     read, not a network call. A tracker whose adapter cannot write back
-     (`capabilities().writeback = false`, GitLab today) → 409 `writeback_unsupported`
-     (amended 2026-11-07, `tracker-gitlab.md` §G8).
+     read, not a network call. A tracker whose adapter cannot map fields
+     (`capabilities().fields = false`, GitLab and GitHub) → 409 `fields_unsupported`, before
+     the lock, any network call and any DB write; `[]` reaches it too (amended 2026-11-07,
+     `tracker-gitlab.md` §G8; amended 2026-11-14, `tracker-forge-comment-writeback.md` F1).
   5. `field_ref` fails `adapter.field_ref_shape` (Jira: `^customfield_[1-9][0-9]{0,9}$`)
      → 422 `invalid_field_ref` `{field_ref}`. No network request has been made yet.
      Then the Save takes the board's lock (`TrackerLocks`, the one sync and the pass
@@ -428,21 +451,28 @@ from the edit screen is refused with a 400, which is `field_invalid` (W4).
 - `PATCH /api/workspaces/{id}/trackers/{tracker}`: the body must be exactly
   `{"writeback_enabled": <bool>}`. Anything else (missing, non-bool, extra key) → 422
   `invalid_body`. It returns 200 with the tracker in the `GET …/trackers` element shape.
-  `true` on a tracker whose adapter cannot write back (`capabilities().writeback = false`,
-  GitLab today) → 409 `writeback_unsupported`; `false` is always allowed. The write-back
-  pass skips such a tracker (amended 2026-11-07, `tracker-gitlab.md` §G8).
+  `true` on a tracker whose adapter cannot write the comment (`capabilities().comment = false`;
+  no registered adapter today) → 409 `writeback_unsupported`; `false` is always allowed. The
+  write-back pass skips such a tracker (amended 2026-11-07, `tracker-gitlab.md` §G8; amended
+  2026-11-14, `tracker-forge-comment-writeback.md` F1: Jira, GitLab and GitHub all write the
+  comment).
   Going false → true clears `comment_removed`, `forbidden`, `not_found` and `field_invalid` for that
   tracker's tasks, and with `comment_removed` it also sets `writeback_comment_ref = NULL`
   and `writeback_hash = NULL`. The next pass therefore posts a new comment.
 - `GET …/trackers`: each tracker gains
-  `"writeback": {"enabled", "state", "surface": "comment"|"fields", "mapped": <n>, "assigned": <n>, "failing": <n>, "error": <code|null>}`:
+  `"writeback": {"enabled", "state", "surface": "comment"|"fields", "supports": {"comment": <bool>, "fields": <bool>}, "mapped": <n>, "assigned": <n>, "failing": <n>, "not_private": <n>, "error": <code|null>}`:
+  - `supports`: the adapter's `capabilities().comment` and `.fields` (amended 2026-11-14,
+    `tracker-forge-comment-writeback.md` F10). Jira `{true, true}`; GitLab and GitHub
+    `{true, false}`.
   - `mapped`: the number of mapped `tracker_fields` rows; `surface` is `fields` when it is > 0
   - `assigned`: live tasks (`removed_at IS NULL`) with `assigned_to_me = true`
-  - `failing`: the subset of `assigned` whose `writeback_status` is set and isn't `ok`.
-    Never-written (NULL) and reassigned or removed tickets don't count, so
+  - `failing`: the subset of `assigned` whose `writeback_status` is set and is neither `ok`
+    nor `not_private`. Never-written (NULL) and reassigned or removed tickets don't count, so
     `failing ≤ assigned`.
+  - `not_private`: the subset of `assigned` whose `writeback_status` is `not_private` (F7).
+    It is a deliberate skip, not a failure.
 
-  Both come from one `PgStore::writeback_counts(tracker_id) -> (assigned, failing)`.
+  All three come from one `PgStore::writeback_counts(tracker_id) -> (assigned, failing, not_private)`.
   `state` is the first of these that applies:
   1. `disabled`
   2. `pass_failed` (`writeback_error` not NULL)
@@ -470,9 +500,14 @@ The mapping covers every `TrackerError` and every operation:
 | outcome | status | sticky until |
 |---|---|---|
 | 2xx | `ok` | n/a |
-| `Forbidden` (403), `Unauthorized` (401) on any write | `forbidden` | toggle on, re-connect |
+| `Forbidden` (403 that names no rate limit), `Unauthorized` (401) on any write | `forbidden` | toggle on, re-connect |
+| a 403 that names a rate limit (`Retry-After`, `x-ratelimit-remaining: 0`, or a JSON `message` containing "rate limit"), on a read or a write (amended 2026-11-14, F8); the issue check (W5, F6a) is the exception: any of its errors but `NotFound` is `error` | `rate_limited` (via `RateLimited`) | not sticky |
+| a 410 on any request (F8) | as `NotFound` | as `NotFound` |
 | `BadRequest` (400) on a field write | `field_invalid` | mapping PUT, toggle on, re-connect |
-| `NotFound` on a field write or a comment create; the W5 404 check | `not_found` | toggle on, re-connect |
+| `NotFound` on a field write; the W5 404 check finds no issue; the forge identity check (F6b) finds a different issue | `not_found` | toggle on, re-connect |
+| `NotFound` on a comment create, then the issue check finds the issue (amended 2026-11-14, F6a) | `forbidden` | toggle on, re-connect |
+| the ticket's repository or project is public or internal (F7) | `not_private`, nothing written; not a failure | not sticky: re-checked each pass |
+| the visibility read (`Audience`) fails: `NotFound` → `not_found`; `RateLimited` → `rate_limited`; any other, `Forbidden` and `Unauthorized` included → `error` (F7) | as named | as named |
 | on the W5 comment-list read (`find_comment`): `Unauthorized`/`Forbidden` → `forbidden`, `NotFound` → `not_found`, any other → `error` | as named | as named |
 | the W5 404 check finds the issue | `comment_removed` | toggle on, re-connect (both clear the ref) |
 | `RateLimited` after `WRITE_RETRIES` | `rate_limited` | not sticky |
@@ -482,7 +517,8 @@ The mapping covers every `TrackerError` and every operation:
 | `Db`, `TokenMissing`, `CredentialStore`, `UnsupportedTracker` from a single request | `error` | not sticky |
 
 `status_for(op, TrackerError) -> WritebackStatus` is total. `op` is one of `FindComment`,
-`CreateComment`, `UpdateComment`, `IssueCheck` or `WriteFields`, and its test iterates every
+`CreateComment`, `UpdateComment`, `IssueCheck`, `WriteFields` or `Audience` (amended
+2026-11-14, F7), and its test iterates every
 `op` × `TrackerError::ALL` with no wildcard arm.
 
 - A write failure **never** writes `trackers.last_error` or changes the sync's result. The
@@ -495,7 +531,7 @@ The mapping covers every `TrackerError` and every operation:
 ### W10 · Seams (provider-neutral)
 
 ```rust
-pub enum WriteMethod { Post, Put }
+pub enum WriteMethod { Post, Put, Patch }   // Patch: GitHub comment edits (amended 2026-11-14)
 
 #[async_trait] pub trait WriteTransport: Send + Sync {
     async fn send_json(&self, method: WriteMethod, path: &str, query: &[(&str, String)],
@@ -537,17 +573,27 @@ pub enum WriteMethod { Post, Put }
   - `field_ref_shape(&str) -> bool`
   - `check_fields(t, &[String]) -> Result<Vec<FieldCheck>, TrackerError>`
   - `field_in_use(t, &BoardScope, &str) -> Result<bool, TrackerError>`
-  - `find_comment(t, task_ext_id, &AccountRef) -> Result<Option<String>, TrackerError>`
-  - `create_comment(w, task_ext_id, &Report) -> Result<String, TrackerError>`
-  - `update_comment(w, task_ext_id, comment_ref, &Report) -> Result<(), TrackerError>`
-  - `issue_exists(t, task_ext_id) -> Result<bool, TrackerError>`
+  - `find_comment(t, &TaskRef, &AccountRef) -> Result<Option<String>, TrackerError>`
+  - `create_comment(w, &TaskRef, &Report) -> Result<String, TrackerError>`
+  - `update_comment(w, &TaskRef, comment_ref, &Report) -> Result<(), TrackerError>`
+  - `issue_exists(t, &TaskRef) -> Result<bool, TrackerError>`
   - `write_fields(w, task_ext_id, &[(String, FieldValue)]) -> Result<(), TrackerError>`,
     where `FieldValue = Int(i64) | Dec(String) | Null`
+  - `audience_key(&TaskRef) -> Option<String>` and
+    `audience(t, audience_key) -> Result<Audience, TrackerError>` (F7; Jira: `None`, never called)
+
+  `TaskRef { external_id, key }` (amended 2026-11-14, `tracker-forge-comment-writeback.md`
+  F2): the forges address a ticket by project and number, derived from the stored `key`.
+  Jira reads only `external_id`.
 - **Path safety.** Before any path is built, each adapter write method checks
-  `task_ext_id` and `comment_ref` against the adapter's id shape (Jira: `^[0-9]{1,18}$`)
-  and every `field_ref` against `field_ref_shape`. Anything that fails returns
-  `Decode`, mapped to `error`, without sending a request, so a real 400 stays the only
-  `field_invalid`.
+  `task_ext_id` and `comment_ref` against the adapter's id shape (`tracker::is_numeric_id`,
+  `^[0-9]{1,18}$`, shared by every adapter since 2026-11-14, F3)
+  and every `field_ref` against `field_ref_shape`. Anything that fails returns an error
+  mapped to `error`, without sending a request: `Decode` on a field write, so a real 400
+  stays the only `field_invalid`, and `BadRequest` on a comment method (as built). The
+  forges check the `key` shape the same way (F5, F6): GitLab's `parse_key` must succeed,
+  the path must contain `/`, and `iid` must be 1 to `i64::MAX`; GitHub's `github_key` must
+  succeed. A failing key or `comment_ref` returns `BadRequest` with no request.
 - `TrackerRow.owner_ref` becomes `Option<AccountRef>`, so a `{:?}` of the row the pass
   carries can't print the owner's id (gate 5).
 - `tracker/writeback.rs` holds the pass, the payload, the hash, `render` and the status
@@ -558,7 +604,7 @@ pub enum WriteMethod { Post, Put }
 
 - New enums, each pinned to its Rust `ALL` by a test as `tracker_error` is:
   - `tracker_metric` (W3 order)
-  - `tracker_writeback_status` (`ok, forbidden, field_invalid, comment_removed, not_found, rate_limited, error`)
+  - `tracker_writeback_status` (`ok, forbidden, field_invalid, comment_removed, not_found, rate_limited, error, not_private`; `not_private` added 2026-11-14 by an `apply/before` hook, `tracker-forge-comment-writeback.md` F7)
   - `tracker_owner_state` (`unknown, not_a_person`)
 - New table `tracker_fields` (W6).
 - `trackers` gains `owner_ref text`, `owner_state tracker_owner_state`,
@@ -589,29 +635,49 @@ pub enum WriteMethod { Post, Put }
 
 ### W-UI · Integrations screen
 
-- **Sub-line** (based on the shipped D40 text in `IntegrationsScreen.svelte:71`): "Connect this
-  workspace's Jira boards, each at a level, so sensei can link AI sessions to tickets and
-  report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these
-  numbers back to Jira, as a comment or in the fields you map."
-- **Each board card** gets:
-  - **Write back to Jira**, a toggle (`data-action="writeback"`) that sends the PATCH.
+Amended 2026-11-14 (`tracker-forge-comment-writeback.md` F10): the copy names the card's
+tracker, never Jira on a forge card, and the write-back block is gated on
+`writeback.supports`, never on the kind.
+
+- **Sub-line** (based on the shipped D40 text in `IntegrationsScreen.svelte:73`): "Connect this
+  workspace's Jira, GitLab or GitHub boards, each at a level, so sensei can link AI sessions
+  to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei
+  writes these numbers back to the tracker: as a comment, or on Jira in the fields you map.
+  It never comments on a public or internal GitLab project or GitHub repository."
+- **Each board card** whose `writeback.supports.comment` is true gets:
+  - **Write back to {tracker}** ("Write back to Jira", "… GitLab", "… GitHub", from
+    `TRACKER_NAME`), a toggle (`data-action="writeback"`) that sends the PATCH.
     While pending, the toggle is disabled. On error, it reverts and shows the code text.
   - **A state line** (`data-writeback-state=<state>`):
-    - `active`: "Writing to N tickets assigned to you." N is `writeback.assigned`. With
+    - `active`: "Writing to N tickets assigned to you." N is `writeback.assigned −
+      writeback.not_private`, so skipped tickets are not counted as written. With
       `failing > 0` it adds " K couldn't be written."
     - `disabled`: "Write-back is off."
-    - `pass_failed`, by `error` code:
-      - `token_missing` / `credential_store`: "Couldn't read the Jira token to write back. Replace the token."
+    - `pass_failed`, by `error` code (`writebackStopped(code, kind)`; {tracker} is the
+      card's tracker name):
+      - `token_missing` / `credential_store`: "Couldn't read the {tracker} token to write back. Replace the token."
       - `db`: "Couldn't record what was written. Write-back retries on each sync."
-      - `rate_limited`: "Jira is rate-limiting writes. Write-back resumes on the next sync."
+      - `rate_limited`: "{tracker} is rate-limiting writes. Write-back resumes on the next sync."
       - `transport`: "Writing didn't finish in time. Write-back resumes on the next sync."
     - `owner_not_a_person`: "This token belongs to an app account, so sensei can't tell
       which tickets are yours. Nothing is written."
     - `owner_lookup_failed`: "Couldn't check which tickets are yours: <error text>.
-      Retrying on each sync." The `<error text>` is `tracker-errors.ts`'s words for the code.
+      Retrying on each sync." The `<error text>` is `tracker-errors.ts`'s words for the code,
+      in the card's tracker's words (`writebackText(w, kind)`).
     - `owner_unknown`: "Checking which tickets are yours on the next sync."
     - `nothing_assigned`: "No tickets on this board are assigned to you."
-  - **Fields** (`data-section="fields"`): lists the mappings in enum order, adds a row
+  - **Skipped tickets** (`data-writeback="not-private"`), only when `not_private > 0`:
+    "N tickets are in public or internal repositories; sensei doesn't comment there."
+    ("1 ticket is …" for one.)
+  - **Comment-only note** (`data-writeback="comment-only"`), when `!supports.fields`:
+    - GitLab: "Sensei posts one comment on each ticket assigned to you, in private projects
+      only, and keeps it up to date. The token needs the api scope. The first comment
+      notifies the ticket's participants; updates don't."
+    - GitHub: "Sensei posts one comment on each ticket assigned to you, in private
+      repositories only, and keeps it up to date. The token needs Issues: read and write on
+      each repository (or a classic repo token). The first comment notifies the ticket's
+      participants; updates don't."
+  - **Fields** (`data-section="fields"`), only when `supports.fields` (Jira): lists the mappings in enum order, adds a row
     (metric select + field id input), removes a row, and saves with `PUT …/fields`. Under
     the editor: "Each ticket counts its own sessions in full; don't sum these fields across
     tickets." W7 errors are shown inline on the row they name:
@@ -629,19 +695,20 @@ pub enum WriteMethod { Post, Put }
     `errorFor`'s text. A duplicate marks the second row.
 - **Per-ticket write status** on the Tickets screen stays out of this slice. The state
   line's `failing` count is the only aggregate.
-- **Scheduled tasks**: the `tracker_sync` description (`api/handlers/scheduled_tasks.rs:63`)
-  becomes "Tracker sync — mirrors each connected Jira board's sprints and tickets, writes
-  usage metrics back to tickets assigned to you, and drains removed credentials".
-- **Tickets screen sub-line** (`TicketsScreen.svelte:40`, `workspace-tickets.md:45-47`):
-  "… Read from Jira. On tickets assigned to you, sensei writes these numbers back, as set
-  on Integrations."
+- **Scheduled tasks**: the `tracker_sync` description (`api/handlers/scheduled_tasks.rs:71`)
+  is "Tracker sync — mirrors each connected Jira, GitLab or GitHub board's sprints and
+  tickets, writes usage metrics back to tickets assigned to you (and SDLC metrics on Jira),
+  and drains removed credentials" (amended 2026-11-14, F10).
+- **Tickets screen sub-line** (`TicketsScreen.svelte:50`, `workspace-tickets.md`):
+  "… Read from the connected tracker. On tickets assigned to you, sensei writes these
+  numbers back, as set on Integrations." (amended 2026-11-14, F10: it no longer says Jira.)
 - **App wrappers** go on `senseiApi` in `app/src/lib/api.ts`, beside `tryListTrackers`
   and the others, following their `try*` convention (C29): `trySetTrackerWriteback`,
   `tryGetTrackerFields`, `tryPutTrackerFields`. They're tested in
   `app/src/lib/api-trackers.spec.ts`. The W7/W8 codes and the `pass_failed` texts are added to
   `tracker-errors.ts`.
-- **Disconnect copy** stays "Jira itself is not changed." It's still true: disconnect never
-  deletes what was written.
+- **Disconnect copy** stays "the tracker itself is not changed." It's still true: disconnect
+  never deletes what was written.
 
 ### W-DOCS · Documents updated in this slice
 
@@ -683,7 +750,7 @@ The X1–X8 fixture checks run against a real tenant before step 5 is merged.
 ### Out of scope
 
 - team totals (Dōjō rollup, F-3)
-- adapters other than Jira
+- mapped fields on adapters other than Jira (amended 2026-11-14: every kind writes the comment, `tracker-forge-comment-writeback.md`)
 - a per-ticket opt-out
 - deleting or archiving sensei comments
 - text-type custom fields
@@ -780,7 +847,9 @@ and the test DB unless marked *(tenant)*.
     - `rg -n 'write_transport\(' crates/senseid/src` → only the trait method and impls in
       `tracker/runtime.rs`, and calls in `tracker/writeback.rs`.
     - `rg -n -U 'client\s*\.\s*(post|put|patch|delete|request)\(|reqwest::Method' crates/senseid/src/tracker`
-      → only the `RawWrite` impl and `RawGet::post_graphql` in `transport.rs` (the latter a
+      → only the `RawWrite` impl (which sends `POST`, `PUT` and, since 2026-11-14, `PATCH`
+      for `WriteMethod::Patch`, GitHub's comment edit, `tracker-forge-comment-writeback.md`
+      F3) and `RawGet::post_graphql` in `transport.rs` (the latter a
       POST to the fixed `/graphql` path, refused unless built with `allow_graphql`; its
       document is a `GraphqlQuery`, which refuses `mutation`, tested in `tracker::graphql`). `-U` and `\s*` catch a call rustfmt
       splits across lines. The keyring `s.delete(` at connect.rs:177 doesn't match, because

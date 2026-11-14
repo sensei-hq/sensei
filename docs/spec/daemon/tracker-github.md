@@ -224,6 +224,11 @@ Metadata: read on the project's repositories. A classic token with `repo` and
 classic `repo` token can also **write** to every repository it reaches.
 `gh auth token` is a classic token.
 
+Write-back also needs **Issues: read and write** on each repository whose tickets are on
+the project (fine-grained), or a classic `repo` token. Connect stays read-only and does
+not check for it: a read-only token connects and syncs, and its comment writes fail as
+`forbidden` (amended 2026-11-14, tracker-forge-comment-writeback).
+
 ### H3 · Snapshot
 
 `fetch_snapshot` calls a pure `snapshot_from(board, item_pages, now)`; `now` is
@@ -338,12 +343,15 @@ Containment as H4 is checked **before** anything is mapped or returned. Maps `ti
 
 ### H6 · Capabilities
 
-`GithubAdapter::capabilities()` = `{history: false, writeback: false}`. The §G8
+`GithubAdapter::capabilities()` = `{history: false, comment: true, fields: false}` (amended 2026-11-14, tracker-forge-comment-writeback);
+it was `{history: false, writeback: false}`. The §G8
 guards read `capabilities()` and name no kind (`history.rs:46`, `writeback.rs:516`,
 `api/handlers/trackers.rs:376, :461-466`, `sdlc/ticket.rs:562`,
-`sdlc/sprint_replay.rs:415`), so they apply with no change. The write-back trait
-methods are required, so `github.rs` returns `Err(UnsupportedTracker)` from each and
-`false` from `field_ref_shape`, as `gitlab.rs:553-599` does. `owner()`: `GET /user`
+`sdlc/sprint_replay.rs:415`), so they apply with no change. GitHub writes the usage
+comment as a REST issue comment, edited with PATCH, only on tickets in private
+repositories (`tracker-forge-comment-writeback.md` F6, F7). Its field methods return
+`Err(UnsupportedTracker)` and `field_ref_shape` returns `false`, as GitLab's do; PUT
+`/fields` is 409 `fields_unsupported`. `owner()`: `GET /user`
 → `Person(AccountRef(id))`, or `NotAPerson` when `type == "Bot"`.
 
 ### H7 · Changes, by surface
@@ -363,7 +371,7 @@ methods are required, so `github.rs` returns `Err(UnsupportedTracker)` from each
 | DDL | `enum/sensei/tracker_kind.ddl` (`'github'`, and its comment at `:7`); `database/apply/before/sensei_tracker_kind_github.sql` (as `…_gitlab.sql`: dbd does not add a value to an existing enum) registered in `design.yaml`; the column comments in `table/sensei/trackers.ddl:47-54` and `tracker_tasks.ddl:43` name GitHub's values; `sprints.ddl:27-28` (`seq` is an ordering key); `design.dbml` enum and tracker notes; `make test-template` |
 | CLI `crates/cli/src/tracker.rs` | `sensei tracker connect github --workspace <w> --level <l> --board-url <url> [--iteration-field <name>]`; token from `SENSEI_GITHUB_TOKEN`, else stdin; `Provider::Github`; GitHub words in `describe_error_for`; `iteration_field_ambiguous` prints the names; the help names the fine-grained token and the classic token's write reach |
 | App `lib/types.ts`, `lib/tracker-errors.ts` | `TrackerKind` gains `'github'`; `TrackerConnection` (`types.ts:1773-1800`) gains `url` and `iteration_field` (nullable); `TRACKER_NAME.github = 'GitHub'`; `errorFor`'s early `board_not_found` and `task_not_on_board` branches (`:111-153`) gain a GitHub case ("No GitHub project at that address, or the token can't see it"); a `GITHUB_WORDS` map for `unauthorized` and `forbidden` ("The token needs Projects: read"); the create-token link for GitHub opens `https://github.com/settings/personal-access-tokens/new` |
-| App Integrations (`integrations-state.svelte.ts`, `IntegrationsScreen.svelte`) | the GitHub radio; board URL and token; the optional iteration field, and on `iteration_field_ambiguous` a select of the returned names; card title **"GitHub · <owner>/<n> · <board_name>"** (the title at `:294-301` no longer falls to Jira's); **Replace token** re-sends `board_url = params.url`, `iteration_field = params.iteration_field` and the new token (`startReplace` `:470-484` gains a GitHub branch); "Write-back: not available for GitHub yet"; the token-reach note; and "A ticket in a repository the token can't read shows as not found" (H5.4 treats invisible and missing alike) |
+| App Integrations (`integrations-state.svelte.ts`, `IntegrationsScreen.svelte`) | the GitHub radio; board URL and token; the optional iteration field, and on `iteration_field_ambiguous` a select of the returned names; card title **"GitHub · <owner>/<n> · <board_name>"** (the title at `:294-301` no longer falls to Jira's); **Replace token** re-sends `board_url = params.url`, `iteration_field = params.iteration_field` and the new token (`startReplace` `:470-484` gains a GitHub branch); the "Write back to GitHub" toggle with the comment-only note and no field mapping (amended 2026-11-14, tracker-forge-comment-writeback); the token-reach note; and "A ticket in a repository the token can't read shows as not found" (H5.4 treats invisible and missing alike) |
 | Docs | `decisions.md` D92, and amendment notes on D71 and D91; the analysis's frontmatter, §2 FT3/FT5, §4, §5's milestone mapping, §6's GitHub cells, §7's PR row, §8 and §9 O5/O6 marked superseded by D92; parent `tracker-jira-linkage.md` `:75` and R4 (`:277-283`, the read seam and "One method"), `:80-83` (adapters), `:115` (one board: Jira, GitLab or GitHub), R2 `:160` and `:162` (`seq` is an ordering key), R8's GET shape `:524` (`url`, `iteration_field`), R8 `:525, :545` (`iteration_field_ambiguous`), R10 `:561`, Out of scope `:682`, Future adapters `:701` (`Bearer` is built); `tracker-metrics-writeback.md` `:47` and gate 13 (`GetTransport` is GET plus validated queries); `tracker-levels.md` (a project's iterations are sprints); `tracker-gitlab.md` §G9 `:208-209` (the host filter for a bare key; `tracker_for_key` now in `forge.rs`); `docs/spec/dojo/targets-and-gates.md:707-713` (the GitHub reader uses the tracker's token per D92, the kind is `Github`, and the forge-sign-in and `forge_token_unavailable` text goes); screen specs `workspace-integrations.md`, `workspace-tickets.md` |
 
 ### Build order
@@ -410,10 +418,10 @@ methods are required, so `github.rs` returns `Err(UnsupportedTracker)` from each
 ### Out of scope
 
 Milestones; GitHub Enterprise Server; projects with more than 100 fields; the
-project's Status field as ticket status; write-back; history and SDLC metrics
+project's Status field as ticket status; mapped-field write-back (amended 2026-11-14, tracker-forge-comment-writeback); history and SDLC metrics
 (`unsupported_by_tracker`); OAuth or the forge sign-in as the credential; estimates
 (a Number field as points); sub-issues; past iteration membership; reading GitHub's
-secondary rate limit (403) as `rate_limited`; a token-scope warning (needs response
+secondary rate limit (403) as `rate_limited` (no longer out of scope: a 403 that names a rate limit is `rate_limited` on reads and writes, F8, amended 2026-11-14, tracker-forge-comment-writeback); a token-scope warning (needs response
 headers in `RawResponse`).
 
 ## Done gate
@@ -432,7 +440,7 @@ headers in `RawResponse`).
 | E10 | Board identity (DB) | the same project connected to workspace A, then (as `orgs/acme/3` and after a rename as `orgs/acme2/3`) to workspace B → `board_already_connected` |
 | E11 | Discovery (recorded `issue-on/off`, `pr`) | on the project → found with its sprint; off → absent; a PR number → absent; a missing repository (scripted `NOT_FOUND`) → absent; `acme/x/y#1`, `acme/platform#2147483648`, `_ab/platform#1` → absent with **no request sent**; containment on page 2 of `projectItems` → found; 10 pages, no match → `http_error` |
 | E12 | `get_ticket` | `acme/platform#12` → 200; an issue the token sees but off the project → 404 `ticket_not_found`, no title in the body; a bare `#12` from a folder with `repo_key github.com/acme/platform`, in a workspace with a GitLab tracker `full_path acme` and a GitHub tracker → the **GitHub** tracker answers; a bare key from a `gitlab.example.com` folder never reaches GitHub; two GitHub trackers, the first `Ok(None)` → the second answers; the first `Err(Forbidden)` → 502 `forbidden`, no content; a nonexistent issue and an off-board issue → the **same** 404 `ticket_not_found` body; a repository the first tracker's token cannot see (`NOT_FOUND`) → the second tracker still answers; a GitHub tracker with no mirrored task in the repo → still found; no GitHub tracker → 404 `no_tracker_for_key` |
-| E13 | Guards and owner | PATCH write-back on a GitHub tracker → 409 `writeback_unsupported`; SDLC reasons `unsupported_by_tracker`; `/user` `type: "Bot"` → `NotAPerson`, `"User"` → `Person(id)` |
+| E13 | Guards and owner | PATCH write-back on a GitHub tracker → 200, and PUT `/fields` → 409 `fields_unsupported` (amended 2026-11-14, tracker-forge-comment-writeback); was PATCH → 409 `writeback_unsupported`; SDLC reasons `unsupported_by_tracker`; `/user` `type: "Bot"` → `NotAPerson`, `"User"` → `Person(id)` |
 | E14 | Kinds and DDL | `every_registered_kind_is_a_label_of_the_ddl_enum` green; the upgrade hook adds `github` to an enum holding `jira, gitlab`; the dbml enum lists `github` |
 | E15 | User-Agent | a request from `ReqwestRaw` carries `user-agent: sensei/<version>` |
 | E16 | Fixtures | `fixtures_are_scrubbed` green |
