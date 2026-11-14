@@ -171,8 +171,24 @@ pub fn needs_owner_backfill(owner_ref: Option<&str>, owner_state: Option<&str>) 
 pub struct Capabilities {
     /// It reads ticket history (S4): the history task and the SDLC figures built on it.
     pub history: bool,
-    /// It writes figures back to tickets (D50).
-    pub writeback: bool,
+    /// It writes the write-back comment to tickets (W5; tracker-forge-comment-writeback F1).
+    pub comment: bool,
+    /// It writes figures into mapped ticket fields (W6, W7).
+    pub fields: bool,
+}
+
+/// A ticket as the comment methods address it: its id, and its stored key (a forge
+/// addresses comments by project and number, which only the key carries; F2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskRef<'a> {
+    pub external_id: &'a str,
+    pub key: &'a str,
+}
+
+/// Pure: a plain decimal id of 1–18 digits, the only id shape that reaches a request
+/// path (W10).
+pub fn is_numeric_id(id: &str) -> bool {
+    (1..=18).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// The capabilities of the adapter registered for `kind`. An unregistered kind is an
@@ -540,21 +556,21 @@ pub trait TrackerAdapter: Send + Sync {
     async fn find_comment(
         &self,
         t: &dyn GetTransport,
-        task_external_id: &str,
+        task: &TaskRef<'_>,
         owner: &AccountRef,
     ) -> Result<Option<String>, TrackerError>;
     /// Post the report as a new comment; its id.
     async fn create_comment(
         &self,
         w: &dyn WriteTransport,
-        task_external_id: &str,
+        task: &TaskRef<'_>,
         report: &writeback::Report,
     ) -> Result<String, TrackerError>;
     /// Replace the comment's body with the report, without notifying watchers.
     async fn update_comment(
         &self,
         w: &dyn WriteTransport,
-        task_external_id: &str,
+        task: &TaskRef<'_>,
         comment_ref: &str,
         report: &writeback::Report,
     ) -> Result<(), TrackerError>;
@@ -584,7 +600,7 @@ pub trait TrackerAdapter: Send + Sync {
     async fn issue_exists(
         &self,
         t: &dyn GetTransport,
-        task_external_id: &str,
+        task: &TaskRef<'_>,
     ) -> Result<bool, TrackerError>;
     /// Prove the credential and the board.
     async fn validate(
@@ -714,9 +730,21 @@ mod tests {
     fn jira_reads_history_and_writes_back_and_an_unknown_kind_is_an_error() {
         assert_eq!(
             capabilities_of_kind("jira"),
-            Ok(Capabilities { history: true, writeback: true })
+            Ok(Capabilities { history: true, comment: true, fields: true })
         );
         assert!(capabilities_of_kind("not-a-kind").is_err());
+    }
+
+    /// W10: only a plain decimal id of 1–18 digits reaches a request path, for every
+    /// adapter (tracker-forge-comment-writeback F3).
+    #[test]
+    fn only_numeric_ids_reach_a_path() {
+        for ok in ["1", "10001", "123456789012345678"] {
+            assert!(is_numeric_id(ok), "{ok}");
+        }
+        for bad in ["", "1234567890123456789", "10001/../x", "1?x=1", "-1", "1 ", "AUTH-1", "１"] {
+            assert!(!is_numeric_id(bad), "{bad:?}");
+        }
     }
 
     #[test]
@@ -867,7 +895,7 @@ pub mod test_support {
                 scopes: [String::new(), String::new()],
                 validated: None,
                 params_extra: Default::default(),
-                capabilities: Capabilities { history: true, writeback: true },
+                capabilities: Capabilities { history: true, comment: true, fields: true },
             }
         }
     }
@@ -919,7 +947,7 @@ pub mod test_support {
         async fn find_comment(
             &self,
             _t: &dyn GetTransport,
-            _task: &str,
+            _task: &crate::tracker::TaskRef<'_>,
             _owner: &crate::tracker::AccountRef,
         ) -> Result<Option<String>, TrackerError> {
             Err(TrackerError::UnsupportedTracker)
@@ -927,7 +955,7 @@ pub mod test_support {
         async fn create_comment(
             &self,
             _w: &dyn crate::tracker::WriteTransport,
-            _task: &str,
+            _task: &crate::tracker::TaskRef<'_>,
             _report: &crate::tracker::writeback::Report,
         ) -> Result<String, TrackerError> {
             Err(TrackerError::UnsupportedTracker)
@@ -935,7 +963,7 @@ pub mod test_support {
         async fn update_comment(
             &self,
             _w: &dyn crate::tracker::WriteTransport,
-            _task: &str,
+            _task: &crate::tracker::TaskRef<'_>,
             _comment: &str,
             _report: &crate::tracker::writeback::Report,
         ) -> Result<(), TrackerError> {
@@ -944,7 +972,7 @@ pub mod test_support {
         async fn issue_exists(
             &self,
             _t: &dyn GetTransport,
-            _task: &str,
+            _task: &crate::tracker::TaskRef<'_>,
         ) -> Result<bool, TrackerError> {
             Err(TrackerError::UnsupportedTracker)
         }
@@ -1603,7 +1631,7 @@ mod seam_tests {
         for kind in ["gitlab", "github"] {
             assert_eq!(
                 capabilities_of_kind(kind),
-                Ok(Capabilities { history: false, writeback: false })
+                Ok(Capabilities { history: false, comment: false, fields: false })
             );
         }
     }

@@ -12,7 +12,9 @@ use crate::db::pg_store::trackers::{WriteTarget, WritebackTask};
 use crate::tracker::runtime::{SYNC_RETRIES, TransportFactory};
 use crate::tracker::secret::{KEYRING_TIMEOUT, SecretStore, bounded};
 use crate::tracker::usage::Usage;
-use crate::tracker::{AccountRef, GetTransport, TrackerAdapter, TrackerError, WriteTransport};
+use crate::tracker::{
+    AccountRef, GetTransport, TaskRef, TrackerAdapter, TrackerError, WriteTransport,
+};
 
 /// The whole pass, 429 sleeps included (W2).
 pub const WRITEBACK_DEADLINE: Duration = Duration::from_secs(5 * 60);
@@ -513,7 +515,7 @@ pub async fn run(
     deadline: Duration,
     _guard: &tokio::sync::OwnedMutexGuard<()>,
 ) -> PassOutcome {
-    if !adapter.capabilities().writeback {
+    if !adapter.capabilities().comment {
         return PassOutcome::Skipped;
     }
     // Read at pass start: the sync may have just found the owner (W1). The sync's
@@ -794,25 +796,25 @@ impl Pass<'_> {
         owner: &AccountRef,
         report: &Report,
     ) -> Result<String, WritebackStatus> {
-        let ext = task.external_id.as_str();
+        let ticket = &TaskRef { external_id: &task.external_id, key: &task.key };
         let comment_ref = match &task.comment_ref {
             Some(r) => r.clone(),
-            None => match self.adapter.find_comment(get, ext, owner).await {
+            None => match self.adapter.find_comment(get, ticket, owner).await {
                 Ok(Some(r)) => r,
                 Ok(None) => {
                     return self
                         .adapter
-                        .create_comment(write, ext, report)
+                        .create_comment(write, ticket, report)
                         .await
                         .map_err(|e| status_for(WriteOp::CreateComment, e));
                 }
                 Err(e) => return Err(status_for(WriteOp::FindComment, e)),
             },
         };
-        match self.adapter.update_comment(write, ext, &comment_ref, report).await {
+        match self.adapter.update_comment(write, ticket, &comment_ref, report).await {
             Ok(()) => Ok(comment_ref),
             // Which object is gone: the comment, or the whole ticket (W5)?
-            Err(TrackerError::NotFound) => match self.adapter.issue_exists(get, ext).await {
+            Err(TrackerError::NotFound) => match self.adapter.issue_exists(get, ticket).await {
                 Ok(true) => Err(WritebackStatus::CommentRemoved),
                 Ok(false) => Err(WritebackStatus::NotFound),
                 Err(e) => Err(status_for(WriteOp::IssueCheck, e)),
@@ -1376,6 +1378,31 @@ mod pass_tests {
 
     fn comment_path(ext: &str) -> String {
         format!("/rest/api/3/issue/{ext}/comment")
+    }
+
+    /// tracker-forge-comment-writeback F2: a candidate carries its stored key, so a
+    /// forge adapter can address the ticket by project and number.
+    #[tokio::test]
+    async fn a_candidate_carries_its_key() {
+        let f = fixture([Some("A1"), Some("A1"), None]).await;
+        let mut got: Vec<(String, String)> =
+            f.pg.writeback_candidates(f.t)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|t| (t.external_id, t.key))
+                .collect();
+        got.sort();
+        let keys: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT external_id, key FROM sensei.tracker_tasks
+              WHERE tracker_id = $1 AND assigned_to_me ORDER BY 1",
+        )
+        .bind(f.t)
+        .fetch_all(f.pg.pool())
+        .await
+        .unwrap();
+        assert!(!keys.is_empty(), "the fixture has assigned tickets");
+        assert_eq!(got, keys);
     }
 
     /// The bullet texts of a sent ADF body.
@@ -2522,10 +2549,10 @@ mod pass_tests {
         let service = pg.tracker_by_id(t).await.unwrap().unwrap().secret_service;
         let io = crate::tracker::test_support::empty_pass_io();
         let locks = crate::tracker::sync::TrackerLocks::default();
-        let pass = |writeback: bool| {
+        let pass = |comment: bool, fields: bool| {
             let adapter =
                 crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
-                    capabilities: crate::tracker::Capabilities { history: false, writeback },
+                    capabilities: crate::tracker::Capabilities { history: false, comment, fields },
                     ..crate::tracker::test_support::FakeAdapter::gitlab_like()
                 });
             let (pg, io, service, locks) = (pg.clone(), io.clone(), service.clone(), &locks);
@@ -2534,7 +2561,12 @@ mod pass_tests {
                 run(&pg, &io, t, &service, adapter, WRITEBACK_DEADLINE, &guard).await
             }
         };
-        assert_eq!(pass(false).await, PassOutcome::Skipped);
-        assert_ne!(pass(true).await, PassOutcome::Skipped, "control: a capable adapter proceeds");
+        assert_eq!(pass(false, false).await, PassOutcome::Skipped);
+        assert_eq!(pass(false, true).await, PassOutcome::Skipped, "fields alone are not enough");
+        assert_ne!(
+            pass(true, false).await,
+            PassOutcome::Skipped,
+            "control: an adapter that writes the comment proceeds"
+        );
     }
 }

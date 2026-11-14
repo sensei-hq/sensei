@@ -101,6 +101,9 @@ impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for TrackerRow {
 pub struct WritebackTask {
     pub id: uuid::Uuid,
     pub external_id: String,
+    /// The ticket's stored key: a forge addresses its comments by project and number
+    /// (tracker-forge-comment-writeback F2).
+    pub key: String,
     pub comment_ref: Option<String>,
     pub hash: Option<String>,
     /// `sensei.tracker_writeback_status`, NULL when never attempted.
@@ -1412,6 +1415,7 @@ impl PgStore {
             (
                 uuid::Uuid,
                 String,
+                String,
                 Option<String>,
                 Option<String>,
                 Option<String>,
@@ -1419,7 +1423,7 @@ impl PgStore {
                 Option<chrono::DateTime<chrono::Utc>>,
             ),
         >(
-            "SELECT id, external_id, writeback_comment_ref, writeback_hash, writeback_status::text,
+            "SELECT id, external_id, key, writeback_comment_ref, writeback_hash, writeback_status::text,
                     writeback_at, writeback_tried_at
                FROM sensei.tracker_tasks
               WHERE tracker_id = $1 AND (assigned_to_me OR NOT $2) AND removed_at IS NULL
@@ -1431,10 +1435,11 @@ impl PgStore {
         .await
         .map(|rows| {
             rows.into_iter()
-                .map(|(id, external_id, comment_ref, hash, status, written_at, tried_at)| {
+                .map(|(id, external_id, key, comment_ref, hash, status, written_at, tried_at)| {
                     WritebackTask {
                         id,
                         external_id,
+                        key,
                         comment_ref,
                         hash,
                         status,

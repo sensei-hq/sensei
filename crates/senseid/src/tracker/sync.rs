@@ -1216,7 +1216,7 @@ mod tests {
         async fn find_comment(
             &self,
             t: &dyn GetTransport,
-            task: &str,
+            task: &crate::tracker::TaskRef<'_>,
             owner: &crate::tracker::AccountRef,
         ) -> Result<Option<String>, TrackerError> {
             JiraAdapter.find_comment(t, task, owner).await
@@ -1224,7 +1224,7 @@ mod tests {
         async fn create_comment(
             &self,
             w: &dyn crate::tracker::WriteTransport,
-            task: &str,
+            task: &crate::tracker::TaskRef<'_>,
             report: &crate::tracker::writeback::Report,
         ) -> Result<String, TrackerError> {
             JiraAdapter.create_comment(w, task, report).await
@@ -1232,7 +1232,7 @@ mod tests {
         async fn update_comment(
             &self,
             w: &dyn crate::tracker::WriteTransport,
-            task: &str,
+            task: &crate::tracker::TaskRef<'_>,
             comment: &str,
             report: &crate::tracker::writeback::Report,
         ) -> Result<(), TrackerError> {
@@ -1241,7 +1241,7 @@ mod tests {
         async fn issue_exists(
             &self,
             t: &dyn GetTransport,
-            task: &str,
+            task: &crate::tracker::TaskRef<'_>,
         ) -> Result<bool, TrackerError> {
             JiraAdapter.issue_exists(t, task).await
         }

@@ -579,7 +579,11 @@ mod store_tests {
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
         let adapter =
             crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
-                capabilities: crate::tracker::Capabilities { history: false, writeback: false },
+                capabilities: crate::tracker::Capabilities {
+                    history: false,
+                    comment: false,
+                    fields: false,
+                },
                 ..crate::tracker::test_support::FakeAdapter::gitlab_like()
             });
         let io = crate::tracker::test_support::empty_pass_io();

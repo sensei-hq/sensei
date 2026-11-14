@@ -6,8 +6,8 @@ use crate::tracker::sprint::SprintState;
 use crate::tracker::{
     AccountRef, ApiToken, AuthScheme, BoardScope, ConnectParams, Discovered, FieldCheck,
     FieldValue, GetTransport, KnownTask, Link, LinkSource, OwnerLookup, ParamError, PrevState,
-    SessionText, Snapshot, SprintRow, TaskRow, TrackerAdapter, TrackerError, TrackerKind,
-    ValidateError, Validated, WriteMethod, WriteTransport,
+    SessionText, Snapshot, SprintRow, TaskRef, TaskRow, TrackerAdapter, TrackerError, TrackerKind,
+    ValidateError, Validated, WriteMethod, WriteTransport, is_numeric_id,
 };
 
 /// Jira Cloud's site domains: `atlassian.net`, and `jira.com` for older sites.
@@ -74,7 +74,7 @@ impl TrackerAdapter for JiraAdapter {
     }
 
     fn capabilities(&self) -> crate::tracker::Capabilities {
-        crate::tracker::Capabilities { history: true, writeback: true }
+        crate::tracker::Capabilities { history: true, comment: true, fields: true }
     }
 
     fn connect_params(&self, body: &serde_json::Value) -> Result<ConnectParams, ParamError> {
@@ -124,10 +124,10 @@ impl TrackerAdapter for JiraAdapter {
     async fn find_comment(
         &self,
         t: &dyn GetTransport,
-        task_external_id: &str,
+        task: &TaskRef<'_>,
         owner: &AccountRef,
     ) -> Result<Option<String>, TrackerError> {
-        let path = format!("{}/comment", issue_path(task_external_id)?);
+        let path = format!("{}/comment", issue_path(task.external_id)?);
         let query = [("orderBy", "-created".to_string()), ("maxResults", "50".to_string())];
         let page = t.get_json(&path, &query).await?;
         let comments =
@@ -149,10 +149,10 @@ impl TrackerAdapter for JiraAdapter {
     async fn create_comment(
         &self,
         w: &dyn WriteTransport,
-        task_external_id: &str,
+        task: &TaskRef<'_>,
         report: &crate::tracker::writeback::Report,
     ) -> Result<String, TrackerError> {
-        let path = format!("{}/comment", issue_path(task_external_id)?);
+        let path = format!("{}/comment", issue_path(task.external_id)?);
         let created = w
             .send_json(WriteMethod::Post, &path, &[], &serde_json::json!({"body": adf(report)}))
             .await?;
@@ -162,14 +162,14 @@ impl TrackerAdapter for JiraAdapter {
     async fn update_comment(
         &self,
         w: &dyn WriteTransport,
-        task_external_id: &str,
+        task: &TaskRef<'_>,
         comment_ref: &str,
         report: &crate::tracker::writeback::Report,
     ) -> Result<(), TrackerError> {
-        if !is_jira_id(comment_ref) {
+        if !is_numeric_id(comment_ref) {
             return Err(TrackerError::BadRequest);
         }
-        let path = format!("{}/comment/{comment_ref}", issue_path(task_external_id)?);
+        let path = format!("{}/comment/{comment_ref}", issue_path(task.external_id)?);
         let query = [("notifyUsers", "false".to_string())];
         w.send_json(WriteMethod::Put, &path, &query, &serde_json::json!({"body": adf(report)}))
             .await
@@ -228,7 +228,9 @@ impl TrackerAdapter for JiraAdapter {
         fields: &[(String, FieldValue)],
     ) -> Result<(), TrackerError> {
         // Refused before any request, as `Decode`: a Jira 400 is the only `field_invalid` (W6).
-        if !is_jira_id(task_external_id) || !fields.iter().all(|(r, _)| field_number(r).is_some()) {
+        if !is_numeric_id(task_external_id)
+            || !fields.iter().all(|(r, _)| field_number(r).is_some())
+        {
             return Err(TrackerError::Decode);
         }
         let body: serde_json::Map<String, serde_json::Value> =
@@ -246,9 +248,9 @@ impl TrackerAdapter for JiraAdapter {
     async fn issue_exists(
         &self,
         t: &dyn GetTransport,
-        task_external_id: &str,
+        task: &TaskRef<'_>,
     ) -> Result<bool, TrackerError> {
-        match t.get_json(&issue_path(task_external_id)?, &[("fields", "none".to_string())]).await {
+        match t.get_json(&issue_path(task.external_id)?, &[("fields", "none".to_string())]).await {
             Ok(_) => Ok(true),
             Err(TrackerError::NotFound) => Ok(false),
             Err(e) => Err(e),
@@ -780,11 +782,6 @@ pub fn adf(report: &crate::tracker::writeback::Report) -> serde_json::Value {
     ]})
 }
 
-/// Jira's numeric issue and comment ids (W10 path safety): only these reach a path.
-pub fn is_jira_id(id: &str) -> bool {
-    (1..=18).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())
-}
-
 /// The number of a Jira custom field id `customfield_<n>` (`n` from 1, up to ten
 /// digits, no leading zero), or `None` for anything else.
 fn field_number(field_ref: &str) -> Option<&str> {
@@ -794,9 +791,9 @@ fn field_number(field_ref: &str) -> Option<&str> {
     ok.then_some(n)
 }
 
-/// `/rest/api/3/issue/{id}`, only for an id that passes [`is_jira_id`].
+/// `/rest/api/3/issue/{id}`, only for an id that passes [`is_numeric_id`].
 fn issue_path(task_external_id: &str) -> Result<String, TrackerError> {
-    if !is_jira_id(task_external_id) {
+    if !is_numeric_id(task_external_id) {
         return Err(TrackerError::BadRequest);
     }
     Ok(format!("/rest/api/3/issue/{task_external_id}"))
@@ -905,6 +902,11 @@ mod tests {
 #[cfg(test)]
 mod adapter_tests {
     use super::*;
+
+    /// A Jira ticket as the comment methods take it: Jira addresses it by id alone.
+    fn tref(external_id: &str) -> TaskRef<'_> {
+        TaskRef { external_id, key: "AUTH-1" }
+    }
     use crate::tracker::sprint::SprintState;
     use crate::tracker::test_support::FakeBoard;
     use serde_json::json;
@@ -1210,22 +1212,12 @@ mod adapter_tests {
         assert_eq!(w.raw().sent().len(), 1, "a refused id or field never reaches a request");
     }
 
-    #[test]
-    fn only_numeric_ids_reach_a_path() {
-        for ok in ["1", "10001", "123456789012345678"] {
-            assert!(is_jira_id(ok), "{ok}");
-        }
-        for bad in ["", "1234567890123456789", "10001/../x", "1?x=1", "-1", "1 ", "AUTH-1", "１"] {
-            assert!(!is_jira_id(bad), "{bad:?}");
-        }
-    }
-
     #[tokio::test]
     async fn a_comment_is_created_then_updated_without_notifying_watchers() {
         let w = PolicyTransport::new(RecordingWrites::default(), 0);
-        let id = JiraAdapter.create_comment(&w, "10001", &report()).await.unwrap();
+        let id = JiraAdapter.create_comment(&w, &tref("10001"), &report()).await.unwrap();
         assert_eq!(id, "20000");
-        JiraAdapter.update_comment(&w, "10001", &id, &report()).await.unwrap();
+        JiraAdapter.update_comment(&w, &tref("10001"), &id, &report()).await.unwrap();
         let sent = w.raw().sent();
         assert_eq!(sent.len(), 2);
         assert_eq!(
@@ -1248,18 +1240,21 @@ mod adapter_tests {
         let board = FakeBoard::standard();
         let owner = AccountRef::new("A1");
         assert_eq!(
-            JiraAdapter.create_comment(&w, "10001/../x", &report()).await,
+            JiraAdapter.create_comment(&w, &tref("10001/../x"), &report()).await,
             Err(TrackerError::BadRequest)
         );
         assert_eq!(
-            JiraAdapter.update_comment(&w, "10001", "1?x=1", &report()).await,
+            JiraAdapter.update_comment(&w, &tref("10001"), "1?x=1", &report()).await,
             Err(TrackerError::BadRequest)
         );
         assert_eq!(
-            JiraAdapter.find_comment(&board, "AUTH-1", &owner).await,
+            JiraAdapter.find_comment(&board, &tref("AUTH-1"), &owner).await,
             Err(TrackerError::BadRequest)
         );
-        assert_eq!(JiraAdapter.issue_exists(&board, "1/x").await, Err(TrackerError::BadRequest));
+        assert_eq!(
+            JiraAdapter.issue_exists(&board, &tref("1/x")).await,
+            Err(TrackerError::BadRequest)
+        );
         assert!(w.raw().sent().is_empty() && board.calls().is_empty());
     }
 
@@ -1282,20 +1277,23 @@ mod adapter_tests {
             ]}),
         );
         let a1 = AccountRef::new("A1");
-        assert_eq!(JiraAdapter.find_comment(&board, "10001", &a1).await, Ok(Some("7".into())));
+        assert_eq!(
+            JiraAdapter.find_comment(&board, &tref("10001"), &a1).await,
+            Ok(Some("7".into()))
+        );
         assert_eq!(
             board.query_of(path),
             Some(vec![("orderBy".into(), "-created".into()), ("maxResults".into(), "50".into())])
         );
         assert_eq!(
-            JiraAdapter.find_comment(&board, "10001", &AccountRef::new("C3")).await,
+            JiraAdapter.find_comment(&board, &tref("10001"), &AccountRef::new("C3")).await,
             Ok(None)
         );
         let none = FakeBoard::standard().with(path, 0, json!({"comments": []}));
-        assert_eq!(JiraAdapter.find_comment(&none, "10001", &a1).await, Ok(None));
+        assert_eq!(JiraAdapter.find_comment(&none, &tref("10001"), &a1).await, Ok(None));
         let denied = FakeBoard::standard().fail(path, TrackerError::Forbidden);
         assert_eq!(
-            JiraAdapter.find_comment(&denied, "10001", &a1).await,
+            JiraAdapter.find_comment(&denied, &tref("10001"), &a1).await,
             Err(TrackerError::Forbidden)
         );
     }
@@ -1304,12 +1302,15 @@ mod adapter_tests {
     async fn an_issue_exists_until_jira_says_it_is_gone() {
         let path = "/rest/api/3/issue/10001";
         let board = FakeBoard::standard().with(path, 0, json!({"id": "10001"}));
-        assert_eq!(JiraAdapter.issue_exists(&board, "10001").await, Ok(true));
+        assert_eq!(JiraAdapter.issue_exists(&board, &tref("10001")).await, Ok(true));
         assert_eq!(board.query_of(path), Some(vec![("fields".into(), "none".into())]));
         let gone = FakeBoard::standard().fail(path, TrackerError::NotFound);
-        assert_eq!(JiraAdapter.issue_exists(&gone, "10001").await, Ok(false));
+        assert_eq!(JiraAdapter.issue_exists(&gone, &tref("10001")).await, Ok(false));
         let denied = FakeBoard::standard().fail(path, TrackerError::Forbidden);
-        assert_eq!(JiraAdapter.issue_exists(&denied, "10001").await, Err(TrackerError::Forbidden));
+        assert_eq!(
+            JiraAdapter.issue_exists(&denied, &tref("10001")).await,
+            Err(TrackerError::Forbidden)
+        );
     }
 
     #[tokio::test]

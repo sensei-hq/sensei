@@ -10,7 +10,7 @@ use crate::tracker::sprint::SprintState;
 use crate::tracker::{
     AccountRef, ApiToken, AuthScheme, BoardScope, Capabilities, ConnectParams, Discovered,
     FieldCheck, FieldValue, GetTransport, KnownTask, Link, OwnerLookup, ParamError, PrevState,
-    SessionText, Snapshot, SprintRow, TaskRow, TrackerAdapter, TrackerError, TrackerKind,
+    SessionText, Snapshot, SprintRow, TaskRef, TaskRow, TrackerAdapter, TrackerError, TrackerKind,
     ValidateError, Validated, WriteTransport,
 };
 
@@ -465,7 +465,8 @@ impl TrackerAdapter for GithubAdapter {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities { history: false, writeback: false }
+        // The comment surface arrives with its methods (tracker-forge-comment-writeback W5).
+        Capabilities { history: false, comment: false, fields: false }
     }
 
     fn reads_graphql(&self) -> bool {
@@ -597,7 +598,7 @@ impl TrackerAdapter for GithubAdapter {
     async fn find_comment(
         &self,
         _t: &dyn GetTransport,
-        _task: &str,
+        _task: &TaskRef<'_>,
         _owner: &AccountRef,
     ) -> Result<Option<String>, TrackerError> {
         Err(TrackerError::UnsupportedTracker)
@@ -605,7 +606,7 @@ impl TrackerAdapter for GithubAdapter {
     async fn create_comment(
         &self,
         _w: &dyn WriteTransport,
-        _task: &str,
+        _task: &TaskRef<'_>,
         _report: &crate::tracker::writeback::Report,
     ) -> Result<String, TrackerError> {
         Err(TrackerError::UnsupportedTracker)
@@ -613,7 +614,7 @@ impl TrackerAdapter for GithubAdapter {
     async fn update_comment(
         &self,
         _w: &dyn WriteTransport,
-        _task: &str,
+        _task: &TaskRef<'_>,
         _comment: &str,
         _report: &crate::tracker::writeback::Report,
     ) -> Result<(), TrackerError> {
@@ -645,7 +646,11 @@ impl TrackerAdapter for GithubAdapter {
     ) -> Result<(), TrackerError> {
         Err(TrackerError::UnsupportedTracker)
     }
-    async fn issue_exists(&self, _t: &dyn GetTransport, _task: &str) -> Result<bool, TrackerError> {
+    async fn issue_exists(
+        &self,
+        _t: &dyn GetTransport,
+        _task: &TaskRef<'_>,
+    ) -> Result<bool, TrackerError> {
         Err(TrackerError::UnsupportedTracker)
     }
 }
@@ -864,7 +869,10 @@ mod tests {
             }
         );
         assert!(GithubAdapter.reads_graphql());
-        assert_eq!(GithubAdapter.capabilities(), Capabilities { history: false, writeback: false });
+        assert_eq!(
+            GithubAdapter.capabilities(),
+            Capabilities { history: false, comment: false, fields: false }
+        );
     }
 
     // ── E3: validate ────────────────────────────────────────────────────────

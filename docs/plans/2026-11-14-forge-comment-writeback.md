@@ -43,9 +43,8 @@ their comment methods. Flipping it earlier would let the pass reach the
 ### W1 · Seams, with Jira unchanged (F1, F2, F3)
 - **Issue:** #436
 - **Layers:**
-  - `tracker/mod.rs`: `Capabilities`, `TaskRef`, `is_numeric_id`, `WriteMethod::Patch`, the
+  - `tracker/mod.rs`: `Capabilities`, `TaskRef`, `is_numeric_id`, the
     `gitlab_like` fake
-  - `tracker/transport.rs`: the Patch verb
   - `tracker/{jira,gitlab,github}.rs`: signatures
   - `tracker/writeback.rs`: guard, `TaskRef` built in `write_comment`
   - `db/pg_store/trackers.rs`: `WritebackTask.key`
@@ -62,7 +61,9 @@ their comment methods. Flipping it earlier would let the pass reach the
   - `PUT /fields` on a forge gives 409 `fields_unsupported`, for both `[]` and one entry,
     with 0 requests and 0 rows. A malformed body still gives 422. Handler test `:1376`
     changes to match; `:899-908` is rewritten for the two refusal functions.
-  - Gate 11: `ReqwestRaw` sends `PATCH` to a local listener.
+  - **Amended at build (2026-11-14):** `WriteMethod::Patch` and gate 11 moved to W5.
+    Clippy `-D warnings` rejects a variant nothing constructs until GitHub's comment
+    PATCH exists, and suppressing the lint would be a workaround.
   - `is_jira_id` is gone; `jira.rs` calls `is_numeric_id`.
 - **Test scenarios:**
   - Given a Jira tracker with an assigned ticket, when the pass runs before and after this
@@ -148,6 +149,8 @@ their comment methods. Flipping it earlier would let the pass reach the
   - recorded fixtures under each adapter's test fixtures. These are hand-built from the
     documented response shapes and scrubbed (`fixtures_are_scrubbed`).
   - module doc comments (`gitlab.rs:5`, `github.rs:5`)
+  - `tracker/mod.rs` `WriteMethod::Patch`, and the `ReqwestRaw` PATCH verb
+    (`transport.rs`), moved here from W1
 - **Depends on:** W1, W2, W3, W4.
 - **Acceptance:**
   - Gate 3: PATCH `writeback_enabled: true` gives 200 on GitLab and GitHub. Handler tests
@@ -156,6 +159,10 @@ their comment methods. Flipping it earlier would let the pass reach the
     and the update sequences.
   - Gate 7 on each forge.
   - Gate 8: shape refusals make 0 requests.
+  - Gate 11: `ReqwestRaw` sends `PATCH` to a local listener (moved from W1).
+  - The pass hands each adapter the row's `key` in `TaskRef.key`. This is proved by the
+    forge request paths in gates 5 and 6, which are built only from the key (W1 review,
+    LOW 4).
   - Gate 14: `UnsupportedTracker` remains only on `check_fields`, `field_in_use` and
     `write_fields`, and the stale module docs are gone.
 - **Test scenarios:**

@@ -1,0 +1,40 @@
+{
+  "slice_id": "delivery-copy-order-a5",
+  "spec_path": "docs/spec/daemon/tracker-delivery-metrics.md (A5, gates 19-23, claims C25-C37)",
+  "plan_path": "docs/plans/2026-11-09-delivery-copy-order.md",
+  "run_id": "d9ebaff7-2e05-4f6c-8f4b-d3576753c23e",
+  "mode": "unattended",
+  "phases": [
+    "T1 daemon synced_at",
+    "T2 dojo storage+order",
+    "T3 ingest check",
+    "T4 close"
+  ],
+  "current_phase": "complete",
+  "completed": [
+    "design bf77987a4 (gate pass, DF3 user)",
+    "A5 r3 age wire 8592e5cc4, 168539f83",
+    "T1 daemon synced_age_s: 52 delivery tests green (red first)",
+    "T2 dojo DDL: delivery_facts.sql + delivery_effort.sql green via run.sh --apply (red first)",
+    "T3 ingest: 18/18 (red first); dojo check 0, dojo tests 2400/2400",
+    "clippy -D warnings 0, fmt clean, make test-template restamped",
+    "T1-T3 3c5b40838 (senseid 4706/0, dojo 2400/2400)",
+    "review 2c1a17046 (F-DC2 negative age; test gaps; failure-mode none)",
+    "T4 wrong-gate checked, backlog DF1 closed, spec/plan built",
+    "complete: done gates 19-23 verified (done-gate-verifier), wrong gates absent (wrong-gate-hunter)",
+    "E2E 2026-11-10: real GitHub board filed in local dojo, pending 0 (was 125), synced_at = sync + 1.8 s; C40 FALSE corrected 4c1153973",
+    "backlog: dev daemon behind branch schema d6bd89d98"
+  ],
+  "gate_status": "pass",
+  "claims_rerun": "2026-11-09 build start: C25-C37 unchanged, 0 FALSE",
+  "open_questions": [],
+  "known_broken": [
+    "GitLab and Jira boards not shown E2E: their workspaces repos are on git.senecaglobal.in (unknown_host, no tenant), so not eligible to push",
+    "app/src-tauri/Cargo.lock dbd-core 0.27.9 bump uncommitted (desktop dev build, not this slice)",
+    "sensei daemon run d9ebaff7 not marked done (MCP unavailable in the completing session)"
+  ],
+  "amendments": [
+    "A5 r3 (user, 2026-11-09): synced_age_s replaces synced_at on the wire (F-FM1 clock skew); C38 FALSE recorded"
+  ],
+  "next_command": "PR feature/delivery_metrics -> develop"
+}

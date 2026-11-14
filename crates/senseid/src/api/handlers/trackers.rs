@@ -382,7 +382,7 @@ pub(crate) async fn put_tracker_fields(
     else {
         return fail(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_tracker").into_response();
     };
-    if let Some(r) = refusal_for(adapter.capabilities(), true) {
+    if let Some(r) = fields_refusal(adapter.capabilities()) {
         return r.into_response();
     }
     if let Some((_, bad)) = entries.iter().find(|(_, r)| !adapter.field_ref_shape(r)) {
@@ -461,15 +461,21 @@ pub(crate) async fn disconnect_tracker(
     }
 }
 
-/// §G8: turning write-back on, or mapping its fields, on a tracker whose adapter cannot
-/// write back is a 409. Turning it off is always allowed.
+/// §G8: turning write-back on for a tracker whose adapter cannot write the comment is a
+/// 409. Turning it off is always allowed.
 fn writeback_refusal(kind: &str, enabling: bool) -> Result<Option<ApiErr>, String> {
-    Ok(refusal_for(crate::tracker::capabilities_of_kind(kind)?, enabling))
+    Ok(toggle_refusal(crate::tracker::capabilities_of_kind(kind)?, enabling))
 }
 
-/// Pure: the 409 for turning write-back on with an adapter that cannot.
-fn refusal_for(caps: crate::tracker::Capabilities, enabling: bool) -> Option<ApiErr> {
-    (enabling && !caps.writeback).then(|| fail(StatusCode::CONFLICT, "writeback_unsupported"))
+/// Pure: the 409 for turning write-back on with an adapter that cannot write the comment
+/// (tracker-forge-comment-writeback F1).
+fn toggle_refusal(caps: crate::tracker::Capabilities, enabling: bool) -> Option<ApiErr> {
+    (enabling && !caps.comment).then(|| fail(StatusCode::CONFLICT, "writeback_unsupported"))
+}
+
+/// Pure: the 409 for mapping fields on an adapter that cannot write them (F1).
+fn fields_refusal(caps: crate::tracker::Capabilities) -> Option<ApiErr> {
+    (!caps.fields).then(|| fail(StatusCode::CONFLICT, "fields_unsupported"))
 }
 
 /// `PATCH /api/workspaces/{id}/trackers/{tracker}` — exactly `{"writeback_enabled": bool}` (W8).
@@ -893,19 +899,35 @@ mod tests {
     use std::sync::Arc;
     use tower::ServiceExt;
 
+    /// tracker-forge-comment-writeback F1: the toggle needs the comment surface; mapping
+    /// fields needs the fields surface. Turning write-back off is always allowed.
     #[test]
     fn write_back_is_refused_only_when_enabling_it_on_an_adapter_that_cannot() {
         use crate::tracker::Capabilities;
-        let cannot = Capabilities { history: false, writeback: false };
-        let (status, body) = super::refusal_for(cannot, true).expect("refused");
+        let none = Capabilities { history: false, comment: false, fields: false };
+        let comment_only = Capabilities { history: false, comment: true, fields: false };
+        let fields_only = Capabilities { history: false, comment: false, fields: true };
+        let all = Capabilities { history: true, comment: true, fields: true };
+
+        let (status, body) = super::toggle_refusal(none, true).expect("refused");
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body.0, json!({"error": "writeback_unsupported"}));
-        assert!(super::refusal_for(cannot, false).is_none(), "turning it off is allowed");
+        assert!(super::toggle_refusal(none, false).is_none(), "turning it off is allowed");
+        assert!(super::toggle_refusal(comment_only, true).is_none(), "the comment is enough");
+        assert!(super::toggle_refusal(all, true).is_none());
         assert!(
-            super::refusal_for(Capabilities { history: true, writeback: true }, true).is_none()
+            super::toggle_refusal(fields_only, true).is_some(),
+            "fields alone are not the comment"
         );
-        // Through the registry: Jira can, an unknown kind is an error. The HTTP 409 on a
-        // real GitLab tracker is F3's (D10).
+
+        let (status, body) = super::fields_refusal(comment_only).expect("refused");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body.0, json!({"error": "fields_unsupported"}));
+        assert!(super::fields_refusal(none).is_some());
+        assert!(super::fields_refusal(all).is_none());
+        assert!(super::fields_refusal(fields_only).is_none(), "the comment is not needed");
+
+        // Through the registry: Jira can, an unknown kind is an error.
         assert!(super::writeback_refusal("jira", true).unwrap().is_none());
         assert!(super::writeback_refusal("not-a-kind", true).is_err());
     }
@@ -1331,12 +1353,10 @@ mod tests {
     async fn a_gitlab_board_connects_syncs_and_refuses_write_back() {
         let h = harness().await;
         let p = workspace(&h).await;
-        h.factory.serve_transport(
-            "https://gitlab.example.com",
-            Arc::new(crate::tracker::gitlab::test_support::RecordedGitlab::load(
-                "ce-closed-milestone",
-            )),
-        );
+        let gitlab = Arc::new(crate::tracker::gitlab::test_support::RecordedGitlab::load(
+            "ce-closed-milestone",
+        ));
+        h.factory.serve_transport("https://gitlab.example.com", gitlab.clone());
         let body = json!({
             "kind": "gitlab", "level": "sprint",
             "board_url": "https://gitlab.example.com/groups/acme/-/boards",
@@ -1368,12 +1388,39 @@ mod tests {
         let (st, _) =
             call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": false})), None).await;
         assert_eq!(st, StatusCode::OK, "turning it off is allowed");
+        // Mapped fields stay Jira-only (tracker-forge-comment-writeback F1): one entry
+        // and the empty list are both refused before any request or write. A row seeded
+        // under the store's feet proves `[]` did not reach `replace_tracker_fields`.
         let metric = crate::tracker::writeback::TrackerMetric::ALL[0].as_str();
-        let fields = json!({"fields": [{"metric": metric, "field_ref": "x"}]});
-        let (st, b) = call(&h, "PUT", &format!("{uri}/fields"), Some(fields), None).await;
+        let tid: uuid::Uuid = t.parse().unwrap();
+        h.state
+            .pg
+            .replace_tracker_fields(tid, &[(metric.to_string(), "seeded".to_string())])
+            .await
+            .unwrap();
+        let requests = gitlab.calls.lock().unwrap().len();
+        for fields in
+            [json!({"fields": [{"metric": metric, "field_ref": "x"}]}), json!({"fields": []})]
+        {
+            let (st, b) = call(&h, "PUT", &format!("{uri}/fields"), Some(fields), None).await;
+            assert_eq!(
+                (st, json(&b)["error"].clone()),
+                (StatusCode::CONFLICT, json!("fields_unsupported"))
+            );
+        }
+        assert_eq!(gitlab.calls.lock().unwrap().len(), requests, "no request reached GitLab");
+        let kept = h.state.pg.tracker_fields(tid).await.unwrap();
+        assert_eq!(
+            kept.iter().map(|r| r.field_ref.as_str()).collect::<Vec<_>>(),
+            ["seeded"],
+            "the stored mapping is untouched"
+        );
+        let (st, b) =
+            call(&h, "PUT", &format!("{uri}/fields"), Some(json!({"fields": "x"})), None).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
-            (StatusCode::CONFLICT, json!("writeback_unsupported"))
+            (StatusCode::UNPROCESSABLE_ENTITY, json!("invalid_body")),
+            "a malformed body is still refused first"
         );
 
         let (st, b) = call(&h, "GET", &format!("{uri}/sprints"), None, None).await;
