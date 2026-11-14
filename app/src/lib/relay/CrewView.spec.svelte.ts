@@ -62,7 +62,7 @@ describe('RunCard', () => {
     const c = mount(RunCard, { card: card(), groups: groups(), onmessage: vi.fn() });
     const root = c.querySelector('[data-run-card]')!;
     expect(text(root.querySelector('[data-run-title]'))).toBe('Run 7f3a running');
-    expect(root.querySelector('[data-run-title] [data-relay-pill]')?.getAttribute('data-tone')).toBe('success');
+    expect(root.querySelector('[data-run-title] [data-pill]')?.getAttribute('data-tone')).toBe('success');
     expect(text(root.querySelector('[data-run-meta]'))).toContain('completes, and is archived');
     expect([...root.querySelectorAll('[data-run-fact]')].map(text)).toEqual(['Members 7', 'Tasks 12', 'Done 5']);
     expect([...root.querySelectorAll('[data-member-group]')].map((g) => text(g.querySelector('[data-member-group-label]')))).toEqual([
@@ -83,7 +83,13 @@ describe('MemberCard', () => {
     expect(name.getAttribute('title')).toBe('Active');
     expect(name.className).toMatch(/text-success/);
     expect(text(root.querySelector('[data-member-lane]'))).toBe('Diagrams · L1');
-    expect([...root.querySelectorAll('[data-tag]')].map(text)).toEqual(['Claude Code 2.1', 'claude-opus-5-5']);
+    const tags = [...root.querySelectorAll('[data-member-tags] [data-pill]')] as HTMLElement[];
+    expect(tags.map(text)).toEqual(['Claude Code 2.1', 'claude-opus-5-5']);
+    // rokkit's Pill: the family is the plain chip; the model is the outline chip, in mono.
+    expect(tags[0].hasAttribute('data-variant')).toBe(false);
+    expect(tags[1].getAttribute('data-variant')).toBe('outline');
+    expect(tags[1].className).toMatch(/\bfont-mono\b/);
+    expect(tags.every((t) => t.getAttribute('data-size') === 'sm')).toBe(true);
     const message = root.querySelector('button[data-member-message]') as HTMLButtonElement;
     expect(message.getAttribute('aria-label')).toBe('Message cobalt-lyra');
     message.click();

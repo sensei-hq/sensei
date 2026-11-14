@@ -48,7 +48,9 @@ describe('TaskHeader', () => {
     const title = c.querySelector('[data-task-title]')!;
     expect(text(title)).toBe('Diagrams header on ScreenShell');
     expect(title.className).toMatch(/\bdisplay\b/);
-    expect(c.querySelector('[data-task-state] [data-relay-pill]')?.getAttribute('data-tone')).toBe('success');
+    const state = c.querySelector('[data-task-state] [data-pill]');
+    expect(state?.getAttribute('data-tone')).toBe('success');
+    expect(state?.getAttribute('data-size')).toBe('sm');
     expect([...c.querySelectorAll('[data-task-fact]')].map(text)).toEqual([
       'Lane Diagrams · L1',
       'Assistant Claude Code 2.1 · claude-opus-5-5',

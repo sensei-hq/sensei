@@ -44,7 +44,7 @@ describe('QueueRow', () => {
     expect(text(row.querySelector('[data-queue-title]'))).toBe('Sync shows "synced" for a refused repository');
     const pills = [...row.querySelectorAll('[data-queue-pills] > *')];
     expect(pills.map(text)).toEqual(['bug', 'sprint 47', 'sensei']);
-    expect(pills[0].querySelector('[data-relay-pill]')?.getAttribute('data-tone')).toBe('danger');
+    expect(pills[0].querySelector('[data-pill]')?.getAttribute('data-tone')).toBe('danger');
   });
 
   it('the ticket is a pill linking out: provider and key, opening in a new tab', () => {

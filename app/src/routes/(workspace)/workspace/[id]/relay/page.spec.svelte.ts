@@ -531,7 +531,7 @@ describe('Relay · Queue', () => {
     // The kind first, as a toned pill, then the tags (#423).
     const tags = all(ticketed, '[data-queue-pills] > *').map(text);
     expect(tags[0]).toBe('bug');
-    expect(one(ticketed, '[data-queue-pills] [data-relay-pill]')?.getAttribute('data-tone')).toBe('danger');
+    expect(one(ticketed, '[data-queue-pills] [data-pill]')?.getAttribute('data-tone')).toBe('danger');
     expect(tags).toContain('sprint 47');
     const ticket = need(one(ticketed, 'a[data-ticket]'), 'a[data-ticket]');
     expect(ticket.getAttribute('href')).toBe('https://acme.atlassian.net/browse/SEN-58');

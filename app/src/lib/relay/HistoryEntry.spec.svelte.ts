@@ -36,7 +36,7 @@ describe('HistoryEntry', () => {
     expect(text(root.querySelector('[data-entry-title]'))).toBe('Review · impl r2');
     const outcome = root.querySelector('[data-entry-outcome]')!;
     expect(text(outcome)).toBe('approved');
-    expect(outcome.querySelector('[data-relay-pill]')?.getAttribute('data-tone')).toBe('success');
+    expect(outcome.querySelector('[data-pill]')?.getAttribute('data-tone')).toBe('success');
     expect(text(root.querySelector('[data-entry-time]'))).toBe(hhmm(action.created_at));
   });
 
